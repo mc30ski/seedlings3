@@ -23,7 +23,7 @@ import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { projectViewerPayout, projectTeamPayoutsForOcc, perWorkerShare, rateForViewer } from "@/src/lib/paymentMath";
 import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
 import { getLocation } from "@/src/lib/geo";
-import { determineRoles, occurrenceStatusColor, prettyStatus, clientLabel, fmtDate, fmtDateTime, fmtDateWeekday, bizDateKey, jobTypeLabel } from "@/src/lib/lib";
+import { determineRoles, occurrenceStatusColor, prettyStatus, clientLabel, fmtDate, fmtDateTime, fmtDateWeekday, bizDateKey, bizToday, jobTypeLabel } from "@/src/lib/lib";
 import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
 import { useBranding } from "@/src/lib/useBranding";
 import { type TabPropsType, type WorkerOccurrence, JOB_OCCURRENCE_STATUS, JOB_KIND } from "@/src/lib/types";
@@ -949,7 +949,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     const key = `${pfx}_lastUsedDate`;
     try {
       const lastDate = localStorage.getItem(key);
-      const today = new Date().toISOString().slice(0, 10);
+      const today = bizToday();
       if (!lastDate || lastDate !== today) {
         // New day — reset filters
         setDatePreset("now");
@@ -1322,21 +1322,31 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         });
       } else if (!forAdmin && myId) {
         if (isTrainee) {
-          // Trainees only see jobs they are assigned to (no unassigned/claimable)
+          // Trainees only see jobs they are assigned to (no unassigned/
+          // claimable). Timeline events (workflow=EVENT) are admin-only —
+          // hidden even if the trainee was somehow assigned. Backend
+          // /occurrences also enforces this; the frontend filter is a
+          // belt-and-suspenders guard.
           list = list.filter((occ) => {
+            if (occ.workflow === "EVENT") return false;
             const assignees = occ.assignees ?? [];
             return assignees.some((a) => a.userId === myId);
           });
         } else {
-          // Worker view — show only my jobs + unassigned (claimable) + announcements + highlighted occurrence
-          // Events and Followups are team-scoped: only visible to assignees
+          // Worker view — show only my jobs + unassigned (claimable) +
+          // announcements + highlighted occurrence. Timeline events
+          // (workflow=EVENT) are admin-only and hidden entirely.
+          // Followups remain team-scoped: visible to assignees only.
           list = list.filter((occ) => {
             if (keepOccId && occ.id === keepOccId) return true;
+            // Events are admin-only Timeline items — hide from all
+            // non-admin workers regardless of assignment.
+            if (occ.workflow === "EVENT") return false;
             // Announcements are universally visible
             if (occ.workflow === "ANNOUNCEMENT") return true;
             const assignees = occ.assignees ?? [];
-            // Events and Followups: only show if user is an assignee
-            if (occ.workflow === "EVENT" || occ.workflow === "FOLLOWUP") {
+            // Followups: only show if user is an assignee
+            if (occ.workflow === "FOLLOWUP") {
               return assignees.some((a) => a.userId === myId);
             }
             return assignees.length === 0 || assignees.some((a) => a.userId === myId);

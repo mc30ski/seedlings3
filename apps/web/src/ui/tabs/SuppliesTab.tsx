@@ -31,6 +31,7 @@ import {
   Sliders,
 } from "lucide-react";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
+import { bizToday } from "@/src/lib/lib";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -93,11 +94,8 @@ function fmtDateTime(d: string): string {
   return new Date(d).toLocaleString();
 }
 
-function todayStr(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
+// Date helpers come from @/src/lib/lib. NEVER reinvent — see lib/lib.ts.
+// `bizToday()` returns today's date as YYYY-MM-DD in Eastern Time.
 
 type Props = {
   /** Read-only mode hides all action buttons, the businessCost column,
@@ -146,7 +144,7 @@ export default function SuppliesTab({
   const [bQty, setBQty] = useState("");
   // Total actually paid for the whole purchase, incl. tax/discounts.
   const [bTotalCost, setBTotalCost] = useState("");
-  const [bDate, setBDate] = useState(todayStr());
+  const [bDate, setBDate] = useState(bizToday());
   const [bVendor, setBVendor] = useState("");
   const [bInvoice, setBInvoice] = useState("");
   const [bNotes, setBNotes] = useState("");
@@ -367,7 +365,7 @@ export default function SuppliesTab({
     setBQty("");
     // Total is the receipt figure — it varies every trip, so don't prefill.
     setBTotalCost("");
-    setBDate(todayStr());
+    setBDate(bizToday());
     setBVendor("");
     setBInvoice("");
     setBNotes("");

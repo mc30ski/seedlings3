@@ -2,7 +2,17 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { services } from "../services";
 import { prisma } from "../db/prisma";
 import { getUploadUrl, getDownloadUrl, deleteObject } from "../lib/r2";
-import { etMidnight, etEndOfDay, parseUserDate } from "../lib/dates";
+import {
+  etMidnight,
+  etEndOfDay,
+  parseUserDate,
+  etToday,
+  etAddDays,
+  etFormatDate,
+  etSundayOnOrBefore,
+  etStartOfMonth,
+  etStartOfYear,
+} from "../lib/dates";
 import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
 import { Role as RoleVal } from "@prisma/client";
@@ -2243,10 +2253,14 @@ Respond ONLY with valid JSON in this exact format:
 
   app.get("/admin/users/:id/earnings-summary", adminGuard, async (req: any) => {
     const userId = String(req.params.id);
-    const now = new Date();
-    const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - now.getDay()); startOfWeek.setHours(0, 0, 0, 0);
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const startOfYear = new Date(now.getFullYear(), 0, 1);
+    // ET-anchored period starts. On Vercel (UTC server), naive Date getters
+    // would compute UTC week/month/year boundaries — wrong for an operator
+    // working off the ET calendar. See lib/dates.ts for why we never
+    // hand-roll this. Sunday-start to match the original behavior
+    // (`now.getDay() === 0` → walks back to Sunday).
+    const startOfWeek = etMidnight(etSundayOnOrBefore());
+    const startOfMonth = etMidnight(etStartOfMonth());
+    const startOfYear = etMidnight(etStartOfYear());
 
     // Business Start Date filter — see lib/businessStartCutoff.ts.
     const cutoff = await resolveCutoff(req);
@@ -2475,7 +2489,7 @@ Respond ONLY with valid JSON in this exact format:
         : null;
 
       const expenseTotal = occ.expenses.reduce((s, e) => s + e.cost, 0);
-      const dayKey = occ.completedAt ? occ.completedAt.toISOString().slice(0, 10) : null;
+      const dayKey = occ.completedAt ? etFormatDate(occ.completedAt) : null;
       const propId = occ.job?.property?.id;
 
       for (const a of occ.assignees) {
@@ -2662,8 +2676,7 @@ Respond ONLY with valid JSON in this exact format:
 
   app.get("/admin/operations", adminGuard, async (req: any) => {
     const { from, to } = (req.query || {}) as { from?: string; to?: string };
-    const today = new Date();
-    const todayKey = today.toISOString().slice(0, 10);
+    const todayKey = etToday();
     const dateFrom = from ? etMidnight(from) : etMidnight(todayKey);
     const dateTo = to ? etEndOfDay(to) : etEndOfDay(todayKey);
 
@@ -3789,7 +3802,7 @@ Respond ONLY with valid JSON in this exact format:
               id: a.id,
               jobId: a.jobId!,
               occurrenceId: a.id,
-              description: `${a.job?.property?.displayName ?? "Unknown"}${clientName ? ` (${clientName})` : ""}: two SCHEDULED occurrences ${diffDays < 1 ? "same day" : `${Math.round(diffDays)}d apart`} (${a.startAt.toISOString().slice(0, 10)} & ${b.startAt.toISOString().slice(0, 10)})`,
+              description: `${a.job?.property?.displayName ?? "Unknown"}${clientName ? ` (${clientName})` : ""}: two SCHEDULED occurrences ${diffDays < 1 ? "same day" : `${Math.round(diffDays)}d apart`} (${etFormatDate(a.startAt)} & ${etFormatDate(b.startAt)})`,
             });
           }
         }
@@ -3843,7 +3856,7 @@ Respond ONLY with valid JSON in this exact format:
           occurrenceId: o.id,
           description: isPending
             ? `${o.job?.property?.displayName ?? "Unknown"}${clientName ? ` (${clientName})` : ""}: awaiting payment — next occurrence will auto-create when payment is accepted (freq: ${o.job?.frequencyDays}d). Not a problem yet.`
-            : `${o.job?.property?.displayName ?? "Unknown"}${clientName ? ` (${clientName})` : ""}: completed ${o.completedAt?.toISOString().slice(0, 10) ?? "?"} but no next SCHEDULED occurrence found (freq: ${o.job?.frequencyDays}d)`,
+            : `${o.job?.property?.displayName ?? "Unknown"}${clientName ? ` (${clientName})` : ""}: completed ${o.completedAt ? etFormatDate(o.completedAt) : "?"} but no next SCHEDULED occurrence found (freq: ${o.job?.frequencyDays}d)`,
         });
       }
       results.push({ check: "missing_next_occurrence", label: "Missing Next Repeating Occurrence", issues });
@@ -4721,11 +4734,13 @@ Respond ONLY with valid JSON in this exact format:
   // Summary: totals by today, week, month, year, all time + grouped by category for current period
   app.get("/admin/business-expenses/summary", superGuard, async (req: any) => {
     const q = (req.query || {}) as { from?: string; to?: string };
-    const now = new Date();
-    const startOfToday = new Date(now); startOfToday.setHours(0, 0, 0, 0);
-    const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - now.getDay()); startOfWeek.setHours(0, 0, 0, 0);
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const startOfYear = new Date(now.getFullYear(), 0, 1);
+    // ET-anchored period starts. Sunday-start to match every other "this
+    // week" summary in this file. Naive Date getters would compute UTC
+    // boundaries on Vercel — see lib/dates.ts.
+    const startOfToday = etMidnight(etToday());
+    const startOfWeek = etMidnight(etSundayOnOrBefore());
+    const startOfMonth = etMidnight(etStartOfMonth());
+    const startOfYear = etMidnight(etStartOfYear());
     // Summary card on the Accounting tab is "expenses only" — by-category
     // breakdown and totals are only meaningful for operating cash-out.
     const where: any = { type: "EXPENSE" };
@@ -4870,7 +4885,7 @@ Respond ONLY with valid JSON in this exact format:
         // populated. Cost and date are editable; description/vendor/category
         // copy as-is. `type` carries through so the dialog opens in the
         // right mode (expense vs equity).
-        nextExpectedDate: expected.toISOString().slice(0, 10),
+        nextExpectedDate: etFormatDate(expected),
         overdueDays: Math.max(0, Math.floor((now.getTime() - expected.getTime()) / 86400000)),
         recurrence: latest.recurrence,
         type: latest.type,
@@ -4887,7 +4902,7 @@ Respond ONLY with valid JSON in this exact format:
         },
         // Reference info for the UI
         latestId: latest.id,
-        latestDate: latest.date.toISOString().slice(0, 10),
+        latestDate: etFormatDate(latest.date),
         latestCost: latest.cost,
       }));
 
@@ -5017,7 +5032,7 @@ Respond ONLY with valid JSON in this exact format:
       guaranteedPayoutAdvances,
     };
 
-    const filename = `seedlings-export-${new Date().toISOString().slice(0, 10)}.json`;
+    const filename = `seedlings-export-${etToday()}.json`;
     reply
       .header("Content-Type", "application/json; charset=utf-8")
       .header("Content-Disposition", `attachment; filename="${filename}"`)

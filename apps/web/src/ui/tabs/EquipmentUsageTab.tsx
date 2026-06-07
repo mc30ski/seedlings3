@@ -15,7 +15,7 @@ import {
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
 import { usePersistedState } from "@/src/lib/usePersistedState";
-import { bizDateKey } from "@/src/lib/lib";
+import { bizDateKey, bizToday, bizAddDays } from "@/src/lib/lib";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -61,17 +61,11 @@ const USAGE_PRESETS: { key: UsagePreset; label: string }[] = [
   { key: "all", label: "All time" },
 ];
 
-function ymd(d: Date): string {
-  return bizDateKey(d);
-}
-
 function rangeForPreset(p: UsagePreset): { from: string; to: string } {
   if (p === "all") return { from: "", to: "" };
   const days = Number(p);
-  const now = new Date();
-  const from = new Date();
-  from.setDate(from.getDate() - days);
-  return { from: ymd(from), to: ymd(now) };
+  const to = bizToday();
+  return { from: bizAddDays(to, -days), to };
 }
 
 function equipmentLabel(e: EquipmentBrief): string {

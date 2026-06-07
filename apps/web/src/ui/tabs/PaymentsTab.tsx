@@ -23,7 +23,7 @@ import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/li
 import DateInput from "@/src/ui/components/DateInput";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import { apiGet, apiPatch, apiDelete, apiPost } from "@/src/lib/api";
-import { determineRoles, prettyStatus, clientLabel, fmtDate, bizDateKey } from "@/src/lib/lib";
+import { determineRoles, prettyStatus, clientLabel, fmtDate, bizDateKey, bizToday, bizAddDays } from "@/src/lib/lib";
 import { resolveBillingMode, shortBillingChip } from "@/src/lib/equipmentBilling";
 import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
 import {
@@ -46,14 +46,10 @@ import { openEventSearch } from "@/src/lib/bus";
 import PendingApprovalsSection from "@/src/ui/components/PendingApprovalsSection";
 import OutstandingRequestsSection from "@/src/ui/components/OutstandingRequestsSection";
 
+// Date helpers come from @/src/lib/lib (bizToday, bizAddDays). NEVER
+// reinvent — see lib/lib.ts.
 function defaultDateFrom() {
-  const d = new Date();
-  d.setDate(d.getDate() - 30);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-function todayStr() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return bizAddDays(bizToday(), -30);
 }
 
 // Payments tab sub-tabs. Driven by `typeFilter` state. Only ONE is shown

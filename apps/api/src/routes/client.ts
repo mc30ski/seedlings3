@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyRequest } from "fastify";
 import { prisma } from "../db/prisma";
 import { getDownloadUrl } from "../lib/r2";
+import { etMidnight, etToday, etStartOfMonth, etAddDays } from "../lib/dates";
 
 /**
  * Client-facing routes. Require Clerk auth but NOT worker/admin roles.
@@ -214,10 +215,16 @@ export default async function clientRoutes(app: FastifyInstance) {
     const monthsBack = Number.isFinite(rawMonths)
       ? Math.min(MAX_MONTHS_BACK, Math.max(1, Math.floor(rawMonths)))
       : 1;
-    const startOfMonth = new Date();
-    startOfMonth.setDate(1);
-    startOfMonth.setHours(0, 0, 0, 0);
-    startOfMonth.setMonth(startOfMonth.getMonth() - (monthsBack - 1));
+    // First-of-month in ET, then walk back monthsBack-1 months via string
+    // arithmetic so DST/UTC don't shift the boundary.
+    const startKey = etStartOfMonth(); // YYYY-MM-01 in ET
+    const [sy, sm] = startKey.split("-").map(Number);
+    // First-of-month for (current month - monthsBack + 1).
+    const targetMonth0 = sm - 1 - (monthsBack - 1); // 0-indexed, may be negative
+    const yShift = Math.floor(targetMonth0 / 12);
+    const mShifted = ((targetMonth0 % 12) + 12) % 12; // 0..11
+    const targetKey = `${sy + yShift}-${String(mShifted + 1).padStart(2, "0")}-01`;
+    const startOfMonth = etMidnight(targetKey);
 
     const occurrences = await prisma.jobOccurrence.findMany({
       where: {
@@ -622,8 +629,7 @@ export default async function clientRoutes(app: FastifyInstance) {
     // (e.g., a client picking today late at night for a tomorrow visit
     // that already moved past midnight) doesn't get rejected. The UI
     // pushes them at least to tomorrow anyway.
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
+    const startOfToday = etMidnight(etToday());
     if (proposed.getTime() < startOfToday.getTime()) {
       throw app.httpErrors.badRequest("The suggested date must be in the future.");
     }

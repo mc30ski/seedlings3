@@ -1,6 +1,7 @@
 import { prisma } from "../db/prisma";
 import { loadQbAccountMap, loadScheduleCLineMap } from "./expenseCategories";
 import { generateLedgerId } from "../lib/ledgerId";
+import { etFormatDate } from "../lib/dates";
 import {
   computeBreakdown,
   loadRates,
@@ -37,16 +38,18 @@ function csvRow(cells: unknown[]): string {
   return cells.map(csvEscape).join(",");
 }
 
+// YYYY-MM-DD in Eastern Time. Used for the Gusto Pay Period Start/End
+// columns. Delegates to the shared etFormatDate so all date formatting
+// in this codebase routes through a single helper. See lib/dates.ts.
 function toIsoDate(d: Date): string {
-  // YYYY-MM-DD in UTC. The route layer accepts caller-provided start/end as
-  // YYYY-MM-DD and converts to inclusive day boundaries before calling here.
-  return d.toISOString().slice(0, 10);
+  return etFormatDate(d);
 }
 
-// MM/DD/YYYY in UTC. QuickBooks' CSV importer parses this format by default.
+// MM/DD/YYYY in Eastern Time. QuickBooks' CSV importer parses this format
+// by default. Same ET anchor as toIsoDate — naive `.toISOString().slice(0, 10)`
+// would emit the next calendar day for ET-anchored Dates near midnight.
 function toQbDate(d: Date): string {
-  const iso = d.toISOString().slice(0, 10); // YYYY-MM-DD
-  const [y, m, day] = iso.split("-");
+  const [y, m, day] = etFormatDate(d).split("-");
   return `${m}/${day}/${y}`;
 }
 

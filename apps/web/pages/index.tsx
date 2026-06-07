@@ -7,7 +7,7 @@ import { useOffline } from "@/src/lib/offline";
 import OfflineQueueDialog from "@/src/ui/dialogs/OfflineQueueDialog";
 import { apiGet } from "@/src/lib/api";
 import { setCompressionDefaults } from "@/src/lib/imageRedact";
-import { bizDateKey } from "@/src/lib/lib";
+import { bizDateKey, bizToday } from "@/src/lib/lib";
 import { computeDatesFromPreset } from "@/src/lib/datePresets";
 import BrandLabel from "@/src/ui/helpers/BrandLabel";
 import { useRouter } from "next/router";
@@ -306,7 +306,7 @@ export default function HomePage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `seedlings-summary-${new Date().toISOString().slice(0, 10)}.txt`;
+      a.download = `seedlings-summary-${bizToday()}.txt`;
       a.click();
       URL.revokeObjectURL(url);
     } catch {
@@ -322,7 +322,7 @@ export default function HomePage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `seedlings-export-${new Date().toISOString().slice(0, 10)}.json`;
+      a.download = `seedlings-export-${bizToday()}.json`;
       a.click();
       URL.revokeObjectURL(url);
     } catch {

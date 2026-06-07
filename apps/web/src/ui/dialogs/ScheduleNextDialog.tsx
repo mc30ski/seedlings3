@@ -10,14 +10,13 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import OccurrenceDialog from "@/src/ui/dialogs/OccurrenceDialog";
+import { bizAddDays } from "@/src/lib/lib";
 
+// Add N days to a YYYY-MM-DD string in ET via the shared helper. Returns
+// an empty string for null inputs so the existing call sites work unchanged.
 function addDays(isoDate: string | null | undefined, days: number): string {
   if (!isoDate) return "";
-  // Parse as local date to avoid timezone shifts
-  const [y, m, d] = isoDate.slice(0, 10).split("-").map(Number);
-  const date = new Date(y, m - 1, d);
-  date.setDate(date.getDate() + days);
-  return date.toISOString().slice(0, 10);
+  return bizAddDays(isoDate.slice(0, 10), days);
 }
 
 type ClosedOccurrence = {
