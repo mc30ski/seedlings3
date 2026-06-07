@@ -14,6 +14,7 @@ import {
 } from "@chakra-ui/react";
 import { AlertCircle, AlertTriangle, CheckCircle2, ExternalLink, Info, Search } from "lucide-react";
 import { apiPost } from "@/src/lib/api";
+import { fmtDateTime } from "@/src/lib/lib";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -241,7 +242,7 @@ export default function AuditTab() {
           </HStack>
           {ranAt && (
             <Text fontSize="xs" color="fg.muted" mb={3}>
-              Ran {new Date(ranAt).toLocaleString()} — these results may be stale if data has changed since then. Run again to refresh.
+              Ran {fmtDateTime(new Date(ranAt))} — these results may be stale if data has changed since then. Run again to refresh.
             </Text>
           )}
 

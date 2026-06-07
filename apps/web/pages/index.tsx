@@ -7,7 +7,7 @@ import { useOffline } from "@/src/lib/offline";
 import OfflineQueueDialog from "@/src/ui/dialogs/OfflineQueueDialog";
 import { apiGet } from "@/src/lib/api";
 import { setCompressionDefaults } from "@/src/lib/imageRedact";
-import { bizDateKey, bizToday } from "@/src/lib/lib";
+import { bizDateKey, bizToday, bizTomorrow, bizYesterday, bizAddDays, bizHour } from "@/src/lib/lib";
 import { computeDatesFromPreset } from "@/src/lib/datePresets";
 import BrandLabel from "@/src/ui/helpers/BrandLabel";
 import { useRouter } from "next/router";
@@ -169,11 +169,10 @@ export default function HomePage() {
       const last = lastRaw ? new Date(lastRaw) : null;
       const snoozeRaw = localStorage.getItem("seedlings_homeSnoozedUntil");
       const snoozeUntil = snoozeRaw ? new Date(snoozeRaw) : null;
-      const etDayKey = (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(d);
-      const etHour = parseInt(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false }).format(now), 10);
+      const etHour = bizHour();
       const isPastFiveEt = etHour >= 5;
       const isLateEvening = etHour >= 22; // 10pm+ ET — don't take over the screen
-      const newDay = !last || etDayKey(last) !== etDayKey(now);
+      const newDay = !last || bizDateKey(last) !== bizDateKey(now);
       const snoozed = snoozeUntil && snoozeUntil > now;
       // Only auto-show on the first open of a new ET day, after 5am, before 10pm.
       const shouldShow = !snoozed && !isLateEvening && isPastFiveEt && newDay;
@@ -1566,13 +1565,9 @@ export default function HomePage() {
   const loadOverdue = useCallback(async () => {
     if (!isAdmin) { setOverdueCount(0); markAlertLoaded("overdue"); return; }
     try {
-      const today = bizDateKey(new Date());
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      const toStr = bizDateKey(yesterday);
-      const monthAgo = new Date();
-      monthAgo.setDate(monthAgo.getDate() - 60);
-      const fromStr = bizDateKey(monthAgo);
+      const today = bizToday();
+      const toStr = bizYesterday();
+      const fromStr = bizAddDays(today, -60);
       const list = await apiGet<any[]>(`/api/occurrences?from=${fromStr}&to=${toStr}`);
       const excludeStatuses = new Set(["COMPLETED", "CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
       // Match JobsTab's overdue filter — announcements are not "overdue" work
@@ -1836,8 +1831,7 @@ export default function HomePage() {
         .filter((occ: any) => !occ._isReminderGhost && !occ._isPinnedGhost)
         .filter((occ: any) => (occ.assignees ?? []).some((a: any) => a.userId === myId));
 
-      const tomorrowD = new Date(); tomorrowD.setDate(tomorrowD.getDate() + 1);
-      const tomorrowKey = bizDateKey(tomorrowD);
+      const tomorrowKey = bizTomorrow();
 
       // Count tomorrow's items that need client confirmation
       const tomorrowNeedsConfirm = myItems.filter((occ: any) =>

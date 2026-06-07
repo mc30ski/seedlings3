@@ -2,7 +2,7 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { services } from "../services";
 import { prisma } from "../db/prisma";
 import { getUploadUrl, getDownloadUrl, deleteObject } from "../lib/r2";
-import { etMidnight, etEndOfDay, etToday, etTomorrow, etAddDays, etFormatDate } from "../lib/dates";
+import { etMidnight, etEndOfDay, etToday, etTomorrow, etAddDays, etFormatDate, etDaysBetween } from "../lib/dates";
 import { Role as RoleVal, JobOccurrenceStatus } from "@prisma/client";
 import { ServiceError } from "../lib/errors";
 import { normalizePhone } from "../lib/phone";
@@ -16,6 +16,7 @@ import {
   expensesIncludeWithCutoff,
   occurrenceWorkDateCutoff,
 } from "../lib/businessStartCutoff";
+import { redactObserverFieldsForCaller, redactTraineeFieldsForCaller } from "../lib/observerRedaction";
 
 async function currentUserId(req: any) {
   return (await services.currentUser.me(req.auth?.clerkUserId)).id;
@@ -82,11 +83,12 @@ export default async function workerRoutes(app: FastifyInstance) {
     const tomorrowStr = etTomorrow();
     const tomorrowMidnight = etMidnight(tomorrowStr);
     const tomorrowEnd = etEndOfDay(tomorrowStr);
-    // 1-month rolling window for "stale" tiles (overdue, awaiting payment, active work, etc.).
-    // Matches the `lastMonth` date preset used by the Home tile click-throughs.
-    // Jobs older than this fall off Home tiles — they don't disappear, just stop bloating the dashboard.
-    const lookbackStart = new Date(todayMidnight);
-    lookbackStart.setMonth(lookbackStart.getMonth() - 1);
+    // ~1-month (30-day) rolling window for "stale" tiles. ET-anchored
+    // via etAddDays so a `.setMonth()` on the UTC midnight Date doesn't
+    // produce off-by-day-boundary results on month rollovers (e.g.
+    // Mar 31 → Feb 31 → Mar 3 cascade). Matches the `lastMonth` date
+    // preset used by the Home tile click-throughs.
+    const lookbackStart = etMidnight(etAddDays(todayStr, -30));
 
     // 7 full days BEFORE today (today is excluded — today's in-progress
     // numbers belong to the title-bar optimistic projection, not the "last
@@ -609,7 +611,9 @@ export default async function workerRoutes(app: FastifyInstance) {
     const tomorrowStr = etTomorrow();
     const tomorrowMidnight = etMidnight(tomorrowStr);
     const tomorrowEnd = etEndOfDay(tomorrowStr);
-    const lookbackStart = new Date(todayMidnight); lookbackStart.setMonth(lookbackStart.getMonth() - 1);
+    // ~1-month (30-day) rolling window for "stale" tiles, ET-anchored.
+    // See twin block at top of this file for rationale.
+    const lookbackStart = etMidnight(etAddDays(todayStr, -30));
     // 7 full days BEFORE today (today excluded) — same window the per-worker
     // path uses for the Hours and Earnings tiles. See the matching block at
     // the top of the per-worker route for the rationale.
@@ -1261,6 +1265,17 @@ export default async function workerRoutes(app: FastifyInstance) {
       ? (await prisma.user.findUnique({ where: { id: uid }, select: { roles: { select: { role: true } } } }))?.roles ?? []
       : (await prisma.userRole.findMany({ where: { userId: uid }, select: { role: true } }));
     const effectiveIsAdmin = effectiveUserRoles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+    // Look up the effective user's worker classification — drives the
+    // Trainee feed scope + payment-split redaction below. Trainees may
+    // ONLY see occurrences they're assigned to (server-side scoping;
+    // the frontend already filters, but a malicious trainee inspecting
+    // network responses could see jobs they're not on without this
+    // server-side guard).
+    const effectiveUser = await prisma.user.findUnique({
+      where: { id: uid },
+      select: { workerType: true },
+    });
+    const effectiveIsTrainee = effectiveUser?.workerType === "TRAINEE";
     const [pins, likes, reminders, observedAssignments] = await Promise.all([
       prisma.pinnedOccurrence.findMany({ where: { userId: uid }, select: { occurrenceId: true } }),
       prisma.likedOccurrence.findMany({ where: { userId: uid }, select: { occurrenceId: true } }),
@@ -1337,15 +1352,65 @@ export default async function workerRoutes(app: FastifyInstance) {
     // even if they were previously assigned/pinned/observed. The
     // dashboard-summary endpoint applies the same rule to the Notices
     // count; both must stay in sync.
-    const filtered = effectiveIsAdmin
+    const eventFiltered = effectiveIsAdmin
       ? allOccs
       : allOccs.filter((o: any) => o.workflow !== "EVENT");
+
+    // Trainee scope clamp: trainees see ONLY occurrences they're
+    // assigned to (no unassigned/claimable, no team-feed visibility).
+    // The frontend already enforces this; the server-side filter
+    // protects against DevTools/network inspection.
+    const filtered = effectiveIsTrainee
+      ? eventFiltered.filter((o: any) => (o.assignees ?? []).some((a: any) => a.userId === uid))
+      : eventFiltered;
+
+    // Observer redaction: for occurrences where the effective user is
+    // assigned as `role = "observer"`, strip payment/expense/price
+    // fields. Observers see the basic job (where, when, who) so they
+    // know where to show up, but never the financial detail. Admins
+    // viewing as themselves see everything; an admin viewing-as a
+    // non-admin observer (via viewAsUserId) gets the same redaction
+    // their target would see.
+    redactObserverFieldsForCaller(filtered as any[], uid, effectiveIsAdmin);
+    // Trainee redaction: for non-observer Trainee callers, strip OTHER
+    // workers' payment splits / completion splits / promised payouts
+    // (the trainee sees only their own), plus processor fees and
+    // expense costs (business-internal financial data). Order matters
+    // — observer redaction is heavier and runs first; trainee
+    // redaction skips occurrences already observer-redacted.
+    redactTraineeFieldsForCaller(
+      filtered as any[],
+      uid,
+      effectiveUser?.workerType,
+      effectiveIsAdmin,
+    );
+
     return filtered;
   });
 
   app.get("/occurrences/mine", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
-    return services.jobs.listMyOccurrences(uid);
+    // Admin/super users see Timeline events (workflow=EVENT) in their
+    // own assigned list; non-admin workers don't. Mirrors the same gate
+    // applied by /occurrences and dashboard-summary.
+    const caller = await prisma.user.findUnique({
+      where: { id: uid },
+      include: { roles: true },
+    });
+    const isAdmin = !!caller?.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+    const occs = await services.jobs.listMyOccurrences(uid, { isAdmin });
+    // Per-occurrence observer redaction — same gate as /occurrences.
+    redactObserverFieldsForCaller(occs as any[], uid, isAdmin);
+    // Per-occurrence trainee redaction — strip other workers' splits,
+    // completion percentages, promised payouts, processor fees, and
+    // expense costs. Keeps the caller's own split visible.
+    redactTraineeFieldsForCaller(
+      occs as any[],
+      uid,
+      caller?.workerType,
+      isAdmin,
+    );
+    return occs;
   });
 
   app.get("/occurrences/available", workerGuard, async () => {
@@ -1627,6 +1692,29 @@ export default async function workerRoutes(app: FastifyInstance) {
   app.post("/occurrences/:id/cancel-payment-request", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const occurrenceId = String(req.params.id);
+    // Gate mirrors /accept-payment (~1880). Only the claimer (or an
+    // admin) can cancel an in-flight payment request, and Trainees are
+    // explicitly blocked even if they somehow ended up as the claimer.
+    // Without this check, any worker on the team could invalidate the
+    // client's payment link out from under the claimer.
+    const actUser = await prisma.user.findUniqueOrThrow({
+      where: { id: uid },
+      include: { roles: true },
+    });
+    const isAdmin = actUser.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+    if (!isAdmin) {
+      const assignee = await prisma.jobOccurrenceAssignee.findFirst({
+        where: { occurrenceId, userId: uid },
+      });
+      if (!assignee) throw app.httpErrors.forbidden("You are not assigned to this job.");
+      const isClaimer = assignee.assignedById === uid && assignee.role !== "observer";
+      if (!isClaimer) {
+        throw app.httpErrors.forbidden("Only the claimer can cancel payment requests.");
+      }
+      if (actUser.workerType === "TRAINEE") {
+        throw app.httpErrors.forbidden("Trainees cannot cancel payment requests.");
+      }
+    }
     try {
       await services.paymentRequests.cancelPaymentRequest(uid, occurrenceId);
     } catch (err: any) {
@@ -1929,16 +2017,18 @@ export default async function workerRoutes(app: FastifyInstance) {
     // Day boundaries are anchored to Eastern Time.
 
     const todayStr = etToday();
-    const [y, m, d] = todayStr.split("-").map(Number);
-    const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" });
-    const dayStr = (offsetDays: number) =>
-      fmt.format(new Date(Date.UTC(y, m - 1, d + offsetDays, 12)));
+    // `dayStr(offsetDays)` is just etAddDays — keep the alias for the
+    // local readability but route through the canonical helper so
+    // there's exactly one DST-safe day-arithmetic implementation in
+    // the codebase.
+    const dayStr = (offsetDays: number) => etAddDays(todayStr, offsetDays);
     const startOfToday = etMidnight(todayStr);
     const startOfTomorrow = etMidnight(dayStr(1));
     const startOfWeekWindow = etMidnight(dayStr(-6));   // 7-day rolling, today inclusive
     const startOfMonthWindow = etMidnight(dayStr(-29)); // 30-day rolling
-    const startOfYear = etMidnight(`${y}-01-01`);
-    const startOfNextYear = etMidnight(`${y + 1}-01-01`);
+    const currentYear = parseInt(todayStr.slice(0, 4), 10);
+    const startOfYear = etMidnight(`${currentYear}-01-01`);
+    const startOfNextYear = etMidnight(`${currentYear + 1}-01-01`);
 
     const me = await prisma.user.findUnique({ where: { id: uid }, select: { workerType: true } });
     const isEmployee = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
@@ -2210,16 +2300,18 @@ export default async function workerRoutes(app: FastifyInstance) {
     const uid = await currentUserId(req);
 
     const todayStr = etToday();
-    const [y, m, d] = todayStr.split("-").map(Number);
-    const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" });
-    const dayStr = (offsetDays: number) =>
-      fmt.format(new Date(Date.UTC(y, m - 1, d + offsetDays, 12)));
+    // `dayStr(offsetDays)` is just etAddDays — keep the alias for the
+    // local readability but route through the canonical helper so
+    // there's exactly one DST-safe day-arithmetic implementation in
+    // the codebase.
+    const dayStr = (offsetDays: number) => etAddDays(todayStr, offsetDays);
     const startOfToday = etMidnight(todayStr);
     const startOfTomorrow = etMidnight(dayStr(1));
     const startOfWeekWindow = etMidnight(dayStr(-6));
     const startOfMonthWindow = etMidnight(dayStr(-29));
-    const startOfYear = etMidnight(`${y}-01-01`);
-    const startOfNextYear = etMidnight(`${y + 1}-01-01`);
+    const currentYear = parseInt(todayStr.slice(0, 4), 10);
+    const startOfYear = etMidnight(`${currentYear}-01-01`);
+    const startOfNextYear = etMidnight(`${currentYear + 1}-01-01`);
 
     const me = await prisma.user.findUnique({ where: { id: uid }, select: { workerType: true } });
     const isEmployee = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
@@ -3760,11 +3852,9 @@ export default async function workerRoutes(app: FastifyInstance) {
       throw app.httpErrors.forbidden("Only the claimer or an admin can reschedule this job");
     }
 
-    // Enforce 2-day window for non-admins
+    // Enforce 2-day window for non-admins (ET calendar days, DST-safe).
     if (!reschedIsAdmin) {
-      const newDateET = etMidnight(startAt.slice(0, 10));
-      const todayET = etMidnight(etToday());
-      const diffDays = Math.round(Math.abs(newDateET.getTime() - todayET.getTime()) / 86400000);
+      const diffDays = Math.abs(etDaysBetween(etToday(), startAt.slice(0, 10)));
       if (diffDays > 2) {
         throw app.httpErrors.badRequest("Workers can only reschedule within 2 days of today");
       }
@@ -3881,7 +3971,9 @@ export default async function workerRoutes(app: FastifyInstance) {
     const filters = body.filters || {};
     const label = body.label?.trim() || null;
 
-    // Auto-cleanup: remove tokens not accessed in 90 days
+    // Auto-cleanup: remove tokens not accessed in 90 days.
+    // date-handling-allow: elapsed-time — ~90 days of inactivity for token
+    // expiry, ≤1-hour DST drift is irrelevant for this threshold.
     const staleDate = new Date(Date.now() - STALE_TOKEN_DAYS * 86400000);
     await prisma.calendarFeedToken.deleteMany({
       where: {

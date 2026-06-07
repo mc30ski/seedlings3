@@ -489,7 +489,7 @@ export type ServicesJobs = {
 
   listAllOccurrences(params?: { from?: string; to?: string; cutoff?: Date | null }): Promise<any[]>;
   getOccurrencesByIds(ids: string[], cutoff?: Date | null): Promise<any[]>;
-  listMyOccurrences(userId: string): Promise<any[]>;
+  listMyOccurrences(userId: string, options?: { isAdmin?: boolean }): Promise<any[]>;
   listAvailableOccurrences(): Promise<any[]>;
   claimOccurrence(currentUserId: string, occurrenceId: string): Promise<{ claimed: true }>;
   updateOccurrenceStatus(

@@ -30,6 +30,7 @@ import {
   fmtDate,
   fmtDateTime,
   bizDateKey,
+  bizYesterday,
   jobTypeLabel,
 } from "@/src/lib/lib";
 import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
@@ -76,9 +77,7 @@ import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
 import TruncatedText from "@/src/ui/components/TruncatedText";
 import { type JobOccurrenceAssigneeWithUser } from "@/src/lib/types";
 
-function localDate(d: Date): string {
-  return bizDateKey(d);
-}
+// `localDate` removed — use `bizDateKey` directly.
 
 function parseJobTags(occ: any): string[] {
   if (!occ?.jobTags) return [];
@@ -133,10 +132,8 @@ export default function ServicesTab({
 
   useEffect(() => {
     if (overdueActive) {
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
       setDateFrom("");
-      setDateTo(localDate(yesterday));
+      setDateTo(bizYesterday());
     } else if (datePreset) {
       const d = computeDatesFromPreset(datePreset);
       setDateFrom(d.from);
@@ -379,10 +376,8 @@ export default function ServicesTab({
 
   async function refreshOverdueCount() {
     try {
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
       const list = await apiGet<{ id: string; status: string }[]>(
-        `/api/occurrences?to=${localDate(yesterday)}`
+        `/api/occurrences?to=${bizYesterday()}`
       );
       const count = (Array.isArray(list) ? list : []).filter(
         (o) => o.status !== "COMPLETED" && o.status !== "CLOSED" && o.status !== "ARCHIVED" && o.status !== "CANCELED" && o.status !== "REJECTED" && o.status !== "ACCEPTED"
@@ -906,11 +901,9 @@ export default function ServicesTab({
               setDatePreset(presetBeforeOverdueRef.current ?? "thisMonth");
             } else {
               presetBeforeOverdueRef.current = datePreset;
-              const yesterday = new Date();
-              yesterday.setDate(yesterday.getDate() - 1);
               setDatePreset(null);
               setDateFrom("");
-              setDateTo(localDate(yesterday));
+              setDateTo(bizYesterday());
               setOccStatusFilter(["ALL"]);
               setOverdueActive(true);
             }

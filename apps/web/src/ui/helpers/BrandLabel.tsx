@@ -6,6 +6,7 @@ import {
   SignedOut,
   UserButton,
 } from "@clerk/clerk-react";
+import { bizMonth } from "@/src/lib/lib";
 
 function resolveIcon(): string {
   if (typeof window === "undefined") return "/seedlings-icon.png";
@@ -14,9 +15,10 @@ function resolveIcon(): string {
     if (override === "fall") return "/seedlings-icon-fall.png";
     if (override === "spring") return "/seedlings-icon.png";
   } catch {}
-  // Auto — check month
-  const month = new Date().getMonth();
-  return (month >= 2 && month <= 7) ? "/seedlings-icon.png" : "/seedlings-icon-fall.png";
+  // Auto — check the current ET month (NOT browser-local). Mar (3) –
+  // Aug (8) = spring/summer icon. Mirrors the rule in lib/season.ts.
+  const month = bizMonth();
+  return (month >= 3 && month <= 8) ? "/seedlings-icon.png" : "/seedlings-icon-fall.png";
 }
 
 type Props = {

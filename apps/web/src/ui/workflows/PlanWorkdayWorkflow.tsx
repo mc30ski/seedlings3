@@ -15,7 +15,7 @@ import {
 import { apiGet, apiPost } from "@/src/lib/api";
 import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
 import { type WorkerOccurrence } from "@/src/lib/types";
-import { fmtDate, bizDateKey, clientLabel } from "@/src/lib/lib";
+import { fmtDate, bizDateKey, bizToday, bizTomorrow, clientLabel } from "@/src/lib/lib";
 import { resolveBillingMode, shortBillingChip } from "@/src/lib/equipmentBilling";
 import { MapLink } from "@/src/ui/helpers/Link";
 import TruncatedText from "@/src/ui/components/TruncatedText";
@@ -107,8 +107,8 @@ type Props = {
 };
 
 export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTargetDate, trainee }: Props) {
-  const today = bizDateKey(new Date());
-  const tomorrow = bizDateKey(new Date(Date.now() + 86400000));
+  const today = bizToday();
+  const tomorrow = bizTomorrow();
 
   const [step, setStep] = useState<"idle" | "choose-date" | "routes" | "loading" | "confirm-jobs" | "no-jobs" | "equipment" | "summary" | "done">("idle");
   const [targetDate, setTargetDate] = useState(defaultTargetDate ?? tomorrow);

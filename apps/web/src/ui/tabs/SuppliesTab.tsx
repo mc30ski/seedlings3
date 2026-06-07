@@ -31,7 +31,7 @@ import {
   Sliders,
 } from "lucide-react";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
-import { bizToday } from "@/src/lib/lib";
+import { bizToday, fmtDate, fmtDateTime } from "@/src/lib/lib";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -90,9 +90,6 @@ function fmtUSD(n: number): string {
   return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-function fmtDateTime(d: string): string {
-  return new Date(d).toLocaleString();
-}
 
 // Date helpers come from @/src/lib/lib. NEVER reinvent — see lib/lib.ts.
 // `bizToday()` returns today's date as YYYY-MM-DD in Eastern Time.
@@ -718,7 +715,7 @@ export default function SuppliesTab({
                           const propLabel = job?.property?.displayName ?? "(unknown property)";
                           const clientLabel = job?.property?.client?.displayName;
                           const dateLabel = h.occurrence?.startAt
-                            ? new Date(h.occurrence.startAt).toLocaleDateString()
+                            ? fmtDate(h.occurrence.startAt)
                             : "";
                           return (
                             <HStack
@@ -1119,7 +1116,7 @@ export default function SuppliesTab({
                                 <Text fontSize="xs" color="fg.muted">
                                   {fmtDateTime(evt.row.createdAt)}
                                   {evt.row.occurrence?.job?.property?.displayName
-                                    ? ` · Job: ${evt.row.occurrence.job.property.displayName}${evt.row.occurrence.startAt ? ` (${new Date(evt.row.occurrence.startAt).toLocaleDateString()})` : ""}`
+                                    ? ` · Job: ${evt.row.occurrence.job.property.displayName}${evt.row.occurrence.startAt ? ` (${fmtDate(evt.row.occurrence.startAt)})` : ""}`
                                     : ""}
                                   {evt.row.createdBy?.displayName ? ` · by ${evt.row.createdBy.displayName}` : ""}
                                 </Text>

@@ -18,6 +18,7 @@ import {
 } from "@chakra-ui/react";
 import { Mail, MessageSquare, Search, X } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
+import { fmtDateOpts } from "@/src/lib/lib";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
@@ -618,7 +619,7 @@ function HistoryView(props: { entries: HistoryEntry[]; loading: boolean; userMap
           <Box key={e.id} p={2} borderWidth="1px" borderRadius="md" fontSize="xs">
             <HStack justify="space-between" mb={1} flexWrap="wrap">
               <Text fontWeight="semibold">{m.title || "Untitled"}</Text>
-              <Text color="fg.muted">{new Date(e.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</Text>
+              <Text color="fg.muted">{fmtDateOpts(e.createdAt, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</Text>
             </HStack>
             <Text whiteSpace="pre-wrap" mb={1}>{m.body || ""}</Text>
             <HStack flexWrap="wrap" gap={1.5} color="fg.muted">

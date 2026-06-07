@@ -18,7 +18,7 @@ import { apiGet, apiPost } from "@/src/lib/api";
 import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import { type WorkerOccurrence } from "@/src/lib/types";
-import { fmtDate, bizDateKey, clientLabel, jobTypeLabel } from "@/src/lib/lib";
+import { fmtDate, fmtDateOpts, bizDateKey, clientLabel, jobTypeLabel } from "@/src/lib/lib";
 import { resolveBillingMode, shortBillingChip } from "@/src/lib/equipmentBilling";
 import { MapLink } from "@/src/ui/helpers/Link";
 import { StatusBadge } from "@/src/ui/components/StatusBadge";
@@ -431,7 +431,7 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                         const pocEmail: string | null = poc?.email ?? null;
                         if (!pocPhone && !pocEmail) return null;
                         const dateStr = current.startAt
-                          ? new Date(current.startAt).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })
+                          ? fmtDateOpts(current.startAt, { weekday: "long", month: "long", day: "numeric" })
                           : "your upcoming appointment";
                         const name = contactName || "there";
                         // `address` is already computed above for the card

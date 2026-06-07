@@ -17,6 +17,7 @@ import {
 } from "@chakra-ui/react";
 import { DollarSign, Pencil, Plus, Trash2 } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
+import { fmtDate } from "@/src/lib/lib";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -219,7 +220,7 @@ export default function PricingTab({ isSuper, readOnly }: Props) {
                       <Text fontSize="xs" color="fg.muted">{v.description}</Text>
                     )}
                     <Text fontSize="xs" color="fg.muted">
-                      Last updated: {new Date(entry.updatedAt).toLocaleDateString()}
+                      Last updated: {fmtDate(entry.updatedAt)}
                       {entry.updatedBy?.displayName && ` by ${entry.updatedBy.displayName}`}
                     </Text>
                   </VStack>

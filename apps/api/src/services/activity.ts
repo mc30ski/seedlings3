@@ -1,6 +1,7 @@
 import { prisma } from "../db/prisma";
 import { AuditTuple } from "../lib/auditActions";
 import { AuditScope, AuditVerb } from "@prisma/client";
+import { etMidnight, etToday, etAddDays } from "../lib/dates";
 import type { AdminActivityUser, AdminActivityEvent } from "../types/services";
 import type { ServicesActivity } from "../types/services";
 import { toActionString } from "../lib/auditActions";
@@ -16,7 +17,8 @@ export const activity: ServicesActivity = {
       orderBy: { createdAt: "desc" },
     });
 
-    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000); // 30 days ago
+    // ET-anchored 30-day cutoff for the activity report window.
+    const since = etMidnight(etAddDays(etToday(), -30));
 
     for (const user of usersById) {
       const userEvents = await prisma.auditEvent.findMany({

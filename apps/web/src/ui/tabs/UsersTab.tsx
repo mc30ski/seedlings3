@@ -18,7 +18,7 @@ import {
 } from "@chakra-ui/react";
 import { ChevronDown, ChevronRight, Filter, Info, RefreshCw, Shield, Tag, X } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
-import { prettyStatus, equipmentStatusColor, fmtDate, bizToday, bizAddDays } from "@/src/lib/lib";
+import { prettyStatus, equipmentStatusColor, fmtDate, bizToday, bizAddDays, bizDateKey, bizDaysBetween } from "@/src/lib/lib";
 import { Role } from "@/src/lib/types";
 import { openEventSearch } from "@/src/lib/bus";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
@@ -339,6 +339,9 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
     }
     if (guaranteedPayoutFilter !== "all") {
       const now = Date.now();
+      // date-handling-allow: elapsed-time — "expiring within 7 days"
+      // filter threshold. A ≤1-hour DST drift on the cutoff doesn't
+      // materially change which users land in the bucket.
       const sevenDaysOut = now + 7 * 86400000;
       rows = rows.filter((u) => {
         if (!u.guaranteedPayoutUntil) return false;
@@ -782,8 +785,11 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
           // contingent terms.
           const guaranteedPayoutUntilDate = u.guaranteedPayoutUntil ? new Date(u.guaranteedPayoutUntil) : null;
           const guaranteedPayoutActive = !!(guaranteedPayoutUntilDate && guaranteedPayoutUntilDate.getTime() > Date.now());
+          // Days-remaining in ET calendar days (NOT raw 24-hour elapsed
+          // chunks). bizDaysBetween dodges DST drift that the old
+          // `/ 86_400_000` pattern was vulnerable to.
           const guaranteedPayoutDaysLeft = guaranteedPayoutActive && guaranteedPayoutUntilDate
-            ? Math.max(0, Math.ceil((guaranteedPayoutUntilDate.getTime() - Date.now()) / 86400000))
+            ? Math.max(0, bizDaysBetween(bizToday(), bizDateKey(guaranteedPayoutUntilDate)))
             : 0;
 
           return (

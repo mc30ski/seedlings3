@@ -24,6 +24,7 @@ import {
 } from "@chakra-ui/react";
 import { Check, ExternalLink, Pencil, RefreshCw, Slash, XCircle } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
+import { fmtDate as fmtDateLib } from "@/src/lib/lib";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -92,7 +93,7 @@ function propertyLabel(p: PendingRow["occurrence"]["job"] extends infer J ? J : 
 function fmtDate(iso: string | null): string {
   if (!iso) return "";
   try {
-    return new Date(iso).toLocaleDateString();
+    return fmtDateLib(iso);
   } catch {
     return "";
   }

@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyRequest } from "fastify";
 import { prisma } from "../db/prisma";
 import { getDownloadUrl } from "../lib/r2";
-import { etMidnight, etToday, etStartOfMonth, etAddDays } from "../lib/dates";
+import { etMidnight, etToday, etStartOfMonth, etAddDays, etFormatDateOpts } from "../lib/dates";
 
 /**
  * Client-facing routes. Require Clerk auth but NOT worker/admin roles.
@@ -549,7 +549,7 @@ export default async function clientRoutes(app: FastifyInstance) {
       const subject = `New ${verb} request - ${opts.clientLabel}`;
       const suggestion =
         opts.kind === "RESCHEDULE" && opts.proposedStartAt
-          ? ` Suggested: ${opts.proposedStartAt.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}.`
+          ? ` Suggested: ${etFormatDateOpts(opts.proposedStartAt, { weekday: "short", month: "short", day: "numeric" })}.`
           : "";
       const body =
         `${opts.clientLabel} requested a ${verb} for ${opts.propertyLabel} on ${opts.occurrenceDateLabel}.` +
@@ -587,7 +587,7 @@ export default async function clientRoutes(app: FastifyInstance) {
         reqUser?.email ||
         "(client)");
     const dateLabel = occ?.startAt
-      ? new Date(occ.startAt).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })
+      ? etFormatDateOpts(new Date(occ.startAt), { weekday: "short", month: "short", day: "numeric" })
       : "an upcoming visit";
     return { propertyLabel, clientLabel, dateLabel };
   }

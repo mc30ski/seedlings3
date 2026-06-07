@@ -23,7 +23,7 @@ import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/li
 import DateInput from "@/src/ui/components/DateInput";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import { apiGet, apiPatch, apiDelete, apiPost } from "@/src/lib/api";
-import { determineRoles, prettyStatus, clientLabel, fmtDate, bizDateKey, bizToday, bizAddDays } from "@/src/lib/lib";
+import { determineRoles, prettyStatus, clientLabel, fmtDate, bizDateKey, bizToday, bizAddDays, bizAddYears } from "@/src/lib/lib";
 import { resolveBillingMode, shortBillingChip } from "@/src/lib/equipmentBilling";
 import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
 import {
@@ -109,7 +109,10 @@ function WorkerPayments({
 
   const [q, setQ] = useState("");
   const [datePreset, setDatePreset] = usePersistedState<DatePreset>(`pay_w${ns}_datePreset`, "lastMonth");
-  const presetDates = useMemo(() => computeDatesFromPreset("lastMonth"), []);
+  // Inline (not useMemo) — caching the result with empty deps would let
+  // the "lastMonth" anchor go stale past midnight ET if a tab is open
+  // across the day boundary. Recomputation is cheap (~µs).
+  const presetDates = computeDatesFromPreset("lastMonth");
   const [dateFrom, setDateFrom] = usePersistedState(`pay_w${ns}_dateFrom`, presetDates.from);
   const [dateTo, setDateTo] = usePersistedState(`pay_w${ns}_dateTo`, presetDates.to);
   const [quickDateMenuOpen, setQuickDateMenuOpen] = useState(false);
@@ -170,13 +173,10 @@ function WorkerPayments({
   ], []);
 
   // Floor for the custom-range date pickers: workers can't query earlier
-  // than 1 year ago. Recomputed each render so it stays current across day
-  // boundaries.
-  const minWorkerDate = useMemo(() => {
-    const d = new Date();
-    d.setFullYear(d.getFullYear() - 1);
-    return bizDateKey(d);
-  }, []);
+  // than 1 year ago. Inline (not useMemo with []) so it stays current
+  // across day boundaries — the previous empty-deps memo cached the
+  // value indefinitely, contradicting the comment.
+  const minWorkerDate = bizAddYears(bizToday(), -1);
 
   useEffect(() => {
     // Reset to the default ("Last month") if the persisted preset isn't a
@@ -907,7 +907,8 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [quickDateMenuOpen, setQuickDateMenuOpen] = useState(false);
   const [datePreset, setDatePreset] = usePersistedState<DatePreset>("pay_a_datePreset", "lastMonth");
-  const presetDates = useMemo(() => computeDatesFromPreset("lastMonth"), []);
+  // Inline — see explanation on the worker variant above.
+  const presetDates = computeDatesFromPreset("lastMonth");
   const [dateFrom, setDateFrom] = usePersistedState("pay_a_dateFrom", presetDates.from);
   const [dateTo, setDateTo] = usePersistedState("pay_a_dateTo", presetDates.to);
   const [quickDate, setQuickDate] = useState<string[]>([]);

@@ -15,7 +15,7 @@ import { apiGet, apiPost } from "@/src/lib/api";
 import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
 import { openEventSearch } from "@/src/lib/bus";
 import { type Me, type WorkerOccurrence } from "@/src/lib/types";
-import { bizDateKey, clientLabel } from "@/src/lib/lib";
+import { bizDateKey, clientLabel, bizTomorrow, fmtDateOpts } from "@/src/lib/lib";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import TomorrowWeatherWarning from "@/src/ui/components/TomorrowWeatherWarning";
 
@@ -34,10 +34,14 @@ type Props = {
 };
 
 function tomorrowDate(): { key: string; label: string } {
-  const d = new Date();
-  d.setDate(d.getDate() + 1);
-  const key = bizDateKey(d);
-  const label = d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+  // ET-anchored. The label uses noon UTC on the key day for a stable
+  // instant that formats to the correct ET calendar day.
+  const key = bizTomorrow();
+  const label = fmtDateOpts(key + "T12:00:00Z", {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+  });
   return { key, label };
 }
 
@@ -154,7 +158,12 @@ export default function RemindersTab({ myId, me, showAll, forAdmin, teamView, vi
       .catch(() => setOutstandingReqs([]));
   }, [teamView]);
 
-  const { key: tomorrowKey, label: tomorrowLabel } = useMemo(() => tomorrowDate(), []);
+  // Re-derive whenever the underlying items load — empty-deps would
+  // cache the value past midnight ET and surface "tomorrow" as the
+  // previous day. Keying on `items` length is a cheap proxy that
+  // refreshes whenever the tab re-fetches (which happens on day
+  // rollover via the seedlings3:jobs-changed event).
+  const { key: tomorrowKey, label: tomorrowLabel } = useMemo(() => tomorrowDate(), [items.length]);
 
   // Filter to tomorrow's items assigned to me
   const tomorrowItems = useMemo(() => {

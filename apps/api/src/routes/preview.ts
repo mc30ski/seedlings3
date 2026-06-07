@@ -3,7 +3,7 @@ import { prisma } from "../db/prisma";
 import Anthropic from "@anthropic-ai/sdk";
 import { getRoutingProvider, AVAILABLE_PROVIDERS, type OptimizedRoute } from "../lib/routing";
 
-import { etMidnight, etToday, etAddDays } from "../lib/dates";
+import { etMidnight, etToday, etAddDays, etFormatDate } from "../lib/dates";
 
 const workerGuard = {
   preHandler: (req: FastifyRequest, reply: FastifyReply) =>
@@ -129,7 +129,7 @@ export default async function previewRoutes(app: FastifyInstance) {
           name: prop.displayName,
           city: prop.city ?? "",
           count: 1,
-          lastDate: occ.completedAt?.toISOString()?.slice(0, 10) ?? null,
+          lastDate: occ.completedAt ? etFormatDate(occ.completedAt) : null,
         });
       }
     }
@@ -150,7 +150,7 @@ export default async function previewRoutes(app: FastifyInstance) {
         price: occ.price ?? occ.job?.defaultPrice ?? null,
         estimatedMinutes: occ.estimatedMinutes ?? occ.job?.estimatedMinutes ?? null,
         kind: occ.kind,
-        currentDate: occ.startAt?.toISOString()?.slice(0, 10) ?? null,
+        currentDate: occ.startAt ? etFormatDate(occ.startAt) : null,
       };
     };
 

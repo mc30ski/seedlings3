@@ -12,17 +12,16 @@
 // their parent's ledgerId + a user suffix — no per-split column.
 
 import { randomInt } from "crypto";
+import { etFormatDate } from "./dates";
 
 const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"; // 36 chars
 
 function etYyMmDd(date: Date): string {
-  // en-CA gives YYYY-MM-DD; slice off the century.
-  const [y, m, d] = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(date).split("-");
+  // YYYY-MM-DD in ET → YYMMDD. Goes through the canonical etFormatDate
+  // helper so this stays consistent with the rest of the codebase
+  // (e.g. if America/New_York is ever swapped for another timezone,
+  // it's a one-line change in lib/dates.ts).
+  const [y, m, d] = etFormatDate(date).split("-");
   return `${y.slice(2)}${m}${d}`;
 }
 

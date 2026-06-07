@@ -3,6 +3,7 @@ import { prisma } from "../db/prisma";
 import { writeAudit } from "../lib/auditLogger";
 import { AUDIT } from "../lib/auditActions";
 import { ServiceError } from "../lib/errors";
+import { etMidnight, etToday, etAddDays, etDaysBetween, etFormatDate } from "../lib/dates";
 import {
   deleteObject,
   getDownloadUrl,
@@ -33,10 +34,11 @@ function slugifyFilename(name: string): string {
 
 function expirationStatus(expiresAt: Date | null): "active" | "expiring" | "expired" {
   if (!expiresAt) return "active";
-  const now = Date.now();
-  const diffMs = expiresAt.getTime() - now;
-  if (diffMs < 0) return "expired";
-  if (diffMs <= 30 * 24 * 60 * 60 * 1000) return "expiring";
+  if (expiresAt.getTime() < Date.now()) return "expired";
+  // ET calendar-day diff so the "expiring within 30 days" status flips
+  // exactly at ET midnight regardless of the request's UTC timing.
+  const daysUntil = etDaysBetween(etToday(), etFormatDate(expiresAt));
+  if (daysUntil <= 30) return "expiring";
   return "active";
 }
 
@@ -64,12 +66,15 @@ export const companyDocuments = {
       if (params.status === "expired") {
         where.expiresAt = { lt: new Date() };
       } else if (params.status === "expiring") {
-        const in30 = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+        // ET-anchored 30-day window — end-of-day inclusive so a doc
+        // expiring at 23:59 ET on day 30 is in the bucket.
+        const in30 = etMidnight(etAddDays(etToday(), 31));
         where.expiresAt = { gte: new Date(), lte: in30 };
       } else if (params.status === "active") {
+        const in30 = etMidnight(etAddDays(etToday(), 31));
         where.OR = [
           { expiresAt: null },
-          { expiresAt: { gt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) } },
+          { expiresAt: { gt: in30 } },
         ];
       }
     }
@@ -516,7 +521,8 @@ export const companyDocuments = {
     if (!opts.adminHiddenVisible) baseWhere.adminHidden = false;
 
     const now = new Date();
-    const in30 = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    // ET-anchored 30-day window for "expiring soon" count.
+    const in30 = etMidnight(etAddDays(etToday(), 31));
 
     const [expired, expiring] = await Promise.all([
       prisma.companyDocument.count({

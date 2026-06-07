@@ -16,6 +16,7 @@ import {
 } from "@chakra-ui/react";
 import { Plus } from "lucide-react";
 import { apiPost } from "@/src/lib/api";
+import { bizInstantFromEtParts } from "@/src/lib/lib";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -107,7 +108,7 @@ export default function UploadDocumentDialog({
         // Singleton types use the type-level description; per-doc description
         // is intentionally omitted so it doesn't double up.
         description: selectedType?.singleton ? undefined : (description.trim() || undefined),
-        expiresAt: expiresAt ? new Date(expiresAt + "T00:00:00").toISOString() : null,
+        expiresAt: expiresAt ? bizInstantFromEtParts(expiresAt, "23:59:59") : null,
         adminHidden,
       });
 
@@ -126,7 +127,7 @@ export default function UploadDocumentDialog({
 
       await apiPost(
         `${apiBase}/${created.id}/versions/${init.versionId}/confirm`,
-        { expiresAt: expiresAt ? new Date(expiresAt + "T00:00:00").toISOString() : null },
+        { expiresAt: expiresAt ? bizInstantFromEtParts(expiresAt, "23:59:59") : null },
       );
 
       publishInlineMessage({ type: "SUCCESS", text: "Document uploaded." });

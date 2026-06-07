@@ -13,7 +13,7 @@ import {
 } from "@chakra-ui/react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiPost, apiPatch } from "@/src/lib/api";
-import { bizDateKey } from "@/src/lib/lib";
+import { bizDateKey, bizInstantFromEtParts } from "@/src/lib/lib";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -64,7 +64,9 @@ export default function AnnouncementDialog({ open, onOpenChange, onCreated, edit
     try {
       const body: Record<string, unknown> = {
         title: title.trim(),
-        startAt: new Date(date + "T09:00").toISOString(),
+        // 9 AM ET on the picked date — anchored to ET regardless of the
+        // browser's local timezone (operator may not always be in NC).
+        startAt: bizInstantFromEtParts(date, "09:00"),
         notes: notes.trim() || null,
       };
 

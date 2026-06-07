@@ -15,7 +15,7 @@ import {
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
 import { usePersistedState } from "@/src/lib/usePersistedState";
-import { bizDateKey, bizToday, bizAddDays } from "@/src/lib/lib";
+import { bizDateKey, bizToday, bizAddDays, fmtDateOpts } from "@/src/lib/lib";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -90,8 +90,7 @@ function daysOut(c: UsageRow): number {
 }
 
 function fmtDate(s: string | null): string {
-  if (!s) return "—";
-  return new Date(s).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return fmtDateOpts(s, { month: "short", day: "numeric" });
 }
 
 type GroupByMode = "person" | "equipment" | "collection" | "day";
@@ -175,7 +174,7 @@ export default function EquipmentUsageTab({ purpose }: { purpose: Purpose }) {
       } else if (groupBy === "day") {
         const key = r.checkedOutAt ? bizDateKey(r.checkedOutAt) : "unknown";
         const label = r.checkedOutAt
-          ? new Date(r.checkedOutAt).toLocaleDateString(undefined, {
+          ? fmtDateOpts(r.checkedOutAt, {
               weekday: "short",
               month: "short",
               day: "numeric",

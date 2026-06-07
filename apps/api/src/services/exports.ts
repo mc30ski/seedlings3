@@ -553,6 +553,29 @@ async function loadGpAdvanceCandidates(
     );
     if (eligible.length === 0) continue;
 
+    // Prefer the promisedPayouts snapshot when it exists — it was locked
+    // in at completion time and reflects what each worker was actually
+    // promised. Recomputing from the current price + assignees can drift
+    // if the price was edited post-completion or a contractor was
+    // removed pre-payment. GP guarantees pay the contractor what they
+    // were promised; the snapshot IS the promise.
+    const promisedPayoutsSnapshot = (occ as any).promisedPayouts as
+      | Array<{ userId: string; net: number }>
+      | null
+      | undefined;
+    const snapshotByUser = new Map<string, number>(
+      Array.isArray(promisedPayoutsSnapshot)
+        ? promisedPayoutsSnapshot
+            .map((r: any) => [String(r.userId), Number(r.net) || 0] as [string, number])
+            .filter((r) => r[1] > 0)
+        : [],
+    );
+
+    // Fallback path (no snapshot OR contractor not in snapshot): compute
+    // promised net the same way the snapshot would have at completion
+    // time, using current price/expenses + current assignees. This is
+    // the legacy behavior; preserved for cases where the snapshot was
+    // never written (e.g., older data before the snapshot feature).
     const completionSplits = (occ as any).completionSplits as
       | Array<{ userId: string; percent: number }>
       | null
@@ -575,15 +598,23 @@ async function loadGpAdvanceCandidates(
       (s, e) => s + (e.cost ?? 0),
       0,
     );
-    const promised = computeBreakdown(priceTotal, expTotal, workersList, rates);
+    const fallbackBreakdown = computeBreakdown(priceTotal, expTotal, workersList, rates);
 
     for (const q of eligible) {
-      const promisedRow = promised.find((r) => r.userId === q.userId);
-      if (!promisedRow || promisedRow.net <= 0) continue;
+      // Snapshot path: use the locked-in promised net if available.
+      const snapshotNet = snapshotByUser.get(q.userId);
+      let advanceAmount: number;
+      if (snapshotNet != null && snapshotNet > 0) {
+        advanceAmount = round2(snapshotNet);
+      } else {
+        const promisedRow = fallbackBreakdown.find((r) => r.userId === q.userId);
+        if (!promisedRow || promisedRow.net <= 0) continue;
+        advanceAmount = round2(promisedRow.net);
+      }
       out.push({
         userId: q.userId,
         occurrenceId: occ.id,
-        amount: round2(promisedRow.net),
+        amount: advanceAmount,
         contractor: {
           id: q.user.id,
           displayName: q.user.displayName,
@@ -663,21 +694,52 @@ export async function gustoContractorsCsv(
   // (preview also uses it for read-only totals), then persist each
   // candidate as a GuaranteedPayoutAdvance row + roll into byWorker.
   // Unique constraint on (userId, occurrenceId) is the idempotency
-  // belt-and-suspenders.
+  // belt-and-suspenders — but we ALSO catch P2002 on .create() so a
+  // partial-failure scenario doesn't crash the next export attempt:
+  //
+  //   1. First run creates advances for candidates A, B, then network
+  //      blip kills the request before C. Advances A + B are committed.
+  //   2. Operator retries. loadGpAdvanceCandidates returns C only
+  //      (A + B are now in existingAdvances). C is created cleanly.
+  //   3. But IF the candidate finder somehow re-returns A (race in
+  //      the SELECT-then-INSERT pattern), the .create() throws P2002.
+  //      Without a catch, the entire export fails and no CSV is
+  //      produced. With the catch, A is treated as already-created
+  //      (skip, log) and the loop continues — same outcome as if the
+  //      candidate finder had filtered A out.
   const candidates = await loadGpAdvanceCandidates(start, end);
   if (candidates.length > 0) {
     const exportedAtNow = new Date();
     for (const c of candidates) {
-      await prisma.guaranteedPayoutAdvance.create({
-        data: {
-          ledgerId: generateLedgerId(),
-          userId: c.userId,
-          occurrenceId: c.occurrenceId,
-          amount: c.amount,
-          exportedAt: exportedAtNow,
-          exportedByUserId: exportedByUserId ?? null,
-        },
-      });
+      let advanceCreated = true;
+      try {
+        await prisma.guaranteedPayoutAdvance.create({
+          data: {
+            ledgerId: generateLedgerId(),
+            userId: c.userId,
+            occurrenceId: c.occurrenceId,
+            amount: c.amount,
+            exportedAt: exportedAtNow,
+            exportedByUserId: exportedByUserId ?? null,
+          },
+        });
+      } catch (err: any) {
+        // P2002 = Prisma unique-constraint violation. The (userId,
+        // occurrenceId) row was created by a concurrent / earlier
+        // export run for the same window; safe to skip. Re-throw
+        // anything else.
+        if (err?.code === "P2002") {
+          advanceCreated = false;
+        } else {
+          throw err;
+        }
+      }
+
+      // Only roll into the CSV total when WE created the advance.
+      // If the row already existed from a prior export run, the
+      // contractor was already paid that amount via that earlier
+      // payroll cycle — re-counting it here would double-pay.
+      if (!advanceCreated) continue;
 
       const cur = byWorker.get(c.userId);
       const { first, last } = splitName(c.contractor.displayName);
@@ -1155,7 +1217,26 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<CsvResult> 
     }
   }
 
-  // GP advance journals.
+  // GP advance journals — anchored on `exportedAt`.
+  //
+  // KNOWN LIMITATION: this query includes ALL advances whose exportedAt
+  // falls in the [start, end] window, with no awareness of whether the
+  // advance has been imported to QB on a prior export run. If the
+  // operator runs the QB Expenses export for overlapping windows
+  // (e.g., "this week" then "this month"), the same advance row will
+  // appear in BOTH CSVs and — because QB's journal-entry importer
+  // does NOT dedupe on JournalNo — will end up in QB Expenses TWICE.
+  //
+  // OPERATIONAL GUIDANCE: only export windows you haven't previously
+  // imported. Common patterns:
+  //   • Run "Last week" each Monday → import → next Monday repeat.
+  //   • Or run year-to-date once at year-start → import → then export
+  //     only "Last week" going forward.
+  // A proper fix requires tracking which advances have been included
+  // in a prior QB Expenses CSV (schema change: a join table or a
+  // qbExpensesExportedAt field on GuaranteedPayoutAdvance). Deferred
+  // until the operator hits this in practice; document it now so
+  // future devs don't think it's a missed edge case.
   const gpAdvances = await prisma.guaranteedPayoutAdvance.findMany({
     where: { exportedAt: { gte: start, lte: end } },
     include: {

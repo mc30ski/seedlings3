@@ -1,8 +1,10 @@
-import { bizDateKey } from "@/src/lib/lib";
+import { bizToday, bizAddDays, bizAddMonths, bizAddYears } from "@/src/lib/lib";
 
-function localDate(d: Date): string {
-  return bizDateKey(d);
-}
+// Every preset returns a YYYY-MM-DD string key. All arithmetic is on
+// string keys via the canonical helpers — no `.setDate()` /
+// `.setMonth()` / `.setFullYear()` on Date instants (which would mix
+// browser-local time into an ET-anchored calendar). See
+// docs/DATE_HANDLING.md.
 
 export type DatePreset =
   | "now"
@@ -27,97 +29,51 @@ export type DatePreset =
   | null; // null = custom dates
 
 export function computeDatesFromPreset(preset: DatePreset): { from: string; to: string } {
-  const today = new Date();
+  const today = bizToday();
   switch (preset) {
-    case "now": {
-      const d = new Date(today);
-      d.setDate(d.getDate() + 2);
-      return { from: localDate(today), to: localDate(d) };
-    }
+    case "now":
+      return { from: today, to: bizAddDays(today, 2) };
     case "today":
-      return { from: localDate(today), to: localDate(today) };
+      return { from: today, to: today };
     case "yesterday": {
-      const d = new Date(today);
-      d.setDate(d.getDate() - 1);
-      return { from: localDate(d), to: localDate(d) };
+      const y = bizAddDays(today, -1);
+      return { from: y, to: y };
     }
-    case "next3": {
-      const d = new Date(today);
-      d.setDate(d.getDate() + 2);
-      return { from: localDate(today), to: localDate(d) };
-    }
-    case "overdueAndNext3": {
-      const d = new Date(today);
-      d.setDate(d.getDate() + 3);
-      const from = new Date(today);
-      from.setDate(from.getDate() - 60);
-      return { from: localDate(from), to: localDate(d) };
-    }
-    case "overdueOnly": {
-      const d = new Date(today);
-      d.setDate(d.getDate() - 1);
-      return { from: "", to: localDate(d) };
-    }
-    case "overdueAndNextWeek": {
-      const d = new Date(today);
-      d.setDate(d.getDate() + 7);
-      return { from: "", to: localDate(d) };
-    }
+    case "next3":
+      return { from: today, to: bizAddDays(today, 2) };
+    case "overdueAndNext3":
+      return { from: bizAddDays(today, -60), to: bizAddDays(today, 3) };
+    case "overdueOnly":
+      return { from: "", to: bizAddDays(today, -1) };
+    case "overdueAndNextWeek":
+      return { from: "", to: bizAddDays(today, 7) };
     case "thisWeek":
-    case "nextWeek": {
-      const d = new Date(today);
-      d.setDate(d.getDate() + 6);
-      return { from: localDate(today), to: localDate(d) };
-    }
+    case "nextWeek":
+      return { from: today, to: bizAddDays(today, 6) };
     case "thisMonth":
-    case "nextMonth": {
-      const d = new Date(today);
-      d.setMonth(d.getMonth() + 1);
-      return { from: localDate(today), to: localDate(d) };
-    }
+    case "nextMonth":
+      return { from: today, to: bizAddMonths(today, 1) };
     case "future":
-      return { from: localDate(today), to: "" };
-    case "recent": {
-      const d = new Date(today);
-      d.setDate(d.getDate() - 30);
-      return { from: localDate(d), to: "" };
-    }
-    case "rolling": {
-      const from = new Date(today);
-      from.setMonth(from.getMonth() - 1);
-      const to = new Date(today);
-      to.setDate(to.getDate() + 7);
-      return { from: localDate(from), to: localDate(to) };
-    }
-    case "lastWeek": {
-      const d = new Date(today);
-      d.setDate(d.getDate() - 7);
-      return { from: localDate(d), to: localDate(today) };
-    }
-    case "lastMonth": {
-      const d = new Date(today);
-      d.setMonth(d.getMonth() - 1);
-      return { from: localDate(d), to: localDate(today) };
-    }
-    case "lastYear": {
+      return { from: today, to: "" };
+    case "recent":
+      return { from: bizAddDays(today, -30), to: "" };
+    case "rolling":
+      return { from: bizAddMonths(today, -1), to: bizAddDays(today, 7) };
+    case "lastWeek":
+      return { from: bizAddDays(today, -7), to: today };
+    case "lastMonth":
+      return { from: bizAddMonths(today, -1), to: today };
+    case "lastYear":
       // Rolling 12 months ending today (matches lastWeek/lastMonth shape).
-      const d = new Date(today);
-      d.setFullYear(d.getFullYear() - 1);
-      return { from: localDate(d), to: localDate(today) };
-    }
-    case "thisYear": {
+      return { from: bizAddYears(today, -1), to: today };
+    case "thisYear":
       // Forward-looking, matching thisWeek (today → +6 days) and thisMonth (today → +1 month).
-      const d = new Date(today);
-      d.setFullYear(d.getFullYear() + 1);
-      return { from: localDate(today), to: localDate(d) };
-    }
+      return { from: today, to: bizAddYears(today, 1) };
     case "all":
       return { from: "", to: "" };
     default:
       // fallback to next month
-      const d = new Date(today);
-      d.setMonth(d.getMonth() + 1);
-      return { from: localDate(today), to: localDate(d) };
+      return { from: today, to: bizAddMonths(today, 1) };
   }
 }
 

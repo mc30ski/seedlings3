@@ -2,6 +2,7 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaNeon } from "@prisma/adapter-neon";
 import { neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
+import { etFormatDate } from "../src/lib/dates";
 
 // ── Safety guard ────────────────────────────────────────────────────────────
 const dbUrl = process.env.DATABASE_URL ?? "";
@@ -3399,7 +3400,7 @@ async function seedPaymentsGuaranteedPayout() {
       guaranteedPayoutHistory: [] as any,
     },
   });
-  console.log(`    CONTRACTOR_ID on active GP through ${gpUntil.toISOString().slice(0, 10)}`);
+  console.log(`    CONTRACTOR_ID on active GP through ${etFormatDate(gpUntil)}`);
 
   // Helper that creates a PENDING_PAYMENT occurrence with Carla as sole
   // active assignee. Returns the occurrence + the per-worker promised

@@ -13,6 +13,7 @@ import {
 } from "@chakra-ui/react";
 import { Plus } from "lucide-react";
 import { apiPost } from "@/src/lib/api";
+import { bizDateKey, bizInstantFromEtParts } from "@/src/lib/lib";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -31,13 +32,12 @@ type Props = {
 
 function isoToDateInput(iso: string | null | undefined): string {
   if (!iso) return "";
+  // <input type="date"> takes a YYYY-MM-DD calendar value. For the
+  // ET-anchored business, use the ET calendar day — bizDateKey
+  // handles the timezone correctly even when the user's browser is
+  // in a different zone than the operator (e.g. traveler).
   try {
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return "";
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    return `${y}-${m}-${day}`;
+    return bizDateKey(iso);
   } catch {
     return "";
   }
@@ -82,7 +82,7 @@ export default function UploadDocumentVersionDialog({
       if (!putRes.ok) throw new Error(`Upload failed: ${putRes.status}`);
       await apiPost(
         `${apiBase}/${documentId}/versions/${init.versionId}/confirm`,
-        { expiresAt: showExpiration && expiresAt ? new Date(expiresAt + "T00:00:00").toISOString() : null },
+        { expiresAt: showExpiration && expiresAt ? bizInstantFromEtParts(expiresAt, "23:59:59") : null },
       );
       publishInlineMessage({ type: "SUCCESS", text: "New version uploaded." });
       onUploaded();
