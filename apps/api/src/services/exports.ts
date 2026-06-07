@@ -483,7 +483,13 @@ async function loadGpAdvanceCandidates(
       },
       addons: { select: { price: true } },
       expenses: { select: { cost: true } },
-      payment: { include: { splits: { select: { userId: true } } } },
+      // Need `confirmed` + `writtenOff` to correctly distinguish a real
+      // cash event (cash-basis: only confirmed, non-written-off payments
+      // pay the contractor) from a recorded-but-unapproved payment
+      // (PaymentSplit exists but the contractor hasn't been paid yet).
+      // The candidate-exclusion logic below uses these to keep
+      // contractors in GP eligible while their payment sits unconfirmed.
+      payment: { select: { confirmed: true, writtenOff: true, splits: { select: { userId: true } } } },
     },
   });
 
@@ -519,8 +525,28 @@ async function loadGpAdvanceCandidates(
       select: { userId: true },
     });
     const advancedUserIds = new Set(existingAdvances.map((a) => a.userId));
+    // PaymentSplit existence ALONE is not enough to mark the contractor
+    // as already-paid. A self-reported or worker-initiated payment that
+    // hasn't been admin-approved yet has `confirmed = false` — under
+    // cash-basis accounting, no money has actually moved. The whole
+    // point of GP is to decouple contractor pay from client-payment
+    // timing, so an unconfirmed payment must NOT block a GP advance.
+    //
+    // We also skip the split-blocking on written-off payments — the
+    // client never paid, so the contractor never received that money.
+    //
+    // Once the admin approves the payment, the existing-advance check
+    // above catches it (the approval flow stamps `guaranteedPayoutPaidAt`
+    // on the split via fetchAdvanceFlagsByUser, and the next export's
+    // payment-anchored loop skips flagged splits — see line ~616). So
+    // there's no double-pay even if the advance is created first and
+    // the payment is approved later.
+    const paymentCountsAsPaid =
+      !!occ.payment?.confirmed && !occ.payment.writtenOff;
     const splitUserIds = new Set(
-      (occ.payment?.splits ?? []).map((s: any) => s.userId),
+      paymentCountsAsPaid
+        ? (occ.payment?.splits ?? []).map((s: any) => s.userId)
+        : [],
     );
     const eligible = qualifying.filter(
       (q) => !advancedUserIds.has(q.userId) && !splitUserIds.has(q.userId),

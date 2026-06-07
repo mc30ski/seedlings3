@@ -1013,6 +1013,206 @@ describe("Slice 2 — Guaranteed payout reconciliation", () => {
     expect(advancePair[1][2]).toBe("App Clearing Account"); // credit-side account
     expect(advancePair[1][4]).toBe("50.00"); // Credits
   });
+
+  // Regression test for the limbo-zone bug:
+  // A contractor in active GP period completes a job today. A Payment +
+  // PaymentSplit exist (e.g. client self-reported via /pay/[token]) but
+  // the payment hasn't been admin-approved yet (confirmed = false). The
+  // export must still create a GP advance for the contractor — otherwise
+  // they fall into limbo (not paid via payment-anchored since the
+  // Payment is unconfirmed, not paid via GP since a PaymentSplit
+  // technically "exists"). Cash-basis: only confirmed payments count
+  // as already-paid; unconfirmed ones must NOT block GP.
+  it("creates a GP advance when a PaymentSplit exists on an UNCONFIRMED payment (limbo-zone fix)", async () => {
+    prismaMock.payment.findMany.mockResolvedValue([]); // no confirmed payments
+    prismaMock.guaranteedPayoutAdvance.findMany.mockResolvedValue([]);
+    prismaMock.setting.findUnique.mockResolvedValue({ value: "20" });
+
+    // Single occurrence completed in window. The contractor is in active
+    // GP period. An unconfirmed payment + split already exist (the
+    // contractor or client recorded the payment but admin hasn't
+    // approved yet).
+    const completedAt = new Date("2026-06-10T15:00:00.000Z");
+    const gpStart = new Date("2026-06-01T00:00:00.000Z");
+    const gpUntil = new Date("2026-06-30T23:59:59.000Z");
+    prismaMock.jobOccurrence.findMany.mockResolvedValueOnce([
+      {
+        id: "occ-limbo",
+        completedAt,
+        price: 50,
+        proposalAmount: null,
+        completionSplits: [{ userId: "c1", percent: 100 }],
+        addons: [],
+        expenses: [],
+        assignees: [
+          {
+            userId: "c1",
+            role: null,
+            user: {
+              id: "c1",
+              displayName: "Caleb Contractor",
+              email: "caleb@example.com",
+              workerType: "CONTRACTOR",
+              guaranteedPayoutUntil: gpUntil,
+              guaranteedPayoutStartedAt: gpStart,
+              guaranteedPayoutHistory: [],
+            },
+          },
+        ],
+        payment: {
+          confirmed: false,            // ← unconfirmed payment
+          writtenOff: false,
+          splits: [{ userId: "c1" }],  // ← split exists but doesn't pay yet
+        },
+      },
+    ]);
+
+    const created: any[] = [];
+    (prismaMock.guaranteedPayoutAdvance.create as any).mockImplementation(
+      async ({ data }: any) => {
+        created.push(data);
+        return { id: `adv-${created.length}`, amount: data.amount };
+      },
+    );
+
+    const result = await gustoContractorsCsv(
+      new Date("2026-06-01T00:00:00.000Z"),
+      new Date("2026-06-30T23:59:59.000Z"),
+    );
+
+    // Without the fix: no advance would be created (PaymentSplit blocked
+    // it), and the contractor would be absent from the CSV entirely
+    // because the Payment is unconfirmed. With the fix: advance created
+    // and the contractor appears in the CSV with promised net.
+    expect(created).toHaveLength(1);
+    expect(created[0].userId).toBe("c1");
+    expect(created[0].occurrenceId).toBe("occ-limbo");
+    expect(created[0].amount).toBe(40); // 50 × (1 - 0.20) = 40 at 20% platform fee
+    expect(result.csv).toContain("Caleb,Contractor");
+    expect(result.csv).toContain("40.00");
+  });
+
+  // The flip side: a CONFIRMED payment with a split must still block
+  // a GP advance — otherwise the contractor would be double-paid (once
+  // via payment-anchored, once via advance).
+  it("does NOT create a GP advance when a PaymentSplit exists on a CONFIRMED payment (no double-pay)", async () => {
+    prismaMock.payment.findMany.mockResolvedValue([]);
+    prismaMock.guaranteedPayoutAdvance.findMany.mockResolvedValue([]);
+    prismaMock.setting.findUnique.mockResolvedValue({ value: "20" });
+
+    const completedAt = new Date("2026-06-10T15:00:00.000Z");
+    const gpStart = new Date("2026-06-01T00:00:00.000Z");
+    const gpUntil = new Date("2026-06-30T23:59:59.000Z");
+    prismaMock.jobOccurrence.findMany.mockResolvedValueOnce([
+      {
+        id: "occ-confirmed",
+        completedAt,
+        price: 50,
+        proposalAmount: null,
+        completionSplits: [{ userId: "c1", percent: 100 }],
+        addons: [],
+        expenses: [],
+        assignees: [
+          {
+            userId: "c1",
+            role: null,
+            user: {
+              id: "c1",
+              displayName: "Caleb Contractor",
+              email: "caleb@example.com",
+              workerType: "CONTRACTOR",
+              guaranteedPayoutUntil: gpUntil,
+              guaranteedPayoutStartedAt: gpStart,
+              guaranteedPayoutHistory: [],
+            },
+          },
+        ],
+        payment: {
+          confirmed: true,             // ← CONFIRMED payment
+          writtenOff: false,
+          splits: [{ userId: "c1" }],
+        },
+      },
+    ]);
+
+    const created: any[] = [];
+    (prismaMock.guaranteedPayoutAdvance.create as any).mockImplementation(
+      async ({ data }: any) => {
+        created.push(data);
+        return { id: `adv-${created.length}`, amount: data.amount };
+      },
+    );
+
+    await gustoContractorsCsv(
+      new Date("2026-06-01T00:00:00.000Z"),
+      new Date("2026-06-30T23:59:59.000Z"),
+    );
+
+    // Confirmed split blocks the GP advance — the contractor's already
+    // getting paid via the payment-anchored path.
+    expect(created).toHaveLength(0);
+  });
+
+  // Written-off payments are a third case: the client never paid, so
+  // the PaymentSplit will never actually disburse money. GP must kick
+  // in to pay the contractor anyway.
+  it("creates a GP advance when the PaymentSplit is on a WRITTEN-OFF payment", async () => {
+    prismaMock.payment.findMany.mockResolvedValue([]);
+    prismaMock.guaranteedPayoutAdvance.findMany.mockResolvedValue([]);
+    prismaMock.setting.findUnique.mockResolvedValue({ value: "20" });
+
+    const completedAt = new Date("2026-06-10T15:00:00.000Z");
+    const gpStart = new Date("2026-06-01T00:00:00.000Z");
+    const gpUntil = new Date("2026-06-30T23:59:59.000Z");
+    prismaMock.jobOccurrence.findMany.mockResolvedValueOnce([
+      {
+        id: "occ-writeoff",
+        completedAt,
+        price: 50,
+        proposalAmount: null,
+        completionSplits: [{ userId: "c1", percent: 100 }],
+        addons: [],
+        expenses: [],
+        assignees: [
+          {
+            userId: "c1",
+            role: null,
+            user: {
+              id: "c1",
+              displayName: "Caleb Contractor",
+              email: "caleb@example.com",
+              workerType: "CONTRACTOR",
+              guaranteedPayoutUntil: gpUntil,
+              guaranteedPayoutStartedAt: gpStart,
+              guaranteedPayoutHistory: [],
+            },
+          },
+        ],
+        payment: {
+          confirmed: true,
+          writtenOff: true,            // ← written off — client never paid
+          splits: [{ userId: "c1" }],
+        },
+      },
+    ]);
+
+    const created: any[] = [];
+    (prismaMock.guaranteedPayoutAdvance.create as any).mockImplementation(
+      async ({ data }: any) => {
+        created.push(data);
+        return { id: `adv-${created.length}`, amount: data.amount };
+      },
+    );
+
+    await gustoContractorsCsv(
+      new Date("2026-06-01T00:00:00.000Z"),
+      new Date("2026-06-30T23:59:59.000Z"),
+    );
+
+    // Write-off means no client cash — GP must still pay the contractor.
+    expect(created).toHaveLength(1);
+    expect(created[0].amount).toBe(40);
+  });
 });
 
 describe("All tax exports — forbidden-field guard", () => {
