@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Box, Button, Card, Checkbox, Dialog, HStack, Heading, Input, Portal, Spinner, Switch, Text, VStack } from "@chakra-ui/react";
 import { FiDownload, FiTrash2 } from "react-icons/fi";
 import { apiGet, apiDownload, apiDelete } from "@/src/lib/api";
+import { bizDateKey, bizToday, bizAddDays, bizMondayOnOrBefore, bizStartOfMonth, bizStartOfYear } from "@/src/lib/lib";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { usePersistedState } from "@/src/lib/usePersistedState";
@@ -81,70 +82,51 @@ const KIND_LABELS: Record<HistoryRow["kind"], string> = {
   QB_BUNDLE: "QB Bundle (zip)",
 };
 
-function pad(n: number): string {
-  return String(n).padStart(2, "0");
-}
-
-function dateKey(d: Date): string {
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
+// Date helpers come from apps/web/src/lib/lib.ts — bizDateKey, bizToday,
+// bizAddDays, bizMondayOnOrBefore, bizStartOfMonth, bizStartOfYear. NEVER
+// reinvent — see lib/lib.ts header for why.
 
 // Format a stored ExportRun range bound (ISO string in UTC) as its ET
 // calendar date. The backend stores rangeEnd as end-of-day ET, which in
 // UTC rolls into the next day — naive `.slice(0,10)` shows the wrong day
-// (e.g. user selects 6/5, history shows 6/6). en-CA gives YYYY-MM-DD.
+// (e.g. user selects 6/5, history shows 6/6). bizDateKey accepts an ISO
+// string and formats in America/New_York.
 function etDateFromIso(iso: string): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date(iso));
+  return bizDateKey(iso);
 }
 
-// Returns the Monday on/before the given date (local time).
-function mondayOnOrBefore(d: Date): Date {
-  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const dow = x.getDay(); // Sun=0..Sat=6
-  const delta = dow === 0 ? -6 : 1 - dow;
-  x.setDate(x.getDate() + delta);
-  return x;
-}
-
-function addDays(d: Date, days: number): Date {
-  const x = new Date(d);
-  x.setDate(x.getDate() + days);
-  return x;
-}
-
-// Compute "Last period" and "This period" for a given cadence (local time).
-// Last period = most recent CLOSED period (the one you'd run payroll on).
-// This period = the period currently in progress.
+// Compute "Last period" and "This period" for a given cadence, all in
+// Eastern Time via bizMondayOnOrBefore / bizAddDays / bizStartOfMonth so
+// the operator's calendar drives the boundaries (not the user's browser).
+//   Last period = most recent CLOSED period (the one you'd run payroll on).
+//   This period = the period currently in progress.
 function periodFor(cadence: Cadence, kind: "this" | "last"): { from: string; to: string } {
-  const today = new Date();
   if (cadence === "WEEKLY") {
-    const thisStart = mondayOnOrBefore(today);
-    const start = kind === "this" ? thisStart : addDays(thisStart, -7);
-    const end = addDays(start, 6);
-    return { from: dateKey(start), to: dateKey(end) };
+    const thisStart = bizMondayOnOrBefore();
+    const start = kind === "this" ? thisStart : bizAddDays(thisStart, -7);
+    return { from: start, to: bizAddDays(start, 6) };
   }
   if (cadence === "BIWEEKLY") {
-    const thisStart = addDays(mondayOnOrBefore(today), -7); // 2-week window containing today
-    const start = kind === "this" ? thisStart : addDays(thisStart, -14);
-    const end = addDays(start, 13);
-    return { from: dateKey(start), to: dateKey(end) };
+    const thisStart = bizAddDays(bizMondayOnOrBefore(), -7); // 2-week window containing today
+    const start = kind === "this" ? thisStart : bizAddDays(thisStart, -14);
+    return { from: start, to: bizAddDays(start, 13) };
   }
-  // MONTHLY
-  const y = today.getFullYear();
-  const m = today.getMonth();
+  // MONTHLY — first → last calendar day in ET.
+  const thisMonthStart = bizStartOfMonth(); // YYYY-MM-01
   if (kind === "this") {
-    const start = new Date(y, m, 1);
-    const end = new Date(y, m + 1, 0);
-    return { from: dateKey(start), to: dateKey(end) };
+    const [y, m] = thisMonthStart.split("-").map(Number);
+    const nextMonthStart = m === 12
+      ? `${y + 1}-01-01`
+      : `${y}-${String(m + 1).padStart(2, "0")}-01`;
+    return { from: thisMonthStart, to: bizAddDays(nextMonthStart, -1) };
   }
-  const start = new Date(y, m - 1, 1);
-  const end = new Date(y, m, 0);
-  return { from: dateKey(start), to: dateKey(end) };
+  const lastMonthEnd = bizAddDays(thisMonthStart, -1);
+  const lastMonthStart = `${lastMonthEnd.slice(0, 7)}-01`;
+  return { from: lastMonthStart, to: lastMonthEnd };
 }
 
 function ytdRange(): { from: string; to: string } {
-  const today = new Date();
-  return { from: `${today.getFullYear()}-01-01`, to: dateKey(today) };
+  return { from: bizStartOfYear(), to: bizToday() };
 }
 
 export default function ExportsTab() {
@@ -154,10 +136,9 @@ export default function ExportsTab() {
   // future. Sunday → shows this same week, ending today. Monday morning
   // of a fresh week → shows the new week (operator clicks "Last weekly"
   // preset for the just-ended week if that's what they need).
-  const thisMondayDefault = mondayOnOrBefore(new Date());
-  const thisSundayDefault = addDays(thisMondayDefault, 6);
-  const [start, setStart] = useState(dateKey(thisMondayDefault));
-  const [end, setEnd] = useState(dateKey(thisSundayDefault));
+  const thisMondayDefault = bizMondayOnOrBefore();
+  const [start, setStart] = useState(thisMondayDefault);
+  const [end, setEnd] = useState(bizAddDays(thisMondayDefault, 6));
   const [preview, setPreview] = useState<Preview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);

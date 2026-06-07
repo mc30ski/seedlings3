@@ -5,6 +5,7 @@ import { Box, Button, Card, HStack, Input, Spinner, Text, VStack } from "@chakra
 import { FiInfo } from "react-icons/fi";
 import { apiGet } from "@/src/lib/api";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
+import { bizDateKey, bizToday, bizAddDays, bizMondayOnOrBefore, bizStartOfMonth, bizStartOfYear } from "@/src/lib/lib";
 
 /**
  * P&L Report tab — structured Profit & Loss view for a selectable date
@@ -37,28 +38,9 @@ type PnLReport = {
   netOperatingIncome: number;
 };
 
-function pad(n: number): string {
-  return String(n).padStart(2, "0");
-}
-function dateKey(d: Date): string {
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-function mondayOnOrBefore(d: Date): Date {
-  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const dow = x.getDay();
-  const delta = dow === 0 ? -6 : 1 - dow;
-  x.setDate(x.getDate() + delta);
-  return x;
-}
-function addDays(d: Date, days: number): Date {
-  const x = new Date(d);
-  x.setDate(x.getDate() + days);
-  return x;
-}
-function ytdRange(): { from: string; to: string } {
-  const today = new Date();
-  return { from: `${today.getFullYear()}-01-01`, to: dateKey(today) };
-}
+// Date helpers come from apps/web/src/lib/lib.ts. NEVER reinvent — see
+// the "Date helpers" header in that file for why. All date math in
+// this tab routes through bizDateKey / bizToday / bizAddDays / etc.
 
 function fmtUSD(n: number): string {
   const abs = Math.abs(n);
@@ -76,10 +58,9 @@ function leafName(qbAccount: string): string {
 
 export default function PnLReportTab() {
   // Default to this calendar week's Mon–Sun, matching the Exports tab default.
-  const thisMondayDefault = mondayOnOrBefore(new Date());
-  const thisSundayDefault = addDays(thisMondayDefault, 6);
-  const [start, setStart] = useState(dateKey(thisMondayDefault));
-  const [end, setEnd] = useState(dateKey(thisSundayDefault));
+  const thisMondayDefault = bizMondayOnOrBefore();
+  const [start, setStart] = useState(thisMondayDefault);
+  const [end, setEnd] = useState(bizAddDays(thisMondayDefault, 6));
   const [report, setReport] = useState<PnLReport | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -107,46 +88,45 @@ export default function PnLReportTab() {
         key: "last-week",
         label: "Last week",
         range: () => {
-          const thisMon = mondayOnOrBefore(new Date());
-          const lastMon = addDays(thisMon, -7);
-          return { from: dateKey(lastMon), to: dateKey(addDays(lastMon, 6)) };
+          const lastMon = bizAddDays(bizMondayOnOrBefore(), -7);
+          return { from: lastMon, to: bizAddDays(lastMon, 6) };
         },
       },
       {
         key: "this-week",
         label: "This week",
-        range: () => ({
-          from: dateKey(mondayOnOrBefore(new Date())),
-          to: dateKey(addDays(mondayOnOrBefore(new Date()), 6)),
-        }),
+        range: () => {
+          const mon = bizMondayOnOrBefore();
+          return { from: mon, to: bizAddDays(mon, 6) };
+        },
       },
       {
         key: "last-month",
         label: "Last month",
         range: () => {
-          // First → last calendar day of the previous month. Day 0 of the
-          // current month resolves to the last day of the prior month
-          // (handles 28/29/30/31 correctly without per-month branching).
-          const today = new Date();
-          const start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-          const end = new Date(today.getFullYear(), today.getMonth(), 0);
-          return { from: dateKey(start), to: dateKey(end) };
+          // First → last calendar day of the previous month, in ET.
+          const thisMonthStart = bizStartOfMonth(); // "YYYY-MM-01"
+          const lastMonthEnd = bizAddDays(thisMonthStart, -1); // last day of prev month
+          const lastMonthStart = `${lastMonthEnd.slice(0, 7)}-01`;
+          return { from: lastMonthStart, to: lastMonthEnd };
         },
       },
       {
         key: "this-month",
         label: "This month",
         range: () => {
-          // First → last calendar day of the current month. The end uses
-          // day 0 of the NEXT month, which JS resolves to the last day of
-          // the current month (handles month-length variation automatically).
-          const today = new Date();
-          const start = new Date(today.getFullYear(), today.getMonth(), 1);
-          const end = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-          return { from: dateKey(start), to: dateKey(end) };
+          // First → last calendar day of the current month, in ET. The end
+          // is the day before the first of the next month.
+          const start = bizStartOfMonth();
+          const [y, m] = start.split("-").map(Number);
+          const nextMonthStart = m === 12
+            ? `${y + 1}-01-01`
+            : `${y}-${String(m + 1).padStart(2, "0")}-01`;
+          const end = bizAddDays(nextMonthStart, -1);
+          return { from: start, to: end };
         },
       },
-      { key: "ytd", label: "Year to date", range: ytdRange },
+      { key: "ytd", label: "Year to date", range: () => ({ from: bizStartOfYear(), to: bizToday() }) },
     ],
     [],
   );

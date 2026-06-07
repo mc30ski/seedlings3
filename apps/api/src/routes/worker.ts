@@ -2,7 +2,7 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { services } from "../services";
 import { prisma } from "../db/prisma";
 import { getUploadUrl, getDownloadUrl, deleteObject } from "../lib/r2";
-import { etMidnight, etEndOfDay, etToday, etTomorrow } from "../lib/dates";
+import { etMidnight, etEndOfDay, etToday, etTomorrow, etAddDays, etFormatDate } from "../lib/dates";
 import { Role as RoleVal, JobOccurrenceStatus } from "@prisma/client";
 import { ServiceError } from "../lib/errors";
 import { normalizePhone } from "../lib/phone";
@@ -64,6 +64,16 @@ export default async function workerRoutes(app: FastifyInstance) {
       if (!isAdmin) throw app.httpErrors.forbidden("Only admins can view another worker's dashboard.");
       uid = viewAsUserId;
     }
+    // Determine whether the effective dashboard user (after viewAsUserId
+    // override) has the ADMIN or SUPER role. Drives whether Timeline
+    // events (workflow=EVENT) appear in the Notices tile + count below.
+    // Events are an admin-only concept; non-admin workers must never see
+    // them in their dashboard or feed. An admin viewing-as a non-admin
+    // gets the non-admin's experience, including no event count.
+    const effectiveUserRoles = uid === callerUid
+      ? (await prisma.user.findUnique({ where: { id: uid }, select: { roles: { select: { role: true } } } }))?.roles ?? []
+      : (await prisma.userRole.findMany({ where: { userId: uid }, select: { role: true } }));
+    const effectiveIsAdmin = effectiveUserRoles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
     const now = new Date();
     // Use Eastern Time (business TZ) for "today"/"tomorrow" — UTC-based date strings
     // would tip into the next day late evening ET and miscount.
@@ -84,21 +94,18 @@ export default async function workerRoutes(app: FastifyInstance) {
     // tile (`minutesThisWeek` / `thisWeekJobs`) and the Earnings tile
     // (`actualWeekEarnings`); the queries pair it with `lt: todayMidnight`
     // so the two tiles always cover the same job set.
-    const todayEtParts = etToday().split("-").map(Number);
-    const todayUtcNoon = new Date(Date.UTC(todayEtParts[0], todayEtParts[1] - 1, todayEtParts[2], 12));
-    const sevenDaysAgoUtc = new Date(todayUtcNoon);
-    sevenDaysAgoUtc.setUTCDate(sevenDaysAgoUtc.getUTCDate() - 7);
-    const sevenDaysAgo = etMidnight(sevenDaysAgoUtc.toISOString().slice(0, 10));
+    const sevenDaysAgo = etMidnight(etAddDays(todayStr, -7));
 
-    // Sunday-of-this-week in Eastern Time. Used as the anchor for the weekly trend chart
-    // and the "Hours this week" tile.
-    const dayOfWeek = todayUtcNoon.getUTCDay();
-    const sowUtc = new Date(todayUtcNoon);
-    sowUtc.setUTCDate(sowUtc.getUTCDate() - dayOfWeek);
-    const startOfWeek = etMidnight(sowUtc.toISOString().slice(0, 10));
+    // Sunday-of-this-week in Eastern Time. Used as the anchor for the
+    // weekly trend chart and the "Hours this week" tile. Compute the day-
+    // of-week from a UTC-noon Date for the current ET calendar day so the
+    // arithmetic is DST-safe.
+    const [ty, tm, td] = todayStr.split("-").map(Number);
+    const dayOfWeek = new Date(Date.UTC(ty, tm - 1, td, 12)).getUTCDay();
+    const startOfWeek = etMidnight(etAddDays(todayStr, -dayOfWeek));
 
     // 9-week window (~2 months) for the "Jobs completed" trend chart on the Home tab.
-    const trendStart = new Date(startOfWeek); trendStart.setDate(trendStart.getDate() - 8 * 7);
+    const trendStart = etMidnight(etAddDays(todayStr, -dayOfWeek - 8 * 7));
 
     // Get user's assigned occurrences (SCHEDULED/IN_PROGRESS/PENDING_PAYMENT/PROPOSAL_SUBMITTED).
     // Pull role so we can carve out a working-only subset — observer assignments must NOT
@@ -246,7 +253,12 @@ export default async function workerRoutes(app: FastifyInstance) {
         where: {
           id: { in: myOccIds },
           status: { in: ["SCHEDULED", "IN_PROGRESS"] as any },
-          workflow: { in: ["ANNOUNCEMENT", "FOLLOWUP", "EVENT"] as any },
+          // Timeline events (workflow=EVENT) are admin-only — non-admins
+          // never see them in the Notices tile or count. Admins still get
+          // the full set including events.
+          workflow: { in: (effectiveIsAdmin
+            ? ["ANNOUNCEMENT", "FOLLOWUP", "EVENT"]
+            : ["ANNOUNCEMENT", "FOLLOWUP"]) as any },
           startAt: { gte: todayMidnight, lt: tomorrowMidnight },
         },
         _count: { _all: true },
@@ -431,20 +443,21 @@ export default async function workerRoutes(app: FastifyInstance) {
       return sum + Math.max(0, ms / 60000);
     }, 0);
 
-    // Bucket completed jobs into weekly counts for the trend chart (13 weeks, Sun-start).
+    // Bucket completed jobs into weekly counts for the trend chart
+    // (Sunday-start, in ET). Convert the Date to its ET calendar day, then
+    // walk back to the Sunday-on-or-before via string arithmetic — keeps
+    // the bucketing consistent across DST edges and server timezones.
     const weekKey = (d: Date) => {
-      const w = new Date(d);
-      w.setHours(0, 0, 0, 0);
-      w.setDate(w.getDate() - w.getDay());
-      const y = w.getFullYear();
-      const m = String(w.getMonth() + 1).padStart(2, "0");
-      const dd = String(w.getDate()).padStart(2, "0");
-      return `${y}-${m}-${dd}`;
+      const dayKey = etFormatDate(d);
+      const [yy, mm, dd] = dayKey.split("-").map(Number);
+      const dow = new Date(Date.UTC(yy, mm - 1, dd, 12)).getUTCDay();
+      return etAddDays(dayKey, -dow);
     };
     const weeklyMap: Record<string, { count: number; earnings: number }> = {};
+    const startOfWeekKey = etFormatDate(startOfWeek);
+    const trendStartKey = etAddDays(startOfWeekKey, -8 * 7);
     for (let i = 0; i < 9; i++) {
-      const w = new Date(trendStart); w.setDate(w.getDate() + i * 7);
-      weeklyMap[weekKey(w)] = { count: 0, earnings: 0 };
+      weeklyMap[etAddDays(trendStartKey, i * 7)] = { count: 0, earnings: 0 };
     }
     // Same payout formula as todayPotentialAmount / earnings-summary.
     for (const occ of trendJobs as Array<{ completedAt: Date | null; price: number | null; proposalAmount: number | null; addons: { price: number | null }[]; expenses: { cost: number }[]; assignees: { role: string | null }[] }>) {
@@ -481,17 +494,11 @@ export default async function workerRoutes(app: FastifyInstance) {
     //     drill-down is the Payments tab.
     // Decoupled from the Hours tile — that still counts jobs completed this
     // week (thisWeekJobs); earnings now has its own window + anchor.
-    const earnWindowStart = new Date(todayMidnight);
-    earnWindowStart.setDate(earnWindowStart.getDate() - 7);
+    const earnWindowStart = etMidnight(etAddDays(todayStr, -7));
     // ET date strings (YYYY-MM-DD) for the window, returned so the tile's
     // click-through filters the Payments/Jobs tab to exactly this range.
-    const fmtEtDate = (daysBack: number) => {
-      const d = new Date(Date.UTC(todayEtParts[0], todayEtParts[1] - 1, todayEtParts[2]));
-      d.setUTCDate(d.getUTCDate() - daysBack);
-      return d.toISOString().slice(0, 10);
-    };
-    const weekEarningsFrom = fmtEtDate(7); // 7 days before today
-    const weekEarningsTo = fmtEtDate(1);   // yesterday
+    const weekEarningsFrom = etAddDays(todayStr, -7); // 7 days before today
+    const weekEarningsTo = etAddDays(todayStr, -1);   // yesterday
     let actualWeekEarnings = 0;
     let weekJobCount = 0;
     // Business Start Date filter (`cutoff` declared at the top of this
@@ -606,15 +613,14 @@ export default async function workerRoutes(app: FastifyInstance) {
     // 7 full days BEFORE today (today excluded) — same window the per-worker
     // path uses for the Hours and Earnings tiles. See the matching block at
     // the top of the per-worker route for the rationale.
-    const sevenDaysAgoUtc = new Date(todayMidnight); sevenDaysAgoUtc.setUTCDate(sevenDaysAgoUtc.getUTCDate() - 7);
-    const sevenDaysAgo = etMidnight(sevenDaysAgoUtc.toISOString().slice(0, 10));
-    const startOfWeek = (() => {
-      const d = new Date(todayMidnight);
-      const day = d.getUTCDay();
-      d.setUTCDate(d.getUTCDate() - day);
-      return etMidnight(d.toISOString().slice(0, 10));
-    })();
-    const trendStart = new Date(startOfWeek); trendStart.setDate(trendStart.getDate() - 8 * 7);
+    // Mirror the worker-Home handler above: ET-anchored "7 days ago" + "this
+    // week's Sunday" + "9 weeks back". String arithmetic via etAddDays keeps
+    // these stable across DST + server timezone.
+    const sevenDaysAgo = etMidnight(etAddDays(todayStr, -7));
+    const [ty2, tm2, td2] = todayStr.split("-").map(Number);
+    const dayOfWeek = new Date(Date.UTC(ty2, tm2 - 1, td2, 12)).getUTCDay();
+    const startOfWeek = etMidnight(etAddDays(todayStr, -dayOfWeek));
+    const trendStart = etMidnight(etAddDays(todayStr, -dayOfWeek - 8 * 7));
 
     // Pull margin/fee settings — used when summing total worker payouts per occurrence.
     const empSetting = await prisma.setting.findUnique({ where: { key: "EMPLOYEE_BUSINESS_MARGIN_PERCENT" } });
@@ -954,17 +960,21 @@ export default async function workerRoutes(app: FastifyInstance) {
     const actualWeekEarnings = (thisWeekJobs as any[]).reduce((s, o) => s + totalWorkerPayouts(o), 0);
     const weekJobCount = (thisWeekJobs as any[]).length;
 
-    // Weekly trend (13 weeks) — distinct job count + total worker payouts per week.
+    // Weekly trend (13 weeks) — distinct job count + total worker payouts
+    // per week. Bucketing is Sunday-start in ET. Convert each Date to ET
+    // calendar day then walk back to the Sunday-on-or-before via string
+    // arithmetic so DST/server-tz doesn't shift bucket boundaries.
     const weekKey = (d: Date) => {
-      const w = new Date(d);
-      w.setHours(0, 0, 0, 0);
-      w.setDate(w.getDate() - w.getDay());
-      return `${w.getFullYear()}-${String(w.getMonth() + 1).padStart(2, "0")}-${String(w.getDate()).padStart(2, "0")}`;
+      const dayKey = etFormatDate(d);
+      const [yy, mm, dd] = dayKey.split("-").map(Number);
+      const dow = new Date(Date.UTC(yy, mm - 1, dd, 12)).getUTCDay();
+      return etAddDays(dayKey, -dow);
     };
     const weeklyMap: Record<string, { count: number; earnings: number }> = {};
+    const startOfWeekKey2 = etFormatDate(startOfWeek);
+    const trendStartKey2 = etAddDays(startOfWeekKey2, -8 * 7);
     for (let i = 0; i < 9; i++) {
-      const w = new Date(trendStart); w.setDate(w.getDate() + i * 7);
-      weeklyMap[weekKey(w)] = { count: 0, earnings: 0 };
+      weeklyMap[etAddDays(trendStartKey2, i * 7)] = { count: 0, earnings: 0 };
     }
     for (const occ of trendJobs as any[]) {
       if (!occ.completedAt) continue;
@@ -1242,6 +1252,15 @@ export default async function workerRoutes(app: FastifyInstance) {
       if (!isAdmin) throw app.httpErrors.forbidden("Only admins can view another worker's occurrences.");
       uid = viewAsUserId;
     }
+    // Determine whether the effective user (after viewAsUserId override)
+    // has admin/super privileges. Drives whether Timeline events
+    // (workflow=EVENT) are included in the returned feed. Non-admins
+    // never see events in their Jobs feed regardless of assignment.
+    // An admin viewing-as a non-admin gets the non-admin's feed.
+    const effectiveUserRoles = uid === callerUid
+      ? (await prisma.user.findUnique({ where: { id: uid }, select: { roles: { select: { role: true } } } }))?.roles ?? []
+      : (await prisma.userRole.findMany({ where: { userId: uid }, select: { role: true } }));
+    const effectiveIsAdmin = effectiveUserRoles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
     const [pins, likes, reminders, observedAssignments] = await Promise.all([
       prisma.pinnedOccurrence.findMany({ where: { userId: uid }, select: { occurrenceId: true } }),
       prisma.likedOccurrence.findMany({ where: { userId: uid }, select: { occurrenceId: true } }),
@@ -1313,7 +1332,15 @@ export default async function workerRoutes(app: FastifyInstance) {
       const client = (occ as any).job?.property?.client;
       if (client) delete client.adminTags;
     }
-    return allOccs;
+    // Final gate: Timeline events (workflow=EVENT) are an admin-only
+    // concept. Non-admin effective users never see them in the feed,
+    // even if they were previously assigned/pinned/observed. The
+    // dashboard-summary endpoint applies the same rule to the Notices
+    // count; both must stay in sync.
+    const filtered = effectiveIsAdmin
+      ? allOccs
+      : allOccs.filter((o: any) => o.workflow !== "EVENT");
+    return filtered;
   });
 
   app.get("/occurrences/mine", workerGuard, async (req: any) => {
@@ -3424,7 +3451,7 @@ export default async function workerRoutes(app: FastifyInstance) {
       if (actualMinutes != null && actualMinutes > 0) { totalActualMinutes += actualMinutes; jobsWithTiming++; }
       if (occ.estimatedMinutes) totalEstimatedMinutes += occ.estimatedMinutes;
       if (occ.payment?.method) paymentMethods[occ.payment.method] = (paymentMethods[occ.payment.method] || 0) + 1;
-      const dayKey = occ.completedAt ? occ.completedAt.toISOString().slice(0, 10) : null;
+      const dayKey = occ.completedAt ? etFormatDate(occ.completedAt) : null;
       if (dayKey) jobsByDay[dayKey] = (jobsByDay[dayKey] || 0) + 1;
       if (occ.job?.property?.id) propertySet.add(occ.job.property.id);
     }
@@ -3536,9 +3563,8 @@ export default async function workerRoutes(app: FastifyInstance) {
         days[date].push(entry);
       }
 
-      // Use local date for "today" key (not UTC)
-      const now = new Date();
-      const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      // ET calendar day for the "today" weather key.
+      const todayKey = etToday();
 
       // Always include today using current weather, then next 2 forecast days
       const todayForecastEntries = days[todayKey] ?? [];
@@ -3737,7 +3763,7 @@ export default async function workerRoutes(app: FastifyInstance) {
     // Enforce 2-day window for non-admins
     if (!reschedIsAdmin) {
       const newDateET = etMidnight(startAt.slice(0, 10));
-      const todayET = etMidnight(new Date().toISOString().slice(0, 10));
+      const todayET = etMidnight(etToday());
       const diffDays = Math.round(Math.abs(newDateET.getTime() - todayET.getTime()) / 86400000);
       if (diffDays > 2) {
         throw app.httpErrors.badRequest("Workers can only reschedule within 2 days of today");

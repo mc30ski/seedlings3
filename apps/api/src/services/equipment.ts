@@ -3,7 +3,7 @@ import { Prisma, Equipment, EquipmentStatus } from "@prisma/client";
 import type { ServicesEquipment, EquipmentWithHolder } from "../types/services";
 import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
-import { etMidnight, etEndOfDay } from "../lib/dates";
+import { etMidnight, etEndOfDay, etFormatDate } from "../lib/dates";
 import { ServiceError } from "../lib/errors";
 import { deleteObject } from "../lib/r2";
 import { generateLedgerId } from "../lib/ledgerId";
@@ -26,10 +26,9 @@ function onBehalfOfMeta(currentUserId: string, userId: string) {
 }
 
 /** ISO YYYY-MM-DD in Eastern Time for the given Date. */
-const ET_DAY_FMT = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" });
-export function etDayKey(d: Date): string {
-  return ET_DAY_FMT.format(d);
-}
+// Re-exported alias of the canonical helper for backward compatibility with
+// existing callers. New code should import `etFormatDate` directly.
+export const etDayKey = etFormatDate;
 
 /** Per-day line in the rental breakdown, for receipts and audit metadata. */
 export type RentalBreakdownLine = {
@@ -48,15 +47,19 @@ export type RentalBreakdownLine = {
  *  `[from, to]`, inclusive of both ends. Same day = ["yyyy-mm-dd"]. */
 function listEtDaysBetween(from: Date, to: Date): string[] {
   const toUtcNoon = (d: Date) => {
-    const [y, m, day] = ET_DAY_FMT.format(d).split("-").map(Number);
+    const [y, m, day] = etFormatDate(d).split("-").map(Number);
     return Date.UTC(y, m - 1, day, 12);
   };
   const startUtc = toUtcNoon(from);
   const endUtc = toUtcNoon(to);
   if (endUtc < startUtc) return [];
   const days: string[] = [];
+  // Iterate UTC-noon timestamps (each is safely far from midnight ET in
+  // either direction) and format each in ET via etFormatDate. Avoids the
+  // `.toISOString().slice(0, 10)` UTC-day trap if anyone ever shifts the
+  // step or the noon anchor.
   for (let t = startUtc; t <= endUtc; t += 86_400_000) {
-    days.push(new Date(t).toISOString().slice(0, 10));
+    days.push(etFormatDate(new Date(t)));
   }
   return days;
 }

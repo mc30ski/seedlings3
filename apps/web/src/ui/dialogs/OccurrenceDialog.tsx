@@ -34,7 +34,7 @@ const workflowItems = [
   { label: "One-Off Job", value: "ONE_OFF" },
 ];
 const workflowCollection = createListCollection({ items: workflowItems });
-import { prettyStatus } from "@/src/lib/lib";
+import { prettyStatus, bizDateKey } from "@/src/lib/lib";
 
 function toDateInput(iso: string | null | undefined): string {
   if (!iso) return "";
@@ -682,10 +682,12 @@ export default function OccurrenceDialog({
                       if (!endAt || !oldStart) {
                         setEndAt(val);
                       } else {
-                        // Preserve the duration between start and end
+                        // Preserve the duration between start and end. Use
+                        // noon UTC anchors so the day math is DST-stable;
+                        // bizDateKey then renders the result in ET.
                         const diffMs = new Date(endAt + "T12:00:00Z").getTime() - new Date(oldStart + "T12:00:00Z").getTime();
                         const newEnd = new Date(new Date(val + "T12:00:00Z").getTime() + diffMs);
-                        setEndAt(newEnd.toISOString().slice(0, 10));
+                        setEndAt(bizDateKey(newEnd));
                       }
                     }}
                   />

@@ -3,7 +3,7 @@ import { prisma } from "../db/prisma";
 import Anthropic from "@anthropic-ai/sdk";
 import { getRoutingProvider, AVAILABLE_PROVIDERS, type OptimizedRoute } from "../lib/routing";
 
-import { etMidnight, etToday } from "../lib/dates";
+import { etMidnight, etToday, etAddDays } from "../lib/dates";
 
 const workerGuard = {
   preHandler: (req: FastifyRequest, reply: FastifyReply) =>
@@ -32,22 +32,18 @@ export default async function previewRoutes(app: FastifyInstance) {
     const availableHours = mode === "suggest" ? Math.min(Math.max(Number(req.query?.availableHours) || (user.availableHoursPerDay ?? 4), 2), 12) : 0;
     const bufferPercent = Math.min(Math.max(Number(req.query?.bufferPercent) || 20, 0), 50);
     const availableDays: number[] = user.availableDays ? JSON.parse(user.availableDays) : [];
-    const now = new Date();
-    // Target date = the specific day to plan a route for
+    // Target date = the specific day to plan a route for. ET-anchored so a
+    // worker checking their route at 11pm ET still sees "tomorrow" as the
+    // next calendar day in their actual timezone, not 6 hours ahead in UTC.
     const targetDateParam = req.query?.targetDate as string | undefined;
-    const tomorrow = new Date(now);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const targetStr = targetDateParam || tomorrow.toISOString().slice(0, 10);
-    // Search range: lookAhead days before AND after target date, but never before today
-    // Use Eastern time for "today" to match frontend's bizDateKey
     const todayStr = etToday();
-    const rangeStartDate = new Date(targetStr + "T12:00:00Z");
-    rangeStartDate.setDate(rangeStartDate.getDate() - lookAhead);
-    const rangeStartStr = rangeStartDate.toISOString().slice(0, 10);
+    const targetStr = targetDateParam || etAddDays(todayStr, 1);
+    // Search range: lookAhead days before AND after the target date, but
+    // never before today. All string arithmetic in ET so DST edges and the
+    // server's UTC clock don't shift the window.
+    const rangeStartStr = etAddDays(targetStr, -lookAhead);
     const startStr = rangeStartStr < todayStr ? todayStr : rangeStartStr;
-    const endDate = new Date(targetStr + "T12:00:00Z");
-    endDate.setDate(endDate.getDate() + lookAhead + 1);
-    const endStr = endDate.toISOString().slice(0, 10);
+    const endStr = etAddDays(targetStr, lookAhead + 1);
 
     // Fetch claimable occurrences only in "suggest" mode
     // When admin is running routes (userId param set), include estimates in suggestions

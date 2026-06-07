@@ -7,6 +7,7 @@ import { TfiMoney } from "react-icons/tfi";
 import { ComposedChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, LabelList } from "recharts";
 import { computeDatesFromPreset, type DatePreset } from "@/src/lib/datePresets";
 import { apiGet } from "@/src/lib/api";
+import { bizDateKey, bizToday, bizAddDays } from "@/src/lib/lib";
 import { usePushNotifications } from "@/src/lib/usePushNotifications";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import TomorrowWeatherWarning from "@/src/ui/components/TomorrowWeatherWarning";
@@ -238,17 +239,12 @@ function dispatchNavPlain(tab: string, opts?: NavOpts) {
   window.dispatchEvent(new CustomEvent(eventName, { detail: { tab, remount } }));
 }
 
-function bizDateKey(d: Date): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(d);
-}
+// Date helpers come from @/src/lib/lib (bizDateKey is imported below).
+// NEVER reinvent — see lib/lib.ts header for why.
 
 function sevenDaysAgoKey(): string {
-  // Today minus 6 days (so the range is 7 days inclusive of today), in Eastern Time.
-  const todayKey = bizDateKey(new Date());
-  const [y, m, d] = todayKey.split("-").map(Number);
-  const todayUtcNoon = new Date(Date.UTC(y, m - 1, d, 12));
-  todayUtcNoon.setUTCDate(todayUtcNoon.getUTCDate() - 6);
-  return todayUtcNoon.toISOString().slice(0, 10);
+  // Today minus 6 days (so the range is 7 days inclusive of today), in ET.
+  return bizAddDays(bizToday(), -6);
 }
 
 function fmtMoney(n: number): string {

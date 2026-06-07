@@ -20,7 +20,7 @@ import { MapLink } from "@/src/ui/helpers/Link";
 import { type Me } from "@/src/lib/types";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import { openEventSearch } from "@/src/lib/bus";
-import { fmtDate, fmtDateTime, bizDateKey } from "@/src/lib/lib";
+import { fmtDate, fmtDateTime, bizDateKey, bizTomorrow } from "@/src/lib/lib";
 import AddressAutocomplete from "@/src/ui/components/AddressAutocomplete";
 
 type RouteJob = {
@@ -97,11 +97,7 @@ function formatDuration(mins: number): string {
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
-function addDays(date: Date, n: number): Date {
-  const d = new Date(date);
-  d.setDate(d.getDate() + n);
-  return d;
-}
+// Date helpers come from @/src/lib/lib (bizTomorrow). NEVER reinvent.
 
 type Props = {
   userId?: string;
@@ -153,7 +149,7 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
 
   // Target day = the day to optimize a route for
   const todayStr = bizDateKey(new Date());
-  const tomorrowStr = bizDateKey(addDays(new Date(), 1));
+  const tomorrowStr = bizTomorrow();
   const [targetDate, setTargetDate] = usePersistedState("preview_targetDate", tomorrowStr);
 
   const dateBadge = targetDate === todayStr ? "Today" : targetDate === tomorrowStr ? "Tomorrow" : null;

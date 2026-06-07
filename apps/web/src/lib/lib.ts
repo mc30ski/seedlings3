@@ -5,6 +5,43 @@ export const sleep = (ms: number) =>
 
 const BIZ_TZ = "America/New_York";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DATE HELPERS — the SINGLE source of truth on the web side.
+//
+// Why this section exists:
+//   The business operates in Eastern Time. Browsers run in the user's local
+//   timezone. The default JS Date methods (`toISOString`, `.getDate()`,
+//   `.getMonth()`, etc.) all use UTC or local time, neither of which is the
+//   operator's calendar day near midnight. We've been bitten by this in many
+//   places (Exports tab history, PnL Report, Accounting tab, JobsTab filters,
+//   the Gusto CSV Pay Period End column, etc.) — every fix patches one site;
+//   the bug keeps coming back because each callsite reinvents the formatter.
+//
+// The rules:
+//   - Format a Date for display: `fmtDate(d)` / `fmtDateTime(d)` / `fmtDateWeekday(d)`
+//   - Get a YYYY-MM-DD key (date-input value, URL param, localStorage key,
+//     date-comparison key): `bizDateKey(d)`. Accepts a Date or an ISO string.
+//   - Today / tomorrow / yesterday as YYYY-MM-DD: `bizToday()` / `bizTomorrow()` /
+//     `bizYesterday()`.
+//   - This week's Monday / current month start / current year start as
+//     YYYY-MM-DD: `bizMondayOnOrBefore()` / `bizStartOfMonth()` / `bizStartOfYear()`.
+//   - Add days to a YYYY-MM-DD string (handles month/year rollover correctly):
+//     `bizAddDays(key, n)`.
+//
+// FORBIDDEN patterns (use the helpers above instead):
+//   • `d.toISOString().slice(0, 10)` — uses UTC, wrong calendar day near
+//     midnight ET (e.g. user picks 6/6, this emits 6/7).
+//   • `d.getFullYear()` / `d.getMonth()` / `d.getDate()` chains — use the
+//     browser's local time, which on a server build is UTC.
+//   • `d.setHours(0, 0, 0, 0)` — uses local time, wrong on most servers.
+//   • `new Date(YYYY, MM, DD)` — creates a Date at the browser's local
+//     midnight, which depends on the user's timezone. Use `bizDateKey()`
+//     or work in YYYY-MM-DD strings until you have a real timestamp.
+//
+// If a new helper would be useful, add it here. Don't reinvent date math
+// at the callsite — that's how the bug keeps coming back.
+// ─────────────────────────────────────────────────────────────────────────────
+
 /** Format a date as a short date string in business timezone (Eastern) */
 export function fmtDate(d: string | Date | null | undefined): string {
   if (!d) return "—";
@@ -29,11 +66,60 @@ export function fmtDateWeekday(d: string | Date | null | undefined, opts?: { yea
   });
 }
 
-/** Get the YYYY-MM-DD date string in business timezone */
+/** Get the YYYY-MM-DD date string in business timezone (Eastern). The
+ *  canonical key format for date inputs, URL params, localStorage keys,
+ *  and any string-based date comparison.
+ *
+ *  ALWAYS use this instead of `.toISOString().slice(0, 10)` or
+ *  `${y}-${m}-${d}` template literals built from `.getDate()` etc. */
 export function bizDateKey(d: string | Date): string {
-  const dt = new Date(d);
-  const parts = dt.toLocaleDateString("en-CA", { timeZone: BIZ_TZ }); // en-CA gives YYYY-MM-DD
-  return parts;
+  const dt = typeof d === "string" ? new Date(d) : d;
+  return dt.toLocaleDateString("en-CA", { timeZone: BIZ_TZ }); // en-CA gives YYYY-MM-DD
+}
+
+/** Today's date as YYYY-MM-DD in Eastern Time. */
+export function bizToday(): string {
+  return bizDateKey(new Date());
+}
+
+/** Tomorrow's date as YYYY-MM-DD in Eastern Time. */
+export function bizTomorrow(): string {
+  return bizDateKey(new Date(Date.now() + 86_400_000));
+}
+
+/** Yesterday's date as YYYY-MM-DD in Eastern Time. */
+export function bizYesterday(): string {
+  return bizDateKey(new Date(Date.now() - 86_400_000));
+}
+
+/** Add N days to a YYYY-MM-DD string, returning a new YYYY-MM-DD string.
+ *  Handles month/year boundary rollover via the JS Date constructor's
+ *  natural overflow semantics. Works in UTC noon to dodge DST edges. */
+export function bizAddDays(key: string, n: number): string {
+  const [y, m, d] = key.split("-").map(Number);
+  const utcNoon = new Date(Date.UTC(y, m - 1, d + n, 12));
+  return new Intl.DateTimeFormat("en-CA", { timeZone: BIZ_TZ }).format(utcNoon);
+}
+
+/** The Monday on-or-before today, as YYYY-MM-DD in Eastern Time. The
+ *  canonical week-start for the operator's calendar. */
+export function bizMondayOnOrBefore(): string {
+  const today = bizToday();
+  const [y, m, d] = today.split("-").map(Number);
+  const utcNoon = new Date(Date.UTC(y, m - 1, d, 12));
+  const dow = utcNoon.getUTCDay(); // 0 = Sun ... 6 = Sat
+  const daysBack = dow === 0 ? 6 : dow - 1;
+  return bizAddDays(today, -daysBack);
+}
+
+/** First day of the current month as YYYY-MM-DD in Eastern Time. */
+export function bizStartOfMonth(): string {
+  return `${bizToday().slice(0, 7)}-01`;
+}
+
+/** January 1st of the current year as YYYY-MM-DD in Eastern Time. */
+export function bizStartOfYear(): string {
+  return `${bizToday().slice(0, 4)}-01-01`;
 }
 
 /** Append " JOB" to client display names for display purposes. */

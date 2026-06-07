@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { prisma } from "../db/prisma";
 import { getDownloadUrl } from "../lib/r2";
 import { services } from "../services";
+import { etFormatDate } from "../lib/dates";
 
 export default async function publicRoutes(app: FastifyInstance) {
   // Public activity feed — no auth required
@@ -313,12 +314,12 @@ export default async function publicRoutes(app: FastifyInstance) {
 
     // Helper functions
     const esc = (s: string) => s.replace(/[\\;,]/g, (c) => `\\${c}`).replace(/\n/g, "\\n");
-    const fmtDateOnly = (d: Date) => {
-      const y = d.getFullYear();
-      const m = String(d.getMonth() + 1).padStart(2, "0");
-      const day = String(d.getDate()).padStart(2, "0");
-      return `${y}${m}${day}`;
-    };
+    // iCalendar VALUE=DATE format: YYYYMMDD in the operator's calendar
+    // timezone (ET). On Vercel the server is UTC, so `.getFullYear()` etc.
+    // would emit the wrong day near midnight ET — calendar subscribers
+    // would see events drift by one day in their app. Always go through
+    // `etFormatDate` which formats in America/New_York.
+    const fmtDateOnly = (d: Date) => etFormatDate(d).replace(/-/g, "");
     const fmtDt = (d: Date) => d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
     const prettyEnum = (s: string) => s.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c: string) => c.toUpperCase());
     const prettyStatus = (s: string) => s === "CLOSED" ? "Completed" : prettyEnum(s);

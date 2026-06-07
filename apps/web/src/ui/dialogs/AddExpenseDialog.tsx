@@ -13,6 +13,7 @@ import {
   createListCollection,
 } from "@chakra-ui/react";
 import { apiGet, apiPost } from "@/src/lib/api";
+import { bizToday } from "@/src/lib/lib";
 import {
   getErrorMessage,
   publishInlineMessage,
@@ -25,11 +26,7 @@ import { useExpenseCategories } from "@/src/lib/useExpenseCategories";
 // job purchases almost always land there.
 const DEFAULT_CATEGORY = "Supplies";
 
-function todayStr(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
+// Today as YYYY-MM-DD in ET via the shared helper. See lib/lib.ts.
 
 type Props = {
   open: boolean;
@@ -71,7 +68,7 @@ export default function AddExpenseDialog({
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState(DEFAULT_CATEGORY);
   const [vendor, setVendor] = useState("");
-  const [date, setDate] = useState(todayStr());
+  const [date, setDate] = useState(bizToday());
 
   const [supplies, setSupplies] = useState<SupplyOption[]>([]);
   const [pickedSupplyId, setPickedSupplyId] = useState("");
@@ -103,7 +100,7 @@ export default function AddExpenseDialog({
     setDescription("");
     setCategory(DEFAULT_CATEGORY);
     setVendor("");
-    setDate(todayStr());
+    setDate(bizToday());
     setPickedSupplyId("");
     setPickedQty("");
   }

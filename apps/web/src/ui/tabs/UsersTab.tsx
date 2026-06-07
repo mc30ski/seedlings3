@@ -18,7 +18,7 @@ import {
 } from "@chakra-ui/react";
 import { ChevronDown, ChevronRight, Filter, Info, RefreshCw, Shield, Tag, X } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
-import { prettyStatus, equipmentStatusColor, fmtDate } from "@/src/lib/lib";
+import { prettyStatus, equipmentStatusColor, fmtDate, bizToday, bizAddDays } from "@/src/lib/lib";
 import { Role } from "@/src/lib/types";
 import { openEventSearch } from "@/src/lib/bus";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
@@ -478,10 +478,8 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
     // the input min/max bounds the picker, but a user could type past it
     // in some browsers).
     if (until) {
-      const todayIso = new Date().toISOString().slice(0, 10);
-      const maxDate = new Date();
-      maxDate.setDate(maxDate.getDate() + 90);
-      const maxIso = maxDate.toISOString().slice(0, 10);
+      const todayIso = bizToday();
+      const maxIso = bizAddDays(todayIso, 90);
       if (until < todayIso) {
         publishInlineMessage({ type: "ERROR", text: "End date must be today or later." });
         return;
@@ -1042,11 +1040,7 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
                           // days out via the date input's min/max.
                           const defaultDate = guaranteedPayoutActive && u.guaranteedPayoutUntil
                             ? u.guaranteedPayoutUntil.slice(0, 10)
-                            : (() => {
-                                const d = new Date();
-                                d.setDate(d.getDate() + 60);
-                                return d.toISOString().slice(0, 10);
-                              })();
+                            : bizAddDays(bizToday(), 60);
                           setGuaranteedPayoutTarget({
                             user: u,
                             mode: guaranteedPayoutActive ? "manage" : "start",
@@ -1385,10 +1379,8 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
                   // Window bounds for the picker: today (earliest allowed
                   // end date) through today + 90 days (maximum onboarding
                   // length). Operator decides anywhere inside.
-                  const todayIso = new Date().toISOString().slice(0, 10);
-                  const maxDateObj = new Date();
-                  maxDateObj.setDate(maxDateObj.getDate() + 90);
-                  const maxIso = maxDateObj.toISOString().slice(0, 10);
+                  const todayIso = bizToday();
+                  const maxIso = bizAddDays(todayIso, 90);
                   return (
                     <VStack align="stretch" gap={3}>
                       <Box p={3} bg="gray.50" borderWidth="1px" borderColor="gray.200" rounded="md">

@@ -61,6 +61,7 @@ import {
 } from "@chakra-ui/react";
 import { ChevronDown, ChevronUp, Eye, Info, Paperclip, Pencil, Plus, Repeat, Search, Trash2, X } from "lucide-react";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
+import { bizToday, bizAddDays, bizStartOfMonth, bizStartOfYear } from "@/src/lib/lib";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -224,14 +225,8 @@ function fmtDate(d: string): string {
   return new Date(d).toLocaleDateString();
 }
 
-function todayStr(): string {
-  return ymd(new Date());
-}
-
-function ymd(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
+// Date helpers come from @/src/lib/lib (bizDateKey, bizToday, bizAddDays,
+// bizStartOfMonth, bizStartOfYear). NEVER reinvent — see lib/lib.ts.
 
 // Backward-looking, calendar-accurate ranges for the summary timeframe — the
 // shared datePresets lib is forward-looking (built for job scheduling), wrong
@@ -252,27 +247,26 @@ const EXPENSE_PRESETS: { key: ExpensePreset; label: string }[] = [
 ];
 
 function rangeForExpensePreset(p: ExpensePreset): { from: string; to: string } {
-  const now = new Date();
-  const today = ymd(now);
+  const today = bizToday();
   switch (p) {
-    case "last30": {
-      const from = new Date(now);
-      from.setDate(from.getDate() - 30);
-      return { from: ymd(from), to: today };
-    }
+    case "last30":
+      return { from: bizAddDays(today, -30), to: today };
     case "month":
-      return { from: ymd(new Date(now.getFullYear(), now.getMonth(), 1)), to: today };
+      return { from: bizStartOfMonth(), to: today };
     case "quarter": {
-      const q = Math.floor(now.getMonth() / 3);
-      return { from: ymd(new Date(now.getFullYear(), q * 3, 1)), to: today };
+      // Quarter start = first of the month for quarters: Jan (Q1), Apr (Q2),
+      // Jul (Q3), Oct (Q4). Compute against ET-today's month.
+      const [y, m] = today.split("-").map(Number);
+      const q = Math.floor((m - 1) / 3);
+      const qStartMonth = q * 3 + 1;
+      return { from: `${y}-${String(qStartMonth).padStart(2, "0")}-01`, to: today };
     }
     case "year":
-      return { from: ymd(new Date(now.getFullYear(), 0, 1)), to: today };
-    case "lastYear":
-      return {
-        from: ymd(new Date(now.getFullYear() - 1, 0, 1)),
-        to: ymd(new Date(now.getFullYear() - 1, 11, 31)),
-      };
+      return { from: bizStartOfYear(), to: today };
+    case "lastYear": {
+      const [y] = today.split("-").map(Number);
+      return { from: `${y - 1}-01-01`, to: `${y - 1}-12-31` };
+    }
     case "all":
     default:
       return { from: "", to: "" };
@@ -439,7 +433,7 @@ export default function BusinessExpensesTab() {
     // If the user is filtered to a specific entry type, default new entries
     // to that type — they're almost certainly adding more of the same.
     setFType(filterType || "EXPENSE");
-    setFDate(todayStr());
+    setFDate(bizToday());
     setFCost("");
     setFDescription("");
     setFCategory("");
