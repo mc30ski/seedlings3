@@ -1387,7 +1387,15 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 nextDate: string;
                 adminHidden: boolean;
               };
-          const fr = await apiGet<UpcomingApiRow[]>("/api/admin/timeline/upcoming?includeDocs=1");
+          // Super uses /super/ — includes adminHidden Timeline activities
+          // and documents (which only super admins can create/view). Admin
+          // uses /admin/ — the same endpoint with adminHidden filtered out
+          // server-side. The title-bar alert count at pages/index.tsx
+          // already follows this same split; keep both surfaces in sync.
+          const timelineEndpoint = isSuper
+            ? "/api/super/timeline/upcoming?includeDocs=1"
+            : "/api/admin/timeline/upcoming?includeDocs=1";
+          const fr = await apiGet<UpcomingApiRow[]>(timelineEndpoint);
           if (seq !== loadSeqRef.current) return;
           const rows: ForeignRow[] = (Array.isArray(fr) ? fr : []).map((r) =>
             r.kind === "event"
