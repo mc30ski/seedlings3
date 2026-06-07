@@ -115,6 +115,13 @@ export default function TimelineEventDialog({ open, onOpenChange, event, onSaved
         await apiPost("/api/super/timeline", payload);
         publishInlineMessage({ type: "SUCCESS", text: "Activity created." });
       }
+      // Tell every listening surface that the timeline changed — the
+      // JobsTab mixes Timeline activities into its admin feed via
+      // /api/admin/timeline/upcoming and needs to refetch, the title-bar
+      // alert count needs to refresh, etc. Without this dispatch, the
+      // new activity is invisible everywhere except this dialog's parent
+      // until a hard reload.
+      window.dispatchEvent(new CustomEvent("seedlings3:timeline-changed"));
       onSaved();
       onOpenChange(false);
     } catch (err) {
