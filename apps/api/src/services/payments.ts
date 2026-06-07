@@ -3,7 +3,7 @@ import { prisma } from "../db/prisma";
 import { JobOccurrenceStatus, type WorkerType } from "@prisma/client";
 import { ServiceError } from "../lib/errors";
 import type { ServicesPayments } from "../types/services";
-import { etMidnight, etEndOfDay } from "../lib/dates";
+import { etMidnight, etEndOfDay, etFormatDate } from "../lib/dates";
 import { writeAudit } from "../lib/auditLogger";
 import { AUDIT } from "../lib/auditActions";
 import { generateLedgerId } from "../lib/ledgerId";
@@ -498,7 +498,7 @@ export const payments: ServicesPayments = {
           if (existing) {
             throw new ServiceError(
               "ALREADY_PAID",
-              `This occurrence was already paid ($${existing.amountPaid.toFixed(2)} on ${existing.createdAt.toISOString().slice(0, 10)}). Refresh to see the recorded payment.`,
+              `This occurrence was already paid ($${existing.amountPaid.toFixed(2)} on ${etFormatDate(existing.createdAt)}). Refresh to see the recorded payment.`,
               409
             );
           }
@@ -517,7 +517,7 @@ export const payments: ServicesPayments = {
         throw new ServiceError(
           existingPayment.confirmed ? "ALREADY_PAID" : "PAYMENT_EXISTS",
           existingPayment.confirmed
-            ? `This occurrence was already paid ($${existingPayment.amountPaid.toFixed(2)} on ${existingPayment.createdAt.toISOString().slice(0, 10)}). Refresh to see the recorded payment.`
+            ? `This occurrence was already paid ($${existingPayment.amountPaid.toFixed(2)} on ${etFormatDate(existingPayment.createdAt)}). Refresh to see the recorded payment.`
             : `A payment is already pending admin approval. Reject it from the Pending Approvals queue before recording a new one.`,
           409,
         );

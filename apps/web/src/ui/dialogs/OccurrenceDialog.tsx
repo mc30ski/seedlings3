@@ -34,15 +34,12 @@ const workflowItems = [
   { label: "One-Off Job", value: "ONE_OFF" },
 ];
 const workflowCollection = createListCollection({ items: workflowItems });
-import { prettyStatus, bizDateKey } from "@/src/lib/lib";
+import { prettyStatus, bizDateKey, bizToLocalInputValue, bizParseLocalInputValue } from "@/src/lib/lib";
 
 function toDateInput(iso: string | null | undefined): string {
   if (!iso) return "";
-  const d = new Date(iso);
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  // ET-anchored — see lib/lib.ts header on bizDateKey for the rationale.
+  return bizDateKey(iso);
 }
 
 type Props = {
@@ -259,12 +256,11 @@ export default function OccurrenceDialog({
   const [workers, setWorkers] = useState<WorkerItem[]>([]);
   const [selectedAssignees, setSelectedAssignees] = useState<Set<string>>(new Set());
 
+  // ET-anchored — see bizToLocalInputValue / bizParseLocalInputValue in
+  // lib/lib.ts for the rationale. Browser-local round-tripping makes the
+  // displayed and submitted times disagree for any operator outside ET.
   function toDateTimeLocal(iso: string | null | undefined): string {
-    if (!iso) return "";
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return "";
-    const pad = (n: number) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return iso ? bizToLocalInputValue(iso) : "";
   }
 
   // Initialize form every time dialog opens
@@ -480,9 +476,12 @@ export default function OccurrenceDialog({
         if (status) body.status = status;
         if (kind) body.kind = kind;
         if (isAdmin) {
-          // Only send startedAt/completedAt if they differ from defaults to avoid accidental overwrite
-          const newStartedAt = startedAt ? new Date(startedAt).toISOString() : null;
-          const newCompletedAt = completedAt ? new Date(completedAt).toISOString() : null;
+          // Only send startedAt/completedAt if they differ from defaults to avoid accidental overwrite.
+          // Parse the datetime-local inputs as ET wall-clock (see
+          // bizParseLocalInputValue) so the round-trip through the
+          // ET-displayed input is consistent.
+          const newStartedAt = startedAt ? bizParseLocalInputValue(startedAt) : null;
+          const newCompletedAt = completedAt ? bizParseLocalInputValue(completedAt) : null;
           const origStartedAt = defaultStartedAt ? new Date(defaultStartedAt).toISOString() : null;
           const origCompletedAt = defaultCompletedAt ? new Date(defaultCompletedAt).toISOString() : null;
           if (newStartedAt !== origStartedAt) body.startedAt = newStartedAt;

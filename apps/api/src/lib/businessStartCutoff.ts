@@ -32,6 +32,7 @@
 
 import type { FastifyRequest } from "fastify";
 import { prisma } from "../db/prisma";
+import { etMidnight } from "./dates";
 
 export const BUSINESS_START_DATE_KEY = "BUSINESS_START_DATE";
 export const BUSINESS_START_DATE_ENABLED_KEY = "BUSINESS_START_DATE_ENABLED";
@@ -121,11 +122,13 @@ export async function resolveCutoff(req: FastifyRequest): Promise<Date | null> {
 function parseCutoffValue(raw: string): Date | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
-  // YYYY-MM-DD → anchor on local midnight so a row created at 23:59 the day
-  // BEFORE the cutoff is correctly excluded.
+  // YYYY-MM-DD → anchor on ET midnight (NOT server-local) so a row
+  // created at 23:59 ET the day BEFORE the cutoff is correctly excluded.
+  // The old `new Date(y, m-1, d)` constructor used server-local time =
+  // UTC on Vercel, which mis-anchored the cutoff by 4-5 hours and let
+  // rows from before the official start date slip into reports.
   if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-    const [y, m, d] = trimmed.split("-").map(Number);
-    const dt = new Date(y, m - 1, d, 0, 0, 0, 0);
+    const dt = etMidnight(trimmed);
     return Number.isFinite(dt.getTime()) ? dt : null;
   }
   const dt = new Date(trimmed);

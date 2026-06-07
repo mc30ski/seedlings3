@@ -22,7 +22,7 @@ import {
 import type { ServicesJobs } from "../types/services";
 import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
-import { etMidnight, etEndOfDay } from "../lib/dates";
+import { etMidnight, etEndOfDay, etToday, etFormatDate, etDaysBetween } from "../lib/dates";
 import { ServiceError } from "../lib/errors";
 import {
   occurrenceWorkDateCutoff,
@@ -1398,6 +1398,32 @@ export const jobs: ServicesJobs = {
           }
           await tx.paymentSplit.deleteMany({ where: { paymentId: existingPayment.id } });
           await tx.payment.delete({ where: { id: existingPayment.id } });
+          // DESIGN NOTE — we intentionally DO NOT delete any
+          // GuaranteedPayoutAdvance rows tied to this occurrence here,
+          // even though they reference a payment we just deleted. The
+          // advance was created at a prior export run; in the normal
+          // flow the operator has already uploaded that export to Gusto
+          // and the contractor has been actually paid the advanced
+          // amount. Keeping the advance row preserves that paid-state:
+          // when the operator re-records the payment after revert and
+          // the new splits are created, fetchAdvanceFlagsByUser stamps
+          // `guaranteedPayoutPaidAt` on the matching split — preventing
+          // a double-pay on the next payroll cycle.
+          //
+          // EDGE CASE — if the operator reverted before uploading the
+          // earlier export's CSV to Gusto, the contractor was never
+          // actually paid the advance amount. In that case the orphan
+          // advance silently suppresses the new split from the next
+          // payroll, under-paying the contractor.
+          //
+          // Recovery (rare): manually DELETE the GuaranteedPayoutAdvance
+          // row for (occurrenceId, userId) before approving the new
+          // payment, so the new split lands unflagged in the next
+          // Gusto Contractors CSV.
+          //
+          // Auto-deleting here was considered and rejected because the
+          // common case (operator already paid Gusto) would cause a
+          // double-pay that's worse than the rare under-pay above.
         }
       }
 
@@ -1871,11 +1897,17 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async listMyOccurrences(userId) {
+  async listMyOccurrences(userId, options?: { isAdmin?: boolean }) {
     return prisma.jobOccurrence.findMany({
       where: {
         status: { in: [JobOccurrenceStatus.SCHEDULED, JobOccurrenceStatus.IN_PROGRESS] },
         assignees: { some: { userId } },
+        // Timeline events (workflow=EVENT) are admin-only. Non-admin
+        // workers must never see them even if they were somehow assigned
+        // — same gate as the other /worker/* endpoints. The caller
+        // (routes/worker.ts) passes isAdmin based on the requesting
+        // user's effective roles.
+        ...(options?.isAdmin ? {} : { workflow: { not: OccurrenceWorkflow.EVENT } }),
       },
       include: {
         job: {
@@ -1941,7 +1973,12 @@ export const jobs: ServicesJobs = {
       where: {
         status: JobOccurrenceStatus.SCHEDULED,
         assignees: { none: {} },
-        workflow: { not: OccurrenceWorkflow.TASK },
+        // Timeline events (workflow=EVENT) and tasks are NOT claimable
+        // by workers. Events are admin-only; tasks are non-job items.
+        // Only STANDARD and ONE_OFF (and possibly PROPOSAL_SUBMITTED in
+        // some flows) are claimable. Keep this narrow rather than open
+        // so future workflow additions default to "not claimable".
+        workflow: { in: [OccurrenceWorkflow.STANDARD, OccurrenceWorkflow.ONE_OFF] },
       },
       include: {
         job: {
@@ -2297,8 +2334,8 @@ export const jobs: ServicesJobs = {
       {
         const user = await tx.user.findUniqueOrThrow({ where: { id: currentUserId } });
         if (user.workerType === "CONTRACTOR" && occ.startAt) {
-          const now = new Date();
-          const daysAhead = Math.ceil((occ.startAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+          // ET calendar-day diff (DST-safe) — contractor lockout rule.
+          const daysAhead = etDaysBetween(etToday(), etFormatDate(occ.startAt));
           if (daysAhead > 2) {
             throw new ServiceError("CONTRACTOR_TOO_FAR", "Contractors can only claim jobs within 2 days. This job is " + daysAhead + " days out.", 403);
           }

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Box, HStack, Text } from "@chakra-ui/react";
 import { Cloud, CloudRain, Droplets, Sun, CloudSun, Snowflake, CloudLightning, Wind } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
+import { bizToday, bizTomorrow, fmtDateOpts } from "@/src/lib/lib";
 
 type DayForecast = {
   date: string;
@@ -44,13 +45,13 @@ function WeatherIcon({ icon, size = 14 }: { icon: string; size?: number }) {
 
 function dayLabel(date: string, label?: string): string {
   if (label) return label;
-  const d = new Date(date + "T12:00:00");
-  const today = new Date();
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  if (d.toDateString() === today.toDateString()) return "Today";
-  if (d.toDateString() === tomorrow.toDateString()) return "Tmrw";
-  return d.toLocaleDateString(undefined, { weekday: "short" });
+  // `date` is a YYYY-MM-DD string. Compare directly against ET today
+  // and tomorrow keys — string equality on day keys is unambiguous and
+  // doesn't drift across midnight. The weekday label needs an instant,
+  // so anchor at noon UTC on the key for a stable ET-day formatter.
+  if (date === bizToday()) return "Today";
+  if (date === bizTomorrow()) return "Tmrw";
+  return fmtDateOpts(date + "T12:00:00Z", { weekday: "short" });
 }
 
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);

@@ -7,7 +7,7 @@ import { TfiMoney } from "react-icons/tfi";
 import { ComposedChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, LabelList } from "recharts";
 import { computeDatesFromPreset, type DatePreset } from "@/src/lib/datePresets";
 import { apiGet } from "@/src/lib/api";
-import { bizDateKey, bizToday, bizAddDays } from "@/src/lib/lib";
+import { bizDateKey, bizToday, bizTomorrow, bizAddDays, bizHour, fmtDateOpts, fmtTimeOpts } from "@/src/lib/lib";
 import { usePushNotifications } from "@/src/lib/usePushNotifications";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import TomorrowWeatherWarning from "@/src/ui/components/TomorrowWeatherWarning";
@@ -169,7 +169,7 @@ function navigateWithFilter(
     // new day. It reads the marker as a RAW localStorage key (no seedlings_ prefix), so
     // we write it raw too — otherwise the reset still fires and clobbers what we just
     // wrote, leaving the user with default filters and "everything" in the feed.
-    try { localStorage.setItem(`${pfx}_lastUsedDate`, new Date().toISOString().slice(0, 10)); } catch {}
+    try { localStorage.setItem(`${pfx}_lastUsedDate`, bizToday()); } catch {}
     if (adminMode) {
       // Worker filter for destination AdminJobsTab: subset list, single worker, or empty.
       setLS(`adminjobs_workers`, destWorkerIds);
@@ -392,11 +392,7 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
   }, [viewAsUserId, aggregate, subsetKey]);
 
   // Hour in Eastern Time (the business timezone) — drives the hero CTA framing.
-  const etHour = (() => {
-    try {
-      return parseInt(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false }).format(new Date()), 10);
-    } catch { return new Date().getHours(); }
-  })();
+  const etHour = bizHour();
   const isEvening = etHour >= 15;       // 3pm+: pivot toward "plan tomorrow"
   const isLateEvening = etHour >= 21;   // 9pm+: calm mode, no aggressive CTA
 
@@ -635,10 +631,7 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
                       // typically a sign of a forgotten "complete" — the
                       // status dot stays accurate either way.
                       const dateLabel = occ.startAt
-                        ? new Date(occ.startAt).toLocaleDateString(undefined, {
-                            month: "short",
-                            day: "numeric",
-                          })
+                        ? fmtDateOpts(occ.startAt, { month: "short", day: "numeric" })
                         : "";
                       return (
                         <HStack
@@ -735,15 +728,9 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
                       // wrapped up when. Falls back to the scheduled date
                       // when completedAt is somehow missing.
                       const timeLabel = occ.completedAt
-                        ? new Date(occ.completedAt).toLocaleTimeString(undefined, {
-                            hour: "numeric",
-                            minute: "2-digit",
-                          })
+                        ? fmtTimeOpts(occ.completedAt, { hour: "numeric", minute: "2-digit" })
                         : occ.startAt
-                          ? new Date(occ.startAt).toLocaleDateString(undefined, {
-                              month: "short",
-                              day: "numeric",
-                            })
+                          ? fmtDateOpts(occ.startAt, { month: "short", day: "numeric" })
                           : "";
                       // Dot color reflects post-completion state at a
                       // glance: blue = awaiting payment, gray = closed
@@ -934,9 +921,7 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
                         onClick={(e: any) => {
                           e.stopPropagation();
                           // Navigate to JobsTab filtered to tomorrow's unclaimed jobs.
-                          const today = new Date();
-                          const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
-                          const tomorrowKey = bizDateKey(tomorrow);
+                          const tomorrowKey = bizTomorrow();
                           navTo("jobs", { status: "UNCLAIMED", dateFrom: tomorrowKey, dateTo: tomorrowKey });
                         }}
                       >

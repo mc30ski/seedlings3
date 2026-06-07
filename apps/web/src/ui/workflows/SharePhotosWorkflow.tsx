@@ -54,8 +54,10 @@ export default function SharePhotosWorkflow({ active, onDone }: Props) {
   const [sharing, setSharing] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
-  // Date range — default to last 7 days
-  const defaults = useMemo(() => computeDatesFromPreset("lastWeek"), []);
+  // Date range — default to last 7 days. Inline (not useMemo with [])
+  // so the preset stays current across midnight ET if the workflow is
+  // left open.
+  const defaults = computeDatesFromPreset("lastWeek");
   const [dateFrom, setDateFrom] = useState(defaults.from);
   const [dateTo, setDateTo] = useState(defaults.to);
 

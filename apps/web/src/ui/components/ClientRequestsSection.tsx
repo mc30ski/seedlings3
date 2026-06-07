@@ -33,6 +33,7 @@ import {
 } from "@chakra-ui/react";
 import { Calendar, Mail, Phone, RefreshCw, SkipForward, X } from "lucide-react";
 import { apiGet, apiPatch, apiPost } from "@/src/lib/api";
+import { bizDateKey, bizToday, fmtDateOpts } from "@/src/lib/lib";
 import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
 import {
   publishInlineMessage,
@@ -89,7 +90,7 @@ type ChangeRequestRow = {
 function fmtDateTime(iso: string | null): string {
   if (!iso) return "—";
   try {
-    return new Date(iso).toLocaleString(undefined, {
+    return fmtDateOpts(iso, {
       weekday: "short",
       month: "short",
       day: "numeric",
@@ -106,7 +107,7 @@ function fmtDateTime(iso: string | null): string {
 function fmtDateOnly(iso: string | null): string {
   if (!iso) return "—";
   try {
-    return new Date(iso).toLocaleDateString(undefined, {
+    return fmtDateOpts(iso, {
       weekday: "short",
       month: "short",
       day: "numeric",
@@ -249,9 +250,7 @@ export default function ClientRequestsSection() {
     // current scheduled date.
     const source = row.proposedStartAt ?? row.occurrence.startAt;
     if (source) {
-      const d = new Date(source);
-      const pad = (n: number) => String(n).padStart(2, "0");
-      setRescheduleDate(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+      setRescheduleDate(bizDateKey(source));
     } else {
       setRescheduleDate("");
     }
@@ -484,11 +483,10 @@ export default function ClientRequestsSection() {
               </Dialog.Header>
               <Dialog.Body>
                 {reschedulingRow && (() => {
-                  // Compute min=today (server is lenient about same-day;
-                  // browser min stops a stray past-date pick).
-                  const today = new Date();
-                  const pad = (n: number) => String(n).padStart(2, "0");
-                  const minDate = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+                  // ET-anchored "today" so a user in a different timezone
+                  // doesn't get a min that disagrees with the operator's
+                  // calendar.
+                  const minDate = bizToday();
                   const isPast = !!rescheduleDate && rescheduleDate < minDate;
                   return (
                     <VStack align="stretch" gap={3}>
@@ -540,12 +538,7 @@ export default function ClientRequestsSection() {
                     loading={rescheduleBusy}
                     disabled={
                       !rescheduleDate ||
-                      (() => {
-                        const today = new Date();
-                        const pad = (n: number) => String(n).padStart(2, "0");
-                        const minDate = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
-                        return rescheduleDate < minDate;
-                      })()
+                      rescheduleDate < bizToday()
                     }
                   >
                     Save & Resolve

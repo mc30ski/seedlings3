@@ -17,6 +17,7 @@ import Head from "next/head";
 import { useRouter } from "next/router";
 import { useAuth } from "@clerk/nextjs";
 import { useBranding } from "@/src/lib/useBranding";
+import { fmtDateOpts, bizMonth } from "@/src/lib/lib";
 import {
   Badge,
   Box,
@@ -79,7 +80,7 @@ type MethodKey = string;
 function fmtDate(iso: string | null): string {
   if (!iso) return "";
   try {
-    return new Date(iso).toLocaleDateString(undefined, {
+    return fmtDateOpts(iso, {
       weekday: "short",
       year: "numeric",
       month: "long",
@@ -697,8 +698,9 @@ function resolveBrandIcon(): string {
     if (override === "fall") return "/seedlings-icon-fall.png";
     if (override === "spring") return "/seedlings-icon.png";
   } catch { /* ignore — fall through to month-based default */ }
-  const month = new Date().getMonth();
-  return (month >= 2 && month <= 7) ? "/seedlings-icon.png" : "/seedlings-icon-fall.png";
+  // ET-anchored month — mirrors lib/season.ts.
+  const month = bizMonth();
+  return (month >= 3 && month <= 8) ? "/seedlings-icon.png" : "/seedlings-icon-fall.png";
 }
 
 function PageShell({ children }: { children: React.ReactNode }) {

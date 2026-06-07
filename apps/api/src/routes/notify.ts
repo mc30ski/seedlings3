@@ -3,6 +3,7 @@ import { Role as RoleVal, AuditScope, AuditVerb } from "@prisma/client";
 import { prisma } from "../db/prisma";
 import { notifyWorker } from "../lib/notifications";
 import { writeAudit } from "../lib/auditLogger";
+import { etMidnight, etToday } from "../lib/dates";
 import { AUDIT } from "../lib/auditActions";
 
 /**
@@ -89,7 +90,10 @@ export default async function notifyRoutes(app: FastifyInstance) {
     if (!me) return reply.code(401).send({ error: "Unauthorized" });
 
     // Rate limit — count today's NOTIFICATION.SENT entries for this actor.
-    const dayStart = new Date(); dayStart.setUTCHours(0, 0, 0, 0);
+    // ET-anchored so the daily cap resets at ET midnight (not UTC midnight,
+    // which is 7-8 PM ET — broadcasts late in the operator's evening would
+    // otherwise count toward the wrong day's limit).
+    const dayStart = etMidnight(etToday());
     const sentToday = await prisma.auditEvent.count({
       where: {
         scope: AuditScope.NOTIFICATION,
@@ -259,3 +263,5 @@ export default async function notifyRoutes(app: FastifyInstance) {
     return { items, total, page, pageSize };
   });
 }
+
+

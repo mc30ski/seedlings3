@@ -9,6 +9,8 @@ import {
   etToday,
   etAddDays,
   etFormatDate,
+  etFormatDateOpts,
+  etDaysBetween,
   etSundayOnOrBefore,
   etStartOfMonth,
   etStartOfYear,
@@ -239,7 +241,9 @@ export default async function adminRoutes(app: FastifyInstance) {
   // renders for super.
   app.get("/admin/users/guaranteed-payout-summary", superGuard, async () => {
     const now = new Date();
-    const inSevenDays = new Date(now.getTime() + 7 * 86400000);
+    // ET-anchored 7-day window. The raw `now + 7 * 86_400_000` pattern
+    // drifts at DST; etMidnight(etAddDays(..., 7)) is exact.
+    const inSevenDays = etMidnight(etAddDays(etToday(), 7));
     const [active, expiringSoon] = await Promise.all([
       prisma.user.count({
         where: {
@@ -328,7 +332,9 @@ export default async function adminRoutes(app: FastifyInstance) {
       // period that was never activated) or a multi-year "onboarding"
       // window that undermines the defensibility framing.
       const nowMs = Date.now();
-      const ninetyDaysMs = nowMs + 90 * 86400000;
+      // ET-anchored 90-day window. Computing via `nowMs + 90 * 86_400_000`
+      // drifts at DST; etMidnight(etAddDays(..., 90)) is exact.
+      const ninetyDaysMs = etMidnight(etAddDays(etToday(), 90)).getTime();
       if (nextUntil.getTime() < nowMs) {
         throw app.httpErrors.badRequest("until must be today or later (ET).");
       }
@@ -378,6 +384,33 @@ export default async function adminRoutes(app: FastifyInstance) {
       const prevHistory = Array.isArray(before.guaranteedPayoutHistory)
         ? (before.guaranteedPayoutHistory as any[])
         : [];
+
+      // Defensive validation: refuse to append a history entry that
+      // overlaps with an existing one. Overlaps shouldn't happen in
+      // normal flow (each period either ends naturally via cron or
+      // gets pushed cleanly to history on early-end), but a buggy
+      // code path or hand-edited DB JSON could produce them.
+      // wasUserInGuaranteedPayoutAt iterates history and returns true
+      // on any overlap, so silently allowing them would only show up
+      // later as confusing audit trails.
+      if (historyAppend.length > 0) {
+        const newRange = historyAppend[0];
+        const newStart = new Date(newRange.startedAt).getTime();
+        const newEnd = new Date(newRange.endedAt).getTime();
+        for (const h of prevHistory) {
+          if (!h?.startedAt || !h?.endedAt) continue;
+          const s = new Date(h.startedAt).getTime();
+          const e = new Date(h.endedAt).getTime();
+          if (!Number.isFinite(s) || !Number.isFinite(e)) continue;
+          // Standard interval-overlap: [s, e] overlaps [newStart, newEnd]
+          // iff s <= newEnd AND newStart <= e.
+          if (s <= newEnd && newStart <= e) {
+            throw app.httpErrors.conflict(
+              `Cannot end guaranteed payout period — the active period (${newRange.startedAt} → ${newRange.endedAt}) overlaps with an existing history entry (${h.startedAt} → ${h.endedAt}). Inspect User.guaranteedPayoutHistory directly to resolve before retrying.`,
+            );
+          }
+        }
+      }
 
       await tx.user.update({
         where: { id: targetId },
@@ -2882,9 +2915,10 @@ Respond ONLY with valid JSON in this exact format:
     }
     // Inclusive day count for the window; minimum 1 to avoid divide-by-zero
     // on same-day ranges. Used as the denominator for utilization %.
+    // etDaysBetween is DST-safe (string math); +1 makes the count inclusive.
     const windowDays = Math.max(
       1,
-      Math.round((dateTo.getTime() - dateFrom.getTime()) / 86_400_000) + 1,
+      etDaysBetween(etFormatDate(dateFrom), etFormatDate(dateTo)) + 1,
     );
     const usedEquipmentIds = new Set(byEquipment.keys());
     const equipmentLeaderboard = [...byEquipment.values()]
@@ -3795,6 +3829,9 @@ Respond ONLY with valid JSON in this exact format:
           const a = group[i];
           const b = group[i + 1];
           if (!a.startAt || !b.startAt) continue;
+          // date-handling-allow: elapsed-time — comparing two job startAt
+          // instants for "scheduled within 2 days of each other". A ≤1-hour
+          // DST drift on the threshold doesn't affect the audit result.
           const diffDays = Math.abs(b.startAt.getTime() - a.startAt.getTime()) / 86400000;
           if (diffDays <= 2) {
             const clientName = (a.job?.property as any)?.client?.displayName ?? "";
@@ -3812,8 +3849,10 @@ Respond ONLY with valid JSON in this exact format:
 
     // 5. Missing next repeating occurrence (completed in last 2 months, no SCHEDULED sibling)
     if (checks.includes("missing_next_occurrence")) {
-      const twoMonthsAgo = new Date();
-      twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+      // ET-anchored ~60-day window. setMonth(-2) on a UTC Date does
+      // calendar-month subtraction (March 31 → February 31 = March 3),
+      // an anti-pattern for a fixed-duration window.
+      const twoMonthsAgo = etMidnight(etAddDays(etToday(), -60));
       const closed = await prisma.jobOccurrence.findMany({
         where: {
           status: { in: ["CLOSED", "COMPLETED"] },
@@ -4218,9 +4257,12 @@ Respond ONLY with valid JSON in this exact format:
   // keep nagging us forever; the alert helps us follow up while there's
   // still a reasonable window, then lets it fall off.
   app.get("/admin/estimates/stale-followup-count", adminGuard, async (_req: any) => {
-    const now = new Date();
-    const oneWeekAgo = new Date(now); oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-    const fourWeeksAgo = new Date(now); fourWeeksAgo.setDate(fourWeeksAgo.getDate() - 28);
+    // ET-anchored: setDate() on a UTC Date drops the window by ~4-5 hours
+    // at the ET-day boundary, which can include/exclude an estimate
+    // whose proposal was sent right at the cutoff.
+    const todayKey = etToday();
+    const oneWeekAgo = etMidnight(etAddDays(todayKey, -7));
+    const fourWeeksAgo = etMidnight(etAddDays(todayKey, -28));
     const count = await prisma.jobOccurrence.count({
       where: {
         workflow: "ESTIMATE",
@@ -4886,7 +4928,8 @@ Respond ONLY with valid JSON in this exact format:
         // copy as-is. `type` carries through so the dialog opens in the
         // right mode (expense vs equity).
         nextExpectedDate: etFormatDate(expected),
-        overdueDays: Math.max(0, Math.floor((now.getTime() - expected.getTime()) / 86400000)),
+        // ET calendar-day diff (DST-safe).
+        overdueDays: Math.max(0, etDaysBetween(etFormatDate(expected), etFormatDate(now))),
         recurrence: latest.recurrence,
         type: latest.type,
         prefill: {
@@ -5096,13 +5139,34 @@ Respond ONLY with valid JSON in this exact format:
     const lines: string[] = [];
     const hr = "=".repeat(80);
     const sr = "-".repeat(60);
+    // ET-anchored display formatters routed through the canonical
+    // etFormatDateOpts helper. Inline Intl.DateTimeFormat is forbidden
+    // (see lib/dates.ts header) — using the helper means a TZ change
+    // would be a one-line edit, not a sweep.
     const date = (d: Date | string | null | undefined) =>
-      d ? new Date(d).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "—";
+      d
+        ? etFormatDateOpts(new Date(d), {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+          })
+        : "—";
+    const dateTime = (d: Date | string | null | undefined) =>
+      d
+        ? etFormatDateOpts(new Date(d), {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+            timeZoneName: "short",
+          })
+        : "—";
     const money = (n: number | null | undefined) =>
       n != null ? `$${n.toFixed(2)}` : "—";
 
     lines.push(`SEEDLINGS LAWN CARE — DATA SUMMARY`);
-    lines.push(`Exported: ${new Date().toLocaleString("en-US")}`);
+    lines.push(`Exported: ${dateTime(new Date())}`);
     lines.push(hr);
     lines.push("");
 

@@ -15,7 +15,7 @@ import {
 } from "@chakra-ui/react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiPost, apiPatch } from "@/src/lib/api";
-import { bizDateKey } from "@/src/lib/lib";
+import { bizDateKey, bizInstantFromEtParts } from "@/src/lib/lib";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -104,7 +104,10 @@ export default function EventDialog({ open, onOpenChange, onCreated, editEvent }
     try {
       const body: Record<string, unknown> = {
         title: title.trim(),
-        startAt: new Date(date + "T" + eventTime).toISOString(),
+        // Operator-picked wall-clock time interpreted as ET (not browser
+        // local). Otherwise an admin scheduling an event from a non-ET
+        // timezone would shift it by the offset difference.
+        startAt: bizInstantFromEtParts(date, eventTime),
         notes: notes.trim() || null,
         frequencyDays: isRepeating ? modeToDays(repeatMode, customDays) : null,
       };
@@ -116,6 +119,14 @@ export default function EventDialog({ open, onOpenChange, onCreated, editEvent }
         await apiPost("/api/admin/events", body);
         publishInlineMessage({ type: "SUCCESS", text: "Event created." });
       }
+      // Tell every other JobsTab instance (e.g., admin context vs.
+      // worker context elsewhere on the page) that an EVENT-workflow
+      // occurrence changed, so they refresh. Mirrors the dispatch
+      // pattern used by other mutating dialogs (e.g., AcceptPaymentDialog,
+      // ChangeWorkersDialog) and by TimelineEventDialog for the
+      // TimelineEvent table. Without this, only the parent that owns
+      // onCreated re-fetches — other surfaces stay stale.
+      window.dispatchEvent(new CustomEvent("seedlings3:jobs-changed"));
       reset();
       onOpenChange(false);
       onCreated?.();

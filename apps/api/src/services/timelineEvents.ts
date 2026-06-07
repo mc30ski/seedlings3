@@ -11,6 +11,10 @@ export const URGENT_DAYS = 7;
 export const SOON_DAYS = 30;
 
 function msIn(days: number): number {
+  // date-handling-allow: elapsed-time — millisecond conversion used for
+  // bucketing audit events into "urgent / soon / future" relative to
+  // nextDueDate. The buckets are coarse (7-day / 30-day), so the ≤1-hour
+  // DST drift is invisible.
   return days * 24 * 60 * 60 * 1000;
 }
 

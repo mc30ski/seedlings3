@@ -21,7 +21,7 @@ import { apiGet, apiPatch, apiPost, apiDelete } from "@/src/lib/api";
 import { useBusinessStartCutoff } from "@/src/lib/businessStartCutoff";
 import { emailKey, phoneKey } from "@/src/lib/comms";
 import { type TabPropsType } from "@/src/lib/types";
-import { determineRoles, fmtDateTime } from "@/src/lib/lib";
+import { determineRoles, fmtDateTime, fmtDateOpts } from "@/src/lib/lib";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
   SETTING_SECTIONS,
@@ -913,7 +913,7 @@ function BusinessStartStatusPanel({ isSuper }: { isSuper: boolean }) {
   const { cutoff, reveal, setReveal } = useBusinessStartCutoff();
   const filterActive = cutoff !== null;
   const fmtDate = (d: Date) =>
-    d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+    fmtDateOpts(d, { year: "numeric", month: "short", day: "numeric" });
   // Three visual states. The OFF state reads as an INFORMATIONAL message
   // (blue) — nothing requires attention. The ACTIVE state is a WARNING-style
   // banner (amber) because pre-cutoff data is being hidden across the app.

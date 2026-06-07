@@ -17,7 +17,7 @@ import {
 } from "@chakra-ui/react";
 import { Calendar, CheckCircle2, Download, Eye, SkipForward, X } from "lucide-react";
 import { apiDelete, apiGet, apiPost } from "@/src/lib/api";
-import { fmtDate, fmtDateWeekday } from "@/src/lib/lib";
+import { fmtDate, fmtDateWeekday, bizToday, bizAddDays } from "@/src/lib/lib";
 import { MapLink } from "@/src/ui/helpers/Link";
 import { type ReceiptData, downloadReceipt, getReceiptBlob } from "@/src/lib/receipt";
 import { useBranding } from "@/src/lib/useBranding";
@@ -294,12 +294,9 @@ export default function ClientMyJobsTab() {
     setActionDialog({ type, job } as any);
     setActionComment("");
     if (type === "reschedule") {
-      // Default the suggested date to 3 days from now. Date-only —
-      // jobs are scheduled by day in this system, not by time slot.
-      const base = new Date();
-      base.setDate(base.getDate() + 3);
-      const pad = (n: number) => String(n).padStart(2, "0");
-      setProposedDate(`${base.getFullYear()}-${pad(base.getMonth() + 1)}-${pad(base.getDate())}`);
+      // Default the suggested date to 3 days from now, in ET. Date-only
+      // — jobs are scheduled by day in this system, not by time slot.
+      setProposedDate(bizAddDays(bizToday(), 3));
     } else {
       setProposedDate("");
     }
@@ -320,10 +317,7 @@ export default function ClientMyJobsTab() {
           setActionBusy(false);
           return;
         }
-        const tomorrow = new Date();
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        const pad = (n: number) => String(n).padStart(2, "0");
-        const minDate = `${tomorrow.getFullYear()}-${pad(tomorrow.getMonth() + 1)}-${pad(tomorrow.getDate())}`;
+        const minDate = bizAddDays(bizToday(), 1);
         if (proposedDate < minDate) {
           publishInlineMessage({ type: "WARNING", text: "The suggested date must be in the future." });
           setActionBusy(false);
@@ -925,10 +919,7 @@ export default function ClientMyJobsTab() {
                     // <input min> attribute (browser-enforced when honored)
                     // and as a client-side validation in submitAction, with
                     // a third layer of validation on the server.
-                    const tomorrow = new Date();
-                    tomorrow.setDate(tomorrow.getDate() + 1);
-                    const pad = (n: number) => String(n).padStart(2, "0");
-                    const minDate = `${tomorrow.getFullYear()}-${pad(tomorrow.getMonth() + 1)}-${pad(tomorrow.getDate())}`;
+                    const minDate = bizAddDays(bizToday(), 1);
                     const isPast = !!proposedDate && proposedDate < minDate;
                     return (
                     <>

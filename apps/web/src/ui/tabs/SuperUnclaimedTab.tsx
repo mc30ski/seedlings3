@@ -18,16 +18,14 @@ import { CalendarRange, ChevronDown, RefreshCw, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet } from "@/src/lib/api";
 import { type WorkerOccurrence } from "@/src/lib/types";
-import { fmtDate, bizDateKey, clientLabel, occurrenceStatusColor, prettyStatus } from "@/src/lib/lib";
+import { fmtDate, bizDateKey, bizToday, bizTomorrow, bizYesterday, clientLabel, occurrenceStatusColor, prettyStatus } from "@/src/lib/lib";
 import { StatusBadge } from "@/src/ui/components/StatusBadge";
 import { MapLink } from "@/src/ui/helpers/Link";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import { openEventSearch } from "@/src/lib/bus";
 import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/lib/datePresets";
 
-function localDate(d: Date): string {
-  return bizDateKey(d);
-}
+// `localDate` removed — use `bizDateKey` from @/src/lib/lib directly.
 
 const superPresetItems = [
   { value: "overdueOnly", label: "Overdue only" },
@@ -54,10 +52,8 @@ export default function SuperUnclaimedTab() {
   // Re-apply preset dates when preset changes
   useEffect(() => {
     if (overdueActive) {
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
       setDateFrom("");
-      setDateTo(localDate(yesterday));
+      setDateTo(bizYesterday());
     } else if (datePreset) {
       const d = computeDatesFromPreset(datePreset);
       setDateFrom(d.from);
@@ -252,10 +248,8 @@ export default function SuperUnclaimedTab() {
           const prop = occ.job?.property;
           const isVip = !!(prop?.client as any)?.isVip;
           const vipReason = (prop?.client as any)?.vipReason;
-          const today = bizDateKey(new Date());
-          const tomorrowDate = new Date();
-          tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-          const tomorrow = bizDateKey(tomorrowDate);
+          const today = bizToday();
+          const tomorrow = bizTomorrow();
           const occDate = occ.startAt ? bizDateKey(occ.startAt) : "";
           const isOverdue = occDate && occDate < today;
           const isTodayOrTomorrow = occDate === today || occDate === tomorrow;

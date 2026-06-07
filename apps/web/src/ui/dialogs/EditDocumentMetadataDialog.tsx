@@ -15,6 +15,7 @@ import {
 } from "@chakra-ui/react";
 import { Plus } from "lucide-react";
 import { apiPatch } from "@/src/lib/api";
+import { bizDateKey, bizInstantFromEtParts } from "@/src/lib/lib";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -42,13 +43,10 @@ type Props = {
 
 function isoToDateInput(iso: string | null | undefined): string {
   if (!iso) return "";
+  // <input type="date"> takes a YYYY-MM-DD calendar value, ET-anchored
+  // for this business so the date shown matches the operator's view.
   try {
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return "";
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    return `${y}-${m}-${day}`;
+    return bizDateKey(iso);
   } catch {
     return "";
   }
@@ -89,7 +87,7 @@ export default function EditDocumentMetadataDialog({
         ...(isSingletonType ? {} : { description: description.trim() || null }),
         // Send null when the picker is hidden or empty — that's the user
         // saying "no expiration." Send a real ISO when they've picked a date.
-        expiresAt: showExpiration && expiresAt ? new Date(expiresAt + "T00:00:00").toISOString() : null,
+        expiresAt: showExpiration && expiresAt ? bizInstantFromEtParts(expiresAt, "23:59:59") : null,
         adminHidden,
       });
       publishInlineMessage({ type: "SUCCESS", text: "Document updated." });

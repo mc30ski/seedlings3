@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Box, Button, Card, Checkbox, Dialog, HStack, Heading, Input, Portal, Spinner, Switch, Text, VStack } from "@chakra-ui/react";
 import { FiDownload, FiTrash2 } from "react-icons/fi";
 import { apiGet, apiDownload, apiDelete } from "@/src/lib/api";
-import { bizDateKey, bizToday, bizAddDays, bizMondayOnOrBefore, bizStartOfMonth, bizStartOfYear } from "@/src/lib/lib";
+import { bizDateKey, bizToday, bizAddDays, bizMondayOnOrBefore, bizStartOfMonth, bizStartOfYear, fmtDateTime } from "@/src/lib/lib";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { usePersistedState } from "@/src/lib/usePersistedState";
@@ -1312,7 +1312,7 @@ export default function ExportsTab() {
                         {KIND_LABELS[row.kind]} · {rs} → {re}
                       </Text>
                       <Text color="fg.muted" truncate>
-                        {created.toLocaleString()} ·{" "}
+                        {fmtDateTime(created)} ·{" "}
                         {row.createdBy.displayName || row.createdBy.email || "—"} ·{" "}
                         {row.rowCount} row{row.rowCount === 1 ? "" : "s"} · $
                         {row.totalAmount.toFixed(2)}

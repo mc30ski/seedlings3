@@ -11,6 +11,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { apiPost } from "@/src/lib/api";
+import { bizInstantFromEtParts } from "@/src/lib/lib";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -59,7 +60,7 @@ export default function InsuranceUploadDialog({ open, onOpenChange, onUploaded }
         key,
         fileName: file.name,
         contentType,
-        expiresAt: new Date(expiresAt + "T00:00:00").toISOString(),
+        expiresAt: bizInstantFromEtParts(expiresAt, "23:59:59"),
       });
 
       publishInlineMessage({ type: "SUCCESS", text: "Insurance certificate uploaded." });

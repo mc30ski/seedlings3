@@ -10,7 +10,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import OccurrenceDialog from "@/src/ui/dialogs/OccurrenceDialog";
-import { bizAddDays } from "@/src/lib/lib";
+import { bizAddDays, fmtDate } from "@/src/lib/lib";
 
 // Add N days to a YYYY-MM-DD string in ET via the shared helper. Returns
 // an empty string for null inputs so the existing call sites work unchanged.
@@ -134,7 +134,7 @@ export default function ScheduleNextDialog({
                   </Text>
                   {nextStartAt && (
                     <Text fontSize="sm" color="fg.muted">
-                      Next date: {new Date(nextStartAt + "T00:00:00").toLocaleDateString()}
+                      Next date: {fmtDate(nextStartAt + "T12:00:00Z")}
                     </Text>
                   )}
                 </VStack>

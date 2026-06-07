@@ -15,7 +15,7 @@ import {
 } from "@chakra-ui/react";
 import { BarChart3, LayoutGrid, X } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
-import { fmtDate, bizDateKey } from "@/src/lib/lib";
+import { fmtDate, bizDateKey, bizToday, bizAddDays } from "@/src/lib/lib";
 import {
   BarChart,
   Bar,
@@ -86,11 +86,9 @@ export default function StatisticsTab({ myId }: Props = {}) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Date range
-  const thirtyAgo = new Date();
-  thirtyAgo.setDate(thirtyAgo.getDate() - 30);
-  const [dateFrom, setDateFrom] = usePersistedState("stats_from", bizDateKey(thirtyAgo));
-  const [dateTo, setDateTo] = usePersistedState("stats_to", bizDateKey(new Date()));
+  // Date range — default to the last 30 days, ET-anchored.
+  const [dateFrom, setDateFrom] = usePersistedState("stats_from", bizAddDays(bizToday(), -30));
+  const [dateTo, setDateTo] = usePersistedState("stats_to", bizToday());
 
   // Worker selection
   const [selectedWorkers, setSelectedWorkers] = usePersistedState<string[]>("stats_workers", []);

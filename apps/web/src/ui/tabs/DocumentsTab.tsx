@@ -38,6 +38,7 @@ import {
 } from "lucide-react";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import { apiDelete, apiGet, apiPost } from "@/src/lib/api";
+import { fmtDate } from "@/src/lib/lib";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -110,7 +111,7 @@ function fmtSize(bytes: number): string {
 function fmtDateShort(iso: string | null | undefined): string {
   if (!iso) return "—";
   try {
-    return new Date(iso).toLocaleDateString();
+    return fmtDate(iso);
   } catch {
     return "—";
   }

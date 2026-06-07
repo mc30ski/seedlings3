@@ -61,7 +61,7 @@ import {
 } from "@chakra-ui/react";
 import { ChevronDown, ChevronUp, Eye, Info, Paperclip, Pencil, Plus, Repeat, Search, Trash2, X } from "lucide-react";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
-import { bizToday, bizAddDays, bizStartOfMonth, bizStartOfYear } from "@/src/lib/lib";
+import { bizToday, bizAddDays, bizStartOfMonth, bizStartOfYear, fmtDate, fmtDateOpts } from "@/src/lib/lib";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -221,9 +221,8 @@ function fmtUSD(n: number): string {
   return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-function fmtDate(d: string): string {
-  return new Date(d).toLocaleDateString();
-}
+// Date display helpers come from @/src/lib/lib (fmtDate, fmtDateOpts, etc.) —
+// see those helper headers for the strict no-reinvent policy.
 
 // Date helpers come from @/src/lib/lib (bizDateKey, bizToday, bizAddDays,
 // bizStartOfMonth, bizStartOfYear). NEVER reinvent — see lib/lib.ts.
@@ -725,7 +724,10 @@ export default function BusinessExpensesTab() {
             <VStack align="stretch" gap={1}>
               {dueSoon.map((s) => {
                 const isOverdue = s.overdueDays > 0;
-                const expectedLabel = new Date(s.nextExpectedDate + "T00:00:00").toLocaleDateString(undefined, {
+                // nextExpectedDate is a YYYY-MM-DD string from the API.
+                // Anchor at noon UTC for a stable instant on the correct
+                // ET calendar day, then format in ET.
+                const expectedLabel = fmtDateOpts(s.nextExpectedDate + "T12:00:00Z", {
                   month: "short",
                   day: "numeric",
                 });

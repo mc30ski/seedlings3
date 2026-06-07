@@ -7,16 +7,21 @@
  * Admins can override via localStorage.
  */
 
+import { bizMonth } from "@/src/lib/lib";
+
 export type Season = "spring" | "fall";
 export type SeasonOverride = "auto" | "spring" | "fall";
 
 const STORAGE_KEY = "seedlings_seasonOverride";
 
-/** Get the natural season based on current month */
+/** Get the natural season based on the current ET month. The business
+ *  is anchored to Eastern Time; using `new Date().getMonth()` would key
+ *  off the user's local timezone and could flip the season a day early
+ *  or late for users outside ET. */
 export function getNaturalSeason(): Season {
-  const month = new Date().getMonth(); // 0-indexed
-  // Mar (2) through Aug (7) = spring/summer
-  return month >= 2 && month <= 7 ? "spring" : "fall";
+  const month = bizMonth(); // 1-indexed in ET
+  // Mar (3) through Aug (8) = spring/summer
+  return month >= 3 && month <= 8 ? "spring" : "fall";
 }
 
 /** Get the user's season override preference */

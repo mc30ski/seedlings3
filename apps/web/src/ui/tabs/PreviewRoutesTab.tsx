@@ -20,7 +20,7 @@ import { MapLink } from "@/src/ui/helpers/Link";
 import { type Me } from "@/src/lib/types";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import { openEventSearch } from "@/src/lib/bus";
-import { fmtDate, fmtDateTime, bizDateKey, bizTomorrow } from "@/src/lib/lib";
+import { fmtDate, fmtDateTime, bizDateKey, bizTomorrow, bizDaysBetween } from "@/src/lib/lib";
 import AddressAutocomplete from "@/src/ui/components/AddressAutocomplete";
 
 type RouteJob = {
@@ -363,11 +363,10 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
   const maxMoveDays = userId ? 5 : 2;
 
   async function rescheduleJob(occurrenceId: string, newDate: string, job: any) {
-    // Validate move is within allowed range
+    // Validate move is within allowed range — ET calendar days
+    // (DST-safe via the canonical helper).
     if (job?.currentDate) {
-      const orig = new Date(job.currentDate + "T12:00:00Z");
-      const dest = new Date(newDate + "T12:00:00Z");
-      const diffDays = Math.round(Math.abs(dest.getTime() - orig.getTime()) / (1000 * 60 * 60 * 24));
+      const diffDays = Math.abs(bizDaysBetween(job.currentDate, newDate));
       if (diffDays > maxMoveDays) {
         publishInlineMessage({
           type: "WARNING",

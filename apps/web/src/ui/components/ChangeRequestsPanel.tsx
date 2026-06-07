@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Badge, Box, Button, Card, HStack, Text, Textarea, VStack } from "@chakra-ui/react";
 import { Calendar, CheckCircle2, ChevronDown, ChevronUp, SkipForward, X } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
-import { fmtDateWeekday } from "@/src/lib/lib";
+import { fmtDate, fmtDateWeekday } from "@/src/lib/lib";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 
 type ChangeRequest = {
@@ -117,7 +117,7 @@ export default function ChangeRequestsPanel() {
                         <Text fontSize="xs" mt={1} fontStyle="italic" color="fg.muted">"{cr.comment}"</Text>
                       )}
                       <Text fontSize="2xs" color="fg.muted" mt={1}>
-                        Requested by {requesterName} · {new Date(cr.createdAt).toLocaleDateString()}
+                        Requested by {requesterName} · {fmtDate(cr.createdAt)}
                       </Text>
                     </Box>
                     <HStack gap={1} flexShrink={0}>

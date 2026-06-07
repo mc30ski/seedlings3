@@ -23,7 +23,7 @@ import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { projectViewerPayout, projectTeamPayoutsForOcc, perWorkerShare, rateForViewer } from "@/src/lib/paymentMath";
 import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
 import { getLocation } from "@/src/lib/geo";
-import { determineRoles, occurrenceStatusColor, prettyStatus, clientLabel, fmtDate, fmtDateTime, fmtDateWeekday, bizDateKey, bizToday, jobTypeLabel } from "@/src/lib/lib";
+import { determineRoles, occurrenceStatusColor, prettyStatus, clientLabel, fmtDate, fmtDateTime, fmtDateWeekday, fmtDateOpts, fmtTimeOpts, bizDateKey, bizToday, bizYesterday, bizAddDays, bizAddYears, bizYearOf, bizDaysBetween, bizInstantFromEtParts, bizToLocalInputValue, bizParseLocalInputValue, jobTypeLabel } from "@/src/lib/lib";
 import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
 import { useBranding } from "@/src/lib/useBranding";
 import { type TabPropsType, type WorkerOccurrence, JOB_OCCURRENCE_STATUS, JOB_KIND } from "@/src/lib/types";
@@ -81,9 +81,8 @@ import {
   type DocumentTypeConfig,
 } from "@/src/ui/components/DocumentTypePicker";
 
-function localDate(d: Date): string {
-  return bizDateKey(d);
-}
+// `localDate` removed — use `bizDateKey` directly (single canonical
+// helper from @/src/lib/lib). See docs/DATE_HANDLING.md.
 
 function formatDuration(minutes: number): string {
   const h = Math.floor(minutes / 60);
@@ -123,7 +122,7 @@ function assigneeSortOrder(a: { assignedById?: string | null; userId: string; ro
  */
 function getQuickMessage(occ: any, contactName: string | null): { label: string; body: string } | null {
   const name = contactName ?? "there";
-  const dateStr = occ.startAt ? new Date(occ.startAt).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }) : "your upcoming appointment";
+  const dateStr = occ.startAt ? fmtDateOpts(occ.startAt, { weekday: "long", month: "long", day: "numeric" }) : "your upcoming appointment";
   // Property address joined into "street, city, state" form. Empty string
   // when no address is on file so the message just omits the location clause
   // instead of rendering an awkward "at ." segment.
@@ -677,20 +676,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         setCardOverrides(new Map([[occId, "expanded"]]));
         setQ("");
         setDatePreset(null);
-        // Set a 7-day window around the occurrence date
+        // Set a 7-day window around the occurrence date (ET-anchored).
         if (startAt) {
-          const occDate = new Date(startAt);
-          const from = new Date(occDate);
-          from.setDate(from.getDate() - 3);
-          const to = new Date(occDate);
-          to.setDate(to.getDate() + 3);
-          setDateFrom(bizDateKey(from));
-          setDateTo(bizDateKey(to));
+          const occKey = bizDateKey(startAt);
+          setDateFrom(bizAddDays(occKey, -3));
+          setDateTo(bizAddDays(occKey, 3));
         } else {
-          // No date — use recent
-          const d = new Date();
-          d.setDate(d.getDate() - 7);
-          setDateFrom(bizDateKey(d));
+          // No date — use last 7 days.
+          setDateFrom(bizAddDays(bizToday(), -7));
           setDateTo("");
         }
       } else if (typeof searchQ === "string") {
@@ -718,12 +711,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       setOverdueActive(false);
       setDatePreset(null);
       if (startAt) {
-        const occDate = new Date(startAt);
-        const from = new Date(occDate); from.setDate(from.getDate() - 3);
-        const to = new Date(occDate); to.setDate(to.getDate() + 3);
-        setDateFrom(bizDateKey(from));
-        setDateTo(bizDateKey(to));
-        void load(true, { from: bizDateKey(from), to: bizDateKey(to) }, occId);
+        const occKey = bizDateKey(startAt);
+        const fromKey = bizAddDays(occKey, -3);
+        const toKey = bizAddDays(occKey, 3);
+        setDateFrom(fromKey);
+        setDateTo(toKey);
+        void load(true, { from: fromKey, to: toKey }, occId);
       }
     };
     window.addEventListener("open:servicesTabToJobsTabSearch", onNav as EventListener);
@@ -743,12 +736,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     setShowCanceled(false);
     setShowArchived(false);
     setDatePreset(null);
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const overdueTo = localDate(yesterday);
-    const monthAgo = new Date();
-    monthAgo.setDate(monthAgo.getDate() - 60);
-    const overdueFrom = localDate(monthAgo);
+    const overdueTo = bizYesterday();
+    const overdueFrom = bizAddDays(bizToday(), -60);
     setDateFrom(overdueFrom);
     setDateTo(overdueTo);
     setOverdueActive(true);
@@ -787,11 +776,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     setDatePreset(null);
     setOverdueActive(false);
     setUnapprovedHoursActive(false);
-    const now = new Date();
-    const oneWeekAgo = new Date(now); oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-    const fourWeeksAgo = new Date(now); fourWeeksAgo.setDate(fourWeeksAgo.getDate() - 28);
-    const from = localDate(fourWeeksAgo);
-    const to = localDate(oneWeekAgo);
+    const today = bizToday();
+    const from = bizAddDays(today, -28);
+    const to = bizAddDays(today, -7);
     setDateFrom(from);
     setDateTo(to);
     void load(true, { from, to });
@@ -828,10 +815,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     setShowArchived(false);
     setDatePreset(null);
     setOverdueActive(false);
-    const now = new Date();
-    const ninetyAgo = new Date(now); ninetyAgo.setDate(ninetyAgo.getDate() - 90);
-    const from = localDate(ninetyAgo);
-    const to = localDate(now);
+    const to = bizToday();
+    const from = bizAddDays(to, -90);
     setDateFrom(from);
     setDateTo(to);
     setUnapprovedHoursActive(true);
@@ -974,11 +959,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   // Worker date clamp is silently applied; no inline warning — the cap is intentional, not an error.
   useEffect(() => {
     if (overdueActive) {
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      const monthAgo = new Date();
-      monthAgo.setDate(monthAgo.getDate() - 60);
-      const { from, to } = clampWorkerDates(localDate(monthAgo), localDate(yesterday));
+      const { from, to } = clampWorkerDates(
+        bizAddDays(bizToday(), -60),
+        bizYesterday(),
+      );
       setDateFrom(from);
       setDateTo(to);
     } else if (datePreset) {
@@ -1033,13 +1017,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [editTimeForm, setEditTimeForm] = useState<{ startedAt: string; completedAt: string; offHours: string; offMinutes: string }>({ startedAt: "", completedAt: "", offHours: "0", offMinutes: "0" });
   useEffect(() => {
     if (!editTimeOcc) return;
-    const toLocal = (iso?: string | null) => {
-      if (!iso) return "";
-      const d = new Date(iso);
-      if (isNaN(d.getTime())) return "";
-      const pad = (n: number) => String(n).padStart(2, "0");
-      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    };
+    // ET-anchored datetime-local converter via the canonical helper —
+    // see bizToLocalInputValue in lib/lib.ts. Browser-local round-trip
+    // was the bug here previously.
+    const toLocal = (iso?: string | null) =>
+      iso ? bizToLocalInputValue(iso) : "";
     const offMs = editTimeOcc.totalPausedMs ?? 0;
     const offMinTotal = Math.max(0, Math.round(offMs / 60000));
     setEditTimeForm({
@@ -1267,20 +1249,23 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     }
   }
 
-  // Workers limited to 2-month date range — clamp and return adjusted dates
+  // Workers limited to ~2-month date range — clamp and return adjusted dates.
+  // String-based math only: the previous `new Date(from + "T00:00:00")` parsed
+  // the YYYY-MM-DD in the BROWSER's local timezone, so a worker in PST got a
+  // window shifted by 8 hours and the millisecond clamp could drop / add an
+  // extra day at the boundary. bizDaysBetween + bizAddDays keep everything
+  // anchored to ET regardless of where the worker's device clock is.
   function clampWorkerDates(from: string, to: string): { from: string; to: string; clamped: boolean } {
     if (forAdmin) return { from, to, clamped: false };
-    const maxMs = 62 * 86400000; // ~2 months
+    const MAX_DAYS = 62;
     if (from && to) {
-      const fromDate = new Date(from + "T00:00:00");
-      const toDate = new Date(to + "T00:00:00");
-      if (toDate.getTime() - fromDate.getTime() > maxMs) {
-        return { from: bizDateKey(new Date(toDate.getTime() - maxMs)), to, clamped: true };
+      if (bizDaysBetween(from, to) > MAX_DAYS) {
+        return { from: bizAddDays(to, -MAX_DAYS), to, clamped: true };
       }
     } else if (!from && to) {
-      return { from: bizDateKey(new Date(new Date(to + "T00:00:00").getTime() - maxMs)), to, clamped: true };
+      return { from: bizAddDays(to, -MAX_DAYS), to, clamped: true };
     } else if (from && !to) {
-      return { from, to: bizDateKey(new Date(new Date(from + "T00:00:00").getTime() + maxMs)), clamped: true };
+      return { from, to: bizAddDays(from, MAX_DAYS), clamped: true };
     }
     return { from, to, clamped: false };
   }
@@ -1570,7 +1555,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     setShowCanceled(false);
     setShowArchived(false);
     setTypeFilter(["ANNOUNCEMENT"]);
-    const todayStr = localDate(new Date());
+    const todayStr = bizDateKey(new Date());
     setDatePreset(null);
     setDateFrom(todayStr);
     setDateTo(todayStr);
@@ -1612,10 +1597,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       fromStr = day;
       toStr = day;
     } else {
-      const from = new Date(); from.setFullYear(from.getFullYear() - 1);
-      const to = new Date(); to.setFullYear(to.getFullYear() + 1);
-      fromStr = bizDateKey(from);
-      toStr = bizDateKey(to);
+      // ET-anchored ±1 year window via the canonical helpers.
+      fromStr = bizAddYears(bizToday(), -1);
+      toStr = bizAddYears(bizToday(), 1);
     }
     setDateFrom(fromStr);
     setDateTo(toStr);
@@ -1658,10 +1642,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
   async function refreshOverdueCount() {
     try {
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
       let list = await apiGet<WorkerOccurrence[]>(
-        `/api/occurrences?to=${localDate(yesterday)}`
+        `/api/occurrences?to=${bizYesterday()}`
       );
       if (!Array.isArray(list)) list = [];
 
@@ -1893,9 +1875,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       })();
       return;
     }
-    const now = new Date();
-    const pad = (n: number) => String(n).padStart(2, "0");
-    setStartJobTime(`${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`);
+    // ET-anchored datetime-local string so a worker outside ET sees
+    // (and submits) the time their team is operating on, not the time
+    // on their device clock.
+    setStartJobTime(bizToLocalInputValue(new Date()));
     setStartJobOcc(occ);
   }
 
@@ -2258,17 +2241,20 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     const todayKey = bizDateKey(new Date());
 
     const dayLabel = (dateKey: string) => {
-      // dateKey is YYYY-MM-DD in ET
-      const d = new Date(dateKey + "T12:00:00Z"); // noon UTC avoids day-boundary issues
-      const todayD = new Date(todayKey + "T12:00:00Z");
-      const diff = Math.round((d.getTime() - todayD.getTime()) / 86400000);
+      // dateKey is YYYY-MM-DD in ET. bizDaysBetween does the string math
+      // through UTC-noon anchors (DST-immune) — no need for the manual
+      // noon-UTC dance below.
+      const d = new Date(dateKey + "T12:00:00Z"); // for fmtDateWeekday display
+      const diff = bizDaysBetween(todayKey, dateKey);
       if (diff === 0) return "Today";
       if (diff === -1) return "Yesterday";
       if (diff === 1) return "Tomorrow";
       const dayName = fmtDateWeekday(d);
       if (diff >= 2 && diff <= 6) return dayName;
       if (diff <= -2 && diff >= -6) return `Last ${dayName}`;
-      return fmtDateWeekday(d, { year: d.getFullYear() !== todayD.getFullYear() });
+      // String math on the YYYY-MM-DD key avoids any Date-vs-Date
+      // year drift across DST / timezone boundaries.
+      return fmtDateWeekday(d, { year: bizYearOf(dateKey) !== bizYearOf(todayKey) });
     };
 
     // Separate pinned and reminder-due items into their own groups (worker view only).
@@ -2826,11 +2812,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               setDatePreset(presetBeforeOverdueRef.current ?? (forAdmin ? "thisWeek" : "now"));
             } else {
               presetBeforeOverdueRef.current = datePreset;
-              const yesterday = new Date();
-              yesterday.setDate(yesterday.getDate() - 1);
               setDatePreset(null);
               setDateFrom("");
-              setDateTo(localDate(yesterday));
+              setDateTo(bizYesterday());
               setStatusFilter(["ALL"]);
               setOverdueActive(true);
             }
@@ -3239,9 +3223,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   onClick={(e: any) => {
                     e.stopPropagation();
                     try {
-                      const today = new Date();
-                      const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-                      localStorage.setItem("seedlings_preview_targetDate", JSON.stringify(todayKey));
+                      // ET-anchored "today" so a worker checking late
+                      // evening doesn't land tomorrow's route preview.
+                      localStorage.setItem("seedlings_preview_targetDate", JSON.stringify(bizToday()));
                     } catch {}
                     window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "routes", autoAnalyze: true } }));
                   }}
@@ -3260,7 +3244,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             //     cardOverrides, click cycles through ultra → semi → expanded.
             if ((occ as any)._foreignKind === "activity") {
               const p = (occ as any)._foreignPayload as ActivityForeignRow;
-              const dueDays = Math.round((new Date(p.nextDueDate).getTime() - Date.now()) / 86400000);
+              // Calendar-day diff (DST-safe). `p.nextDueDate` is a
+              // YYYY-MM-DD or ISO string from the API.
+              const dueDays = bizDaysBetween(bizToday(), bizDateKey(p.nextDueDate));
               const isOverdue = dueDays < 0;
               const dueLabel = isOverdue
                 ? `overdue ${-dueDays} ${-dueDays === 1 ? "day" : "days"}`
@@ -3635,13 +3621,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             setFilterJobId(null);
                             setQ("");
                             if (occ.startAt) {
-                              const d = new Date(occ.startAt);
-                              const from = new Date(d); from.setDate(from.getDate() - 3);
-                              const to = new Date(d); to.setDate(to.getDate() + 3);
+                              const occKey = bizDateKey(occ.startAt);
+                              const fromKey = bizAddDays(occKey, -3);
+                              const toKey = bizAddDays(occKey, 3);
                               setDatePreset(null);
-                              setDateFrom(bizDateKey(from));
-                              setDateTo(bizDateKey(to));
-                              void load(true, { from: bizDateKey(from), to: bizDateKey(to) }, occ.id);
+                              setDateFrom(fromKey);
+                              setDateTo(toKey);
+                              void load(true, { from: fromKey, to: toKey }, occ.id);
                             }
                           }}
                         >
@@ -4008,8 +3994,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               }
               if (isUnassigned && !isAdminOnlyOcc && !isTaskOrReminder) {
                 const isContractor = me?.workerType === "CONTRACTOR";
-                const jobDate = occ.startAt ? new Date(occ.startAt) : null;
-                const daysAhead = jobDate ? Math.ceil((jobDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)) : 0;
+                // ET calendar-day diff (DST-safe). Contractor lockout
+                // rule is "jobs more than 2 ET days away".
+                const daysAhead = occ.startAt ? bizDaysBetween(bizToday(), bizDateKey(occ.startAt)) : 0;
                 const contractorBlocked = isContractor && daysAhead > 2;
                 if (contractorBlocked || isTrainee) return null;
                 return (
@@ -4237,7 +4224,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         >
                           {titleText}
                         </Text>
-                        {total != null && (
+                        {total != null && !isObserver && (
                           <Box
                             flexShrink={0}
                             px="1"
@@ -4725,13 +4712,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                     setQ("");
                                     // Ensure date range includes the linked occurrence
                                     if (lo.startAt) {
-                                      const d = new Date(lo.startAt);
-                                      const from = new Date(d); from.setDate(from.getDate() - 3);
-                                      const to = new Date(d); to.setDate(to.getDate() + 3);
+                                      const occKey = bizDateKey(lo.startAt);
+                                      const fromKey = bizAddDays(occKey, -3);
+                                      const toKey = bizAddDays(occKey, 3);
                                       setDatePreset(null);
-                                      setDateFrom(bizDateKey(from));
-                                      setDateTo(bizDateKey(to));
-                                      void load(true, { from: bizDateKey(from), to: bizDateKey(to) }, lo.id);
+                                      setDateFrom(fromKey);
+                                      setDateTo(toKey);
+                                      void load(true, { from: fromKey, to: toKey }, lo.id);
                                     } else {
                                       void load(true, undefined, lo.id);
                                     }
@@ -4938,7 +4925,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       {/* Event time */}
                       {isEvent && occ.startAt && (
                         <Text fontSize="sm" fontWeight="bold" color="#B45309">
-                          {new Date(occ.startAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                          {fmtTimeOpts(occ.startAt, { hour: "numeric", minute: "2-digit" })}
                         </Text>
                       )}
                       {/* Followup attachments (compact) */}
@@ -5169,7 +5156,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     {/* Event time — prominent */}
                     {isEvent && occ.startAt && (
                       <Text fontSize="md" fontWeight="bold" color="#B45309">
-                        {new Date(occ.startAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                        {fmtTimeOpts(occ.startAt, { hour: "numeric", minute: "2-digit" })}
                       </Text>
                     )}
                     {isLightEstimate && occ.estimateAddress && (
@@ -6335,9 +6322,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     )}
                     {isUnassigned && !isAdminOnlyOcc && !isTaskOrReminder && (() => {
                       const isContractor = me?.workerType === "CONTRACTOR";
-                      const jobDate = occ.startAt ? new Date(occ.startAt) : null;
-                      const now = new Date();
-                      const daysAhead = jobDate ? Math.ceil((jobDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)) : 0;
+                      // ET calendar-day diff (DST-safe).
+                      const daysAhead = occ.startAt ? bizDaysBetween(bizToday(), bizDateKey(occ.startAt)) : 0;
                       const contractorBlocked = isContractor && daysAhead > 2;
                       if (contractorBlocked) {
                         return (
@@ -7365,12 +7351,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       <Button
                         key={opt.days}
                         size="xs"
-                        variant={reminderDate === localDate((() => { const d = new Date(); d.setDate(d.getDate() + opt.days); return d; })()) ? "solid" : "outline"}
+                        variant={reminderDate === bizAddDays(bizToday(), opt.days) ? "solid" : "outline"}
                         colorPalette="orange"
                         onClick={() => {
-                          const d = new Date();
-                          d.setDate(d.getDate() + opt.days);
-                          setReminderDate(localDate(d));
+                          setReminderDate(bizAddDays(bizToday(), opt.days));
                         }}
                       >
                         {opt.label}
@@ -7457,7 +7441,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       setBusyOccId(startJobOcc.id);
                       setStartJobOcc(null);
                       try {
-                        const startedAt = new Date(startJobTime).toISOString();
+                        // ET-anchored parse — see bizParseLocalInputValue.
+                        const startedAt = bizParseLocalInputValue(startJobTime);
                         const occDate = startJobOcc.startAt ? bizDateKey(startJobOcc.startAt) : "";
                         const todayDate = bizDateKey(new Date());
                         // Strictly future-dated only. Past-dated (catch-up
@@ -7494,7 +7479,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       setBusyOccId(startJobOcc.id);
                       setStartJobOcc(null);
                       try {
-                        const startedAt = new Date(startJobTime).toISOString();
+                        // ET-anchored parse — see bizParseLocalInputValue.
+                        const startedAt = bizParseLocalInputValue(startJobTime);
                         const occDate = startJobOcc.startAt ? bizDateKey(startJobOcc.startAt) : "";
                         const todayDate = bizDateKey(new Date());
                         // Strictly future-dated only. Past-dated (catch-up
@@ -7551,9 +7537,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         { label: "Tomorrow", days: 1 },
                         { label: "In 2 days", days: 2 },
                       ].map((opt) => {
-                        const d = new Date();
-                        d.setDate(d.getDate() + opt.days);
-                        const val = bizDateKey(d);
+                        const val = bizAddDays(bizToday(), opt.days);
                         return (
                           <Button
                             key={opt.days}
@@ -8131,8 +8115,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       return false;
                     })()}
                     onClick={async () => {
-                      const startedAtIso = editTimeForm.startedAt ? new Date(editTimeForm.startedAt).toISOString() : null;
-                      const completedAtIso = editTimeForm.completedAt ? new Date(editTimeForm.completedAt).toISOString() : null;
+                      // ET-anchored parse of datetime-local strings —
+                      // see bizParseLocalInputValue in lib/lib.ts.
+                      const startedAtIso = editTimeForm.startedAt ? bizParseLocalInputValue(editTimeForm.startedAt) : null;
+                      const completedAtIso = editTimeForm.completedAt ? bizParseLocalInputValue(editTimeForm.completedAt) : null;
                       const offH = parseInt(editTimeForm.offHours || "0", 10) || 0;
                       const offM = parseInt(editTimeForm.offMinutes || "0", 10) || 0;
                       const totalPausedMs = (offH * 60 + offM) * 60000;

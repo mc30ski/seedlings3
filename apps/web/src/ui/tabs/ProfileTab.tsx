@@ -21,7 +21,7 @@ import {
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 import { type Me, type Role } from "@/src/lib/types";
-import { fmtDate as fmtDateLib } from "@/src/lib/lib";
+import { fmtDate as fmtDateLib, fmtDateOpts, fmtTimeOpts, bizToday, bizDateKey, bizDaysBetween } from "@/src/lib/lib";
 import { useOffline } from "@/src/lib/offline";
 import { getAllActions, deleteAction, retryAction, clearAllActions, subscribeQueue, type QueuedAction } from "@/src/lib/offlineQueue";
 import { usePushNotifications } from "@/src/lib/usePushNotifications";
@@ -471,7 +471,9 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
                   const untilDate = new Date(me.guaranteedPayoutUntil);
                   const active = untilDate.getTime() > Date.now();
                   if (!active) return null;
-                  const daysLeft = Math.max(0, Math.ceil((untilDate.getTime() - Date.now()) / 86400000));
+                  // ET calendar-day diff (not raw ms / 86_400_000 which
+                  // drifts at DST). See bizDaysBetween in lib/lib.ts.
+                  const daysLeft = Math.max(0, bizDaysBetween(bizToday(), bizDateKey(untilDate)));
                   return (
                     <HStack fontSize="sm" align="flex-start">
                       <Text color="fg.muted" w="80px">Payout:</Text>
@@ -741,11 +743,8 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
 function NotificationsSection() {
   const push = usePushNotifications();
 
-  const fmtDate = (s?: string | null) => {
-    if (!s) return "";
-    try { return new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); }
-    catch { return s; }
-  };
+  const fmtDate = (s?: string | null) =>
+    s ? fmtDateOpts(s, { month: "short", day: "numeric", year: "numeric" }) : "";
 
   // Best-effort label from user-agent — short, recognizable.
   const deviceLabel = (ua?: string | null, label?: string | null) => {
@@ -938,10 +937,8 @@ function CalendarFeedsSection() {
     publishInlineMessage({ type: "SUCCESS", text: "All feeds revoked." });
   }
 
-  const fmtDate = (s: string) => {
-    try { return new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); }
-    catch { return s; }
-  };
+  const fmtDate = (s: string) =>
+    fmtDateOpts(s, { month: "short", day: "numeric", year: "numeric" });
 
   const filterSummary = (f: any) => {
     const parts: string[] = [];
@@ -1044,7 +1041,7 @@ function OfflineSection() {
           </HStack>
           {lastSyncedAt && (
             <Text fontSize="xs" color="fg.muted">
-              Last synced: {lastSyncedAt.toLocaleTimeString()}
+              Last synced: {fmtTimeOpts(lastSyncedAt, { hour: "numeric", minute: "2-digit", second: "2-digit" })}
             </Text>
           )}
           {queuedActions.length > 0 && (

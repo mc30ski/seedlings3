@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { prisma } from "../db/prisma";
 import { notifyWorker } from "../lib/notifications";
-import { etMidnight, etToday, etTomorrow } from "../lib/dates";
+import { etMidnight, etToday, etTomorrow, etAddDays } from "../lib/dates";
 import { AUDIT } from "../lib/auditActions";
 
 /**
@@ -28,9 +28,10 @@ export default async function cronRoutes(app: FastifyInstance) {
 
     const tomorrowStr = etTomorrow();
     const tomorrowStart = etMidnight(tomorrowStr);
-    // Day after tomorrow in ET
-    const dayAfterDate = new Date(Date.now() + 2 * 86400000);
-    const dayAfterStr = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(dayAfterDate);
+    // Day after tomorrow in ET — go through etAddDays on the string key
+    // to dodge DST edges (the millisecond `Date.now() + 2 * 86400000`
+    // pattern is off by an hour on DST spring/fall days).
+    const dayAfterStr = etAddDays(tomorrowStr, 1);
     const dayAfterMidnight = etMidnight(dayAfterStr);
 
     // Find tomorrow's occurrences across all workflows, mirroring the Planning tab.

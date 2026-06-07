@@ -1,6 +1,7 @@
 import { randomBytes } from "crypto";
 import type { Prisma, PaymentCommsMode } from "@prisma/client";
 import { prisma } from "../db/prisma";
+import { etFormatDateOpts } from "../lib/dates";
 import { writeAudit } from "../lib/auditLogger";
 import { AUDIT } from "../lib/auditActions";
 import { sendSMS, sendEmail } from "../lib/notifications";
@@ -112,9 +113,11 @@ function propertyLabel(p: { displayName: string | null; street1: string | null; 
 }
 
 // "Thursday, May 28" — same format as the Confirm Client message body.
+// ET-anchored: a job completed at 23:30 ET on May 28 is "May 28" to the
+// client, not "May 29" (which is what a UTC-locale formatter would emit).
 function formatServiceDate(d: Date | null): string {
   if (!d) return "your recent appointment";
-  return new Date(d).toLocaleDateString("en-US", {
+  return etFormatDateOpts(new Date(d), {
     weekday: "long",
     month: "long",
     day: "numeric",
@@ -624,6 +627,9 @@ export const paymentRequests = {
         }),
     );
     const now = Date.now();
+    // date-handling-allow: elapsed-time — "days since requested" for a
+    // display label (e.g. "Requested 3 days ago"). ≤1-hour DST drift
+    // doesn't matter for a human-readable bucket count.
     const dayMs = 86_400_000;
     return occs.map((o) => {
       const requestedAt = o.paymentRequestSentAt!;

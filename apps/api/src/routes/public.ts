@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify";
 import { prisma } from "../db/prisma";
 import { getDownloadUrl } from "../lib/r2";
 import { services } from "../services";
-import { etFormatDate } from "../lib/dates";
+import { etFormatDate, etFormatDateOpts, etIcalLocalDateTime, etHourMinute, etMidnight, etToday, etAddDays } from "../lib/dates";
 
 export default async function publicRoutes(app: FastifyInstance) {
   // Public activity feed — no auth required
@@ -10,9 +10,14 @@ export default async function publicRoutes(app: FastifyInstance) {
     const limit = Math.min(Math.max(Number(req.query?.limit) || 30, 1), 50);
     const days = Math.min(Math.max(Number(req.query?.days) || 7, 1), 30);
 
+    // ET-anchored lookback so the public site shows full ET-day windows
+    // even when the request lands near midnight UTC. setDate() on a UTC
+    // Date would drop in / out of the lookback by ~4 hours.
+    const lookback = etMidnight(etAddDays(etToday(), -days));
+    // `now` is needed downstream for in-progress feed items (duration
+    // since startedAt) — kept separately because that math is on the
+    // instant axis, not the calendar-day axis.
     const now = new Date();
-    const lookback = new Date(now);
-    lookback.setDate(lookback.getDate() - days);
 
     // Fetch completed jobs (with photos, assignees, property) — exclude estimates
     const completed = await prisma.jobOccurrence.findMany({
@@ -168,9 +173,9 @@ export default async function publicRoutes(app: FastifyInstance) {
 
   // Public stats
   app.get("/public/stats", async () => {
-    const now = new Date();
-    const thirtyDaysAgo = new Date(now);
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    // ET-anchored 30-day window — see notes on the recent-completed route
+    // above.
+    const thirtyDaysAgo = etMidnight(etAddDays(etToday(), -30));
 
     const [completedAllTime, completedThisMonth, activePropertyCount, workerCount, inProgressCount] = await Promise.all([
       prisma.jobOccurrence.count({
@@ -236,12 +241,12 @@ export default async function publicRoutes(app: FastifyInstance) {
     const uid = feedToken.userId;
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://www.seedlings.team";
 
-    // Rolling window: 2 weeks back, 2 months forward
-    const now = new Date();
-    const from = new Date(now);
-    from.setDate(from.getDate() - 14);
-    const to = new Date(now);
-    to.setMonth(to.getMonth() + 2);
+    // Rolling window: 2 weeks back, ~2 months forward. ET-anchored so
+    // the iCal feed's covered range matches the operator's calendar
+    // expectation regardless of when the request lands relative to UTC.
+    const todayKey = etToday();
+    const from = etMidnight(etAddDays(todayKey, -14));
+    const to = etMidnight(etAddDays(todayKey, 60));
 
     // Fetch occurrences in range (include tasks)
     const where: any = {
@@ -320,7 +325,16 @@ export default async function publicRoutes(app: FastifyInstance) {
     // would see events drift by one day in their app. Always go through
     // `etFormatDate` which formats in America/New_York.
     const fmtDateOnly = (d: Date) => etFormatDate(d).replace(/-/g, "");
-    const fmtDt = (d: Date) => d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+    // ET-anchored local datetime, paired with the VTIMEZONE block + the
+    // `TZID=America/New_York` parameter on DTSTART / DTEND. Per RFC 5545,
+    // a TZID-qualified local datetime puts the event at the right ET
+    // wall-clock time for every subscriber, regardless of their device
+    // timezone. The previous `.toISOString()` UTC format ("Z" suffix)
+    // emitted UTC instants — RFC-correct but caused subscribers in
+    // non-ET zones to see the event at the wrong local time.
+    const fmtDtLocalEt = etIcalLocalDateTime;
+    // UTC instant — kept for LAST-MODIFIED (which iCal requires in UTC).
+    const fmtDtUtc = (d: Date) => d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
     const prettyEnum = (s: string) => s.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c: string) => c.toUpperCase());
     const prettyStatus = (s: string) => s === "CLOSED" ? "Completed" : prettyEnum(s);
 
@@ -363,14 +377,24 @@ export default async function publicRoutes(app: FastifyInstance) {
 
       const start = occ.startAt ?? new Date();
 
-      // Description with full details
+      // Description with full details. Observers (assigned with
+      // role="observer") see the job in their calendar — they need to
+      // know where to show up — but must NOT see the price (financial
+      // detail leak). Their token's `uid` is matched against the
+      // assignee list to decide.
+      const subscriberAssignee = (occ.assignees ?? []).find(
+        (a: any) => a.userId === uid,
+      );
+      const subscriberIsObserver = subscriberAssignee?.role === "observer";
       const desc: string[] = [];
       desc.push(`Type: ${type}`);
       desc.push(`Status: ${prettyStatus(occ.status)}`);
       if (!isTask && client) desc.push(`Client: ${client}`);
       if (!isTask && propName) desc.push(`Property: ${propName}`);
       if (jobType && !isTask) desc.push(`Job Type: ${jobType}`);
-      if (occ.price != null) desc.push(`Price: $${occ.price.toFixed(2)}`);
+      if (occ.price != null && !subscriberIsObserver) {
+        desc.push(`Price: $${occ.price.toFixed(2)}`);
+      }
       if (occ.estimatedMinutes) desc.push(`Estimated Duration: ${occ.estimatedMinutes} min`);
       if (address && !isTask) desc.push(`Address: ${address}`);
 
@@ -396,41 +420,58 @@ export default async function publicRoutes(app: FastifyInstance) {
         if (lp) desc.push(`Linked to: ${lp}`);
       }
 
-      // Reminder
+      // Reminder description text — show the reminder date in ET so the
+      // text matches what the subscriber sees on their calendar.
       const reminder = reminderMap.get(occ.id);
       if (reminder) {
-        desc.push(`Reminder: ${reminder.note || "Set"} (${reminder.remindAt.toISOString().slice(0, 10)})`);
+        desc.push(`Reminder: ${reminder.note || "Set"} (${etFormatDate(reminder.remindAt)})`);
       }
 
-      // Check if this is an EVENT with a specific time (not default 09:00)
-      const isTimedEvent = occ.workflow === "EVENT" && start instanceof Date && (start.getHours() !== 9 || start.getMinutes() !== 0);
+      // Check if this is an EVENT with a specific time (not default 09:00).
+      // Get the ET hours/minutes (not local server time, which is UTC on
+      // Vercel) so the "is the event at default 9am or not" decision
+      // matches what the operator scheduled.
+      let isTimedEvent = false;
+      if (occ.workflow === "EVENT" && start instanceof Date) {
+        isTimedEvent = etHourMinute(start) !== "09:00";
+      }
 
       if (isTimedEvent) {
-        // Timed event — 1 hour duration
+        // Timed event — 1 hour duration. Use TZID-qualified local ET
+        // datetime so the event lands at the right ET wall-clock time
+        // for every subscriber, regardless of their device timezone.
         const endTime = new Date(start.getTime() + 60 * 60 * 1000);
         events.push([
           "BEGIN:VEVENT",
           `UID:${occ.id}@seedlings`,
-          `DTSTART:${fmtDt(start)}`,
-          `DTEND:${fmtDt(endTime)}`,
+          `DTSTART;TZID=America/New_York:${fmtDtLocalEt(start)}`,
+          `DTEND;TZID=America/New_York:${fmtDtLocalEt(endTime)}`,
           `SUMMARY:${esc(summary)}`,
           `DESCRIPTION:${esc(desc.join("\\n"))}`,
           `URL:${appUrl}?occ=${occ.id}`,
-          `LAST-MODIFIED:${fmtDt(occ.updatedAt ?? occ.createdAt ?? new Date())}`,
+          `LAST-MODIFIED:${fmtDtUtc(occ.updatedAt ?? occ.createdAt ?? new Date())}`,
           "END:VEVENT",
         ].filter(Boolean).join("\r\n"));
       } else {
-        // All-day event using VALUE=DATE format
+        // All-day event using VALUE=DATE format. DTEND must be the day
+        // AFTER DTSTART per RFC 5545 (exclusive end). Computing it via
+        // `start.getTime() + 86_400_000` is fragile across DST fall-back
+        // (Nov 2026: noon-to-noon UTC + 24h lands at 11 PM EST the same
+        // day → previous calendar day → wrong DTEND). Go through the
+        // canonical etAddDays helper on the ET day key instead.
+        const startDayKey = etFormatDate(start);
+        const endDayKey = etAddDays(startDayKey, 1);
+        const endIcalDay = endDayKey.replace(/-/g, "");
         events.push([
           "BEGIN:VEVENT",
           `UID:${occ.id}@seedlings`,
           `DTSTART;VALUE=DATE:${fmtDateOnly(start)}`,
-          `DTEND;VALUE=DATE:${fmtDateOnly(new Date(start.getTime() + 86400000))}`,
+          `DTEND;VALUE=DATE:${endIcalDay}`,
           `SUMMARY:${esc(summary)}`,
           address && !isTask ? `LOCATION:${esc(address)}` : null,
           `DESCRIPTION:${esc(desc.join("\\n"))}`,
           `URL:${appUrl}?occ=${occ.id}`,
-          `LAST-MODIFIED:${fmtDt(occ.updatedAt ?? occ.createdAt ?? new Date())}`,
+          `LAST-MODIFIED:${fmtDtUtc(occ.updatedAt ?? occ.createdAt ?? new Date())}`,
           "END:VEVENT",
         ].filter(Boolean).join("\r\n"));
       }
@@ -441,21 +482,47 @@ export default async function publicRoutes(app: FastifyInstance) {
         const occDateStr = fmtDateOnly(start);
         if (remDateStr !== occDateStr) {
           const ghostSummary = `[Reminder] ${isTask ? (occ.title || "Task") : propName}${reminder.note ? ` — ${reminder.note}` : ""}`;
+          // DTEND day-after computed via etAddDays (same rationale as above).
+          const remEndDay = etAddDays(etFormatDate(reminder.remindAt), 1).replace(/-/g, "");
           events.push([
             "BEGIN:VEVENT",
             `UID:reminder-${occ.id}@seedlings`,
             `DTSTART;VALUE=DATE:${remDateStr}`,
-            `DTEND;VALUE=DATE:${fmtDateOnly(new Date(reminder.remindAt.getTime() + 86400000))}`,
+            `DTEND;VALUE=DATE:${remEndDay}`,
             `SUMMARY:${esc(ghostSummary)}`,
-            `DESCRIPTION:${esc(`Reminder for: ${summary}\\nScheduled: ${start.toISOString().slice(0, 10)}\\n${reminder.note ? `Note: ${reminder.note}` : ""}`)}`,
+            `DESCRIPTION:${esc(`Reminder for: ${summary}\\nScheduled: ${etFormatDate(start)}\\n${reminder.note ? `Note: ${reminder.note}` : ""}`)}`,
             `URL:${appUrl}?occ=${occ.id}`,
-            `LAST-MODIFIED:${fmtDt(occ.updatedAt ?? occ.createdAt ?? new Date())}`,
+            `LAST-MODIFIED:${fmtDtUtc(occ.updatedAt ?? occ.createdAt ?? new Date())}`,
             "END:VEVENT",
           ].filter(Boolean).join("\r\n"));
         }
       }
     }
 
+    // Inline VTIMEZONE block for America/New_York. Subscribers' apps
+    // need this to correctly interpret the TZID-qualified DTSTART/DTEND
+    // values on timed events. The DST rules below are the official US
+    // rules in effect since 2007: spring-forward on the 2nd Sunday of
+    // March, fall-back on the 1st Sunday of November.
+    const vtimezone = [
+      "BEGIN:VTIMEZONE",
+      "TZID:America/New_York",
+      "BEGIN:DAYLIGHT",
+      "TZOFFSETFROM:-0500",
+      "TZOFFSETTO:-0400",
+      "TZNAME:EDT",
+      "DTSTART:19700308T020000",
+      "RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU",
+      "END:DAYLIGHT",
+      "BEGIN:STANDARD",
+      "TZOFFSETFROM:-0400",
+      "TZOFFSETTO:-0500",
+      "TZNAME:EST",
+      "DTSTART:19701101T020000",
+      "RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU",
+      "END:STANDARD",
+      "END:VTIMEZONE",
+    ];
     const cal = [
       "BEGIN:VCALENDAR",
       "VERSION:2.0",
@@ -463,6 +530,8 @@ export default async function publicRoutes(app: FastifyInstance) {
       `X-WR-CALNAME:${esc(feedToken.label || `Seedlings - ${feedToken.user.displayName ?? "Jobs"}`)}`,
       "CALSCALE:GREGORIAN",
       "METHOD:PUBLISH",
+      "X-WR-TIMEZONE:America/New_York",
+      ...vtimezone,
       ...events,
       "END:VCALENDAR",
     ].join("\r\n");
@@ -515,8 +584,10 @@ export default async function publicRoutes(app: FastifyInstance) {
     const methodsList = await loadPaymentMethods(prisma);
     const clientMethods = listActivePaymentMethods(methodsList, "CLIENT_REQUEST");
     // Memo line used for {{note}} in deep links + suggested-memo display.
+    // ET-anchored so the date the client sees matches the date the job
+    // happened on the operator's calendar (not the UTC server's locale).
     const dateLabel = resolved.serviceDate
-      ? new Date(resolved.serviceDate).toLocaleDateString(undefined, {
+      ? etFormatDateOpts(new Date(resolved.serviceDate), {
           year: "numeric",
           month: "short",
           day: "numeric",
