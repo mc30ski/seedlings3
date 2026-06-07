@@ -1489,7 +1489,18 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   useEffect(() => {
     const handler = () => { void loadRef.current(false); };
     window.addEventListener("seedlings3:jobs-changed", handler);
-    return () => window.removeEventListener("seedlings3:jobs-changed", handler);
+    // The admin Jobs feed mixes Timeline activities + doc-expiration rows
+    // in via foreignRows (see load() below). When the operator adds /
+    // edits / completes a Timeline activity from the Timeline tab or
+    // updates a document, that surface must refresh so the new row
+    // appears in the feed without a hard reload.
+    window.addEventListener("seedlings3:timeline-changed", handler);
+    window.addEventListener("seedlings3:documents-changed", handler);
+    return () => {
+      window.removeEventListener("seedlings3:jobs-changed", handler);
+      window.removeEventListener("seedlings3:timeline-changed", handler);
+      window.removeEventListener("seedlings3:documents-changed", handler);
+    };
   }, []);
 
   // Check for Begin Work Day workflow date override
