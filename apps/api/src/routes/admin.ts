@@ -6104,6 +6104,7 @@ Respond ONLY with valid JSON in this exact format:
     qbEquityCsv,
     qbFixedAssetsCsv,
     exportPreview,
+    exportPreviewDetails,
     findUnmappedExpenseRows,
   } = await import("../services/exports");
   const JSZip = (await import("jszip")).default;
@@ -6219,6 +6220,26 @@ Respond ONLY with valid JSON in this exact format:
     const { start, end } = readDateRange(req);
     const effectiveStart = await clampExportStartToCutoff(req, start);
     return exportPreview(effectiveStart, end);
+  });
+
+  // Per-section detail rows for the Exports tab's "Preview totals"
+  // expand/collapse. Same query window as /preview; section keys match
+  // the Preview totals card. See exportPreviewDetails in services/exports.ts.
+  app.get("/admin/exports/preview/details", superGuard, async (req: any) => {
+    const { start, end } = readDateRange(req);
+    const effectiveStart = await clampExportStartToCutoff(req, start);
+    const section = String(req.query?.section ?? "") as
+      | "gusto-w2"
+      | "gusto-contractors"
+      | "qb-income"
+      | "qb-expenses"
+      | "qb-fixed-assets"
+      | "qb-equity";
+    const valid = new Set(["gusto-w2", "gusto-contractors", "qb-income", "qb-expenses", "qb-fixed-assets", "qb-equity"]);
+    if (!valid.has(section)) {
+      throw app.httpErrors.badRequest(`Unknown preview section: ${section}`);
+    }
+    return exportPreviewDetails(effectiveStart, end, section);
   });
 
   app.get("/admin/exports/gusto-w2.csv", superGuard, async (req: any, reply: FastifyReply) => {

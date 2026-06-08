@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Box, Button, Card, Checkbox, Dialog, HStack, Heading, Input, Portal, Spinner, Switch, Text, VStack } from "@chakra-ui/react";
 import { FiDownload, FiTrash2 } from "react-icons/fi";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { apiGet, apiDownload, apiDelete } from "@/src/lib/api";
 import { bizDateKey, bizToday, bizAddDays, bizMondayOnOrBefore, bizStartOfMonth, bizStartOfYear, fmtDateTime } from "@/src/lib/lib";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
@@ -18,6 +19,32 @@ type UnmappedRow = {
   category: string;
   amount: number;
 };
+
+// Per-section detail rows surfaced under each Preview totals line when
+// the operator expands it. Matches PreviewDetails in services/exports.ts.
+type PreviewDetailRow = {
+  date: string;
+  primary: string;
+  secondary?: string;
+  meta?: string;
+  amount: number;
+};
+type PreviewDetailGroup = {
+  label: string;
+  rows: PreviewDetailRow[];
+  subtotal: number;
+};
+type PreviewDetails = {
+  groups: PreviewDetailGroup[];
+  total: number;
+};
+type PreviewSectionKey =
+  | "gusto-w2"
+  | "gusto-contractors"
+  | "qb-income"
+  | "qb-expenses"
+  | "qb-fixed-assets"
+  | "qb-equity";
 
 type Preview = {
   gustoW2: {
@@ -142,6 +169,38 @@ export default function ExportsTab() {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  // Expand/collapse state for the Preview totals card. Detail rows are
+  // lazy-loaded per section the first time it's expanded for the current
+  // window; cleared whenever start/end change (next useEffect below).
+  const [expandedSections, setExpandedSections] = useState<Set<PreviewSectionKey>>(new Set());
+  type DetailState = PreviewDetails | "loading" | { error: string };
+  const [details, setDetails] = useState<Partial<Record<PreviewSectionKey, DetailState>>>({});
+
+  async function togglePreviewSection(section: PreviewSectionKey) {
+    setExpandedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(section)) {
+        next.delete(section);
+        return next;
+      }
+      next.add(section);
+      const cached = details[section];
+      if (!cached || (typeof cached === "object" && "error" in cached)) {
+        setDetails((d) => ({ ...d, [section]: "loading" }));
+        apiGet<PreviewDetails>(
+          `/api/admin/exports/preview/details?section=${section}&start=${start}&end=${end}`,
+        )
+          .then((data) => setDetails((d) => ({ ...d, [section]: data })))
+          .catch((err: any) =>
+            setDetails((d) => ({
+              ...d,
+              [section]: { error: err?.message ?? "Failed to load details" },
+            })),
+          );
+      }
+      return next;
+    });
+  }
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [showUnmappedDetails, setShowUnmappedDetails] = useState(false);
   const [showQbHelp, setShowQbHelp] = useState(false);
@@ -222,11 +281,15 @@ export default function ExportsTab() {
   }, []);
 
   // Re-fetch preview whenever range changes (debounced by browser; cheap).
+  // Clear any previously-loaded detail rows + collapse all sections —
+  // the rows belonged to the prior window and are no longer valid.
   useEffect(() => {
     if (!start || !end || end < start) {
       setPreview(null);
       return;
     }
+    setExpandedSections(new Set());
+    setDetails({});
     let cancelled = false;
     setPreviewLoading(true);
     setPreviewError(null);
@@ -461,92 +524,134 @@ export default function ExportsTab() {
             </Text>
           ) : preview ? (
             <VStack align="stretch" gap={1} fontSize="sm">
-              <HStack justify="space-between">
-                <Text color="fg.muted">Gusto W-2 (employees + trainees):</Text>
-                <Text>
-                  {preview.gustoW2.workers} worker{preview.gustoW2.workers === 1 ? "" : "s"}
-                  {" · "}
-                  {preview.gustoW2.hours.toFixed(2)} hrs{" · "}
-                  <b>${preview.gustoW2.gross.toFixed(2)}</b>
-                </Text>
-              </HStack>
-              <HStack justify="space-between">
-                <Text color="fg.muted">Gusto 1099 (contractors):</Text>
-                <Text>
-                  {preview.gustoContractors.workers} contractor
-                  {preview.gustoContractors.workers === 1 ? "" : "s"}
-                  {" · "}
-                  <b>${preview.gustoContractors.gross.toFixed(2)}</b>
-                </Text>
-              </HStack>
-              <HStack justify="space-between">
-                <Text color="fg.muted">QB Income (confirmed payments):</Text>
-                <Text>
-                  {preview.qbIncome.rows} payment{preview.qbIncome.rows === 1 ? "" : "s"}{" · "}
-                  <b>${preview.qbIncome.total.toFixed(2)}</b>
-                </Text>
-              </HStack>
-              <HStack justify="space-between">
-                <Text color="fg.muted">QB Expenses (BusinessExpense + fees + contractors):</Text>
-                <Text>
-                  {preview.qbExpenses.rows} row{preview.qbExpenses.rows === 1 ? "" : "s"}{" · "}
-                  <b>${preview.qbExpenses.total.toFixed(2)}</b>
-                </Text>
-              </HStack>
-              {preview.qbExpenses.processorFeeTotal > 0 && (
-                <HStack justify="space-between" pl={4} fontSize="xs">
-                  <Text color="fg.muted">↳ Payment Processing Fees:</Text>
-                  <Text color="fg.muted">
-                    <b>${preview.qbExpenses.processorFeeTotal.toFixed(2)}</b>
-                  </Text>
-                </HStack>
-              )}
-              {preview.qbExpenses.contractLaborTotal > 0 && (
-                <HStack justify="space-between" pl={4} fontSize="xs">
-                  <Text color="fg.muted">↳ Contract Labor:</Text>
-                  <Text color="fg.muted">
-                    <b>${preview.qbExpenses.contractLaborTotal.toFixed(2)}</b>
-                  </Text>
-                </HStack>
-              )}
-              {preview.qbFixedAssets.rows > 0 && (
-                <HStack justify="space-between">
-                  <Text color="fg.muted">
-                    QB Fixed Assets (capital purchases ≥ ${preview.qbFixedAssets.threshold}):
-                  </Text>
+              <ExpandablePreviewRow
+                section="gusto-w2"
+                label="Gusto W-2 (employees + trainees):"
+                summary={
                   <Text>
-                    {preview.qbFixedAssets.rows} asset{preview.qbFixedAssets.rows === 1 ? "" : "s"}{" · "}
-                    <b>${preview.qbFixedAssets.total.toFixed(2)}</b>
+                    {preview.gustoW2.workers} worker{preview.gustoW2.workers === 1 ? "" : "s"}
+                    {" · "}
+                    {preview.gustoW2.hours.toFixed(2)} hrs{" · "}
+                    <b>${preview.gustoW2.gross.toFixed(2)}</b>
                   </Text>
-                </HStack>
+                }
+                expanded={expandedSections.has("gusto-w2")}
+                onToggle={() => void togglePreviewSection("gusto-w2")}
+                detailState={details["gusto-w2"]}
+              />
+              <ExpandablePreviewRow
+                section="gusto-contractors"
+                label="Gusto 1099 (contractors):"
+                summary={
+                  <Text>
+                    {preview.gustoContractors.workers} contractor
+                    {preview.gustoContractors.workers === 1 ? "" : "s"}
+                    {" · "}
+                    <b>${preview.gustoContractors.gross.toFixed(2)}</b>
+                  </Text>
+                }
+                expanded={expandedSections.has("gusto-contractors")}
+                onToggle={() => void togglePreviewSection("gusto-contractors")}
+                detailState={details["gusto-contractors"]}
+              />
+              <ExpandablePreviewRow
+                section="qb-income"
+                label="QB Income (confirmed payments):"
+                summary={
+                  <Text>
+                    {preview.qbIncome.rows} payment{preview.qbIncome.rows === 1 ? "" : "s"}{" · "}
+                    <b>${preview.qbIncome.total.toFixed(2)}</b>
+                  </Text>
+                }
+                expanded={expandedSections.has("qb-income")}
+                onToggle={() => void togglePreviewSection("qb-income")}
+                detailState={details["qb-income"]}
+              />
+              <ExpandablePreviewRow
+                section="qb-expenses"
+                label="QB Expenses (BusinessExpense + fees + contractors):"
+                summary={
+                  <Text>
+                    {preview.qbExpenses.rows} row{preview.qbExpenses.rows === 1 ? "" : "s"}{" · "}
+                    <b>${preview.qbExpenses.total.toFixed(2)}</b>
+                  </Text>
+                }
+                expanded={expandedSections.has("qb-expenses")}
+                onToggle={() => void togglePreviewSection("qb-expenses")}
+                detailState={details["qb-expenses"]}
+                subRows={
+                  <>
+                    {preview.qbExpenses.processorFeeTotal > 0 && (
+                      <HStack justify="space-between" pl={6} fontSize="xs">
+                        <Text color="fg.muted">↳ Payment Processing Fees:</Text>
+                        <Text color="fg.muted">
+                          <b>${preview.qbExpenses.processorFeeTotal.toFixed(2)}</b>
+                        </Text>
+                      </HStack>
+                    )}
+                    {preview.qbExpenses.contractLaborTotal > 0 && (
+                      <HStack justify="space-between" pl={6} fontSize="xs">
+                        <Text color="fg.muted">↳ Contract Labor:</Text>
+                        <Text color="fg.muted">
+                          <b>${preview.qbExpenses.contractLaborTotal.toFixed(2)}</b>
+                        </Text>
+                      </HStack>
+                    )}
+                  </>
+                }
+              />
+              {preview.qbFixedAssets.rows > 0 && (
+                <ExpandablePreviewRow
+                  section="qb-fixed-assets"
+                  label={`QB Fixed Assets (capital purchases ≥ $${preview.qbFixedAssets.threshold}):`}
+                  summary={
+                    <Text>
+                      {preview.qbFixedAssets.rows} asset{preview.qbFixedAssets.rows === 1 ? "" : "s"}{" · "}
+                      <b>${preview.qbFixedAssets.total.toFixed(2)}</b>
+                    </Text>
+                  }
+                  expanded={expandedSections.has("qb-fixed-assets")}
+                  onToggle={() => void togglePreviewSection("qb-fixed-assets")}
+                  detailState={details["qb-fixed-assets"]}
+                />
               )}
               {preview.qbEquity.rows > 0 && (
                 <>
-                  <HStack justify="space-between">
-                    <Text color="fg.muted">QB Equity (contributions + draws):</Text>
-                    <Text>
-                      {preview.qbEquity.rows} row{preview.qbEquity.rows === 1 ? "" : "s"}{" · "}
-                      <b>
-                        ${(preview.qbEquity.contributionTotal + preview.qbEquity.drawTotal).toFixed(2)}
-                      </b>
-                    </Text>
-                  </HStack>
-                  {preview.qbEquity.contributionTotal > 0 && (
-                    <HStack justify="space-between" pl={4} fontSize="xs">
-                      <Text color="fg.muted">↳ Capital Contributions:</Text>
-                      <Text color="fg.muted">
-                        <b>${preview.qbEquity.contributionTotal.toFixed(2)}</b>
+                  <ExpandablePreviewRow
+                    section="qb-equity"
+                    label="QB Equity (contributions + draws):"
+                    summary={
+                      <Text>
+                        {preview.qbEquity.rows} row{preview.qbEquity.rows === 1 ? "" : "s"}{" · "}
+                        <b>
+                          ${(preview.qbEquity.contributionTotal + preview.qbEquity.drawTotal).toFixed(2)}
+                        </b>
                       </Text>
-                    </HStack>
-                  )}
-                  {preview.qbEquity.drawTotal > 0 && (
-                    <HStack justify="space-between" pl={4} fontSize="xs">
-                      <Text color="fg.muted">↳ Owner Draws:</Text>
-                      <Text color="fg.muted">
-                        <b>${preview.qbEquity.drawTotal.toFixed(2)}</b>
-                      </Text>
-                    </HStack>
-                  )}
+                    }
+                    expanded={expandedSections.has("qb-equity")}
+                    onToggle={() => void togglePreviewSection("qb-equity")}
+                    detailState={details["qb-equity"]}
+                    subRows={
+                      <>
+                        {preview.qbEquity.contributionTotal > 0 && (
+                          <HStack justify="space-between" pl={6} fontSize="xs">
+                            <Text color="fg.muted">↳ Capital Contributions:</Text>
+                            <Text color="fg.muted">
+                              <b>${preview.qbEquity.contributionTotal.toFixed(2)}</b>
+                            </Text>
+                          </HStack>
+                        )}
+                        {preview.qbEquity.drawTotal > 0 && (
+                          <HStack justify="space-between" pl={6} fontSize="xs">
+                            <Text color="fg.muted">↳ Owner Draws:</Text>
+                            <Text color="fg.muted">
+                              <b>${preview.qbEquity.drawTotal.toFixed(2)}</b>
+                            </Text>
+                          </HStack>
+                        )}
+                      </>
+                    }
+                  />
                 </>
               )}
             </VStack>
@@ -1542,6 +1647,161 @@ export default function ExportsTab() {
           onCancel={closeDelete}
         />
       )}
+    </VStack>
+  );
+}
+
+/**
+ * One row in the Preview totals card. Clicking the row toggles a
+ * details panel below, which shows the per-row breakdown that adds up
+ * to the displayed total. Details are lazy-loaded on first expand for
+ * the current window — see togglePreviewSection in ExportsTab.
+ *
+ * `subRows` is rendered above the details panel, immediately under the
+ * summary row, regardless of expand state. Used for the inline
+ * sub-totals on QB Expenses (Processing Fees, Contract Labor) and
+ * QB Equity (Contributions, Draws) so the at-a-glance breakdown is
+ * always visible while the full per-row drilldown is opt-in.
+ */
+function ExpandablePreviewRow({
+  label,
+  summary,
+  expanded,
+  onToggle,
+  detailState,
+  subRows,
+}: {
+  section: PreviewSectionKey;
+  label: string;
+  summary: React.ReactNode;
+  expanded: boolean;
+  onToggle: () => void;
+  detailState: PreviewDetails | "loading" | { error: string } | undefined;
+  subRows?: React.ReactNode;
+}) {
+  return (
+    <Box>
+      <HStack
+        as="button"
+        onClick={onToggle}
+        justify="space-between"
+        w="full"
+        textAlign="left"
+        bg="transparent"
+        _hover={{ bg: "blackAlpha.50" }}
+        rounded="sm"
+        px={1}
+        py={0.5}
+        cursor="pointer"
+        aria-expanded={expanded}
+      >
+        <HStack gap={1} flex="1" minW={0}>
+          <Box color="fg.muted" flexShrink={0}>
+            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          </Box>
+          <Text color="fg.muted">{label}</Text>
+        </HStack>
+        {summary}
+      </HStack>
+      {subRows}
+      {expanded && (
+        <Box mt={1} pl={6} pr={1} pb={2}>
+          <PreviewDetailsPanel state={detailState} />
+        </Box>
+      )}
+    </Box>
+  );
+}
+
+function PreviewDetailsPanel({
+  state,
+}: {
+  state: PreviewDetails | "loading" | { error: string } | undefined;
+}) {
+  if (state === undefined || state === "loading") {
+    return (
+      <HStack color="fg.muted" fontSize="xs" py={2}>
+        <Spinner size="xs" />
+        <Text>Loading details…</Text>
+      </HStack>
+    );
+  }
+  if (typeof state === "object" && "error" in state) {
+    return (
+      <Text fontSize="xs" color="red.600">
+        {state.error}
+      </Text>
+    );
+  }
+  if (state.groups.length === 0) {
+    return (
+      <Text fontSize="xs" color="fg.muted">
+        No rows in this section for the selected window.
+      </Text>
+    );
+  }
+  return (
+    <VStack
+      align="stretch"
+      gap={2}
+      fontSize="xs"
+      borderLeftWidth="2px"
+      borderColor="gray.200"
+      pl={3}
+    >
+      {state.groups.map((g) => (
+        <Box key={g.label}>
+          <HStack justify="space-between" mb={1}>
+            <Text fontWeight="semibold" color="fg.muted">
+              {g.label}
+            </Text>
+            <Text fontWeight="semibold" color="fg.muted">
+              ${g.subtotal.toFixed(2)}
+            </Text>
+          </HStack>
+          <VStack align="stretch" gap={0}>
+            {g.rows.length === 0 && (
+              <Text color="fg.muted" fontStyle="italic">
+                (no rows)
+              </Text>
+            )}
+            {g.rows.map((r, i) => (
+              <HStack
+                key={i}
+                justify="space-between"
+                gap={2}
+                py={0.5}
+                borderBottomWidth="1px"
+                borderColor="gray.100"
+              >
+                <HStack gap={2} flex="1" minW={0}>
+                  {r.date && (
+                    <Text
+                      color="fg.muted"
+                      fontFamily="mono"
+                      flexShrink={0}
+                      minW="78px"
+                    >
+                      {r.date}
+                    </Text>
+                  )}
+                  <VStack align="start" gap={0} flex="1" minW={0}>
+                    <Text>{r.primary}</Text>
+                    {(r.secondary || r.meta) && (
+                      <Text color="fg.muted" fontSize="2xs">
+                        {[r.secondary, r.meta].filter(Boolean).join(" · ")}
+                      </Text>
+                    )}
+                  </VStack>
+                </HStack>
+                <Text fontWeight="medium" flexShrink={0}>
+                  ${r.amount.toFixed(2)}
+                </Text>
+              </HStack>
+            ))}
+          </VStack>
+        </Box>
+      ))}
     </VStack>
   );
 }

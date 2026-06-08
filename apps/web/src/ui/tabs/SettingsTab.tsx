@@ -118,6 +118,12 @@ const BOOLEAN_SETTINGS = new Set([
   // Gusto's QB integration is configured), Gusto posts contractor
   // payments to QB directly and the app's rows would be duplicative.
   "QB_INCLUDE_CONTRACT_LABOR",
+  // Master toggle for equipment billing. When OFF, all checkout
+  // releases write rentalCost = 0 regardless of equipment dailyRate or
+  // worker type. Lets the operator absorb equipment cost into the
+  // contractor commission while figuring out the right billing /
+  // sales-tax model with a CPA.
+  "EQUIPMENT_BILLING_ENABLED",
 ]);
 
 /** Setting keys whose value is a calendar date (stored as YYYY-MM-DD). Rendered

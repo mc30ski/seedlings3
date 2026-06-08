@@ -337,6 +337,15 @@ job and a non-owner-worked job can be compared apples-to-apples).
 
 ## 8a. Equipment rental billing
 
+> **⚠️ Currently disabled.** The `EQUIPMENT_BILLING_ENABLED` setting is OFF
+> in the current deployment — every release writes `Checkout.rentalCost = 0`
+> regardless of the per-worker policy below. Equipment cost is absorbed
+> into a higher `CONTRACTOR_PLATFORM_FEE_PERCENT` while the operator
+> finalizes the billing + sales-tax model with a CPA. The per-worker
+> policy documented in the rest of this section is what resumes when
+> the toggle flips back ON. See `loadEquipmentBillingEnabled()` in
+> `services/equipment.ts` for the gating logic.
+
 Equipment owned by the LLC is rented by contractors when they use it on jobs;
 the charge is rental **income** to the business (not an expense). Employees
 and trainees use the same equipment at no cost — their usage is already
@@ -512,6 +521,7 @@ hardcoded.
 | `DEFAULT_PAYMENT_COMMUNICATIONS_MODE` | `SERVER` | Whether payment-request comms are sent by the server or handed off to the claimer's device |
 | `BUSINESS_START_DATE_ENABLED` / `BUSINESS_START_DATE` | `false` / — | Operator-controlled cutoff: when enabled, financial-event rows dated before the cutoff are hidden from every view and export. See `lib/businessStartCutoff.ts` |
 | `QB_INCLUDE_CONTRACT_LABOR` | `true` | When ON, `qb-journal-expenses.csv` emits Contract Labor rows for contractor payments (post-GP splits, GP wage-path work, historical advances). When OFF, the whole Contract Labor section is dropped. Flip OFF once Gusto's QuickBooks integration is configured to post contractor payments to QB directly — the app's rows become duplicative at that point. See `loadIncludeContractLabor()` in `services/exports.ts`. |
+| `EQUIPMENT_BILLING_ENABLED` | `false` (current operator setting; default ON for fresh installs) | Master toggle for equipment billing. When ON, equipment checkouts charge contractors per the equipment's daily rate (employees + trainees always pay $0). When OFF, every release writes `Checkout.rentalCost = 0` regardless of equipment dailyRate or worker type — `rentalDays` + `rentalBreakdown` are still preserved for audit. Currently OFF while the operator finalizes the contractor billing + sales-tax model with a CPA; equipment cost is absorbed into a higher `CONTRACTOR_PLATFORM_FEE_PERCENT`. See `loadEquipmentBillingEnabled()` in `services/equipment.ts`. |
 
 ---
 

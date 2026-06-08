@@ -10,10 +10,10 @@ Last updated: 2026-06-08.
 
 ## Contents
 
-1. [The big picture — two tax worlds running in parallel](#1-the-big-picture--two-tax-worlds-running-in-parallel)
+1. [The big picture — three tax worlds running in parallel](#1-the-big-picture--three-tax-worlds-running-in-parallel)
 2. [World 1 — Employment taxes (NC DOR + IRS, via Gusto)](#2-world-1--employment-taxes-nc-dor--irs-via-gusto)
-2a. [Contractor (1099) vs Employee (W-2) — what's different](#2a-contractor-1099-vs-employee-w-2--whats-different)
-3. [World 2 — Personal business taxes (LLC owner)](#3-world-2--personal-business-taxes-llc-owner)
+2a. [World 2 — Contractor taxes (1099, via Gusto)](#2a-world-2--contractor-taxes-1099-via-gusto--what-s-different-from-w-2)
+3. [World 3 — Personal business taxes (LLC owner)](#3-world-3--personal-business-taxes-llc-owner)
 4. [Day-to-day money flow on a typical job](#4-day-to-day-money-flow-on-a-typical-job)
 5. [The weekly / monthly / quarterly / annual rhythm](#5-the-weekly--monthly--quarterly--annual-rhythm)
 6. [The three numbers to always know](#6-the-three-numbers-to-always-know)
@@ -24,16 +24,23 @@ Last updated: 2026-06-08.
 
 ---
 
-## 1. The big picture — two tax worlds running in parallel
+## 1. The big picture — three tax worlds running in parallel
 
-There are two completely separate tax worlds happening in the business at the same time. They share no overlap. Understanding which world a tax payment belongs to is the foundation of everything else.
+There are three completely separate tax worlds happening in the business at the same time. They share no overlap. Understanding which world a tax payment belongs to is the foundation of everything else.
 
-| World | Who pays the tax | What it covers | Where the money flows |
-|---|---|---|---|
-| **World 1 — Employment taxes** | The W-2 employee — withheld from their paycheck. The business also pays an employer-side portion. | Federal income tax, NC state income tax, FICA (Social Security), Medicare | Gusto handles all of it. Gusto withholds from the paycheck, remits to IRS + NC DOR, files quarterly + annual forms. |
-| **World 2 — Personal business taxes** | You (Mike), as the LLC owner — out of your personal post-distribution income. | Self-employment tax (SE), federal income tax on profit, NC state income tax on profit, NC franchise tax | You pay it yourself. Quarterly estimated payments to IRS + NC DOR; annual filing through your CPA. |
+| World | Who pays the tax | What it covers | Where the money flows | Business's responsibility |
+|---|---|---|---|---|
+| **World 1 — Employment taxes (W-2)** | The W-2 employee — withheld from their paycheck. The business also pays an employer-side portion. | Federal income tax, NC state income tax, FICA (Social Security), Medicare | Gusto withholds from the paycheck, remits to IRS + NC DOR, files quarterly + annual forms. | Run payroll on schedule. Gusto does the math, withholding, remittance, and W-2 filing. |
+| **World 2 — Contractor taxes (1099)** | The 1099 contractor — out of their personal gross income. The contractor pays their own federal + state income tax AND their own self-employment tax (the contractor's version of FICA, 15.3%). | Federal income tax, NC state income tax, self-employment tax (SE) | The business pays the contractor the full agreed amount with **no withholding**. The contractor remits their own taxes quarterly + annually. | Issue a 1099-NEC at year-end (Gusto generates it automatically) for any contractor paid ≥ $600 in the calendar year. No withholding, no employer-side payroll taxes. |
+| **World 3 — Personal business taxes (LLC owner)** | You (Mike), as the LLC owner — out of your personal post-distribution income. | Self-employment tax (SE), federal income tax on profit, NC state income tax on profit, NC franchise tax | You pay it yourself. Quarterly estimated payments to IRS + NC DOR; annual filing through your CPA. | Set aside ~25–30% of net profit. Pay quarterly. File annually with your CPA. |
 
-The NC Withholding Account number you registered for is for **World 1 only**. The EIN and LLC filing are what enable **World 2**.
+**Quick lookup — which world does this transaction belong to?**
+
+- Employee paycheck → World 1 (Gusto handles everything)
+- Contractor payout → World 2 (issue 1099 at year-end via Gusto, otherwise just pay)
+- Mike's net business profit at year-end → World 3 (your personal tax return)
+
+The NC Withholding Account number you registered for is for **World 1 only**. The EIN and LLC filing are what enable **World 3**. **World 2 requires no special account registration** — issuing a 1099 needs only the contractor's W-9 (their TIN or SSN), which Gusto collects during contractor onboarding.
 
 ---
 
@@ -66,9 +73,28 @@ The business also pays an **employer-side** portion on top of the gross wage (th
 - NC SUTA (unemployment): roughly **0.06%–5.76%** depending on your experience rating
 - Federal FUTA: **0.6%** of the first $7,000 paid per employee per year
 
-So a $500 gross paycheck actually costs the business about **$538–$542** total once you include the employer-side payroll tax. Gusto handles all of this automatically and tells you each pay period what your total cost was.
+So a $500 gross paycheck actually costs the business about **$538–$542** total once you include the employer-side payroll tax.
 
-**Your day-to-day involvement: zero.** You hit "Run payroll" in Gusto. Gusto does everything else.
+### How Gusto pulls the money from your account
+
+When you run payroll in Gusto, here's the actual money movement:
+
+1. **Gusto calculates the total**: employee net pay (after employee withholdings) + employer-side payroll taxes + employee withholdings. For a $500 gross check, that's roughly $390 net + $58 employee withholdings + $38–$42 employer-side = ~$486–$490 that Gusto needs to pull from your account. (The employee withholdings get held by Gusto and remitted later, so they're part of the pull but not really "your" cost — they were taken from the employee's gross.)
+2. **Gusto debits your linked bank account via ACH**: typically 1–2 business days before pay date, Gusto initiates an ACH pull on your Chase business checking account (the one you linked during Gusto setup). The total cost above leaves your account.
+3. **Gusto holds + distributes**:
+   - Employee net pay → direct-deposited to the employee's bank account on pay date
+   - Employee withholdings → held by Gusto, remitted to IRS + NC DOR on the IRS deposit schedule (monthly or semi-weekly depending on your size; under the $50K/year threshold you're monthly)
+   - Employer-side payroll taxes → held by Gusto, remitted on the same schedule
+   - Federal FUTA → remitted quarterly
+   - NC SUTA → remitted quarterly
+
+You see the total pull as a **single ACH debit on your Chase statement** ("GUSTO PAYROLL" or similar), within a day or two of running payroll. Gusto's payroll-run summary tells you the breakdown — net pay vs. taxes vs. employer side — so you can match it against your bank statement.
+
+**What you need to do**: keep enough cash in Chase business checking to cover the pull. Gusto's UI shows the upcoming debit total when you're about to run payroll, AND emails you a "deposit reminder" a couple of days before. If your account balance is too low when Gusto tries to pull, the ACH bounces, employees don't get paid on time, and you get an angry email from Gusto plus a bounced-debit fee from Chase.
+
+### Your day-to-day involvement: nearly zero
+
+You hit "Run payroll" in Gusto. Gusto does everything else — the math, the bank pull, the deposits, the withholding remittance, the quarterly + annual filings, the W-2 generation. Your only ongoing job is **making sure Chase has enough cash to cover each pull**.
 
 ### What the NC Withholding Account specifically does
 
@@ -80,9 +106,15 @@ If total monthly NC withholding stays under $250/month across all employees, you
 
 ---
 
-## 2a. Contractor (1099) vs Employee (W-2) — what's different
+## 2a. World 2 — Contractor taxes (1099, via Gusto) — what's different from W-2
 
-The flow in §2 above applies to **W-2 employees only**. Contractors (1099) are a completely different setup — they're independent business owners who happen to work jobs for you, not workers on your payroll. This distinction drives most of the differences in how each gets paid, taxed, and reported:
+The flow in §2 above applies to **W-2 employees only**. Contractors (1099) are **World 2** in §1's three-worlds picture: independent business owners who happen to work jobs for you, not workers on your payroll. This distinction drives most of the differences in how each gets paid, taxed, and reported:
+
+**What World 2 looks like operationally:**
+- The business pays the contractor the agreed gross amount, with **no withholding** (federal, state, or FICA — none of it).
+- The contractor handles their own taxes — federal income tax, NC state income tax, AND self-employment tax (15.3%, the contractor's equivalent of the employee+employer FICA split).
+- The business's only year-end responsibility: issue a **1099-NEC** for any contractor paid ≥ $600. Gusto generates it automatically based on what was paid through Gusto's contractor payment system.
+- No NC state-level registration needed beyond what's already in place for W-2 employees. The 1099 only requires the contractor's W-9 (TIN/SSN), which Gusto collects during contractor onboarding.
 
 | | **W-2 Employee** | **1099 Contractor** |
 |---|---|---|
@@ -125,7 +157,7 @@ See [FINANCIAL_SYSTEM.md §4](./FINANCIAL_SYSTEM.md) for the wage-path / split-p
 
 ---
 
-## 3. World 2 — Personal business taxes (LLC owner)
+## 3. World 3 — Personal business taxes (LLC owner)
 
 As the LLC owner, **you don't get a paycheck with taxes withheld.** Instead:
 
@@ -161,34 +193,166 @@ Nobody withholds any of this for you. **You owe it directly and pay it yourself 
 
 ## 4. Day-to-day money flow on a typical job
 
-A single client job, end to end:
+Three scenarios that cover most real-world jobs. All three use the same $200 job price + $30 materials expense for comparison; what changes is the worker mix and equipment use.
+
+**Standing assumptions for all three scenarios:**
+
+- Client pays $200 via Venmo Business → Venmo fee $3.90 → $196.10 deposited to Chase
+- Worker payouts are computed on the **full $200 gross** — the Venmo fee never reduces a worker's payout. The business absorbs the fee.
+- Equipment used: one piece (a mower, say) with `dailyRate = $40` and flat-daily billing (`equivalentJobs IS NULL`). Rental days = 1.
+- Settings: `CONTRACTOR_PLATFORM_FEE_PERCENT = 20`, `EMPLOYEE_BUSINESS_MARGIN_PERCENT = 30`, **`EQUIPMENT_BILLING_ENABLED = false`** (see note below).
+
+> **⚠️ Equipment billing is currently OFF — pending CPA review.**
+>
+> The setting `EQUIPMENT_BILLING_ENABLED` is OFF in the current
+> deployment. Every checkout release records `rentalCost = 0` regardless
+> of equipment daily rate or worker type. The scenarios below reflect
+> this — equipment usage is recorded for audit (rentalDays, breakdown)
+> but no contractor is charged. The cost of providing equipment is
+> currently absorbed into the contractor commission (`CONTRACTOR_PLATFORM_FEE_PERCENT`),
+> which the operator can raise to compensate.
+>
+> When the operator finalizes the right billing + sales-tax model with
+> a CPA, they'll flip `EQUIPMENT_BILLING_ENABLED` back ON in Settings →
+> Payments & Payouts and the original per-worker billing policy will
+> resume (employees/trainees still pay $0; contractors pay their share;
+> unbilled employee shares are NOT redistributed to contractors).
+
+### Scenario A — Solo W-2 employee, used the mower
+
+A W-2 employee works the job alone and checked out the mower for the day.
 
 ```
 Monday — Job completed at the client's property
         ↓
 Worker records the payment in the app ($200 job price)
         ↓
-App calculates per worker:
-  Materials/expenses for the job:   $30
-  Net distributable pool:            $170  ($200 − $30)
-  Worker payout (assuming 80/20):   $136  (W-2 employee at 30% margin → $119; contractor at 20% fee → $136)
-  Business retains:                  $34  (the 20% platform fee in the contractor case)
+App calculates the job split:
+  Job price:                         $200.00
+  Materials/expenses:                 $30.00
+  Net distributable pool:            $170.00   ($200 − $30)
+  Business margin (30%):              $51.00   (business keeps)
+  Employee payout (70%):             $119.00   (worker gets)
         ↓
-Client pays $200 via Venmo Business
+App calculates equipment rental (EQUIPMENT_BILLING_ENABLED = OFF):
+  Notional rental cost (1 × $40):     $40.00   (computed for audit)
+  Employee equipment charge:           $0.00   (toggle OFF; W-2 would also be $0)
+  Equipment income to business:        $0.00
         ↓
-Venmo charges its processor fee (1.9% + $0.10 = $3.90)
+Client pays $200 via Venmo → $196.10 deposited, $3.90 fee
         ↓
-$196.10 deposited to Chase business checking
-        ↓
-The app records:
-  grossCharged       = $200.00
-  processorFeeAmount = $3.90
-  netReceived        = $196.10
-  worker payout      = $136.00   (paid the FULL gross share — fee not deducted)
-  business retains   = $34.00 − $3.90 = $30.10  (margin minus the Venmo fee)
+Net to the business:
+  Margin retained:                    $51.00
+  Equipment income:                    $0.00
+  Less: Venmo fee:                    −$3.90
+  ───────────────────────────────────────────
+  Business net:                       $47.10
+  Employee net (paid via Gusto):     $119.00
 ```
 
-The business **absorbs the Venmo fee** entirely. The worker's payout is always calculated on the full gross — payment method choice never reduces what the worker gets.
+Equipment usage is recorded for audit (rentalDays, breakdown) but no charge is generated under the current toggle. Even with `EQUIPMENT_BILLING_ENABLED` ON, this employee scenario would still produce $0 charges — employees never pay equipment regardless.
+
+### Scenario B — Solo 1099 contractor, used the mower
+
+A contractor works the job alone and checked out the mower for the day. Same job price, same materials.
+
+```
+Monday — Job completed at the client's property
+        ↓
+Worker records the payment in the app ($200 job price)
+        ↓
+App calculates the job split:
+  Job price:                         $200.00
+  Materials/expenses:                 $30.00
+  Net distributable pool:            $170.00   ($200 − $30)
+  Platform fee (20%):                 $34.00   (business keeps)
+  Contractor payout (80%):           $136.00   (full take-home)
+        ↓
+App calculates equipment rental (EQUIPMENT_BILLING_ENABLED = OFF):
+  Notional rental cost (1 × $40):     $40.00   (computed for audit)
+  Contractor equipment charge:         $0.00   (toggle OFF — no charge)
+  Equipment income to business:        $0.00
+        ↓
+Client pays $200 via Venmo → $196.10 deposited, $3.90 fee
+        ↓
+What the app records:
+  Gusto Contractor CSV row for this contractor:  $136.00
+  Contractor's "equipment owed" balance:           $0.00
+  QB Income export — Equipment Rental Income:      $0.00
+        ↓
+Net to the business:
+  Platform fee retained:               $34.00
+  Equipment income:                     $0.00
+  Less: Venmo fee:                     −$3.90
+  ───────────────────────────────────────────
+  Business net:                        $30.10
+```
+
+With the equipment toggle OFF, the contractor takes home the full $136 — no equipment deduction, no separate balance to settle. The business absorbs the equipment cost in exchange for the commission. If the operator wants this absorption to be financially neutral, they raise `CONTRACTOR_PLATFORM_FEE_PERCENT` so that the higher commission covers expected equipment usage on average across contractor jobs. When the toggle flips back ON (post-CPA review), the original $40 contractor charge resumes.
+
+### Scenario C — Mixed crew (employee + contractor), employee is the equipment claimer
+
+A W-2 employee and a 1099 contractor work the job together as a formal crew, even 50/50 split on the job. The **employee** is the one who actually checked out the mower (the equipment claimer).
+
+```
+Monday — Job completed at the client's property by the crew
+        ↓
+Worker records the payment in the app ($200 job price)
+        ↓
+App calculates the job split (50/50 between employee and contractor):
+  Job price:                         $200.00
+  Materials/expenses:                 $30.00
+  Net distributable pool:            $170.00   ($200 − $30)
+
+  Employee's gross share (50%):       $85.00
+  Employee business margin (30%):     $25.50   (business keeps)
+  Employee payout (70%):              $59.50   (employee gets)
+
+  Contractor's gross share (50%):     $85.00
+  Contractor platform fee (20%):      $17.00   (business keeps)
+  Contractor payout (80%):            $68.00   (contractor full take-home)
+
+  Total business retained (job):      $42.50   ($25.50 + $17.00)
+        ↓
+App calculates equipment rental (EQUIPMENT_BILLING_ENABLED = OFF):
+  Notional rental cost (1 × $40):     $40.00   (computed for audit)
+  Per-worker shares (recorded for audit, all $0):
+    Employee share:                   $0.00 (toggle OFF — and W-2 anyway)
+    Contractor share:                 $0.00 (toggle OFF)
+  Equipment income to business:       $0.00
+        ↓
+Client pays $200 via Venmo → $196.10 deposited, $3.90 fee
+        ↓
+What the app records:
+  Gusto Contractor CSV row for this contractor:  $68.00
+  Gusto W-2 CSV row for the employee:            $59.50
+  Contractor's "equipment owed" balance:          $0.00
+  QB Income export — Equipment Rental Income:     $0.00
+        ↓
+Net to the business:
+  Job margin + platform fee retained: $42.50
+  Equipment income:                    $0.00
+  Less: Venmo fee:                    −$3.90
+  ───────────────────────────────────────────
+  Business net:                       $38.60
+```
+
+Like Scenario B, the contractor pays nothing for equipment under the current toggle. When `EQUIPMENT_BILLING_ENABLED` flips back ON (post-CPA review), each crew member's share is evaluated by their own worker type — the employee's $20 share stays at $0 (W-2 → business absorbs), the contractor's $20 share is billed. **The claimer's worker type does NOT automatically exempt the whole crew.** Unbilled employee shares are NOT redistributed to remaining contractors (that would punish a contractor for crewing with an employee).
+
+### Cross-scenario sanity check (current `EQUIPMENT_BILLING_ENABLED = OFF`)
+
+| | Scenario A (employee solo) | Scenario B (contractor solo) | Scenario C (mixed crew) |
+|---|---|---|---|
+| Gusto W-2 row(s) | $119.00 (employee) | — | $59.50 (employee) |
+| Gusto Contractor row(s) | — | $136.00 | $68.00 |
+| Contractor "equipment owed" balance | $0 | $0 | $0 |
+| QB Equipment Rental Income line | $0 | $0 | $0 |
+| Business net | $47.10 | $30.10 | $38.60 |
+| **Total ($200 client − $3.90 Venmo − $30 materials)** | **$166.10** | **$166.10** | **$166.10** |
+
+The bottom row stays at $166.10 — $200 collected minus the $3.90 Venmo fee and the $30 of materials — and gets allocated differently across worker payouts and business margin depending on the scenario. Conservation holds in every case. With equipment billing OFF, the business retains less on contractor jobs than it would if contractors paid for equipment — the tradeoff for a clean books / no-settlement workflow is a lower business net per contractor job. Raising `CONTRACTOR_PLATFORM_FEE_PERCENT` is the lever to offset this.
+
+**When the toggle flips back ON** (post-CPA review), the equipment income lines populate again ($40 / $20 in scenarios B / C), the contractor's "equipment owed" balance shows up, and the business net rises accordingly. See the related sections in [FINANCIAL_SYSTEM.md §8a](./FINANCIAL_SYSTEM.md#8a-equipment-rental-billing) for the per-worker billing policy that resumes.
 
 See [§8 below](#8-how-the-venmo-processor-fee-is-handled) for the full processor-fee policy and alternatives considered.
 

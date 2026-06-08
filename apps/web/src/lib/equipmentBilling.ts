@@ -16,19 +16,28 @@
 
 export type BillingMode =
   | { kind: "free" }
+  | { kind: "disabled" }  // master toggle EQUIPMENT_BILLING_ENABLED = false; displays "$0.00/day"
   | { kind: "flatDaily"; dailyRate: number }
   | { kind: "perJob"; dailyRate: number; equivalentJobs: number; perJobRate: number };
 
 /**
  * Resolve the billing mode for a piece of equipment given its
  * `dailyRate` + `equivalentJobs` columns. Returns `kind: "free"` when
- * there's no positive daily rate — no rental charge applies to anyone.
+ * there's no positive daily rate. Returns `kind: "disabled"` when the
+ * master toggle `EQUIPMENT_BILLING_ENABLED` is OFF — display chips
+ * still render but all show $0.00/day to communicate that the rate is
+ * suppressed, not that the equipment is intrinsically free.
+ *
+ * `billingEnabled` defaults to `true` to preserve the original
+ * behavior at any callsite that hasn't been updated.
  */
 export function resolveBillingMode(
   dailyRate: number | null | undefined,
   equivalentJobs: number | null | undefined,
+  billingEnabled: boolean = true,
 ): BillingMode {
   if (!dailyRate || dailyRate <= 0) return { kind: "free" };
+  if (!billingEnabled) return { kind: "disabled" };
   if (equivalentJobs != null && equivalentJobs > 0) {
     return {
       kind: "perJob",
@@ -42,13 +51,16 @@ export function resolveBillingMode(
 
 /**
  * Short label suitable for an inline chip (`"$4/day"`, `"$1/job · max
- * $4/day"`, or empty when free). Returns `null` for the free case so
- * callers can `if (label) {…}` instead of rendering empty.
+ * $4/day"`, or `"$0.00/day"` when the master toggle is off). Returns
+ * `null` for the genuinely-free case so callers can `if (label) {…}`
+ * instead of rendering empty.
  */
 export function shortBillingChip(mode: BillingMode): string | null {
   switch (mode.kind) {
     case "free":
       return null;
+    case "disabled":
+      return "$0.00/day";
     case "flatDaily":
       return `$${mode.dailyRate.toFixed(2)}/day`;
     case "perJob":
@@ -64,6 +76,8 @@ export function instructiveBillingText(mode: BillingMode): string {
   switch (mode.kind) {
     case "free":
       return "No rental charge for this piece.";
+    case "disabled":
+      return "Equipment billing is currently disabled.";
     case "flatDaily":
       return `Contractors are charged $${mode.dailyRate.toFixed(2)} per Eastern-Time calendar day this piece is checked out. Employees and trainees use it at no cost (covered by their business margin).`;
     case "perJob":

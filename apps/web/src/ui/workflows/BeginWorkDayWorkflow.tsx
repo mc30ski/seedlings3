@@ -20,6 +20,7 @@ import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/Inlin
 import { type WorkerOccurrence } from "@/src/lib/types";
 import { fmtDate, fmtDateOpts, bizDateKey, clientLabel, jobTypeLabel } from "@/src/lib/lib";
 import { resolveBillingMode, shortBillingChip } from "@/src/lib/equipmentBilling";
+import { useEquipmentBillingEnabled } from "@/src/lib/useEquipmentBillingEnabled";
 import { MapLink } from "@/src/ui/helpers/Link";
 import { StatusBadge } from "@/src/ui/components/StatusBadge";
 
@@ -45,6 +46,7 @@ type Props = {
 export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerType }: Props) {
   const today = bizDateKey(new Date());
 
+  const equipmentBillingEnabled = useEquipmentBillingEnabled();
   const [step, setStep] = useState<"idle" | "loading" | "overview" | "confirm" | "route" | "equipment" | "ready" | "no-jobs">("idle");
   const [occurrences, setOccurrences] = useState<WorkerOccurrence[]>([]);
   const [confirmIndex, setConfirmIndex] = useState(0);
@@ -587,7 +589,7 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                                 the piece has equivalentJobs set. */}
                             {myWorkerType === "CONTRACTOR" && (() => {
                               const chip = shortBillingChip(
-                                resolveBillingMode((eq as any).dailyRate, (eq as any).equivalentJobs),
+                                resolveBillingMode((eq as any).dailyRate, (eq as any).equivalentJobs, equipmentBillingEnabled),
                               );
                               return chip ? (
                                 <Text fontSize="xs" fontWeight="medium" color="orange.700" flexShrink={0}>{chip}</Text>

@@ -13,6 +13,31 @@ type Tx = Prisma.TransactionClient;
 
 const now = () => new Date();
 
+/**
+ * Master toggle for equipment billing. Setting key:
+ * `EQUIPMENT_BILLING_ENABLED` (boolean). When OFF, every release path
+ * forces `Checkout.rentalCost = 0` and writeCheckoutSplits gets
+ * `rentalCost = 0` so per-worker CheckoutSplit rows are recorded with
+ * `amount = 0` (audit trail preserved). Equipment chips/badges still
+ * show but render as $0.
+ *
+ * Default: ON (matches historical behavior). Operators who want to
+ * absorb equipment cost into a higher contractor commission flip the
+ * setting OFF in Settings → Payments & Payouts and bump
+ * `CONTRACTOR_PLATFORM_FEE_PERCENT` to compensate. See
+ * docs/TAX_AND_PAYROLL_PICTURE.md scenarios + memo `feature_per_job_equipment_billing`.
+ */
+async function loadEquipmentBillingEnabled(
+  client: typeof prisma | any = prisma,
+): Promise<boolean> {
+  const row = await client.setting.findUnique({
+    where: { key: "EQUIPMENT_BILLING_ENABLED" },
+  });
+  if (!row) return true;
+  const v = String(row.value).toLowerCase().trim();
+  return !(v === "false" || v === "0" || v === "off" || v === "no");
+}
+
 // Super "act on behalf of a worker" audit marker. When the action's actor
 // (currentUserId) differs from the target worker (userId), the action is by
 // construction a Super override — only the /super/equipment/* routes pass
@@ -743,6 +768,11 @@ export const equipment: ServicesEquipment = {
           eq?.equivalentJobs ?? null,
           jobsByDay,
         );
+        // Master toggle: when OFF, force rentalCost to 0 (and downstream
+        // splits to 0) so no contractor is billed for equipment. The
+        // rentalDays + breakdown are still preserved for audit.
+        const billingEnabled = await loadEquipmentBillingEnabled(tx);
+        const effectiveRentalCost = billingEnabled ? (rental?.rentalCost ?? 0) : 0;
         // First write rentalDays + the per-day breakdown. The breakdown is
         // load-bearing for receipts + worker money tab — without it the
         // worker just sees a total with no audit trail. rentalCost is
@@ -759,7 +789,7 @@ export const equipment: ServicesEquipment = {
             const { contractorTotal } = await writeCheckoutSplits(tx, {
               checkoutId: checkout.id,
               groupId,
-              rentalCost: rental.rentalCost,
+              rentalCost: effectiveRentalCost,
             });
             // Checkout.rentalCost stores the *actual* billed total — sum
             // of contractor splits, not the notional pre-split cost. That
@@ -772,11 +802,13 @@ export const equipment: ServicesEquipment = {
             // Solo: only contractors (or unclassified, treated as
             // contractor for billing) actually pay. Employees + trainees
             // get rentalCost = 0 even though rentalDays is recorded.
+            // The master billing toggle (effectiveRentalCost) zeros out
+            // EVERYONE — contractors included — when OFF.
             const wt = holder?.workerType ?? null;
             const billable = wt === "CONTRACTOR" || wt === null;
             await tx.checkout.update({
               where: { id: checkout.id },
-              data: { rentalCost: billable ? rental.rentalCost : 0 },
+              data: { rentalCost: billable ? effectiveRentalCost : 0 },
             });
           }
         }
@@ -1041,6 +1073,11 @@ export const equipment: ServicesEquipment = {
         eq.equivalentJobs ?? null,
         jobsByDay,
       );
+      // Master toggle: see loadEquipmentBillingEnabled. When OFF, all
+      // rentalCost writes go to 0 (audit trail in rentalDays + breakdown
+      // preserved).
+      const billingEnabled = await loadEquipmentBillingEnabled(tx);
+      const effectiveRentalCost = billingEnabled ? (rental?.rentalCost ?? 0) : 0;
       const returned = await tx.checkout.update({
         where: { id: active.id },
         data: {
@@ -1053,7 +1090,7 @@ export const equipment: ServicesEquipment = {
           const { contractorTotal } = await writeCheckoutSplits(tx, {
             checkoutId: returned.id,
             groupId,
-            rentalCost: rental.rentalCost,
+            rentalCost: effectiveRentalCost,
           });
           await tx.checkout.update({
             where: { id: returned.id },
@@ -1064,7 +1101,7 @@ export const equipment: ServicesEquipment = {
           const billable = wt === "CONTRACTOR" || wt === null;
           await tx.checkout.update({
             where: { id: returned.id },
-            data: { rentalCost: billable ? rental.rentalCost : 0 },
+            data: { rentalCost: billable ? effectiveRentalCost : 0 },
           });
         }
       }

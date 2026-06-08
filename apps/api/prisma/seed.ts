@@ -149,6 +149,7 @@ const SETTING_SECTIONS: Record<string, string> = {
   MIN_WAGE_PER_HOUR: "payments",
   FIXED_ASSET_MIN_COST: "payments",
   QB_INCLUDE_CONTRACT_LABOR: "payments",
+  EQUIPMENT_BILLING_ENABLED: "payments",
   // Client Payment Requests
   BUSINESS_NAME: "client_requests",
   DEFAULT_PAYMENT_COMMUNICATIONS_MODE: "client_requests",
@@ -2156,6 +2157,20 @@ async function seedDatabase() {
     },
     update: { description: "When ON, qb-journal-expenses.csv emits Contract Labor rows for contractor payments (post-GP splits, GP wage-path work, and historical advances). When OFF, the entire Contract Labor section is dropped — appropriate once Gusto's QuickBooks integration is configured to post contractor payments to QB directly. Default ON.", updatedById: MICHAEL_ID },
   });
+  await prisma.setting.upsert({
+    where: { key: "EQUIPMENT_BILLING_ENABLED" },
+    create: {
+      key: "EQUIPMENT_BILLING_ENABLED",
+      // OFF by default in this seed — the operator absorbs equipment
+      // cost into a higher contractor commission while finalizing the
+      // billing + sales-tax model with a CPA. Flip ON once the
+      // settlement workflow is finalized.
+      value: "false",
+      description: "Master toggle for equipment billing. When ON, equipment checkouts charge contractors per the equipment's daily rate (employees + trainees always pay $0). When OFF, every checkout release records rentalCost = 0 regardless of equipment dailyRate or worker type — equipment chips still render but show $0. Use this when absorbing equipment cost into a higher CONTRACTOR_PLATFORM_FEE_PERCENT. Pending CPA review of the billing model.",
+      updatedById: MICHAEL_ID,
+    },
+    update: { description: "Master toggle for equipment billing. When ON, equipment checkouts charge contractors per the equipment's daily rate (employees + trainees always pay $0). When OFF, every checkout release records rentalCost = 0 regardless of equipment dailyRate or worker type — equipment chips still render but show $0. Use this when absorbing equipment cost into a higher CONTRACTOR_PLATFORM_FEE_PERCENT. Pending CPA review of the billing model.", updatedById: MICHAEL_ID },
+  });
 
   // ── Timeline categories taxonomy ──────────────────────────────────────────
   const timelineCategoriesValue = JSON.stringify([
@@ -2859,6 +2874,11 @@ async function seedPaymentsBase() {
     where: { key: "QB_INCLUDE_CONTRACT_LABOR" },
     create: { key: "QB_INCLUDE_CONTRACT_LABOR", value: "true", description: "When ON, qb-journal-expenses.csv emits Contract Labor rows for contractor payments (post-GP splits, GP wage-path work, and historical advances). When OFF, the entire Contract Labor section is dropped — appropriate once Gusto's QuickBooks integration is configured to post contractor payments to QB directly. Default ON.", updatedById: MICHAEL_ID },
     update: { description: "When ON, qb-journal-expenses.csv emits Contract Labor rows for contractor payments (post-GP splits, GP wage-path work, and historical advances). When OFF, the entire Contract Labor section is dropped — appropriate once Gusto's QuickBooks integration is configured to post contractor payments to QB directly. Default ON." },
+  });
+  await prisma.setting.upsert({
+    where: { key: "EQUIPMENT_BILLING_ENABLED" },
+    create: { key: "EQUIPMENT_BILLING_ENABLED", value: "false", description: "Master toggle for equipment billing. When ON, equipment checkouts charge contractors per the equipment's daily rate (employees + trainees always pay $0). When OFF, every checkout release records rentalCost = 0 regardless of equipment dailyRate or worker type — equipment chips still render but show $0. Use this when absorbing equipment cost into a higher CONTRACTOR_PLATFORM_FEE_PERCENT. Pending CPA review of the billing model.", updatedById: MICHAEL_ID },
+    update: { description: "Master toggle for equipment billing. When ON, equipment checkouts charge contractors per the equipment's daily rate (employees + trainees always pay $0). When OFF, every checkout release records rentalCost = 0 regardless of equipment dailyRate or worker type — equipment chips still render but show $0. Use this when absorbing equipment cost into a higher CONTRACTOR_PLATFORM_FEE_PERCENT. Pending CPA review of the billing model." },
   });
   // Stale REQUEST_PAYMENT_FROM_CLIENT_ENABLED setting is best-effort
   // cleaned up so it doesn't linger in the Settings tab after the gate was

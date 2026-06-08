@@ -2583,14 +2583,19 @@ export default function HomePage() {
   const goToApprovals = useCallback(() => {
     // User management is now a Super-only activity. The "Pending Users"
     // alert chip in the title bar (also super-gated) routes here.
-    window.sessionStorage.setItem("admin:usersOpenOnce", JSON.stringify({ status: "pending" }));
+    // Include `role: "all"` in the payload so the persisted role filter
+    // (worker/admin/client) is reset on arrival — otherwise the alert
+    // would land on a screen filtered to a role the new sign-up doesn't
+    // have, and the Pending section would silently show zero rows
+    // despite the alert badge reading a positive count.
+    window.sessionStorage.setItem("admin:usersOpenOnce", JSON.stringify({ status: "pending", role: "all" }));
     setTopTab("super");
     setSuperInnerTab("users");
     // Also dispatch event for when component is already mounted
     setTimeout(() => {
       window.dispatchEvent(
         new CustomEvent("admin:openUsers", {
-          detail: { status: "pending" as const },
+          detail: { status: "pending" as const, role: "all" as const },
         })
       );
     }, 100);

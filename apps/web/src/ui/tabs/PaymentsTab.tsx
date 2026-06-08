@@ -25,6 +25,7 @@ import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import { apiGet, apiPatch, apiDelete, apiPost } from "@/src/lib/api";
 import { determineRoles, prettyStatus, clientLabel, fmtDate, bizDateKey, bizToday, bizAddDays, bizAddYears } from "@/src/lib/lib";
 import { resolveBillingMode, shortBillingChip } from "@/src/lib/equipmentBilling";
+import { useEquipmentBillingEnabled } from "@/src/lib/useEquipmentBillingEnabled";
 import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
 import {
   type TabPropsType,
@@ -99,6 +100,7 @@ function WorkerPayments({
   // survive the refactor.
   const ns = viewAs ? `_${viewAs.id}` : "";
 
+  const equipmentBillingEnabled = useEquipmentBillingEnabled();
   const [items, setItems] = useState<WorkerPaymentItem[]>([]);
   const [totalAmount, setTotalAmount] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -803,7 +805,7 @@ function WorkerPayments({
                       {(() => {
                         // Equipment chip — same helper the reserve flow
                         // uses, so the worker sees consistent billing copy.
-                        const mode = resolveBillingMode(c.equipment.dailyRate, c.equipment.equivalentJobs);
+                        const mode = resolveBillingMode(c.equipment.dailyRate, c.equipment.equivalentJobs, equipmentBillingEnabled);
                         const chip = shortBillingChip(mode);
                         return (
                           <Text fontSize="xs" color="fg.muted">
@@ -862,6 +864,7 @@ function WorkerPayments({
 // ─── Admin Payments ──────────────────────────────────────────────────
 
 function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: boolean }) {
+  const equipmentBillingEnabled = useEquipmentBillingEnabled();
   const [items, setItems] = useState<PaymentListItem[]>([]);
   const [personTotals, setPersonTotals] = useState<Array<{ userId: string; displayName: string | null; total: number }>>([]);
   const [totalPlatformFees, setTotalPlatformFees] = useState(0);
@@ -2706,7 +2709,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                         // billing was per-completed-job — making a $0 charge
                         // look like a bug instead of "the contractor didn't
                         // complete a billable job during the window."
-                        const mode = resolveBillingMode(c.equipment.dailyRate, c.equipment.equivalentJobs);
+                        const mode = resolveBillingMode(c.equipment.dailyRate, c.equipment.equivalentJobs, equipmentBillingEnabled);
                         const chip = shortBillingChip(mode);
                         return (
                           <Text fontSize="xs" color="fg.muted">
