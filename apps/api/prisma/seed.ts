@@ -83,6 +83,10 @@ async function clearDatabase() {
 
   console.log("  Clearing payments...");
   await prisma.payment.deleteMany();
+  // GuaranteedPayoutAdvance is deprecated (new code doesn't write rows)
+  // but historical rows still hold FK refs to JobOccurrence. Clear
+  // before deleting occurrences.
+  await prisma.guaranteedPayoutAdvance.deleteMany();
 
   console.log("  Clearing occurrences...");
   await prisma.jobOccurrence.deleteMany();
@@ -144,6 +148,7 @@ const SETTING_SECTIONS: Record<string, string> = {
   HOURS_APPROVAL_VARIANCE_THRESHOLD_PERCENT: "payments",
   MIN_WAGE_PER_HOUR: "payments",
   FIXED_ASSET_MIN_COST: "payments",
+  QB_INCLUDE_CONTRACT_LABOR: "payments",
   // Client Payment Requests
   BUSINESS_NAME: "client_requests",
   DEFAULT_PAYMENT_COMMUNICATIONS_MODE: "client_requests",
@@ -2136,6 +2141,21 @@ async function seedDatabase() {
     },
     update: { description: "Master switch for the Business Start Date filter. Off = every money view shows full history. On = pre-cutoff money rows are hidden from every view and export (Super can transiently reveal them).", updatedById: MICHAEL_ID },
   });
+  await prisma.setting.upsert({
+    where: { key: "QB_INCLUDE_CONTRACT_LABOR" },
+    create: {
+      key: "QB_INCLUDE_CONTRACT_LABOR",
+      // ON by default — the app's qb-journal-expenses.csv is the only
+      // path getting contractor labor into QB until Gusto's QB
+      // integration is configured. Flip OFF after enabling Gusto-QB
+      // sync; the integration posts contractor payments directly so
+      // the app's rows become duplicative.
+      value: "true",
+      description: "When ON, qb-journal-expenses.csv emits Contract Labor rows for contractor payments (post-GP splits, GP wage-path work, and historical advances). When OFF, the entire Contract Labor section is dropped — appropriate once Gusto's QuickBooks integration is configured to post contractor payments to QB directly. Default ON.",
+      updatedById: MICHAEL_ID,
+    },
+    update: { description: "When ON, qb-journal-expenses.csv emits Contract Labor rows for contractor payments (post-GP splits, GP wage-path work, and historical advances). When OFF, the entire Contract Labor section is dropped — appropriate once Gusto's QuickBooks integration is configured to post contractor payments to QB directly. Default ON.", updatedById: MICHAEL_ID },
+  });
 
   // ── Timeline categories taxonomy ──────────────────────────────────────────
   const timelineCategoriesValue = JSON.stringify([
@@ -2834,6 +2854,11 @@ async function seedPaymentsBase() {
     where: { key: "BUSINESS_START_DATE_ENABLED" },
     create: { key: "BUSINESS_START_DATE_ENABLED", value: "false", description: "Master switch for the Business Start Date filter. Off = every money view shows full history. On = pre-cutoff money rows are hidden from every view and export (Super can transiently reveal them).", updatedById: MICHAEL_ID },
     update: { description: "Master switch for the Business Start Date filter. Off = every money view shows full history. On = pre-cutoff money rows are hidden from every view and export (Super can transiently reveal them)." },
+  });
+  await prisma.setting.upsert({
+    where: { key: "QB_INCLUDE_CONTRACT_LABOR" },
+    create: { key: "QB_INCLUDE_CONTRACT_LABOR", value: "true", description: "When ON, qb-journal-expenses.csv emits Contract Labor rows for contractor payments (post-GP splits, GP wage-path work, and historical advances). When OFF, the entire Contract Labor section is dropped — appropriate once Gusto's QuickBooks integration is configured to post contractor payments to QB directly. Default ON.", updatedById: MICHAEL_ID },
+    update: { description: "When ON, qb-journal-expenses.csv emits Contract Labor rows for contractor payments (post-GP splits, GP wage-path work, and historical advances). When OFF, the entire Contract Labor section is dropped — appropriate once Gusto's QuickBooks integration is configured to post contractor payments to QB directly. Default ON." },
   });
   // Stale REQUEST_PAYMENT_FROM_CLIENT_ENABLED setting is best-effort
   // cleaned up so it doesn't linger in the Settings tab after the gate was

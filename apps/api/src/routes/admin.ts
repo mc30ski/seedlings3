@@ -27,7 +27,7 @@ import {
 import { normalizePhone } from "../lib/phone";
 import { generateLedgerId } from "../lib/ledgerId";
 import { loadCategoryLabels } from "../services/expenseCategories";
-import { loadFixedAssetMinCost, isFixedAsset } from "../services/exports";
+import { loadFixedAssetMinCost, isFixedAsset, loadGpWorkAnchoredItems } from "../services/exports";
 import {
   resolveCutoff,
   cutoffWhere,
@@ -2307,13 +2307,13 @@ Respond ONLY with valid JSON in this exact format:
       },
       include: { payment: { select: { createdAt: true, method: true } } },
     });
-    const gpAdvances = await prisma.guaranteedPayoutAdvance.findMany({
-      where: {
-        userId,
-        ...(cutoff ? { exportedAt: { gte: cutoff } } : {}),
-      },
-      select: { amount: true, exportedAt: true },
-    });
+    // GP wage-path earnings: bucketed at occurrence.completedAt. Same
+    // source as the Gusto Contractors CSV's work-anchored half.
+    const gpItems = await loadGpWorkAnchoredItems(
+      cutoff ?? new Date(0),
+      new Date(),
+      { userId },
+    );
 
     let thisWeek = 0, thisMonth = 0, thisYear = 0, allTime = 0;
     const byMethod: Record<string, number> = {};
@@ -2328,12 +2328,12 @@ Respond ONLY with valid JSON in this exact format:
       byMethod[sp.payment.method] = (byMethod[sp.payment.method] ?? 0) + sp.amount;
       jobCount++;
     }
-    for (const adv of gpAdvances) {
-      allTime += adv.amount;
-      const d = adv.exportedAt;
-      if (d >= startOfWeek) thisWeek += adv.amount;
-      if (d >= startOfMonth) thisMonth += adv.amount;
-      if (d >= startOfYear) thisYear += adv.amount;
+    for (const item of gpItems) {
+      allTime += item.amount;
+      const d = item.completedAt;
+      if (d >= startOfWeek) thisWeek += item.amount;
+      if (d >= startOfMonth) thisMonth += item.amount;
+      if (d >= startOfYear) thisYear += item.amount;
       jobCount++;
     }
 
@@ -2453,20 +2453,21 @@ Respond ONLY with valid JSON in this exact format:
       select: { id: true, displayName: true, email: true, workerType: true },
     });
 
-    // Pre-fetch GP advances for any (user, occurrence) combos in scope.
-    // For flagged splits, contractor was paid the advance amount (not the
-    // reconciled split amount which may be lower if client underpaid pro-
-    // rata). Using advance.amount as the authoritative earnings value
-    // keeps the statistics consistent with the contractor's actual cash.
-    const occIdsForGp = occurrences.map((o) => o.id);
-    const advanceRows = occIdsForGp.length > 0
-      ? await prisma.guaranteedPayoutAdvance.findMany({
-          where: { occurrenceId: { in: occIdsForGp } },
-          select: { userId: true, occurrenceId: true, amount: true },
-        })
+    // For GP-period work, the contractor was paid the wage-path amount
+    // on the Gusto run for the work week. Use the same compute the CSV
+    // uses (loadGpWorkAnchoredItems) so worker stats reconcile with
+    // payroll. For post-GP work, the split amount remains authoritative.
+    const occurrenceWindowStart = occurrences.length > 0
+      ? new Date(Math.min(...occurrences.map((o) => (o.completedAt ?? new Date()).getTime())))
+      : new Date(0);
+    const occurrenceWindowEnd = occurrences.length > 0
+      ? new Date(Math.max(...occurrences.map((o) => (o.completedAt ?? new Date()).getTime())))
+      : new Date();
+    const gpItemsAllUsers = occurrences.length > 0
+      ? await loadGpWorkAnchoredItems(occurrenceWindowStart, occurrenceWindowEnd)
       : [];
     const advanceByKey = new Map(
-      advanceRows.map((a) => [`${a.userId}:${a.occurrenceId}`, a.amount]),
+      gpItemsAllUsers.map((i) => [`${i.userId}:${i.occurrenceId}`, i.amount]),
     );
 
     // Build per-worker stats
@@ -6174,6 +6175,17 @@ Respond ONLY with valid JSON in this exact format:
           bytes,
         },
       });
+      // Mirror to the audit log so CSV downloads surface in the Audit
+      // Log tab alongside other admin actions. ExportRun already stores
+      // the full bytes; this is the operator-facing summary record.
+      await writeAudit(prisma, AUDIT.EXPORT.DOWNLOADED, userId, {
+        kind,
+        rangeStart: range.startStr,
+        rangeEnd: range.endStr,
+        rowCount: result.rowCount,
+        totalAmount: result.total,
+        fileName: fn,
+      });
     }
     reply.header("Content-Type", "text/csv; charset=utf-8");
     reply.header("Content-Disposition", `attachment; filename="${fn}"`);
@@ -6224,7 +6236,7 @@ Respond ONLY with valid JSON in this exact format:
     const startStr = String(req.query.start);
     const endStr = String(req.query.end);
     const actorId = await currentUserId(req);
-    const result = await gustoContractorsCsv(effectiveStart, end, actorId);
+    const result = await gustoContractorsCsv(effectiveStart, end);
     return deliverCsv(reply, actorId, "GUSTO_CONTRACTORS", { start: effectiveStart, end, startStr, endStr }, "gusto-contractors", result, readSaveHistory(req));
   });
 
@@ -6287,7 +6299,7 @@ Respond ONLY with valid JSON in this exact format:
     const actorId = await currentUserId(req);
     const [w2, contractors] = await Promise.all([
       gustoW2Csv(effectiveStart, end),
-      gustoContractorsCsv(effectiveStart, end, actorId),
+      gustoContractorsCsv(effectiveStart, end),
     ]);
     const zip = new JSZip();
     zip.file(`gusto-w2-${startStr}_${endStr}.csv`, w2.csv);

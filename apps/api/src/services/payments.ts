@@ -119,29 +119,68 @@ export function wasUserInGuaranteedPayoutAt(
   return false;
 }
 
-// Look up GuaranteedPayoutAdvance rows for the (occurrence, users) combos
-// in a single query. Returns a map of userId → exportedAt so callers can
-// stamp PaymentSplit.guaranteedPayoutPaidAt at split-creation time.
+// Derive `PaymentSplit.guaranteedPayoutPaidAt` for splits being created
+// from an eventual client payment. A split is "GP-paid" when its
+// contractor was in their guaranteed-payout period at the moment their
+// occurrence was completed — that work was already paid on the
+// wage-path Gusto contractor run for the completion week, and the
+// client's later payment must not re-trigger a contractor disbursement.
 //
-// This runs at EVERY split-creation site (createPayment, updatePayment,
-// recalculateSplits, approvePayment) so a client paying after a GP advance
-// was already exported correctly flags the resulting split as "this money
-// was already disbursed; future payroll exports must exclude it."
+// Runs at EVERY split-creation site (createPayment, updatePayment,
+// recalculateSplits, approvePayment) so the flag is consistent regardless
+// of which surface created the split. The flag's downstream consumer is
+// gustoContractorsCsv's payment-anchored half, which skips flagged
+// splits.
 //
-// Without this hook, a contractor who got the advance would ALSO have an
-// unflagged PaymentSplit in the next contractor payroll export → operator
-// pays them again → over-disbursement that's hard to detect.
+// Pure derivation — no GuaranteedPayoutAdvance table lookup. The advance
+// table is deprecated as of the wage-path refactor (see feature memo
+// `feature_guaranteed_payout`); historical rows remain for audit reference
+// but are not read by new code. The "did this work happen during GP"
+// question is answered by occurrence.completedAt + the user's GP window
+// (User.guaranteedPayoutUntil/StartedAt/History), via the existing
+// wasUserInGuaranteedPayoutAt helper above.
+//
+// Returns a map of userId → "GP-paid date" suitable for stamping on
+// PaymentSplit.guaranteedPayoutPaidAt. We use occurrence.completedAt as
+// the proxy — the actual Gusto pay date lives in Gusto, not the app;
+// completedAt is the load-bearing date that identifies "the work that
+// was paid on the wage cycle covering this date."
 export async function fetchAdvanceFlagsByUser(
   tx: any,
   occurrenceId: string,
   userIds: string[],
 ): Promise<Map<string, Date>> {
   if (userIds.length === 0) return new Map();
-  const advances = await tx.guaranteedPayoutAdvance.findMany({
-    where: { occurrenceId, userId: { in: userIds } },
-    select: { userId: true, exportedAt: true },
+  const occ = await tx.jobOccurrence.findUnique({
+    where: { id: occurrenceId },
+    select: { completedAt: true },
   });
-  return new Map(advances.map((a: any) => [a.userId, a.exportedAt as Date]));
+  if (!occ?.completedAt) return new Map();
+  const users = await tx.user.findMany({
+    where: { id: { in: userIds } },
+    select: {
+      id: true,
+      guaranteedPayoutUntil: true,
+      guaranteedPayoutStartedAt: true,
+      guaranteedPayoutHistory: true,
+    },
+  });
+  const flags = new Map<string, Date>();
+  for (const u of users as any[]) {
+    if (
+      wasUserInGuaranteedPayoutAt(
+        {
+          guaranteedPayoutUntil: u.guaranteedPayoutUntil,
+          guaranteedPayoutStartedAt: u.guaranteedPayoutStartedAt,
+          guaranteedPayoutHistory: u.guaranteedPayoutHistory,
+        },
+        occ.completedAt,
+      )
+    ) {
+      flags.set(u.id, occ.completedAt);
+    }
+  }
+  return flags;
 }
 
 // When two `gte` constraints apply to the same field (e.g., a user-supplied

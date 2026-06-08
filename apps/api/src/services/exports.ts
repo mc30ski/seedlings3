@@ -27,15 +27,46 @@ export type CsvResult = {
 // Every CSV ends with a TOTALS row for eyeball verification against the
 // in-app PaymentsTab numbers.
 
+// CSV-injection-safe field escape. Excel/LibreOffice interprets any
+// field STARTING with `=`, `+`, `-`, `@`, tab (\t), or CR (\r) as a
+// formula, which is a real attack vector (OWASP CSV Injection) — a
+// client or worker named `=cmd|/c calc!` would execute the moment the
+// operator opens the CSV. We defuse those leads by prefixing a single
+// quote (the canonical Excel "treat literally" marker).
 function csvEscape(v: unknown): string {
   if (v == null) return "";
-  const s = String(v);
+  let s = String(v);
+  // Strip leading/trailing whitespace AFTER the formula check — leading
+  // whitespace would mask a `\t=...` payload otherwise.
+  if (/^[=+\-@\t\r]/.test(s)) {
+    s = "'" + s; // Excel-safe literal prefix
+  }
   if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;
 }
 
+// Join cells with commas. We use CRLF line endings (\r\n) per RFC 4180 —
+// older Excel and a few Windows tools choke on bare LF and render the
+// whole file as a single cell. The csv outputs below glue the rows with
+// CRLF and append a trailing CRLF.
 function csvRow(cells: unknown[]): string {
   return cells.map(csvEscape).join(",");
+}
+
+// UTF-8 byte-order mark. Prepend to any CSV that may contain
+// non-ASCII characters (names with accents, addresses with curly
+// quotes, etc.) — without it, Excel-on-Windows interprets the file as
+// ANSI and shows characters as garbage. Modern Excel + Google Sheets
+// detect the BOM and decode correctly.
+const UTF8_BOM = "﻿";
+
+// Single canonical CSV finalizer. Glues row strings with CRLF (RFC 4180,
+// the only line-ending Excel-on-Windows handles correctly), appends a
+// trailing CRLF, and prepends a UTF-8 BOM. EVERY csv-returning function
+// in this file goes through here — never `lines.join("\n")` directly,
+// or BOM + CRLF will be missing and Excel will render the file wrong.
+function finalizeCsv(lines: string[]): string {
+  return UTF8_BOM + lines.join("\r\n") + "\r\n";
 }
 
 // YYYY-MM-DD in Eastern Time. Used for the Gusto Pay Period Start/End
@@ -422,30 +453,54 @@ export async function gustoW2Csv(start: Date, end: Date): Promise<CsvResult> {
       "",
     ]),
   );
-  return { csv: lines.join("\n") + "\n", rowCount: rows.length, total: round2(totalGross) };
+  return { csv: finalizeCsv(lines), rowCount: rows.length, total: round2(totalGross) };
 }
 
-// Computes the work-anchored GP advance candidates for a window WITHOUT
-// writing any advance rows. Shared by gustoContractorsCsv (which then
-// inserts the rows) and exportPreview (read-only — just needs the totals
-// for the Exports tab UI). Returns one entry per (user × occurrence)
-// that would receive an advance on this export run.
+// Computes the work-anchored items for contractors in their guaranteed-
+// payout (GP) period — pure-read, ZERO database writes, fully idempotent.
 //
-// Eligibility = active OR historical GP period covers occurrence.completedAt
-//   AND no GuaranteedPayoutAdvance exists yet for this (user, occurrence)
-//   AND no PaymentSplit exists for this user on this occurrence's payment
-//       (client hasn't paid → standard payment-anchored flow doesn't cover it)
-export type GpAdvanceCandidate = {
+// During GP, a contractor's payment is wage-like (work-anchored, paid on
+// the next payroll cycle for the period the work fell in), the same model
+// W-2 employees use. After GP expires, the same contractor's payment
+// reverts to split-anchored (paid when the client's payment is confirmed).
+//
+// This function is the wage-side computation: one entry per (user ×
+// occurrence) where the contractor was in GP at occurrence.completedAt
+// AND completedAt ∈ [start, end]. Callers use it to:
+//   • feed gustoContractorsCsv's work-anchored half
+//   • feed exportPreview's tally for the same window
+//   • populate worker/admin earnings dashboards (filtered by userId)
+//
+// There is NO exclusion based on existing PaymentSplits or any prior
+// GuaranteedPayoutAdvance row. That's the whole point of idempotency —
+// the same (start, end, optional userId) input ALWAYS produces the same
+// output regardless of what other side effects have happened.
+//
+// Dedup against eventual client payment is handled at PaymentSplit
+// creation time: when the client later pays for a GP-period occurrence,
+// fetchAdvanceFlagsByUser derives `guaranteedPayoutPaidAt` from the same
+// "was user in GP at completedAt" rule used here. The Gusto Contractors
+// CSV's payment-anchored half then skips flagged splits.
+//
+// `opts.userId` narrows the result to a single contractor — used by
+// worker/admin earnings dashboards.
+export type GpWorkAnchoredItem = {
   userId: string;
   occurrenceId: string;
   amount: number;
+  completedAt: Date;
   contractor: { id: string; displayName: string | null; email: string | null };
+  // Property + client context — non-null when the occurrence has them
+  // wired up. Used by the QB Expenses CSV's Contract Labor descriptions
+  // and by any other consumer that wants the human-readable provenance.
+  property: { displayName: string | null; clientDisplayName: string | null } | null;
 };
 
-async function loadGpAdvanceCandidates(
+export async function loadGpWorkAnchoredItems(
   start: Date,
   end: Date,
-): Promise<GpAdvanceCandidate[]> {
+  opts?: { userId?: string },
+): Promise<GpWorkAnchoredItem[]> {
   const occs = await prisma.jobOccurrence.findMany({
     where: {
       completedAt: { gte: start, lte: end },
@@ -459,7 +514,10 @@ async function loadGpAdvanceCandidates(
           // contractor jobs silently disappear from the Gusto Contractors
           // export and the contractor doesn't get paid.
           OR: [{ role: null }, { role: { not: "observer" } }],
-          user: { workerType: "CONTRACTOR" },
+          user: {
+            workerType: "CONTRACTOR",
+            ...(opts?.userId ? { id: opts.userId } : {}),
+          },
         },
       },
     },
@@ -483,19 +541,22 @@ async function loadGpAdvanceCandidates(
       },
       addons: { select: { price: true } },
       expenses: { select: { cost: true } },
-      // Need `confirmed` + `writtenOff` to correctly distinguish a real
-      // cash event (cash-basis: only confirmed, non-written-off payments
-      // pay the contractor) from a recorded-but-unapproved payment
-      // (PaymentSplit exists but the contractor hasn't been paid yet).
-      // The candidate-exclusion logic below uses these to keep
-      // contractors in GP eligible while their payment sits unconfirmed.
-      payment: { select: { confirmed: true, writtenOff: true, splits: { select: { userId: true } } } },
+      job: {
+        select: {
+          property: {
+            select: {
+              displayName: true,
+              client: { select: { displayName: true } },
+            },
+          },
+        },
+      },
     },
   });
 
   if (occs.length === 0) return [];
   const rates = await loadRates(prisma);
-  const out: GpAdvanceCandidate[] = [];
+  const out: GpWorkAnchoredItem[] = [];
 
   for (const occ of occs) {
     if (!occ.completedAt) continue;
@@ -506,6 +567,7 @@ async function loadGpAdvanceCandidates(
     const qualifying = active.filter(
       (a) =>
         a.user.workerType === "CONTRACTOR" &&
+        (!opts?.userId || a.userId === opts.userId) &&
         wasUserInGuaranteedPayoutAt(
           {
             guaranteedPayoutUntil: a.user.guaranteedPayoutUntil,
@@ -516,42 +578,6 @@ async function loadGpAdvanceCandidates(
         ),
     );
     if (qualifying.length === 0) continue;
-
-    const existingAdvances = await prisma.guaranteedPayoutAdvance.findMany({
-      where: {
-        occurrenceId: occ.id,
-        userId: { in: qualifying.map((q) => q.userId) },
-      },
-      select: { userId: true },
-    });
-    const advancedUserIds = new Set(existingAdvances.map((a) => a.userId));
-    // PaymentSplit existence ALONE is not enough to mark the contractor
-    // as already-paid. A self-reported or worker-initiated payment that
-    // hasn't been admin-approved yet has `confirmed = false` — under
-    // cash-basis accounting, no money has actually moved. The whole
-    // point of GP is to decouple contractor pay from client-payment
-    // timing, so an unconfirmed payment must NOT block a GP advance.
-    //
-    // We also skip the split-blocking on written-off payments — the
-    // client never paid, so the contractor never received that money.
-    //
-    // Once the admin approves the payment, the existing-advance check
-    // above catches it (the approval flow stamps `guaranteedPayoutPaidAt`
-    // on the split via fetchAdvanceFlagsByUser, and the next export's
-    // payment-anchored loop skips flagged splits — see line ~616). So
-    // there's no double-pay even if the advance is created first and
-    // the payment is approved later.
-    const paymentCountsAsPaid =
-      !!occ.payment?.confirmed && !occ.payment.writtenOff;
-    const splitUserIds = new Set(
-      paymentCountsAsPaid
-        ? (occ.payment?.splits ?? []).map((s: any) => s.userId)
-        : [],
-    );
-    const eligible = qualifying.filter(
-      (q) => !advancedUserIds.has(q.userId) && !splitUserIds.has(q.userId),
-    );
-    if (eligible.length === 0) continue;
 
     // Prefer the promisedPayouts snapshot when it exists — it was locked
     // in at completion time and reflects what each worker was actually
@@ -573,9 +599,8 @@ async function loadGpAdvanceCandidates(
 
     // Fallback path (no snapshot OR contractor not in snapshot): compute
     // promised net the same way the snapshot would have at completion
-    // time, using current price/expenses + current assignees. This is
-    // the legacy behavior; preserved for cases where the snapshot was
-    // never written (e.g., older data before the snapshot feature).
+    // time, using current price/expenses + current assignees. Preserved
+    // for older data created before the snapshot feature existed.
     const completionSplits = (occ as any).completionSplits as
       | Array<{ userId: string; percent: number }>
       | null
@@ -600,26 +625,33 @@ async function loadGpAdvanceCandidates(
     );
     const fallbackBreakdown = computeBreakdown(priceTotal, expTotal, workersList, rates);
 
-    for (const q of eligible) {
-      // Snapshot path: use the locked-in promised net if available.
+    for (const q of qualifying) {
       const snapshotNet = snapshotByUser.get(q.userId);
-      let advanceAmount: number;
+      let amount: number;
       if (snapshotNet != null && snapshotNet > 0) {
-        advanceAmount = round2(snapshotNet);
+        amount = round2(snapshotNet);
       } else {
         const promisedRow = fallbackBreakdown.find((r) => r.userId === q.userId);
         if (!promisedRow || promisedRow.net <= 0) continue;
-        advanceAmount = round2(promisedRow.net);
+        amount = round2(promisedRow.net);
       }
+      const property = (occ as any).job?.property
+        ? {
+            displayName: (occ as any).job.property.displayName as string | null,
+            clientDisplayName: (occ as any).job.property.client?.displayName ?? null,
+          }
+        : null;
       out.push({
         userId: q.userId,
         occurrenceId: occ.id,
-        amount: advanceAmount,
+        amount,
+        completedAt,
         contractor: {
           id: q.user.id,
           displayName: q.user.displayName,
           email: q.user.email,
         },
+        property,
       });
     }
   }
@@ -630,27 +662,35 @@ async function loadGpAdvanceCandidates(
 // ─────────────────────────────────────────────────────────────────────────────
 // Gusto Contractors CSV — one row per 1099 contractor with total paid.
 //
-// Two sources of pay aggregated per contractor:
-//   (a) Payment-anchored: confirmed PaymentSplits in window, EXCLUDING any
-//       flagged with guaranteedPayoutPaidAt (those splits were already
-//       disbursed via a prior GP advance and re-counting them would
-//       double-pay).
-//   (b) Work-anchored GP advance: for any contractor with an active OR
-//       historical GP period covering an occurrence's completedAt, find
-//       completed-in-window occurrences they were active assignee on
-//       where no PaymentSplit exists yet (client hasn't paid) AND no
-//       prior GuaranteedPayoutAdvance exists. Compute promised net via
-//       canonical computeBreakdown, ADD to CSV total, INSERT advance row.
+// PURE READ. Idempotent: same (start, end) → same CSV, no DB writes.
 //
-// The advance INSERT is what makes the next client-payment cycle reconcile
-// correctly: payments.ts split-creation hooks find the advance and stamp
-// guaranteedPayoutPaidAt on the resulting split, taking it out of the
-// payment-anchored bucket above. See feature memo `feature_guaranteed_payout`.
+// Two sources of pay aggregated per contractor:
+//   (a) Payment-anchored (post-GP path): confirmed PaymentSplits in
+//       window, EXCLUDING any flagged with guaranteedPayoutPaidAt
+//       (those splits' contractor was in GP at occurrence completion and
+//       was already paid on the wage-path payroll cycle for that work).
+//   (b) Work-anchored (GP path): for any contractor in their guaranteed-
+//       payout period at the moment their occurrence completed, paid
+//       like a W-2 employee — included on the contractor CSV for the
+//       period the work fell in, NOT the period the client eventually
+//       paid. Computed from JobOccurrence.completedAt + promisedPayouts
+//       snapshot.
+//
+// Cross-week dedup: when the client eventually pays for a GP-period
+// occurrence, the resulting PaymentSplit is created with
+// guaranteedPayoutPaidAt set (see fetchAdvanceFlagsByUser — same
+// derivation as half (b) here). Half (a) skips those splits, so the
+// contractor is never paid for the same work twice.
+//
+// Idempotency contract: this function never inserts into
+// GuaranteedPayoutAdvance (or anywhere else). Gusto is the system of
+// record for what was actually paid. The app is the calculator that
+// computes "what should be on this CSV given current data" — the same
+// answer every time.
 // ─────────────────────────────────────────────────────────────────────────────
 export async function gustoContractorsCsv(
   start: Date,
   end: Date,
-  exportedByUserId?: string | null,
 ): Promise<CsvResult> {
   const payments = await loadConfirmedPayments(start, end);
 
@@ -668,8 +708,9 @@ export async function gustoContractorsCsv(
   for (const p of payments) {
     for (const sp of p.splits) {
       if (isEmployeeClass(sp.user.workerType)) continue;
-      // Skip splits already disbursed via GP advance — the contractor
-      // received this money out-of-band on a prior payroll cycle.
+      // Skip splits whose contractor was paid via the GP wage path on
+      // the payroll cycle for the work's completion week — re-counting
+      // here would double-pay.
       if ((sp as any).guaranteedPayoutPaidAt != null) continue;
       const k = sp.user.id;
       const cur = byWorker.get(k);
@@ -690,72 +731,23 @@ export async function gustoContractorsCsv(
     }
   }
 
-  // (b) Work-anchored GP advance part. Use the shared candidate finder
-  // (preview also uses it for read-only totals), then persist each
-  // candidate as a GuaranteedPayoutAdvance row + roll into byWorker.
-  // Unique constraint on (userId, occurrenceId) is the idempotency
-  // belt-and-suspenders — but we ALSO catch P2002 on .create() so a
-  // partial-failure scenario doesn't crash the next export attempt:
-  //
-  //   1. First run creates advances for candidates A, B, then network
-  //      blip kills the request before C. Advances A + B are committed.
-  //   2. Operator retries. loadGpAdvanceCandidates returns C only
-  //      (A + B are now in existingAdvances). C is created cleanly.
-  //   3. But IF the candidate finder somehow re-returns A (race in
-  //      the SELECT-then-INSERT pattern), the .create() throws P2002.
-  //      Without a catch, the entire export fails and no CSV is
-  //      produced. With the catch, A is treated as already-created
-  //      (skip, log) and the loop continues — same outcome as if the
-  //      candidate finder had filtered A out.
-  const candidates = await loadGpAdvanceCandidates(start, end);
-  if (candidates.length > 0) {
-    const exportedAtNow = new Date();
-    for (const c of candidates) {
-      let advanceCreated = true;
-      try {
-        await prisma.guaranteedPayoutAdvance.create({
-          data: {
-            ledgerId: generateLedgerId(),
-            userId: c.userId,
-            occurrenceId: c.occurrenceId,
-            amount: c.amount,
-            exportedAt: exportedAtNow,
-            exportedByUserId: exportedByUserId ?? null,
-          },
-        });
-      } catch (err: any) {
-        // P2002 = Prisma unique-constraint violation. The (userId,
-        // occurrenceId) row was created by a concurrent / earlier
-        // export run for the same window; safe to skip. Re-throw
-        // anything else.
-        if (err?.code === "P2002") {
-          advanceCreated = false;
-        } else {
-          throw err;
-        }
-      }
-
-      // Only roll into the CSV total when WE created the advance.
-      // If the row already existed from a prior export run, the
-      // contractor was already paid that amount via that earlier
-      // payroll cycle — re-counting it here would double-pay.
-      if (!advanceCreated) continue;
-
-      const cur = byWorker.get(c.userId);
-      const { first, last } = splitName(c.contractor.displayName);
-      if (cur) {
-        cur.total += c.amount;
-        cur.jobs += 1;
-      } else {
-        byWorker.set(c.userId, {
-          userId: c.userId,
-          first,
-          last,
-          email: c.contractor.email ?? "",
-          total: c.amount,
-          jobs: 1,
-        });
-      }
+  // (b) Work-anchored GP part: pure read.
+  const workItems = await loadGpWorkAnchoredItems(start, end);
+  for (const item of workItems) {
+    const cur = byWorker.get(item.userId);
+    const { first, last } = splitName(item.contractor.displayName);
+    if (cur) {
+      cur.total += item.amount;
+      cur.jobs += 1;
+    } else {
+      byWorker.set(item.userId, {
+        userId: item.userId,
+        first,
+        last,
+        email: item.contractor.email ?? "",
+        total: item.amount,
+        jobs: 1,
+      });
     }
   }
 
@@ -803,7 +795,7 @@ export async function gustoContractorsCsv(
       "",
     ]),
   );
-  return { csv: lines.join("\n") + "\n", rowCount: rows.length, total: round2(totalPaid) };
+  return { csv: finalizeCsv(lines), rowCount: rows.length, total: round2(totalPaid) };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -983,7 +975,7 @@ export async function qbIncomeCsv(start: Date, end: Date): Promise<CsvResult> {
 
   // rowCount = source transaction count (NOT line count) so downstream
   // displays still read "N payments + M rentals" rather than 2× that.
-  return { csv: lines.join("\n") + "\n", rowCount: transactionCount, total: round2(total) };
+  return { csv: finalizeCsv(lines), rowCount: transactionCount, total: round2(total) };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1015,6 +1007,23 @@ export async function loadFixedAssetMinCost(
 
 export function isFixedAsset(be: { cost: number; date: Date }, minCost: number): boolean {
   return be.cost >= minCost && be.date.getTime() >= FIXED_ASSET_START_DATE.getTime();
+}
+
+/**
+ * Whether qb-journal-expenses.csv should emit Contract Labor rows.
+ * Setting: QB_INCLUDE_CONTRACT_LABOR (boolean). Default = true (current
+ * behavior — the app's CSV is the only path getting contractor labor
+ * into QB). Flip to false once Gusto's QuickBooks integration is
+ * configured to post contractor payments directly; the app's rows
+ * become duplicative at that point.
+ */
+export async function loadIncludeContractLabor(
+  client: typeof prisma | any = prisma,
+): Promise<boolean> {
+  const row = await client.setting.findUnique({ where: { key: "QB_INCLUDE_CONTRACT_LABOR" } });
+  if (!row) return true; // default ON for backwards-compat with existing behavior
+  const v = String(row.value).toLowerCase().trim();
+  return v !== "false" && v !== "0" && v !== "off" && v !== "no";
 }
 
 // Synthetic category for processor-fee rows — sourced from Payment records,
@@ -1184,12 +1193,18 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<CsvResult> 
     transactionCount += 1;
   }
 
-  // Contract Labor journals — one per non-flagged contractor PaymentSplit.
+  // Contract Labor journals — gated by QB_INCLUDE_CONTRACT_LABOR
+  // (default ON). Turn OFF once Gusto's QuickBooks integration is
+  // configured to post contractor payments to QB directly — the app's
+  // rows would be duplicative at that point.
+  const includeContractLabor = await loadIncludeContractLabor();
+  const contractLaborAccount = qbAccountMap[CONTRACT_LABOR_CATEGORY] ?? "Unmapped";
+  if (includeContractLabor) {
+  // Post-GP path: one journal per non-flagged contractor PaymentSplit.
   // JournalNo derives from the parent Payment.ledgerId + last 4 chars of
   // the contractor's userId (uppercased). Unique per (payment, contractor)
   // and survives split delete+recreate at reconciliation — the parent
   // payment's ledgerId is stable.
-  const contractLaborAccount = qbAccountMap[CONTRACT_LABOR_CATEGORY] ?? "Unmapped";
   for (const p of payments) {
     const prop = p.occurrence?.job?.property;
     const clientName = prop?.client?.displayName ?? "";
@@ -1217,26 +1232,18 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<CsvResult> 
     }
   }
 
-  // GP advance journals — anchored on `exportedAt`.
+  // HISTORICAL READ ONLY — GuaranteedPayoutAdvance is deprecated; no new
+  // rows are created. Pre-cutover advance rows whose exportedAt falls in
+  // window get emitted as Contract Labor for backwards compatibility.
+  // After the cutover (and for any window that doesn't overlap with the
+  // pre-cutover period), this loop returns empty and only the GP
+  // wage-path Contract Labor section below emits rows for GP work.
   //
-  // KNOWN LIMITATION: this query includes ALL advances whose exportedAt
-  // falls in the [start, end] window, with no awareness of whether the
-  // advance has been imported to QB on a prior export run. If the
-  // operator runs the QB Expenses export for overlapping windows
-  // (e.g., "this week" then "this month"), the same advance row will
-  // appear in BOTH CSVs and — because QB's journal-entry importer
-  // does NOT dedupe on JournalNo — will end up in QB Expenses TWICE.
-  //
-  // OPERATIONAL GUIDANCE: only export windows you haven't previously
-  // imported. Common patterns:
-  //   • Run "Last week" each Monday → import → next Monday repeat.
-  //   • Or run year-to-date once at year-start → import → then export
-  //     only "Last week" going forward.
-  // A proper fix requires tracking which advances have been included
-  // in a prior QB Expenses CSV (schema change: a join table or a
-  // qbExpensesExportedAt field on GuaranteedPayoutAdvance). Deferred
-  // until the operator hits this in practice; document it now so
-  // future devs don't think it's a missed edge case.
+  // KNOWN LIMITATION (pre-cutover only): re-exporting overlapping windows
+  // emits the same advance row twice, and QB's journal-entry importer
+  // does NOT dedupe on JournalNo. Mitigation: don't re-import overlapping
+  // windows for pre-cutover periods. After the cutover this isn't a
+  // concern — no new advance rows exist for forward windows.
   const gpAdvances = await prisma.guaranteedPayoutAdvance.findMany({
     where: { exportedAt: { gte: start, lte: end } },
     include: {
@@ -1278,8 +1285,44 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<CsvResult> 
     transactionCount += 1;
   }
 
+  // GP wage-path Contract Labor: post-cutover GP work doesn't write
+  // advance rows anymore, so the historical advance loop above misses
+  // it. Emit Contract Labor here directly from the work-anchored items
+  // (same source the Gusto Contractors CSV uses), anchored on
+  // completedAt. NOTE: once Gusto-QB integration handles contractor
+  // payments end-to-end, this whole Contract Labor section can be
+  // removed — see docs/FINANCIAL_SYSTEM.md §12.
+  //
+  // Historical advance rows (loop above) cover pre-cutover work. The
+  // two paths don't overlap because no occurrence has BOTH an advance
+  // row AND falls into the work-anchored set for a forward window —
+  // work-anchored only emits for new completions in window, and
+  // advance rows exist only for pre-cutover completions.
+  const gpItems = await loadGpWorkAnchoredItems(start, end);
+  for (const item of gpItems) {
+    const vendor = item.contractor.displayName ?? item.contractor.email ?? "";
+    const clientName = item.property?.clientDisplayName ?? "";
+    const propName = item.property?.displayName ?? "";
+    const desc = `Contractor wage-path payout to ${vendor}${clientName ? ` for ${clientName}` : ""}${propName ? ` (${propName})` : ""}`;
+    // Derived JournalNo — short, deterministic, dedupes on QB re-import.
+    const journalNo = `GPW-${item.occurrenceId.slice(-8).toUpperCase()}-${item.userId.slice(-4).toUpperCase()}`;
+    lines.push(
+      ...expenseJournalRows(
+        journalNo,
+        toQbDate(item.completedAt),
+        contractLaborAccount,
+        item.amount,
+        desc,
+        "",
+      ),
+    );
+    total += item.amount;
+    transactionCount += 1;
+  }
+  } // end if (includeContractLabor)
+
   return {
-    csv: lines.join("\n") + "\n",
+    csv: finalizeCsv(lines),
     rowCount: transactionCount,
     total: round2(total),
   };
@@ -1367,7 +1410,7 @@ export async function qbEquityCsv(start: Date, end: Date): Promise<CsvResult> {
   lines.push(csvRow(["SUBTOTAL Owner Draws", "", round2(drawTotal).toFixed(2), ...blank10]));
   lines.push(csvRow(["TOTALS", "", round2(contributionTotal + drawTotal).toFixed(2), ...blank10]));
   return {
-    csv: lines.join("\n") + "\n",
+    csv: finalizeCsv(lines),
     rowCount: rows.length,
     total: round2(contributionTotal + drawTotal),
   };
@@ -1489,7 +1532,7 @@ export async function qbFixedAssetsCsv(start: Date, end: Date): Promise<CsvResul
       "",
     ]),
   );
-  return { csv: lines.join("\n") + "\n", rowCount: rows.length, total: round2(total) };
+  return { csv: finalizeCsv(lines), rowCount: rows.length, total: round2(total) };
 }
 
 // A single row that would land as "Unmapped" in qb-expenses.csv — i.e. its
@@ -1583,9 +1626,10 @@ export async function findUnmappedExpenseRows(
         });
       }
     }
-    // GP advances also land in Contract Labor; warn the same way if the
-    // category is unmapped so the operator doesn't ship an "Unmapped"
-    // row to QB.
+    // HISTORICAL READ ONLY — GuaranteedPayoutAdvance is deprecated; no
+    // new rows are created. Pre-cutover rows whose exportedAt falls in
+    // window get the same Contract Labor unmapped-warning treatment so
+    // the operator doesn't ship an "Unmapped" row to QB.
     const advances = await prisma.guaranteedPayoutAdvance.findMany({
       where: { exportedAt: { gte: start, lte: end } },
       include: { user: { select: { displayName: true, email: true } } },
@@ -1696,20 +1740,20 @@ export async function exportPreview(start: Date, end: Date): Promise<ExportPrevi
       qbContractLaborTotal += sp.amount;
     }
   }
-  // GP candidates this run WOULD create — read-only here, so preview
-  // matches what the actual export will produce. Goes into both Gusto
-  // (this period's payout) and QB (this period's Contract Labor).
-  const gpCandidates = await loadGpAdvanceCandidates(start, end);
-  for (const c of gpCandidates) {
-    gustoContractorWorkers.add(c.userId);
-    gustoContractorGross += c.amount;
+  // GP wage-path items for the window — same pure-read source the Gusto
+  // Contractors CSV uses. Idempotent: same window → same numbers.
+  const gpItems = await loadGpWorkAnchoredItems(start, end);
+  for (const item of gpItems) {
+    gustoContractorWorkers.add(item.userId);
+    gustoContractorGross += item.amount;
     qbContractLaborRows += 1;
-    qbContractLaborTotal += c.amount;
+    qbContractLaborTotal += item.amount;
   }
-  // Prior advance rows with exportedAt in window — only on QB (already
-  // paid via the previous run's CSV, so they don't re-appear on Gusto).
-  // The candidate query filters out already-advanced (userId,
-  // occurrenceId) pairs so these don't overlap with gpCandidates.
+  // Historical advance rows: included in QB Contract Labor preview for
+  // any rows whose exportedAt falls in this window. New code does not
+  // write to GuaranteedPayoutAdvance — these are pre-cutover artifacts
+  // only. After the operator transitions, this loop returns empty for
+  // all forward windows.
   const priorAdvances = await prisma.guaranteedPayoutAdvance.findMany({
     where: { exportedAt: { gte: start, lte: end } },
     select: { amount: true },

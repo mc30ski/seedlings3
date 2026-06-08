@@ -35,6 +35,7 @@ enum AuditScope {
   TIMELINE
   BANNER
   PAYMENT
+  EXPORT
   // add more scopes as you expand the schema
 }
 
@@ -1050,27 +1051,31 @@ model Payment {
   @@index([processorFeeAmount, createdAt])
 }
 
-// Records a single guaranteed-payout advance disbursement to a contractor
-// for one occurrence. Created when the contractor payroll export's
-// work-anchored part emits a row for them — that's the moment the
-// operator commits to paying the contractor out-of-band (Zelle/Venmo)
-// for that specific job, regardless of client payment timing.
+// DEPRECATED 2026-06-08 — kept for historical audit reference only.
 //
-// Serves three purposes simultaneously:
-//   1. Source of truth for what was advanced (1099 year-end input).
-//   2. Reconciliation lookup — at PaymentSplit creation, if an advance
-//      exists for (userId, occurrenceId), the new split is flagged as
-//      already-paid via `guaranteedPayoutPaidAt`, so future payroll
-//      exports skip it.
-//   3. Idempotency — re-running the same export window finds existing
-//      advances via the unique constraint and skips them.
+// Under the wage-path GP model, a contractor in their GP period is paid
+// like a W-2 employee: work-anchored, computed from completed
+// occurrences each pay period (see services/exports.ts
+// loadGpWorkAnchoredItems + gustoContractorsCsv). The app no longer
+// writes to this table.
 //
-// Append-only — operator workflow doesn't include un-advancing. If an
-// occurrence is later canceled or adjusted, the advance row stays
-// (contractor was actually paid; no clawback). The eventual PaymentSplit
-// row (when client pays) absorbs any delta via the existing reconcile
-// logic; business absorbs underpayment shortfalls. See feature memo
-// `feature_guaranteed_payout.md`.
+// Rows that already exist were created by the old export logic before
+// the cutover. They remain in the database so:
+//   • Pre-cutover periods' QB Contract Labor reconciliation still works
+//   • Historical "what was paid out via Gusto" lookups still find the
+//     advance amount (informational only — Gusto is the system of
+//     record for actual contractor payments going forward)
+//   • The full-DB JSON export still includes them
+//
+// The double-payment-prevention question ("was this contractor already
+// paid for this work?") is now answered by a pure derivation:
+// occurrence.completedAt ∈ user.guaranteedPayoutUntil window. See
+// payments.ts fetchAdvanceFlagsByUser. Advance row existence is no
+// longer consulted by new code.
+//
+// DO NOT write new rows to this table. New code paths producing
+// contractor payments must route through the wage-path computation in
+// loadGpWorkAnchoredItems instead.
 model GuaranteedPayoutAdvance {
   id String @id @default(cuid())
 
@@ -1135,13 +1140,17 @@ model PaymentSplit {
   // from Gusto/payroll exports — the owner takes a draw, not a paycheck.
   ownerEarnings Boolean @default(false)
 
-  // Guaranteed-payout reconciliation. Set when this split's user was on a
-  // guaranteed-payout period at the time of work completion AND received
-  // advance payment for this occurrence on the corresponding payroll
-  // cycle. When the client eventually pays and this row is generated,
-  // payroll/QB exports must exclude guaranteed-payout-paid rows so the
-  // contractor isn't disbursed twice. See services/exports.ts
-  // gustoContractorsCsv.
+  // Guaranteed-payout reconciliation. Set when this split's user was
+  // in their GP period at the moment of work completion — i.e. the
+  // work was paid on the wage-path Gusto run for the completion week
+  // (loadGpWorkAnchoredItems), not via this client-payment split. The
+  // value is the occurrence's `completedAt` (the wage-path anchor).
+  //
+  // When the client later pays and this row is generated, payroll +
+  // QB exports skip flagged rows so the contractor isn't paid twice.
+  // The flag is derived at split-creation time by
+  // services/payments.ts fetchAdvanceFlagsByUser — see that function
+  // for the derivation rule.
   guaranteedPayoutPaidAt DateTime?
 
   createdAt DateTime @default(now())

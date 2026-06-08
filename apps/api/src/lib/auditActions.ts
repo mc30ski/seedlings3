@@ -113,6 +113,14 @@ export const AUDIT = {
     DISMISSED: [AuditScope.BANNER, AuditVerb.UPDATED] as const,
     DELETED: [AuditScope.BANNER, AuditVerb.DELETED] as const,
   },
+  EXPORT: {
+    // CSV downloaded from the Exports tab. Records (actor, kind,
+    // range) so the Audit Log shows when each payroll / QB pull
+    // happened. The ExportRun table also persists the bytes for
+    // a byte-identical re-download; this audit event is the
+    // operator-facing summary.
+    DOWNLOADED: [AuditScope.EXPORT, AuditVerb.DOWNLOADED] as const,
+  },
   PAYMENT: {
     // Reusing AuditVerb.CREATED for the admin-direct record path keeps the
     // "admin recorded a payment" semantics consistent with how other scopes

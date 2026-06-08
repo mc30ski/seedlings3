@@ -482,9 +482,11 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
                           Guaranteed through {fmtDateLib(me.guaranteedPayoutUntil)} · {daysLeft}d left
                         </Badge>
                         <Text fontSize="xs" color="fg.muted" mt={1}>
-                          During this onboarding window the Company pays you for completed jobs regardless of
-                          client payment timing. After {fmtDateLib(me.guaranteedPayoutUntil)}, the standing
-                          contingent-payment terms in your Independent Contractor Agreement apply.
+                          During this onboarding window you're paid for each completed job on the
+                          next contractor payroll run for the week the work fell in — same timing
+                          a W-2 employee would see for that work. After {fmtDateLib(me.guaranteedPayoutUntil)},
+                          the standing contingent-payment terms in your Independent Contractor
+                          Agreement apply (paid after the client pays).
                         </Text>
                       </Box>
                     </HStack>
