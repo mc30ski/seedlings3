@@ -511,6 +511,7 @@ hardcoded.
 | `ZELLE_ADDRESS` | — | Business Zelle address; referenced by the taxonomy |
 | `DEFAULT_PAYMENT_COMMUNICATIONS_MODE` | `SERVER` | Whether payment-request comms are sent by the server or handed off to the claimer's device |
 | `BUSINESS_START_DATE_ENABLED` / `BUSINESS_START_DATE` | `false` / — | Operator-controlled cutoff: when enabled, financial-event rows dated before the cutoff are hidden from every view and export. See `lib/businessStartCutoff.ts` |
+| `QB_INCLUDE_CONTRACT_LABOR` | `true` | When ON, `qb-journal-expenses.csv` emits Contract Labor rows for contractor payments (post-GP splits, GP wage-path work, historical advances). When OFF, the whole Contract Labor section is dropped. Flip OFF once Gusto's QuickBooks integration is configured to post contractor payments to QB directly — the app's rows become duplicative at that point. See `loadIncludeContractLabor()` in `services/exports.ts`. |
 
 ---
 
@@ -551,12 +552,14 @@ DB state) → same CSV. The `gusto-contractors` export specifically does
 not insert advance rows or any other side effect. Re-run the same
 window any number of times → identical output. Same for `qb-journal-expenses`.
 
-**Contract Labor in `qb-journal-expenses` is transitional.** Once
-Gusto's QuickBooks integration is configured to post contractor
-payments directly to QB, the Contract Labor lines emitted here become
-duplicative and should be dropped (see in-app "Explain these files"
-panel on the Exports tab for the operator-facing version of this
-note).
+**Contract Labor in `qb-journal-expenses` is transitional.** Gated by
+the `QB_INCLUDE_CONTRACT_LABOR` setting (default ON). While ON, the
+CSV emits Contract Labor rows for post-GP contractor splits, GP
+wage-path work, and historical advance rows. Flip OFF once Gusto's
+QuickBooks integration is configured to post contractor payments to
+QB directly — the app's rows become duplicative at that point. The
+in-app "Explain these files" panel on the Exports tab surfaces this
+guidance to the operator.
 
 **Why the W-2 export is work-anchored, not payment-anchored.** A W-2
 employee's wages accrue when they do the work and must be paid on the regular
