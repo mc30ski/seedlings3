@@ -671,9 +671,6 @@ export default function ExportsTab() {
                   </Text>
                   <Text as="ul" pl={4} mt={1}>
                     <Text as="li">
-                      <Text as="span" fontWeight="semibold">Matches job rhythm</Text> — most recurring clients are weekly, so workers get paid for the jobs they just finished rather than work from two weeks ago.
-                    </Text>
-                    <Text as="li">
                       <Text as="span" fontWeight="semibold">Cash flow + retention</Text> — every-week deposits read as a real paycheck; better for worker budgeting and stickiness.
                     </Text>
                     <Text as="li">
@@ -686,21 +683,50 @@ export default function ExportsTab() {
                 </Box>
 
                 <Box>
-                  <Text fontWeight="semibold" mb={1}>The weekly rhythm</Text>
+                  <Text fontWeight="semibold" mb={1}>The weekly rhythm (Friday pay)</Text>
                   <Text as="ul" pl={4}>
                     <Text as="li">
                       <Text as="span" fontWeight="semibold">Mon–Sun</Text>: workers complete jobs; the app tracks earnings.
                     </Text>
                     <Text as="li">
-                      <Text as="span" fontWeight="semibold">Mon morning</Text>: download <code>gusto-w2.csv</code> and <code>gusto-contractors.csv</code> from the date range above (defaults to last week).
+                      <Text as="span" fontWeight="semibold">Mon (following)</Text>: reconcile — confirm that the prior week's client payments actually arrived and admin-approve any pending payments. Contractors in their guarantee period are paid for their completed work on this week's CSV regardless of client-payment status (work-anchored, like a W-2 employee). Post-GP contractor work without a confirmed client payment rolls into a future week.
                     </Text>
                     <Text as="li">
-                      <Text as="span" fontWeight="semibold">Mon</Text>: in Gusto, submit the W-2 payroll run first (after the min-wage check), then the contractor payment run.
+                      <Text as="span" fontWeight="semibold">Tue / Wed AM</Text>: download <code>gusto-w2.csv</code> and <code>gusto-contractors.csv</code> from the date range above (defaults to last week). Submit the W-2 run in Gusto first (after the min-wage check), then the contractor payment run. Gusto's cutoff for Friday direct deposit is typically <b>~3:00 PM ET Wednesday</b> — submit before then.
                     </Text>
                     <Text as="li">
-                      <Text as="span" fontWeight="semibold">Wed</Text>: Gusto direct deposits land in worker accounts (typical 2-business-day lag).
+                      <Text as="span" fontWeight="semibold">Fri</Text>: workers receive direct deposit (2-business-day ACH lag from Wed submission).
                     </Text>
                     <Text as="li">Next Mon: repeat.</Text>
+                  </Text>
+                </Box>
+
+                <Box>
+                  <Text fontWeight="semibold" mb={1}>Net lag, worker perspective</Text>
+                  <Text as="ul" pl={4}>
+                    <Text as="li">
+                      Job done <b>Sunday</b> → paid the following <b>Friday</b> (5 days).
+                    </Text>
+                    <Text as="li">
+                      Job done <b>Monday</b> → paid the following <b>Friday</b> (12 days).
+                    </Text>
+                    <Text as="li">
+                      Average lag across the week: ~8.5 days.
+                    </Text>
+                  </Text>
+                </Box>
+
+                <Box>
+                  <Text fontWeight="semibold" mb={1}>Why Friday specifically</Text>
+                  <Text>
+                    Friday pay is the most common piece-rate / hourly cadence in
+                    US small business — it aligns with how workers budget
+                    (weekend spending lands on a fresh paycheck) and gives the
+                    operator Mon–Wed to reconcile job completions and client
+                    payments before submitting payroll. Moving the pay day
+                    earlier in the week (e.g. Wed) shrinks the reconciliation
+                    window and pressures the admin to submit before some prior-
+                    week payments have arrived.
                   </Text>
                 </Box>
 
@@ -824,7 +850,16 @@ export default function ExportsTab() {
                       <Text as="span" fontWeight="semibold">In Gusto:</Text> create a contractor payment run, enter each row's Total Paid against the matching contractor.
                     </Text>
                     <Text as="li">
-                      <Text as="span" fontWeight="semibold">Gusto auto-handles:</Text> direct deposit, 1099-NEC at year-end for any contractor paid ≥ $600, QB sync.
+                      <Text as="span" fontWeight="semibold">Two row types per contractor:</Text>
+                      {" "}<i>post-GP</i> rows are payment-anchored (paid when the client confirms);
+                      {" "}<i>GP-period</i> rows are work-anchored (paid on the next contractor run for the week the work was completed — like a W-2 employee).
+                      The same CSV combines them transparently.
+                    </Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Idempotent:</Text> re-running the same date range produces the same CSV. Safe to re-export at any time (CPA reports, monthly reconciliation, year-end totals).
+                    </Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Gusto auto-handles:</Text> direct deposit, 1099-NEC at year-end for any contractor paid ≥ $600, QB sync (once connected).
                     </Text>
                     <Text as="li">
                       <Text as="span" fontWeight="semibold">Gusto does NOT:</Text> withhold taxes — contractors handle their own income tax + self-employment tax.
@@ -1042,13 +1077,16 @@ export default function ExportsTab() {
                     </Text>
                   </Text>
                   <Text fontSize="xs" mt={1.5} color="blue.800">
-                    Note: the app's current Expenses CSV does emit one
-                    {" "}<i>Contract Labor</i> row per contractor PaymentSplit (from earlier Phase 2 work),
-                    and the EXPENSE_CATEGORIES taxonomy maps it to QB's
-                    Contract Labor account. If Gusto is also syncing those contractor payments to QB,
-                    skip the Contract Labor rows on import to avoid double-counting — or remove the
-                    Contract Labor mapping from EXPENSE_CATEGORIES so they land as <i>Unmapped</i> for
-                    a manual decision per row.
+                    Note: the app's current Expenses CSV emits Contract Labor rows for both
+                    {" "}<i>post-GP</i> contractor PaymentSplits (anchored on payment confirmation) AND
+                    {" "}<i>GP-period</i> wage-path work (anchored on completion date), so the QB
+                    Contract Labor total stays complete regardless of where the contractor's
+                    payment timing landed.
+                    {" "}Once Gusto's QuickBooks integration is configured to post contractor
+                    payments to QB directly, drop the Contract Labor rows on import (or remove
+                    the Contract Labor mapping from EXPENSE_CATEGORIES so they land as
+                    {" "}<i>Unmapped</i> for manual review). The whole section can be deleted
+                    from the export once Gusto-QB is wired up.
                   </Text>
                 </Box>
 

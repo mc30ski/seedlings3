@@ -113,6 +113,11 @@ const BOOLEAN_SETTINGS = new Set([
   // Paired with BUSINESS_START_DATE (the cutoff itself). See
   // lib/businessStartCutoff.tsx (client) and apps/api/src/lib/businessStartCutoff.ts.
   "BUSINESS_START_DATE_ENABLED",
+  // When true, qb-journal-expenses.csv emits Contract Labor rows for
+  // contractor payments. When false (the recommended setting once
+  // Gusto's QB integration is configured), Gusto posts contractor
+  // payments to QB directly and the app's rows would be duplicative.
+  "QB_INCLUDE_CONTRACT_LABOR",
 ]);
 
 /** Setting keys whose value is a calendar date (stored as YYYY-MM-DD). Rendered

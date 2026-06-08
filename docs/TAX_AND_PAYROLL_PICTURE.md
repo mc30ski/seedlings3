@@ -4,7 +4,7 @@
 
 **Technical reference for the app's payment math, exports, and integrity rules:** see [FINANCIAL_SYSTEM.md](./FINANCIAL_SYSTEM.md).
 
-Last updated: 2026-06-06.
+Last updated: 2026-06-08.
 
 ---
 
@@ -87,7 +87,7 @@ The flow in §2 above applies to **W-2 employees only**. Contractors (1099) are 
 | | **W-2 Employee** | **1099 Contractor** |
 |---|---|---|
 | **Relationship** | The business's employee — works on the company's terms, schedule, equipment | Independent contractor — runs their own business, you're a customer |
-| **Payment timing** | **Work-anchored.** Paid every payroll cycle for the work done in that period — even if the client hasn't paid yet. The business fronts the cash. | **Payment-anchored.** Paid AFTER the client pays the business. If the client never pays, the contractor doesn't get paid (their pay shrinks pro-rata on underpayment, $0 on a write-off). |
+| **Payment timing** | **Work-anchored.** Paid every payroll cycle for the work done in that period — even if the client hasn't paid yet. The business fronts the cash. | **Payment-anchored** (default). Paid AFTER the client pays. If the client never pays, the contractor doesn't get paid (pro-rata on underpayment, $0 on a write-off). **Exception:** during a contractor's GP period (see below), GP-period work is **work-anchored** like a W-2 employee. |
 | **Withholding** | Yes — federal, NC state, FICA (Social Security), Medicare withheld from every paycheck | None. The contractor handles their own taxes; they receive the full split amount. |
 | **Employer-side taxes** | Yes — business pays employer FICA (6.2%), Medicare (1.45%), NC SUTA, federal FUTA on top of the gross wage | None. You only pay the contractor's net split. |
 | **Made-whole policy** | Yes — if client underpays, employee still gets their full promised net. Business absorbs the gap. | No — contractor absorbs a pro-rata share of any client underpayment. Their pay reflects the actual cash received. |
@@ -111,7 +111,17 @@ This asymmetry drives:
 
 ### The GP (Guaranteed Payout) exception
 
-The app supports a **Guaranteed Payout window** for new contractors during their onboarding period — typically 30 days. During that window, the contractor gets paid like an employee (work-anchored, fronted by the business) so they have predictable income while getting started. After the window expires, they revert to the standard payment-anchored model. See [FINANCIAL_SYSTEM.md](./FINANCIAL_SYSTEM.md) for the technical details (`GuaranteedPayoutAdvance` model, GP cron expiration, reconciliation flag).
+The app supports a **Guaranteed Payout window** for new contractors during their onboarding period — typically 30 days. During that window, the contractor is paid **exactly like an employee for that work**: the Gusto contractor payroll CSV is anchored on the job's completion date (not the client payment date), and the business fronts the cash. After the window expires, the same contractor reverts to the standard payment-anchored model for new jobs.
+
+**The choice is per-occurrence.** Each completed job is evaluated against the contractor's GP window at completion time:
+- Completed during GP → wage path (paid on the next Friday's contractor run for that week's work)
+- Completed after GP → split path (paid after the client confirms payment)
+
+A single contractor can have some jobs on each path — there's no per-contractor switch. The boundary is determined automatically by `occurrence.completedAt` vs `User.guaranteedPayoutUntil`.
+
+**Tax form stays 1099.** GP changes the timing, not the classification. Gusto still issues a 1099-NEC at year-end based on what it actually paid the contractor through its contractor payment system. The app's role is producing the right CSV; Gusto's role is paying + reporting.
+
+See [FINANCIAL_SYSTEM.md §4](./FINANCIAL_SYSTEM.md) for the wage-path / split-path rules and §12 for the export anchor table.
 
 ---
 
@@ -389,7 +399,7 @@ Continue to export the app's QB Income, QB Expenses, QB Equity, and QB Fixed Ass
 | Client revenue | App exports `qb-journal-income.csv` → you upload to QB weekly | Service Income + Equipment Rental Income lines |
 | Operating expenses | App exports `qb-journal-expenses.csv` → you upload to QB weekly | Categorized expense lines (Supplies, Insurance, Advertising, etc.) |
 | Processor fees | Same `qb-journal-expenses.csv` upload | Payment Processing Fees expense |
-| Contractor labor (1099) | Same `qb-journal-expenses.csv` upload | Contract Labor expense |
+| Contractor labor (1099) | **Currently:** same `qb-journal-expenses.csv` upload — the app emits Contract Labor rows for post-GP splits, GP wage-path work, and historical advance rows, gated by the `QB_INCLUDE_CONTRACT_LABOR` setting (default ON). **After connecting Gusto-QB:** flip `QB_INCLUDE_CONTRACT_LABOR` to OFF in Settings → Payments & Payouts. The app's Contract Labor section disappears from the CSV; Gusto's integration posts contractor payments to QB directly. | Contract Labor expense |
 | W-2 wages | App exports `gusto-w2.csv` → you upload to Gusto → run payroll → **Gusto auto-posts to QB** | Wages expense |
 | Employer payroll taxes | Run payroll in Gusto (same step as above) → **Gusto auto-posts to QB** | Payroll Tax expense |
 | Owner equity (contributions/draws) | App exports `qb-equity.csv` → you upload to QB weekly | Owner Investments / Owner Draws (equity accounts) |

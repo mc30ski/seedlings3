@@ -390,11 +390,14 @@ beforeEach(() => {
 
 // Helper — parse a CSV string into rows of cell strings. Naïve splitter
 // adequate for our deterministic test output (no embedded newlines in
-// fixture cells; quoted commas are not exercised here).
+// fixture cells; quoted commas are not exercised here). Strips the
+// UTF-8 BOM (the canonical exporter prepends one for Excel) and accepts
+// either CRLF or LF line endings.
 function parseCsv(csv: string): string[][] {
   return csv
+    .replace(/^﻿/, "") // strip UTF-8 BOM
     .trim()
-    .split("\n")
+    .split(/\r?\n/)
     .map((line) => line.split(","));
 }
 
@@ -872,6 +875,56 @@ describe("qbEquityCsv — tax integrity", () => {
 // gusto-w2.csv — payroll integrity
 // ─────────────────────────────────────────────────────────────────────────────
 
+describe("CSV format hygiene (all exports)", () => {
+  it("every CSV starts with a UTF-8 BOM (Excel-on-Windows decodes correctly)", async () => {
+    prismaMock.jobOccurrence.findMany.mockResolvedValue(makeCompletedOccurrences());
+    prismaMock.payment.findMany.mockResolvedValue(makeConfirmedPayments());
+    prismaMock.guaranteedPayoutAdvance.findMany.mockResolvedValue([]);
+    prismaMock.businessExpense.findMany.mockResolvedValue([]);
+    prismaMock.setting.findUnique.mockResolvedValue({ value: "30" });
+
+    const w2 = await gustoW2Csv(RANGE_START, RANGE_END);
+    const contractors = await gustoContractorsCsv(RANGE_START, RANGE_END);
+    // BOM = 0xEF 0xBB 0xBF, which encodes as U+FEFF in JS strings.
+    expect(w2.csv.charCodeAt(0)).toBe(0xfeff);
+    expect(contractors.csv.charCodeAt(0)).toBe(0xfeff);
+  });
+
+  it("every CSV uses CRLF line endings (RFC 4180; older Excel/Windows tools require it)", async () => {
+    prismaMock.jobOccurrence.findMany.mockResolvedValue(makeCompletedOccurrences());
+    prismaMock.setting.findUnique.mockResolvedValue({ value: "30" });
+
+    const { csv } = await gustoW2Csv(RANGE_START, RANGE_END);
+    // At least one CRLF must appear (between header and first data row,
+    // at minimum). No bare LF without a preceding CR.
+    expect(csv).toContain("\r\n");
+    // Strip the BOM, then check no LF appears without a CR immediately
+    // before it.
+    const body = csv.replace(/^﻿/, "");
+    const bareLfs = body.split("").filter((c, i) => c === "\n" && body[i - 1] !== "\r");
+    expect(bareLfs.length).toBe(0);
+  });
+
+  it("CSV injection defense: fields starting with =, +, -, @, \\t, \\r get a literal-quote prefix", async () => {
+    // Inject a worker whose name starts with `=` — the OWASP CSV
+    // Injection canonical attack. The exporter MUST prefix `'` so
+    // Excel treats it as a literal, not a formula.
+    const evil = makeCompletedOccurrences();
+    // Mutate the assignee name on the first occurrence's first assignee
+    // to simulate an attacker-controlled value.
+    (evil[0].assignees[0].user as any).displayName = "=cmd|/c calc!";
+    prismaMock.jobOccurrence.findMany.mockResolvedValue(evil);
+    prismaMock.setting.findUnique.mockResolvedValue({ value: "30" });
+
+    const { csv } = await gustoW2Csv(RANGE_START, RANGE_END);
+    // The dangerous value must NEVER appear unprefixed at the start of
+    // a field (i.e. directly after a comma or as the first char of a
+    // row). It must always appear with a leading `'`.
+    expect(csv).not.toMatch(/(?:^|,)=cmd/m);
+    expect(csv).toContain("'=cmd");
+  });
+});
+
 describe("gustoW2Csv — payroll integrity", () => {
   it("never produces a negative wage amount", async () => {
     // Even on an underpaid job, the employee is made whole; gross wages
@@ -1014,16 +1067,17 @@ describe("Slice 2 — Guaranteed payout reconciliation", () => {
     expect(advancePair[1][4]).toBe("50.00"); // Credits
   });
 
-  // Regression test for the limbo-zone bug:
+  // Regression test for the limbo-zone bug, updated for the wage-path
+  // model:
   // A contractor in active GP period completes a job today. A Payment +
   // PaymentSplit exist (e.g. client self-reported via /pay/[token]) but
-  // the payment hasn't been admin-approved yet (confirmed = false). The
-  // export must still create a GP advance for the contractor — otherwise
-  // they fall into limbo (not paid via payment-anchored since the
-  // Payment is unconfirmed, not paid via GP since a PaymentSplit
-  // technically "exists"). Cash-basis: only confirmed payments count
-  // as already-paid; unconfirmed ones must NOT block GP.
-  it("creates a GP advance when a PaymentSplit exists on an UNCONFIRMED payment (limbo-zone fix)", async () => {
+  // the payment hasn't been admin-approved yet (confirmed = false).
+  // The contractor MUST appear on the Gusto Contractors CSV for the
+  // period the work was completed in — regardless of payment status —
+  // because GP-period contractors are paid like W-2 employees
+  // (work-anchored). Under the new pure-read model, the function does
+  // NOT write to GuaranteedPayoutAdvance.
+  it("includes the contractor on the Gusto Contractors CSV for unconfirmed-payment GP work", async () => {
     prismaMock.payment.findMany.mockResolvedValue([]); // no confirmed payments
     prismaMock.guaranteedPayoutAdvance.findMany.mockResolvedValue([]);
     prismaMock.setting.findUnique.mockResolvedValue({ value: "20" });
@@ -1067,6 +1121,8 @@ describe("Slice 2 — Guaranteed payout reconciliation", () => {
       },
     ]);
 
+    // No advance creation under the new model — assert the function
+    // writes nothing (pure read).
     const created: any[] = [];
     (prismaMock.guaranteedPayoutAdvance.create as any).mockImplementation(
       async ({ data }: any) => {
@@ -1080,16 +1136,13 @@ describe("Slice 2 — Guaranteed payout reconciliation", () => {
       new Date("2026-06-30T23:59:59.000Z"),
     );
 
-    // Without the fix: no advance would be created (PaymentSplit blocked
-    // it), and the contractor would be absent from the CSV entirely
-    // because the Payment is unconfirmed. With the fix: advance created
-    // and the contractor appears in the CSV with promised net.
-    expect(created).toHaveLength(1);
-    expect(created[0].userId).toBe("c1");
-    expect(created[0].occurrenceId).toBe("occ-limbo");
-    expect(created[0].amount).toBe(40); // 50 × (1 - 0.20) = 40 at 20% platform fee
+    // The contractor appears in the CSV via the work-anchored path:
+    // 50 × (1 - 0.20) = 40 at the 20% platform fee. The unconfirmed
+    // payment does not block the wage-path computation.
     expect(result.csv).toContain("Caleb,Contractor");
     expect(result.csv).toContain("40.00");
+    // No advance rows created — function is pure read.
+    expect(created).toHaveLength(0);
   });
 
   // The flip side: a CONFIRMED payment with a split must still block
@@ -1154,9 +1207,12 @@ describe("Slice 2 — Guaranteed payout reconciliation", () => {
   });
 
   // Written-off payments are a third case: the client never paid, so
-  // the PaymentSplit will never actually disburse money. GP must kick
-  // in to pay the contractor anyway.
-  it("creates a GP advance when the PaymentSplit is on a WRITTEN-OFF payment", async () => {
+  // the PaymentSplit will never actually disburse money. The
+  // work-anchored wage-path still pays the contractor because they were
+  // in GP at completion. Under the new pure-read model the function
+  // doesn't write to GuaranteedPayoutAdvance — the contractor simply
+  // appears on the Gusto Contractors CSV.
+  it("includes the contractor on the Gusto Contractors CSV for written-off GP work", async () => {
     prismaMock.payment.findMany.mockResolvedValue([]);
     prismaMock.guaranteedPayoutAdvance.findMany.mockResolvedValue([]);
     prismaMock.setting.findUnique.mockResolvedValue({ value: "20" });
@@ -1204,14 +1260,16 @@ describe("Slice 2 — Guaranteed payout reconciliation", () => {
       },
     );
 
-    await gustoContractorsCsv(
+    const result = await gustoContractorsCsv(
       new Date("2026-06-01T00:00:00.000Z"),
       new Date("2026-06-30T23:59:59.000Z"),
     );
 
-    // Write-off means no client cash — GP must still pay the contractor.
-    expect(created).toHaveLength(1);
-    expect(created[0].amount).toBe(40);
+    // Contractor appears via the work-anchored path. Write-off doesn't
+    // change the wage-path computation.
+    expect(result.csv).toContain("Caleb,Contractor");
+    expect(result.csv).toContain("40.00");
+    expect(created).toHaveLength(0);
   });
 });
 

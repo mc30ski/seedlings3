@@ -6,8 +6,9 @@ import { etMidnight, etEndOfDay, etToday, etTomorrow, etAddDays, etFormatDate, e
 import { Role as RoleVal, JobOccurrenceStatus } from "@prisma/client";
 import { ServiceError } from "../lib/errors";
 import { normalizePhone } from "../lib/phone";
-import { persistCompletionSplits } from "../services/payments";
+import { persistCompletionSplits, wasUserInGuaranteedPayoutAt } from "../services/payments";
 import { evaluateHoursApproval, loadHoursApprovalVarianceThreshold } from "../services/jobs";
+import { loadGpWorkAnchoredItems } from "../services/exports";
 import {
   resolveCutoff,
   cutoffWhere,
@@ -525,9 +526,12 @@ export default async function workerRoutes(app: FastifyInstance) {
       actualWeekEarnings = empJobs.reduce((sum, occ) => sum + payoutShareForOcc(occ), 0);
       weekJobCount = empJobs.length;
     } else {
-      // Contractor weekly earnings = non-flagged splits in window +
-      // GP advances in window. Skip flagged splits (already counted as
-      // advance disbursements above).
+      // Contractor weekly earnings = post-GP splits + GP-period
+      // work-anchored items, both in window. Post-GP path: confirmed
+      // PaymentSplits in window, skipping those flagged as paid via
+      // the wage path. GP path: pure-read computation from completed
+      // occurrences during the contractor's GP window — same source
+      // the Gusto Contractors CSV uses for its work-anchored half.
       const winLo = cutoff && cutoff > earnWindowStart ? cutoff : earnWindowStart;
       const mySplits = await prisma.paymentSplit.findMany({
         where: {
@@ -537,17 +541,11 @@ export default async function workerRoutes(app: FastifyInstance) {
         },
         select: { amount: true },
       });
-      const myAdvances = await prisma.guaranteedPayoutAdvance.findMany({
-        where: {
-          userId: uid,
-          exportedAt: { gte: winLo, lt: todayMidnight },
-        },
-        select: { amount: true },
-      });
+      const myGpItems = await loadGpWorkAnchoredItems(winLo, todayMidnight, { userId: uid });
       actualWeekEarnings =
         mySplits.reduce((sum, sp) => sum + sp.amount, 0) +
-        myAdvances.reduce((sum, a) => sum + a.amount, 0);
-      weekJobCount = mySplits.length + myAdvances.length;
+        myGpItems.reduce((sum, i) => sum + i.amount, 0);
+      weekJobCount = mySplits.length + myGpItems.length;
     }
     void weekSplits;
 
@@ -2190,17 +2188,15 @@ export default async function workerRoutes(app: FastifyInstance) {
         }
       }
 
-      // GP advances — actual cash to the contractor bucketed at exportedAt.
-      const gpAdvances = await prisma.guaranteedPayoutAdvance.findMany({
-        where: {
-          userId: uid,
-          ...(cutoff ? { exportedAt: { gte: cutoff } } : {}),
-        },
-        select: { amount: true, exportedAt: true },
-      });
-      for (const adv of gpAdvances) {
-        addToBuckets(adv.amount, adv.exportedAt);
-        if (adv.amount > 0) jobCount++;
+      // GP wage-path earnings — bucketed at occurrence.completedAt. Same
+      // source the Gusto Contractors CSV uses for its work-anchored half,
+      // ensuring this dashboard and the CSV stay in lockstep.
+      const gpWindowStart = cutoff ?? new Date(0);
+      const gpWindowEnd = new Date(); // up to now
+      const gpItems = await loadGpWorkAnchoredItems(gpWindowStart, gpWindowEnd, { userId: uid });
+      for (const item of gpItems) {
+        addToBuckets(item.amount, item.completedAt);
+        if (item.amount > 0) jobCount++;
       }
 
       // Business Start Date filter — pre-cutoff pipeline occurrences hidden
@@ -2237,17 +2233,11 @@ export default async function workerRoutes(app: FastifyInstance) {
           assignees: { select: { userId: true, role: true } },
         },
       });
-      // Skip occurrences already advance-counted above (same-day overlap
-      // when operator runs the export the same day the work was logged).
-      const advancedOccIds2 = new Set(
-        (await prisma.guaranteedPayoutAdvance.findMany({
-          where: {
-            userId: uid,
-            occurrenceId: { in: todayPipelineOccs.map((o) => o.id) },
-          },
-          select: { occurrenceId: true },
-        })).map((a) => a.occurrenceId),
-      );
+      // Skip occurrences already counted on the wage path above
+      // (contractor was in GP at the occurrence's completion — the
+      // gpItems loader emitted a row for it, so the projection would
+      // double-count if we added it again).
+      const advancedOccIds2 = new Set(gpItems.map((i) => i.occurrenceId));
       for (const occ of todayPipelineOccs) {
         if (advancedOccIds2.has(occ.id)) continue;
         const when = occ.completedAt ?? occ.startAt;
@@ -2447,20 +2437,16 @@ export default async function workerRoutes(app: FastifyInstance) {
           jobCount++;
         }
       }
-      // GP advances: actual cash to the contractor, bucketed at exportedAt.
-      // No `method` (operator paid out-of-band — Zelle/Venmo etc); jobCount
-      // increments. Reconciliation guarantees a corresponding PaymentSplit
-      // (when client pays) carries the flag and is excluded above.
-      const gpAdvances = await prisma.guaranteedPayoutAdvance.findMany({
-        where: {
-          userId: uid,
-          ...(cutoff ? { exportedAt: { gte: cutoff } } : {}),
-        },
-        select: { amount: true, exportedAt: true },
-      });
-      for (const adv of gpAdvances) {
-        addToBuckets(adv.amount, adv.exportedAt);
-        if (adv.amount > 0) jobCount++;
+      // GP wage-path earnings: bucketed at occurrence.completedAt. Same
+      // source the Gusto Contractors CSV's work-anchored half uses, so
+      // this dashboard and the CSV agree. Reconciliation guarantees the
+      // eventual PaymentSplit (when client pays) carries the wage-path
+      // flag and is excluded above.
+      const gpWindowStart2 = cutoff ?? new Date(0);
+      const gpItems2 = await loadGpWorkAnchoredItems(gpWindowStart2, new Date(), { userId: uid });
+      for (const item of gpItems2) {
+        addToBuckets(item.amount, item.completedAt);
+        if (item.amount > 0) jobCount++;
       }
       // Pipeline projection's work-date is constrained to TODAY by the
       // in-loop check, so the Business Start cutoff is naturally satisfied
@@ -2496,19 +2482,10 @@ export default async function workerRoutes(app: FastifyInstance) {
           assignees: { select: { userId: true, role: true } },
         },
       });
-      // If a GP advance was already recorded for an occurrence (e.g.
-      // operator ran the export earlier today after the job was logged),
-      // the projection would double-count over the gpAdvances loop above.
-      // Skip those occurrence IDs here.
-      const advancedOccIds = new Set(
-        (await prisma.guaranteedPayoutAdvance.findMany({
-          where: {
-            userId: uid,
-            occurrenceId: { in: todayPipelineOccs.map((o) => o.id) },
-          },
-          select: { occurrenceId: true },
-        })).map((a) => a.occurrenceId),
-      );
+      // Skip occurrences already counted on the wage path above
+      // (gpItems2). The pipeline projection only covers work NOT yet
+      // counted — adding a GP-period occurrence here would double-count.
+      const advancedOccIds = new Set(gpItems2.map((i) => i.occurrenceId));
       for (const occ of todayPipelineOccs) {
         if (advancedOccIds.has(occ.id)) continue;
         // Same bucket-date rule as the employee branch above — in-progress
@@ -3501,22 +3478,31 @@ export default async function workerRoutes(app: FastifyInstance) {
 
     const user = await prisma.user.findUnique({
       where: { id: uid },
-      select: { id: true, displayName: true, email: true, workerType: true },
+      select: {
+        id: true,
+        displayName: true,
+        email: true,
+        workerType: true,
+        guaranteedPayoutUntil: true,
+        guaranteedPayoutStartedAt: true,
+        guaranteedPayoutHistory: true,
+      },
     });
     if (!user) return { workers: [], totalOccurrences: 0, daysInRange: 0 };
 
-    // Pre-fetch GP advances for any of these occurrences. For flagged
-    // splits, contractor was paid the advance amount (the matching
-    // PaymentSplit is bookkeeping only). Using advance amount as
-    // authoritative earnings keeps the stats consistent with actual cash.
+    // For GP-period work, the contractor was paid the wage-path amount
+    // on the Gusto run covering the work week. Use the same compute the
+    // CSV uses (loadGpWorkAnchoredItems) so stats and payroll stay in
+    // sync. For post-GP work, the split amount remains authoritative.
     const occIdsForGp = occurrences.map((o) => o.id);
-    const advanceRows = occIdsForGp.length > 0
-      ? await prisma.guaranteedPayoutAdvance.findMany({
-          where: { userId: uid, occurrenceId: { in: occIdsForGp } },
-          select: { occurrenceId: true, amount: true },
-        })
+    const gpItemsList = occIdsForGp.length > 0
+      ? await loadGpWorkAnchoredItems(
+          new Date(Math.min(...occurrences.map((o) => (o.completedAt ?? new Date()).getTime()))),
+          new Date(Math.max(...occurrences.map((o) => (o.completedAt ?? new Date()).getTime()))),
+          { userId: uid },
+        )
       : [];
-    const advanceByOccId = new Map(advanceRows.map((a) => [a.occurrenceId, a.amount]));
+    const advanceByOccId = new Map(gpItemsList.map((i) => [i.occurrenceId, i.amount]));
 
     // Build stats for just this user
     let jobsCompleted = 0, totalEarnings = 0, totalExpenses = 0, totalActualMinutes = 0,
