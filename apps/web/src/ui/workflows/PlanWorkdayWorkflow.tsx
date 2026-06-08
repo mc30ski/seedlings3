@@ -17,6 +17,7 @@ import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
 import { type WorkerOccurrence } from "@/src/lib/types";
 import { fmtDate, bizDateKey, bizToday, bizTomorrow, clientLabel } from "@/src/lib/lib";
 import { resolveBillingMode, shortBillingChip } from "@/src/lib/equipmentBilling";
+import { useEquipmentBillingEnabled } from "@/src/lib/useEquipmentBillingEnabled";
 import { MapLink } from "@/src/ui/helpers/Link";
 import TruncatedText from "@/src/ui/components/TruncatedText";
 import {
@@ -60,6 +61,7 @@ function clearState() {
 function EquipmentSummary({ onCostLoaded }: { myId?: string; onCostLoaded?: (cost: number) => void }) {
   const [items, setItems] = useState<any[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const equipmentBillingEnabled = useEquipmentBillingEnabled();
   useEffect(() => {
     apiGet<any[]>("/api/equipment/mine")
       .then((list) => {
@@ -82,7 +84,7 @@ function EquipmentSummary({ onCostLoaded }: { myId?: string; onCostLoaded?: (cos
       ) : (
         <VStack align="stretch" gap={1}>
           {items.map((eq) => {
-            const chip = shortBillingChip(resolveBillingMode(eq.dailyRate, eq.equivalentJobs));
+            const chip = shortBillingChip(resolveBillingMode(eq.dailyRate, eq.equivalentJobs, equipmentBillingEnabled));
             return (
               <HStack key={eq.id} justify="space-between" fontSize="sm">
                 <Text>{eq.shortDesc || eq.type || "Equipment"}{eq.brand ? ` — ${eq.brand}` : ""}{eq.model ? ` ${eq.model}` : ""}</Text>

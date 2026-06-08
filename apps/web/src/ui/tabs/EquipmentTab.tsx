@@ -31,6 +31,7 @@ import {
 import { TabPropsType, EquipmentStatus, Equipment } from "@/src/lib/types";
 import { onEventSearchRun } from "@/src/lib/bus";
 import { resolveBillingMode, shortBillingChip, instructiveBillingText } from "@/src/lib/equipmentBilling";
+import { useEquipmentBillingEnabled } from "@/src/lib/useEquipmentBillingEnabled";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -93,6 +94,10 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<Equipment[]>([]);
   const [equipmentKinds, setEquipmentKinds] = useState<EquipmentKindConfig[]>([]);
+  // Master toggle EQUIPMENT_BILLING_ENABLED — when OFF every billing
+  // chip + reserve-confirmation text renders $0.00/day instead of the
+  // configured rate. See lib/useEquipmentBillingEnabled.
+  const equipmentBillingEnabled = useEquipmentBillingEnabled();
   // Equipment Collections — kits the admin has defined. Workers see them at
   // the top of the tab as "Reserve kit" shortcuts; the action loops the
   // existing per-piece reserve() call.
@@ -1819,7 +1824,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                       // Admin view — show the contractor-billing chip
                       // (matches the non-compact admin card) so admins see
                       // the rate/cap mode at a glance.
-                      const chip = shortBillingChip(resolveBillingMode(e.dailyRate, e.equivalentJobs));
+                      const chip = shortBillingChip(resolveBillingMode(e.dailyRate, e.equivalentJobs, equipmentBillingEnabled));
                       return chip ? (
                         <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="1.5" borderRadius="full" title="Contractor billing">
                           {chip}
@@ -1914,7 +1919,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                   </Text>
                 )}
                 {(() => {
-                  const mode = resolveBillingMode(e.dailyRate, e.equivalentJobs);
+                  const mode = resolveBillingMode(e.dailyRate, e.equivalentJobs, equipmentBillingEnabled);
                   const chip = shortBillingChip(mode);
                   if (forAdmin) {
                     return (
@@ -2384,6 +2389,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                         const mode = resolveBillingMode(
                           reserveConfirmEquip.dailyRate,
                           reserveConfirmEquip.equivalentJobs,
+                          equipmentBillingEnabled,
                         );
                         const isContractor = wt === "CONTRACTOR" || !wt;
                         if (mode.kind !== "free" && isContractor) {

@@ -32,9 +32,10 @@ import {
 //TODO:
 // `readOnly` lets non-super admins see the directory without any
 // mutation surface — no approve, no role/worker-type changes, no
-// privilege toggles, no delete, and pending users are hidden entirely
-// (since admins can't act on them anyway). User-management is now a
-// SUPER-only activity.
+// privilege toggles, no delete. Pending sign-ups DO render (so admins
+// have awareness of the approval queue) but with identity badges only;
+// the action buttons further down are gated by `!readOnly`. User
+// management actions are SUPER-only — handled via Super → Users.
 export type TabRolePropType = { role: "worker" | "admin"; readOnly?: boolean };
 
 type ApiUser = {
@@ -80,8 +81,19 @@ type Holding = {
 };
 
 // Inline confirm state
-type ConfirmKind = "delete" | "decline" | "approve-worker";
+type ConfirmKind = "delete" | "decline";
 type ConfirmState = { userId: string; kind: ConfirmKind } | null;
+
+/** Target for the high-friction "Approve as Worker" modal. Separate from
+ *  the inline confirm bar (which still handles delete + decline) because
+ *  worker approval grants access to all internal data — jobs, payments,
+ *  equipment, crew schedules — and the operator must re-type the user's
+ *  email to confirm intent. See ConfirmDialog `requiredInputValue`. */
+type ApproveWorkerTarget = {
+  userId: string;
+  displayName: string;
+  email: string;
+} | null;
 
 // Status filter type for this page
 type Status = "all" | "pending" | "approved";
@@ -152,8 +164,10 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
     useState<"all" | "active" | "expiring">("all");
 
   // Check for pending approvals / guaranteed-payout navigation from header
-  // badge — on mount and via event. Supports two payload shapes:
+  // badge — on mount and via event. Supports three payload shapes:
   //   { status } → set the status filter (pending users path)
+  //   { role }   → set the accessRole filter ("all" used by the alert
+  //                chip so the persisted role filter is reset on arrival)
   //   { guaranteedPayoutFilter } → set the GP filter (alert chip path)
   useEffect(() => {
     try {
@@ -162,6 +176,7 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
         sessionStorage.removeItem("admin:usersOpenOnce");
         const parsed = JSON.parse(flag);
         if (parsed?.status) setStatus(parsed.status);
+        if (parsed?.role) setAccessRole(parsed.role);
         if (parsed?.guaranteedPayoutFilter) {
           setGuaranteedPayoutFilter(parsed.guaranteedPayoutFilter);
         }
@@ -170,6 +185,7 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
     const onOpen = (e: Event) => {
       const detail = (e as CustomEvent).detail || {};
       if (detail?.status) setStatus(detail.status);
+      if (detail?.role) setAccessRole(detail.role);
       if (detail?.guaranteedPayoutFilter) {
         setGuaranteedPayoutFilter(detail.guaranteedPayoutFilter);
       }
@@ -190,6 +206,12 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
 
   // confirm bar state (for Delete or Decline)
   const [confirm, setConfirm] = useState<ConfirmState>(null);
+
+  // "Approve as Worker" modal target — separate from the inline confirm
+  // bar above. Requires the operator to re-type the user's email before
+  // the Confirm button enables (typed-confirmation gate).
+  const [approveWorkerTarget, setApproveWorkerTarget] = useState<ApproveWorkerTarget>(null);
+  const [approveWorkerBusy, setApproveWorkerBusy] = useState(false);
 
   // Listen for programmatic open: set status filter
   useEffect(() => {
@@ -291,13 +313,12 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
   // sense for clients or pending users.
   const filtered = useMemo(() => {
     let rows = items;
-    // Read-only mode: pending users hidden entirely. Admins (non-super)
-    // can't act on them and shouldn't be tempted to try; the "Pending
-    // Users" alert badge has been moved to super-only, so this is the
-    // only surface where they might have seen them.
-    if (readOnly) {
-      rows = rows.filter((u) => u.isApproved);
-    }
+    // Read-only mode (Admin Directory → Users) renders pending users
+    // but suppresses every mutation surface — the action buttons are
+    // gated separately by `!readOnly` further down. Showing pending
+    // sign-ups gives non-super admins awareness of the queue without
+    // letting them act on it; super admins still see the same rows
+    // with Approve / Decline buttons via the Super → Users tab.
     // Client filter: approved, no roles
     if (accessRole === "client") {
       rows = rows.filter((u) => u.isApproved && !u.roles.some((r) => r.role === "WORKER" || r.role === "ADMIN"));
@@ -762,14 +783,12 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
           const confirmKind = confirm?.kind;
 
           const confirmCopy =
-            confirmKind === "approve-worker"
-              ? "Approve this user as a worker? They will be able to claim jobs, manage equipment, and access the Worker tab."
-              : confirmKind === "decline"
+            confirmKind === "decline"
               ? "Decline this user? This removes their account and Clerk entry. This action cannot be undone."
               : "Delete this user? This removes their account and Clerk entry. This action cannot be undone.";
 
           const confirmCTA =
-            confirmKind === "approve-worker" ? "Confirm approve" : confirmKind === "decline" ? "Confirm decline" : "Confirm delete";
+            confirmKind === "decline" ? "Confirm decline" : "Confirm delete";
 
           const isContractor = u.workerType === "CONTRACTOR";
           const isEmployee = u.workerType === "EMPLOYEE";
@@ -871,8 +890,14 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
                               size={{ base: "xs", md: "sm" }}
                               variant="ghost"
                               onClick={() =>
-                                setConfirm({ userId: u.id, kind: "approve-worker" as any })
+                                setApproveWorkerTarget({
+                                  userId: u.id,
+                                  displayName: u.displayName || u.email || "this user",
+                                  email: u.email || "",
+                                })
                               }
+                              disabled={!u.email}
+                              title={!u.email ? "User has no email on file — cannot use typed-email confirmation." : "Approve this pending sign-up as a Worker"}
                             >
                               Approve as Worker
                             </Button>
@@ -1177,15 +1202,15 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
                   p={3}
                   borderRadius="md"
                   borderWidth="1px"
-                  borderColor={confirmKind === "approve-worker" ? "green.300" : "red.300"}
-                  bg={confirmKind === "approve-worker" ? "green.50" : "red.50"}
+                  borderColor="red.300"
+                  bg="red.50"
                   justify="space-between"
                   flexWrap="wrap"
                   gap="2"
                 >
                   <Text
                     fontSize="sm"
-                    color={confirmKind === "approve-worker" ? "green.900" : "red.900"}
+                    color="red.900"
                     flex="1 1 auto"
                     minW="220px"
                   >
@@ -1201,23 +1226,8 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
                     </Button>
                     <Button
                       size="xs"
-                      colorPalette={confirmKind === "approve-worker" ? "green" : "red"}
-                      onClick={async () => {
-                        if (confirmKind === "approve-worker") {
-                          try {
-                            await apiPost(`/api/admin/users/${u.id}/approve`);
-                            await addRole(u.id, "WORKER");
-                            window.dispatchEvent(new Event("seedlings3:users-changed"));
-                            publishInlineMessage({ type: "SUCCESS", text: "User approved as worker." });
-                            setConfirm(null);
-                            load();
-                          } catch (err: any) {
-                            publishInlineMessage({ type: "ERROR", text: getErrorMessage("Approve failed.", err) });
-                          }
-                        } else {
-                          deleteUser(u.id);
-                        }
-                      }}
+                      colorPalette="red"
+                      onClick={() => deleteUser(u.id)}
                     >
                       {confirmCTA}
                     </Button>
@@ -1544,6 +1554,67 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
           </Dialog.Positioner>
         </Portal>
       </Dialog.Root>
+
+      {/* Approve as Worker — typed-email confirmation modal.
+       *
+       *  Worker approval grants access to every job, payment, equipment
+       *  checkout, and crew schedule across the business. Mis-tapping
+       *  this for a client sign-up would expose internal data to an
+       *  external party. The friction here (re-type the email exactly)
+       *  prevents accidental approval — the operator must read the
+       *  email, copy or re-type it, and only THEN can the Confirm
+       *  button enable. See ConfirmDialog.requiredInputValue.
+       */}
+      <ConfirmDialog
+        open={approveWorkerTarget !== null}
+        title="Approve as Worker?"
+        message=""
+        messageNode={
+          approveWorkerTarget ? (
+            <VStack align="stretch" gap={2}>
+              <Box p={3} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">
+                <Text fontSize="sm" color="fg.muted">User</Text>
+                <Text fontSize="md" fontWeight="semibold">{approveWorkerTarget.displayName}</Text>
+                <Text fontSize="sm" color="fg.muted" fontFamily="mono">{approveWorkerTarget.email}</Text>
+              </Box>
+              <Text fontSize="sm">
+                This grants full Worker access: view and modify every client's jobs, payments, equipment checkouts, and crew schedules. It cannot be undone with a single click — you'd have to manually remove the Worker role afterward.
+              </Text>
+            </VStack>
+          ) : null
+        }
+        warning={
+          approveWorkerTarget
+            ? `If you intended to approve "${approveWorkerTarget.displayName}" as a Client (an external account with no operational access), cancel this dialog and click "Approve as Client" instead.`
+            : undefined
+        }
+        confirmLabel={approveWorkerBusy ? "Approving..." : "Approve as Worker"}
+        confirmColorPalette="red"
+        inputLabel={approveWorkerTarget ? `Type the email "${approveWorkerTarget.email}" to confirm` : undefined}
+        inputPlaceholder={approveWorkerTarget?.email ?? ""}
+        requiredInputValue={approveWorkerTarget?.email ?? undefined}
+        onConfirm={async () => {
+          if (!approveWorkerTarget || approveWorkerBusy) return;
+          const userId = approveWorkerTarget.userId;
+          setApproveWorkerBusy(true);
+          try {
+            await apiPost(`/api/admin/users/${userId}/approve`);
+            await addRole(userId, "WORKER");
+            window.dispatchEvent(new Event("seedlings3:users-changed"));
+            publishInlineMessage({ type: "SUCCESS", text: "User approved as Worker." });
+            setApproveWorkerTarget(null);
+            void load();
+          } catch (err: any) {
+            publishInlineMessage({ type: "ERROR", text: getErrorMessage("Approve failed.", err) });
+          } finally {
+            setApproveWorkerBusy(false);
+          }
+        }}
+        onCancel={() => {
+          if (approveWorkerBusy) return;
+          setApproveWorkerTarget(null);
+        }}
+      />
     </Box>
   );
 }

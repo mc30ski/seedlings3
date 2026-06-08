@@ -27,6 +27,13 @@ type Props = {
   inputOptional?: boolean;
   /** Default value for the input */
   inputDefaultValue?: string;
+  /** When set, the Confirm button is disabled until the typed input
+   *  matches this value exactly (case-insensitive, whitespace-trimmed).
+   *  Use for destructive / high-risk actions where the operator must
+   *  re-enter a unique identifier (email, user-typed phrase) to prove
+   *  intent. Overrides `inputOptional` — typed confirmation is always
+   *  required when this is set. */
+  requiredInputValue?: string;
   /** If provided, shows an additional currency input. The amount value is passed as the 2nd arg to onConfirm. Always optional. */
   amountLabel?: string;
   amountPlaceholder?: string;
@@ -73,6 +80,7 @@ export default function ConfirmDialog({
   inputLabel,
   inputOptional,
   inputDefaultValue,
+  requiredInputValue,
   amountLabel,
   amountPlaceholder,
   amountDefaultValue,
@@ -123,7 +131,14 @@ export default function ConfirmDialog({
 
   const hasInput = !!inputPlaceholder;
   const hasAmount = !!amountLabel;
-  const canConfirm = !hasInput || inputOptional || inputValue.trim().length > 0;
+  // When requiredInputValue is set, the typed input MUST match it
+  // (case-insensitive, trimmed) — overrides inputOptional.
+  const typedMatchesRequired =
+    requiredInputValue == null ||
+    inputValue.trim().toLowerCase() === requiredInputValue.trim().toLowerCase();
+  const canConfirm =
+    (!hasInput || inputOptional || inputValue.trim().length > 0) &&
+    typedMatchesRequired;
 
   function handleConfirm() {
     if (!canConfirm) return;
@@ -175,23 +190,51 @@ export default function ConfirmDialog({
                       {inputLabel}
                     </Text>
                   )}
-                  <textarea
-                    placeholder={inputPlaceholder}
-                    value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
-                    rows={3}
-                    style={{
-                      width: "100%",
-                      fontSize: "0.875rem",
-                      padding: "0.5rem",
-                      borderRadius: "0.375rem",
-                      border: "1px solid var(--chakra-colors-border)",
-                      background: "var(--chakra-colors-bg)",
-                      color: "var(--chakra-colors-fg)",
-                      outline: "none",
-                      resize: "vertical",
-                    }}
-                  />
+                  {requiredInputValue != null ? (
+                    <input
+                      type="text"
+                      placeholder={inputPlaceholder}
+                      value={inputValue}
+                      onChange={(e) => setInputValue(e.target.value)}
+                      autoComplete="off"
+                      autoCapitalize="off"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      style={{
+                        width: "100%",
+                        fontSize: "0.875rem",
+                        padding: "0.5rem",
+                        borderRadius: "0.375rem",
+                        border: `1px solid ${typedMatchesRequired && inputValue.trim().length > 0 ? "var(--chakra-colors-green-500)" : "var(--chakra-colors-border)"}`,
+                        background: "var(--chakra-colors-bg)",
+                        color: "var(--chakra-colors-fg)",
+                        outline: "none",
+                      }}
+                    />
+                  ) : (
+                    <textarea
+                      placeholder={inputPlaceholder}
+                      value={inputValue}
+                      onChange={(e) => setInputValue(e.target.value)}
+                      rows={3}
+                      style={{
+                        width: "100%",
+                        fontSize: "0.875rem",
+                        padding: "0.5rem",
+                        borderRadius: "0.375rem",
+                        border: "1px solid var(--chakra-colors-border)",
+                        background: "var(--chakra-colors-bg)",
+                        color: "var(--chakra-colors-fg)",
+                        outline: "none",
+                        resize: "vertical",
+                      }}
+                    />
+                  )}
+                  {requiredInputValue != null && inputValue.trim().length > 0 && !typedMatchesRequired && (
+                    <Text fontSize="xs" color="red.600" mt={1}>
+                      Doesn't match. Re-enter <Text as="span" fontWeight="semibold">{requiredInputValue}</Text> exactly.
+                    </Text>
+                  )}
                 </Box>
               )}
               {hasAmount && (

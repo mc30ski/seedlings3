@@ -1836,3 +1836,275 @@ export async function exportPreview(start: Date, end: Date): Promise<ExportPrevi
     },
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// exportPreviewDetails — drill-down rows for the Exports tab's Preview
+// totals expand/collapse. Same underlying queries as exportPreview (and
+// the same numbers — the sum of detail rows for a section ALWAYS equals
+// the section's exportPreview total). The section split mirrors the
+// Preview totals card so an operator can audit how each total was
+// derived. Loaded lazily by the client only when a section is expanded.
+// ─────────────────────────────────────────────────────────────────────────────
+export type PreviewDetailsSection =
+  | "gusto-w2"
+  | "gusto-contractors"
+  | "qb-income"
+  | "qb-expenses"
+  | "qb-fixed-assets"
+  | "qb-equity";
+
+export type PreviewDetailRow = {
+  /** YYYY-MM-DD in ET, or empty string when not applicable (e.g. worker
+   *  totals that aggregate across multiple dates). */
+  date: string;
+  /** Primary identifier — worker name, client name, expense category. */
+  primary: string;
+  /** Optional secondary line — email, description, etc. */
+  secondary?: string;
+  /** Optional dollar-side context shown inline (e.g. "12.50 hrs"). */
+  meta?: string;
+  amount: number;
+};
+
+export type PreviewDetailGroup = {
+  label: string;
+  rows: PreviewDetailRow[];
+  subtotal: number;
+};
+
+export type PreviewDetails = {
+  groups: PreviewDetailGroup[];
+  total: number;
+};
+
+export async function exportPreviewDetails(
+  start: Date,
+  end: Date,
+  section: PreviewDetailsSection,
+): Promise<PreviewDetails> {
+  switch (section) {
+    case "gusto-w2": {
+      const rows = await computeW2Earnings(start, end);
+      const detailRows: PreviewDetailRow[] = rows
+        .sort((a, b) => (a.last || a.first).localeCompare(b.last || b.first))
+        .map((r) => ({
+          date: "",
+          primary: `${r.first}${r.last ? ` ${r.last}` : ""}`.trim() || r.email || "(unnamed)",
+          secondary: r.email,
+          meta: `${round2(r.hours).toFixed(2)} hrs · ${r.jobs} job${r.jobs === 1 ? "" : "s"}`,
+          amount: round2(r.gross),
+        }));
+      const subtotal = detailRows.reduce((s, r) => s + r.amount, 0);
+      return {
+        groups: [{ label: "Workers", rows: detailRows, subtotal: round2(subtotal) }],
+        total: round2(subtotal),
+      };
+    }
+
+    case "gusto-contractors": {
+      // Match gustoContractorsCsv's two-half compute exactly.
+      const payments = await loadConfirmedPayments(start, end);
+      type Agg = { userId: string; displayName: string; email: string; total: number; jobs: number };
+      const byWorker = new Map<string, Agg>();
+      const add = (userId: string, displayName: string, email: string, amount: number) => {
+        const cur = byWorker.get(userId);
+        if (cur) {
+          cur.total += amount;
+          cur.jobs += 1;
+        } else {
+          byWorker.set(userId, { userId, displayName, email, total: amount, jobs: 1 });
+        }
+      };
+      for (const p of payments) {
+        for (const sp of p.splits) {
+          if (isEmployeeClass(sp.user.workerType)) continue;
+          if ((sp as any).guaranteedPayoutPaidAt != null) continue;
+          add(sp.user.id, sp.user.displayName ?? sp.user.email ?? "(unnamed)", sp.user.email ?? "", sp.amount);
+        }
+      }
+      const workItems = await loadGpWorkAnchoredItems(start, end);
+      for (const item of workItems) {
+        add(item.userId, item.contractor.displayName ?? item.contractor.email ?? "(unnamed)", item.contractor.email ?? "", item.amount);
+      }
+      const rows = Array.from(byWorker.values())
+        .sort((a, b) => a.displayName.localeCompare(b.displayName))
+        .map<PreviewDetailRow>((r) => ({
+          date: "",
+          primary: r.displayName,
+          secondary: r.email || undefined,
+          meta: `${r.jobs} job${r.jobs === 1 ? "" : "s"}`,
+          amount: round2(r.total),
+        }));
+      const subtotal = rows.reduce((s, r) => s + r.amount, 0);
+      return {
+        groups: [{ label: "Contractors", rows, subtotal: round2(subtotal) }],
+        total: round2(subtotal),
+      };
+    }
+
+    case "qb-income": {
+      const payments = await loadConfirmedPayments(start, end);
+      // Equipment rental income — checkouts with rentalCost > 0 in window.
+      const equipmentRentals = await prisma.checkout.findMany({
+        where: {
+          releasedAt: { gte: start, lte: end },
+          rentalCost: { gt: 0 },
+        },
+        include: {
+          equipment: { select: { shortDesc: true, brand: true, model: true } },
+          user: { select: { displayName: true, email: true } },
+        },
+      });
+      const paymentRows: PreviewDetailRow[] = payments.map((p) => ({
+        date: p.confirmedAt ? etFormatDate(p.confirmedAt) : "",
+        primary: (p as any).occurrence?.job?.property?.client?.displayName ?? "(unknown client)",
+        secondary: (p as any).occurrence?.job?.property?.displayName ?? undefined,
+        meta: p.method ?? undefined,
+        amount: round2(p.amountPaid),
+      }));
+      const paymentSubtotal = paymentRows.reduce((s, r) => s + r.amount, 0);
+      const equipmentRows: PreviewDetailRow[] = equipmentRentals.map((c) => ({
+        date: c.releasedAt ? etFormatDate(c.releasedAt) : "",
+        primary: [c.equipment?.brand, c.equipment?.model].filter(Boolean).join(" ") || c.equipment?.shortDesc || "Equipment rental",
+        secondary: c.user?.displayName ?? c.user?.email ?? undefined,
+        amount: round2(c.rentalCost ?? 0),
+      }));
+      const equipmentSubtotal = equipmentRows.reduce((s, r) => s + r.amount, 0);
+      const groups: PreviewDetailGroup[] = [
+        { label: "Service payments", rows: paymentRows, subtotal: round2(paymentSubtotal) },
+      ];
+      if (equipmentRows.length > 0) {
+        groups.push({ label: "Equipment Rental Income", rows: equipmentRows, subtotal: round2(equipmentSubtotal) });
+      }
+      return { groups, total: round2(paymentSubtotal + equipmentSubtotal) };
+    }
+
+    case "qb-expenses": {
+      const fixedAssetMinCost = await loadFixedAssetMinCost();
+      const expenses = await prisma.businessExpense.findMany({
+        where: { type: "EXPENSE", date: { gte: start, lte: end } },
+        select: { id: true, date: true, category: true, description: true, cost: true },
+      });
+      const operating = expenses.filter((e) => !isFixedAsset(e, fixedAssetMinCost));
+      const businessExpenseRows: PreviewDetailRow[] = operating
+        .sort((a, b) => a.date.getTime() - b.date.getTime())
+        .map((e) => ({
+          date: etFormatDate(e.date),
+          primary: e.category || "(uncategorized)",
+          secondary: e.description ?? undefined,
+          amount: round2(e.cost),
+        }));
+      const businessExpenseSubtotal = businessExpenseRows.reduce((s, r) => s + r.amount, 0);
+
+      const payments = await loadConfirmedPayments(start, end);
+      const processorFeeRows: PreviewDetailRow[] = payments
+        .filter((p) => (p.processorFeeAmount ?? 0) > 0)
+        .sort((a, b) => (a.confirmedAt?.getTime() ?? 0) - (b.confirmedAt?.getTime() ?? 0))
+        .map((p) => ({
+          date: p.confirmedAt ? etFormatDate(p.confirmedAt) : "",
+          primary: (p as any).occurrence?.job?.property?.client?.displayName ?? "(unknown client)",
+          secondary: `${p.method} fee on $${round2(p.grossCharged ?? 0).toFixed(2)} gross`,
+          amount: round2(p.processorFeeAmount ?? 0),
+        }));
+      const processorFeeSubtotal = processorFeeRows.reduce((s, r) => s + r.amount, 0);
+
+      // Contract Labor (matches qbExpensesCsv): post-GP splits + GP wage-path + historical advances.
+      const contractLaborRows: PreviewDetailRow[] = [];
+      for (const p of payments) {
+        for (const sp of p.splits) {
+          if (isEmployeeClass(sp.user.workerType)) continue;
+          if ((sp as any).guaranteedPayoutPaidAt != null) continue;
+          contractLaborRows.push({
+            date: p.confirmedAt ? etFormatDate(p.confirmedAt) : "",
+            primary: sp.user.displayName ?? sp.user.email ?? "(unnamed contractor)",
+            secondary: (p as any).occurrence?.job?.property?.client?.displayName ?? undefined,
+            meta: "client payment",
+            amount: round2(sp.amount),
+          });
+        }
+      }
+      const wageItems = await loadGpWorkAnchoredItems(start, end);
+      for (const item of wageItems) {
+        contractLaborRows.push({
+          date: etFormatDate(item.completedAt),
+          primary: item.contractor.displayName ?? item.contractor.email ?? "(unnamed contractor)",
+          secondary: item.property?.clientDisplayName ?? undefined,
+          meta: "GP wage-path",
+          amount: round2(item.amount),
+        });
+      }
+      const historicalAdvances = await prisma.guaranteedPayoutAdvance.findMany({
+        where: { exportedAt: { gte: start, lte: end } },
+        include: { user: { select: { displayName: true, email: true } } },
+      });
+      for (const adv of historicalAdvances) {
+        contractLaborRows.push({
+          date: etFormatDate(adv.exportedAt),
+          primary: adv.user?.displayName ?? adv.user?.email ?? "(unnamed contractor)",
+          meta: "historical advance",
+          amount: round2(adv.amount),
+        });
+      }
+      contractLaborRows.sort((a, b) => a.date.localeCompare(b.date));
+      const contractLaborSubtotal = contractLaborRows.reduce((s, r) => s + r.amount, 0);
+
+      const groups: PreviewDetailGroup[] = [];
+      if (businessExpenseRows.length > 0) groups.push({ label: "Business Expenses", rows: businessExpenseRows, subtotal: round2(businessExpenseSubtotal) });
+      if (processorFeeRows.length > 0) groups.push({ label: "Payment Processing Fees", rows: processorFeeRows, subtotal: round2(processorFeeSubtotal) });
+      if (contractLaborRows.length > 0) groups.push({ label: "Contract Labor", rows: contractLaborRows, subtotal: round2(contractLaborSubtotal) });
+      return {
+        groups,
+        total: round2(businessExpenseSubtotal + processorFeeSubtotal + contractLaborSubtotal),
+      };
+    }
+
+    case "qb-fixed-assets": {
+      const fixedAssetMinCost = await loadFixedAssetMinCost();
+      const all = await prisma.businessExpense.findMany({
+        where: { type: "EXPENSE", date: { gte: start, lte: end } },
+        select: { id: true, date: true, category: true, description: true, cost: true },
+      });
+      const rows: PreviewDetailRow[] = all
+        .filter((e) => isFixedAsset(e, fixedAssetMinCost))
+        .sort((a, b) => a.date.getTime() - b.date.getTime())
+        .map((e) => ({
+          date: etFormatDate(e.date),
+          primary: e.category || "(uncategorized)",
+          secondary: e.description ?? undefined,
+          amount: round2(e.cost),
+        }));
+      const subtotal = rows.reduce((s, r) => s + r.amount, 0);
+      return {
+        groups: [{ label: `Fixed assets (≥ $${fixedAssetMinCost})`, rows, subtotal: round2(subtotal) }],
+        total: round2(subtotal),
+      };
+    }
+
+    case "qb-equity": {
+      const rows = await prisma.businessExpense.findMany({
+        where: {
+          type: { in: ["CAPITAL_CONTRIBUTION", "OWNER_DRAW"] },
+          date: { gte: start, lte: end },
+        },
+        select: { id: true, type: true, date: true, description: true, cost: true },
+        orderBy: { date: "asc" },
+      });
+      const contributions = rows.filter((r) => r.type === "CAPITAL_CONTRIBUTION").map<PreviewDetailRow>((r) => ({
+        date: etFormatDate(r.date),
+        primary: r.description ?? "Capital Contribution",
+        amount: round2(r.cost),
+      }));
+      const draws = rows.filter((r) => r.type === "OWNER_DRAW").map<PreviewDetailRow>((r) => ({
+        date: etFormatDate(r.date),
+        primary: r.description ?? "Owner Draw",
+        amount: round2(r.cost),
+      }));
+      const contributionSubtotal = contributions.reduce((s, r) => s + r.amount, 0);
+      const drawSubtotal = draws.reduce((s, r) => s + r.amount, 0);
+      const groups: PreviewDetailGroup[] = [];
+      if (contributions.length > 0) groups.push({ label: "Capital Contributions", rows: contributions, subtotal: round2(contributionSubtotal) });
+      if (draws.length > 0) groups.push({ label: "Owner Draws", rows: draws, subtotal: round2(drawSubtotal) });
+      return { groups, total: round2(contributionSubtotal + drawSubtotal) };
+    }
+  }
+}
