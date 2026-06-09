@@ -67,6 +67,7 @@ import {
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
+import DateInput from "@/src/ui/components/DateInput";
 import ReceiptUpload from "@/src/ui/components/ReceiptUpload";
 import { compressOnly } from "@/src/lib/imageRedact";
 import { useExpenseCategories } from "@/src/lib/useExpenseCategories";
@@ -184,31 +185,6 @@ type Summary = {
   count: number;
 };
 
-// Cash Flow for the selected timeframe (single range, not buckets). Operating
-// activity sums to operatingNet; equity activity (owner contributions / draws)
-// sums to equityNet; netCashChange is the period's actual cash delta.
-type Comparison = {
-  platformFees: number;
-  businessMargin: number;
-  equipmentRentals: number;
-  earnings: number;
-  expenses: number;
-  processingFees: number;
-  // Fixed-asset purchases (cost >= FIXED_ASSET_MIN_COST setting, dated
-  // on/after the policy start). Capitalized on the QB balance sheet —
-  // not operating expense — so they're surfaced as their own line and
-  // EXCLUDED from `expenses` above. Still subtract from netCashChange
-  // because they leave the bank account.
-  fixedAssetPurchases?: number;
-  // Legacy field — equals operatingNet, kept for backward compat.
-  net: number;
-  operatingNet: number;
-  capitalContributions: number;
-  ownerDraws: number;
-  equityNet: number;
-  netCashChange: number;
-};
-
 // Categories aligned to Schedule C (Form 1040). The label is what gets stored
 // in the DB so it imports cleanly into tax software; the line number is shown
 // in the picker for clarity. COGS / Part III is intentionally omitted —
@@ -220,6 +196,18 @@ type Comparison = {
 function fmtUSD(n: number): string {
   return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
+
+// Per-page sizes for the Ledger pagination footer. Mirrors PaymentsTab —
+// same option set, same module-level collection, so the two tabs feel
+// identical. Stored as strings (Chakra Select uses string values);
+// converted back to number when piped to `setPageSize`.
+const pageSizeItems = [
+  { label: "10", value: "10" },
+  { label: "25", value: "25" },
+  { label: "50", value: "50" },
+  { label: "100", value: "100" },
+];
+const pageSizeCollection = createListCollection({ items: pageSizeItems });
 
 // Date display helpers come from @/src/lib/lib (fmtDate, fmtDateOpts, etc.) —
 // see those helper headers for the strict no-reinvent policy.
@@ -276,7 +264,6 @@ export default function BusinessExpensesTab() {
   const { categories, selectableCategories, lineFor } = useExpenseCategories();
   const [expenses, setExpenses] = useState<BusinessExpense[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
-  const [comparison, setComparison] = useState<Comparison | null>(null);
   const [loading, setLoading] = useState(false);
 
   // Filters. filterFrom/filterTo are the shared date range — set by the
@@ -290,6 +277,10 @@ export default function BusinessExpensesTab() {
   // "" = all types. EXPENSE | CAPITAL_CONTRIBUTION | OWNER_DRAW narrows.
   const [filterType, setFilterType] = useState<"" | EntryType>("");
   const [expensePreset, setExpensePreset] = useState<ExpensePreset>("last30");
+  // Quick-date popover visibility. Matches PaymentsTab's pattern — the
+  // active preset is shown in a green chip; clicking it toggles the
+  // dropdown that lists every preset choice.
+  const [quickDateMenuOpen, setQuickDateMenuOpen] = useState(false);
 
   function applyPreset(p: ExpensePreset) {
     setExpensePreset(p);
@@ -303,25 +294,11 @@ export default function BusinessExpensesTab() {
   // Pagination — most recent first, page back through history. pageSize is
   // user-controlled (persisted) so the choice survives reloads. page resets
   // to 1 whenever a filter changes.
-  const [pageSize, setPageSize] = usePersistedState<number>("be_pageSize", 20);
-  const pageSizeCollection = useMemo(
-    () => createListCollection({
-      items: [
-        { label: "20", value: "20" },
-        { label: "50", value: "50" },
-        { label: "100", value: "100" },
-      ],
-    }),
-    [],
-  );
+  const [pageSize, setPageSize] = usePersistedState<number>("be_pageSize", 10);
   // Collapsible "When to capitalize vs expense" reference panel. Default
   // closed so the tab opens clean; opens once per user-preference (persisted
   // localStorage) for operators who want it visible while logging.
   const [assetRuleOpen, setAssetRuleOpen] = usePersistedState<boolean>("be_assetRuleOpen", false);
-  // Same pattern for the equipment-rental CPA reminder. Temporary by intent
-  // (delete the whole block once a CPA has confirmed the treatment) but in
-  // the meantime, collapsed by default so it doesn't dominate the tab.
-  const [equipmentRentalNoteOpen, setEquipmentRentalNoteOpen] = usePersistedState<boolean>("be_equipmentRentalNoteOpen", false);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
 
@@ -383,11 +360,6 @@ export default function BusinessExpensesTab() {
       if (filterTo) sumQs.set("to", filterTo);
       const s = await apiGet<Summary>(`/api/admin/business-expenses/summary${sumQs.toString() ? `?${sumQs.toString()}` : ""}`);
       setSummary(s);
-      // Cash Flow — scoped to the same selected timeframe.
-      try {
-        const cmp = await apiGet<Comparison>(`/api/admin/business-expenses/vs-revenue${sumQs.toString() ? `?${sumQs.toString()}` : ""}`);
-        setComparison(cmp);
-      } catch { /* non-fatal */ }
       // Due-to-record suggestions (also global; recurrence is a property of
       // the series, not the current filter view).
       try {
@@ -673,7 +645,7 @@ export default function BusinessExpensesTab() {
         </>
       )}
       <HStack justify="space-between" mb={3} wrap="wrap" gap={2}>
-        <Text fontWeight="bold" fontSize="lg">Accounting</Text>
+        <Text fontWeight="bold" fontSize="lg">Ledger</Text>
         <HStack gap={2}>
           <Button size="sm" colorPalette="blue" onClick={openCreate}>
             <Plus size={14} /> Add Entry
@@ -681,29 +653,21 @@ export default function BusinessExpensesTab() {
         </HStack>
       </HStack>
 
-      {/* TEMP — CPA-review reminder. Remove the entire block once a CPA
-          has confirmed equipment-rental treatment. Red palette signals
-          "open item" rather than reference material; sits at the very top
-          of the tab so it can't be missed. */}
-      <CollapsibleNote
-        open={equipmentRentalNoteOpen}
-        onToggle={() => setEquipmentRentalNoteOpen(!equipmentRentalNoteOpen)}
-        palette="red"
-        label="Review equipment-rental with CPA"
-      >
-        <Text fontSize="xs" color="red.900" textAlign="left">
-          Equipment rental charges are internal — they reduce a worker's take-home and the business
-          recovers them; they don't flow into any tax export (Gusto / QuickBooks).{" "}
-          <b>Contractors (1099):</b> a business-to-business charge — confirm with a CPA how it nets
-          against reported income.{" "}
-          <b>Employees (W-2):</b> charging an employee for equipment is a wage deduction
-          (payroll / labor-law regulated) — review with a CPA and payroll before charging real W-2
-          staff. Owner charges are a wash.
-        </Text>
-        <Text fontSize="xs" color="red.700" mt={2} fontStyle="italic" textAlign="left">
-          Remove this note once reviewed with a CPA.
-        </Text>
-      </CollapsibleNote>
+      {/* Informational banner — explains the Ledger's narrow scope. The
+          tab is the operator's hand-logged record of the three money
+          movements that don't otherwise touch the app's flow (real-time
+          payments + payroll are tracked elsewhere; bank transactions
+          live in the accounting software). Mirrors the type filter's
+          three options: Expenses, Owner Draws (withdrawals), and
+          Capital Contributions. */}
+      <Box p={3} mb={3} bg="blue.50" borderLeftWidth="3px" borderColor="blue.400" borderRadius="md">
+        <HStack align="flex-start" gap={2}>
+          <Box pt={0.5}><Info size={14} /></Box>
+          <Text fontSize="xs" color="blue.900">
+            Ledger of Business <b>Expenses</b>, Owner <b>Withdrawals</b> (draws), and Capital <b>Contributions</b>.
+          </Text>
+        </HStack>
+      </Box>
 
       {/* Capitalize-vs-expense reference. Collapsed by default so the tab
           doesn't lead with rules; admin can expand once and the open state
@@ -834,52 +798,97 @@ export default function BusinessExpensesTab() {
       {summary && filterType !== "CAPITAL_CONTRIBUTION" && filterType !== "OWNER_DRAW" && (
         <Card.Root variant="outline" mb={3}>
           <Card.Body p={3}>
-            {/* Timeframe — shared range, scopes the summary, list, and export. */}
-            <HStack gap={1.5} wrap="wrap" align="center" mb={3}>
-              {EXPENSE_PRESETS.map((p) => (
-                <Button
-                  key={p.key}
-                  size="xs"
-                  variant={expensePreset === p.key ? "solid" : "outline"}
-                  colorPalette={expensePreset === p.key ? "blue" : "gray"}
-                  onClick={() => applyPreset(p.key)}
+            {/* Timeframe row — DateInput + dash + DateInput + green preset
+                chip on a single line, matching the PaymentsTab layout. */}
+            <HStack gap={2} wrap="wrap" align="center" mb={3}>
+              <DateInput
+                value={filterFrom}
+                onChange={(val) => {
+                  setFilterFrom(val);
+                  setExpensePreset("custom");
+                  if (filterTo && val && val > filterTo) setFilterTo(val);
+                }}
+              />
+              <Text fontSize="sm">–</Text>
+              <DateInput
+                value={filterTo}
+                onChange={(val) => {
+                  setFilterTo(val);
+                  setExpensePreset("custom");
+                  if (filterFrom && val && val < filterFrom) setFilterFrom(val);
+                }}
+              />
+              {/* Preset picker — green chip + dropdown, matching PaymentsTab.
+                  The chip's label is the currently-selected preset, or
+                  "Custom dates" when the operator typed dates directly.
+                  The dropdown is `position: fixed` and pinned to the chip
+                  so it overflows the card without clipping. */}
+              <Box position="relative" onClick={(e: any) => e.stopPropagation()}>
+                <Badge
+                  size="sm"
+                  colorPalette="green"
+                  variant="subtle"
+                  cursor="pointer"
+                  onClick={() => setQuickDateMenuOpen((v) => !v)}
                 >
-                  {p.label}
-                </Button>
-              ))}
-              <HStack gap={1}>
-                <Text fontSize="xs" color="fg.muted">From</Text>
-                <input
-                  type="date"
-                  value={filterFrom}
-                  onChange={(e) => { setFilterFrom(e.target.value); setExpensePreset("custom"); }}
-                  style={{ padding: "4px 8px", fontSize: "13px", border: "1px solid var(--chakra-colors-gray-200)", borderRadius: "6px" }}
-                />
-              </HStack>
-              <HStack gap={1}>
-                <Text fontSize="xs" color="fg.muted">To</Text>
-                <input
-                  type="date"
-                  value={filterTo}
-                  onChange={(e) => { setFilterTo(e.target.value); setExpensePreset("custom"); }}
-                  style={{ padding: "4px 8px", fontSize: "13px", border: "1px solid var(--chakra-colors-gray-200)", borderRadius: "6px" }}
-                />
-              </HStack>
-            </HStack>
-            <HStack gap={6} wrap="wrap">
-              <VStack align="start" gap={0}>
-                <Text fontSize="2xs" color="fg.muted" textTransform="uppercase">
-                  Total{expensePreset === "all" ? "" : ` · ${EXPENSE_PRESETS.find((p) => p.key === expensePreset)?.label ?? "Custom range"}`}
-                </Text>
-                <Text fontSize="md" fontWeight="bold" color="orange.600">{fmtUSD(summary.total)}</Text>
-              </VStack>
-              <VStack align="start" gap={0}>
-                <Text fontSize="2xs" color="fg.muted" textTransform="uppercase">Entries</Text>
-                <Text fontSize="md" fontWeight="bold">{summary.count}</Text>
-              </VStack>
+                  {expensePreset === "custom"
+                    ? "Custom dates"
+                    : EXPENSE_PRESETS.find((p) => p.key === expensePreset)?.label ?? "Custom dates"}
+                  {" "}
+                  <Box
+                    as="span"
+                    display="inline-flex"
+                    alignItems="center"
+                    justifyContent="center"
+                    w="14px"
+                    h="14px"
+                    borderRadius="full"
+                    bg="green.500"
+                    color="white"
+                    verticalAlign="middle"
+                  >
+                    <ChevronDown size={9} />
+                  </Box>
+                </Badge>
+                {quickDateMenuOpen && (
+                  <VStack
+                    position="fixed"
+                    bg="white"
+                    borderWidth="1px"
+                    borderColor="gray.200"
+                    rounded="md"
+                    shadow="lg"
+                    zIndex={10000}
+                    p={1}
+                    gap={0}
+                    minW="160px"
+                    ref={(el: HTMLDivElement | null) => {
+                      if (el && el.parentElement) {
+                        const rect = el.parentElement.getBoundingClientRect();
+                        el.style.top = `${rect.bottom + 4}px`;
+                        el.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 168))}px`;
+                      }
+                    }}
+                  >
+                    {EXPENSE_PRESETS.map((p) => (
+                      <Button
+                        key={p.key}
+                        size="xs"
+                        variant={expensePreset === p.key ? "solid" : "ghost"}
+                        colorPalette={expensePreset === p.key ? "green" : undefined}
+                        w="full"
+                        justifyContent="start"
+                        onClick={() => { setQuickDateMenuOpen(false); applyPreset(p.key); }}
+                      >
+                        {p.label}
+                      </Button>
+                    ))}
+                  </VStack>
+                )}
+              </Box>
             </HStack>
             {Object.keys(summary.byCategory).length > 0 && (
-              <Box mt={3} pt={3} borderTopWidth="1px" borderColor="gray.200">
+              <Box>
                 <Text fontSize="xs" color="fg.muted" mb={1.5}>By Category {hasFilters ? "(filtered)" : ""}</Text>
                 <HStack gap={2} wrap="wrap">
                   {Object.entries(summary.byCategory)
@@ -896,117 +905,6 @@ export default function BusinessExpensesTab() {
         </Card.Root>
       )}
 
-
-      {/* Cash Flow — operating activity + equity activity for the selected
-          timeframe. Operating net is unchanged from the prior "Earnings vs
-          Expenses" view; the equity block is new and shows contributions /
-          draws so the operator can see whether cash actually grew. */}
-      {comparison && filterType !== "CAPITAL_CONTRIBUTION" && filterType !== "OWNER_DRAW" && (() => {
-        const rangeLabel = expensePreset === "all"
-          ? "All time"
-          : EXPENSE_PRESETS.find((p) => p.key === expensePreset)?.label ?? "Custom range";
-        const operatingNet = comparison.operatingNet ?? comparison.net;
-        const equityNet = comparison.equityNet ?? 0;
-        const netCashChange = comparison.netCashChange ?? operatingNet;
-        const showEquity =
-          (comparison.capitalContributions ?? 0) > 0 ||
-          (comparison.ownerDraws ?? 0) > 0;
-        return (
-          <Card.Root variant="outline" mb={3}>
-            <Card.Body p={3}>
-              <HStack justify="space-between" mb={1}>
-                <Text fontSize="sm" fontWeight="semibold">Cash Flow</Text>
-                <Badge size="sm" colorPalette="blue" variant="subtle" borderRadius="full">{rangeLabel}</Badge>
-              </HStack>
-              <Text fontSize="xs" color="fg.muted" mb={2}>
-                Operating = what the business kept from jobs minus what it spent. Equity = owner money in / out (not part of profitability). Net cash change = both combined.
-              </Text>
-              <VStack align="stretch" gap={0} fontSize="xs">
-                <Text fontSize="2xs" color="fg.muted" textTransform="uppercase" letterSpacing="wide" mt={1}>
-                  Operating
-                </Text>
-                <HStack justify="space-between" py={1.5}>
-                  <Text color="fg.muted">Platform fees (contractors)</Text>
-                  <Text>{fmtUSD(comparison.platformFees)}</Text>
-                </HStack>
-                <HStack justify="space-between" py={1.5}>
-                  <Text color="fg.muted">Margin (employees/trainees)</Text>
-                  <Text>{fmtUSD(comparison.businessMargin)}</Text>
-                </HStack>
-                <HStack justify="space-between" py={1.5}>
-                  <Text color="fg.muted">Equipment rentals</Text>
-                  <Text>{fmtUSD(comparison.equipmentRentals)}</Text>
-                </HStack>
-                <HStack justify="space-between" py={1.5} borderTopWidth="1px" borderColor="gray.200">
-                  <Text fontWeight="semibold" color="green.700">Earnings (total)</Text>
-                  <Text fontWeight="semibold" color="green.700">{fmtUSD(comparison.earnings)}</Text>
-                </HStack>
-                <HStack justify="space-between" py={1.5}>
-                  <Text fontWeight="semibold" color="orange.700">Business expenses</Text>
-                  <Text fontWeight="semibold" color="orange.700">−{fmtUSD(comparison.expenses)}</Text>
-                </HStack>
-                {(comparison.processingFees ?? 0) > 0 && (
-                  <HStack justify="space-between" py={1.5}>
-                    <Text fontWeight="semibold" color="orange.700">Processing fees</Text>
-                    <Text fontWeight="semibold" color="orange.700">−{fmtUSD(comparison.processingFees)}</Text>
-                  </HStack>
-                )}
-                <HStack justify="space-between" py={1.5} borderTopWidth="1px" borderColor="gray.200">
-                  <Text fontWeight="semibold">Operating net</Text>
-                  <Text fontWeight="semibold" color={operatingNet >= 0 ? "green.700" : "red.600"}>
-                    {operatingNet < 0 ? "−" : ""}{fmtUSD(Math.abs(operatingNet))}
-                  </Text>
-                </HStack>
-                {/* Fixed-asset purchases (cost >= threshold). Capitalized on
-                    the QB balance sheet — not part of Operating net (P&L), but
-                    they DO leave the bank account so they subtract from Net
-                    cash change. Only renders when there's activity. */}
-                {(comparison.fixedAssetPurchases ?? 0) > 0 && (
-                  <HStack justify="space-between" py={1.5} mt={2} pl={3} borderLeftWidth="2px" borderColor="purple.300" bg="purple.50" borderRadius="md">
-                    <Box>
-                      <Text fontSize="xs" color="purple.700" fontWeight="semibold">Fixed asset purchases</Text>
-                      <Text fontSize="2xs" color="fg.muted">Capitalized — not in Operating net. Reduces cash on hand.</Text>
-                    </Box>
-                    <Text fontWeight="semibold" color="purple.700">−{fmtUSD(comparison.fixedAssetPurchases ?? 0)}</Text>
-                  </HStack>
-                )}
-
-                {showEquity && (
-                  <>
-                    <Text fontSize="2xs" color="fg.muted" textTransform="uppercase" letterSpacing="wide" mt={3}>
-                      Equity
-                    </Text>
-                    <HStack justify="space-between" py={1.5}>
-                      <Text color="fg.muted">Capital contributions</Text>
-                      <Text color="green.700">+{fmtUSD(comparison.capitalContributions ?? 0)}</Text>
-                    </HStack>
-                    <HStack justify="space-between" py={1.5}>
-                      <Text color="fg.muted">Owner draws</Text>
-                      <Text color="pink.600">−{fmtUSD(comparison.ownerDraws ?? 0)}</Text>
-                    </HStack>
-                    <HStack justify="space-between" py={1.5} borderTopWidth="1px" borderColor="gray.200">
-                      <Text fontWeight="semibold">Equity net</Text>
-                      <Text fontWeight="semibold" color={equityNet >= 0 ? "green.700" : "pink.600"}>
-                        {equityNet < 0 ? "−" : ""}{fmtUSD(Math.abs(equityNet))}
-                      </Text>
-                    </HStack>
-                  </>
-                )}
-
-                <HStack justify="space-between" py={2} mt={1} borderTopWidth="2px" borderColor="gray.300">
-                  <Text fontWeight="bold">Net cash change</Text>
-                  <Text fontWeight="bold" color={netCashChange >= 0 ? "green.700" : "red.600"}>
-                    {netCashChange < 0 ? "−" : ""}{fmtUSD(Math.abs(netCashChange))}
-                  </Text>
-                </HStack>
-              </VStack>
-              <Text fontSize="xs" color="fg.muted" mt={2}>
-                Management view only. For tax reporting use QuickBooks exports + Gusto. Equity entries don't affect profit; they explain why cash on hand changed.
-              </Text>
-            </Card.Body>
-          </Card.Root>
-        );
-      })()}
 
       {/* Filters — Search, Type, Category share the row in equal thirds.
           Clear button drops below when active so the trio's symmetry isn't
@@ -1222,14 +1120,16 @@ export default function BusinessExpensesTab() {
         </VStack>
       )}
 
-      {/* Pagination footer — only renders when there's more than one page
-          worth of rows. Per-page selector lives on the right. */}
+      {/* Pagination footer — mirrors PaymentsTab's renderPaginationFooter
+          so the two surfaces feel identical. Same spacing, same Select
+          variant ("sm" with a visible chevron via Select.Indicator), same
+          "Per page" + "Showing X-Y of Z" framing. */}
       {total > 0 && (() => {
         const totalPages = Math.max(1, Math.ceil(total / pageSize));
         const start = (page - 1) * pageSize + 1;
         const end = Math.min(page * pageSize, total);
         return (
-          <HStack mt={3} justify="space-between" wrap="wrap" gap={2} fontSize="sm">
+          <HStack mt={2} justify="space-between" wrap="wrap" gap={2} fontSize="sm">
             <Text color="fg.muted">
               Showing {start}–{end} of {total}
             </Text>
@@ -1262,22 +1162,20 @@ export default function BusinessExpensesTab() {
                 <Select.Root
                   collection={pageSizeCollection}
                   value={[String(pageSize)]}
-                  onValueChange={(e) => {
-                    const n = Number(e.value[0]);
-                    if (Number.isFinite(n) && n > 0) setPageSize(n);
-                  }}
-                  size="xs"
+                  onValueChange={(e) => setPageSize(Number(e.value[0]))}
+                  size="sm"
                   positioning={{ strategy: "fixed", hideWhenDetached: true }}
                   css={{ width: "auto", flex: "0 0 auto" }}
                 >
                   <Select.Control>
                     <Select.Trigger w="auto" minW="0" px="2">
-                      <Select.ValueText />
+                      <Select.ValueText placeholder={String(pageSize)} />
+                      <Select.Indicator />
                     </Select.Trigger>
                   </Select.Control>
                   <Select.Positioner>
                     <Select.Content>
-                      {pageSizeCollection.items.map((it) => (
+                      {pageSizeItems.map((it) => (
                         <Select.Item key={it.value} item={it.value}>
                           <Select.ItemText>{it.label}</Select.ItemText>
                         </Select.Item>

@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Box, Button, Card, HStack, Input, Spinner, Text, VStack } from "@chakra-ui/react";
+import { Badge, Box, Button, Card, HStack, Spinner, Text, VStack } from "@chakra-ui/react";
 import { FiDownload, FiInfo } from "react-icons/fi";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { apiGet, apiDownload } from "@/src/lib/api";
+import DateInput from "@/src/ui/components/DateInput";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import {
   bizToday,
@@ -83,6 +84,11 @@ export default function ReconcileTab() {
   // Independent loading state for the CSV downloads so we can disable
   // the right button while its file is streaming.
   const [downloading, setDownloading] = useState<"capital" | "income" | "expenses" | null>(null);
+  // Active preset key + dropdown visibility for the green-chip preset
+  // picker (matching PaymentsTab + Ledger). `null` means the operator
+  // typed the dates by hand — the chip reads "Custom dates".
+  const [selectedPreset, setSelectedPreset] = useState<string | null>("this-week");
+  const [quickDateMenuOpen, setQuickDateMenuOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!start || !end) return;
@@ -221,56 +227,105 @@ export default function ReconcileTab() {
       <Card.Root>
         <Card.Body>
           <VStack align="stretch" gap={3}>
-            <Text fontSize="sm" fontWeight="medium">Date range</Text>
-            <HStack gap={2} wrap="wrap">
-              <Box>
-                <Text fontSize="xs" color="fg.muted" mb={1}>Start</Text>
-                <Input
-                  type="date"
-                  value={start}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    if (!v) { setStart(v); return; }
-                    setStart(v);
-                    if (end && v > end) setEnd(v);
-                  }}
+            {/* Timeframe row — DateInput + dash + DateInput + green preset
+                chip on a single line, matching the PaymentsTab layout. */}
+            <HStack gap={2} wrap="wrap" align="center">
+              <DateInput
+                value={start}
+                onChange={(val) => {
+                  setSelectedPreset(null);
+                  setStart(val);
+                  if (end && val && val > end) setEnd(val);
+                }}
+              />
+              <Text fontSize="sm">–</Text>
+              <DateInput
+                value={end}
+                min={start || undefined}
+                onChange={(val) => {
+                  setSelectedPreset(null);
+                  setEnd(val);
+                  if (start && val && val < start) setStart(val);
+                }}
+              />
+              {/* Preset picker — green chip + dropdown, matching PaymentsTab
+                  and Ledger. Clicking the chip toggles a popover with every
+                  preset; the active preset's label fills the chip when one
+                  is selected, otherwise "Custom dates". */}
+              <Box position="relative" onClick={(e: any) => e.stopPropagation()}>
+                <Badge
                   size="sm"
-                  w="160px"
-                />
-              </Box>
-              <Box>
-                <Text fontSize="xs" color="fg.muted" mb={1}>End</Text>
-                <Input
-                  type="date"
-                  value={end}
-                  min={start || undefined}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    if (!v) { setEnd(v); return; }
-                    setEnd(v);
-                    if (start && v < start) setStart(v);
-                  }}
-                  size="sm"
-                  w="160px"
-                />
-              </Box>
-            </HStack>
-            <HStack gap={2} wrap="wrap">
-              {presets.map((p) => (
-                <Button
-                  key={p.key}
-                  size="xs"
-                  variant="outline"
-                  onClick={() => {
-                    const r = p.range();
-                    setStart(r.from);
-                    setEnd(r.to);
-                  }}
+                  colorPalette="green"
+                  variant="subtle"
+                  cursor="pointer"
+                  onClick={() => setQuickDateMenuOpen((v) => !v)}
                 >
-                  {p.label}
-                </Button>
-              ))}
+                  {selectedPreset
+                    ? presets.find((p) => p.key === selectedPreset)?.label ?? "Custom dates"
+                    : "Custom dates"}
+                  {" "}
+                  <Box
+                    as="span"
+                    display="inline-flex"
+                    alignItems="center"
+                    justifyContent="center"
+                    w="14px"
+                    h="14px"
+                    borderRadius="full"
+                    bg="green.500"
+                    color="white"
+                    verticalAlign="middle"
+                  >
+                    <ChevronDown size={9} />
+                  </Box>
+                </Badge>
+                {quickDateMenuOpen && (
+                  <VStack
+                    position="fixed"
+                    bg="white"
+                    borderWidth="1px"
+                    borderColor="gray.200"
+                    rounded="md"
+                    shadow="lg"
+                    zIndex={10000}
+                    p={1}
+                    gap={0}
+                    minW="160px"
+                    ref={(el: HTMLDivElement | null) => {
+                      if (el && el.parentElement) {
+                        const rect = el.parentElement.getBoundingClientRect();
+                        el.style.top = `${rect.bottom + 4}px`;
+                        el.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 168))}px`;
+                      }
+                    }}
+                  >
+                    {presets.map((p) => (
+                      <Button
+                        key={p.key}
+                        size="xs"
+                        variant={selectedPreset === p.key ? "solid" : "ghost"}
+                        colorPalette={selectedPreset === p.key ? "green" : undefined}
+                        w="full"
+                        justifyContent="start"
+                        onClick={() => {
+                          setQuickDateMenuOpen(false);
+                          setSelectedPreset(p.key);
+                          const r = p.range();
+                          setStart(r.from);
+                          setEnd(r.to);
+                        }}
+                      >
+                        {p.label}
+                      </Button>
+                    ))}
+                  </VStack>
+                )}
+              </Box>
             </HStack>
+            {/* By-category chip strip — same look as the Ledger tab. Sits
+                directly under the timeframe so the operator sees the spend
+                breakdown at a glance before scrolling into the P&L table. */}
+            {report && <ExpenseCategoryChips report={report} />}
           </VStack>
         </Card.Body>
       </Card.Root>
@@ -667,5 +722,41 @@ function TotalRow({ label, amount }: { label: string; amount: number }) {
 function EmptyRow({ label }: { label: string }) {
   return (
     <Text fontSize="xs" color="fg.muted" pl={6} py={2}>{label}</Text>
+  );
+}
+
+/**
+ * At-a-glance chips of the P&L's COGS + Expenses lines sorted by amount
+ * descending. Mirrors the by-category chip view on the Ledger tab so the
+ * operator can scan "where did money go" without re-reading the full
+ * P&L table. Computed from the report (no extra fetch); skipped when
+ * nothing's there.
+ */
+function ExpenseCategoryChips({ report }: { report: PnLReport }) {
+  const items: { label: string; amount: number }[] = [];
+  // Flatten both buckets — flat rows + each group's parent direct + its
+  // children — into a single list keyed by qbAccount.
+  function pushBucket(bucket: PnLBucket) {
+    for (const r of bucket.flat) items.push({ label: r.qbAccount, amount: r.total });
+    for (const g of bucket.groups) {
+      if (g.directTotal !== 0) items.push({ label: g.parent, amount: g.directTotal });
+      for (const c of g.children) items.push({ label: c.qbAccount, amount: c.total });
+    }
+  }
+  pushBucket(report.cogs);
+  pushBucket(report.expenses);
+  if (items.length === 0) return null;
+  items.sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+  return (
+    <Box>
+      <Text fontSize="xs" color="fg.muted" mb={1.5}>By Category</Text>
+      <HStack gap={2} wrap="wrap">
+        {items.map((it) => (
+          <Badge key={it.label} size="sm" colorPalette="gray" variant="subtle" borderRadius="full" px="2">
+            {it.label}: {fmtUSD(it.amount)}
+          </Badge>
+        ))}
+      </HStack>
+    </Box>
   );
 }

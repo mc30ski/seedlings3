@@ -1055,17 +1055,17 @@ export default function HomePage() {
           categoryIcon: TfiMoney,
         },
         {
-          // Internally this tab is BusinessExpensesTab and the API/model is
-          // BusinessExpense — both kept for historical reasons. The visible
-          // label is "Accounting" because the tab houses three kinds of
-          // money entries that flow to QuickBooks: operating expenses,
-          // capital contributions (equity in), and owner draws (equity out).
-          // See the EntryType discriminator on the BusinessExpense model.
-          // The URL key "business-expenses" is preserved so existing deep
-          // links and localStorage handoffs (Supply badge, Job badge) keep
-          // working.
-          value: "business-expenses",
-          label: "Accounting",
+          // Internally this tab is BusinessExpensesTab and the API/model
+          // is BusinessExpense — both kept for historical reasons. The
+          // visible label is "Ledger" because the tab is a hand-logged
+          // record of three money-movement categories: business expenses,
+          // capital contributions (equity in), and owner draws (equity
+          // out). See the EntryType discriminator on the BusinessExpense
+          // model. The URL key is "ledger" to match the visible name —
+          // deep links and localStorage handoffs (Supply badge, Job badge)
+          // need updating to match.
+          value: "ledger",
+          label: "Ledger",
           icon: FiBook,
           content: wrapWithInlineMessage(<BusinessExpensesTab />),
           category: "Money",
@@ -2096,7 +2096,7 @@ export default function HomePage() {
       programmaticNavRef.current = true;
       setTopTab("super");
       setSuperInnerTab(tab as any);
-      if (tab === "supplies" || tab === "business-expenses" || tab === "payments" || tab === "pricing" || tab === "exports") setSuperCategory("Money");
+      if (tab === "supplies" || tab === "ledger" || tab === "payments" || tab === "pricing" || tab === "reconcile") setSuperCategory("Money");
       else if (tab === "operations" || tab === "audit" || tab === "documents" || tab === "timeline") setSuperCategory("Records");
       else if (tab === "settings" || tab === "profile") setSuperCategory("System");
       setTimeout(() => { programmaticNavRef.current = false; }, 50);
