@@ -22,7 +22,7 @@ import SuperUnclaimedTab from "@/src/ui/tabs/SuperUnclaimedTab";
 import OperationsTab from "@/src/ui/tabs/OperationsTab";
 import AuditTab from "@/src/ui/tabs/AuditTab";
 import BusinessExpensesTab from "@/src/ui/tabs/BusinessExpensesTab";
-import PnLReportTab from "@/src/ui/tabs/PnLReportTab";
+import ReconcileTab from "@/src/ui/tabs/ReconcileTab";
 import SuppliesTab from "@/src/ui/tabs/SuppliesTab";
 import DocumentsTab from "@/src/ui/tabs/DocumentsTab";
 import TimelineTab from "@/src/ui/tabs/TimelineTab";
@@ -62,7 +62,6 @@ import WorkerCollectionsTab from "@/src/ui/tabs/WorkerCollectionsTab";
 import EquipmentUsageTab from "@/src/ui/tabs/EquipmentUsageTab";
 import AdminGroupsTab from "@/src/ui/tabs/AdminGroupsTab";
 import PricingTab from "@/src/ui/tabs/PricingTab";
-import ExportsTab from "@/src/ui/tabs/ExportsTab";
 
 import AppSplash from "@/src/ui/helpers/AppSplash";
 import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
@@ -1073,15 +1072,18 @@ export default function HomePage() {
           categoryIcon: TfiMoney,
         },
         {
-          // P&L Report — structured Profit & Loss view for a date range,
-          // designed to reconcile against QuickBooks Online's P&L report.
-          // Same source data as the QB Income + QB Expenses CSVs, same
-          // filters, same ET-anchored boundaries. See PnLReportTab.tsx +
-          // services/pnlReport.ts.
-          value: "pnl-report",
-          label: "P&L Report",
+          // Reconcile — accounting-software validation surface. Replaces
+          // the old Exports + P&L Report tabs. Renders a QB-style P&L
+          // for the selected window with click-to-drill-down on every
+          // row, and offers three flat CSVs (Capital, Income, Expenses)
+          // for visual cross-checking against the operator's accounting
+          // software (which is now the source of truth, wired directly
+          // to the bank). See ReconcileTab.tsx + services/pnlReport.ts
+          // + services/exports.ts.
+          value: "reconcile",
+          label: "Reconcile",
           icon: FiBarChart2,
-          content: wrapWithInlineMessage(<PnLReportTab />),
+          content: wrapWithInlineMessage(<ReconcileTab />),
           category: "Money",
           categoryIcon: TfiMoney,
         },
@@ -1103,14 +1105,6 @@ export default function HomePage() {
           label: "Pricing",
           icon: FiTag,
           content: wrapWithInlineMessage(<PricingTab isSuper />),
-          category: "Money",
-          categoryIcon: TfiMoney,
-        },
-        {
-          value: "exports",
-          label: "Exports",
-          icon: FiDownload,
-          content: wrapWithInlineMessage(<ExportsTab />),
           category: "Money",
           categoryIcon: TfiMoney,
         },

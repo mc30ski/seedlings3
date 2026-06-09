@@ -1,4 +1,5 @@
 import { prisma } from "../db/prisma";
+import { etFormatDate } from "../lib/dates";
 import {
   loadExpenseCategories,
   SYNTHETIC_PL_CATEGORIES,
@@ -353,6 +354,243 @@ function round2(n: number): number {
  * to the default. We only need the account name here, not the Schedule C
  * line — the P&L groups by account, not by line.
  */
+// ─────────────────────────────────────────────────────────────────────────────
+// P&L drill-down — returns the per-row breakdown that contributes to a
+// specific qbAccount in the report for a given window.
+//
+// Routes through the same filters + anchoring rules as buildPnLReport
+// (cash basis, confirmed + !writtenOff, ET-anchored boundaries, effective-
+// date anchoring for per-occurrence expenses) so the rows always sum to
+// the section total shown in the main report.
+//
+// Special qbAccount values that don't come from BusinessExpense:
+//   • "Services"                                → confirmed Payment rows
+//   • equipment-rental-income account name      → Checkout rentalCost rows
+//   • SYNTHETIC.PROCESSOR_FEES.qbAccount        → Payment.processorFeeAmount rows
+//   • SYNTHETIC.CONTRACT_LABOR.qbAccount        → non-employee PaymentSplit
+//                                                 rows + GP advance rows
+// Everything else → BusinessExpense rows whose category maps to that qbAccount.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type PnLDetailRow = {
+  date: string;       // YYYY-MM-DD, ET-anchored
+  primary: string;    // main description (vendor, client, etc.)
+  secondary?: string; // optional second line (category, property, source, etc.)
+  amount: number;
+};
+
+export type PnLDetail = {
+  qbAccount: string;
+  rows: PnLDetailRow[];
+  total: number;
+};
+
+export async function pnlReportDetails(
+  start: Date,
+  end: Date,
+  qbAccount: string,
+): Promise<PnLDetail> {
+  const [equipRentalAccount, categories] = await Promise.all([
+    loadEquipmentRentalIncomeAccount(),
+    loadExpenseCategories(),
+  ]);
+
+  // ── Income: Services ────────────────────────────────────────────────────
+  if (qbAccount === INCOME_ACCOUNT_SERVICES) {
+    const payments = await prisma.payment.findMany({
+      where: {
+        confirmed: true,
+        confirmedAt: { gte: start, lte: end },
+        writtenOff: false,
+      },
+      select: {
+        amountPaid: true,
+        confirmedAt: true,
+        method: true,
+        occurrence: {
+          select: {
+            job: {
+              select: {
+                property: {
+                  select: { displayName: true, client: { select: { displayName: true } } },
+                },
+              },
+            },
+          },
+        },
+      },
+      orderBy: { confirmedAt: "asc" },
+    });
+    const rows: PnLDetailRow[] = payments.map((p) => ({
+      date: p.confirmedAt ? etFormatDate(p.confirmedAt) : "",
+      primary: p.occurrence?.job?.property?.client?.displayName ?? "(unknown client)",
+      secondary: [p.occurrence?.job?.property?.displayName, p.method].filter(Boolean).join(" · ") || undefined,
+      amount: round2(p.amountPaid ?? 0),
+    }));
+    return { qbAccount, rows, total: round2(sum(rows.map((r) => r.amount))) };
+  }
+
+  // ── Income: Equipment Rental ───────────────────────────────────────────
+  if (qbAccount === equipRentalAccount) {
+    const checkouts = await prisma.checkout.findMany({
+      where: {
+        rentalCost: { gt: 0 },
+        releasedAt: { gte: start, lte: end },
+      },
+      include: {
+        equipment: { select: { shortDesc: true, brand: true, model: true } },
+        user: { select: { displayName: true, email: true } },
+      },
+      orderBy: { releasedAt: "asc" },
+    });
+    const rows: PnLDetailRow[] = checkouts.map((c) => ({
+      date: c.releasedAt ? etFormatDate(c.releasedAt) : "",
+      primary: [c.equipment?.brand, c.equipment?.model].filter(Boolean).join(" ") || c.equipment?.shortDesc || "Equipment rental",
+      secondary: c.user?.displayName ?? c.user?.email ?? undefined,
+      amount: round2(c.rentalCost ?? 0),
+    }));
+    return { qbAccount, rows, total: round2(sum(rows.map((r) => r.amount))) };
+  }
+
+  // ── Expense: Payment Processing Fees (synthetic) ───────────────────────
+  if (qbAccount === SYNTHETIC_PL_CATEGORIES.PROCESSOR_FEES.qbAccount) {
+    const payments = await prisma.payment.findMany({
+      where: {
+        confirmed: true,
+        confirmedAt: { gte: start, lte: end },
+        writtenOff: false,
+        processorFeeAmount: { gt: 0 },
+      },
+      select: {
+        processorFeeAmount: true,
+        confirmedAt: true,
+        method: true,
+        grossCharged: true,
+        occurrence: {
+          select: {
+            job: {
+              select: {
+                property: {
+                  select: { client: { select: { displayName: true } } },
+                },
+              },
+            },
+          },
+        },
+      },
+      orderBy: { confirmedAt: "asc" },
+    });
+    const rows: PnLDetailRow[] = payments.map((p) => ({
+      date: p.confirmedAt ? etFormatDate(p.confirmedAt) : "",
+      primary: p.occurrence?.job?.property?.client?.displayName ?? "(unknown client)",
+      secondary: `${p.method ?? ""} fee on $${round2(p.grossCharged ?? 0).toFixed(2)} gross`,
+      amount: round2(p.processorFeeAmount ?? 0),
+    }));
+    return { qbAccount, rows, total: round2(sum(rows.map((r) => r.amount))) };
+  }
+
+  // ── Expense: Contract Labor (synthetic) ────────────────────────────────
+  if (qbAccount === SYNTHETIC_PL_CATEGORIES.CONTRACT_LABOR.qbAccount) {
+    const [contractorPayments, gpAdvances] = await Promise.all([
+      prisma.payment.findMany({
+        where: {
+          confirmed: true,
+          confirmedAt: { gte: start, lte: end },
+          writtenOff: false,
+        },
+        select: {
+          confirmedAt: true,
+          occurrence: {
+            select: {
+              job: {
+                select: {
+                  property: {
+                    select: { client: { select: { displayName: true } } },
+                  },
+                },
+              },
+            },
+          },
+          splits: {
+            where: { ownerEarnings: false },
+            select: {
+              amount: true,
+              guaranteedPayoutPaidAt: true,
+              user: { select: { workerType: true, displayName: true, email: true } },
+            },
+          },
+        },
+        orderBy: { confirmedAt: "asc" },
+      }),
+      prisma.guaranteedPayoutAdvance.findMany({
+        where: { exportedAt: { gte: start, lte: end } },
+        include: { user: { select: { displayName: true, email: true } } },
+        orderBy: { exportedAt: "asc" },
+      }),
+    ]);
+    const rows: PnLDetailRow[] = [];
+    for (const p of contractorPayments) {
+      for (const sp of p.splits) {
+        if (isEmployeeClass(sp.user.workerType)) continue;
+        if (sp.guaranteedPayoutPaidAt != null) continue;
+        rows.push({
+          date: p.confirmedAt ? etFormatDate(p.confirmedAt) : "",
+          primary: sp.user.displayName ?? sp.user.email ?? "(unnamed contractor)",
+          secondary: p.occurrence?.job?.property?.client?.displayName ?? undefined,
+          amount: round2(sp.amount ?? 0),
+        });
+      }
+    }
+    for (const adv of gpAdvances) {
+      rows.push({
+        date: adv.exportedAt ? etFormatDate(adv.exportedAt) : "",
+        primary: adv.user?.displayName ?? adv.user?.email ?? "(unnamed contractor)",
+        secondary: "guaranteed-payout advance",
+        amount: round2(adv.amount ?? 0),
+      });
+    }
+    rows.sort((a, b) => a.date.localeCompare(b.date));
+    return { qbAccount, rows, total: round2(sum(rows.map((r) => r.amount))) };
+  }
+
+  // ── Default: BusinessExpense rows whose category maps to this account ──
+  // A qbAccount can be mapped from multiple categories (rare but possible),
+  // so collect every category whose mapping equals this qbAccount.
+  const categoryLabels = categories
+    .filter((c) => (c.qbAccount ?? "Unmapped") === qbAccount)
+    .map((c) => c.label);
+  if (categoryLabels.length === 0) {
+    return { qbAccount, rows: [], total: 0 };
+  }
+  const expenses = await prisma.businessExpense.findMany({
+    where: {
+      type: "EXPENSE",
+      category: { in: categoryLabels },
+      ...expenseAnchorDateWhere(start, end),
+    },
+    include: {
+      occurrence: { select: { completedAt: true } },
+    },
+  });
+  const fixedAssetMinCost = await loadFixedAssetMinCost();
+  const rows: PnLDetailRow[] = [];
+  for (const r of expenses) {
+    // Match the main P&L: fixed-asset rows belong on the balance sheet,
+    // never on the P&L. Same effective-date capitalization check used in
+    // the totals computation.
+    const effDate = effectiveExpenseDate(r);
+    if (isFixedAsset({ cost: r.cost, date: effDate }, fixedAssetMinCost)) continue;
+    rows.push({
+      date: etFormatDate(effDate),
+      primary: r.category ?? "(uncategorized)",
+      secondary: [r.description, r.vendor].filter(Boolean).join(" · ") || undefined,
+      amount: round2(r.cost),
+    });
+  }
+  rows.sort((a, b) => a.date.localeCompare(b.date));
+  return { qbAccount, rows, total: round2(sum(rows.map((r) => r.amount))) };
+}
+
 async function loadEquipmentRentalIncomeAccount(): Promise<string> {
   const row = await prisma.setting.findUnique({
     where: { key: "EQUIPMENT_RENTAL_INCOME_CONFIG" },

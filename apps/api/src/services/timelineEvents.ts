@@ -4,7 +4,6 @@ import { prisma } from "../db/prisma";
 import { writeAudit } from "../lib/auditLogger";
 import { AUDIT } from "../lib/auditActions";
 import { ServiceError } from "../lib/errors";
-import { etFormatDate } from "../lib/dates";
 
 // Urgency thresholds — exposed here so the routes + the title-bar pill stay
 // in sync if they ever drift.
@@ -159,8 +158,10 @@ export const timelineEvents = {
         archivedAt: ev.archivedAt,
         adminHidden: ev.adminHidden,
         // Render under the lastCompletedAt date in the UI — that's the
-        // anchor the operator is reviewing for this view.
-        nextDate: ev.lastCompletedAt ? etFormatDate(ev.lastCompletedAt) : ev.anchorDate,
+        // anchor the operator is reviewing for this view. Mirrors the
+        // existing nextDate typing (Date in code, ISO string on the wire
+        // after JSON serialization — the frontend's fmtDate handles both).
+        nextDate: (ev.lastCompletedAt ?? ev.anchorDate) as unknown as Date,
       }));
     }
     const events = await prisma.timelineEvent.findMany({

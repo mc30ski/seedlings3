@@ -1,6 +1,4 @@
 import { prisma } from "../db/prisma";
-import { loadQbAccountMap, loadScheduleCLineMap } from "./expenseCategories";
-import { generateLedgerId } from "../lib/ledgerId";
 import { etFormatDate } from "../lib/dates";
 import {
   computeBreakdown,
@@ -9,23 +7,22 @@ import {
   type WorkerInput,
 } from "./payments";
 
-// Returned by every CSV builder. `rowCount` counts data rows only (excludes
-// header + TOTALS); `total` is the dollar figure on the TOTALS line. The
-// route layer persists these to ExportRun so the history view eyeballs
-// against the file without re-parsing the bytes.
+// Returned by every CSV builder. `rowCount` counts data rows only
+// (excludes header + TOTALS); `total` is the dollar figure on the TOTALS
+// line. The route layer doesn't persist these anywhere now — they're
+// emitted for eyeball validation only.
 export type CsvResult = {
   csv: string;
   rowCount: number;
   total: number;
 };
 
-// CSV-export service. All exports are super-admin-gated at the route layer.
-// Cash-basis: Payment.confirmedAt anchors all payment-derived rows so that
-// unconfirmed (pending-approval) payments are never counted as income or wages.
-//
-// Returns plain CSV strings (route layer sets Content-Type and Content-Disposition).
-// Every CSV ends with a TOTALS row for eyeball verification against the
-// in-app PaymentsTab numbers.
+// CSV-export service for the Money → Preview tab. Two flat files
+// (expensesCsv, workersCsv) plus helpers shared with the P&L Report.
+// All routes super-admin-gated at the route layer. Cash basis: payment-
+// derived rows anchor on Payment.confirmedAt; expense rows anchor on the
+// effective date (occurrence.completedAt for per-occurrence, BE.date for
+// freestanding) — same rules QB enforces, so reconciliation tracks.
 
 // CSV-injection-safe field escape. Excel/LibreOffice interprets any
 // field STARTING with `=`, `+`, `-`, `@`, tab (\t), or CR (\r) as a
@@ -69,80 +66,11 @@ function finalizeCsv(lines: string[]): string {
   return UTF8_BOM + lines.join("\r\n") + "\r\n";
 }
 
-// YYYY-MM-DD in Eastern Time. Used for the Gusto Pay Period Start/End
-// columns. Delegates to the shared etFormatDate so all date formatting
-// in this codebase routes through a single helper. See lib/dates.ts.
+// YYYY-MM-DD in Eastern Time. Delegates to the shared etFormatDate so
+// all date formatting in this codebase routes through a single helper.
+// See lib/dates.ts.
 function toIsoDate(d: Date): string {
   return etFormatDate(d);
-}
-
-// MM/DD/YYYY in Eastern Time. QuickBooks' CSV importer parses this format
-// by default. Same ET anchor as toIsoDate — naive `.toISOString().slice(0, 10)`
-// would emit the next calendar day for ET-anchored Dates near midnight.
-function toQbDate(d: Date): string {
-  const [y, m, day] = etFormatDate(d).split("-");
-  return `${m}/${day}/${y}`;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// QuickBooks Online journal-entry import format.
-//
-// The QB income and expenses CSVs both use the canonical 10-column journal-
-// entry shape so the operator can import them straight into QB Online's
-// "Journal Entries" importer without re-shaping. Every source transaction
-// emits a balanced pair of rows (debit + credit) sharing the same JournalNo;
-// the second row's JournalDate is blank (QB groups by adjacent JournalNo and
-// expects the date only on the leader row).
-//
-// Counter-account for both directions is `APP_CLEARING_ACCOUNT` — a clearing
-// account the operator sets up in QB. Income debits clearing, then credits
-// the income account; expenses debit the expense account, then credit
-// clearing. When a real bank deposit/withdrawal lands in QB, it offsets the
-// clearing balance, and the operator reconciles the two sides.
-// ─────────────────────────────────────────────────────────────────────────────
-const JOURNAL_HEADER = [
-  "*JournalNo",
-  "*JournalDate",
-  "*AccountName",
-  "*Debits",
-  "*Credits",
-  "Description",
-  "Name",
-  "Currency",
-  "Location",
-  "Class",
-];
-
-const APP_CLEARING_ACCOUNT = "App Clearing Account";
-
-function incomeJournalRows(
-  journalNo: string,
-  dateStr: string,
-  incomeAccount: string,
-  amount: number,
-  description: string,
-  name: string,
-): string[] {
-  const amt = round2(amount).toFixed(2);
-  return [
-    csvRow([journalNo, dateStr, APP_CLEARING_ACCOUNT, amt, "", description, name, "", "", ""]),
-    csvRow([journalNo, "", incomeAccount, "", amt, description, name, "", "", ""]),
-  ];
-}
-
-function expenseJournalRows(
-  journalNo: string,
-  dateStr: string,
-  expenseAccount: string,
-  amount: number,
-  description: string,
-  name: string,
-): string[] {
-  const amt = round2(amount).toFixed(2);
-  return [
-    csvRow([journalNo, dateStr, expenseAccount, amt, "", description, name, "", "", ""]),
-    csvRow([journalNo, "", APP_CLEARING_ACCOUNT, "", amt, description, name, "", "", ""]),
-  ];
 }
 
 function round2(n: number): number {
@@ -151,51 +79,6 @@ function round2(n: number): number {
 
 export function isEmployeeClass(t: string | null | undefined): boolean {
   return t === "EMPLOYEE" || t === "TRAINEE";
-}
-
-function splitName(displayName: string | null | undefined): { first: string; last: string } {
-  if (!displayName) return { first: "", last: "" };
-  const parts = displayName.trim().split(/\s+/);
-  if (parts.length === 1) return { first: parts[0], last: "" };
-  return { first: parts[0], last: parts.slice(1).join(" ") };
-}
-
-// Wall-clock hours each worker spent on an occurrence. Use this for
-// payroll exports: every active worker on a job clocked in for the full
-// wall-clock duration, so they each get reported the same number of hours.
-// Returns 0 if the job isn't timed.
-//
-// Example: 2 workers on a job that ran 20 wall-clock minutes →
-// wallClockHoursPerWorker = 0.333 → each W-2 worker reports 20 minutes,
-// total W-2 labor on this job = 40 person-minutes.
-function wallClockHoursPerWorker(occ: {
-  startedAt: Date | null;
-  completedAt: Date | null;
-  totalPausedMs: number | null;
-}): number {
-  if (!occ.startedAt || !occ.completedAt) return 0;
-  const elapsedMs = occ.completedAt.getTime() - occ.startedAt.getTime() - (occ.totalPausedMs ?? 0);
-  if (elapsedMs <= 0) return 0;
-  return elapsedMs / 1000 / 3600;
-}
-
-// Labor effort split across active workers — wall-clock hours DIVIDED by
-// the crew size. Use this for cost-allocation views (e.g. "share of job
-// duration per worker"), NOT for payroll. For the same 2-worker / 20-min
-// example, this returns 0.167h per worker (10 min). Currently has no
-// callers; kept for future cost-allocation reports so the math intent
-// stays explicit (don't reach for `wallClockHoursPerWorker` for this
-// purpose by mistake).
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function laborSplitHoursPerWorker(occ: {
-  startedAt: Date | null;
-  completedAt: Date | null;
-  totalPausedMs: number | null;
-  assigneeCount: number;
-}): number {
-  const wall = wallClockHoursPerWorker(occ);
-  if (wall === 0) return 0;
-  return wall / Math.max(1, occ.assigneeCount);
 }
 
 // Common loader: confirmed payments in [start, end] with everything we need.
@@ -210,6 +93,7 @@ async function loadConfirmedPayments(start: Date, end: Date) {
       occurrence: {
         select: {
           id: true,
+          title: true,
           startedAt: true,
           completedAt: true,
           totalPausedMs: true,
@@ -221,6 +105,10 @@ async function loadConfirmedPayments(start: Date, end: Date) {
           },
           job: {
             select: {
+              // Job doesn't have a `title` field — the operator-facing
+              // label on each row uses JobOccurrence.title (selected
+              // above) and falls back to Job.description.
+              description: true,
               property: {
                 select: {
                   displayName: true,
@@ -234,11 +122,12 @@ async function loadConfirmedPayments(start: Date, end: Date) {
           },
         },
       },
+      // ALL splits — including owner-earnings rows. The Income CSV
+      // surfaces them as "Owner / Business" income so the operator sees
+      // the full payment breakdown (worker payouts + the business's
+      // own cut). When a caller needs only payout-side rows it can
+      // filter by `ownerEarnings === false` in memory.
       splits: {
-        // Exclude owner-earnings splits from every export. The owner takes a
-        // draw, not a paycheck — they should never appear in Gusto payroll
-        // or in worker payout reports.
-        where: { ownerEarnings: false },
         include: {
           user: {
             select: {
@@ -282,179 +171,21 @@ type W2Agg = {
   jobs: number;
 };
 
-async function loadEmployeeMarginPercent(): Promise<number> {
-  const row = await prisma.setting.findUnique({
-    where: { key: "EMPLOYEE_BUSINESS_MARGIN_PERCENT" },
-  });
-  return Number(row?.value ?? 0) || 0;
-}
 
 // Completed STANDARD/ONE_OFF occurrences in the window — the W-2 wage events.
 // hoursApprovedAt filter is the payroll-integrity gate: occurrences whose
 // hours haven't been admin-approved are excluded from the export. They
 // surface in the title-bar alert and the Exports tab pre-download warning
 // until reviewed (or hours edited back within tolerance to auto-approve).
-async function loadCompletedOccurrences(start: Date, end: Date) {
-  return prisma.jobOccurrence.findMany({
-    where: {
-      completedAt: { gte: start, lte: end },
-      status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
-      workflow: { in: ["STANDARD", "ONE_OFF"] as any },
-      hoursApprovedAt: { not: null },
-    },
-    select: {
-      id: true,
-      startedAt: true,
-      completedAt: true,
-      totalPausedMs: true,
-      price: true,
-      proposalAmount: true,
-      promisedPayouts: true,
-      completionSplits: true,
-      addons: { select: { price: true } },
-      expenses: { select: { cost: true } },
-      assignees: {
-        select: {
-          userId: true,
-          role: true,
-          user: {
-            select: { id: true, displayName: true, email: true, workerType: true, isOwner: true },
-          },
-        },
-      },
-    },
-  });
-}
 
 /**
  * Aggregate W-2 (employee + trainee) earnings for the window, work-anchored.
  * Shared by the CSV export and the preview.
  */
-async function computeW2Earnings(start: Date, end: Date): Promise<W2Agg[]> {
-  const [occs, marginPct] = await Promise.all([
-    loadCompletedOccurrences(start, end),
-    loadEmployeeMarginPercent(),
-  ]);
-  const byWorker = new Map<string, W2Agg>();
-
-  for (const occ of occs) {
-    const active = occ.assignees.filter((a) => a.role !== "observer");
-    if (active.length === 0) continue;
-    // Each active worker is paid for the full wall-clock duration they
-    // clocked in for — NOT a divided share of it. Total W-2 labor hours
-    // logged for the job = wallClockHours × workerCount.
-    const occHours = wallClockHoursPerWorker({
-      startedAt: occ.startedAt,
-      completedAt: occ.completedAt,
-      totalPausedMs: occ.totalPausedMs,
-    });
-    const priceTotal =
-      (occ.price ?? occ.proposalAmount ?? 0) +
-      (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
-    const expTotal = (occ.expenses ?? []).reduce((s, e) => s + (e.cost ?? 0), 0);
-    const N = Math.max(0, priceTotal - expTotal);
-    const promised = (occ.promisedPayouts as Array<{ userId: string; net: number }> | null) ?? null;
-    const splitPctById = new Map<string, number>(
-      (Array.isArray(occ.completionSplits) ? occ.completionSplits : []).map((s: any) => [s.userId, Number(s.percent) || 0]),
-    );
-
-    for (const a of active) {
-      if (!isEmployeeClass(a.user.workerType)) continue;
-      if (a.user.isOwner) continue; // owner takes a draw — never on payroll
-      // Promised net: snapshot if present, else computed.
-      let net: number;
-      const snap = promised?.find((r) => r.userId === a.userId);
-      if (snap) {
-        net = snap.net;
-      } else {
-        const fraction = splitPctById.has(a.userId)
-          ? (splitPctById.get(a.userId) ?? 0) / 100
-          : 1 / active.length;
-        const grossShare = N * fraction;
-        net = grossShare * (1 - marginPct / 100);
-      }
-      const k = a.userId;
-      const cur = byWorker.get(k);
-      const { first, last } = splitName(a.user.displayName);
-      if (cur) {
-        cur.hours += occHours;
-        cur.gross += net;
-        cur.jobs += 1;
-      } else {
-        byWorker.set(k, {
-          userId: k,
-          first,
-          last,
-          email: a.user.email ?? "",
-          workerType: a.user.workerType ?? "",
-          hours: occHours,
-          gross: net,
-          jobs: 1,
-        });
-      }
-    }
-  }
-  return Array.from(byWorker.values());
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Gusto W-2 CSV — one row per employee/trainee with totals in the period.
 // ─────────────────────────────────────────────────────────────────────────────
-export async function gustoW2Csv(start: Date, end: Date): Promise<CsvResult> {
-  const rows = (await computeW2Earnings(start, end)).sort((a, b) =>
-    (a.last || a.first).localeCompare(b.last || b.first),
-  );
-
-  const header = [
-    "First Name",
-    "Last Name",
-    "Email",
-    "Worker Type",
-    "Hours Worked",
-    "Gross Pay",
-    "# of Jobs",
-    "Pay Period Start",
-    "Pay Period End",
-  ];
-  const lines: string[] = [csvRow(header)];
-  let totalHours = 0;
-  let totalGross = 0;
-  let totalJobs = 0;
-  const startStr = toIsoDate(start);
-  const endStr = toIsoDate(end);
-  for (const r of rows) {
-    lines.push(
-      csvRow([
-        r.first,
-        r.last,
-        r.email,
-        r.workerType,
-        round2(r.hours).toFixed(2),
-        round2(r.gross).toFixed(2),
-        r.jobs,
-        startStr,
-        endStr,
-      ]),
-    );
-    totalHours += r.hours;
-    totalGross += r.gross;
-    totalJobs += r.jobs;
-  }
-  lines.push(
-    csvRow([
-      "TOTALS",
-      "",
-      "",
-      "",
-      round2(totalHours).toFixed(2),
-      round2(totalGross).toFixed(2),
-      totalJobs,
-      "",
-      "",
-    ]),
-  );
-  return { csv: finalizeCsv(lines), rowCount: rows.length, total: round2(totalGross) };
-}
 
 // Computes the work-anchored items for contractors in their guaranteed-
 // payout (GP) period — pure-read, ZERO database writes, fully idempotent.
@@ -688,115 +419,6 @@ export async function loadGpWorkAnchoredItems(
 // computes "what should be on this CSV given current data" — the same
 // answer every time.
 // ─────────────────────────────────────────────────────────────────────────────
-export async function gustoContractorsCsv(
-  start: Date,
-  end: Date,
-): Promise<CsvResult> {
-  const payments = await loadConfirmedPayments(start, end);
-
-  type Agg = {
-    userId: string;
-    first: string;
-    last: string;
-    email: string;
-    total: number;
-    jobs: number;
-  };
-  const byWorker = new Map<string, Agg>();
-
-  // (a) Payment-anchored part: confirmed PaymentSplits, minus GP-flagged.
-  for (const p of payments) {
-    for (const sp of p.splits) {
-      if (isEmployeeClass(sp.user.workerType)) continue;
-      // Skip splits whose contractor was paid via the GP wage path on
-      // the payroll cycle for the work's completion week — re-counting
-      // here would double-pay.
-      if ((sp as any).guaranteedPayoutPaidAt != null) continue;
-      const k = sp.user.id;
-      const cur = byWorker.get(k);
-      const { first, last } = splitName(sp.user.displayName);
-      if (cur) {
-        cur.total += sp.amount;
-        cur.jobs += 1;
-      } else {
-        byWorker.set(k, {
-          userId: k,
-          first,
-          last,
-          email: sp.user.email ?? "",
-          total: sp.amount,
-          jobs: 1,
-        });
-      }
-    }
-  }
-
-  // (b) Work-anchored GP part: pure read.
-  const workItems = await loadGpWorkAnchoredItems(start, end);
-  for (const item of workItems) {
-    const cur = byWorker.get(item.userId);
-    const { first, last } = splitName(item.contractor.displayName);
-    if (cur) {
-      cur.total += item.amount;
-      cur.jobs += 1;
-    } else {
-      byWorker.set(item.userId, {
-        userId: item.userId,
-        first,
-        last,
-        email: item.contractor.email ?? "",
-        total: item.amount,
-        jobs: 1,
-      });
-    }
-  }
-
-  const rows = Array.from(byWorker.values()).sort((a, b) =>
-    (a.last || a.first).localeCompare(b.last || b.first),
-  );
-
-  const header = [
-    "First Name",
-    "Last Name",
-    "Email",
-    "Total Paid",
-    "# of Jobs",
-    "Pay Period Start",
-    "Pay Period End",
-  ];
-  const lines: string[] = [csvRow(header)];
-  let totalPaid = 0;
-  let totalJobs = 0;
-  const startStr = toIsoDate(start);
-  const endStr = toIsoDate(end);
-  for (const r of rows) {
-    lines.push(
-      csvRow([
-        r.first,
-        r.last,
-        r.email,
-        round2(r.total).toFixed(2),
-        r.jobs,
-        startStr,
-        endStr,
-      ]),
-    );
-    totalPaid += r.total;
-    totalJobs += r.jobs;
-  }
-  lines.push(
-    csvRow([
-      "TOTALS",
-      "",
-      "",
-      round2(totalPaid).toFixed(2),
-      totalJobs,
-      "",
-      "",
-    ]),
-  );
-  return { csv: finalizeCsv(lines), rowCount: rows.length, total: round2(totalPaid) };
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // QB Income CSV — one row per confirmed Payment.
@@ -826,157 +448,7 @@ const EQUIPMENT_RENTAL_INCOME_CONFIG_DEFAULT = {
   scheduleCLine: "1",
 };
 
-async function loadEquipmentRentalIncomeConfig(
-  client: typeof prisma | any = prisma,
-): Promise<{ qbAccount: string; scheduleCLine: string }> {
-  const row = await client.setting.findUnique({
-    where: { key: "EQUIPMENT_RENTAL_INCOME_CONFIG" },
-  });
-  if (!row?.value) return EQUIPMENT_RENTAL_INCOME_CONFIG_DEFAULT;
-  try {
-    const parsed = JSON.parse(row.value);
-    return {
-      qbAccount:
-        typeof parsed?.qbAccount === "string" && parsed.qbAccount.trim()
-          ? parsed.qbAccount.trim()
-          : EQUIPMENT_RENTAL_INCOME_CONFIG_DEFAULT.qbAccount,
-      scheduleCLine:
-        typeof parsed?.scheduleCLine === "string" && parsed.scheduleCLine.trim()
-          ? parsed.scheduleCLine.trim()
-          : EQUIPMENT_RENTAL_INCOME_CONFIG_DEFAULT.scheduleCLine,
-    };
-  } catch {
-    // Malformed JSON — fall back to defaults rather than blow up the
-    // entire export. The operator will notice the wrong values in QB
-    // on import, which is the right surface for catching this.
-    return EQUIPMENT_RENTAL_INCOME_CONFIG_DEFAULT;
-  }
-}
 
-export async function qbIncomeCsv(start: Date, end: Date): Promise<CsvResult> {
-  // Income comes from two sources:
-  //   1. Confirmed Payment rows — client → business job payments
-  //   2. Equipment rental Checkouts — contractor → business equipment income
-  //      (see memory/project_equipment_rental_income.md)
-  // Both are raw cash-flow fields. No derived values participate.
-  const [payments, equipmentRentals, rentalIncomeConfig] = await Promise.all([
-    loadConfirmedPayments(start, end),
-    // Pull every checkout released in the window with a positive billed
-    // total — but also fetch the per-worker CheckoutSplit rows so we can
-    // attribute group-rental income to each individual contractor. Solo
-    // rentals have no splits and emit a single row at Checkout.rentalCost
-    // (= the solo contractor's full amount, or 0 for solo employees).
-    // Group rentals emit one row per contractor split (amount > 0); the
-    // employee/trainee splits have amount = 0 and are filtered out.
-    prisma.checkout.findMany({
-      where: {
-        rentalCost: { gt: 0 },
-        releasedAt: { gte: start, lte: end },
-      },
-      include: {
-        equipment: { select: { id: true, shortDesc: true, brand: true, model: true } },
-        user: { select: { id: true, displayName: true, email: true } },
-        splits: {
-          where: { amount: { gt: 0 } },
-          include: { user: { select: { id: true, displayName: true, email: true } } },
-        },
-      },
-      orderBy: { releasedAt: "asc" },
-    }),
-    loadEquipmentRentalIncomeConfig(),
-  ]);
-
-  // Journal-entry format: every source transaction emits a balanced
-  // debit/credit pair. Income flow:
-  //   Row 1: debit  App Clearing Account
-  //   Row 2: credit the configured income account
-  // Both rows share JournalNo; only Row 1 carries JournalDate. No TOTALS
-  // row — QB rejects rows it can't categorize as journal lines.
-  const lines: string[] = [csvRow(JOURNAL_HEADER)];
-  let total = 0;
-  let transactionCount = 0;
-
-  const SERVICE_INCOME_ACCOUNT = "Services";
-
-  // Job-payment income. JournalNo = Payment.ledgerId (SLC-YYMMDD-XXXX).
-  // Legacy `PAY-{cuid}` is the defensive fallback only for rows that
-  // somehow escaped backfill — should never happen post-backfill.
-  for (const p of payments) {
-    const prop = p.occurrence.job?.property;
-    const customer = prop?.client?.displayName ?? "";
-    const description =
-      p.note?.trim() ||
-      `Service payment${customer ? ` — ${customer}` : ""}${prop?.displayName ? ` (${prop.displayName})` : ""}`;
-    const dateStr = p.confirmedAt ? toQbDate(p.confirmedAt) : "";
-    lines.push(
-      ...incomeJournalRows(
-        (p as any).ledgerId ?? `PAY-${p.id}`,
-        dateStr,
-        SERVICE_INCOME_ACCOUNT,
-        p.amountPaid,
-        description,
-        customer,
-      ),
-    );
-    total += p.amountPaid;
-    transactionCount += 1;
-  }
-
-  // Equipment rental income. Solo rentals → one journal per checkout
-  // (JournalNo = Checkout.ledgerId). Group rentals → one journal per
-  // contractor split; the split's JournalNo derives from the parent
-  // Checkout's ledgerId + last 4 chars of the userId (uppercased) so
-  // the entry stays distinct per contractor and fits under QB's 21-char
-  // JournalNo limit.
-  for (const c of equipmentRentals) {
-    if (!c.releasedAt) continue;
-    const eqLabel = [c.equipment.brand, c.equipment.model].filter(Boolean).join(" ") || c.equipment.shortDesc;
-    const descPrefix = `Equipment rental — ${eqLabel}${c.rentalDays ? ` (${c.rentalDays}d)` : ""}`;
-    const dateStr = toQbDate(c.releasedAt);
-    const parentLedger = (c as any).ledgerId as string | null | undefined;
-
-    if (c.splits.length > 0) {
-      for (const sp of c.splits) {
-        if (sp.amount == null || sp.amount <= 0) continue;
-        const contractorName = sp.user.displayName ?? sp.user.email ?? sp.user.id;
-        const journalNo = parentLedger
-          ? `${parentLedger}-${sp.userId.slice(-4).toUpperCase()}`
-          : `RENT-${c.id}-${sp.userId}`;
-        lines.push(
-          ...incomeJournalRows(
-            journalNo,
-            dateStr,
-            rentalIncomeConfig.qbAccount,
-            sp.amount,
-            descPrefix,
-            contractorName,
-          ),
-        );
-        total += sp.amount;
-        transactionCount += 1;
-      }
-    } else {
-      if (c.rentalCost == null || c.rentalCost <= 0) continue;
-      const contractorName = c.user.displayName ?? c.user.email ?? c.user.id;
-      lines.push(
-        ...incomeJournalRows(
-          parentLedger ?? `RENT-${c.id}`,
-          dateStr,
-          rentalIncomeConfig.qbAccount,
-          c.rentalCost,
-          descPrefix,
-          contractorName,
-        ),
-      );
-      total += c.rentalCost;
-      transactionCount += 1;
-    }
-  }
-
-  // rowCount = source transaction count (NOT line count) so downstream
-  // displays still read "N payments + M rentals" rather than 2× that.
-  return { csv: finalizeCsv(lines), rowCount: transactionCount, total: round2(total) };
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // QB Expenses CSV — BusinessExpense rows in [start, end] (date field). Pulls
@@ -1060,14 +532,6 @@ export function effectiveExpenseDate(be: {
  * configured to post contractor payments directly; the app's rows
  * become duplicative at that point.
  */
-export async function loadIncludeContractLabor(
-  client: typeof prisma | any = prisma,
-): Promise<boolean> {
-  const row = await client.setting.findUnique({ where: { key: "QB_INCLUDE_CONTRACT_LABOR" } });
-  if (!row) return true; // default ON for backwards-compat with existing behavior
-  const v = String(row.value).toLowerCase().trim();
-  return v !== "false" && v !== "0" && v !== "off" && v !== "no";
-}
 
 // Synthetic category for processor-fee rows — sourced from Payment records,
 // never a hand-logged BusinessExpense. Its Schedule C line comes from the
@@ -1081,301 +545,6 @@ const PROCESSOR_FEE_CATEGORY = "Payment Processing Fees";
 // every other expense row uses.
 const CONTRACT_LABOR_CATEGORY = "Contract labor";
 
-export async function qbExpensesCsv(start: Date, end: Date): Promise<CsvResult> {
-  const [rows, feePayments, payments] = await Promise.all([
-    prisma.businessExpense.findMany({
-      // QB Expenses export — Schedule C lines apply only to operating
-      // expenses. Equity entries flow through qbEquityCsv. Per-occurrence
-      // expenses are anchored on the job's completedAt (not BE.date) so a
-      // future-dated job's planned expense doesn't appear in the export
-      // until the job actually completes — see expenseAnchorDateWhere.
-      where: { type: "EXPENSE", ...expenseAnchorDateWhere(start, end) },
-      include: {
-        occurrence: {
-          select: {
-            id: true,
-            completedAt: true,
-            job: {
-              select: {
-                property: {
-                  select: {
-                    displayName: true,
-                    street1: true,
-                    city: true,
-                    state: true,
-                    client: { select: { displayName: true } },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-      orderBy: { date: "asc" },
-    }),
-    // Processor fees ride alongside business expenses in the QB export. We
-    // tag them with category "Payment Processing Fees" so QB sorts them into
-    // their own line on import — and so this app never has to maintain a
-    // synthetic BusinessExpense row for fees the bank statement already
-    // shows. Filtered to confirmed, non-zero-fee, non-written-off rows.
-    prisma.payment.findMany({
-      where: {
-        confirmed: true,
-        confirmedAt: { gte: start, lte: end },
-        writtenOff: false,
-        processorFeeAmount: { gt: 0 },
-      },
-      select: {
-        id: true,
-        // Parent ledgerId is required — the processor-fee JournalNo derives
-        // from it as `{ledgerId}-F`. Without this select, ledgerId comes
-        // through as undefined and the export falls back to the legacy
-        // FEE-{cuid} format which exceeds QB's 21-char doc_num limit.
-        ledgerId: true,
-        method: true,
-        confirmedAt: true,
-        processorFeeAmount: true,
-        grossCharged: true,
-        occurrence: {
-          select: {
-            id: true,
-            job: {
-              select: {
-                property: {
-                  select: {
-                    displayName: true,
-                    street1: true,
-                    city: true,
-                    state: true,
-                    client: { select: { displayName: true } },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-      orderBy: { confirmedAt: "asc" },
-    }),
-    // Confirmed payments with their splits — used to synthesize one
-    // Contract Labor expense row per contractor PaymentSplit. The loader
-    // already filters out ownerEarnings splits (owner takes a draw, not a
-    // 1099). Employee/trainee splits are filtered below; their wages flow
-    // through the W-2 (Gusto) export, never QB Expenses.
-    loadConfirmedPayments(start, end),
-  ]);
-
-  // QB chart-of-accounts mapping comes from the EXPENSE_CATEGORIES taxonomy
-  // (Settings-editable). A category whose qbAccount is null lands as
-  // "Unmapped" so the operator re-categorizes inside QB after import.
-  // Schedule C line numbers no longer ride along on the journal-entry
-  // format (journal entries route purely by AccountName), but the line
-  // mapping is still used by the unmapped-rows preflight elsewhere.
-  const [qbAccountMap, fixedAssetMinCost] = await Promise.all([
-    loadQbAccountMap(),
-    loadFixedAssetMinCost(),
-  ]);
-
-  // Journal-entry format. Each source transaction emits a balanced pair:
-  //   Row 1: debit  the mapped expense account (sub-accounts use colon)
-  //   Row 2: credit App Clearing Account
-  // No TOTALS row — QB rejects unbalanced footer rows.
-  const lines: string[] = [csvRow(JOURNAL_HEADER)];
-  let total = 0;
-  let transactionCount = 0;
-
-  // Fixed-asset purchases are excluded — they belong on the balance sheet
-  // (qb-fixed-assets export) not the P&L journal. Use the effective date
-  // for the capitalization check too — per-occurrence rows' effective
-  // date is occurrence.completedAt, not BE.date.
-  // Operating expenses. JournalNo = BusinessExpense.ledgerId.
-  const expenseRows = rows.filter((r) => !isFixedAsset({ cost: r.cost, date: effectiveExpenseDate(r) }, fixedAssetMinCost));
-  for (const r of expenseRows) {
-    const category = r.category ?? "Other";
-    const account = qbAccountMap[category] ?? "Unmapped";
-    const prop = r.occurrence?.job?.property;
-    const clientName = prop?.client?.displayName ?? "";
-    // Name column intentionally blank on expense rows. QB's journal-entry
-    // importer rejects a Name that isn't already on the Vendor/Customer
-    // list; with the column blank, every row imports cleanly without the
-    // operator pre-creating every vendor. Vendor + client name are still
-    // surfaced in the Description column for traceability.
-    const vendorTrace = (r.vendor ?? "").trim() || clientName;
-    const descWithVendor = vendorTrace
-      ? `${r.description ?? ""}${r.description ? " · " : ""}${vendorTrace}`
-      : (r.description ?? "");
-    lines.push(
-      ...expenseJournalRows(
-        (r as any).ledgerId ?? `EXP-${r.id}`,
-        toQbDate(effectiveExpenseDate(r)),
-        account,
-        r.cost,
-        descWithVendor,
-        "",
-      ),
-    );
-    total += r.cost;
-    transactionCount += 1;
-  }
-
-  // Processor-fee journals. No DB row — JournalNo derives from the parent
-  // Payment.ledgerId with a `-F` suffix (e.g. SLC-260605-X7K2-F = 17 chars).
-  for (const p of feePayments) {
-    const prop = p.occurrence?.job?.property;
-    const clientName = prop?.client?.displayName ?? "";
-    const propName = prop?.displayName ?? "";
-    const desc = `${p.method} fee on ${clientName}${propName ? ` — ${propName}` : ""} (gross $${round2(p.grossCharged ?? 0).toFixed(2)}, payment ${p.id})`;
-    const account = qbAccountMap[PROCESSOR_FEE_CATEGORY] ?? "Unmapped";
-    const parentLedger = (p as any).ledgerId as string | null | undefined;
-    const journalNo = parentLedger ? `${parentLedger}-F` : `FEE-${p.id}`;
-    lines.push(
-      ...expenseJournalRows(
-        journalNo,
-        p.confirmedAt ? toQbDate(p.confirmedAt) : "",
-        account,
-        p.processorFeeAmount ?? 0,
-        desc,
-        "", // Name intentionally blank — see operating-expense loop above.
-      ),
-    );
-    total += p.processorFeeAmount ?? 0;
-    transactionCount += 1;
-  }
-
-  // Contract Labor journals — gated by QB_INCLUDE_CONTRACT_LABOR
-  // (default ON). Turn OFF once Gusto's QuickBooks integration is
-  // configured to post contractor payments to QB directly — the app's
-  // rows would be duplicative at that point.
-  const includeContractLabor = await loadIncludeContractLabor();
-  const contractLaborAccount = qbAccountMap[CONTRACT_LABOR_CATEGORY] ?? "Unmapped";
-  if (includeContractLabor) {
-  // Post-GP path: one journal per non-flagged contractor PaymentSplit.
-  // JournalNo derives from the parent Payment.ledgerId + last 4 chars of
-  // the contractor's userId (uppercased). Unique per (payment, contractor)
-  // and survives split delete+recreate at reconciliation — the parent
-  // payment's ledgerId is stable.
-  for (const p of payments) {
-    const prop = p.occurrence?.job?.property;
-    const clientName = prop?.client?.displayName ?? "";
-    const parentLedger = (p as any).ledgerId as string | null | undefined;
-    for (const sp of p.splits) {
-      if (isEmployeeClass(sp.user.workerType)) continue;
-      if ((sp as any).guaranteedPayoutPaidAt != null) continue;
-      const vendor = sp.user.displayName ?? sp.user.email ?? "";
-      const desc = `Contractor payout to ${vendor}${clientName ? ` for ${clientName}` : ""}${prop?.displayName ? ` (${prop.displayName})` : ""}`;
-      const journalNo = parentLedger
-        ? `${parentLedger}-${sp.userId.slice(-4).toUpperCase()}`
-        : `CL-${sp.id}`;
-      lines.push(
-        ...expenseJournalRows(
-          journalNo,
-          p.confirmedAt ? toQbDate(p.confirmedAt) : "",
-          contractLaborAccount,
-          sp.amount,
-          desc,
-          "", // Name intentionally blank — see operating-expense loop above.
-        ),
-      );
-      total += sp.amount;
-      transactionCount += 1;
-    }
-  }
-
-  // HISTORICAL READ ONLY — GuaranteedPayoutAdvance is deprecated; no new
-  // rows are created. Pre-cutover advance rows whose exportedAt falls in
-  // window get emitted as Contract Labor for backwards compatibility.
-  // After the cutover (and for any window that doesn't overlap with the
-  // pre-cutover period), this loop returns empty and only the GP
-  // wage-path Contract Labor section below emits rows for GP work.
-  //
-  // KNOWN LIMITATION (pre-cutover only): re-exporting overlapping windows
-  // emits the same advance row twice, and QB's journal-entry importer
-  // does NOT dedupe on JournalNo. Mitigation: don't re-import overlapping
-  // windows for pre-cutover periods. After the cutover this isn't a
-  // concern — no new advance rows exist for forward windows.
-  const gpAdvances = await prisma.guaranteedPayoutAdvance.findMany({
-    where: { exportedAt: { gte: start, lte: end } },
-    include: {
-      user: { select: { displayName: true, email: true } },
-      occurrence: {
-        select: {
-          id: true,
-          job: {
-            select: {
-              property: {
-                select: {
-                  displayName: true,
-                  client: { select: { displayName: true } },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-    orderBy: { exportedAt: "asc" },
-  });
-  for (const adv of gpAdvances) {
-    const prop = adv.occurrence?.job?.property;
-    const clientName = prop?.client?.displayName ?? "";
-    const vendor = adv.user?.displayName ?? adv.user?.email ?? "";
-    const desc = `Contractor advance (guaranteed payout) to ${vendor}${clientName ? ` for ${clientName}` : ""}${prop?.displayName ? ` (${prop.displayName})` : ""}`;
-    lines.push(
-      ...expenseJournalRows(
-        (adv as any).ledgerId ?? `GPA-${adv.id}`,
-        toQbDate(adv.exportedAt),
-        contractLaborAccount,
-        adv.amount,
-        desc,
-        "", // Name intentionally blank — see operating-expense loop above.
-      ),
-    );
-    total += adv.amount;
-    transactionCount += 1;
-  }
-
-  // GP wage-path Contract Labor: post-cutover GP work doesn't write
-  // advance rows anymore, so the historical advance loop above misses
-  // it. Emit Contract Labor here directly from the work-anchored items
-  // (same source the Gusto Contractors CSV uses), anchored on
-  // completedAt. NOTE: once Gusto-QB integration handles contractor
-  // payments end-to-end, this whole Contract Labor section can be
-  // removed — see docs/FINANCIAL_SYSTEM.md §12.
-  //
-  // Historical advance rows (loop above) cover pre-cutover work. The
-  // two paths don't overlap because no occurrence has BOTH an advance
-  // row AND falls into the work-anchored set for a forward window —
-  // work-anchored only emits for new completions in window, and
-  // advance rows exist only for pre-cutover completions.
-  const gpItems = await loadGpWorkAnchoredItems(start, end);
-  for (const item of gpItems) {
-    const vendor = item.contractor.displayName ?? item.contractor.email ?? "";
-    const clientName = item.property?.clientDisplayName ?? "";
-    const propName = item.property?.displayName ?? "";
-    const desc = `Contractor wage-path payout to ${vendor}${clientName ? ` for ${clientName}` : ""}${propName ? ` (${propName})` : ""}`;
-    // Derived JournalNo — short, deterministic, dedupes on QB re-import.
-    const journalNo = `GPW-${item.occurrenceId.slice(-8).toUpperCase()}-${item.userId.slice(-4).toUpperCase()}`;
-    lines.push(
-      ...expenseJournalRows(
-        journalNo,
-        toQbDate(item.completedAt),
-        contractLaborAccount,
-        item.amount,
-        desc,
-        "",
-      ),
-    );
-    total += item.amount;
-    transactionCount += 1;
-  }
-  } // end if (includeContractLabor)
-
-  return {
-    csv: finalizeCsv(lines),
-    rowCount: transactionCount,
-    total: round2(total),
-  };
-}
 
 
 // QuickBooks Equity export — owner capital contributions and owner draws.
@@ -1390,80 +559,6 @@ const QB_EQUITY_ACCOUNT: Record<"CAPITAL_CONTRIBUTION" | "OWNER_DRAW", string> =
   OWNER_DRAW: "Owner Draws",
 };
 
-export async function qbEquityCsv(start: Date, end: Date): Promise<CsvResult> {
-  const rows = await prisma.businessExpense.findMany({
-    where: {
-      type: { in: ["CAPITAL_CONTRIBUTION", "OWNER_DRAW"] },
-      date: { gte: start, lte: end },
-    },
-    orderBy: [{ date: "asc" }, { type: "asc" }],
-  });
-
-  // Column shape (7 core spec columns + trailing extras QB ignores):
-  //   Date, Description, Amount, Account, Reference ID, Category, Tax Line,
-  //   Customer, Property, Method, Vendor, Invoice #, Job ID
-  //
-  // Reference ID: `EXP-{id}` — equity entries are BusinessExpense rows.
-  // Tax Line is blank because equity movements are balance-sheet, not Schedule C.
-  // Customer/Property/Method/Vendor/Invoice #/Job ID are always blank — the
-  // only sides of an equity entry are the owner and the business.
-  // Notes (if any) are appended to Description so no information is lost.
-  const header = [
-    "Date",
-    "Description",
-    "Amount",
-    "Account",
-    "Reference ID",
-    "Category",
-    "Tax Line",
-    "Customer",
-    "Property",
-    "Method",
-    "Vendor",
-    "Invoice #",
-    "Job ID",
-  ];
-  const lines: string[] = [csvRow(header)];
-  let contributionTotal = 0;
-  let drawTotal = 0;
-  for (const r of rows) {
-    const typeKey = r.type as "CAPITAL_CONTRIBUTION" | "OWNER_DRAW";
-    const account = QB_EQUITY_ACCOUNT[typeKey];
-    const category = typeKey === "CAPITAL_CONTRIBUTION" ? "Capital Contribution" : "Owner Draw";
-    const amount = round2(r.cost);
-    const desc = [r.description, r.notes].filter((s) => s && s.trim()).join(" — ");
-    lines.push(
-      csvRow([
-        toQbDate(r.date),
-        desc,
-        amount.toFixed(2),
-        account,
-        `EXP-${r.id}`,
-        category,
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-      ]),
-    );
-    if (typeKey === "CAPITAL_CONTRIBUTION") contributionTotal += amount;
-    else drawTotal += amount;
-  }
-  // Two sub-totals so the CPA / spreadsheet check eyeballs each equity
-  // account independently — they post to different lines in QB.
-  const blank10 = ["", "", "", "", "", "", "", "", "", ""];
-  lines.push(csvRow(["SUBTOTAL Capital Contributions", "", round2(contributionTotal).toFixed(2), ...blank10]));
-  lines.push(csvRow(["SUBTOTAL Owner Draws", "", round2(drawTotal).toFixed(2), ...blank10]));
-  lines.push(csvRow(["TOTALS", "", round2(contributionTotal + drawTotal).toFixed(2), ...blank10]));
-  return {
-    csv: finalizeCsv(lines),
-    rowCount: rows.length,
-    total: round2(contributionTotal + drawTotal),
-  };
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // QB Fixed Assets CSV — BusinessExpense purchases ≥ $500 dated on/after the
@@ -1476,724 +571,345 @@ export async function qbEquityCsv(start: Date, end: Date): Promise<CsvResult> {
 // depreciation method. The CSV gets every asset on the books; the CPA
 // drives the depreciation entries from there.
 // ─────────────────────────────────────────────────────────────────────────────
-export async function qbFixedAssetsCsv(start: Date, end: Date): Promise<CsvResult> {
-  // Push the threshold into the query so the DB does the heavy lifting and
-  // we don't pull the whole expense table just to filter in JS. If the
-  // window ends before the policy start date, there can be no fixed-asset
-  // rows in range — skip the query entirely.
-  const fixedAssetMinCost = await loadFixedAssetMinCost();
-  const effectiveStart = start < FIXED_ASSET_START_DATE ? FIXED_ASSET_START_DATE : start;
-  const rows =
-    end < FIXED_ASSET_START_DATE
-      ? []
-      : await prisma.businessExpense.findMany({
-          where: {
-            type: "EXPENSE",
-            cost: { gte: fixedAssetMinCost },
-            // Per-occurrence rows use occurrence.completedAt as the anchor;
-            // freestanding rows use BE.date. Future-dated jobs whose
-            // occurrence isn't completed yet are excluded entirely.
-            ...expenseAnchorDateWhere(effectiveStart, end),
-          },
-          include: {
-            equipment: { select: { id: true, shortDesc: true, brand: true, model: true } },
-            occurrence: {
-              select: {
-                id: true,
-                completedAt: true,
-                job: {
-                  select: {
-                    property: {
-                      select: {
-                        displayName: true,
-                        client: { select: { displayName: true } },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-          orderBy: { date: "asc" },
-        });
-
-  // Same 13-column shape as the other QB CSVs so the operator can eyeball
-  // them side-by-side. Account = "Fixed Assets" (generic catch-all); the
-  // operator re-assigns to a specific Fixed Asset sub-account in QB at
-  // import time. Tax Line is blank (fixed assets aren't a Schedule C line —
-  // depreciation entries come later and live on line 13 via the regular
-  // expense path).
-  const header = [
-    "Date",
-    "Description",
-    "Amount",
-    "Account",
-    "Reference ID",
-    "Category",
-    "Tax Line",
-    "Customer",
-    "Property",
-    "Method",
-    "Vendor",
-    "Invoice #",
-    "Job ID",
-  ];
-  const lines: string[] = [csvRow(header)];
-  let total = 0;
-  for (const r of rows) {
-    const prop = r.occurrence?.job?.property;
-    const equipName = r.equipment
-      ? r.equipment.shortDesc ||
-        [r.equipment.brand, r.equipment.model].filter(Boolean).join(" ")
-      : "";
-    const description = [r.description, equipName ? `(${equipName})` : null]
-      .filter(Boolean)
-      .join(" ");
-    lines.push(
-      csvRow([
-        toQbDate(effectiveExpenseDate(r)),
-        description,
-        round2(r.cost).toFixed(2),
-        "Fixed Assets",
-        `EXP-${r.id}`,
-        r.category ?? "",
-        "",
-        prop?.client?.displayName ?? "",
-        prop?.displayName ?? "",
-        "",
-        r.vendor ?? "",
-        r.invoiceNumber ?? "",
-        r.occurrence?.id ?? "",
-      ]),
-    );
-    total += r.cost;
-  }
-  lines.push(
-    csvRow([
-      "TOTALS",
-      "",
-      round2(total).toFixed(2),
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-    ]),
-  );
-  return { csv: finalizeCsv(lines), rowCount: rows.length, total: round2(total) };
-}
 
 // A single row that would land as "Unmapped" in qb-expenses.csv — i.e. its
-// category has no qbAccount mapping in the EXPENSE_CATEGORIES taxonomy. The
-// Exports tab uses this list to BLOCK the download (single CSV + zip) and
-// surface the refs so the operator can re-categorize in Settings.
-export type UnmappedExpenseRow = {
-  ref: string;          // EXP-{id} / FEE-{id} / CL-{id}
-  date: string;         // MM/DD/YYYY
-  description: string;
-  category: string;     // The taxonomy label that has no qbAccount.
-  amount: number;
-};
 
-/**
- * Scan every row that would appear in qb-expenses.csv and return the ones
- * whose category resolves to qbAccount = null. Equity rows are NOT included
- * (qb-equity.csv has its own hardcoded account names, no taxonomy lookup).
- *
- * Used by exportPreview AND by the route guard so unmapped rows block the
- * download before the file is ever generated.
- */
-export async function findUnmappedExpenseRows(
-  start: Date,
-  end: Date,
-): Promise<UnmappedExpenseRow[]> {
-  const [businessExpenses, feePayments, payments, qbAccountMap] = await Promise.all([
-    prisma.businessExpense.findMany({
-      // Same anchoring as qbExpensesCsv — per-occurrence rows are
-      // anchored on occurrence.completedAt so future-dated jobs don't
-      // block exports until they actually complete.
-      where: { type: "EXPENSE", ...expenseAnchorDateWhere(start, end) },
-      include: { occurrence: { select: { completedAt: true } } },
-      orderBy: { date: "asc" },
-    }),
-    prisma.payment.findMany({
-      where: {
-        confirmed: true,
-        confirmedAt: { gte: start, lte: end },
-        writtenOff: false,
-        processorFeeAmount: { gt: 0 },
-      },
-      select: { id: true, confirmedAt: true, processorFeeAmount: true, method: true },
-      orderBy: { confirmedAt: "asc" },
-    }),
-    loadConfirmedPayments(start, end),
-    loadQbAccountMap(),
-  ]);
-  const fixedAssetMinCost = await loadFixedAssetMinCost();
-
-  const unmapped: UnmappedExpenseRow[] = [];
-
-  for (const r of businessExpenses) {
-    // Fixed-asset rows never appear in qb-expenses.csv, so their category
-    // never needs a qbAccount mapping — skip the unmapped check for them.
-    // Capitalization check uses the effective date (see effectiveExpenseDate)
-    // to stay consistent with the actual qb-expenses split.
-    if (isFixedAsset({ cost: r.cost, date: effectiveExpenseDate(r) }, fixedAssetMinCost)) continue;
-    const category = r.category ?? "Other";
-    if (!qbAccountMap[category]) {
-      unmapped.push({
-        ref: `EXP-${r.id}`,
-        date: toQbDate(effectiveExpenseDate(r)),
-        description: r.description ?? "",
-        category,
-        amount: round2(r.cost),
-      });
-    }
-  }
-  // Processor fees and Contract Labor are synthetic categories — they only
-  // appear unmapped if the operator removed those entries from the taxonomy.
-  // Cheap to check, prevents a silent "Unmapped" surprise in the CSV.
-  if (!qbAccountMap[PROCESSOR_FEE_CATEGORY]) {
-    for (const p of feePayments) {
-      unmapped.push({
-        ref: `FEE-${p.id}`,
-        date: p.confirmedAt ? toQbDate(p.confirmedAt) : "",
-        description: `${p.method ?? ""} processor fee`,
-        category: PROCESSOR_FEE_CATEGORY,
-        amount: round2(p.processorFeeAmount ?? 0),
-      });
-    }
-  }
-  if (!qbAccountMap[CONTRACT_LABOR_CATEGORY]) {
-    for (const p of payments) {
-      for (const sp of p.splits) {
-        if (isEmployeeClass(sp.user.workerType)) continue;
-        // Splits already disbursed via GP advance get a `GPA-` ref row
-        // separately (below); don't double-count.
-        if ((sp as any).guaranteedPayoutPaidAt != null) continue;
-        unmapped.push({
-          ref: `CL-${sp.id}`,
-          date: p.confirmedAt ? toQbDate(p.confirmedAt) : "",
-          description: `Contractor payout to ${sp.user.displayName ?? sp.user.email ?? ""}`,
-          category: CONTRACT_LABOR_CATEGORY,
-          amount: round2(sp.amount),
-        });
-      }
-    }
-    // HISTORICAL READ ONLY — GuaranteedPayoutAdvance is deprecated; no
-    // new rows are created. Pre-cutover rows whose exportedAt falls in
-    // window get the same Contract Labor unmapped-warning treatment so
-    // the operator doesn't ship an "Unmapped" row to QB.
-    const advances = await prisma.guaranteedPayoutAdvance.findMany({
-      where: { exportedAt: { gte: start, lte: end } },
-      include: { user: { select: { displayName: true, email: true } } },
-    });
-    for (const adv of advances) {
-      unmapped.push({
-        ref: `GPA-${adv.id}`,
-        date: toQbDate(adv.exportedAt),
-        description: `Contractor advance (guaranteed payout) to ${adv.user?.displayName ?? adv.user?.email ?? ""}`,
-        category: CONTRACT_LABOR_CATEGORY,
-        amount: round2(adv.amount),
-      });
-    }
-  }
-  return unmapped;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Preview — JSON sanity figures for the Exports tab page (row counts + totals
-// for each of the four files). Avoids the user having to download just to peek.
+// Preview CSVs — replacement for the old QB + Gusto exports.
+//
+// The Money → Preview tab supersedes Money → Exports. The operator's new
+// workflow doesn't use the app to import into QB or Gusto directly; QB
+// is bank-fed and is the source of truth. These two CSVs are
+// reconciliation aids — quick visual checks that what's in the app
+// matches what landed in QB.
+//
+//   • expensesCsv  → flat list of money OUT (BusinessExpense rows of
+//                    type EXPENSE only) for the date range. P&L-side
+//                    items. Excludes equity (CAPITAL_CONTRIBUTION /
+//                    OWNER_DRAW) — those flow through the separate
+//                    capitalCsv since they hit equity accounts on the
+//                    balance sheet, not the P&L.
+//
+//   • capitalCsv   → equity-only flat list: CAPITAL_CONTRIBUTION rows
+//                    (owner puts money in) and OWNER_DRAW rows (owner
+//                    takes money out). Kept separate from expensesCsv
+//                    so the operator can validate equity activity
+//                    against the equity accounts in their accounting
+//                    software without mixing in P&L expenses.
+//
+//   • incomeCsv    → one row per inflow source in the window. Service
+//                    payments produce one row per PaymentSplit (worker
+//                    payouts AND owner-earnings rows, so the business's
+//                    own cut is visible). Equipment rentals produce one
+//                    row per Checkout. Each row carries the parent
+//                    payment's gross / processor fee / net so operator
+//                    can match against bank deposit entries.
+//
+// All three anchor on effective dates (occurrence.completedAt for
+// per-job expenses, Payment.confirmedAt for worker rows, BE.date for
+// freestanding rows) so they match what actually hit the bank — same
+// cash-basis rules accounting software enforces.
 // ─────────────────────────────────────────────────────────────────────────────
-export type ExportPreview = {
-  gustoW2: {
-    workers: number;
-    hours: number;
-    gross: number;
-    // Count of completed STANDARD/ONE_OFF occurrences in the window whose
-    // hours haven't been admin-approved. Excluded from the export — surfaced
-    // as a pre-download warning so the operator can review first.
-    unapprovedOccurrences: number;
-  };
-  gustoContractors: { workers: number; gross: number };
-  qbIncome: { rows: number; total: number };
-  qbExpenses: {
-    rows: number;
-    total: number;
-    businessExpenseTotal: number;
-    processorFeeTotal: number;
-    // Contractor (1099) payouts synthesized from PaymentSplit rows. Counted
-    // here because the QB Expenses CSV includes one Contract Labor row per
-    // contractor split; not double-counted against the Gusto Contractors
-    // export (which is a separate Gusto-side input, not a QB import).
-    contractLaborTotal: number;
-    // Rows whose category has no QB chart-of-accounts mapping — would land
-    // as "Unmapped" in the CSV. Non-empty array BLOCKS the qb-expenses.csv
-    // and qb-bundle.zip downloads at the route layer; the Exports tab
-    // surfaces the list so the operator can re-categorize in Settings.
-    unmappedRows: UnmappedExpenseRow[];
-  };
-  qbEquity: {
-    rows: number;
-    contributionTotal: number;
-    drawTotal: number;
-  };
-  // Fixed-asset purchases (cost ≥ FIXED_ASSET_MIN_COST setting, on/after the
-  // policy start date) — pulled OUT of qbExpenses since they hit a
-  // balance-sheet Fixed Asset account rather than a P&L expense line.
-  // `threshold` is the live configured cutoff so UI hint text stays in sync
-  // with the setting.
-  qbFixedAssets: { rows: number; total: number; threshold: number };
-};
 
-export async function exportPreview(start: Date, end: Date): Promise<ExportPreview> {
-  const payments = await loadConfirmedPayments(start, end);
-
-  // W-2 preview — work-anchored, same source as the W-2 CSV (completed jobs +
-  // promised net). NOT payment-anchored, so it ties out to the export.
-  const w2Rows = await computeW2Earnings(start, end);
-  const w2Hours = w2Rows.reduce((s, r) => s + r.hours, 0);
-  const w2Gross = w2Rows.reduce((s, r) => s + r.gross, 0);
-  // Count of W-2-relevant occurrences in the window whose hours haven't
-  // been approved yet — they were excluded from w2Rows above. The Exports
-  // tab surfaces this as a pre-download warning.
-  const unapprovedW2Occurrences = await prisma.jobOccurrence.count({
+export async function expensesCsv(start: Date, end: Date): Promise<CsvResult> {
+  // EXPENSE-type BusinessExpense rows only — operating cash-out, the
+  // P&L side of the books. Anchored on effective date so per-occurrence
+  // expenses on future jobs don't appear until those jobs complete.
+  // Equity entries (CAPITAL_CONTRIBUTION / OWNER_DRAW) flow through
+  // capitalCsv instead — different account class, must not be mixed.
+  const rows = await prisma.businessExpense.findMany({
     where: {
-      completedAt: { gte: start, lte: end },
-      status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
-      workflow: { in: ["STANDARD", "ONE_OFF"] as any },
-      hoursApprovedAt: null,
+      type: "EXPENSE",
+      ...expenseAnchorDateWhere(start, end),
     },
-  });
-
-  // Contractors stay payment-anchored — sum their splits on confirmed payments.
-  // Contractor numbers split two ways:
-  //   gustoContractor*  = what the next Gusto Contractors CSV will show
-  //                       (non-flagged splits in window + GP candidates
-  //                        this run would CREATE). Prior advances aren't
-  //                        included because they appeared on a prior CSV.
-  //   qbContractLabor*  = what the QB Expenses CSV's Contract Labor
-  //                       section will show (non-flagged splits + GP
-  //                       candidates + prior advances dated in window —
-  //                        all three are Contract Labor expense events).
-  // The two were equivalent before Slice 2; Slice 2's reconciliation
-  // bookkeeping splits them.
-  const gustoContractorWorkers = new Set<string>();
-  let gustoContractorGross = 0;
-  let qbContractLaborRows = 0;
-  let qbContractLaborTotal = 0;
-  for (const p of payments) {
-    for (const sp of p.splits) {
-      if (isEmployeeClass(sp.user.workerType)) continue;
-      // Flagged splits don't appear in either CSV — they're already
-      // counted via the matching advance row (in window or prior).
-      if ((sp as any).guaranteedPayoutPaidAt != null) continue;
-      gustoContractorWorkers.add(sp.user.id);
-      gustoContractorGross += sp.amount;
-      qbContractLaborRows += 1;
-      qbContractLaborTotal += sp.amount;
-    }
-  }
-  // GP wage-path items for the window — same pure-read source the Gusto
-  // Contractors CSV uses. Idempotent: same window → same numbers.
-  const gpItems = await loadGpWorkAnchoredItems(start, end);
-  for (const item of gpItems) {
-    gustoContractorWorkers.add(item.userId);
-    gustoContractorGross += item.amount;
-    qbContractLaborRows += 1;
-    qbContractLaborTotal += item.amount;
-  }
-  // Historical advance rows: included in QB Contract Labor preview for
-  // any rows whose exportedAt falls in this window. New code does not
-  // write to GuaranteedPayoutAdvance — these are pre-cutover artifacts
-  // only. After the operator transitions, this loop returns empty for
-  // all forward windows.
-  const priorAdvances = await prisma.guaranteedPayoutAdvance.findMany({
-    where: { exportedAt: { gte: start, lte: end } },
-    select: { amount: true },
-  });
-  for (const a of priorAdvances) {
-    qbContractLaborRows += 1;
-    qbContractLaborTotal += a.amount;
-  }
-
-  const qbIncomeTotal = payments.reduce((s, p) => s + p.amountPaid, 0);
-
-  const expenses = await prisma.businessExpense.findMany({
-    // Preview row count + total for the QB Expenses CSV button. Equity
-    // entries (contributions/draws) export via the QB Equity CSV — different
-    // account class, must not be mixed into the expense total. Fixed-asset
-    // rows are split out below so they don't double-count against expenses.
-    // Anchoring matches the actual qb-expenses CSV (effectiveExpenseDate).
-    where: { type: "EXPENSE", ...expenseAnchorDateWhere(start, end) },
-    select: {
-      cost: true,
-      date: true,
-      occurrenceId: true,
+    include: {
       occurrence: { select: { completedAt: true } },
     },
   });
-  const fixedAssetMinCost = await loadFixedAssetMinCost();
-  const fixedAssetExpenses = expenses.filter((e) =>
-    isFixedAsset({ cost: e.cost, date: effectiveExpenseDate(e) }, fixedAssetMinCost),
-  );
-  const operatingExpenses = expenses.filter(
-    (e) => !isFixedAsset({ cost: e.cost, date: effectiveExpenseDate(e) }, fixedAssetMinCost),
-  );
-  const businessExpenseTotal = operatingExpenses.reduce((s, e) => s + e.cost, 0);
-  const fixedAssetTotal = fixedAssetExpenses.reduce((s, e) => s + e.cost, 0);
-  const processorFeeTotal = payments.reduce((s, p) => s + (p.processorFeeAmount ?? 0), 0);
-  const processorFeeRows = payments.filter((p) => (p.processorFeeAmount ?? 0) > 0).length;
 
-  // Equity preview — capital contributions + owner draws in range, summed
-  // separately so the CPA-facing tab shows both numbers up front.
-  const equityRows = await prisma.businessExpense.findMany({
+  // Sort by effective date so the file reads chronologically. Within
+  // the same date, alphabetize by description for stable diffs run-to-run.
+  const enriched = rows
+    .map((r) => ({ r, effDate: effectiveExpenseDate(r) }))
+    .sort((a, b) => {
+      const diff = a.effDate.getTime() - b.effDate.getTime();
+      if (diff !== 0) return diff;
+      return (a.r.description ?? "").localeCompare(b.r.description ?? "");
+    });
+
+  const header = [
+    "Date",
+    "Category",
+    "Description",
+    "Vendor",
+    "Amount",
+  ];
+  const lines: string[] = [csvRow(header)];
+  let total = 0;
+  let rowCount = 0;
+  for (const { r, effDate } of enriched) {
+    lines.push(
+      csvRow([
+        toIsoDate(effDate),
+        r.category ?? "",
+        r.description ?? "",
+        r.vendor ?? "",
+        round2(r.cost).toFixed(2),
+      ]),
+    );
+    total += r.cost;
+    rowCount += 1;
+  }
+  // Final TOTALS line — operator can eyeball the bottom line against
+  // the in-app P&L Expenses subtotal for the same window.
+  lines.push(csvRow(["TOTALS", "", "", "", round2(total).toFixed(2)]));
+  return { csv: finalizeCsv(lines), rowCount, total: round2(total) };
+}
+
+export async function capitalCsv(start: Date, end: Date): Promise<CsvResult> {
+  // Equity entries only — money the owner puts INTO the business
+  // (CAPITAL_CONTRIBUTION) and money the owner takes OUT
+  // (OWNER_DRAW). Both hit equity accounts on the balance sheet rather
+  // than the P&L, which is why they're broken out from the operating
+  // Expenses CSV. The accounting software typically posts them to
+  // "Owner's Equity" / "Owner Draws" — match the totals against those.
+  //
+  // Direction column makes the IN vs OUT distinction explicit even
+  // though the type label already encodes it, since some operators
+  // skim the column rather than re-parsing the type string each row.
+  const rows = await prisma.businessExpense.findMany({
     where: {
       type: { in: ["CAPITAL_CONTRIBUTION", "OWNER_DRAW"] },
       date: { gte: start, lte: end },
     },
-    select: { type: true, cost: true },
+    orderBy: { date: "asc" },
   });
+
+  const header = [
+    "Date",
+    "Type",
+    "Direction",
+    "Description",
+    "Amount",
+  ];
+  const lines: string[] = [csvRow(header)];
   let contributionTotal = 0;
   let drawTotal = 0;
-  for (const r of equityRows) {
-    if (r.type === "CAPITAL_CONTRIBUTION") contributionTotal += r.cost;
-    else if (r.type === "OWNER_DRAW") drawTotal += r.cost;
+  for (const r of rows) {
+    const isContribution = r.type === "CAPITAL_CONTRIBUTION";
+    lines.push(
+      csvRow([
+        toIsoDate(r.date),
+        isContribution ? "Capital contribution" : "Owner draw",
+        isContribution ? "In (owner → business)" : "Out (business → owner)",
+        r.description ?? "",
+        round2(r.cost).toFixed(2),
+      ]),
+    );
+    if (isContribution) contributionTotal += r.cost;
+    else drawTotal += r.cost;
   }
-
-  const unmappedRows = await findUnmappedExpenseRows(start, end);
-
-  return {
-    gustoW2: {
-      workers: w2Rows.length,
-      hours: round2(w2Hours),
-      gross: round2(w2Gross),
-      unapprovedOccurrences: unapprovedW2Occurrences,
-    },
-    gustoContractors: {
-      workers: gustoContractorWorkers.size,
-      gross: round2(gustoContractorGross),
-    },
-    qbIncome: {
-      rows: payments.length,
-      total: round2(qbIncomeTotal),
-    },
-    qbExpenses: {
-      rows: operatingExpenses.length + processorFeeRows + qbContractLaborRows,
-      total: round2(businessExpenseTotal + processorFeeTotal + qbContractLaborTotal),
-      // Sub-totals exposed for the Exports tab preview
-      // ("$X expenses + $Y fees + $Z contractor labor").
-      businessExpenseTotal: round2(businessExpenseTotal),
-      processorFeeTotal: round2(processorFeeTotal),
-      contractLaborTotal: round2(qbContractLaborTotal),
-      unmappedRows,
-    },
-    qbEquity: {
-      rows: equityRows.length,
-      contributionTotal: round2(contributionTotal),
-      drawTotal: round2(drawTotal),
-    },
-    qbFixedAssets: {
-      rows: fixedAssetExpenses.length,
-      total: round2(fixedAssetTotal),
-      threshold: fixedAssetMinCost,
-    },
-  };
+  // Three-line footer — contributions and draws shown separately so the
+  // operator can match each against its own equity account without
+  // having to bucket the rows themselves. Net is contributions minus
+  // draws (positive = owner put more in than took out this period).
+  const net = contributionTotal - drawTotal;
+  lines.push(csvRow(["", "", "", "Contributions total", round2(contributionTotal).toFixed(2)]));
+  lines.push(csvRow(["", "", "", "Owner draws total", round2(drawTotal).toFixed(2)]));
+  lines.push(csvRow(["", "", "", "Net (contributions − draws)", round2(net).toFixed(2)]));
+  return { csv: finalizeCsv(lines), rowCount: rows.length, total: round2(contributionTotal + drawTotal) };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// exportPreviewDetails — drill-down rows for the Exports tab's Preview
-// totals expand/collapse. Same underlying queries as exportPreview (and
-// the same numbers — the sum of detail rows for a section ALWAYS equals
-// the section's exportPreview total). The section split mirrors the
-// Preview totals card so an operator can audit how each total was
-// derived. Loaded lazily by the client only when a section is expanded.
-// ─────────────────────────────────────────────────────────────────────────────
-export type PreviewDetailsSection =
-  | "gusto-w2"
-  | "gusto-contractors"
-  | "qb-income"
-  | "qb-expenses"
-  | "qb-fixed-assets"
-  | "qb-equity";
+export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
+  // Comprehensive per-row view of every dollar that came IN during the
+  // window:
+  //
+  //   • Service payments → one row per PaymentSplit on every confirmed,
+  //     non-written-off payment. Both worker payouts AND owner-earnings
+  //     splits surface (the owner-earnings ones are the business's own
+  //     cut of the payment, which is income to the business). Each row
+  //     also carries the parent payment's Gross / Processor Fee / Net
+  //     so the operator can reconcile against bank deposit entries.
+  //
+  //   • Equipment rental income → one row per Checkout with
+  //     `rentalCost > 0` released in window. Income to the business
+  //     from a contractor renter; processor fee is zero.
+  //
+  // The Amount column on each row is that row's own contribution to
+  // income; summing Amount across the whole file = total inflow for
+  // the period. Gross / Fee / Net intentionally do NOT sum across rows
+  // (they'd double-count when a payment has multiple splits).
+  const [payments, rentals] = await Promise.all([
+    loadConfirmedPayments(start, end),
+    prisma.checkout.findMany({
+      where: {
+        rentalCost: { gt: 0 },
+        releasedAt: { gte: start, lte: end },
+      },
+      include: {
+        equipment: { select: { shortDesc: true, brand: true, model: true } },
+        user: { select: { displayName: true, email: true, workerType: true } },
+      },
+      orderBy: { releasedAt: "asc" },
+    }),
+  ]);
 
-export type PreviewDetailRow = {
-  /** YYYY-MM-DD in ET, or empty string when not applicable (e.g. worker
-   *  totals that aggregate across multiple dates). */
-  date: string;
-  /** Primary identifier — worker name, client name, expense category. */
-  primary: string;
-  /** Optional secondary line — email, description, etc. */
-  secondary?: string;
-  /** Optional dollar-side context shown inline (e.g. "12.50 hrs"). */
-  meta?: string;
-  amount: number;
-};
-
-export type PreviewDetailGroup = {
-  label: string;
-  rows: PreviewDetailRow[];
-  subtotal: number;
-};
-
-export type PreviewDetails = {
-  groups: PreviewDetailGroup[];
-  total: number;
-};
-
-export async function exportPreviewDetails(
-  start: Date,
-  end: Date,
-  section: PreviewDetailsSection,
-): Promise<PreviewDetails> {
-  switch (section) {
-    case "gusto-w2": {
-      const rows = await computeW2Earnings(start, end);
-      const detailRows: PreviewDetailRow[] = rows
-        .sort((a, b) => (a.last || a.first).localeCompare(b.last || b.first))
-        .map((r) => ({
-          date: "",
-          primary: `${r.first}${r.last ? ` ${r.last}` : ""}`.trim() || r.email || "(unnamed)",
-          secondary: r.email,
-          meta: `${round2(r.hours).toFixed(2)} hrs · ${r.jobs} job${r.jobs === 1 ? "" : "s"}`,
-          amount: round2(r.gross),
-        }));
-      const subtotal = detailRows.reduce((s, r) => s + r.amount, 0);
-      return {
-        groups: [{ label: "Workers", rows: detailRows, subtotal: round2(subtotal) }],
-        total: round2(subtotal),
-      };
-    }
-
-    case "gusto-contractors": {
-      // Match gustoContractorsCsv's two-half compute exactly.
-      const payments = await loadConfirmedPayments(start, end);
-      type Agg = { userId: string; displayName: string; email: string; total: number; jobs: number };
-      const byWorker = new Map<string, Agg>();
-      const add = (userId: string, displayName: string, email: string, amount: number) => {
-        const cur = byWorker.get(userId);
-        if (cur) {
-          cur.total += amount;
-          cur.jobs += 1;
-        } else {
-          byWorker.set(userId, { userId, displayName, email, total: amount, jobs: 1 });
-        }
-      };
-      for (const p of payments) {
-        for (const sp of p.splits) {
-          if (isEmployeeClass(sp.user.workerType)) continue;
-          if ((sp as any).guaranteedPayoutPaidAt != null) continue;
-          add(sp.user.id, sp.user.displayName ?? sp.user.email ?? "(unnamed)", sp.user.email ?? "", sp.amount);
-        }
-      }
-      const workItems = await loadGpWorkAnchoredItems(start, end);
-      for (const item of workItems) {
-        add(item.userId, item.contractor.displayName ?? item.contractor.email ?? "(unnamed)", item.contractor.email ?? "", item.amount);
-      }
-      const rows = Array.from(byWorker.values())
-        .sort((a, b) => a.displayName.localeCompare(b.displayName))
-        .map<PreviewDetailRow>((r) => ({
-          date: "",
-          primary: r.displayName,
-          secondary: r.email || undefined,
-          meta: `${r.jobs} job${r.jobs === 1 ? "" : "s"}`,
-          amount: round2(r.total),
-        }));
-      const subtotal = rows.reduce((s, r) => s + r.amount, 0);
-      return {
-        groups: [{ label: "Contractors", rows, subtotal: round2(subtotal) }],
-        total: round2(subtotal),
-      };
-    }
-
-    case "qb-income": {
-      const payments = await loadConfirmedPayments(start, end);
-      // Equipment rental income — checkouts with rentalCost > 0 in window.
-      const equipmentRentals = await prisma.checkout.findMany({
-        where: {
-          releasedAt: { gte: start, lte: end },
-          rentalCost: { gt: 0 },
-        },
-        include: {
-          equipment: { select: { shortDesc: true, brand: true, model: true } },
-          user: { select: { displayName: true, email: true } },
-        },
-      });
-      const paymentRows: PreviewDetailRow[] = payments.map((p) => ({
-        date: p.confirmedAt ? etFormatDate(p.confirmedAt) : "",
-        primary: (p as any).occurrence?.job?.property?.client?.displayName ?? "(unknown client)",
-        secondary: (p as any).occurrence?.job?.property?.displayName ?? undefined,
-        meta: p.method ?? undefined,
-        amount: round2(p.amountPaid),
-      }));
-      const paymentSubtotal = paymentRows.reduce((s, r) => s + r.amount, 0);
-      const equipmentRows: PreviewDetailRow[] = equipmentRentals.map((c) => ({
-        date: c.releasedAt ? etFormatDate(c.releasedAt) : "",
-        primary: [c.equipment?.brand, c.equipment?.model].filter(Boolean).join(" ") || c.equipment?.shortDesc || "Equipment rental",
-        secondary: c.user?.displayName ?? c.user?.email ?? undefined,
-        amount: round2(c.rentalCost ?? 0),
-      }));
-      const equipmentSubtotal = equipmentRows.reduce((s, r) => s + r.amount, 0);
-      const groups: PreviewDetailGroup[] = [
-        { label: "Service payments", rows: paymentRows, subtotal: round2(paymentSubtotal) },
-      ];
-      if (equipmentRows.length > 0) {
-        groups.push({ label: "Equipment Rental Income", rows: equipmentRows, subtotal: round2(equipmentSubtotal) });
-      }
-      return { groups, total: round2(paymentSubtotal + equipmentSubtotal) };
-    }
-
-    case "qb-expenses": {
-      const fixedAssetMinCost = await loadFixedAssetMinCost();
-      const expenses = await prisma.businessExpense.findMany({
-        // Anchor on effective date (occurrence.completedAt for per-job
-        // expenses, BE.date otherwise) so this matches qbExpensesCsv.
-        where: { type: "EXPENSE", ...expenseAnchorDateWhere(start, end) },
-        select: {
-          id: true,
-          date: true,
-          category: true,
-          description: true,
-          cost: true,
-          occurrenceId: true,
-          occurrence: { select: { completedAt: true } },
-        },
-      });
-      const operating = expenses.filter(
-        (e) => !isFixedAsset({ cost: e.cost, date: effectiveExpenseDate(e) }, fixedAssetMinCost),
-      );
-      const businessExpenseRows: PreviewDetailRow[] = operating
-        .sort((a, b) => effectiveExpenseDate(a).getTime() - effectiveExpenseDate(b).getTime())
-        .map((e) => ({
-          date: etFormatDate(effectiveExpenseDate(e)),
-          primary: e.category || "(uncategorized)",
-          secondary: e.description ?? undefined,
-          amount: round2(e.cost),
-        }));
-      const businessExpenseSubtotal = businessExpenseRows.reduce((s, r) => s + r.amount, 0);
-
-      const payments = await loadConfirmedPayments(start, end);
-      const processorFeeRows: PreviewDetailRow[] = payments
-        .filter((p) => (p.processorFeeAmount ?? 0) > 0)
-        .sort((a, b) => (a.confirmedAt?.getTime() ?? 0) - (b.confirmedAt?.getTime() ?? 0))
-        .map((p) => ({
-          date: p.confirmedAt ? etFormatDate(p.confirmedAt) : "",
-          primary: (p as any).occurrence?.job?.property?.client?.displayName ?? "(unknown client)",
-          secondary: `${p.method} fee on $${round2(p.grossCharged ?? 0).toFixed(2)} gross`,
-          amount: round2(p.processorFeeAmount ?? 0),
-        }));
-      const processorFeeSubtotal = processorFeeRows.reduce((s, r) => s + r.amount, 0);
-
-      // Contract Labor (matches qbExpensesCsv): post-GP splits + GP wage-path + historical advances.
-      const contractLaborRows: PreviewDetailRow[] = [];
-      for (const p of payments) {
-        for (const sp of p.splits) {
-          if (isEmployeeClass(sp.user.workerType)) continue;
-          if ((sp as any).guaranteedPayoutPaidAt != null) continue;
-          contractLaborRows.push({
-            date: p.confirmedAt ? etFormatDate(p.confirmedAt) : "",
-            primary: sp.user.displayName ?? sp.user.email ?? "(unnamed contractor)",
-            secondary: (p as any).occurrence?.job?.property?.client?.displayName ?? undefined,
-            meta: "client payment",
-            amount: round2(sp.amount),
-          });
-        }
-      }
-      const wageItems = await loadGpWorkAnchoredItems(start, end);
-      for (const item of wageItems) {
-        contractLaborRows.push({
-          date: etFormatDate(item.completedAt),
-          primary: item.contractor.displayName ?? item.contractor.email ?? "(unnamed contractor)",
-          secondary: item.property?.clientDisplayName ?? undefined,
-          meta: "GP wage-path",
-          amount: round2(item.amount),
-        });
-      }
-      const historicalAdvances = await prisma.guaranteedPayoutAdvance.findMany({
-        where: { exportedAt: { gte: start, lte: end } },
-        include: { user: { select: { displayName: true, email: true } } },
-      });
-      for (const adv of historicalAdvances) {
-        contractLaborRows.push({
-          date: etFormatDate(adv.exportedAt),
-          primary: adv.user?.displayName ?? adv.user?.email ?? "(unnamed contractor)",
-          meta: "historical advance",
-          amount: round2(adv.amount),
-        });
-      }
-      contractLaborRows.sort((a, b) => a.date.localeCompare(b.date));
-      const contractLaborSubtotal = contractLaborRows.reduce((s, r) => s + r.amount, 0);
-
-      const groups: PreviewDetailGroup[] = [];
-      if (businessExpenseRows.length > 0) groups.push({ label: "Business Expenses", rows: businessExpenseRows, subtotal: round2(businessExpenseSubtotal) });
-      if (processorFeeRows.length > 0) groups.push({ label: "Payment Processing Fees", rows: processorFeeRows, subtotal: round2(processorFeeSubtotal) });
-      if (contractLaborRows.length > 0) groups.push({ label: "Contract Labor", rows: contractLaborRows, subtotal: round2(contractLaborSubtotal) });
-      return {
-        groups,
-        total: round2(businessExpenseSubtotal + processorFeeSubtotal + contractLaborSubtotal),
-      };
-    }
-
-    case "qb-fixed-assets": {
-      const fixedAssetMinCost = await loadFixedAssetMinCost();
-      const all = await prisma.businessExpense.findMany({
-        where: { type: "EXPENSE", ...expenseAnchorDateWhere(start, end) },
-        select: {
-          id: true,
-          date: true,
-          category: true,
-          description: true,
-          cost: true,
-          occurrenceId: true,
-          occurrence: { select: { completedAt: true } },
-        },
-      });
-      const rows: PreviewDetailRow[] = all
-        .filter((e) => isFixedAsset({ cost: e.cost, date: effectiveExpenseDate(e) }, fixedAssetMinCost))
-        .sort((a, b) => effectiveExpenseDate(a).getTime() - effectiveExpenseDate(b).getTime())
-        .map((e) => ({
-          date: etFormatDate(effectiveExpenseDate(e)),
-          primary: e.category || "(uncategorized)",
-          secondary: e.description ?? undefined,
-          amount: round2(e.cost),
-        }));
-      const subtotal = rows.reduce((s, r) => s + r.amount, 0);
-      return {
-        groups: [{ label: `Fixed assets (≥ $${fixedAssetMinCost})`, rows, subtotal: round2(subtotal) }],
-        total: round2(subtotal),
-      };
-    }
-
-    case "qb-equity": {
-      const rows = await prisma.businessExpense.findMany({
-        where: {
-          type: { in: ["CAPITAL_CONTRIBUTION", "OWNER_DRAW"] },
-          date: { gte: start, lte: end },
-        },
-        select: { id: true, type: true, date: true, description: true, cost: true },
-        orderBy: { date: "asc" },
-      });
-      const contributions = rows.filter((r) => r.type === "CAPITAL_CONTRIBUTION").map<PreviewDetailRow>((r) => ({
-        date: etFormatDate(r.date),
-        primary: r.description ?? "Capital Contribution",
-        amount: round2(r.cost),
-      }));
-      const draws = rows.filter((r) => r.type === "OWNER_DRAW").map<PreviewDetailRow>((r) => ({
-        date: etFormatDate(r.date),
-        primary: r.description ?? "Owner Draw",
-        amount: round2(r.cost),
-      }));
-      const contributionSubtotal = contributions.reduce((s, r) => s + r.amount, 0);
-      const drawSubtotal = draws.reduce((s, r) => s + r.amount, 0);
-      const groups: PreviewDetailGroup[] = [];
-      if (contributions.length > 0) groups.push({ label: "Capital Contributions", rows: contributions, subtotal: round2(contributionSubtotal) });
-      if (draws.length > 0) groups.push({ label: "Owner Draws", rows: draws, subtotal: round2(drawSubtotal) });
-      return { groups, total: round2(contributionSubtotal + drawSubtotal) };
+  // Recipient-type label (operator-facing). For service payments this
+  // is the split user's WorkerType; for owner-earnings splits we
+  // override to "Owner" so the operator can see at a glance which
+  // rows are the business's own cut. Equipment rental is its own
+  // category since the recipient ("Business") isn't a worker.
+  function recipientType(t: string | null | undefined): string {
+    switch (t) {
+      case "EMPLOYEE": return "Employee";
+      case "TRAINEE": return "Trainee";
+      case "CONTRACTOR": return "Contractor";
+      default: return "Unclassified";
     }
   }
+
+  type Row = {
+    date: string;
+    source: string;       // "Service" or "Equipment Rental"
+    recipient: string;    // worker name OR "Business" for rental income
+    recipientType: string;
+    recipientEmail: string;
+    client: string;       // client name (service) or renter name (rental)
+    property: string;     // property name (service) or equipment name (rental)
+    job: string;          // job title (service) or empty (rental)
+    method: string;
+    grossCharged: number;
+    processorFee: number;
+    netReceived: number;
+    amount: number;
+  };
+  const rows: Row[] = [];
+
+  for (const p of payments) {
+    const occ: any = (p as any).occurrence ?? null;
+    const job: any = occ?.job ?? null;
+    const property: any = job?.property ?? null;
+    const client: any = property?.client ?? null;
+    const grossCharged = round2((p as any).grossCharged ?? p.amountPaid ?? 0);
+    const processorFee = round2((p as any).processorFeeAmount ?? 0);
+    const netReceived = round2(grossCharged - processorFee);
+    const dateLabel = p.confirmedAt ? toIsoDate(p.confirmedAt) : "";
+    const propertyName = property?.displayName ?? "";
+    const clientName = client?.displayName ?? "";
+    const jobTitle = occ?.title ?? job?.description ?? "";
+    const method = p.method ?? "";
+    for (const sp of p.splits) {
+      const user = sp.user;
+      const isOwnerCut = (sp as any).ownerEarnings === true;
+      rows.push({
+        date: dateLabel,
+        source: "Service",
+        recipient: user.displayName ?? user.email ?? "(unnamed)",
+        recipientType: isOwnerCut ? "Owner" : recipientType(user.workerType),
+        recipientEmail: user.email ?? "",
+        client: clientName,
+        property: propertyName,
+        job: jobTitle,
+        method,
+        grossCharged,
+        processorFee,
+        netReceived,
+        amount: round2(sp.amount ?? 0),
+      });
+    }
+  }
+
+  for (const c of rentals) {
+    const equipName =
+      [c.equipment?.brand, c.equipment?.model].filter(Boolean).join(" ") ||
+      c.equipment?.shortDesc ||
+      "Equipment rental";
+    const rentalCost = round2(c.rentalCost ?? 0);
+    rows.push({
+      date: c.releasedAt ? toIsoDate(c.releasedAt) : "",
+      source: "Equipment Rental",
+      recipient: "Business",
+      recipientType: "Business",
+      recipientEmail: "",
+      client: c.user?.displayName ?? c.user?.email ?? "",
+      property: equipName,
+      job: "",
+      method: "",
+      grossCharged: rentalCost,
+      processorFee: 0,
+      netReceived: rentalCost,
+      amount: rentalCost,
+    });
+  }
+
+  // Date ASC, then by source (Equipment Rental sorts after Service —
+  // payments first for each day), then by recipient.
+  rows.sort((a, b) => {
+    const dateDiff = a.date.localeCompare(b.date);
+    if (dateDiff !== 0) return dateDiff;
+    const sourceDiff = a.source.localeCompare(b.source);
+    if (sourceDiff !== 0) return sourceDiff;
+    return a.recipient.localeCompare(b.recipient);
+  });
+
+  const header = [
+    "Date",
+    "Source",
+    "Recipient",
+    "Recipient Type",
+    "Recipient Email",
+    "Client / Renter",
+    "Property / Equipment",
+    "Job",
+    "Payment Method",
+    "Gross Charged",
+    "Processor Fee",
+    "Net Received",
+    "Amount",
+  ];
+  const lines: string[] = [csvRow(header)];
+  let amountTotal = 0;
+  for (const r of rows) {
+    lines.push(
+      csvRow([
+        r.date,
+        r.source,
+        r.recipient,
+        r.recipientType,
+        r.recipientEmail,
+        r.client,
+        r.property,
+        r.job,
+        r.method,
+        r.grossCharged.toFixed(2),
+        r.processorFee.toFixed(2),
+        r.netReceived.toFixed(2),
+        r.amount.toFixed(2),
+      ]),
+    );
+    amountTotal += r.amount;
+  }
+  // TOTALS sums the Amount column only — that captures total inflow
+  // (worker payouts + business's cut + equipment rental income).
+  // Gross/Fee/Net are intentionally NOT totaled — they'd double-count
+  // when a payment has multiple splits.
+  lines.push(
+    csvRow([
+      "TOTALS",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      round2(amountTotal).toFixed(2),
+    ]),
+  );
+  return { csv: finalizeCsv(lines), rowCount: rows.length, total: round2(amountTotal) };
 }

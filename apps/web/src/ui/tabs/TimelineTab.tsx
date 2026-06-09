@@ -170,6 +170,40 @@ function sectionOf(iso: string): SectionKey {
   return "later";
 }
 
+// ─── Completed-view buckets ───────────────────────────────────────────
+// The default urgency buckets above are upcoming-tense ("Overdue / Today
+// / Next 7 days / Next 30 days / Later"). For the Completed view the
+// anchor date is historical (`lastCompletedAt`), so reusing those buckets
+// would land every completed item in "Overdue" — semantically wrong, the
+// item isn't pending; it's already done. These mirror-image buckets
+// describe how long ago each completion happened.
+type CompletedSectionKey = "today" | "yesterday" | "week" | "month" | "older";
+const COMPLETED_SECTION_ORDER: CompletedSectionKey[] = ["today", "yesterday", "week", "month", "older"];
+const COMPLETED_SECTION_LABELS: Record<CompletedSectionKey, string> = {
+  today: "Completed today",
+  yesterday: "Completed yesterday",
+  week: "Completed in the last 7 days",
+  month: "Completed in the last 30 days",
+  older: "Older",
+};
+const COMPLETED_SECTION_COLORS: Record<CompletedSectionKey, string> = {
+  today: "green",
+  yesterday: "green",
+  week: "teal",
+  month: "blue",
+  older: "gray",
+};
+const DEFAULT_COLLAPSED_COMPLETED_SECTIONS: CompletedSectionKey[] = ["older"];
+
+function completedSectionOf(iso: string): CompletedSectionKey {
+  const ago = -diffDays(iso);
+  if (ago <= 0) return "today";
+  if (ago === 1) return "yesterday";
+  if (ago <= 7) return "week";
+  if (ago <= 30) return "month";
+  return "older";
+}
+
 export default function TimelineTab({ isSuper = false }: Props) {
   const apiBase = isSuper ? "/api/super/timeline" : "/api/admin/timeline";
 
@@ -180,10 +214,16 @@ export default function TimelineTab({ isSuper = false }: Props) {
   const [kindFilter, setKindFilter] = useState<string[]>(["all"]);
   const [urgencyFilter, setUrgencyFilter] = useState<string[]>(["all"]);
   // Collapsible sections — drives the chevron + which bucket is open.
-  const [collapsedSections, setCollapsedSections] = useState<Set<SectionKey>>(
-    () => new Set(DEFAULT_COLLAPSED_SECTIONS),
+  // Holds keys from either the upcoming bucket set OR the completed
+  // bucket set — they're disjoint strings so a Set<string> handles both
+  // without losing per-mode collapse state when the user toggles modes.
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(
+    () => new Set<string>([
+      ...DEFAULT_COLLAPSED_SECTIONS,
+      ...DEFAULT_COLLAPSED_COMPLETED_SECTIONS,
+    ]),
   );
-  function toggleSection(key: SectionKey) {
+  function toggleSection(key: string) {
     setCollapsedSections((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
@@ -303,16 +343,37 @@ export default function TimelineTab({ isSuper = false }: Props) {
     return out;
   }, [rows, q, kindFilter, urgencyFilter, highlightEventId]);
 
-  // Group the filtered rows into the SECTION_ORDER buckets so the UI can
-  // render each as its own collapsible section. Empty buckets are
-  // skipped at render time — the section header doesn't show at all.
+  // Group the filtered rows into buckets so the UI can render each as
+  // its own collapsible section. Empty buckets are skipped at render
+  // time — the section header doesn't show at all. The Completed view
+  // uses past-tense buckets (Completed today / yesterday / last 7 days
+  // / etc.) instead of the upcoming-tense default — otherwise every
+  // completed item lands in "Overdue" (their nextDate is the past
+  // lastCompletedAt, which sectionOf would call overdue).
   const sectionedRows = useMemo(() => {
+    if (showCompleted) {
+      const buckets: Record<CompletedSectionKey, UpcomingRow[]> = {
+        today: [], yesterday: [], week: [], month: [], older: [],
+      };
+      for (const r of filtered) buckets[completedSectionOf(r.nextDate)].push(r);
+      return COMPLETED_SECTION_ORDER.map((key) => ({
+        key: key as string,
+        label: COMPLETED_SECTION_LABELS[key],
+        color: COMPLETED_SECTION_COLORS[key],
+        items: buckets[key],
+      }));
+    }
     const buckets: Record<SectionKey, UpcomingRow[]> = {
       overdue: [], today: [], week: [], month: [], later: [],
     };
     for (const r of filtered) buckets[sectionOf(r.nextDate)].push(r);
-    return SECTION_ORDER.map((key) => ({ key, label: SECTION_LABELS[key], color: SECTION_COLORS[key], items: buckets[key] }));
-  }, [filtered]);
+    return SECTION_ORDER.map((key) => ({
+      key: key as string,
+      label: SECTION_LABELS[key],
+      color: SECTION_COLORS[key],
+      items: buckets[key],
+    }));
+  }, [filtered, showCompleted]);
 
   // Apply a pre-set urgency filter from the title-bar pill navigation.
   useEffect(() => {

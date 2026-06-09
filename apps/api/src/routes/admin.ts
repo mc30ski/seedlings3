@@ -27,7 +27,7 @@ import {
 import { normalizePhone } from "../lib/phone";
 import { generateLedgerId } from "../lib/ledgerId";
 import { loadCategoryLabels } from "../services/expenseCategories";
-import { loadFixedAssetMinCost, isFixedAsset, loadGpWorkAnchoredItems, effectiveExpenseDate } from "../services/exports";
+import { loadFixedAssetMinCost, isFixedAsset, loadGpWorkAnchoredItems } from "../services/exports";
 import {
   resolveCutoff,
   cutoffWhere,
@@ -4369,35 +4369,24 @@ Respond ONLY with valid JSON in this exact format:
       type?: string;
     };
     const where: any = {};
-    const andConditions: any[] = [];
-    // Business Start Date filter — pre-cutoff BusinessExpense rows hidden
-    // from the Accounting tab. If a from-date is already set, the cutoff is
-    // additive (later bound wins). See lib/businessStartCutoff.ts.
-    const cutoff = await resolveCutoff(req);
-    if (q.from || q.to || cutoff) {
+    if (q.from || q.to) {
       // ET-anchored boundaries (etMidnight / etEndOfDay) — match the QB
       // exports and the vs-revenue endpoint exactly. See vs-revenue for the
       // UTC-vs-ET divergence this prevents.
-      let gte: Date | undefined = q.from ? etMidnight(q.from) : undefined;
-      const lte: Date | undefined = q.to ? etEndOfDay(q.to) : undefined;
-      if (cutoff && (!gte || cutoff > gte)) gte = cutoff;
-      // Per-occurrence BE rows anchor on occurrence.completedAt; freestanding
-      // rows anchor on BE.date. Not-yet-completed per-occurrence rows are
-      // excluded entirely — they show up as "planned" on the job card but
-      // don't pollute the cash-flow / list / export views until the job is
-      // actually completed. See effectiveExpenseDate in services/exports.ts.
-      const dateRange: any = {};
-      if (gte) dateRange.gte = gte;
-      if (lte) dateRange.lte = lte;
-      andConditions.push({
-        OR: [
-          { occurrenceId: null, ...(Object.keys(dateRange).length ? { date: dateRange } : {}) },
-          {
-            occurrenceId: { not: null },
-            occurrence: { completedAt: { not: null, ...dateRange } },
-          },
-        ],
-      });
+      //
+      // Accounting tab is the operator's planning + actual view — it
+      // shows EVERY BE row whose date falls in range, including planned
+      // expenses on future-dated (not-yet-completed) jobs. That works
+      // with a plain BE.date filter because BE.date is auto-synced to
+      // the occurrence's effective anchor (`startAt` while not yet
+      // completed, `completedAt` once it completes). See
+      // deriveJobExpenseDate in services/expenses.ts. QB exports + P&L
+      // Report keep the stricter "exclude uncompleted" filter via
+      // expenseAnchorDateWhere — those are cash-basis reconciliation
+      // surfaces, not planning views.
+      where.date = {};
+      if (q.from) where.date.gte = etMidnight(q.from);
+      if (q.to) where.date.lte = etEndOfDay(q.to);
     }
     if (q.category) where.category = q.category;
     if (q.type) {
@@ -4408,15 +4397,23 @@ Respond ONLY with valid JSON in this exact format:
     }
     if (q.q && q.q.trim()) {
       const term = q.q.trim();
-      andConditions.push({
-        OR: [
-          { description: { contains: term, mode: "insensitive" } },
-          { vendor: { contains: term, mode: "insensitive" } },
-          { notes: { contains: term, mode: "insensitive" } },
-        ],
-      });
+      where.OR = [
+        { description: { contains: term, mode: "insensitive" } },
+        { vendor: { contains: term, mode: "insensitive" } },
+        { notes: { contains: term, mode: "insensitive" } },
+      ];
     }
-    if (andConditions.length > 0) where.AND = andConditions;
+    // Business Start Date filter — pre-cutoff BusinessExpense rows hidden
+    // from the Accounting tab. If a from-date is already set, the cutoff is
+    // additive (later bound wins). See lib/businessStartCutoff.ts.
+    const cutoff = await resolveCutoff(req);
+    if (cutoff) {
+      const existingGte = where.date?.gte;
+      where.date = {
+        ...(where.date ?? {}),
+        gte: existingGte && existingGte > cutoff ? existingGte : cutoff,
+      };
+    }
 
     // Pagination — limit/offset, applied to the same `where` filter so the
     // page is a slice of the filtered set. `all=true` bypasses the page cap;
@@ -4716,19 +4713,16 @@ Respond ONLY with valid JSON in this exact format:
         select: { confirmedAt: true, platformFeeAmount: true, businessMarginAmount: true, processorFeeAmount: true },
       }),
       // One query covers all three EntryType buckets; split by `type`
-      // below. Saves a round-trip vs. separate queries. Per-occurrence
-      // rows include the linked occurrence's completedAt so we can
-      // anchor on the actual job-completion date (effectiveExpenseDate)
-      // and exclude not-yet-completed jobs entirely.
+      // below. Saves a round-trip vs. separate queries. Plain BE.date —
+      // BE.date is auto-synced to the occurrence's effective anchor
+      // (startAt for planned, completedAt for done), so a date-range
+      // filter naturally captures the right rows including planned
+      // expenses for future jobs in the selected window. See
+      // deriveJobExpenseDate in services/expenses.ts. QB exports +
+      // P&L Report use the stricter completion-anchored filter.
       prisma.businessExpense.findMany({
         where: { ...cutoffWhere("BusinessExpense", cutoff) },
-        select: {
-          type: true,
-          date: true,
-          cost: true,
-          occurrenceId: true,
-          occurrence: { select: { completedAt: true } },
-        },
+        select: { type: true, date: true, cost: true },
       }),
       prisma.checkout.findMany({
         where: { rentalCost: { not: null }, releasedAt: { not: null }, ...cutoffWhere("Checkout", cutoff) },
@@ -4755,21 +4749,12 @@ Respond ONLY with valid JSON in this exact format:
       equipmentRentals += r.rentalCost ?? 0;
     }
     for (const e of allEntries) {
-      // Per-occurrence rows whose job hasn't been completed yet are
-      // excluded entirely — same rule the QB exports use. A planned
-      // expense on a future job shouldn't show in the cash-flow view
-      // until the job actually happens. effectiveExpenseDate handles
-      // this for date anchoring; the explicit completedAt check filters
-      // out "no completion yet" rows even if their BE.date happens to
-      // fall in the window.
-      if (e.occurrenceId && !e.occurrence?.completedAt) continue;
-      const eff = effectiveExpenseDate(e);
-      if (!inRange(eff)) continue;
+      if (!inRange(e.date)) continue;
       if (e.type === "EXPENSE") {
         // Split: fixed-asset purchases (capitalized — balance sheet) vs
         // regular operating expenses (P&L). Same threshold + start-date
         // policy the QB Expenses CSV uses, so the totals reconcile.
-        if (isFixedAsset({ cost: e.cost, date: eff }, fixedAssetMinCost)) {
+        if (isFixedAsset(e, fixedAssetMinCost)) {
           fixedAssetPurchases += e.cost;
         } else {
           expenseTotal += e.cost;
@@ -4819,49 +4804,38 @@ Respond ONLY with valid JSON in this exact format:
     const startOfYear = etMidnight(etStartOfYear());
     // Summary card on the Accounting tab is "expenses only" — by-category
     // breakdown and totals are only meaningful for operating cash-out.
-    // Anchor on effective date (occurrence.completedAt for per-job rows,
-    // BE.date for freestanding) — same rule the QB exports use.
+    // Mirrors the list endpoint: plain BE.date filter with no completion
+    // check. BE.date is auto-synced to the occurrence's effective anchor,
+    // so planned expenses on future-dated jobs show in the period that
+    // contains the job's startAt. See the comment in the list endpoint.
     const where: any = { type: "EXPENSE" };
-    const summaryCutoff = await resolveCutoff(req);
-    if (q.from || q.to || summaryCutoff) {
-      let gte: Date | undefined = q.from ? etMidnight(q.from) : undefined;
-      const lte: Date | undefined = q.to ? etEndOfDay(q.to) : undefined;
-      if (summaryCutoff && (!gte || summaryCutoff > gte)) gte = summaryCutoff;
-      const dateRange: any = {};
-      if (gte) dateRange.gte = gte;
-      if (lte) dateRange.lte = lte;
-      where.OR = [
-        { occurrenceId: null, ...(Object.keys(dateRange).length ? { date: dateRange } : {}) },
-        { occurrenceId: { not: null }, occurrence: { completedAt: { not: null, ...dateRange } } },
-      ];
-    } else {
-      // No date bounds AND no cutoff — still want to exclude not-yet-completed
-      // per-occurrence rows so the All-Time total doesn't mix in planned
-      // expenses for future jobs.
-      where.OR = [
-        { occurrenceId: null },
-        { occurrenceId: { not: null }, occurrence: { completedAt: { not: null } } },
-      ];
+    if (q.from || q.to) {
+      // ET-anchored boundaries — same rationale as the list + vs-revenue
+      // endpoints. Keeps the summary card on the Accounting tab consistent
+      // with the by-category breakdown, the export totals, and the
+      // Cash Flow numbers.
+      where.date = {};
+      if (q.from) where.date.gte = etMidnight(q.from);
+      if (q.to) where.date.lte = etEndOfDay(q.to);
     }
-    const all = await prisma.businessExpense.findMany({
-      where,
-      select: {
-        date: true,
-        cost: true,
-        category: true,
-        occurrenceId: true,
-        occurrence: { select: { completedAt: true } },
-      },
-    });
+    // Business Start Date filter — pre-cutoff rows excluded from totals.
+    const summaryCutoff = await resolveCutoff(req);
+    if (summaryCutoff) {
+      const existingGte = where.date?.gte;
+      where.date = {
+        ...(where.date ?? {}),
+        gte: existingGte && existingGte > summaryCutoff ? existingGte : summaryCutoff,
+      };
+    }
+    const all = await prisma.businessExpense.findMany({ where, select: { date: true, cost: true, category: true } });
     let today = 0, thisWeek = 0, thisMonth = 0, thisYear = 0, total = 0;
     const byCategory: Record<string, number> = {};
     for (const e of all) {
-      const eff = effectiveExpenseDate(e);
       total += e.cost;
-      if (eff >= startOfToday) today += e.cost;
-      if (eff >= startOfWeek) thisWeek += e.cost;
-      if (eff >= startOfMonth) thisMonth += e.cost;
-      if (eff >= startOfYear) thisYear += e.cost;
+      if (e.date >= startOfToday) today += e.cost;
+      if (e.date >= startOfWeek) thisWeek += e.cost;
+      if (e.date >= startOfMonth) thisMonth += e.cost;
+      if (e.date >= startOfYear) thisYear += e.cost;
       const cat = e.category || "(Uncategorized)";
       byCategory[cat] = (byCategory[cat] ?? 0) + e.cost;
     }
@@ -4902,6 +4876,27 @@ Respond ONLY with valid JSON in this exact format:
     if (cutoff && cutoff > start) start = cutoff;
     const { buildPnLReport } = await import("../services/pnlReport");
     return buildPnLReport(start, end, { fromStr: q.from, toStr: q.to });
+  });
+
+  // Drill-down rows for a specific qbAccount in the P&L. The Preview tab
+  // uses this when the operator expands a row — same date range as the
+  // report, plus the qbAccount string that identifies which line to
+  // detail. See pnlReportDetails in services/pnlReport.ts.
+  app.get("/admin/business-expenses/pnl-report/details", superGuard, async (req: any) => {
+    const q = (req.query || {}) as { from?: string; to?: string; qbAccount?: string };
+    if (!q.from || !q.to) {
+      throw app.httpErrors.badRequest("from and to query params required (YYYY-MM-DD).");
+    }
+    const qbAccount = (q.qbAccount ?? "").trim();
+    if (!qbAccount) {
+      throw app.httpErrors.badRequest("qbAccount query param required.");
+    }
+    let start = etMidnight(q.from);
+    const end = etEndOfDay(q.to);
+    const cutoff = await resolveCutoff(req);
+    if (cutoff && cutoff > start) start = cutoff;
+    const { pnlReportDetails } = await import("../services/pnlReport");
+    return pnlReportDetails(start, end, qbAccount);
   });
 
   // Recurring-expense suggestions. Groups freestanding (non-job, non-supply)
@@ -6143,25 +6138,20 @@ Respond ONLY with valid JSON in this exact format:
     return services.paymentRequests.sendForOccurrence(uid, String(req.params.id), { regenerateToken: regenerate });
   });
 
-  // ── Exports (super-admin only) ──────────────────────────────────────────
-  // CSV downloads for verifying payroll/bookkeeping data before Gusto/QB
-  // subscriptions go live. All routes anchor on Payment.confirmedAt (cash-
-  // basis) except qb-expenses which uses BusinessExpense.date.
+  // ── Money → Preview tab CSVs (super-admin only) ────────────────────────
+  // Two flat CSVs for visual reconciliation against QuickBooks (which is
+  // now the source of truth, wired directly to the bank):
   //
-  // Every download is persisted as an ExportRun row (bytes + metadata) so
-  // the history view can re-serve the exact file later for CPA review.
-  const {
-    gustoW2Csv,
-    gustoContractorsCsv,
-    qbIncomeCsv,
-    qbExpensesCsv,
-    qbEquityCsv,
-    qbFixedAssetsCsv,
-    exportPreview,
-    exportPreviewDetails,
-    findUnmappedExpenseRows,
-  } = await import("../services/exports");
-  const JSZip = (await import("jszip")).default;
+  //   expenses.csv — BusinessExpense rows (EXPENSE + CAPITAL_CONTRIBUTION
+  //                  + OWNER_DRAW) in window; no journal-entry shape, no
+  //                  ledger clearing lines.
+  //   workers.csv  — one row per worker per job in window, with the
+  //                  parent payment's gross / processor fee / net so
+  //                  the operator can match Venmo deposits in QB.
+  //
+  // Both anchor on effective dates (occurrence.completedAt for per-job
+  // expenses; Payment.confirmedAt for worker rows). No history saved.
+  const { expensesCsv, capitalCsv, incomeCsv } = await import("../services/exports");
 
   function readDateRange(req: any): { start: Date; end: Date } {
     const startStr = String(req.query?.start ?? "");
@@ -6175,10 +6165,9 @@ Respond ONLY with valid JSON in this exact format:
     return { start, end };
   }
 
-  // Business Start Date filter — clamps the export window's lower bound to
-  // the cutoff. Logs a warning so the operator has an audit breadcrumb in
-  // case they ran an export thinking they had full history. Returns the
-  // same `start` when the cutoff is off (null). See
+  // Business Start Date filter — clamps the export window's lower bound
+  // to the cutoff. Logs a warning so the operator has an audit breadcrumb
+  // when they ran an export thinking they had full history. See
   // lib/businessStartCutoff.ts and the Tax Export Integrity memory note.
   async function clampExportStartToCutoff(req: any, start: Date): Promise<Date> {
     const cutoff = await resolveCutoff(req);
@@ -6193,298 +6182,38 @@ Respond ONLY with valid JSON in this exact format:
     return start;
   }
 
-  // Persist + serve a single CSV. Stores the exact bytes the operator
-  // received so a re-download from history is byte-identical, UNLESS the
-  // caller passes `saveHistory=false` — in which case the bytes are
-  // delivered but no ExportRun row is created. The toggle lets the
-  // operator grab an ad-hoc export (e.g. for spot-checking) without
-  // polluting the audit history.
-  async function deliverCsv(
-    reply: FastifyReply,
-    userId: string,
-    kind:
-      | "GUSTO_W2"
-      | "GUSTO_CONTRACTORS"
-      | "QB_INCOME"
-      | "QB_EXPENSES"
-      | "QB_EQUITY"
-      | "QB_FIXED_ASSETS",
-    range: { start: Date; end: Date; startStr: string; endStr: string },
-    fileSlug: string,
-    result: { csv: string; rowCount: number; total: number },
-    saveHistory: boolean,
-  ) {
+  function deliverPlainCsv(reply: FastifyReply, fileSlug: string, range: { startStr: string; endStr: string }, csv: string) {
     const fn = `${fileSlug}-${range.startStr}_${range.endStr}.csv`;
-    const bytes = Buffer.from(result.csv, "utf-8");
-    if (saveHistory) {
-      await prisma.exportRun.create({
-        data: {
-          createdById: userId,
-          kind,
-          rangeStart: range.start,
-          rangeEnd: range.end,
-          rowCount: result.rowCount,
-          totalAmount: result.total,
-          fileName: fn,
-          contentType: "text/csv; charset=utf-8",
-          bytes,
-        },
-      });
-      // Mirror to the audit log so CSV downloads surface in the Audit
-      // Log tab alongside other admin actions. ExportRun already stores
-      // the full bytes; this is the operator-facing summary record.
-      await writeAudit(prisma, AUDIT.EXPORT.DOWNLOADED, userId, {
-        kind,
-        rangeStart: range.startStr,
-        rangeEnd: range.endStr,
-        rowCount: result.rowCount,
-        totalAmount: result.total,
-        fileName: fn,
-      });
-    }
     reply.header("Content-Type", "text/csv; charset=utf-8");
     reply.header("Content-Disposition", `attachment; filename="${fn}"`);
-    return reply.send(bytes);
+    return reply.send(Buffer.from(csv, "utf-8"));
   }
 
-  // Parse the `saveHistory` query param. Default = true (preserves
-  // existing audit-trail behavior). The client opts out by passing
-  // `saveHistory=0` or `false`.
-  function readSaveHistory(req: any): boolean {
-    const raw = req.query?.saveHistory;
-    if (raw == null) return true;
-    const s = String(raw).toLowerCase();
-    return !(s === "false" || s === "0");
-  }
-
-  // qb-expenses (and the zip that contains it) is blocked when any row in
-  // the window has no qbAccount mapping — the operator must fix the
-  // EXPENSE_CATEGORIES taxonomy first. 409 Conflict is the canonical "the
-  // request is well-formed but the resource state forbids it" code.
-  async function assertNoUnmappedExpenseRows(start: Date, end: Date) {
-    const unmapped = await findUnmappedExpenseRows(start, end);
-    if (unmapped.length > 0) {
-      throw app.httpErrors.conflict(
-        `${unmapped.length} expense row(s) have no QB account mapping. Fix the EXPENSE_CATEGORIES setting before exporting.`,
-      );
-    }
-  }
-
-  app.get("/admin/exports/preview", superGuard, async (req: any) => {
-    const { start, end } = readDateRange(req);
-    const effectiveStart = await clampExportStartToCutoff(req, start);
-    return exportPreview(effectiveStart, end);
-  });
-
-  // Per-section detail rows for the Exports tab's "Preview totals"
-  // expand/collapse. Same query window as /preview; section keys match
-  // the Preview totals card. See exportPreviewDetails in services/exports.ts.
-  app.get("/admin/exports/preview/details", superGuard, async (req: any) => {
-    const { start, end } = readDateRange(req);
-    const effectiveStart = await clampExportStartToCutoff(req, start);
-    const section = String(req.query?.section ?? "") as
-      | "gusto-w2"
-      | "gusto-contractors"
-      | "qb-income"
-      | "qb-expenses"
-      | "qb-fixed-assets"
-      | "qb-equity";
-    const valid = new Set(["gusto-w2", "gusto-contractors", "qb-income", "qb-expenses", "qb-fixed-assets", "qb-equity"]);
-    if (!valid.has(section)) {
-      throw app.httpErrors.badRequest(`Unknown preview section: ${section}`);
-    }
-    return exportPreviewDetails(effectiveStart, end, section);
-  });
-
-  app.get("/admin/exports/gusto-w2.csv", superGuard, async (req: any, reply: FastifyReply) => {
+  app.get("/admin/exports/expenses.csv", superGuard, async (req: any, reply: FastifyReply) => {
     const { start, end } = readDateRange(req);
     const effectiveStart = await clampExportStartToCutoff(req, start);
     const startStr = String(req.query.start);
     const endStr = String(req.query.end);
-    const result = await gustoW2Csv(effectiveStart, end);
-    return deliverCsv(reply, await currentUserId(req), "GUSTO_W2", { start: effectiveStart, end, startStr, endStr }, "gusto-w2", result, readSaveHistory(req));
+    const result = await expensesCsv(effectiveStart, end);
+    return deliverPlainCsv(reply, "expenses", { startStr, endStr }, result.csv);
   });
 
-  app.get("/admin/exports/gusto-contractors.csv", superGuard, async (req: any, reply: FastifyReply) => {
+  app.get("/admin/exports/capital.csv", superGuard, async (req: any, reply: FastifyReply) => {
     const { start, end } = readDateRange(req);
     const effectiveStart = await clampExportStartToCutoff(req, start);
     const startStr = String(req.query.start);
     const endStr = String(req.query.end);
-    const actorId = await currentUserId(req);
-    const result = await gustoContractorsCsv(effectiveStart, end);
-    return deliverCsv(reply, actorId, "GUSTO_CONTRACTORS", { start: effectiveStart, end, startStr, endStr }, "gusto-contractors", result, readSaveHistory(req));
+    const result = await capitalCsv(effectiveStart, end);
+    return deliverPlainCsv(reply, "capital", { startStr, endStr }, result.csv);
   });
 
-  app.get("/admin/exports/qb-income.csv", superGuard, async (req: any, reply: FastifyReply) => {
+  app.get("/admin/exports/income.csv", superGuard, async (req: any, reply: FastifyReply) => {
     const { start, end } = readDateRange(req);
     const effectiveStart = await clampExportStartToCutoff(req, start);
     const startStr = String(req.query.start);
     const endStr = String(req.query.end);
-    const result = await qbIncomeCsv(effectiveStart, end);
-    return deliverCsv(reply, await currentUserId(req), "QB_INCOME", { start: effectiveStart, end, startStr, endStr }, "qb-journal-income", result, readSaveHistory(req));
+    const result = await incomeCsv(effectiveStart, end);
+    return deliverPlainCsv(reply, "income", { startStr, endStr }, result.csv);
   });
 
-  app.get("/admin/exports/qb-expenses.csv", superGuard, async (req: any, reply: FastifyReply) => {
-    const { start, end } = readDateRange(req);
-    const effectiveStart = await clampExportStartToCutoff(req, start);
-    await assertNoUnmappedExpenseRows(effectiveStart, end);
-    const startStr = String(req.query.start);
-    const endStr = String(req.query.end);
-    const result = await qbExpensesCsv(effectiveStart, end);
-    return deliverCsv(reply, await currentUserId(req), "QB_EXPENSES", { start: effectiveStart, end, startStr, endStr }, "qb-journal-expenses", result, readSaveHistory(req));
-  });
-
-  // Equity export — capital contributions + owner draws. Separate file from
-  // qb-expenses because these post to QB equity accounts (balance sheet),
-  // not P&L expense lines. Mixing would mis-categorize on import.
-  app.get("/admin/exports/qb-equity.csv", superGuard, async (req: any, reply: FastifyReply) => {
-    const { start, end } = readDateRange(req);
-    const effectiveStart = await clampExportStartToCutoff(req, start);
-    const startStr = String(req.query.start);
-    const endStr = String(req.query.end);
-    const result = await qbEquityCsv(effectiveStart, end);
-    return deliverCsv(reply, await currentUserId(req), "QB_EQUITY", { start: effectiveStart, end, startStr, endStr }, "qb-equity", result, readSaveHistory(req));
-  });
-
-  // Fixed Assets export — capital purchases (≥ $500 on/after the policy
-  // start date). Excluded from qb-expenses.csv so the P&L doesn't show
-  // them as period costs; they're depreciated over the asset's life
-  // through regular Depreciation expense entries instead.
-  app.get("/admin/exports/qb-fixed-assets.csv", superGuard, async (req: any, reply: FastifyReply) => {
-    const { start, end } = readDateRange(req);
-    const effectiveStart = await clampExportStartToCutoff(req, start);
-    const startStr = String(req.query.start);
-    const endStr = String(req.query.end);
-    const result = await qbFixedAssetsCsv(effectiveStart, end);
-    return deliverCsv(reply, await currentUserId(req), "QB_FIXED_ASSETS", { start: effectiveStart, end, startStr, endStr }, "qb-fixed-assets", result, readSaveHistory(req));
-  });
-
-  // QB bundle — income + expenses + equity + fixed assets in one zip so the
-  // operator can hand one file to QuickBooks Import. Blocked by the same
-  // unmapped check qb-expenses.csv uses (the zip would include those rows).
-  // Gusto bundle — W-2 + Contractors in one zip so the operator can grab
-  // a single file each pay period. No "unmapped" check (the Gusto CSVs
-  // don't go through the QB chart-of-accounts mapping path) — just zips
-  // whatever the two CSV builders produce for the date range.
-  app.get("/admin/exports/gusto-bundle.zip", superGuard, async (req: any, reply: FastifyReply) => {
-    const { start, end } = readDateRange(req);
-    const effectiveStart = await clampExportStartToCutoff(req, start);
-    const startStr = String(req.query.start);
-    const endStr = String(req.query.end);
-    const actorId = await currentUserId(req);
-    const [w2, contractors] = await Promise.all([
-      gustoW2Csv(effectiveStart, end),
-      gustoContractorsCsv(effectiveStart, end),
-    ]);
-    const zip = new JSZip();
-    zip.file(`gusto-w2-${startStr}_${endStr}.csv`, w2.csv);
-    zip.file(`gusto-contractors-${startStr}_${endStr}.csv`, contractors.csv);
-    const bytes = await zip.generateAsync({ type: "nodebuffer" });
-    const fn = `gusto-bundle-${startStr}_${endStr}.zip`;
-    if (readSaveHistory(req)) {
-      await prisma.exportRun.create({
-        data: {
-          createdById: await currentUserId(req),
-          kind: "GUSTO_BUNDLE",
-          rangeStart: effectiveStart,
-          rangeEnd: end,
-          rowCount: w2.rowCount + contractors.rowCount,
-          totalAmount: w2.total + contractors.total,
-          fileName: fn,
-          contentType: "application/zip",
-          bytes,
-        },
-      });
-    }
-    reply.header("Content-Type", "application/zip");
-    reply.header("Content-Disposition", `attachment; filename="${fn}"`);
-    return reply.send(bytes);
-  });
-
-  app.get("/admin/exports/qb-bundle.zip", superGuard, async (req: any, reply: FastifyReply) => {
-    const { start, end } = readDateRange(req);
-    const effectiveStart = await clampExportStartToCutoff(req, start);
-    await assertNoUnmappedExpenseRows(effectiveStart, end);
-    const startStr = String(req.query.start);
-    const endStr = String(req.query.end);
-    const [income, expenses, equity, fixedAssets] = await Promise.all([
-      qbIncomeCsv(effectiveStart, end),
-      qbExpensesCsv(effectiveStart, end),
-      qbEquityCsv(effectiveStart, end),
-      qbFixedAssetsCsv(effectiveStart, end),
-    ]);
-    const zip = new JSZip();
-    zip.file(`qb-journal-income-${startStr}_${endStr}.csv`, income.csv);
-    zip.file(`qb-journal-expenses-${startStr}_${endStr}.csv`, expenses.csv);
-    zip.file(`qb-equity-${startStr}_${endStr}.csv`, equity.csv);
-    zip.file(`qb-fixed-assets-${startStr}_${endStr}.csv`, fixedAssets.csv);
-    const bytes = await zip.generateAsync({ type: "nodebuffer" });
-    const fn = `qb-bundle-${startStr}_${endStr}.zip`;
-    if (readSaveHistory(req)) {
-      await prisma.exportRun.create({
-        data: {
-          createdById: await currentUserId(req),
-          kind: "QB_BUNDLE",
-          rangeStart: effectiveStart,
-          rangeEnd: end,
-          rowCount: income.rowCount + expenses.rowCount + equity.rowCount + fixedAssets.rowCount,
-          totalAmount: income.total + expenses.total + equity.total + fixedAssets.total,
-          fileName: fn,
-          contentType: "application/zip",
-          bytes,
-        },
-      });
-    }
-    reply.header("Content-Type", "application/zip");
-    reply.header("Content-Disposition", `attachment; filename="${fn}"`);
-    return reply.send(bytes);
-  });
-
-  // History — list previous downloads (most recent first). Bytes are NOT
-  // returned here; the re-download route below streams them.
-  app.get("/admin/exports/history", superGuard, async (req: any) => {
-    const limitRaw = Number(req.query?.limit ?? 50);
-    const limit = Math.min(200, Math.max(1, Number.isFinite(limitRaw) ? limitRaw : 50));
-    const rows = await prisma.exportRun.findMany({
-      orderBy: { createdAt: "desc" },
-      take: limit,
-      select: {
-        id: true,
-        createdAt: true,
-        kind: true,
-        rangeStart: true,
-        rangeEnd: true,
-        rowCount: true,
-        totalAmount: true,
-        fileName: true,
-        contentType: true,
-        createdBy: { select: { id: true, displayName: true, email: true } },
-      },
-    });
-    return rows;
-  });
-
-  // Re-download a historical export, byte-identical to the original.
-  app.get("/admin/exports/history/:id/download", superGuard, async (req: any, reply: FastifyReply) => {
-    const id = String(req.params.id);
-    const row = await prisma.exportRun.findUnique({ where: { id } });
-    if (!row) throw app.httpErrors.notFound("Export run not found.");
-    reply.header("Content-Type", row.contentType);
-    reply.header("Content-Disposition", `attachment; filename="${row.fileName}"`);
-    return reply.send(Buffer.from(row.bytes));
-  });
-
-  // Permanently delete an export history entry. Super-only; the UI gates
-  // behind a double-confirm dialog so accidental clicks can't blow away the
-  // snapshot. The underlying tax/payroll data is unaffected — only the
-  // previously-downloaded file bytes + metadata go away. No audit log entry
-  // (no EXPORT AuditScope exists yet); if export-deletion forensics become
-  // important, add the scope + a writeAudit call here.
-  app.delete("/admin/exports/history/:id", superGuard, async (req: any) => {
-    const id = String(req.params.id);
-    const row = await prisma.exportRun.findUnique({ where: { id }, select: { id: true } });
-    if (!row) throw app.httpErrors.notFound("Export run not found.");
-    await prisma.exportRun.delete({ where: { id } });
-    return { ok: true };
-  });
 }
