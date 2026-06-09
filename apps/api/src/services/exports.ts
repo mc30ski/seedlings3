@@ -1,5 +1,6 @@
 import { prisma } from "../db/prisma";
 import { etFormatDate } from "../lib/dates";
+import { loadExpenseCategories } from "./expenseCategories";
 import {
   computeBreakdown,
   loadRates,
@@ -94,6 +95,7 @@ async function loadConfirmedPayments(start: Date, end: Date) {
         select: {
           id: true,
           title: true,
+          workflow: true,
           startedAt: true,
           completedAt: true,
           totalPausedMs: true,
@@ -107,7 +109,8 @@ async function loadConfirmedPayments(start: Date, end: Date) {
             select: {
               // Job doesn't have a `title` field — the operator-facing
               // label on each row uses JobOccurrence.title (selected
-              // above) and falls back to Job.description.
+              // above), falling back to Job.description, then to a
+              // workflow-derived label (e.g. "Recurring service").
               description: true,
               property: {
                 select: {
@@ -618,15 +621,34 @@ export async function expensesCsv(start: Date, end: Date): Promise<CsvResult> {
   // expenses on future jobs don't appear until those jobs complete.
   // Equity entries (CAPITAL_CONTRIBUTION / OWNER_DRAW) flow through
   // capitalCsv instead — different account class, must not be mixed.
-  const rows = await prisma.businessExpense.findMany({
-    where: {
-      type: "EXPENSE",
-      ...expenseAnchorDateWhere(start, end),
-    },
-    include: {
-      occurrence: { select: { completedAt: true } },
-    },
-  });
+  //
+  // Schedule C Line + Accounting Mapping columns join the row's
+  // `category` to the EXPENSE_CATEGORIES taxonomy. Categories not in
+  // the taxonomy (or no longer in it) leave those columns blank — the
+  // CSV still lists the row so it isn't silently dropped.
+  const [rows, categories] = await Promise.all([
+    prisma.businessExpense.findMany({
+      where: {
+        type: "EXPENSE",
+        ...expenseAnchorDateWhere(start, end),
+      },
+      include: {
+        occurrence: { select: { completedAt: true } },
+      },
+    }),
+    loadExpenseCategories(),
+  ]);
+
+  // Category-label → (scheduleCLine, qbAccount) lookup. Reading the
+  // taxonomy once outside the row loop keeps the CSV O(rows) instead
+  // of O(rows × categories) on a long history window.
+  const catMeta = new Map<string, { scheduleCLine: string; accountingMapping: string }>();
+  for (const c of categories) {
+    catMeta.set(c.label, {
+      scheduleCLine: c.scheduleCLine ?? "",
+      accountingMapping: c.qbAccount ?? "",
+    });
+  }
 
   // Sort by effective date so the file reads chronologically. Within
   // the same date, alphabetize by description for stable diffs run-to-run.
@@ -641,6 +663,8 @@ export async function expensesCsv(start: Date, end: Date): Promise<CsvResult> {
   const header = [
     "Date",
     "Category",
+    "Schedule C Line",
+    "Accounting Mapping",
     "Description",
     "Vendor",
     "Amount",
@@ -649,10 +673,13 @@ export async function expensesCsv(start: Date, end: Date): Promise<CsvResult> {
   let total = 0;
   let rowCount = 0;
   for (const { r, effDate } of enriched) {
+    const meta = catMeta.get(r.category ?? "");
     lines.push(
       csvRow([
         toIsoDate(effDate),
         r.category ?? "",
+        meta?.scheduleCLine ?? "",
+        meta?.accountingMapping ?? "",
         r.description ?? "",
         r.vendor ?? "",
         round2(r.cost).toFixed(2),
@@ -663,7 +690,7 @@ export async function expensesCsv(start: Date, end: Date): Promise<CsvResult> {
   }
   // Final TOTALS line — operator can eyeball the bottom line against
   // the in-app P&L Expenses subtotal for the same window.
-  lines.push(csvRow(["TOTALS", "", "", "", round2(total).toFixed(2)]));
+  lines.push(csvRow(["TOTALS", "", "", "", "", "", round2(total).toFixed(2)]));
   return { csv: finalizeCsv(lines), rowCount, total: round2(total) };
 }
 
@@ -769,19 +796,44 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
     }
   }
 
+  // Fallback for the Job column when neither JobOccurrence.title nor
+  // Job.description is set (typical for STANDARD recurring service
+  // jobs — they live on a schedule, not a title). Maps the occurrence's
+  // workflow to a readable phrase so the column is never silently empty.
+  function workflowLabel(w: string | null | undefined): string {
+    switch (w) {
+      case "STANDARD": return "Recurring service";
+      case "ONE_OFF": return "One-off service";
+      case "ESTIMATE": return "Estimate";
+      case "TASK": return "Task";
+      case "REMINDER": return "Reminder";
+      case "EVENT": return "Event";
+      case "FOLLOWUP": return "Followup";
+      case "ANNOUNCEMENT": return "Announcement";
+      default: return "";
+    }
+  }
+
+  // Numeric column cells render as a string when populated, empty when
+  // null — distinguishes "not applicable" from "zero." Used on rental
+  // rows for Processor Fee / Platform Fee / Top-up where those columns
+  // don't logically apply, instead of a misleading "0.00".
   type Row = {
     date: string;
-    source: string;       // "Service" or "Equipment Rental"
-    recipient: string;    // worker name OR "Business" for rental income
+    source: string;
+    recipient: string;
     recipientType: string;
     recipientEmail: string;
-    client: string;       // client name (service) or renter name (rental)
-    property: string;     // property name (service) or equipment name (rental)
-    job: string;          // job title (service) or empty (rental)
+    client: string;
+    property: string;
+    job: string;
     method: string;
-    grossCharged: number;
-    processorFee: number;
-    netReceived: number;
+    paymentGross: number | null;
+    processorFee: number | null;
+    paymentNet: number | null;
+    rowGrossShare: number | null;
+    rowPlatformFee: number | null;
+    rowTopUp: number | null;
     amount: number;
   };
   const rows: Row[] = [];
@@ -791,17 +843,36 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
     const job: any = occ?.job ?? null;
     const property: any = job?.property ?? null;
     const client: any = property?.client ?? null;
-    const grossCharged = round2((p as any).grossCharged ?? p.amountPaid ?? 0);
+    const paymentGross = round2((p as any).grossCharged ?? p.amountPaid ?? 0);
     const processorFee = round2((p as any).processorFeeAmount ?? 0);
-    const netReceived = round2(grossCharged - processorFee);
+    const paymentNet = round2(paymentGross - processorFee);
     const dateLabel = p.confirmedAt ? toIsoDate(p.confirmedAt) : "";
     const propertyName = property?.displayName ?? "";
     const clientName = client?.displayName ?? "";
-    const jobTitle = occ?.title ?? job?.description ?? "";
+    // Job label: explicit title → job description → workflow-derived
+    // phrase. Never empty for service-payment rows.
+    const jobTitle =
+      occ?.title?.trim() ||
+      job?.description?.trim() ||
+      workflowLabel(occ?.workflow);
     const method = p.method ?? "";
     for (const sp of p.splits) {
       const user = sp.user;
-      const isOwnerCut = (sp as any).ownerEarnings === true;
+      const spAny = sp as any;
+      const isOwnerCut = spAny.ownerEarnings === true;
+      // Pre-deduction row fields fall back to `amount` when historical
+      // splits (pre-reconciliation migration) don't have the breakdown
+      // populated — better to show the final number on both sides than
+      // a misleading blank where a zero would imply "no gross share."
+      const rowGrossShare = spAny.grossAmount != null
+        ? round2(spAny.grossAmount)
+        : round2(sp.amount ?? 0);
+      const rowPlatformFee = spAny.feeAmount != null
+        ? round2(spAny.feeAmount)
+        : null;
+      const rowTopUp = spAny.topUpAmount != null && spAny.topUpAmount !== 0
+        ? round2(spAny.topUpAmount)
+        : null;
       rows.push({
         date: dateLabel,
         source: "Service",
@@ -812,9 +883,12 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
         property: propertyName,
         job: jobTitle,
         method,
-        grossCharged,
+        paymentGross,
         processorFee,
-        netReceived,
+        paymentNet,
+        rowGrossShare,
+        rowPlatformFee,
+        rowTopUp,
         amount: round2(sp.amount ?? 0),
       });
     }
@@ -826,6 +900,10 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
       c.equipment?.shortDesc ||
       "Equipment rental";
     const rentalCost = round2(c.rentalCost ?? 0);
+    // Equipment rentals have no payment-processor leg and no
+    // platform-fee / top-up bookkeeping — those fields stay null so
+    // the CSV renders blank cells (avoids "0.00" reading as a real
+    // zero-dollar deduction).
     rows.push({
       date: c.releasedAt ? toIsoDate(c.releasedAt) : "",
       source: "Equipment Rental",
@@ -836,9 +914,12 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
       property: equipName,
       job: "",
       method: "",
-      grossCharged: rentalCost,
-      processorFee: 0,
-      netReceived: rentalCost,
+      paymentGross: rentalCost,
+      processorFee: null,
+      paymentNet: rentalCost,
+      rowGrossShare: rentalCost,
+      rowPlatformFee: null,
+      rowTopUp: null,
       amount: rentalCost,
     });
   }
@@ -853,6 +934,12 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
     return a.recipient.localeCompare(b.recipient);
   });
 
+  // Column layout tells the story per row: payment-level context
+  // (what the client paid + what landed in the bank), then the
+  // row-level breakdown (this row's share of gross → minus platform
+  // fee → plus top-up → final amount). Operator can trace from the
+  // payment deposit on the right (Payment Net) to a worker's payout
+  // (Amount) without doing arithmetic in their head.
   const header = [
     "Date",
     "Source",
@@ -863,13 +950,21 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
     "Property / Equipment",
     "Job",
     "Payment Method",
-    "Gross Charged",
+    "Payment Gross",
     "Processor Fee",
-    "Net Received",
+    "Payment Net",
+    "Row Gross Share",
+    "Row Platform Fee",
+    "Row Top-up",
     "Amount",
   ];
   const lines: string[] = [csvRow(header)];
   let amountTotal = 0;
+  // Empty cell when the underlying number is null (rentals); fixed-2
+  // string otherwise. Matches the rest of the file's number formatting.
+  function fmtNum(n: number | null): string {
+    return n == null ? "" : n.toFixed(2);
+  }
   for (const r of rows) {
     lines.push(
       csvRow([
@@ -882,9 +977,12 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
         r.property,
         r.job,
         r.method,
-        r.grossCharged.toFixed(2),
-        r.processorFee.toFixed(2),
-        r.netReceived.toFixed(2),
+        fmtNum(r.paymentGross),
+        fmtNum(r.processorFee),
+        fmtNum(r.paymentNet),
+        fmtNum(r.rowGrossShare),
+        fmtNum(r.rowPlatformFee),
+        fmtNum(r.rowTopUp),
         r.amount.toFixed(2),
       ]),
     );
@@ -892,22 +990,15 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
   }
   // TOTALS sums the Amount column only — that captures total inflow
   // (worker payouts + business's cut + equipment rental income).
-  // Gross/Fee/Net are intentionally NOT totaled — they'd double-count
-  // when a payment has multiple splits.
+  // Payment-level + row-deduction columns are intentionally NOT
+  // totaled — they'd double-count payment numbers across splits and
+  // mix incomparable per-row breakdowns.
   lines.push(
     csvRow([
       "TOTALS",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
+      "", "", "", "", "", "", "", "",
+      "", "", "",
+      "", "", "",
       round2(amountTotal).toFixed(2),
     ]),
   );
