@@ -355,6 +355,13 @@ export default function BusinessExpensesTab() {
   // Recurring-expense suggestions panel.
   const [dueSoon, setDueSoon] = useState<DueSoonSuggestion[]>([]);
   const [confirmSkip, setConfirmSkip] = useState<DueSoonSuggestion | null>(null);
+  // Separate confirm state for the "Already recorded" path. Distinct from
+  // Skip because the operator intent differs ("I paid + recorded this
+  // elsewhere — just dismiss" vs. "I'm not paying this cycle"), even
+  // though both end up advancing the next reminder by one cadence via
+  // the same skip-recurrence endpoint.
+  const [confirmAlreadyRecorded, setConfirmAlreadyRecorded] =
+    useState<DueSoonSuggestion | null>(null);
 
   async function load() {
     setLoading(true);
@@ -508,6 +515,34 @@ export default function BusinessExpensesTab() {
       publishInlineMessage({
         type: "ERROR",
         text: getErrorMessage("Skip failed.", err),
+      });
+    }
+  }
+
+  // "Already recorded" path — dismiss the current suggestion because the
+  // operator already entered this period's row separately. Same backend
+  // call as Skip (advances the next reminder by one cadence), different
+  // toast wording because the user intent is different. Reaches this state
+  // when the recorded row's description/vendor/recurrence didn't perfectly
+  // match the predicted series (which would have otherwise auto-advanced
+  // the reminder once the new row became "latest" in the group).
+  async function doAlreadyRecorded(s: DueSoonSuggestion) {
+    const prevDueSoon = dueSoon;
+    setDueSoon((rows) => rows.filter((r) => r.latestId !== s.latestId));
+    try {
+      await apiPost(
+        `/api/admin/business-expenses/${s.latestId}/skip-recurrence`,
+        { skipDate: s.nextExpectedDate },
+      );
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: `Dismissed ${s.prefill.description} — the next reminder will appear when due.`,
+      });
+    } catch (err) {
+      setDueSoon(prevDueSoon);
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Dismiss failed.", err),
       });
     }
   }
@@ -763,8 +798,18 @@ export default function BusinessExpensesTab() {
                         size="sm"
                         variant="ghost"
                         onClick={() => setConfirmSkip(s)}
+                        title="Skip this period — I'm not paying this cycle"
                       >
                         Skip
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        colorPalette="green"
+                        onClick={() => setConfirmAlreadyRecorded(s)}
+                        title="Already recorded — I paid + entered this elsewhere"
+                      >
+                        Already recorded
                       </Button>
                       <Button
                         size="sm"
@@ -1509,6 +1554,47 @@ export default function BusinessExpensesTab() {
                     }}
                   >
                     Skip this period
+                  </Button>
+                </HStack>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
+
+      {/* Already Recorded confirmation — semantically distinct from Skip
+       *  (operator paid + entered the row separately) but uses the same
+       *  skip-recurrence backend call to advance the next reminder. */}
+      <Dialog.Root open={!!confirmAlreadyRecorded} onOpenChange={(e) => { if (!e.open) setConfirmAlreadyRecorded(null); }}>
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content mx="4" maxW="sm" w="full" rounded="2xl" p="4" shadow="lg">
+              <Dialog.Header>
+                <Dialog.Title>Already recorded this period?</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <Text fontSize="sm">
+                  Dismiss the reminder for <b>{confirmAlreadyRecorded?.prefill.description}</b>
+                  {confirmAlreadyRecorded?.prefill.vendor ? <> from <b>{confirmAlreadyRecorded.prefill.vendor}</b></> : null}?
+                  {" "}The next reminder will appear one
+                  {" "}{confirmAlreadyRecorded ? RECURRENCE_NOUNS[confirmAlreadyRecorded.recurrence] : ""}
+                  {" "}from the expected date. Nothing is created here — use this when you've already entered this period's expense via the regular Add Expense flow.
+                </Text>
+              </Dialog.Body>
+              <Dialog.Footer>
+                <HStack justify="flex-end" w="full">
+                  <Button variant="ghost" onClick={() => setConfirmAlreadyRecorded(null)}>Cancel</Button>
+                  <Button
+                    colorPalette="green"
+                    onClick={() => {
+                      if (confirmAlreadyRecorded) {
+                        void doAlreadyRecorded(confirmAlreadyRecorded);
+                        setConfirmAlreadyRecorded(null);
+                      }
+                    }}
+                  >
+                    Dismiss reminder
                   </Button>
                 </HStack>
               </Dialog.Footer>
