@@ -771,9 +771,17 @@ export const jobs: ServicesJobs = {
       if (occ.workflow !== "EVENT") throw new Error("Not an event");
       if (occ.status !== "SCHEDULED") throw new Error("Event is not in SCHEDULED status");
 
+      const completedAt = new Date();
       await tx.jobOccurrence.update({
         where: { id: occurrenceId },
-        data: { status: JobOccurrenceStatus.CLOSED, completedAt: new Date() },
+        data: { status: JobOccurrenceStatus.CLOSED, completedAt },
+      });
+      // Sync any linked BusinessExpense.date to the completion timestamp —
+      // matches the markComplete path so manual SQL inspection + future
+      // reads stay accurate. See deriveJobExpenseDate.
+      await tx.businessExpense.updateMany({
+        where: { occurrenceId },
+        data: { date: completedAt },
       });
 
       let nextOccurrence = null;
@@ -883,9 +891,14 @@ export const jobs: ServicesJobs = {
       if (occ.workflow !== "FOLLOWUP") throw new Error("Not a followup");
       if (occ.status !== "SCHEDULED") throw new Error("Followup is not in SCHEDULED status");
 
+      const completedAt = new Date();
       await tx.jobOccurrence.update({
         where: { id: occurrenceId },
-        data: { status: JobOccurrenceStatus.CLOSED, completedAt: new Date() },
+        data: { status: JobOccurrenceStatus.CLOSED, completedAt },
+      });
+      await tx.businessExpense.updateMany({
+        where: { occurrenceId },
+        data: { date: completedAt },
       });
 
       let nextOccurrence = null;
@@ -992,9 +1005,14 @@ export const jobs: ServicesJobs = {
       if (occ.workflow !== "ANNOUNCEMENT") throw new Error("Not an announcement");
       if (occ.status !== "SCHEDULED") throw new Error("Announcement is not in SCHEDULED status");
 
+      const completedAt = new Date();
       await tx.jobOccurrence.update({
         where: { id: occurrenceId },
-        data: { status: JobOccurrenceStatus.CLOSED, completedAt: new Date() },
+        data: { status: JobOccurrenceStatus.CLOSED, completedAt },
+      });
+      await tx.businessExpense.updateMany({
+        where: { occurrenceId },
+        data: { date: completedAt },
       });
 
       let nextOccurrence = null;
@@ -1285,6 +1303,28 @@ export const jobs: ServicesJobs = {
         where: { id: occurrenceId },
         data,
       });
+
+      // Sync linked BusinessExpense.date whenever the occurrence's
+      // anchor date moved — completedAt change in either direction OR a
+      // startAt reschedule on a not-yet-completed occurrence. See the
+      // longer comment in the markComplete path for the design rationale.
+      const completedAtBefore = original.completedAt ?? null;
+      const completedAtAfter = updated.completedAt ?? null;
+      const startAtBefore = original.startAt ?? null;
+      const startAtAfter = updated.startAt ?? null;
+      const completedAtChanged =
+        (completedAtBefore?.getTime() ?? null) !== (completedAtAfter?.getTime() ?? null);
+      const startAtChanged =
+        (startAtBefore?.getTime() ?? null) !== (startAtAfter?.getTime() ?? null);
+      if (completedAtChanged || (startAtChanged && !completedAtAfter)) {
+        const targetDate = completedAtAfter ?? updated.startAt;
+        if (targetDate) {
+          await tx.businessExpense.updateMany({
+            where: { occurrenceId },
+            data: { date: targetDate },
+          });
+        }
+      }
 
       if (data.status === JobOccurrenceStatus.CANCELED) {
         await tx.jobOccurrenceAssignee.deleteMany({ where: { occurrenceId } });
@@ -2638,6 +2678,36 @@ export const jobs: ServicesJobs = {
         where: { id: occurrenceId },
         data,
       });
+
+      // Sync linked BusinessExpense.date to the occurrence's effective
+      // anchor whenever completedAt transitions in either direction.
+      //   • Completing (completedAt becomes non-null): BE.date = completedAt
+      //     so the job's expenses anchor on the actual completion date in
+      //     reports + exports.
+      //   • Reverting (completedAt cleared): BE.date = startAt so future
+      //     re-completions reset cleanly. Matches deriveJobExpenseDate.
+      // Read-side queries also clip to occurrence.completedAt regardless
+      // of BE.date (expenseAnchorDateWhere), so this sync is for keeping
+      // the column itself semantically correct — manual SQL, future code,
+      // and the operator-facing list all read the right date.
+      const completedAtBefore = occ.completedAt ?? null;
+      const completedAtAfter =
+        data.completedAt === null
+          ? null
+          : data.completedAt instanceof Date
+            ? data.completedAt
+            : completedAtBefore;
+      if (
+        (completedAtBefore?.getTime() ?? null) !== (completedAtAfter?.getTime() ?? null)
+      ) {
+        const targetDate = completedAtAfter ?? updated.startAt;
+        if (targetDate) {
+          await tx.businessExpense.updateMany({
+            where: { occurrenceId },
+            data: { date: targetDate },
+          });
+        }
+      }
 
       // Inventory hooks: same lifecycle policy as the `update` path above.
       // ACTIVE holds → CONSUMED on entering CLOSED/PENDING_PAYMENT/PROPOSAL_SUBMITTED;

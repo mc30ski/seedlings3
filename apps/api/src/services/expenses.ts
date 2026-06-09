@@ -33,6 +33,31 @@ function resolveDate(raw: string | null | undefined): Date {
   return d;
 }
 
+/**
+ * Derive the BusinessExpense.date for a job-attached expense. If the
+ * operator explicitly typed a date, honor it (e.g. they bought supplies
+ * on Tuesday but logged the expense on Thursday — keep Tuesday). If no
+ * date was provided, anchor on the occurrence:
+ *   • completed jobs → `occurrence.completedAt`
+ *   • not-yet-completed jobs → `occurrence.startAt` (the planned date)
+ *
+ * Before this helper existed, `resolveDate(null)` returned `new Date()`,
+ * which meant the BE row was anchored on "right now" — wrong for
+ * future-dated jobs and a constant source of date-mismatch bugs in
+ * exports and cash-flow views. Read-side queries also clip to
+ * `occurrence.completedAt` regardless of BE.date (see
+ * `expenseAnchorDateWhere` in services/exports.ts), but having BE.date
+ * itself be semantically correct keeps manual SQL inspection accurate
+ * and prevents drift in any future code that reads BE.date directly.
+ */
+function deriveJobExpenseDate(
+  occurrence: { startAt: Date | null; completedAt: Date | null },
+  raw: string | null | undefined,
+): Date {
+  if (raw) return resolveDate(raw);
+  return occurrence.completedAt ?? occurrence.startAt ?? new Date();
+}
+
 const expenseInclude = {
   createdBy: { select: { id: true, displayName: true } },
   businessExpense: true,
@@ -84,7 +109,9 @@ export const expenses: ServicesExpenses = {
     }
 
     const category = await normalizeCategory(input.category);
-    const date = resolveDate(input.date);
+    // Job-attached expense: anchor on the occurrence (completedAt if done,
+    // startAt if not) when no explicit date is given. See deriveJobExpenseDate.
+    const date = deriveJobExpenseDate(occ, input.date);
     const vendor = input.vendor ? input.vendor.trim() || null : null;
     const trimmedDescription = description.trim();
 
@@ -235,8 +262,15 @@ export const expenses: ServicesExpenses = {
     if (cost <= 0) throw new ServiceError("INVALID_AMOUNT", "Expense cost must be greater than zero.", 400);
     if (!description || !description.trim()) throw new ServiceError("INVALID_INPUT", "Expense description is required.", 400);
 
+    const occ = await prisma.jobOccurrence.findUnique({
+      where: { id: occurrenceId },
+      select: { startAt: true, completedAt: true },
+    });
+    if (!occ) throw new ServiceError("NOT_FOUND", "Occurrence not found.", 404);
+
     const category = await normalizeCategory(input.category);
-    const date = resolveDate(input.date);
+    // Job-attached: anchor on the occurrence — see deriveJobExpenseDate.
+    const date = deriveJobExpenseDate(occ, input.date);
     const vendor = input.vendor ? input.vendor.trim() || null : null;
     const trimmedDescription = description.trim();
 

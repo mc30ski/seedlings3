@@ -44,6 +44,7 @@ import {
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import TimelineEventDialog from "@/src/ui/dialogs/TimelineEventDialog";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
+import TruncatedText from "@/src/ui/components/TruncatedText";
 import { rruleLabel } from "@/src/ui/components/RRuleEditor";
 import {
   DEFAULT_TIMELINE_CATEGORIES,
@@ -108,6 +109,20 @@ function relativeLabel(iso: string): string {
   if (months < 12) return `in about ${months} months`;
   const years = Math.round(d / 365);
   return years === 1 ? "in about 1 year" : `in about ${years} years`;
+}
+// Used by the "Completed past N days" view where the anchor date is the
+// historical lastCompletedAt — relativeLabel above would render "overdue
+// X days" which reads wrong for a deliberately-completed item.
+function pastRelativeLabel(iso: string): string {
+  const ago = -diffDays(iso);
+  if (ago <= 0) return "today";
+  if (ago === 1) return "yesterday";
+  if (ago < 30) return `${ago} days ago`;
+  if (ago < 60) return "about 1 month ago";
+  const months = Math.round(ago / 30);
+  if (months < 12) return `about ${months} months ago`;
+  const years = Math.round(ago / 365);
+  return years === 1 ? "about 1 year ago" : `about ${years} years ago`;
 }
 function urgencyOf(iso: string): "past" | "urgent" | "soon" | "future" {
   const d = diffDays(iso);
@@ -179,6 +194,11 @@ export default function TimelineTab({ isSuper = false }: Props) {
   // Description preview dialog — null when closed, holds the row when open.
   const [descriptionView, setDescriptionView] = useState<EventRow | null>(null);
   const [showArchived, setShowArchived] = useState(false);
+  // "Completed (past N days)" — exclusive view-mode that swaps the
+  // default upcoming list for events whose lastCompletedAt falls within
+  // the last N days. Default 30; expandable to 90 / 365 via the chip.
+  const [showCompleted, setShowCompleted] = useState(false);
+  const [completedSinceDays, setCompletedSinceDays] = useState<number>(30);
   const [categories, setCategories] = useState<TimelineCategoryConfig[]>(DEFAULT_TIMELINE_CATEGORIES);
 
   // Load the configurable category taxonomy from settings.
@@ -225,7 +245,14 @@ export default function TimelineTab({ isSuper = false }: Props) {
       // rows aren't in the same dataset; other filters are client-side.
       const params = new URLSearchParams();
       params.set("includeDocs", "1");
-      if (showArchived) params.set("archived", "1");
+      // Archived and Completed are mutually exclusive view modes.
+      // Completed wins if both are somehow toggled.
+      if (showCompleted) {
+        params.set("completed", "1");
+        params.set("completedSinceDays", String(completedSinceDays));
+      } else if (showArchived) {
+        params.set("archived", "1");
+      }
       const list = await apiGet<UpcomingRow[]>(`${apiBase}/upcoming?${params}`);
       setRows(Array.isArray(list) ? list : []);
     } catch (err) {
@@ -236,7 +263,7 @@ export default function TimelineTab({ isSuper = false }: Props) {
     }
   }
 
-  useEffect(() => { void load(); /* eslint-disable-next-line */ }, [showArchived]);
+  useEffect(() => { void load(); /* eslint-disable-next-line */ }, [showArchived, showCompleted, completedSinceDays]);
 
   const filtered = useMemo(() => {
     let out = rows;
@@ -487,7 +514,10 @@ export default function TimelineTab({ isSuper = false }: Props) {
           px="2"
           minW="0"
           flexShrink={0}
-          onClick={() => setShowArchived((v) => !v)}
+          onClick={() => {
+            setShowArchived((v) => !v);
+            if (!showArchived) setShowCompleted(false); // mutually exclusive
+          }}
           title={showArchived ? "Showing archived — click to hide" : "Show archived only"}
           css={showArchived ? {
             background: "var(--chakra-colors-gray-200)",
@@ -497,6 +527,30 @@ export default function TimelineTab({ isSuper = false }: Props) {
           } : undefined}
         >
           <Archive size={14} />
+        </Button>
+        <Button
+          size="sm"
+          variant={showCompleted ? "solid" : "outline"}
+          px="2"
+          minW="0"
+          flexShrink={0}
+          onClick={() => {
+            setShowCompleted((v) => !v);
+            if (!showCompleted) setShowArchived(false); // mutually exclusive
+          }}
+          title={
+            showCompleted
+              ? `Showing completed past ${completedSinceDays} days — click to hide`
+              : "Show completed (past 30 days)"
+          }
+          css={showCompleted ? {
+            background: "var(--chakra-colors-green-100)",
+            color: "var(--chakra-colors-green-800)",
+            border: "1px solid var(--chakra-colors-green-400)",
+            "&:hover": { background: "var(--chakra-colors-green-200)" },
+          } : undefined}
+        >
+          <Check size={14} />
         </Button>
         {isSuper && (
           <Button
@@ -512,7 +566,7 @@ export default function TimelineTab({ isSuper = false }: Props) {
           </Button>
         )}
       </HStack>
-      {(kindFilter[0] !== "all" || urgencyFilter[0] !== "all" || showArchived || q.trim() || highlightEventId) && (
+      {(kindFilter[0] !== "all" || urgencyFilter[0] !== "all" || showArchived || showCompleted || q.trim() || highlightEventId) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="1">
           {kindFilter[0] !== "all" && (
             <Badge
@@ -541,6 +595,36 @@ export default function TimelineTab({ isSuper = false }: Props) {
               Archived only
               <X size={11} style={{ marginLeft: 4 }} />
             </Badge>
+          )}
+          {showCompleted && (
+            <HStack gap={1}>
+              <Badge
+                size="sm"
+                colorPalette="green"
+                variant="solid"
+                cursor="pointer"
+                px="2"
+                onClick={() => setShowCompleted(false)}
+                title="Hide completed"
+              >
+                Completed · past {completedSinceDays} days
+                <X size={11} style={{ marginLeft: 4 }} />
+              </Badge>
+              {[30, 90, 365].map((n) => (
+                <Badge
+                  key={n}
+                  size="sm"
+                  colorPalette="green"
+                  variant={completedSinceDays === n ? "solid" : "outline"}
+                  cursor="pointer"
+                  px="2"
+                  onClick={() => setCompletedSinceDays(n)}
+                  title={`Past ${n} days`}
+                >
+                  {n}d
+                </Badge>
+              ))}
+            </HStack>
           )}
           {urgencyFilter[0] !== "all" && (
             <Badge
@@ -675,8 +759,8 @@ export default function TimelineTab({ isSuper = false }: Props) {
                           )}
                         </HStack>
                         <HStack gap={1.5} wrap="wrap" fontSize="xs" color="fg.muted" align="center">
-                          <Badge size="sm" colorPalette={color} variant="subtle" px="2" borderRadius="full">
-                            {fmtDate(r.nextDate)} · {relativeLabel(r.nextDate)}
+                          <Badge size="sm" colorPalette={showCompleted ? "green" : color} variant="subtle" px="2" borderRadius="full">
+                            {showCompleted ? "Completed " : ""}{fmtDate(r.nextDate)} · {showCompleted ? pastRelativeLabel(r.nextDate) : relativeLabel(r.nextDate)}
                           </Badge>
                           {!isDoc && r.category && (
                             <Badge size="xs" colorPalette="purple" variant="subtle" px="1.5">
@@ -799,7 +883,9 @@ export default function TimelineTab({ isSuper = false }: Props) {
                         screens instead of being squeezed alongside the
                         right-aligned action buttons. */}
                     {!isDoc && r.description && (
-                      <Text fontSize="xs" color="fg.muted" lineClamp={2}>{r.description}</Text>
+                      <TruncatedText maxLines={2} fontSize="xs" color="fg.muted">
+                        {r.description}
+                      </TruncatedText>
                     )}
                     {!isDoc && r.lastCompletedAt && (
                       <Text fontSize="xs" color="fg.subtle">

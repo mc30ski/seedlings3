@@ -8,6 +8,8 @@ import {
   isFixedAsset,
   loadFixedAssetMinCost,
   isEmployeeClass,
+  expenseAnchorDateWhere,
+  effectiveExpenseDate,
 } from "./exports";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -109,11 +111,20 @@ export async function buildPnLReport(
       },
       select: { rentalCost: true },
     }),
-    // Operating expenses — BusinessExpense rows of type EXPENSE in window.
-    // Fixed assets are filtered out below (capitalized → balance sheet).
+    // Operating expenses — BusinessExpense rows of type EXPENSE whose
+    // effective date is in window. Per-occurrence rows are anchored on
+    // occurrence.completedAt (not BE.date); not-yet-completed jobs are
+    // excluded entirely. Matches the QB Expenses CSV. Fixed assets are
+    // filtered out below (capitalized → balance sheet).
     prisma.businessExpense.findMany({
-      where: { type: "EXPENSE", date: { gte: start, lte: end } },
-      select: { cost: true, category: true, date: true },
+      where: { type: "EXPENSE", ...expenseAnchorDateWhere(start, end) },
+      select: {
+        cost: true,
+        category: true,
+        date: true,
+        occurrenceId: true,
+        occurrence: { select: { completedAt: true } },
+      },
     }),
     // Processor fees synthesized from confirmed payments with a non-zero
     // fee. Same filter as the QB Expenses export's fee section.
@@ -198,7 +209,9 @@ export async function buildPnLReport(
   // Operating expense rows from BusinessExpense (fixed assets excluded —
   // they're capitalized to balance sheet, never on the P&L).
   for (const r of operatingExpenses) {
-    if (isFixedAsset(r, fixedAssetMinCost)) continue;
+    // Capitalization check uses effective date to stay consistent with
+    // the QB Expenses CSV's split (see effectiveExpenseDate).
+    if (isFixedAsset({ cost: r.cost, date: effectiveExpenseDate(r) }, fixedAssetMinCost)) continue;
     const meta = catMeta.get(r.category ?? "Other");
     // Categories explicitly marked EXCLUDE_FROM_PNL (or any category not
     // in the taxonomy at all — the loader default) silently drop out of

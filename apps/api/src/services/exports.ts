@@ -1010,6 +1010,49 @@ export function isFixedAsset(be: { cost: number; date: Date }, minCost: number):
 }
 
 /**
+ * Build the where clause that selects BusinessExpense rows whose
+ * **effective** date falls in [start, end]:
+ *
+ * - **Freestanding** BE (no `occurrenceId`): anchored on `BE.date` —
+ *   the date the operator typed when logging the expense.
+ * - **Per-occurrence** BE (linked to a JobOccurrence): anchored on
+ *   `occurrence.completedAt`. If the occurrence hasn't been completed
+ *   yet, the row is excluded from every window — the expense isn't
+ *   "real" until the job actually happens. This matches the operator's
+ *   mental model: planning an expense for a future job shouldn't
+ *   inflate this period's expenses.
+ *
+ * The `type` filter is the caller's responsibility (EXPENSE vs equity
+ * vs both) — this helper only handles the anchoring.
+ */
+export function expenseAnchorDateWhere(start: Date, end: Date) {
+  return {
+    OR: [
+      { occurrenceId: null, date: { gte: start, lte: end } },
+      {
+        occurrenceId: { not: null },
+        occurrence: { completedAt: { gte: start, lte: end, not: null } },
+      },
+    ],
+  };
+}
+
+/**
+ * Returns the **effective** date for a BusinessExpense row — the date
+ * that should appear on the QB CSV row and that the export window
+ * compares against. Matches the anchoring rule in
+ * `expenseAnchorDateWhere`.
+ */
+export function effectiveExpenseDate(be: {
+  date: Date;
+  occurrenceId?: string | null;
+  occurrence?: { completedAt: Date | null } | null;
+}): Date {
+  if (be.occurrenceId && be.occurrence?.completedAt) return be.occurrence.completedAt;
+  return be.date;
+}
+
+/**
  * Whether qb-journal-expenses.csv should emit Contract Labor rows.
  * Setting: QB_INCLUDE_CONTRACT_LABOR (boolean). Default = true (current
  * behavior — the app's CSV is the only path getting contractor labor
@@ -1042,12 +1085,16 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<CsvResult> 
   const [rows, feePayments, payments] = await Promise.all([
     prisma.businessExpense.findMany({
       // QB Expenses export — Schedule C lines apply only to operating
-      // expenses. Equity entries flow through qbEquityCsv.
-      where: { type: "EXPENSE", date: { gte: start, lte: end } },
+      // expenses. Equity entries flow through qbEquityCsv. Per-occurrence
+      // expenses are anchored on the job's completedAt (not BE.date) so a
+      // future-dated job's planned expense doesn't appear in the export
+      // until the job actually completes — see expenseAnchorDateWhere.
+      where: { type: "EXPENSE", ...expenseAnchorDateWhere(start, end) },
       include: {
         occurrence: {
           select: {
             id: true,
+            completedAt: true,
             job: {
               select: {
                 property: {
@@ -1138,9 +1185,11 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<CsvResult> 
   let transactionCount = 0;
 
   // Fixed-asset purchases are excluded — they belong on the balance sheet
-  // (qb-fixed-assets export) not the P&L journal.
+  // (qb-fixed-assets export) not the P&L journal. Use the effective date
+  // for the capitalization check too — per-occurrence rows' effective
+  // date is occurrence.completedAt, not BE.date.
   // Operating expenses. JournalNo = BusinessExpense.ledgerId.
-  const expenseRows = rows.filter((r) => !isFixedAsset(r, fixedAssetMinCost));
+  const expenseRows = rows.filter((r) => !isFixedAsset({ cost: r.cost, date: effectiveExpenseDate(r) }, fixedAssetMinCost));
   for (const r of expenseRows) {
     const category = r.category ?? "Other";
     const account = qbAccountMap[category] ?? "Unmapped";
@@ -1158,7 +1207,7 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<CsvResult> 
     lines.push(
       ...expenseJournalRows(
         (r as any).ledgerId ?? `EXP-${r.id}`,
-        toQbDate(r.date),
+        toQbDate(effectiveExpenseDate(r)),
         account,
         r.cost,
         descWithVendor,
@@ -1440,14 +1489,18 @@ export async function qbFixedAssetsCsv(start: Date, end: Date): Promise<CsvResul
       : await prisma.businessExpense.findMany({
           where: {
             type: "EXPENSE",
-            date: { gte: effectiveStart, lte: end },
             cost: { gte: fixedAssetMinCost },
+            // Per-occurrence rows use occurrence.completedAt as the anchor;
+            // freestanding rows use BE.date. Future-dated jobs whose
+            // occurrence isn't completed yet are excluded entirely.
+            ...expenseAnchorDateWhere(effectiveStart, end),
           },
           include: {
             equipment: { select: { id: true, shortDesc: true, brand: true, model: true } },
             occurrence: {
               select: {
                 id: true,
+                completedAt: true,
                 job: {
                   select: {
                     property: {
@@ -1498,7 +1551,7 @@ export async function qbFixedAssetsCsv(start: Date, end: Date): Promise<CsvResul
       .join(" ");
     lines.push(
       csvRow([
-        toQbDate(r.date),
+        toQbDate(effectiveExpenseDate(r)),
         description,
         round2(r.cost).toFixed(2),
         "Fixed Assets",
@@ -1561,7 +1614,11 @@ export async function findUnmappedExpenseRows(
 ): Promise<UnmappedExpenseRow[]> {
   const [businessExpenses, feePayments, payments, qbAccountMap] = await Promise.all([
     prisma.businessExpense.findMany({
-      where: { type: "EXPENSE", date: { gte: start, lte: end } },
+      // Same anchoring as qbExpensesCsv — per-occurrence rows are
+      // anchored on occurrence.completedAt so future-dated jobs don't
+      // block exports until they actually complete.
+      where: { type: "EXPENSE", ...expenseAnchorDateWhere(start, end) },
+      include: { occurrence: { select: { completedAt: true } } },
       orderBy: { date: "asc" },
     }),
     prisma.payment.findMany({
@@ -1584,12 +1641,14 @@ export async function findUnmappedExpenseRows(
   for (const r of businessExpenses) {
     // Fixed-asset rows never appear in qb-expenses.csv, so their category
     // never needs a qbAccount mapping — skip the unmapped check for them.
-    if (isFixedAsset(r, fixedAssetMinCost)) continue;
+    // Capitalization check uses the effective date (see effectiveExpenseDate)
+    // to stay consistent with the actual qb-expenses split.
+    if (isFixedAsset({ cost: r.cost, date: effectiveExpenseDate(r) }, fixedAssetMinCost)) continue;
     const category = r.category ?? "Other";
     if (!qbAccountMap[category]) {
       unmapped.push({
         ref: `EXP-${r.id}`,
-        date: toQbDate(r.date),
+        date: toQbDate(effectiveExpenseDate(r)),
         description: r.description ?? "",
         category,
         amount: round2(r.cost),
@@ -1770,12 +1829,22 @@ export async function exportPreview(start: Date, end: Date): Promise<ExportPrevi
     // entries (contributions/draws) export via the QB Equity CSV — different
     // account class, must not be mixed into the expense total. Fixed-asset
     // rows are split out below so they don't double-count against expenses.
-    where: { type: "EXPENSE", date: { gte: start, lte: end } },
-    select: { cost: true, date: true },
+    // Anchoring matches the actual qb-expenses CSV (effectiveExpenseDate).
+    where: { type: "EXPENSE", ...expenseAnchorDateWhere(start, end) },
+    select: {
+      cost: true,
+      date: true,
+      occurrenceId: true,
+      occurrence: { select: { completedAt: true } },
+    },
   });
   const fixedAssetMinCost = await loadFixedAssetMinCost();
-  const fixedAssetExpenses = expenses.filter((e) => isFixedAsset(e, fixedAssetMinCost));
-  const operatingExpenses = expenses.filter((e) => !isFixedAsset(e, fixedAssetMinCost));
+  const fixedAssetExpenses = expenses.filter((e) =>
+    isFixedAsset({ cost: e.cost, date: effectiveExpenseDate(e) }, fixedAssetMinCost),
+  );
+  const operatingExpenses = expenses.filter(
+    (e) => !isFixedAsset({ cost: e.cost, date: effectiveExpenseDate(e) }, fixedAssetMinCost),
+  );
   const businessExpenseTotal = operatingExpenses.reduce((s, e) => s + e.cost, 0);
   const fixedAssetTotal = fixedAssetExpenses.reduce((s, e) => s + e.cost, 0);
   const processorFeeTotal = payments.reduce((s, p) => s + (p.processorFeeAmount ?? 0), 0);
@@ -1982,14 +2051,26 @@ export async function exportPreviewDetails(
     case "qb-expenses": {
       const fixedAssetMinCost = await loadFixedAssetMinCost();
       const expenses = await prisma.businessExpense.findMany({
-        where: { type: "EXPENSE", date: { gte: start, lte: end } },
-        select: { id: true, date: true, category: true, description: true, cost: true },
+        // Anchor on effective date (occurrence.completedAt for per-job
+        // expenses, BE.date otherwise) so this matches qbExpensesCsv.
+        where: { type: "EXPENSE", ...expenseAnchorDateWhere(start, end) },
+        select: {
+          id: true,
+          date: true,
+          category: true,
+          description: true,
+          cost: true,
+          occurrenceId: true,
+          occurrence: { select: { completedAt: true } },
+        },
       });
-      const operating = expenses.filter((e) => !isFixedAsset(e, fixedAssetMinCost));
+      const operating = expenses.filter(
+        (e) => !isFixedAsset({ cost: e.cost, date: effectiveExpenseDate(e) }, fixedAssetMinCost),
+      );
       const businessExpenseRows: PreviewDetailRow[] = operating
-        .sort((a, b) => a.date.getTime() - b.date.getTime())
+        .sort((a, b) => effectiveExpenseDate(a).getTime() - effectiveExpenseDate(b).getTime())
         .map((e) => ({
-          date: etFormatDate(e.date),
+          date: etFormatDate(effectiveExpenseDate(e)),
           primary: e.category || "(uncategorized)",
           secondary: e.description ?? undefined,
           amount: round2(e.cost),
@@ -2061,14 +2142,22 @@ export async function exportPreviewDetails(
     case "qb-fixed-assets": {
       const fixedAssetMinCost = await loadFixedAssetMinCost();
       const all = await prisma.businessExpense.findMany({
-        where: { type: "EXPENSE", date: { gte: start, lte: end } },
-        select: { id: true, date: true, category: true, description: true, cost: true },
+        where: { type: "EXPENSE", ...expenseAnchorDateWhere(start, end) },
+        select: {
+          id: true,
+          date: true,
+          category: true,
+          description: true,
+          cost: true,
+          occurrenceId: true,
+          occurrence: { select: { completedAt: true } },
+        },
       });
       const rows: PreviewDetailRow[] = all
-        .filter((e) => isFixedAsset(e, fixedAssetMinCost))
-        .sort((a, b) => a.date.getTime() - b.date.getTime())
+        .filter((e) => isFixedAsset({ cost: e.cost, date: effectiveExpenseDate(e) }, fixedAssetMinCost))
+        .sort((a, b) => effectiveExpenseDate(a).getTime() - effectiveExpenseDate(b).getTime())
         .map((e) => ({
-          date: etFormatDate(e.date),
+          date: etFormatDate(effectiveExpenseDate(e)),
           primary: e.category || "(uncategorized)",
           secondary: e.description ?? undefined,
           amount: round2(e.cost),
