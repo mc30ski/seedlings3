@@ -4,6 +4,7 @@ import { prisma } from "../db/prisma";
 import { writeAudit } from "../lib/auditLogger";
 import { AUDIT } from "../lib/auditActions";
 import { ServiceError } from "../lib/errors";
+import { etFormatDate } from "../lib/dates";
 
 // Urgency thresholds — exposed here so the routes + the title-bar pill stay
 // in sync if they ever drift.
@@ -112,13 +113,56 @@ export const timelineEvents = {
    * Unified upcoming list — events (with computed next dates) merged with
    * non-archived document expirations, sorted ascending by next date.
    * Past one-time events and past doc expirations are excluded.
+   *
+   * Three mutually-exclusive view modes via the `archived` and `completed`
+   * params:
+   *   • `archived = true` — only archived events (no docs)
+   *   • `completed = true` — only events whose `lastCompletedAt` falls
+   *     within the past `completedSinceDays` (default 30). Includes
+   *     one-time events whose `nextDueDate` is now null AND recurring
+   *     events that have at least one completion in window. Sorted by
+   *     lastCompletedAt DESC (most recent first) — opposite of the
+   *     default upcoming sort.
+   *   • Neither — the default upcoming view (current behavior).
    */
   async listUpcoming(params: {
     adminHiddenVisible: boolean;
     includeDocs?: boolean;
     includePast?: boolean;
     archived?: boolean;
+    completed?: boolean;
+    completedSinceDays?: number;
   }): Promise<UpcomingRow[]> {
+    if (params.completed) {
+      const sinceDays = Math.max(
+        1,
+        Math.min(3650, Number(params.completedSinceDays ?? 30) || 30),
+      );
+      const since = new Date(Date.now() - sinceDays * msIn(1));
+      const completed = await prisma.timelineEvent.findMany({
+        where: {
+          archivedAt: null,
+          lastCompletedAt: { not: null, gte: since },
+          ...(params.adminHiddenVisible ? {} : { adminHidden: false }),
+        },
+        orderBy: { lastCompletedAt: "desc" },
+      });
+      return completed.map((ev) => ({
+        kind: "event" as const,
+        id: ev.id,
+        title: ev.title,
+        description: ev.description,
+        category: ev.category,
+        rrule: ev.rrule,
+        anchorDate: ev.anchorDate,
+        lastCompletedAt: ev.lastCompletedAt,
+        archivedAt: ev.archivedAt,
+        adminHidden: ev.adminHidden,
+        // Render under the lastCompletedAt date in the UI — that's the
+        // anchor the operator is reviewing for this view.
+        nextDate: ev.lastCompletedAt ? etFormatDate(ev.lastCompletedAt) : ev.anchorDate,
+      }));
+    }
     const events = await prisma.timelineEvent.findMany({
       where: {
         ...(params.archived

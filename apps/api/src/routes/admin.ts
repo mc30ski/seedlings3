@@ -27,7 +27,7 @@ import {
 import { normalizePhone } from "../lib/phone";
 import { generateLedgerId } from "../lib/ledgerId";
 import { loadCategoryLabels } from "../services/expenseCategories";
-import { loadFixedAssetMinCost, isFixedAsset, loadGpWorkAnchoredItems } from "../services/exports";
+import { loadFixedAssetMinCost, isFixedAsset, loadGpWorkAnchoredItems, effectiveExpenseDate } from "../services/exports";
 import {
   resolveCutoff,
   cutoffWhere,
@@ -4369,13 +4369,35 @@ Respond ONLY with valid JSON in this exact format:
       type?: string;
     };
     const where: any = {};
-    if (q.from || q.to) {
+    const andConditions: any[] = [];
+    // Business Start Date filter — pre-cutoff BusinessExpense rows hidden
+    // from the Accounting tab. If a from-date is already set, the cutoff is
+    // additive (later bound wins). See lib/businessStartCutoff.ts.
+    const cutoff = await resolveCutoff(req);
+    if (q.from || q.to || cutoff) {
       // ET-anchored boundaries (etMidnight / etEndOfDay) — match the QB
       // exports and the vs-revenue endpoint exactly. See vs-revenue for the
       // UTC-vs-ET divergence this prevents.
-      where.date = {};
-      if (q.from) where.date.gte = etMidnight(q.from);
-      if (q.to) where.date.lte = etEndOfDay(q.to);
+      let gte: Date | undefined = q.from ? etMidnight(q.from) : undefined;
+      const lte: Date | undefined = q.to ? etEndOfDay(q.to) : undefined;
+      if (cutoff && (!gte || cutoff > gte)) gte = cutoff;
+      // Per-occurrence BE rows anchor on occurrence.completedAt; freestanding
+      // rows anchor on BE.date. Not-yet-completed per-occurrence rows are
+      // excluded entirely — they show up as "planned" on the job card but
+      // don't pollute the cash-flow / list / export views until the job is
+      // actually completed. See effectiveExpenseDate in services/exports.ts.
+      const dateRange: any = {};
+      if (gte) dateRange.gte = gte;
+      if (lte) dateRange.lte = lte;
+      andConditions.push({
+        OR: [
+          { occurrenceId: null, ...(Object.keys(dateRange).length ? { date: dateRange } : {}) },
+          {
+            occurrenceId: { not: null },
+            occurrence: { completedAt: { not: null, ...dateRange } },
+          },
+        ],
+      });
     }
     if (q.category) where.category = q.category;
     if (q.type) {
@@ -4386,23 +4408,15 @@ Respond ONLY with valid JSON in this exact format:
     }
     if (q.q && q.q.trim()) {
       const term = q.q.trim();
-      where.OR = [
-        { description: { contains: term, mode: "insensitive" } },
-        { vendor: { contains: term, mode: "insensitive" } },
-        { notes: { contains: term, mode: "insensitive" } },
-      ];
+      andConditions.push({
+        OR: [
+          { description: { contains: term, mode: "insensitive" } },
+          { vendor: { contains: term, mode: "insensitive" } },
+          { notes: { contains: term, mode: "insensitive" } },
+        ],
+      });
     }
-    // Business Start Date filter — pre-cutoff BusinessExpense rows hidden
-    // from the Accounting tab. If a from-date is already set, the cutoff is
-    // additive (later bound wins). See lib/businessStartCutoff.ts.
-    const cutoff = await resolveCutoff(req);
-    if (cutoff) {
-      const existingGte = where.date?.gte;
-      where.date = {
-        ...(where.date ?? {}),
-        gte: existingGte && existingGte > cutoff ? existingGte : cutoff,
-      };
-    }
+    if (andConditions.length > 0) where.AND = andConditions;
 
     // Pagination — limit/offset, applied to the same `where` filter so the
     // page is a slice of the filtered set. `all=true` bypasses the page cap;
@@ -4422,6 +4436,7 @@ Respond ONLY with valid JSON in this exact format:
         select: {
           id: true,
           startAt: true,
+          completedAt: true,
           job: {
             select: {
               id: true,
@@ -4701,10 +4716,19 @@ Respond ONLY with valid JSON in this exact format:
         select: { confirmedAt: true, platformFeeAmount: true, businessMarginAmount: true, processorFeeAmount: true },
       }),
       // One query covers all three EntryType buckets; split by `type`
-      // below. Saves a round-trip vs. separate queries.
+      // below. Saves a round-trip vs. separate queries. Per-occurrence
+      // rows include the linked occurrence's completedAt so we can
+      // anchor on the actual job-completion date (effectiveExpenseDate)
+      // and exclude not-yet-completed jobs entirely.
       prisma.businessExpense.findMany({
         where: { ...cutoffWhere("BusinessExpense", cutoff) },
-        select: { type: true, date: true, cost: true },
+        select: {
+          type: true,
+          date: true,
+          cost: true,
+          occurrenceId: true,
+          occurrence: { select: { completedAt: true } },
+        },
       }),
       prisma.checkout.findMany({
         where: { rentalCost: { not: null }, releasedAt: { not: null }, ...cutoffWhere("Checkout", cutoff) },
@@ -4731,12 +4755,21 @@ Respond ONLY with valid JSON in this exact format:
       equipmentRentals += r.rentalCost ?? 0;
     }
     for (const e of allEntries) {
-      if (!inRange(e.date)) continue;
+      // Per-occurrence rows whose job hasn't been completed yet are
+      // excluded entirely — same rule the QB exports use. A planned
+      // expense on a future job shouldn't show in the cash-flow view
+      // until the job actually happens. effectiveExpenseDate handles
+      // this for date anchoring; the explicit completedAt check filters
+      // out "no completion yet" rows even if their BE.date happens to
+      // fall in the window.
+      if (e.occurrenceId && !e.occurrence?.completedAt) continue;
+      const eff = effectiveExpenseDate(e);
+      if (!inRange(eff)) continue;
       if (e.type === "EXPENSE") {
         // Split: fixed-asset purchases (capitalized — balance sheet) vs
         // regular operating expenses (P&L). Same threshold + start-date
         // policy the QB Expenses CSV uses, so the totals reconcile.
-        if (isFixedAsset(e, fixedAssetMinCost)) {
+        if (isFixedAsset({ cost: e.cost, date: eff }, fixedAssetMinCost)) {
           fixedAssetPurchases += e.cost;
         } else {
           expenseTotal += e.cost;
@@ -4786,34 +4819,49 @@ Respond ONLY with valid JSON in this exact format:
     const startOfYear = etMidnight(etStartOfYear());
     // Summary card on the Accounting tab is "expenses only" — by-category
     // breakdown and totals are only meaningful for operating cash-out.
+    // Anchor on effective date (occurrence.completedAt for per-job rows,
+    // BE.date for freestanding) — same rule the QB exports use.
     const where: any = { type: "EXPENSE" };
-    if (q.from || q.to) {
-      // ET-anchored boundaries — same rationale as the list + vs-revenue
-      // endpoints. Keeps the summary card on the Accounting tab consistent
-      // with the by-category breakdown, the export totals, and the
-      // Cash Flow numbers.
-      where.date = {};
-      if (q.from) where.date.gte = etMidnight(q.from);
-      if (q.to) where.date.lte = etEndOfDay(q.to);
-    }
-    // Business Start Date filter — pre-cutoff rows excluded from totals.
     const summaryCutoff = await resolveCutoff(req);
-    if (summaryCutoff) {
-      const existingGte = where.date?.gte;
-      where.date = {
-        ...(where.date ?? {}),
-        gte: existingGte && existingGte > summaryCutoff ? existingGte : summaryCutoff,
-      };
+    if (q.from || q.to || summaryCutoff) {
+      let gte: Date | undefined = q.from ? etMidnight(q.from) : undefined;
+      const lte: Date | undefined = q.to ? etEndOfDay(q.to) : undefined;
+      if (summaryCutoff && (!gte || summaryCutoff > gte)) gte = summaryCutoff;
+      const dateRange: any = {};
+      if (gte) dateRange.gte = gte;
+      if (lte) dateRange.lte = lte;
+      where.OR = [
+        { occurrenceId: null, ...(Object.keys(dateRange).length ? { date: dateRange } : {}) },
+        { occurrenceId: { not: null }, occurrence: { completedAt: { not: null, ...dateRange } } },
+      ];
+    } else {
+      // No date bounds AND no cutoff — still want to exclude not-yet-completed
+      // per-occurrence rows so the All-Time total doesn't mix in planned
+      // expenses for future jobs.
+      where.OR = [
+        { occurrenceId: null },
+        { occurrenceId: { not: null }, occurrence: { completedAt: { not: null } } },
+      ];
     }
-    const all = await prisma.businessExpense.findMany({ where, select: { date: true, cost: true, category: true } });
+    const all = await prisma.businessExpense.findMany({
+      where,
+      select: {
+        date: true,
+        cost: true,
+        category: true,
+        occurrenceId: true,
+        occurrence: { select: { completedAt: true } },
+      },
+    });
     let today = 0, thisWeek = 0, thisMonth = 0, thisYear = 0, total = 0;
     const byCategory: Record<string, number> = {};
     for (const e of all) {
+      const eff = effectiveExpenseDate(e);
       total += e.cost;
-      if (e.date >= startOfToday) today += e.cost;
-      if (e.date >= startOfWeek) thisWeek += e.cost;
-      if (e.date >= startOfMonth) thisMonth += e.cost;
-      if (e.date >= startOfYear) thisYear += e.cost;
+      if (eff >= startOfToday) today += e.cost;
+      if (eff >= startOfWeek) thisWeek += e.cost;
+      if (eff >= startOfMonth) thisMonth += e.cost;
+      if (eff >= startOfYear) thisYear += e.cost;
       const cat = e.category || "(Uncategorized)";
       byCategory[cat] = (byCategory[cat] ?? 0) + e.cost;
     }
@@ -5903,12 +5951,15 @@ Respond ONLY with valid JSON in this exact format:
   });
 
   app.get("/admin/timeline/upcoming", adminGuard, async (req: any) => {
-    const { includeDocs, includePast, archived } = (req.query || {}) as Record<string, string>;
+    const { includeDocs, includePast, archived, completed, completedSinceDays } =
+      (req.query || {}) as Record<string, string>;
     return services.timelineEvents.listUpcoming({
       adminHiddenVisible: false,
       includeDocs: includeDocs !== "0" && includeDocs !== "false",
       includePast: includePast === "1" || includePast === "true",
       archived: archived === "1" || archived === "true",
+      completed: completed === "1" || completed === "true",
+      completedSinceDays: completedSinceDays ? Number(completedSinceDays) : undefined,
     });
   });
 
@@ -5933,12 +5984,15 @@ Respond ONLY with valid JSON in this exact format:
   });
 
   app.get("/super/timeline/upcoming", superGuard, async (req: any) => {
-    const { includeDocs, includePast, archived } = (req.query || {}) as Record<string, string>;
+    const { includeDocs, includePast, archived, completed, completedSinceDays } =
+      (req.query || {}) as Record<string, string>;
     return services.timelineEvents.listUpcoming({
       adminHiddenVisible: true,
       includeDocs: includeDocs !== "0" && includeDocs !== "false",
       includePast: includePast === "1" || includePast === "true",
       archived: archived === "1" || archived === "true",
+      completed: completed === "1" || completed === "true",
+      completedSinceDays: completedSinceDays ? Number(completedSinceDays) : undefined,
     });
   });
 
