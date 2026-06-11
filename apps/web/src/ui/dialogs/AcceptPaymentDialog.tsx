@@ -35,6 +35,7 @@ import {
   publishInlineMessage,
 } from "@/src/ui/components/InlineMessage";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
+import ImpersonationWarning from "@/src/ui/components/ImpersonationWarning";
 
 type HandoffPayload = {
   mode: "SERVER" | "CLAIMER";
@@ -88,6 +89,9 @@ type Props = {
    *  (e.g. an unprompted Venmo) on their behalf. Off on the Worker Jobs tab,
    *  so a field worker's on-site flow stays uncluttered. */
   allowAllMethods?: boolean;
+  /** Display name of the impersonated worker when admin is viewing-as a
+   *  single worker; renders the inline impersonation warning. */
+  viewAsName?: string | null;
   onAccepted: (result?: any) => void;
 };
 
@@ -114,6 +118,7 @@ export default function AcceptPaymentDialog({
   occurrenceId,
   isSuper = false,
   allowAllMethods = false,
+  viewAsName = null,
   onAccepted,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
@@ -506,6 +511,7 @@ export default function AcceptPaymentDialog({
             {view === "confirm-accept" ? (
               <>
                 <Dialog.Body>
+                  <ImpersonationWarning viewAsName={viewAsName} />
                   <VStack align="stretch" gap={3}>
                     <Box
                       p={3}
@@ -660,6 +666,7 @@ export default function AcceptPaymentDialog({
             ) : view === "confirm-request" ? (
               <>
                 <Dialog.Body>
+                  <ImpersonationWarning viewAsName={viewAsName} />
                   <VStack align="stretch" gap={3}>
                     {(() => {
                       const missingPrimary =

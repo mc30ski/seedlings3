@@ -498,7 +498,12 @@ export const paymentRequests = {
         photos: {
           select: { id: true, r2Key: true, contentType: true },
           orderBy: { createdAt: "desc" },
-          take: 6,
+          // Cap the public-page photo set. Jobs with more documentation
+          // (multiple zones, lots of before/afters) were getting clipped
+          // at 6; 15 covers the realistic upper end without making the
+          // signing loop noticeably slow. Newest-first so the most recent
+          // work surfaces first if a job ever does exceed the cap.
+          take: 15,
         },
       },
     });

@@ -6216,4 +6216,95 @@ Respond ONLY with valid JSON in this exact format:
     return deliverPlainCsv(reply, "income", { startStr, endStr }, result.csv);
   });
 
+  // ── Super → Workdays administration ────────────────────────────────────
+  // Day-paged review of every worker's clock-in/out for a given ET
+  // calendar day. Approval window opens at the WORKDAY_APPROVAL_CUTOFF_
+  // HOUR_ET setting (default 4 AM next morning ET). Today's rows are
+  // accessible for read but the service refuses to mutate them.
+  // See services/workdays.ts for the lifecycle.
+  const workdayAdmin = await import("../services/workdays");
+  const { IMPERSONATE_HEADER: WORKDAY_IMPERSONATE_HEADER } = await import("../lib/impersonation");
+
+  function superWorkdayAudit(req: any): { actorId: string; impersonatedUserId: string | null } {
+    const v = req.headers?.[WORKDAY_IMPERSONATE_HEADER];
+    const impersonating = typeof v === "string" && v.trim().length > 0;
+    return {
+      actorId: req.user.id,
+      impersonatedUserId: impersonating ? req.user.id : null,
+    };
+  }
+
+  // Pending-approvals summary — drives the Super alert badge + the
+  // in-tab "pending by day" chip row. Counts only rows that are
+  // actually approvable RIGHT NOW (workdayDate in the past, ended,
+  // not yet approved). NEEDS_ENDING rows excluded.
+  app.get("/super/workdays/pending-summary", superGuard, async () => {
+    return workdayAdmin.superPendingApprovalsSummary();
+  });
+
+  // List every worker's row for a single ET calendar day, plus the
+  // "DIDN'T WORK" set. Query: ?date=YYYY-MM-DD (required).
+  app.get("/super/workdays/by-date", superGuard, async (req: any) => {
+    const date = String(req.query?.date ?? "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      throw app.httpErrors.badRequest("date query param required (YYYY-MM-DD).");
+    }
+    return workdayAdmin.superListWorkdaysForDate(date);
+  });
+
+  // Edit a workday's recorded times (works for open, pending, and
+  // approved rows — see superEditWorkdayTimes for the per-state policy).
+  app.patch("/super/workdays/:id", superGuard, async (req: any) => {
+    const body = (req.body || {}) as {
+      startedAt?: string | null;
+      endedAt?: string | null;
+      totalPausedMs?: number | null;
+    };
+    return workdayAdmin.superEditWorkdayTimes(
+      String(req.params.id),
+      {
+        startedAt: body.startedAt ?? null,
+        endedAt: body.endedAt ?? null,
+        totalPausedMs: body.totalPausedMs ?? null,
+      },
+      superWorkdayAudit(req),
+    );
+  });
+
+  // Approve (with optional edits in the same call). Refuses if row is
+  // still open — must include an endedAt in the body or call PATCH first.
+  app.post("/super/workdays/:id/approve", superGuard, async (req: any) => {
+    const body = (req.body || {}) as {
+      startedAt?: string | null;
+      endedAt?: string | null;
+      totalPausedMs?: number | null;
+    };
+    return workdayAdmin.superApproveWorkday(
+      String(req.params.id),
+      {
+        startedAt: body.startedAt ?? null,
+        endedAt: body.endedAt ?? null,
+        totalPausedMs: body.totalPausedMs ?? null,
+      },
+      superWorkdayAudit(req),
+    );
+  });
+
+  app.post("/super/workdays/:id/unapprove", superGuard, async (req: any) => {
+    return workdayAdmin.superUnapproveWorkday(
+      String(req.params.id),
+      superWorkdayAudit(req),
+    );
+  });
+
+  // Bulk approve — per-row results. Body: { workdayIds: string[] }
+  app.post("/super/workdays/bulk-approve", superGuard, async (req: any) => {
+    const body = (req.body || {}) as { workdayIds?: string[] };
+    const ids = Array.isArray(body.workdayIds) ? body.workdayIds : [];
+    if (ids.length === 0) {
+      throw app.httpErrors.badRequest("workdayIds array required.");
+    }
+    return workdayAdmin.superBulkApprove(ids, superWorkdayAudit(req));
+  });
+
 }

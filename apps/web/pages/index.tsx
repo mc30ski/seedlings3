@@ -20,6 +20,7 @@ import HistoryTab from "@/src/ui/tabs/HistoryTab";
 import SettingsTab from "@/src/ui/tabs/SettingsTab";
 import SuperUnclaimedTab from "@/src/ui/tabs/SuperUnclaimedTab";
 import OperationsTab from "@/src/ui/tabs/OperationsTab";
+import WorkdaysTab from "@/src/ui/tabs/WorkdaysTab";
 import AuditTab from "@/src/ui/tabs/AuditTab";
 import BusinessExpensesTab from "@/src/ui/tabs/BusinessExpensesTab";
 import ReconcileTab from "@/src/ui/tabs/ReconcileTab";
@@ -94,6 +95,7 @@ import {
   FiFolder,
   FiCalendar,
   FiBook,
+  FiClock,
   FiTag,
   FiRefreshCw,
 } from "react-icons/fi";
@@ -131,6 +133,20 @@ export default function HomePage() {
   const [adminCategory, setAdminCategory] = usePersistedState<string>("adminCategory", "Work");
   const [superCategory, setSuperCategory] = usePersistedState<string>("superCategory", "Records");
   const [superInnerTab, setSuperInnerTab] = usePersistedState<SuperTabs>("superTab", "operations");
+
+  // Workday-approval badge state — declared up here (before the tab
+  // tree) because the WorkdaysTab JSX prop list reads these values
+  // synchronously and the tab tree is constructed at the top of this
+  // component body. The loader callback gets registered into a ref
+  // further down once `markAlertLoaded` is available; the tab calls
+  // through the ref so the late binding doesn't break the TDZ.
+  const [pendingWorkdays, setPendingWorkdays] = useState<number>(0);
+  const [pendingWorkdaysByDate, setPendingWorkdaysByDate] = useState<
+    { workdayDate: string; count: number }[]
+  >([]);
+  const [workdaysJumpDate, setWorkdaysJumpDate] = useState<string | null>(null);
+  const [workdaysJumpNonce, setWorkdaysJumpNonce] = useState(0);
+  const loadPendingWorkdaysRef = useRef<() => Promise<void>>(async () => {});
 
   // Handle /e/[slug] QR redirect — navigate to equipment tab
   useEffect(() => {
@@ -995,6 +1011,25 @@ export default function HomePage() {
           categoryIcon: FiBarChart2,
         },
         {
+          // Workdays — Super-only review queue for per-worker clock-in/out.
+          // Day-paged; the 4 AM ET cutoff (settings-driven) gates approval
+          // actions on each row. See ui/tabs/WorkdaysTab.tsx +
+          // services/workdays.ts (superListWorkdaysForDate et al).
+          value: "workdays",
+          label: "Workdays",
+          icon: FiClock,
+          content: wrapWithInlineMessage(
+            <WorkdaysTab
+              pendingByDate={pendingWorkdaysByDate}
+              initialDate={workdaysJumpDate}
+              jumpNonce={workdaysJumpNonce}
+              onApprovalsChanged={() => void loadPendingWorkdaysRef.current()}
+            />,
+          ),
+          category: "Records",
+          categoryIcon: FiBarChart2,
+        },
+        {
           value: "audit",
           label: "Audit",
           icon: FiSearch,
@@ -1490,6 +1525,45 @@ export default function HomePage() {
     void loadPendingPayments();
   }, [loadPendingPayments]);
 
+  // ---- Pending workday approvals badge (super only) ----
+  // State lives near the top of the component (above the tab tree)
+  // because the tab JSX reads these synchronously. The loader is
+  // defined here next to its peers and registered into the ref so the
+  // tab can call it without a forward-reference TDZ.
+  // NEEDS_ENDING rows are intentionally excluded from this count —
+  // those need a force-end action first; different bucket.
+  const loadPendingWorkdays = useCallback(async () => {
+    if (!isSuper) {
+      setPendingWorkdays(0);
+      setPendingWorkdaysByDate([]);
+      markAlertLoaded("pendingWorkdays");
+      return;
+    }
+    try {
+      const r = await apiGet<{
+        totalPending: number;
+        byDate: { workdayDate: string; count: number }[];
+      }>("/api/super/workdays/pending-summary");
+      setPendingWorkdays(r?.totalPending ?? 0);
+      setPendingWorkdaysByDate(Array.isArray(r?.byDate) ? r.byDate : []);
+    } catch {
+      setPendingWorkdays(0);
+      setPendingWorkdaysByDate([]);
+    }
+    markAlertLoaded("pendingWorkdays");
+  }, [isSuper]);
+
+  // Keep the ref in sync so the tab's onApprovalsChanged callback,
+  // which was bound up at the top of the component body, can call
+  // through to the latest version.
+  useEffect(() => {
+    loadPendingWorkdaysRef.current = loadPendingWorkdays;
+  }, [loadPendingWorkdays]);
+
+  useEffect(() => {
+    void loadPendingWorkdays();
+  }, [loadPendingWorkdays]);
+
   // ---- Awaiting-client-payment badge (super only) ----
   // Counts every outstanding payment request — sent to a client, not paid
   // back yet. The worklist on the Super Money Payments tab still flags the
@@ -1733,7 +1807,7 @@ export default function HomePage() {
     return () => { clearTimeout(timer); document.removeEventListener("click", close); };
   }, [alertDropdownOpen]);
   const [alertsLoaded, setAlertsLoaded] = useState<Record<string, boolean>>({});
-  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.planning && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests && alertsLoaded.estimateFollowups && alertsLoaded.unapprovedHours && alertsLoaded.guaranteedPayout);
+  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.planning && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests && alertsLoaded.estimateFollowups && alertsLoaded.unapprovedHours && alertsLoaded.guaranteedPayout && alertsLoaded.pendingWorkdays);
   const markAlertLoaded = useCallback((key: string) => setAlertsLoaded((prev) => prev[key] ? prev : { ...prev, [key]: true }), []);
   const loadAnnouncementCount = useCallback(async () => {
     if (!me?.isApproved) { setAnnouncementCount(0); if (me) markAlertLoaded("announcements"); return; }
@@ -1905,6 +1979,7 @@ export default function HomePage() {
       await Promise.all([
         loadPending(),
         loadPendingPayments(),
+        loadPendingWorkdays(),
         loadAwaitingClientPayment(),
         loadOverdue(),
         loadChangeRequestCount(),
@@ -1919,7 +1994,7 @@ export default function HomePage() {
       setAlertsRefreshing(false);
     }
   }, [
-    loadPending, loadPendingPayments, loadAwaitingClientPayment,
+    loadPending, loadPendingPayments, loadPendingWorkdays, loadAwaitingClientPayment,
     loadOverdue, loadChangeRequestCount, loadEstimateFollowupCount,
     loadUnapprovedHoursCount, loadUnclaimed, loadAnnouncementCount,
     loadDashboardSummary, loadTimelineCount,
@@ -2620,6 +2695,18 @@ export default function HomePage() {
     setSuperInnerTab("payments");
   }, []);
 
+  // Jump to Workdays tab and (when there are pending approvals) point
+  // the tab at the OLDEST pending day so Super starts where the
+  // backlog begins. State for the jump (workdaysJumpDate / Nonce) is
+  // declared near the top of the component; this just bumps it.
+  const goToWorkdayApprovals = useCallback(() => {
+    setTopTab("super");
+    setSuperInnerTab("workdays");
+    const oldest = pendingWorkdaysByDate[0]?.workdayDate ?? null;
+    setWorkdaysJumpDate(oldest);
+    setWorkdaysJumpNonce((n) => n + 1);
+  }, [pendingWorkdaysByDate]);
+
   const isDev = process.env.NEXT_PUBLIC_VERCEL_ENV !== "production" && process.env.NODE_ENV !== "production";
 
   return (
@@ -2821,6 +2908,7 @@ export default function HomePage() {
                 onClick: goToGuaranteedPayoutExpiring,
               });
               if (isSuper && pendingPayments > 0) alerts.push({ label: "Pending Payments", count: pendingPayments, bg: "#DCFCE7", color: "#14532D", dotColor: "#16A34A", onClick: goToPaymentApprovals });
+              if (isSuper && pendingWorkdays > 0) alerts.push({ label: "Workdays to approve", count: pendingWorkdays, bg: "#E0E7FF", color: "#3730A3", dotColor: "#6366F1", onClick: goToWorkdayApprovals });
               if (isSuper && awaitingClientPaymentCount > 0) alerts.push({
                 label: "Awaiting payment",
                 count: awaitingClientPaymentCount,
@@ -2834,7 +2922,7 @@ export default function HomePage() {
               });
               if (isAdmin && changeRequestCount > 0) alerts.push({ label: "Client requests", count: changeRequestCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToClientRequests });
               if (isAdmin && estimateFollowupCount > 0) alerts.push({ label: "Estimate follow-ups", count: estimateFollowupCount, bg: "#FCE7F3", color: "#9D174D", dotColor: "#EC4899", onClick: goToEstimateFollowups });
-              if (isAdmin && unapprovedHoursCount > 0) alerts.push({ label: "Hours awaiting review", count: unapprovedHoursCount, bg: "#FEF3C7", color: "#92400E", dotColor: "#F59E0B", onClick: goToUnapprovedHours });
+              if (isAdmin && unapprovedHoursCount > 0) alerts.push({ label: "Job hours awaiting review", count: unapprovedHoursCount, bg: "#FEF3C7", color: "#92400E", dotColor: "#F59E0B", onClick: goToUnapprovedHours });
               if (isAdmin && unclaimedCount > 0) alerts.push({ label: "Unclaimed", count: unclaimedCount, bg: "#FEF9C3", color: "#713F12", dotColor: "#FACC15", onClick: goToUnclaimed });
               if (planningCount > 0) alerts.push({ label: "Planning", count: planningCount, bg: "#CFFAFE", color: "#155E75", dotColor: "#06B6D4", onClick: goToPlanning });
               if (announcementCount > 0) alerts.push({ label: "Announcements", count: announcementCount, bg: "#EDE9FE", color: "#4C1D95", dotColor: "#6D28D9", onClick: goToAnnouncements });

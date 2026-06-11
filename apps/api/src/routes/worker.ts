@@ -4017,4 +4017,169 @@ export default async function workerRoutes(app: FastifyInstance) {
       String(req.params.id),
     );
   });
+
+  // ── Workday tracking ──────────────────────────────────────────────────
+  // Per-worker daily clock-in/out, used for payroll. Decoupled from
+  // JobOccurrence time — see services/workdays.ts for the long doc + the
+  // schema model comment for the design rationale.
+  //
+  // All routes operate on the authenticated user (req.user.id). The
+  // impersonation header is surfaced into audit context only — the
+  // existing impersonation feature is "view as role," not "act as another
+  // userId," so the worker whose row is mutated is always the caller.
+  // The audit detail records the impersonation flag for traceability.
+  const workdays = await import("../services/workdays");
+  const { IMPERSONATE_HEADER } = await import("../lib/impersonation");
+
+  // Resolve the effective target user for a workday request — either
+  // req.user.id (self-service) or the ?viewAsUserId= query param (admin
+  // / super viewing-as another worker on the Worker Home tab). Returns
+  // BOTH so the audit context can record actor + target correctly.
+  //
+  // Permission model when viewAsUserId is set:
+  //   • Reads (GET) — caller must have ADMIN or SUPER role.
+  //   • Mutations (POST / PATCH) — caller MUST have SUPER role. Admin
+  //     can browse a worker's day for review, but only Super can
+  //     start / pause / end / cancel / edit on the worker's behalf.
+  //
+  // Routes that allow the impersonation get the helper; self-service-only
+  // paths skip it.
+  async function resolveWorkdayTarget(
+    req: any,
+    opts: { allowImpersonationFor: "read" | "mutate" },
+  ): Promise<{ targetUserId: string; isImpersonating: boolean }> {
+    const raw = req.query?.viewAsUserId;
+    const target = typeof raw === "string" && raw.trim() ? raw.trim() : null;
+    if (!target || target === req.user.id) {
+      return { targetUserId: req.user.id, isImpersonating: false };
+    }
+    const caller = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      include: { roles: true },
+    });
+    const hasSuper = caller?.roles?.some((r: any) => r.role === "SUPER") ?? false;
+    const hasAdmin = hasSuper || (caller?.roles?.some((r: any) => r.role === "ADMIN") ?? false);
+    if (opts.allowImpersonationFor === "read" && !hasAdmin) {
+      throw new ServiceError("FORBIDDEN", "Admin or Super role required to view another worker's workday.", 403);
+    }
+    if (opts.allowImpersonationFor === "mutate" && !hasSuper) {
+      throw new ServiceError("FORBIDDEN", "Super role required to act on another worker's workday.", 403);
+    }
+    return { targetUserId: target, isImpersonating: true };
+  }
+
+  function workdayAuditContext(
+    req: any,
+    impersonatedUserId: string | null = null,
+  ): { actorId: string; impersonatedUserId: string | null } {
+    if (impersonatedUserId) {
+      // viewAsUserId path — actor stays as the real authenticated user,
+      // detail flags the target so the audit trail is unambiguous.
+      return { actorId: req.user.id, impersonatedUserId };
+    }
+    // No view-as: fall back to the legacy "X-Impersonate-As" header flag
+    // (the "view as role" feature). Same actorId; flag matches when set.
+    const impersonationHeader = req.headers?.[IMPERSONATE_HEADER];
+    const impersonating = typeof impersonationHeader === "string" && impersonationHeader.trim().length > 0;
+    return {
+      actorId: req.user.id,
+      impersonatedUserId: impersonating ? req.user.id : null,
+    };
+  }
+
+  // Today's workday + the per-day blocking checks the UI needs to render
+  // the Hero strip and the End dialog. Single endpoint so the Hero only
+  // pays one round-trip.
+  app.get("/me/workday/today", workerGuard, async (req: any) => {
+    const { targetUserId } = await resolveWorkdayTarget(req, { allowImpersonationFor: "read" });
+    const [state, activeJobs, activeCheckouts, openPrior] = await Promise.all([
+      workdays.getTodayWorkday(targetUserId),
+      workdays.checkBlockingActiveJobs(targetUserId),
+      workdays.checkActiveEquipmentCheckouts(targetUserId),
+      workdays.listMyOpenWorkdays(targetUserId),
+    ]);
+    return { today: state, activeJobs, activeCheckouts, openPrior };
+  });
+
+  // Standalone open-prior list — used when the UI just needs to know
+  // whether to surface the "you forgot to end yesterday" prompt without
+  // re-pulling today's state.
+  app.get("/me/workday/open-prior", workerGuard, async (req: any) => {
+    const { targetUserId } = await resolveWorkdayTarget(req, { allowImpersonationFor: "read" });
+    return { openPrior: await workdays.listMyOpenWorkdays(targetUserId) };
+  });
+
+  app.post("/me/workday/start", workerGuard, async (req: any) => {
+    const { targetUserId, isImpersonating } = await resolveWorkdayTarget(req, { allowImpersonationFor: "mutate" });
+    const body = (req.body || {}) as { startedAt?: string };
+    return workdays.startWorkday(
+      targetUserId,
+      { startedAt: body.startedAt ?? null },
+      workdayAuditContext(req, isImpersonating ? targetUserId : null),
+    );
+  });
+
+  app.post("/me/workday/pause", workerGuard, async (req: any) => {
+    const { targetUserId, isImpersonating } = await resolveWorkdayTarget(req, { allowImpersonationFor: "mutate" });
+    return workdays.pauseWorkday(targetUserId, workdayAuditContext(req, isImpersonating ? targetUserId : null));
+  });
+
+  app.post("/me/workday/resume", workerGuard, async (req: any) => {
+    const { targetUserId, isImpersonating } = await resolveWorkdayTarget(req, { allowImpersonationFor: "mutate" });
+    return workdays.resumeWorkday(targetUserId, workdayAuditContext(req, isImpersonating ? targetUserId : null));
+  });
+
+  // Cancel today's workday — hard-deletes the row. Used when the worker
+  // tapped Start by accident. Refused if the row is already COMPLETED.
+  // POST (not DELETE) so the action stays consistent with the other
+  // workday verb endpoints and so the body can carry an optional reason
+  // later if we want to capture one.
+  app.post("/me/workday/cancel", workerGuard, async (req: any) => {
+    const { targetUserId, isImpersonating } = await resolveWorkdayTarget(req, { allowImpersonationFor: "mutate" });
+    return workdays.cancelWorkday(targetUserId, workdayAuditContext(req, isImpersonating ? targetUserId : null));
+  });
+
+  // End today's workday OR a prior open workday (forgot-yesterday flow).
+  // Optional `workdayId` selects the prior row; without it, the service
+  // defaults to today's row.
+  app.post("/me/workday/end", workerGuard, async (req: any) => {
+    const { targetUserId, isImpersonating } = await resolveWorkdayTarget(req, { allowImpersonationFor: "mutate" });
+    const body = (req.body || {}) as {
+      workdayId?: string;
+      startedAt?: string;
+      endedAt?: string;
+      totalPausedMs?: number;
+    };
+    return workdays.endWorkday(
+      targetUserId,
+      {
+        workdayId: body.workdayId ?? null,
+        startedAt: body.startedAt ?? null,
+        endedAt: body.endedAt ?? null,
+        totalPausedMs: body.totalPausedMs ?? null,
+      },
+      workdayAuditContext(req, isImpersonating ? targetUserId : null),
+    );
+  });
+
+  // Same-day post-end edit. Service validates the workdayDate still
+  // matches today (per the same-day correction window).
+  app.patch("/me/workday/:id", workerGuard, async (req: any) => {
+    const { targetUserId, isImpersonating } = await resolveWorkdayTarget(req, { allowImpersonationFor: "mutate" });
+    const body = (req.body || {}) as {
+      startedAt?: string;
+      endedAt?: string;
+      totalPausedMs?: number;
+    };
+    return workdays.editWorkdayTimes(
+      targetUserId,
+      String(req.params.id),
+      {
+        startedAt: body.startedAt ?? null,
+        endedAt: body.endedAt ?? null,
+        totalPausedMs: body.totalPausedMs ?? null,
+      },
+      workdayAuditContext(req, isImpersonating ? targetUserId : null),
+    );
+  });
 }

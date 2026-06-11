@@ -65,6 +65,12 @@ export default function AdminJobsTab({ me, purpose = "ADMIN" }: TabPropsType) {
   const viewAsWorkerType = selectedWorkers.length === 1
     ? (workers.find((w) => w.id === selectedWorkers[0])?.workerType ?? null)
     : undefined;
+  // Display name flows down too so mutation-confirm dialogs can render
+  // the impersonation warning. Only when exactly one worker is selected —
+  // multi-worker selection isn't "acting as" anyone specific.
+  const viewAsDisplayName = selectedWorkers.length === 1
+    ? (workers.find((w) => w.id === selectedWorkers[0])?.displayName ?? null)
+    : null;
 
   const searchLc = searchText.toLowerCase();
   const filtered = searchText
@@ -173,6 +179,7 @@ export default function AdminJobsTab({ me, purpose = "ADMIN" }: TabPropsType) {
       purpose={purpose}
       viewAsUserIds={viewAsUserIds}
       viewAsWorkerType={viewAsWorkerType}
+      viewAsDisplayName={viewAsDisplayName}
       headerSlot={header}
       headerBelowSlot={headerBadges}
       onClearAll={() => { setSelectedWorkers([]); setSearchText(""); }}

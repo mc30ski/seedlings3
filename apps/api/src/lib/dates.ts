@@ -108,6 +108,50 @@ export function etEndOfDay(dateStr: string): Date {
   return new Date(Date.UTC(y, m - 1, d + 1, offsetHours, 0, 0) - 1);
 }
 
+/**
+ * Construct a UTC instant from an ET wall-clock date + time.
+ *
+ * Pair to bizInstantFromEtParts on the web side — same algorithm. Routes
+ * through Intl-formatted round-trip verification to pick the correct DST
+ * offset on the requested date. Use for "X at H:MM ET on dateKey D" math
+ * where simple Date construction would mis-attribute the timezone.
+ *
+ * Ambiguous fall-back times (e.g. 1:30 AM on Nov 1) pick the earlier
+ * occurrence (EDT). Spring-forward gap times (e.g. 2:30 AM on Mar 8)
+ * fall back to EDT — won't throw.
+ */
+export function etInstantFromParts(dateKey: string, time: string): Date {
+  if (!dateKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return new Date(NaN);
+  const [y, m, d] = dateKey.split("-").map(Number);
+  const parts = time.split(":").map(Number);
+  const hh = parts[0] ?? 0;
+  const mm = parts[1] ?? 0;
+  const ss = parts[2] ?? 0;
+  const expected =
+    String(hh).padStart(2, "0") + ":" +
+    String(mm).padStart(2, "0") + ":" +
+    String(ss).padStart(2, "0");
+  const verifier = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hour12: false,
+  });
+  for (const offsetHours of [4, 5]) {
+    const candidate = new Date(Date.UTC(y, m - 1, d, hh + offsetHours, mm, ss));
+    const formatted = Object.fromEntries(
+      verifier.formatToParts(candidate).map((p) => [p.type, p.value]),
+    );
+    const formattedKey = `${formatted.year}-${formatted.month}-${formatted.day}`;
+    const hourStr = formatted.hour === "24" ? "00" : formatted.hour;
+    const formattedTime = `${hourStr}:${formatted.minute}:${formatted.second}`;
+    if (formattedKey === dateKey && formattedTime === expected) {
+      return candidate;
+    }
+  }
+  return new Date(Date.UTC(y, m - 1, d, hh + 4, mm, ss));
+}
+
 /** Get tomorrow's date string in Eastern time (YYYY-MM-DD) */
 export function etTomorrow(): string {
   const now = new Date(Date.now() + 86400000);
