@@ -36,6 +36,7 @@ enum AuditScope {
   BANNER
   PAYMENT
   EXPORT
+  WORKDAY
   // add more scopes as you expand the schema
 }
 
@@ -215,6 +216,13 @@ model User {
   bannersCreated     BannerNotification[] @relation("BannerCreator")
   bannerRecipients   BannerRecipient[]
   bannerDismissals   BannerDismissal[]
+
+  // Workday tracking — per-worker daily clock-in/out for payroll. See
+  // WorkerWorkday model. `workdaysApproved` is the back-relation for the
+  // admin-approval phase (built later; the field exists now so the schema
+  // doesn't need a follow-up migration).
+  workdays           WorkerWorkday[] @relation("WorkdayWorker")
+  workdaysApproved   WorkerWorkday[] @relation("WorkdayApprover")
 }
 
 model NotificationTemplate {
@@ -1997,3 +2005,54 @@ model BannerDismissal {
   @@index([userId])
 }
 
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Worker workday tracking — per-worker daily clock-in/out for payroll.
+//
+// Tracks total time the worker spent "on the clock" each day, independent
+// of per-job duration. A workday has a startedAt, optional endedAt, and a
+// pause/resume cycle (same shape as JobOccurrence) that accumulates into
+// totalPausedMs. Active duration = (endedAt or now) − startedAt −
+// totalPausedMs − (now − pausedAt if currently paused).
+//
+// Workday time is INTENTIONALLY DECOUPLED from JobOccurrence time:
+//   - Workday measures "was this worker on the clock?" (payroll basis).
+//   - JobOccurrence measures "how long did this job take?" (planning basis).
+// In a crew, one worker can pause their workday for lunch while a coworker
+// keeps mowing the job — the job clock keeps running, the lunching worker
+// stops accruing paid time. Coupling them would force one of those two
+// readings to be wrong; see the planning thread for the full design.
+//
+// `workdayDate` is the ET calendar date of check-in. Stays the anchor even
+// if work runs past midnight (worker checks in at 11 PM Tuesday, ends at 2
+// AM Wednesday — row remains anchored to Tuesday). The unique constraint
+// enforces "one row per worker per anchor day."
+//
+// `approvedAt` / `approvedById` are reserved for the admin-approval phase
+// (built next). Empty for now; the loader + audit log already account for
+// them so the approval phase is purely additive.
+// ─────────────────────────────────────────────────────────────────────────────
+model WorkerWorkday {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation("WorkdayWorker", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  workdayDate   String    // YYYY-MM-DD in ET
+
+  startedAt     DateTime
+  endedAt       DateTime?
+  pausedAt      DateTime?
+  totalPausedMs Int       @default(0)
+
+  approvedAt    DateTime?
+  approvedById  String?
+  approvedBy    User?     @relation("WorkdayApprover", fields: [approvedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([userId, workdayDate])
+  @@index([userId, startedAt])
+  @@index([workdayDate])
+}

@@ -121,6 +121,26 @@ export const AUDIT = {
     // operator-facing summary.
     DOWNLOADED: [AuditScope.EXPORT, AuditVerb.DOWNLOADED] as const,
   },
+  WORKDAY: {
+    // Worker workday lifecycle events. The audit detail payload carries
+    // the action discriminator (pause / resume / etc.) so the existing
+    // verbs cover the full state machine without needing new enum values.
+    //   CREATED   → start workday
+    //   UPDATED   → pause / resume / edit times
+    //   COMPLETED → end workday
+    //   APPROVED  → admin approval (future phase)
+    // Impersonation: when an admin acts on a worker's workday, actorId is
+    // the admin's id and detail.impersonatedUserId is the worker's id so
+    // the audit trail reflects who actually pushed the button.
+    CREATED: [AuditScope.WORKDAY, AuditVerb.CREATED] as const,
+    UPDATED: [AuditScope.WORKDAY, AuditVerb.UPDATED] as const,
+    COMPLETED: [AuditScope.WORKDAY, AuditVerb.COMPLETED] as const,
+    APPROVED: [AuditScope.WORKDAY, AuditVerb.APPROVED] as const,
+    // Cancel — worker realized they started by mistake (e.g. tapped the
+    // button while clearing notifications). Hard-deletes the row; the
+    // audit detail preserves what the deleted row looked like.
+    DELETED: [AuditScope.WORKDAY, AuditVerb.DELETED] as const,
+  },
   PAYMENT: {
     // Reusing AuditVerb.CREATED for the admin-direct record path keeps the
     // "admin recorded a payment" semantics consistent with how other scopes

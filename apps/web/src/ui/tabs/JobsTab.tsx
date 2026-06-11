@@ -19,6 +19,8 @@ import {
 } from "@chakra-ui/react";
 import { AlertCircle, AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, Eye, Filter, Hand, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, PinOff, Play, RefreshCw, Repeat, Share2, Star, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
+import { useWorkdayGate } from "@/src/ui/dialogs/WorkdayRequiredDialog";
+import ImpersonationWarning from "@/src/ui/components/ImpersonationWarning";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { projectViewerPayout, projectTeamPayoutsForOcc, perWorkerShare, rateForViewer } from "@/src/lib/paymentMath";
 import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
@@ -216,6 +218,10 @@ type JobsTabProps = TabPropsType & {
   viewAsUserIds?: string[];
   /** Simulated worker type when admin is impersonating (for UI behavior like hiding tentative) */
   viewAsWorkerType?: string | null;
+  /** Display name of the impersonated worker — only meaningful when
+   *  viewAsUserIds has exactly one entry. Used by mutation-confirm
+   *  dialogs to surface the ImpersonationWarning. */
+  viewAsDisplayName?: string | null;
   /** Extra UI rendered inline in the search bar row */
   headerSlot?: React.ReactNode;
   /** Extra UI rendered below the search bar row (e.g. selected worker badges) */
@@ -224,9 +230,22 @@ type JobsTabProps = TabPropsType & {
   onClearAll?: () => void;
 };
 
-export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsWorkerType, headerSlot, headerBelowSlot, onClearAll }: JobsTabProps) {
+export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsWorkerType, viewAsDisplayName, headerSlot, headerBelowSlot, onClearAll }: JobsTabProps) {
   const { isAvail, forAdmin, isAdmin, isSuper } = determineRoles(me, purpose);
   const { isOffline } = useOffline();
+  // Workday gate — wraps job-start actions with the "you need an active
+  // workday" check. Renders its own dialog at the bottom of the tree.
+  // Worker-purpose only — admins acting on jobs aren't bound by the gate
+  // (matches the server-side bypass in services/jobs.ts).
+  const workdayGate = useWorkdayGate();
+  const useWorkdayGuard = purpose === "WORKER" && !forAdmin;
+  // Effective viewAs name for the ImpersonationWarning blocks rendered
+  // inside mutation dialogs. Only meaningful when admin is viewing a
+  // single worker; otherwise null. Role-impersonation (X-Impersonate-As)
+  // still fires its own banner via ImpersonationWarning even when this
+  // is null.
+  const effectiveViewAsName =
+    forAdmin && viewAsUserIds?.length === 1 ? (viewAsDisplayName ?? null) : null;
   // Method labels resolved from PAYMENT_METHODS taxonomy (single source of
   // truth — edit in Super → Settings, no code change here).
   const { labelFor: methodLabel } = usePaymentMethodLabels();
@@ -1003,7 +1022,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [contactMenuOcc, setContactMenuOcc] = useState<string | null>(null);
   const [actionMenuOcc, setActionMenuOcc] = useState<string | null>(null);
   const [quickActionMenuOcc, setQuickActionMenuOcc] = useState<string | null>(null);
-  // Open id for the "Hours awaiting review" chip dropdown — null when closed.
+  // Open id for the "Job hours awaiting review" chip dropdown — null when closed.
   const [hoursMenuOcc, setHoursMenuOcc] = useState<string | null>(null);
   const [quickDateMenuOpen, setQuickDateMenuOpen] = useState(false);
   const [editTimeOcc, setEditTimeOcc] = useState<WorkerOccurrence | null>(null);
@@ -1862,6 +1881,22 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   // toast. Used by every density (ultra, semi, expanded) so the behavior is
   // identical everywhere — including the busy-indicator handling.
   function openStartJobDialog(occ: WorkerOccurrence) {
+    // Workday gate — blocks until the worker confirms / starts their
+    // workday. Skipped for admin views and offline (offline still queues;
+    // the server enforces when sync runs). Cancel from the dialog throws
+    // a recognized error which we silently swallow.
+    if (useWorkdayGuard && !isOffline) {
+      void workdayGate.withWorkday(async () => {
+        openStartJobDialogInner(occ);
+      }).catch((err: any) => {
+        if (err?.message !== "GATE_CANCELLED") throw err;
+      });
+      return;
+    }
+    openStartJobDialogInner(occ);
+  }
+
+  function openStartJobDialogInner(occ: WorkerOccurrence) {
     if (isOffline) {
       void (async () => {
         setBusyOccId(occ.id);
@@ -1942,6 +1977,23 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   }
 
   async function resumeJob(occ: WorkerOccurrence) {
+    // Workday gate — resuming a job is forward-direction work; treat it
+    // like Start. Skipped for admin and offline (server is the backstop).
+    if (useWorkdayGuard && !isOffline) {
+      try {
+        await workdayGate.withWorkday(async () => {
+          await resumeJobInner(occ);
+        });
+      } catch (err: any) {
+        if (err?.message === "GATE_CANCELLED") return;
+        throw err;
+      }
+      return;
+    }
+    await resumeJobInner(occ);
+  }
+
+  async function resumeJobInner(occ: WorkerOccurrence) {
     setBusyOccId(occ.id);
     if (isOffline) {
       await enqueueAction("RESUME_JOB" as any, occ.id, queueLabel(occ, "Resume job"), {});
@@ -4059,6 +4111,48 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         </Button>
                       );
                     })()}
+                    {/* Reminder — set / reschedule. Always available in
+                        the worker view because reminders are per-user
+                        and any worker (including Observers, who don't
+                        have access to the footer action rows on
+                        completed jobs) needs a way to add their own.
+                        Server route is workerGuard with no observer
+                        check — UI was the only gate. */}
+                    {isWorkerView && (
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        w="full"
+                        justifyContent="start"
+                        onClick={() => {
+                          setActionMenuOcc(null);
+                          setReminderDialogOccId(occ.id);
+                          setReminderDate(occ.reminder ? bizDateKey(occ.reminder.remindAt) : "");
+                          setReminderNote(occ.reminder?.note ?? "");
+                        }}
+                      >
+                        <Bell size={14} />
+                        <Box as="span" ml={2}>{occ.reminder ? "Reschedule reminder" : "Set reminder"}</Box>
+                      </Button>
+                    )}
+                    {/* Clear reminder — only shown when one already exists. */}
+                    {isWorkerView && occ.reminder && (
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        w="full"
+                        justifyContent="start"
+                        disabled={isOffline}
+                        title={isOffline ? "Requires internet" : undefined}
+                        onClick={() => {
+                          setActionMenuOcc(null);
+                          void clearReminder(occ.id);
+                        }}
+                      >
+                        <BellOff size={14} />
+                        <Box as="span" ml={2}>Clear reminder</Box>
+                      </Button>
+                    )}
                     <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); shareOccurrenceLink(occ.id, occ.startAt); }}>
                       <Share2 size={14} />
                       <Box as="span" ml={2}>Share link</Box>
@@ -4472,7 +4566,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                     setHoursMenuOcc((v) => v === occ.id ? null : occ.id);
                                   }}
                                 >
-                                  Hours awaiting review
+                                  Job hours awaiting review
                                   <ChevronDown size={12} />
                                 </Box>
                                 {hoursMenuOcc === occ.id && (
@@ -4488,7 +4582,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                 )}
                               </Box>
                             ) : (
-                              <StatusBadge status="Hours awaiting review" palette="orange" variant="subtle" />
+                              <StatusBadge status="Job hours awaiting review" palette="orange" variant="subtle" />
                             )
                           )}
                           {isReminder && <StatusBadge status="Reminder" palette="purple" variant="solid" />}
@@ -4833,7 +4927,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                     setHoursMenuOcc((v) => v === occ.id ? null : occ.id);
                                   }}
                                 >
-                                  Hours awaiting review
+                                  Job hours awaiting review
                                   <ChevronDown size={12} />
                                 </Box>
                                 {hoursMenuOcc === occ.id && (
@@ -4849,7 +4943,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                 )}
                               </Box>
                             ) : (
-                              <StatusBadge status="Hours awaiting review" palette="orange" variant="subtle" />
+                              <StatusBadge status="Job hours awaiting review" palette="orange" variant="subtle" />
                             )
                           )}
                           {isReminder && <StatusBadge status="Reminder" palette="purple" variant="solid" />}
@@ -7410,6 +7504,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 <Dialog.Title>{startJobOcc?.workflow === "ESTIMATE" || startJobOcc?.isEstimate ? "Start Estimate" : "Start Job"}</Dialog.Title>
               </Dialog.Header>
               <Dialog.Body>
+                <ImpersonationWarning viewAsName={effectiveViewAsName} />
                 <VStack align="stretch" gap={3}>
                   <Box>
                     <Text fontSize="sm" fontWeight="medium" mb={1}>Start time</Text>
@@ -7522,6 +7617,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 <Dialog.Title>Reschedule Job</Dialog.Title>
               </Dialog.Header>
               <Dialog.Body>
+                <ImpersonationWarning viewAsName={effectiveViewAsName} />
                 <VStack align="stretch" gap={3}>
                   <Text fontSize="sm" color="fg.muted">
                     {forAdmin
@@ -7671,6 +7767,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 <Dialog.Title>Claim this job</Dialog.Title>
               </Dialog.Header>
               <Dialog.Body>
+                <ImpersonationWarning viewAsName={effectiveViewAsName} />
                 <VStack align="stretch" gap={2}>
                   <Text fontSize="sm" color="fg.muted">
                     You can claim solo, or claim for a group you lead — the whole crew gets added at once.
@@ -7752,6 +7849,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           marginPercent={marginPercent}
           isSuper={isSuper}
           allowAllMethods={forAdmin}
+          viewAsName={effectiveViewAsName}
           assignees={(acceptPaymentOcc.assignees ?? []).filter((a) => a.role !== "observer").map((a) => ({
             userId: a.userId,
             displayName: a.user?.displayName ?? a.user?.email,
@@ -7838,6 +7936,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           assignees={completeDialogOcc.assignees}
           workflow={completeDialogOcc.workflow}
           pointOfContact={completeDialogOcc.job?.property?.pointOfContact ?? null}
+          viewAsName={effectiveViewAsName}
           onCompleted={(completedAt, startedAt, totalPausedMs, completionSplits) => {
             setCompleteDialogOcc(null);
             const occToComplete = completeDialogOcc;
@@ -8513,6 +8612,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           </Dialog.Positioner>
         </Portal>
       </Dialog.Root>
+      {/* Workday gate dialog — rendered last so it overlays anything else
+          that happens to be open. The hook's `withWorkday` opens it when
+          a worker tries to start/resume a job without an active workday. */}
+      {workdayGate.dialog}
     </Box>
   );
 }

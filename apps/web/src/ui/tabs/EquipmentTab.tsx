@@ -49,6 +49,7 @@ import DeleteDialog, {
 } from "@/src/ui/dialogs/DeleteDialog";
 import EquipmentDialog from "@/src/ui/dialogs/EquipmentDialog";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
+import ImpersonationWarning from "@/src/ui/components/ImpersonationWarning";
 
 import { EQUIPMENT_KIND, EQUIPMENT_STATUS } from "@/src/lib/types";
 import { parseEquipmentKindsConfig, type EquipmentKindConfig } from "@/src/lib/equipmentSuggestions";
@@ -2503,6 +2504,21 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                 </Dialog.Title>
               </Dialog.Header>
               <Dialog.Body>
+                {/* Surface the impersonation warning once a worker is
+                    selected — every action in this dialog ("on behalf
+                    of") is a Super acting on someone else's equipment
+                    record. Until they pick, no warning (action is not
+                    yet associated with anyone). The role-impersonation
+                    side of the banner still fires when applicable. */}
+                <ImpersonationWarning
+                  viewAsName={
+                    superPickerUserId
+                      ? (adminWorkers.find((w) => w.id === superPickerUserId)?.displayName
+                          ?? adminWorkers.find((w) => w.id === superPickerUserId)?.email
+                          ?? null)
+                      : null
+                  }
+                />
                 {superActionFor && (
                   <VStack align="stretch" gap={3}>
                     <Box p={3} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">

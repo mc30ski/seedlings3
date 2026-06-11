@@ -2512,6 +2512,27 @@ export const jobs: ServicesJobs = {
       // occurrence, stranding it in PENDING_PAYMENT with no claimer.
       await assertOccurrenceHasWorker(tx, occurrenceId, finalStatus);
 
+      // Workday gate — defense in depth alongside the client-side guard
+      // dialog. A worker can't transition a job into IN_PROGRESS without
+      // an active workday. Admins are exempt (they may be cleaning up).
+      // The PAUSED → IN_PROGRESS path (resume) is also gated since it
+      // resumes work and should require an open workday.
+      if (
+        !isAdmin &&
+        finalStatus === JobOccurrenceStatus.IN_PROGRESS &&
+        (occ.status === JobOccurrenceStatus.SCHEDULED || occ.status === JobOccurrenceStatus.PAUSED)
+      ) {
+        const { assertWorkdayActiveOrPrompt } = await import("./workdays");
+        const check = await assertWorkdayActiveOrPrompt(currentUserId);
+        if (!check.ok) {
+          throw new ServiceError(
+            "WORKDAY_NOT_ACTIVE",
+            "Start your workday before starting a job.",
+            409,
+          );
+        }
+      }
+
       const data: any = { status: finalStatus };
       if (finalStatus === JobOccurrenceStatus.IN_PROGRESS && !occ.startedAt) {
         data.startedAt = timestamps?.startedAt ? new Date(timestamps.startedAt) : new Date();

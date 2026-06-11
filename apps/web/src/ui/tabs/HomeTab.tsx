@@ -12,6 +12,7 @@ import { usePushNotifications } from "@/src/lib/usePushNotifications";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import TomorrowWeatherWarning from "@/src/ui/components/TomorrowWeatherWarning";
 import HomeBanners from "@/src/ui/components/HomeBanners";
+import WorkdayStrip from "@/src/ui/components/WorkdayStrip";
 import type { Me } from "@/src/lib/types";
 
 type Props = {
@@ -799,6 +800,21 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
               </VStack>
             </Card.Body>
           </Card.Root>
+        )}
+
+        {/* Workday strip — per-worker clock-in/out for the day. Renders
+            for the personal view only (not the team overview / aggregate).
+            When admin/super "view-as" another worker, the strip targets
+            that worker's record via the viewAsUserId prop; the server
+            gates mutations to Super-only and the UI hides action buttons
+            for non-Super admins (read-only view).
+            See ui/components/WorkdayStrip.tsx for the lifecycle UI. */}
+        {!isAggregate && (
+          <WorkdayStrip
+            viewAsUserId={viewAsUserId ?? null}
+            viewAsDisplayName={isViewingOther ? (viewAsDisplayName ?? null) : null}
+            canImpersonate={!!me?.realRoles?.includes("SUPER")}
+          />
         )}
 
         {/* Hero CTA: Resume active work (any time) */}

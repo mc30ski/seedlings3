@@ -15,6 +15,7 @@ import { bizToLocalInputValue, bizParseLocalInputValue } from "@/src/lib/lib";
 import {
   publishInlineMessage,
 } from "@/src/ui/components/InlineMessage";
+import ImpersonationWarning from "@/src/ui/components/ImpersonationWarning";
 
 type Expense = { id: string; cost: number; description: string };
 
@@ -48,6 +49,9 @@ type Props = {
   workflow?: string | null;
   /** Property point-of-contact (hint for contact-info gate). */
   pointOfContact?: ContactHint;
+  /** Display name of the impersonated worker when admin is viewing-as a
+   *  single worker; renders the inline impersonation warning. */
+  viewAsName?: string | null;
   onCompleted: (completedAt?: string, startedAt?: string, totalPausedMs?: number, completionSplits?: Array<{ userId: string; percent: number }>) => void;
 };
 
@@ -65,6 +69,7 @@ export default function CompleteJobDialog({
   assignees,
   workflow: _workflow,
   pointOfContact: _pointOfContact,
+  viewAsName = null,
   onCompleted,
 }: Props) {
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -216,6 +221,7 @@ export default function CompleteJobDialog({
               <Dialog.Title>Complete Job</Dialog.Title>
             </Dialog.Header>
             <Dialog.Body>
+              <ImpersonationWarning viewAsName={viewAsName} />
               <VStack align="stretch" gap={3}>
                 <Box>
                   <Text fontSize="sm" fontWeight="medium" mb={1}>Start time</Text>

@@ -122,6 +122,9 @@ async function clearDatabase() {
   console.log("  Clearing clients...");
   await prisma.client.deleteMany();
 
+  console.log("  Clearing workday rows...");
+  await prisma.workerWorkday.deleteMany();
+
   console.log("  Clearing audit log...");
   await prisma.auditEvent.deleteMany();
 
@@ -146,6 +149,7 @@ const SETTING_SECTIONS: Record<string, string> = {
   PAYROLL_PERIOD_CADENCE: "payments",
   HIGH_VALUE_JOB_THRESHOLD: "payments",
   HOURS_APPROVAL_VARIANCE_THRESHOLD_PERCENT: "payments",
+  WORKDAY_APPROVAL_CUTOFF_HOUR_ET: "payments",
   MIN_WAGE_PER_HOUR: "payments",
   FIXED_ASSET_MIN_COST: "payments",
   QB_INCLUDE_CONTRACT_LABOR: "payments",
@@ -1828,6 +1832,7 @@ async function seedDatabase() {
     { key: "HOURS_APPROVAL_VARIANCE_THRESHOLD_PERCENT", value: "30", description: "Percent variance (over OR under the estimate) that auto-approves logged hours for payroll. Anything outside this window leaves hoursApprovedAt null and surfaces in the 'Hours awaiting review' alert until an admin reviews. Same threshold drives the visual '⚠ X% over estimate' warning on the JobsTab card." },
     { key: "MIN_WAGE_PER_HOUR", value: "7.25", description: "Minimum wage floor (USD/hour) used by the Operations → Worker Performance compliance check. Defaults to the federal FLSA minimum ($7.25) which is what applies in NC (no state-level higher floor). If you operate in a state with a higher minimum (e.g., NJ, NY, CA), bump this to match. Drives color coding on the per-worker $/hr column; contractors are shown for reclassification-risk monitoring (the floor is not a legal requirement for true 1099 workers)." },
     { key: "FIXED_ASSET_MIN_COST", value: "500", description: "Capitalization threshold (USD). BusinessExpense purchases at or above this cost, dated on/after the policy start date, are treated as Fixed Assets — excluded from qb-expenses.csv and emitted into qb-fixed-assets.csv instead. Policy start date is currently hardcoded in code; only the dollar threshold is editable here." },
+    { key: "WORKDAY_APPROVAL_CUTOFF_HOUR_ET", value: "4", description: "Hour (0-23, ET) the next morning at which workday approval becomes available to admins/supers and the worker's edit window closes. Default 4 covers late-night work that wraps past midnight. Symmetric — worker can still edit until this hour the next day; admin can approve from this hour onward." },
     { key: "PAYROLL_PERIOD_CADENCE", value: "WEEKLY", description: "How often you run payroll. Sets the default date range on the Exports tab." },
     {
       key: "PAYMENT_METHODS",
@@ -2783,9 +2788,172 @@ async function seedDatabase() {
   });
   await prisma.jobOccurrenceAssignee.create({ data: { occurrenceId: ann8.id, userId: MICHAEL_ID, assignedById: MICHAEL_ID } });
 
+  await seedWorkdayFixtures();
+
   await applySettingSections();
 
   console.log("  Seed complete!");
+}
+
+/**
+ * Workday fixtures — one row per seed worker covering every UI state so the
+ * Worker Home strip + dialogs can be eyeballed end-to-end without manual
+ * setup. Anchored on the actual current wall-clock so all the live
+ * durations tick correctly in the strip.
+ *
+ *   EMPLOYEE_ID    → IN_PROGRESS (started 3h ago, no pauses)
+ *   CONTRACTOR_ID  → PAUSED (started 4h ago, paused 30m ago, 12m prior pause)
+ *   TRAINEE_ID     → COMPLETED (8h day with 30m lunch — today's edit window
+ *                    is still open so the "Edit times" affordance fires)
+ *   ADMIN_WORKER_ID → forgot-yesterday (open IN_PROGRESS row from yesterday,
+ *                    nothing today — surfaces the orange catch-up strip)
+ *   MICHAEL_ID     → NOT_STARTED (no row — surfaces the "Start workday" button)
+ */
+async function seedWorkdayFixtures() {
+  console.log("  Workday fixtures (one row per state for each seed worker)...");
+
+  const now = new Date();
+  const today = etFormatDate(now);
+  const yesterday = etFormatDate(daysAgo(1));
+  const mins = (n: number) => n * 60 * 1000;
+  const hrs = (n: number) => n * 60 * 60 * 1000;
+
+  // ── EMPLOYEE_ID: IN_PROGRESS ────────────────────────────────────────
+  await prisma.workerWorkday.create({
+    data: {
+      userId: EMPLOYEE_ID,
+      workdayDate: today,
+      startedAt: new Date(now.getTime() - hrs(3)),
+    },
+  });
+
+  // ── CONTRACTOR_ID: PAUSED ──────────────────────────────────────────
+  // Started 4h ago, took a 12-minute break that's already accumulated
+  // into totalPausedMs, currently paused since 30m ago. Live UI shows
+  // both the closed and the open pause segments.
+  await prisma.workerWorkday.create({
+    data: {
+      userId: CONTRACTOR_ID,
+      workdayDate: today,
+      startedAt: new Date(now.getTime() - hrs(4)),
+      pausedAt: new Date(now.getTime() - mins(30)),
+      totalPausedMs: mins(12),
+    },
+  });
+
+  // ── TRAINEE_ID: COMPLETED ──────────────────────────────────────────
+  // 8h workday with a 30-minute lunch break. Anchors at 8:00 AM ET so
+  // the times render consistently regardless of when the seed runs.
+  // Today's same-day edit window is still open so the strip renders the
+  // "Edit times" link.
+  const traineeStart = new Date(now.getTime() - hrs(9));
+  const traineeEnd = new Date(traineeStart.getTime() + hrs(8) + mins(30));
+  await prisma.workerWorkday.create({
+    data: {
+      userId: TRAINEE_ID,
+      workdayDate: today,
+      startedAt: traineeStart,
+      endedAt: traineeEnd,
+      totalPausedMs: mins(30),
+    },
+  });
+
+  // ── ADMIN_WORKER_ID: forgot-yesterday ───────────────────────────────
+  // IN_PROGRESS row from yesterday, never ended. The Home strip surfaces
+  // the orange "you forgot to end your workday" prompt with a "Set end
+  // time" button that opens the catch-up dialog.
+  await prisma.workerWorkday.create({
+    data: {
+      userId: ADMIN_WORKER_ID,
+      workdayDate: yesterday,
+      startedAt: new Date(now.getTime() - hrs(28)), // ~yesterday 8am-ish
+    },
+  });
+
+  // ── MICHAEL_ID: NOT_STARTED ─────────────────────────────────────────
+  // No row at all — exercises the "Workday hasn't started yet" + Start
+  // workday button on the Hero strip.
+  //  (No-op: deliberately seeding nothing for Michael.)
+
+  // ─── Super Workdays tab fixtures ──────────────────────────────────────
+  // Past-day rows for the Super approval surface. Two days back is well
+  // outside the 4 AM ET cutoff so the approval window is always open
+  // regardless of when the seed runs. Each fixture exercises a different
+  // group in the Super tab: APPROVED, PENDING APPROVAL, NEEDS ENDING.
+  //
+  // `daysAgo(n, hour)` returns a Date at hour HH:00 local-time, N calendar
+  // days back — DST-safe via `.setDate()` per the existing seed pattern.
+  const twoDaysAgoDate = etFormatDate(daysAgo(2));
+  const threeDaysAgoDate = etFormatDate(daysAgo(3));
+  // Yesterday's date — when this seed's approvals were stamped — so the
+  // "Approved by Michael on …" line renders with a plausible timestamp.
+  const yesterdayApproval = daysAgo(1, 16); // 4 PM yesterday
+
+  // EMPLOYEE_ID — APPROVED row (two days ago)
+  // Already approved by Michael; appears in the "Approved" section with
+  // an "Approved by Michael" subline and a (re)Review button.
+  await prisma.workerWorkday.create({
+    data: {
+      userId: EMPLOYEE_ID,
+      workdayDate: twoDaysAgoDate,
+      startedAt: daysAgo(2, 8),
+      endedAt: daysAgo(2, 17),
+      totalPausedMs: mins(30),
+      approvedAt: yesterdayApproval,
+      approvedById: MICHAEL_ID,
+    },
+  });
+
+  // CONTRACTOR_ID — PENDING APPROVAL row (two days ago)
+  // Ended cleanly but no admin has reviewed yet. Appears in the "Pending
+  // approval" section with a checkbox for bulk approve + Review button.
+  await prisma.workerWorkday.create({
+    data: {
+      userId: CONTRACTOR_ID,
+      workdayDate: twoDaysAgoDate,
+      startedAt: daysAgo(2, 7),
+      endedAt: daysAgo(2, 17),
+      totalPausedMs: mins(45),
+    },
+  });
+
+  // TRAINEE_ID — PENDING APPROVAL row (two days ago)
+  // Second pending row so bulk-approve has more than one row to select.
+  await prisma.workerWorkday.create({
+    data: {
+      userId: TRAINEE_ID,
+      workdayDate: twoDaysAgoDate,
+      startedAt: daysAgo(2, 9),
+      endedAt: daysAgo(2, 17),
+      totalPausedMs: mins(20),
+    },
+  });
+
+  // ADMIN_WORKER_ID — NEEDS ENDING row (three days ago)
+  // Never ended. Exercises the unified Review dialog's "open" banner and
+  // the "Set the end time below to close it before approving" flow.
+  await prisma.workerWorkday.create({
+    data: {
+      userId: ADMIN_WORKER_ID,
+      workdayDate: threeDaysAgoDate,
+      startedAt: daysAgo(3, 8),
+    },
+  });
+
+  // MICHAEL_ID — APPROVED row (two days ago) approved by self.
+  // Lets the "Approved by" line render for the seeded admin (self-approval
+  // is allowed since Michael is a Super; the audit log captures it).
+  await prisma.workerWorkday.create({
+    data: {
+      userId: MICHAEL_ID,
+      workdayDate: twoDaysAgoDate,
+      startedAt: daysAgo(2, 8),
+      endedAt: daysAgo(2, 17),
+      totalPausedMs: mins(30),
+      approvedAt: yesterdayApproval,
+      approvedById: MICHAEL_ID,
+    },
+  });
 }
 
 // ── Payments-focused template ──────────────────────────────────────────────
