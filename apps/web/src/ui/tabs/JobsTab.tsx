@@ -132,9 +132,14 @@ function getQuickMessage(occ: any, contactName: string | null): { label: string;
   const addressStr = [prop?.street1, prop?.city, prop?.state].filter(Boolean).join(", ");
   const atAddress = addressStr ? ` at ${addressStr}` : "";
 
-  // Unconfirmed — needs client confirmation (only if claimed)
-  const isClaimed = (occ.assignees ?? []).length > 0;
-  if (occ.status === "SCHEDULED" && occ.jobId && !(occ as any).isClientConfirmed && isClaimed) {
+  // Unconfirmed — needs client confirmation. Previously gated on
+  // isClaimed so unclaimed jobs hid the Request Confirmation button.
+  // That's wrong for the Admin Jobs tab where an admin routinely
+  // confirms unclaimed jobs on the client's behalf and still wants
+  // the messaging affordance. The message copy doesn't depend on
+  // anyone being claimed — it's "we have your appointment scheduled,
+  // please confirm" — so the gate doesn't earn its keep.
+  if (occ.status === "SCHEDULED" && occ.jobId && !(occ as any).isClientConfirmed) {
     return {
       label: "Request Confirmation",
       body: `Hi ${name}, this is Seedlings Lawn Care. We have your lawn service scheduled for ${dateStr}${atAddress}. Could you please confirm this works for you? Or let us know if you need to reschedule.`,
@@ -231,7 +236,22 @@ type JobsTabProps = TabPropsType & {
 };
 
 export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsWorkerType, viewAsDisplayName, headerSlot, headerBelowSlot, onClearAll }: JobsTabProps) {
-  const { isAvail, forAdmin, isAdmin, isSuper } = determineRoles(me, purpose);
+  const { isAvail, forAdmin, isAdmin: hasAdminRole, isSuper: hasSuperRole } = determineRoles(me, purpose);
+  // Tab-aware role gates. The Worker Jobs tab (`purpose === "WORKER"`)
+  // is strictly a worker UI — admin and super capabilities (estimates,
+  // manage-in-services, reset-job, per-occurrence overrides, payment
+  // reconciliation tools, etc.) only surface when the actor is on the
+  // Admin Jobs tab (`forAdmin`). Without this gate, every condition in
+  // the file like `(isAdmin || isSuper) && …` would render admin
+  // controls on the worker tab whenever the signed-in user happened to
+  // have those roles — which is exactly the role-leak we're closing.
+  //
+  // Use these throughout the file; the raw `hasAdminRole` /
+  // `hasSuperRole` are kept so the (very rare) places that need to know
+  // "does the actor TRULY have super, regardless of which tab they're
+  // on" can opt in explicitly.
+  const isAdmin = forAdmin && hasAdminRole;
+  const isSuper = forAdmin && hasSuperRole;
   const { isOffline } = useOffline();
   // Workday gate — wraps job-start actions with the "you need an active
   // workday" check. Renders its own dialog at the bottom of the tree.
@@ -7428,6 +7448,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         onCancelAction={confirmAction?.onCancelAction}
         warning={confirmAction?.warning}
         secondaryActionFirst={confirmAction?.secondaryActionFirst}
+        viewAsName={effectiveViewAsName}
         onConfirm={(inputValue: string, amountValue?: string) => {
           if (confirmAction?.inputPlaceholder || confirmAction?.amountLabel) {
             (confirmAction!.onConfirm as (v: string, a?: string) => void)(inputValue, amountValue);
@@ -7719,6 +7740,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 <Dialog.Title>Notify Client</Dialog.Title>
               </Dialog.Header>
               <Dialog.Body>
+                <ImpersonationWarning viewAsName={effectiveViewAsName} />
                 <VStack align="stretch" gap={3}>
                   <Text fontSize="sm" color="fg.muted">
                     The job has been rescheduled. Let the client know about the change:
@@ -7845,6 +7867,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             ? { canPullInventory: true, canChargeBusinessExpenses: true }
             : (me?.privileges ?? { canPullInventory: false, canChargeBusinessExpenses: false })
         }
+        viewAsName={effectiveViewAsName}
         onChanged={() => void load(false)}
       />
 
@@ -8031,6 +8054,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 <Dialog.Title>Add Service</Dialog.Title>
               </Dialog.Header>
               <Dialog.Body>
+                <ImpersonationWarning viewAsName={effectiveViewAsName} />
                 <VStack align="stretch" gap={3}>
                   <Box>
                     <Text fontSize="xs" fontWeight="medium" mb={1}>Service type</Text>
@@ -8151,6 +8175,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 <Dialog.Title>Edit Work Time</Dialog.Title>
               </Dialog.Header>
               <Dialog.Body>
+                <ImpersonationWarning viewAsName={effectiveViewAsName} />
                 {editTimeOcc && (() => {
                   const startMs = editTimeForm.startedAt ? new Date(editTimeForm.startedAt).getTime() : NaN;
                   const endMs = editTimeForm.completedAt ? new Date(editTimeForm.completedAt).getTime() : NaN;

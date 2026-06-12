@@ -682,8 +682,15 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                                 +(b.isPrimary ?? false) -
                                 +(a.isPrimary ?? false)
                             )
+                            // Tab-aware gate: inactive contacts are an
+                            // admin-only concern (worker UI keeps the
+                            // contacts list to active rows only). Use
+                            // forAdmin instead of raw isAdmin so this
+                            // matches the rest of the file — an admin
+                            // browsing the Worker Clients tab still
+                            // sees the clean worker view.
                             .filter(
-                              (ct: any) => isAdmin || ct.status === "ACTIVE"
+                              (ct: any) => forAdmin || ct.status === "ACTIVE"
                             )
                             .map((ct: any) => {
                               return forAdmin || ct.status === "ACTIVE" ? (
