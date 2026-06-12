@@ -1,5 +1,5 @@
 import { prisma } from "../db/prisma";
-import { etFormatDate } from "../lib/dates";
+import { etFormatDate, etFormatTimeOpts } from "../lib/dates";
 import { loadExpenseCategories } from "./expenseCategories";
 import {
   computeBreakdown,
@@ -765,8 +765,12 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
   //
   // The Amount column on each row is that row's own contribution to
   // income; summing Amount across the whole file = total inflow for
-  // the period. Gross / Fee / Net intentionally do NOT sum across rows
-  // (they'd double-count when a payment has multiple splits).
+  // the period. The TOTALS row also sums every other numeric column
+  // for cross-check convenience — note that the payment-level columns
+  // (Payment Gross / Processor Fee / Payment Net) repeat across splits
+  // of the same payment, so their totals OVER-count when payments
+  // have multiple splits. The Amount column is the only one that's a
+  // pure sum of distinct contributions.
   const [payments, rentals] = await Promise.all([
     loadConfirmedPayments(start, end),
     prisma.checkout.findMany({
@@ -815,9 +819,16 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
   }
 
   // Numeric column cells render as a string when populated, empty when
-  // null — distinguishes "not applicable" from "zero." Used on rental
-  // rows for Processor Fee / Platform Fee / Top-up where those columns
-  // don't logically apply, instead of a misleading "0.00".
+  // null — distinguishes "not applicable" from "zero." Rental rows
+  // skip every fee column; Contractor Fee + Business Margin + Top-up
+  // are mutually exclusive on Service rows by worker type:
+  //   • Contractor row  → Contractor Fee populated; Margin, Top-up blank
+  //   • Employee/Trainee → Business Margin + Top-up populated; Fee blank
+  //   • Owner / Rental  → all three blank
+  // With this layout the math reads explicitly per row:
+  //   Amount = Gross Share − Contractor Fee
+  //   Amount = Gross Share − Business Margin + Top-up
+  // No hidden bookkeeping — every dollar that moves shows in a column.
   type Row = {
     date: string;
     source: string;
@@ -831,9 +842,10 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
     paymentGross: number | null;
     processorFee: number | null;
     paymentNet: number | null;
-    rowGrossShare: number | null;
-    rowPlatformFee: number | null;
-    rowTopUp: number | null;
+    grossShare: number | null;
+    contractorFee: number | null;
+    businessMargin: number | null;
+    topUp: number | null;
     amount: number;
   };
   const rows: Row[] = [];
@@ -864,14 +876,29 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
       // splits (pre-reconciliation migration) don't have the breakdown
       // populated — better to show the final number on both sides than
       // a misleading blank where a zero would imply "no gross share."
-      const rowGrossShare = spAny.grossAmount != null
+      const grossShare = spAny.grossAmount != null
         ? round2(spAny.grossAmount)
         : round2(sp.amount ?? 0);
-      const rowPlatformFee = spAny.feeAmount != null
-        ? round2(spAny.feeAmount)
-        : null;
-      const rowTopUp = spAny.topUpAmount != null && spAny.topUpAmount !== 0
-        ? round2(spAny.topUpAmount)
+      // PaymentSplit.feeAmount holds either the contractor platform
+      // fee OR the business margin, depending on the user's
+      // workerType. Split into two columns so the operator sees at a
+      // glance which deduction applied. Owner-earnings rows are the
+      // business's own cut — no fee/margin applies. Same logic as
+      // services/payments.ts rateFor().
+      const feeRaw = spAny.feeAmount != null ? round2(spAny.feeAmount) : null;
+      const isEmployeeRow = !isOwnerCut && isEmployeeClass(user.workerType);
+      const isContractorRow = !isOwnerCut && !isEmployeeClass(user.workerType);
+      const contractorFee = isContractorRow ? feeRaw : null;
+      const businessMargin = isEmployeeRow ? feeRaw : null;
+      // Top-up only applies to employee/trainee rows (the make-whole
+      // adjustment when their gross share falls below the hourly
+      // floor). Contractors are paid pro-rata, owner-earnings is just
+      // the business's own cut — both blank. We surface 0.00 (rather
+      // than blank) for employees who didn't need a top-up so the
+      // operator can see at a glance "no adjustment applied here" vs
+      // "not applicable to this row type."
+      const topUp = isEmployeeRow
+        ? round2(spAny.topUpAmount ?? 0)
         : null;
       rows.push({
         date: dateLabel,
@@ -886,9 +913,10 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
         paymentGross,
         processorFee,
         paymentNet,
-        rowGrossShare,
-        rowPlatformFee,
-        rowTopUp,
+        grossShare,
+        contractorFee,
+        businessMargin,
+        topUp,
         amount: round2(sp.amount ?? 0),
       });
     }
@@ -901,9 +929,9 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
       "Equipment rental";
     const rentalCost = round2(c.rentalCost ?? 0);
     // Equipment rentals have no payment-processor leg and no
-    // platform-fee / top-up bookkeeping — those fields stay null so
-    // the CSV renders blank cells (avoids "0.00" reading as a real
-    // zero-dollar deduction).
+    // platform-fee bookkeeping — those fields stay null so the CSV
+    // renders blank cells (avoids "0.00" reading as a real zero-dollar
+    // deduction).
     rows.push({
       date: c.releasedAt ? toIsoDate(c.releasedAt) : "",
       source: "Equipment Rental",
@@ -917,9 +945,10 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
       paymentGross: rentalCost,
       processorFee: null,
       paymentNet: rentalCost,
-      rowGrossShare: rentalCost,
-      rowPlatformFee: null,
-      rowTopUp: null,
+      grossShare: rentalCost,
+      contractorFee: null,
+      businessMargin: null,
+      topUp: null,
       amount: rentalCost,
     });
   }
@@ -936,10 +965,19 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
 
   // Column layout tells the story per row: payment-level context
   // (what the client paid + what landed in the bank), then the
-  // row-level breakdown (this row's share of gross → minus platform
-  // fee → plus top-up → final amount). Operator can trace from the
-  // payment deposit on the right (Payment Net) to a worker's payout
-  // (Amount) without doing arithmetic in their head.
+  // per-row breakdown (this person's share of gross → adjustments →
+  // final Amount). Adjustments are exclusive by worker type so the
+  // math always reconciles on the row:
+  //
+  //   Contractor row     → Amount = Gross Share − Contractor Fee
+  //   Employee / Trainee → Amount = Gross Share − Business Margin + Top-up
+  //   Owner / Rental row → Amount = Gross Share  (no adjustments)
+  //
+  // Top-up is the make-whole-on-underpay adjustment (employee/trainee
+  // hourly-floor guarantee). Surfaces as 0.00 on employee rows that
+  // didn't need a top-up (so the operator sees "no adjustment" rather
+  // than wondering whether the column applies). Blank on every other
+  // row type. See docs/FINANCIAL_SYSTEM.md for the full math.
   const header = [
     "Date",
     "Source",
@@ -953,12 +991,29 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
     "Payment Gross",
     "Processor Fee",
     "Payment Net",
-    "Row Gross Share",
-    "Row Platform Fee",
-    "Row Top-up",
+    "Gross Share",
+    "Contractor Fee",
+    "Business Margin",
+    "Top-up",
     "Amount",
   ];
   const lines: string[] = [csvRow(header)];
+  // Sum every numeric column. Null cells (e.g. rentals have no
+  // platform-fee / top-up) count as zero in the total. The Amount
+  // column is the canonical "total inflow" line; the others are sums
+  // of their column's raw values and are useful as cross-checks
+  // against bank/processor reports — note that Payment Gross /
+  // Processor Fee / Payment Net repeat across splits of the same
+  // payment, so their totals over-count when payments have multiple
+  // splits (intentional: the operator can divide by split count or
+  // de-dupe externally when needed).
+  let paymentGrossTotal = 0;
+  let processorFeeTotal = 0;
+  let paymentNetTotal = 0;
+  let grossShareTotal = 0;
+  let contractorFeeTotal = 0;
+  let businessMarginTotal = 0;
+  let topUpTotal = 0;
   let amountTotal = 0;
   // Empty cell when the underlying number is null (rentals); fixed-2
   // string otherwise. Matches the rest of the file's number formatting.
@@ -980,27 +1035,398 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
         fmtNum(r.paymentGross),
         fmtNum(r.processorFee),
         fmtNum(r.paymentNet),
-        fmtNum(r.rowGrossShare),
-        fmtNum(r.rowPlatformFee),
-        fmtNum(r.rowTopUp),
+        fmtNum(r.grossShare),
+        fmtNum(r.contractorFee),
+        fmtNum(r.businessMargin),
+        fmtNum(r.topUp),
         r.amount.toFixed(2),
       ]),
     );
+    paymentGrossTotal += r.paymentGross ?? 0;
+    processorFeeTotal += r.processorFee ?? 0;
+    paymentNetTotal += r.paymentNet ?? 0;
+    grossShareTotal += r.grossShare ?? 0;
+    contractorFeeTotal += r.contractorFee ?? 0;
+    businessMarginTotal += r.businessMargin ?? 0;
+    topUpTotal += r.topUp ?? 0;
     amountTotal += r.amount;
   }
-  // TOTALS sums the Amount column only — that captures total inflow
-  // (worker payouts + business's cut + equipment rental income).
-  // Payment-level + row-deduction columns are intentionally NOT
-  // totaled — they'd double-count payment numbers across splits and
-  // mix incomparable per-row breakdowns.
   lines.push(
     csvRow([
       "TOTALS",
       "", "", "", "", "", "", "", "",
-      "", "", "",
-      "", "", "",
+      round2(paymentGrossTotal).toFixed(2),
+      round2(processorFeeTotal).toFixed(2),
+      round2(paymentNetTotal).toFixed(2),
+      round2(grossShareTotal).toFixed(2),
+      round2(contractorFeeTotal).toFixed(2),
+      round2(businessMarginTotal).toFixed(2),
+      round2(topUpTotal).toFixed(2),
       round2(amountTotal).toFixed(2),
     ]),
   );
   return { csv: finalizeCsv(lines), rowCount: rows.length, total: round2(amountTotal) };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Workdays CSV — one row per worker per workday in window. Drives payroll
+// reconciliation against Gusto.
+//
+// Date filter routes through `workdayDate` (ET YYYY-MM-DD strings on
+// WorkerWorkday), NOT the underlying timestamps. A workday that started
+// at 11 PM Mon and ended at 2 AM Tue stays anchored to Monday — keeps
+// the export aligned with the operator's mental model and with the
+// Super → Workdays tab.
+//
+// Active hours computed from (endedAt − startedAt) − totalPausedMs.
+// Open rows (no endedAt yet) leave Active Hours blank — they aren't a
+// finished workday and shouldn't contribute to a totaled hours figure.
+// The Status column distinguishes the open variants from completed/
+// approved rows so the operator can spot rows that need closing.
+//
+// Business Start Date cutoff intentionally NOT applied — that filter is
+// scoped to money/audit data per docs/FINANCIAL_SYSTEM.md; workdays are
+// a labor record. Operator picks the window via the date range picker.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function workdaysCsv(start: Date, end: Date): Promise<CsvResult> {
+  // ET-anchored boundary keys. workdayDate is YYYY-MM-DD ET, so string
+  // comparison is correct (lexicographic == chronological for that format).
+  const fromKey = etFormatDate(start);
+  const toKey = etFormatDate(end);
+
+  const todayKey = etFormatDate(new Date());
+
+  const [workdays, occs] = await Promise.all([
+    prisma.workerWorkday.findMany({
+      where: { workdayDate: { gte: fromKey, lte: toKey } },
+      include: {
+        user: { select: { displayName: true, email: true, workerType: true } },
+        approvedBy: { select: { displayName: true, email: true } },
+      },
+    }),
+    // Pre-fetch occurrences whose completedAt OR startAt falls anywhere
+    // in the window, with their non-observer assignees + the parent
+    // payment splits. Single query here drives the per-(date, worker)
+    // Jobs Completed count, the today-only Jobs Remaining count, AND
+    // the Net Earnings figure (sum of confirmed PaymentSplit amounts
+    // attributed to work the worker did on that date).
+    //
+    // Owner-earnings splits and GP-flagged contractor splits are
+    // filtered server-side — the former are the business's own cut
+    // (not personal wage), the latter were already paid via the
+    // wage-path Gusto run (would double-count). Mirrors the QB Income
+    // export's filter rules.
+    //
+    // Only real-job workflows count for Jobs Completed / Remaining —
+    // tasks / reminders / events / followups / announcements are
+    // coordination items, not billable jobs.
+    prisma.jobOccurrence.findMany({
+      where: {
+        OR: [
+          { completedAt: { gte: start, lte: end } },
+          { startAt: { gte: start, lte: end } },
+        ],
+        workflow: { in: ["STANDARD", "ONE_OFF", "ESTIMATE"] as any },
+      },
+      select: {
+        startAt: true,
+        completedAt: true,
+        status: true,
+        price: true,
+        completionSplits: true,
+        promisedPayouts: true,
+        addons: { select: { price: true } },
+        expenses: { select: { cost: true } },
+        assignees: {
+          where: { role: { not: "observer" } },
+          select: {
+            userId: true,
+            user: { select: { workerType: true } },
+          },
+        },
+        payment: {
+          select: {
+            confirmed: true,
+            writtenOff: true,
+            splits: {
+              where: {
+                ownerEarnings: false,
+                guaranteedPayoutPaidAt: null,
+              },
+              select: {
+                userId: true,
+                amount: true,
+                topUpAmount: true,
+              },
+            },
+          },
+        },
+      },
+    }),
+  ]);
+
+  // Rates loaded once outside the loop. Used by the runtime fallback
+  // (occurrences without a promisedPayouts snapshot) to derive what
+  // each worker was owed at completion time. Mirrors the W-2 export's
+  // approach — see services/payments.ts computeBreakdown for the math.
+  const rates = await loadRates(prisma);
+
+  // Sort: date asc, then worker display name asc. Prisma can't order by
+  // joined fields cleanly so we sort in memory once.
+  workdays.sort((a, b) => {
+    const d = a.workdayDate.localeCompare(b.workdayDate);
+    if (d !== 0) return d;
+    const an = a.user.displayName ?? a.user.email ?? "";
+    const bn = b.user.displayName ?? b.user.email ?? "";
+    return an.localeCompare(bn);
+  });
+
+  // Build per-(workdayDate, userId) count maps.
+  //   completedMap — occurrences this worker COMPLETED on this ET day
+  //                  (anchored on completedAt). Counted on every row.
+  //   remainingMap — occurrences this worker has SCHEDULED on this ET
+  //                  day (anchored on startAt) that aren't yet
+  //                  completed. Only surfaced in the CSV for today's
+  //                  workdays — past-day "remaining" is ambiguous
+  //                  (rescheduled? skipped? still open?), so we leave
+  //                  the cell blank there per the planning discussion.
+  const finishedStatuses = new Set([
+    "COMPLETED", "CLOSED", "PENDING_PAYMENT", "ARCHIVED", "CANCELED",
+  ]);
+  const completedMap = new Map<string, number>();
+  const remainingMap = new Map<string, number>();
+  // Net earnings per (workdayDate, userId). Source priority:
+  //
+  //   1. JobOccurrence.promisedPayouts snapshot — locked at completion
+  //      time, captures what each worker was OWED regardless of when
+  //      (or whether) the client pays. `net` on the snapshot is
+  //      already gross − fee/margin (pre-top-up), exactly what the
+  //      operator needs to see for hourly-rate-vs-minimum-wage audit.
+  //      This is the right answer for employees + trainees (W-2 wage
+  //      workers paid via Gusto regardless of client payment) and for
+  //      contractors who completed work that hasn't been paid yet.
+  //
+  //   2. Fallback to PaymentSplit.amount − topUpAmount on a confirmed
+  //      payment — for legacy occurrences predating the snapshot
+  //      feature, when the snapshot is null but a payment exists.
+  //
+  //   3. Otherwise zero — no snapshot, no payment, no signal.
+  //
+  // Owner-earnings + GP-flagged splits are filtered server-side by
+  // the query; the snapshot itself never includes owner-earnings.
+  const moneyMap = new Map<string, number>();
+  const bump = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1);
+
+  type PromisedPayoutEntry = { userId?: unknown; net?: unknown };
+  function readSnapshot(raw: unknown): Map<string, number> | null {
+    if (!Array.isArray(raw)) return null;
+    const m = new Map<string, number>();
+    for (const r of raw as PromisedPayoutEntry[]) {
+      if (!r || typeof r !== "object") continue;
+      const uid = typeof r.userId === "string" ? r.userId : null;
+      const net = Number(r.net) || 0;
+      if (uid && net !== 0) m.set(uid, (m.get(uid) ?? 0) + net);
+    }
+    return m.size > 0 ? m : null;
+  }
+
+  // Runtime fallback — replicates computeBreakdown at the point of
+  // completion, so an occurrence missing its promisedPayouts snapshot
+  // (legacy data, seeded fixtures, jobs completed before the snapshot
+  // feature shipped) still produces correct per-worker net figures.
+  // Returns a userId → net map matching the snapshot shape exactly.
+  function computeFallbackPayouts(
+    occ: (typeof occs)[number],
+  ): Map<string, number> {
+    const m = new Map<string, number>();
+    const active = occ.assignees ?? [];
+    if (active.length === 0) return m;
+    const priceTotal =
+      (occ.price ?? 0) +
+      (occ.addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0);
+    const expTotal = (occ.expenses ?? []).reduce(
+      (s: number, e: any) => s + (e.cost ?? 0),
+      0,
+    );
+    const completionSplits = (occ as any).completionSplits as
+      | Array<{ userId: string; percent: number }>
+      | null
+      | undefined;
+    const splitPctById = new Map<string, number>(
+      Array.isArray(completionSplits)
+        ? completionSplits.map((s: any) => [s.userId, Number(s.percent) || 0])
+        : [],
+    );
+    const fallbackPct = active.length > 0 ? 100 / active.length : 0;
+    const workersList: WorkerInput[] = active.map((a: any) => ({
+      userId: a.userId,
+      workerType: a.user?.workerType ?? null,
+      splitPercent: splitPctById.get(a.userId) ?? fallbackPct,
+    }));
+    const breakdown = computeBreakdown(priceTotal, expTotal, workersList, rates);
+    for (const r of breakdown) {
+      if (r.net !== 0) m.set(r.userId, (m.get(r.userId) ?? 0) + r.net);
+    }
+    return m;
+  }
+
+  for (const occ of occs) {
+    if (occ.completedAt) {
+      const day = etFormatDate(occ.completedAt);
+      for (const a of occ.assignees) bump(completedMap, `${day}|${a.userId}`);
+
+      // Source priority: snapshot → runtime compute → confirmed split.
+      // The runtime compute uses the SAME math the snapshot would have
+      // captured at completion (computeBreakdown w/ current price +
+      // assignees + rates), so seeded / legacy occurrences without a
+      // snapshot still produce the right per-worker net. The
+      // PaymentSplit branch only matters when there's neither a
+      // snapshot nor enough state to recompute (very old data).
+      const snapshot = readSnapshot((occ as any).promisedPayouts);
+      const earnings = snapshot ?? computeFallbackPayouts(occ);
+      if (earnings.size > 0) {
+        for (const [userId, net] of earnings) {
+          const k = `${day}|${userId}`;
+          moneyMap.set(k, (moneyMap.get(k) ?? 0) + net);
+        }
+      } else if (occ.payment?.confirmed && !occ.payment.writtenOff) {
+        for (const sp of occ.payment.splits) {
+          const k = `${day}|${sp.userId}`;
+          const preTopUp = (sp.amount ?? 0) - (sp.topUpAmount ?? 0);
+          moneyMap.set(k, (moneyMap.get(k) ?? 0) + preTopUp);
+        }
+      }
+    }
+    if (occ.startAt && !finishedStatuses.has(occ.status as string)) {
+      const day = etFormatDate(occ.startAt);
+      for (const a of occ.assignees) bump(remainingMap, `${day}|${a.userId}`);
+    }
+  }
+
+  function workerTypeLabel(t: string | null | undefined): string {
+    switch (t) {
+      case "EMPLOYEE": return "Employee";
+      case "TRAINEE": return "Trainee";
+      case "CONTRACTOR": return "Contractor";
+      default: return "Unclassified";
+    }
+  }
+
+  // Derived status — matches the labels on the Super → Workdays tab so
+  // the operator's mental model stays consistent across surfaces.
+  function rowStatus(w: { endedAt: Date | null; pausedAt: Date | null; approvedAt: Date | null }): string {
+    if (w.endedAt && w.approvedAt) return "Approved";
+    if (w.endedAt) return "Completed";
+    if (w.pausedAt) return "Paused";
+    return "In progress";
+  }
+
+  const header = [
+    "Date",
+    "Worker",
+    "Worker Type",
+    "Worker Email",
+    "Started At",
+    "Ended At",
+    "Paused Minutes",
+    "Active Hours",
+    "Jobs Completed",
+    "Jobs Remaining",
+    "Net Earnings",
+    "Hourly Wage",
+    "Status",
+    "Approved By",
+    "Approved At",
+  ];
+
+  const lines: string[] = [csvRow(header)];
+  let activeHoursTotal = 0;
+  let pausedMinutesTotal = 0;
+  let jobsCompletedTotal = 0;
+  let jobsRemainingTotal = 0;
+  let netEarningsTotal = 0;
+  for (const w of workdays) {
+    const startedAtLabel = etFormatTimeOpts(w.startedAt, {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+    const endedAtLabel = w.endedAt
+      ? etFormatTimeOpts(w.endedAt, { hour: "2-digit", minute: "2-digit", hour12: false })
+      : "";
+    const pausedMinutes = Math.round((w.totalPausedMs ?? 0) / 60000);
+    // Active hours only meaningful once the workday is closed. Open
+    // rows leave the cell blank rather than printing a partial number
+    // that would bias the TOTALS row.
+    const activeHoursStr = w.endedAt
+      ? round2(
+          (w.endedAt.getTime() - w.startedAt.getTime() - (w.totalPausedMs ?? 0)) / 3600000,
+        ).toFixed(2)
+      : "";
+    const approvedAtLabel = w.approvedAt
+      ? `${etFormatDate(w.approvedAt)} ${etFormatTimeOpts(w.approvedAt, { hour: "2-digit", minute: "2-digit", hour12: false })}`
+      : "";
+    const mapKey = `${w.workdayDate}|${w.userId}`;
+    const jobsCompleted = completedMap.get(mapKey) ?? 0;
+    // Remaining only populates for today's row — past-day "remaining"
+    // is ambiguous (rescheduled vs. skipped vs. still open). For past
+    // dates the cell is blank so the operator doesn't misread a count
+    // as "this worker had N unfinished jobs that day."
+    const isTodayRow = w.workdayDate === todayKey;
+    const jobsRemaining = isTodayRow ? (remainingMap.get(mapKey) ?? 0) : null;
+    const netEarnings = round2(moneyMap.get(mapKey) ?? 0);
+    // Hourly wage = earnings ÷ active hours, only when both are
+    // meaningful. Open workdays (no Active Hours) render blank for
+    // Hourly Wage too — can't divide by a partial running clock.
+    const activeHoursNum = activeHoursStr !== "" ? Number(activeHoursStr) : 0;
+    const hourlyWageStr = activeHoursStr !== "" && activeHoursNum > 0
+      ? round2(netEarnings / activeHoursNum).toFixed(2)
+      : "";
+    lines.push(
+      csvRow([
+        w.workdayDate,
+        w.user.displayName ?? w.user.email ?? "(unnamed)",
+        workerTypeLabel(w.user.workerType),
+        w.user.email ?? "",
+        startedAtLabel,
+        endedAtLabel,
+        pausedMinutes.toString(),
+        activeHoursStr,
+        jobsCompleted.toString(),
+        jobsRemaining == null ? "" : jobsRemaining.toString(),
+        netEarnings.toFixed(2),
+        hourlyWageStr,
+        rowStatus(w),
+        w.approvedBy?.displayName ?? w.approvedBy?.email ?? "",
+        approvedAtLabel,
+      ]),
+    );
+    if (activeHoursStr !== "") activeHoursTotal += Number(activeHoursStr);
+    pausedMinutesTotal += pausedMinutes;
+    jobsCompletedTotal += jobsCompleted;
+    if (jobsRemaining != null) jobsRemainingTotal += jobsRemaining;
+    netEarningsTotal += netEarnings;
+  }
+  // TOTALS row — sums numeric columns. Hourly Wage is intentionally
+  // blank: each row's hourly is a per-worker figure (their own pay ÷
+  // their own hours); a single aggregate cell at the bottom would
+  // average across workers, which isn't anyone's actual rate and
+  // misleads more than it helps. The earnings + hours totals are
+  // still there so the operator can compute a blended figure
+  // themselves if they want.
+  lines.push(
+    csvRow([
+      "TOTALS",
+      "", "", "", "", "",
+      pausedMinutesTotal.toString(),
+      round2(activeHoursTotal).toFixed(2),
+      jobsCompletedTotal.toString(),
+      jobsRemainingTotal.toString(),
+      round2(netEarningsTotal).toFixed(2),
+      "",
+      "", "", "",
+    ]),
+  );
+  return { csv: finalizeCsv(lines), rowCount: workdays.length, total: round2(activeHoursTotal) };
 }

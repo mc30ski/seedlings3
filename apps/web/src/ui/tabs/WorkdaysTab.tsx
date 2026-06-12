@@ -14,7 +14,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { ChevronLeft, ChevronRight, Calendar, AlertTriangle, CheckCircle2, Edit3, RotateCcw } from "lucide-react";
+import { ChevronLeft, ChevronRight, AlertTriangle, CheckCircle2, Edit3, RotateCcw } from "lucide-react";
 import { apiGet, apiPost, apiPatch } from "@/src/lib/api";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import {
@@ -297,9 +297,6 @@ export default function WorkdaysTab({
       <Card.Root variant="outline">
         <Card.Body p={3}>
           <HStack gap={2} align="center" wrap="wrap">
-            <Button size="sm" variant="outline" onClick={() => dayShift(-1)} title="Previous day">
-              <ChevronLeft size={16} />
-            </Button>
             <Box flex="1" minW="220px">
               <Text fontSize="sm" fontWeight="semibold">{headerLabel}</Text>
               {data && (
@@ -312,27 +309,35 @@ export default function WorkdaysTab({
                 </Text>
               )}
             </Box>
-            <HStack gap={1}>
-              <Calendar size={14} color="var(--chakra-colors-gray-500)" />
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                max={bizToday()}
-                style={{
-                  padding: "4px 8px",
-                  fontSize: "13px",
-                  border: "1px solid var(--chakra-colors-gray-200)",
-                  borderRadius: "6px",
-                }}
-              />
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              max={bizToday()}
+              style={{
+                padding: "4px 8px",
+                fontSize: "13px",
+                border: "1px solid var(--chakra-colors-gray-200)",
+                borderRadius: "6px",
+              }}
+            />
+            {/* Keep the prev / today / next buttons together as one
+                wrappable unit — otherwise on narrow viewports the last
+                button gets shoved onto its own row, separated from
+                Today and Previous. The inner HStack's wrap="nowrap"
+                pins them together; the outer row wraps the group as
+                a whole. */}
+            <HStack gap={1} wrap="nowrap" flexShrink={0}>
+              <Button size="sm" variant="outline" onClick={() => dayShift(-1)} title="Previous day">
+                <ChevronLeft size={16} />
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setSelectedDate(bizToday())}>
+                Today
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => dayShift(1)} title="Next day" disabled={selectedDate >= bizToday()}>
+                <ChevronRight size={16} />
+              </Button>
             </HStack>
-            <Button size="sm" variant="outline" onClick={() => setSelectedDate(bizToday())}>
-              Today
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => dayShift(1)} title="Next day" disabled={selectedDate >= bizToday()}>
-              <ChevronRight size={16} />
-            </Button>
           </HStack>
           {!data?.adminWindowOpen && (
             <Box mt={2} p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" borderRadius="md">
