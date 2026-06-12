@@ -1030,6 +1030,26 @@ export default function HomePage() {
           categoryIcon: FiBarChart2,
         },
         {
+          // Reconcile — accounting-software validation surface. Replaces
+          // the old Exports + P&L Report tabs. Renders a QB-style P&L
+          // for the selected window with click-to-drill-down on every
+          // row, and offers flat CSVs (Capital, Income, Expenses,
+          // Workdays) for visual cross-checking against the operator's
+          // accounting software (which is now the source of truth, wired
+          // directly to the bank). See ReconcileTab.tsx + services/
+          // pnlReport.ts + services/exports.ts.
+          //
+          // Lives under Records (not Money) because it's primarily a
+          // review / audit surface for reconciling against an external
+          // system, alongside Workdays / Audit / Timeline.
+          value: "reconcile",
+          label: "Reconcile",
+          icon: FiBarChart2,
+          content: wrapWithInlineMessage(<ReconcileTab />),
+          category: "Records",
+          categoryIcon: FiBarChart2,
+        },
+        {
           value: "audit",
           label: "Audit",
           icon: FiSearch,
@@ -1106,22 +1126,9 @@ export default function HomePage() {
           category: "Money",
           categoryIcon: TfiMoney,
         },
-        {
-          // Reconcile — accounting-software validation surface. Replaces
-          // the old Exports + P&L Report tabs. Renders a QB-style P&L
-          // for the selected window with click-to-drill-down on every
-          // row, and offers three flat CSVs (Capital, Income, Expenses)
-          // for visual cross-checking against the operator's accounting
-          // software (which is now the source of truth, wired directly
-          // to the bank). See ReconcileTab.tsx + services/pnlReport.ts
-          // + services/exports.ts.
-          value: "reconcile",
-          label: "Reconcile",
-          icon: FiBarChart2,
-          content: wrapWithInlineMessage(<ReconcileTab />),
-          category: "Money",
-          categoryIcon: TfiMoney,
-        },
+        // NOTE: Reconcile moved out of Money → Records. It lives next to
+        // Workdays / Audit / Timeline now since it's an external-system
+        // reconciliation surface rather than a per-record money editor.
         // NOTE: the Super "Money → Statistics" tab was removed per operator
         // preference (no longer needed for routine ops review). The
         // StatisticsTab component still ships for the Worker personal-stats

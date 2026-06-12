@@ -83,7 +83,7 @@ export default function ReconcileTab() {
   const [details, setDetails] = useState<Record<string, DetailState>>({});
   // Independent loading state for the CSV downloads so we can disable
   // the right button while its file is streaming.
-  const [downloading, setDownloading] = useState<"capital" | "income" | "expenses" | null>(null);
+  const [downloading, setDownloading] = useState<"capital" | "income" | "expenses" | "workdays" | null>(null);
   // Active preset key + dropdown visibility for the green-chip preset
   // picker (matching PaymentsTab + Ledger). `null` means the operator
   // typed the dates by hand — the chip reads "Custom dates".
@@ -138,7 +138,7 @@ export default function ReconcileTab() {
     });
   }
 
-  async function downloadCsv(kind: "capital" | "income" | "expenses") {
+  async function downloadCsv(kind: "capital" | "income" | "expenses" | "workdays") {
     if (downloading) return;
     setDownloading(kind);
     try {
@@ -463,6 +463,15 @@ export default function ReconcileTab() {
                 {downloading === "expenses" ? <Spinner size="xs" /> : <FiDownload />}
                 <Text ml={2}>Expenses</Text>
               </Button>
+              <Button
+                size="sm"
+                colorPalette="blue"
+                onClick={() => void downloadCsv("workdays")}
+                disabled={downloading !== null || loading}
+              >
+                {downloading === "workdays" ? <Spinner size="xs" /> : <FiDownload />}
+                <Text ml={2}>Workdays</Text>
+              </Button>
             </HStack>
             <Box as="ul" fontSize="xs" color="fg.muted" pl={5} m={0} css={{ listStyleType: "disc" }}>
               <Box as="li" mb={1}>
@@ -471,8 +480,11 @@ export default function ReconcileTab() {
               <Box as="li" mb={1}>
                 <b>Income</b> — every inflow in the window: each worker&apos;s share of every service payment, the owner&apos;s cut back to the business, and equipment rental income. Includes gross / processor fee / net per payment so you can match against deposit entries.
               </Box>
-              <Box as="li">
+              <Box as="li" mb={1}>
                 <b>Expenses</b> — operating business expenses (the P&amp;L side) in the selected window. Use to validate spend categories against your accounting software.
+              </Box>
+              <Box as="li">
+                <b>Workdays</b> — one row per worker per workday in the window: start / end times, paused minutes, active hours, and approval status. Use to reconcile against Gusto payroll hours.
               </Box>
             </Box>
           </VStack>

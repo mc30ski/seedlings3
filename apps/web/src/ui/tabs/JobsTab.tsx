@@ -2074,6 +2074,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         } else {
           if (occ.startAt) candidates.push(bizDateKey(occ.startAt));
           if ((occ as any).completedAt) candidates.push(bizDateKey((occ as any).completedAt));
+          // An attached reminder also makes the row "present" in the
+          // range — without this, an Observer's reminder on a completed
+          // past job (or any reminder set on a finished job that's
+          // outside the reminderBypassFinished window) silently
+          // disappears because the API doesn't ship a ghost when the
+          // occurrence itself was loaded (e.g. via observership).
+          // dayGroups suppresses the past-dated original below so only
+          // the reminder ghost surfaces in the visible window.
+          if ((occ as any).reminder?.remindAt) {
+            candidates.push(bizDateKey((occ as any).reminder.remindAt));
+          }
         }
         if (candidates.length === 0) return true; // no date — include
         return candidates.some((day) => {
@@ -2341,7 +2352,20 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           reminderDueGroup.push(occ);
           reminderDueIds.add(occ.id);
         } else {
-          rest.push(occ);
+          // Suppress the original card when only its reminder pulled
+          // the row through the date filter — i.e. the natural startAt
+          // (and completedAt) are outside the range and what's actually
+          // in range is the future reminder date. Without this, an
+          // Observer's reminder on a completed past job would render
+          // the past completed card in the visible window alongside
+          // its future ghost.
+          const naturalOccKey = occ.startAt ? bizDateKey(occ.startAt) : null;
+          const naturalCompletedKey = (occ as any).completedAt ? bizDateKey((occ as any).completedAt) : null;
+          const occInRange =
+            (!naturalOccKey && !naturalCompletedKey)
+            || (naturalOccKey != null && (!dateFrom || naturalOccKey >= dateFrom) && (!dateTo || naturalOccKey <= dateTo))
+            || (naturalCompletedKey != null && (!dateFrom || naturalCompletedKey >= dateFrom) && (!dateTo || naturalCompletedKey <= dateTo));
+          if (occInRange) rest.push(occ);
           // Future reminders — add a ghost at the reminder date if it's a
           // different ET day than the occurrence AND within date range.
           // Skip when `occ` is ITSELF an API-built reminder ghost (its

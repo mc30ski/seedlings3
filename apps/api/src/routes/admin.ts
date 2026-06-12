@@ -6151,7 +6151,7 @@ Respond ONLY with valid JSON in this exact format:
   //
   // Both anchor on effective dates (occurrence.completedAt for per-job
   // expenses; Payment.confirmedAt for worker rows). No history saved.
-  const { expensesCsv, capitalCsv, incomeCsv } = await import("../services/exports");
+  const { expensesCsv, capitalCsv, incomeCsv, workdaysCsv } = await import("../services/exports");
 
   function readDateRange(req: any): { start: Date; end: Date } {
     const startStr = String(req.query?.start ?? "");
@@ -6214,6 +6214,17 @@ Respond ONLY with valid JSON in this exact format:
     const endStr = String(req.query.end);
     const result = await incomeCsv(effectiveStart, end);
     return deliverPlainCsv(reply, "income", { startStr, endStr }, result.csv);
+  });
+
+  // Workdays — per-worker daily hours in window. Drives Gusto payroll
+  // reconciliation. Intentionally NOT clamped to BUSINESS_START_DATE
+  // cutoff (that filter scopes money/audit data, not labor records).
+  app.get("/admin/exports/workdays.csv", superGuard, async (req: any, reply: FastifyReply) => {
+    const { start, end } = readDateRange(req);
+    const startStr = String(req.query.start);
+    const endStr = String(req.query.end);
+    const result = await workdaysCsv(start, end);
+    return deliverPlainCsv(reply, "workdays", { startStr, endStr }, result.csv);
   });
 
   // ── Super → Workdays administration ────────────────────────────────────
