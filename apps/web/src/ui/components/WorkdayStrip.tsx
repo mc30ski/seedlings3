@@ -419,8 +419,8 @@ function WorkdayCard({
               </Text>
               <Text fontSize="xs" color="orange.800">
                 {viewAsName
-                  ? "Their workday must be started before they can begin any jobs."
-                  : "You need to start your workday before you can begin any jobs."}
+                  ? "Their workday must be started before they can begin any jobs. Start of workday is when they reach their first location."
+                  : "You need to start your workday before you can begin any jobs. Start of workday is when you reach your first location."}
               </Text>
             </VStack>
             {canAct && (

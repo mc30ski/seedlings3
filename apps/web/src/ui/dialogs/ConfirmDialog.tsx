@@ -6,6 +6,7 @@ import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import { apiGet } from "@/src/lib/api";
 import { jobTagLabel, pricingJobTags } from "@/src/ui/components/JobTagPicker";
 import PricingGuideDialog from "@/src/ui/dialogs/PricingGuideDialog";
+import ImpersonationWarning from "@/src/ui/components/ImpersonationWarning";
 
 type Props = {
   open: boolean;
@@ -60,6 +61,12 @@ type Props = {
    *  flows where the secondary opens a sub-dialog and the parent must
    *  stay in state so it can reappear after the sub-dialog closes. */
   keepOpenOnCancelAction?: boolean;
+  /** Display name of the impersonated worker when the caller is acting
+   *  on behalf of another user. Renders the shared red impersonation
+   *  callout at the top of the body. Pass null/undefined when the
+   *  caller is acting on their own behalf — the X-Impersonate-As role
+   *  banner still fires inside ImpersonationWarning if applicable. */
+  viewAsName?: string | null;
 };
 
 type PricingHint = {
@@ -91,6 +98,7 @@ export default function ConfirmDialog({
   warning,
   secondaryActionFirst,
   keepOpenOnCancelAction,
+  viewAsName,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [inputValue, setInputValue] = useState("");
@@ -168,6 +176,7 @@ export default function ConfirmDialog({
               <Dialog.Title>{title}</Dialog.Title>
             </Dialog.Header>
             <Dialog.Body>
+              <ImpersonationWarning viewAsName={viewAsName} />
               {messageNode ? messageNode : (message && <Text>{message}</Text>)}
               {warning && (
                 <Box

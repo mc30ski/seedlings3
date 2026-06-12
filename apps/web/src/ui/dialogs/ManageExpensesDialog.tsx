@@ -16,6 +16,7 @@ import {
 import { apiGet, apiPost, apiDelete, apiPatch } from "@/src/lib/api";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import ReceiptUpload from "@/src/ui/components/ReceiptUpload";
+import ImpersonationWarning from "@/src/ui/components/ImpersonationWarning";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -89,6 +90,10 @@ type Props = {
     canPullInventory: boolean;
     canChargeBusinessExpenses: boolean;
   };
+  /** Display name of the impersonated worker when admin is viewing-as a
+   *  single worker. Renders the inline impersonation warning at the top
+   *  of the dialog body. */
+  viewAsName?: string | null;
   onChanged?: () => void;
 };
 
@@ -99,6 +104,7 @@ export default function ManageExpensesDialog({
   isAdmin,
   disableInventory = false,
   privileges = { canPullInventory: true, canChargeBusinessExpenses: true },
+  viewAsName = null,
   onChanged,
 }: Props) {
   const canInventory = privileges.canPullInventory && !disableInventory;
@@ -372,6 +378,7 @@ export default function ManageExpensesDialog({
               <Dialog.Title>Manage Expenses</Dialog.Title>
             </Dialog.Header>
             <Dialog.Body>
+              <ImpersonationWarning viewAsName={viewAsName} />
               <VStack align="stretch" gap={3}>
                 <Box p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" borderRadius="md">
                   <Text fontSize="xs" color="blue.800">
