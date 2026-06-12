@@ -479,9 +479,28 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                   <Text fontSize="md" fontWeight="semibold">{clientLabel(c.displayName)}</Text>
                 </HStack>
                 <HStack gap={1} wrap="wrap">
-                  {(c.contacts ?? []).some((ct: any) => !ct.email && !ct.phone && !ct.normalizedPhone) && (
-                    <Badge size="xs" colorPalette="red" variant="subtle">Missing contact info</Badge>
-                  )}
+                  {/* Client-level "Missing contact info" — fires only when
+                      we have NO way to reach this client (no active
+                      contact carries an email or phone). Previously this
+                      used `.some`, which fired whenever ANY single
+                      contact lacked comm info — duplicating the
+                      per-contact "No contact info" tag and misleading
+                      the operator when a different contact on the same
+                      client (e.g. spouse / neighbor) DID have a phone
+                      or email and the client was perfectly reachable. */}
+                  {(() => {
+                    const active = (c.contacts ?? []).filter(
+                      (ct: any) => (ct.status ?? "ACTIVE") === "ACTIVE",
+                    );
+                    const noneReachable =
+                      active.length === 0 ||
+                      active.every(
+                        (ct: any) => !ct.email && !ct.phone && !ct.normalizedPhone,
+                      );
+                    return noneReachable ? (
+                      <Badge size="xs" colorPalette="red" variant="subtle">Missing contact info</Badge>
+                    ) : null;
+                  })()}
                   <StatusBadge status={c.type} palette="gray" variant="outline" />
                   <StatusBadge
                     status={c.status}
