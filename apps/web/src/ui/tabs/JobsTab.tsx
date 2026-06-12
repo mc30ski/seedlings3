@@ -1184,6 +1184,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     onCancelAction?: () => void;
     warning?: string;
     secondaryActionFirst?: boolean;
+    /** Per-action impersonation override — name of the worker on whose
+     *  behalf this specific admin action is happening (e.g. the claimer
+     *  of the job being mutated). Used when the tab-level
+     *  effectiveViewAsName is null (admin not viewing-as a single
+     *  worker) but the action still affects a particular worker's
+     *  record. Passed straight through to ConfirmDialog's viewAsName. */
+    viewAsName?: string | null;
   } | null>(null);
 
   const [acceptPaymentOpen, setAcceptPaymentOpen] = useState(false);
@@ -1844,15 +1851,22 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   // SMS/email), or cancel. Used by every Confirm-Client entry point (ultra,
   // semi, expanded card) so the experience stays identical across densities.
   function openConfirmClientDialog(occ: WorkerOccurrence) {
-    // Prefer the property's pointOfContact when set; otherwise fall back to
-    // the client's primary active contact (or the first active one with
-    // phone/email). This lets Request Confirmation show on jobs whose
-    // property never had pointOfContactId set but whose client still has
-    // usable contact info on file.
+    // Prefer the property's pointOfContact ONLY when they have a phone
+    // or email — otherwise fall back to any active client contact that
+    // does. The old `directPoc ?? fallbackPoc` short-circuited as soon
+    // as a pointOfContact existed, even one with no contact info; so a
+    // property where the designated POC is the owner (no phone/email)
+    // but a secondary contact (e.g. spouse, neighbor) has a phone would
+    // still hide the Request Confirmation button. Fix: gate the
+    // preference on `directPoc` actually being reachable.
     const directPoc = (occ.job?.property as any)?.pointOfContact;
+    const directPocReachable = !!(directPoc?.phone || directPoc?.email);
     const clientContacts: any[] = (occ.job?.property as any)?.client?.contacts ?? [];
     const fallbackPoc = clientContacts.find((c) => c?.phone || c?.email) ?? null;
-    const poc = directPoc ?? fallbackPoc;
+    // If the POC has comms info → use POC.
+    // Else if any contact has comms info → use that contact.
+    // Else fall back to POC (just for name display; canRequest will be false).
+    const poc = directPocReachable ? directPoc : (fallbackPoc ?? directPoc);
     const pocPhone: string | null = poc?.phone ?? null;
     const pocEmail: string | null = poc?.email ?? null;
     const pocName: string | null = poc?.firstName
@@ -1860,11 +1874,49 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       : null;
     const quick = getQuickMessage(occ, pocName);
     const canRequest = !!(quick && (pocPhone || pocEmail));
+
+    // Per-action impersonation: when the admin is taking this action on
+    // Admin Jobs, name the worker on whose behalf it's happening. Falls
+    // back through (a) the tab-level viewAs name (if admin is viewing-as
+    // one worker), then (b) the job's claimer, then (c) the first active
+    // non-observer assignee. Workers on the Worker Jobs tab confirm
+    // their own jobs — no impersonation, so this is null.
+    let actionViewAsName: string | null = effectiveViewAsName;
+    if (!actionViewAsName && forAdmin) {
+      const activeAssignees = (occ.assignees ?? []).filter((a: any) => a.role !== "observer");
+      const claimer = activeAssignees.find((a: any) => a.assignedById === a.userId);
+      const target = claimer ?? activeAssignees[0] ?? null;
+      const name = target?.user?.displayName ?? target?.user?.email ?? null;
+      if (name) actionViewAsName = name;
+    }
+
+    // Dialog body — always informative, regardless of whether the
+    // Request Confirmation messaging branch is reachable. Previously
+    // this was empty when no contact info existed, leaving a
+    // title-only dialog with no context for the admin to decide.
+    const propertyLabel = (occ.job?.property as any)?.displayName ?? "this property";
+    const clientLabel_ = (occ.job?.property as any)?.client?.displayName ?? null;
+    const propertyAndClient = clientLabel_ ? `${propertyLabel} — ${clientLabel_}` : propertyLabel;
+    const dateStr = occ.startAt
+      ? fmtDateOpts(occ.startAt, { weekday: "long", month: "long", day: "numeric" })
+      : "this upcoming appointment";
+    const bodyText = `Mark the client as having confirmed the ${dateStr} appointment for ${propertyAndClient}. Confirm only if the client has actually approved.`;
+
+    // Safety warning — also always shown. When the messaging branch is
+    // available we steer the admin to the "Request Confirmation" path;
+    // otherwise we surface the same advisory + how to add contact info.
+    const baseWarning = "Only confirm if the client has approved the appointment. Starting a job without the client's go-ahead can cause issues.";
+    const warningText = canRequest
+      ? `${baseWarning} If you haven't heard back yet, tap "Request Confirmation" to send them a message.`
+      : `${baseWarning} No phone or email is on file for this property — add a contact via the Clients tab if you need to message them.`;
+
     setConfirmAction({
       title: "Confirm Client?",
-      message: "",
+      message: bodyText,
       confirmLabel: "Yes, Confirmed",
       colorPalette: "orange",
+      viewAsName: actionViewAsName,
+      warning: warningText,
       onConfirm: async () => {
         setBusyOccId(occ.id);
         try {
@@ -1888,8 +1940,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               }
             },
             secondaryActionFirst: true,
-            warning:
-              "Only confirm if client has approved the appointment. Otherwise tap \"Request Confirmation\" to send them a message — a job that starts without the client's go-ahead can cause issues.",
           }
         : {}),
     });
@@ -7448,7 +7498,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         onCancelAction={confirmAction?.onCancelAction}
         warning={confirmAction?.warning}
         secondaryActionFirst={confirmAction?.secondaryActionFirst}
-        viewAsName={effectiveViewAsName}
+        viewAsName={confirmAction?.viewAsName !== undefined ? confirmAction.viewAsName : effectiveViewAsName}
         onConfirm={(inputValue: string, amountValue?: string) => {
           if (confirmAction?.inputPlaceholder || confirmAction?.amountLabel) {
             (confirmAction!.onConfirm as (v: string, a?: string) => void)(inputValue, amountValue);
