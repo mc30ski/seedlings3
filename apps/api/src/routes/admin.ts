@@ -4570,6 +4570,14 @@ Respond ONLY with valid JSON in this exact format:
       data.recurrence = r;
     }
 
+    // Load the existing row up front — needed for the no-op type
+    // comparison below AND to resolve link status for both guards.
+    const existing = await prisma.businessExpense.findUnique({
+      where: { id },
+      select: { type: true },
+    });
+    if (!existing) throw app.httpErrors.notFound("Expense not found.");
+
     // If this BE is the tax-ledger pair of a job-level Expense, mirror
     // cost/description so the worker's payout deduction stays in sync with
     // the ledger. Other fields (category/vendor/date/etc) live only on the BE.
@@ -4595,7 +4603,14 @@ Respond ONLY with valid JSON in this exact format:
     // Type changes only allowed on freestanding rows. Job-paired and
     // supply-paired BEs are always EXPENSE; changing them to equity would
     // break the linked Expense/SupplyPurchase semantics.
-    if (nextType !== null) {
+    //
+    // Only treat this as a "type change" when the incoming value
+    // actually differs from what's stored. The frontend posts the
+    // whole record back when saving an edit, so `type` is present in
+    // the body even when the operator is only updating notes / vendor
+    // / etc. Comparing to `existing.type` avoids false-positive
+    // rejections of pure metadata edits on linked expenses.
+    if (nextType !== null && nextType !== existing.type) {
       if (linkedExpense || linkedSupplyPurchase) {
         throw app.httpErrors.badRequest(
           "Cannot change type on an expense linked to a job or supply purchase.",
@@ -4863,6 +4878,22 @@ Respond ONLY with valid JSON in this exact format:
    * Account hierarchy (QB-style "parent:child" naming) is parsed inside
    * buildPnLReport so the UI can render grouped subtotals matching QB.
    */
+  // Worker reconciliation cockpit — per-worker hours + jobs + earnings
+  // breakdown for a window, plus period totals and Gusto/QB targets.
+  // See services/reconcileWorkers.ts buildReconcileWorkers.
+  app.get("/super/reconcile/period", superGuard, async (req: any) => {
+    const q = (req.query || {}) as { from?: string; to?: string };
+    if (!q.from || !q.to || !/^\d{4}-\d{2}-\d{2}$/.test(q.from) || !/^\d{4}-\d{2}-\d{2}$/.test(q.to)) {
+      throw app.httpErrors.badRequest("from and to query params required (YYYY-MM-DD).");
+    }
+    let start = etMidnight(q.from);
+    const end = etEndOfDay(q.to);
+    const cutoff = await resolveCutoff(req);
+    if (cutoff && cutoff > start) start = cutoff;
+    const { buildReconcileWorkers } = await import("../services/reconcileWorkers");
+    return buildReconcileWorkers(start, end, { fromKey: q.from, toKey: q.to });
+  });
+
   app.get("/admin/business-expenses/pnl-report", superGuard, async (req: any) => {
     const q = (req.query || {}) as { from?: string; to?: string };
     if (!q.from || !q.to) {

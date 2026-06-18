@@ -24,6 +24,7 @@ import WorkdaysTab from "@/src/ui/tabs/WorkdaysTab";
 import AuditTab from "@/src/ui/tabs/AuditTab";
 import BusinessExpensesTab from "@/src/ui/tabs/BusinessExpensesTab";
 import ReconcileTab from "@/src/ui/tabs/ReconcileTab";
+import ReconcileWorkersTab from "@/src/ui/tabs/ReconcileWorkersTab";
 import SuppliesTab from "@/src/ui/tabs/SuppliesTab";
 import DocumentsTab from "@/src/ui/tabs/DocumentsTab";
 import TimelineTab from "@/src/ui/tabs/TimelineTab";
@@ -1046,6 +1047,20 @@ export default function HomePage() {
           label: "Reconcile",
           icon: FiBarChart2,
           content: wrapWithInlineMessage(<ReconcileTab />),
+          category: "Records",
+          categoryIcon: FiBarChart2,
+        },
+        {
+          // Worker Reconciliation Cockpit — EXPERIMENTAL. Single-window
+          // tie-out of worker hours + jobs + earnings against Gusto +
+          // QuickBooks. May get yanked if it doesn't earn its keep —
+          // contained as a single tab + service file + route so it's
+          // easy to remove. See ReconcileWorkersTab.tsx +
+          // services/reconcileWorkers.ts.
+          value: "reconcile-workers",
+          label: "Workers · Reconcile",
+          icon: FiUsers,
+          content: wrapWithInlineMessage(<ReconcileWorkersTab />),
           category: "Records",
           categoryIcon: FiBarChart2,
         },
