@@ -21,6 +21,7 @@ import { AlertCircle, AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, Cale
 import DateInput from "@/src/ui/components/DateInput";
 import { useWorkdayGate } from "@/src/ui/dialogs/WorkdayRequiredDialog";
 import ImpersonationWarning from "@/src/ui/components/ImpersonationWarning";
+import WorkdayStrip from "@/src/ui/components/WorkdayStrip";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { projectViewerPayout, projectTeamPayoutsForOcc, perWorkerShare, rateForViewer } from "@/src/lib/paymentMath";
 import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
@@ -2541,6 +2542,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
   return (
     <Box w="full">
+      {/* Workday strip — same Start / Pause / Resume / End controls
+          surfaced on the Worker Home tab. Mounted here so workers can
+          clock in / out without bouncing back to Home before opening
+          their job list. Worker-only: not rendered on Admin Jobs (where
+          purpose is "ADMIN"/"SUPER" and there's no personal workday to
+          act on). The component itself is shared with HomeTab — see
+          ui/components/WorkdayStrip.tsx. */}
+      {isWorkerView && <WorkdayStrip />}
       <HStack mb={2} gap={2} wrap="nowrap">
         <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)", border: "1px solid var(--chakra-colors-gray-300)", borderRadius: "6px" }}>
           <RefreshCw size={14} />
