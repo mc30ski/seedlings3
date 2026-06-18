@@ -2954,6 +2954,74 @@ async function seedWorkdayFixtures() {
       approvedById: MICHAEL_ID,
     },
   });
+
+  // ─── Backfill: workdays aligned with seeded completed jobs ───────────
+  // The Worker Reconciliation Cockpit (and the Workdays CSV) is only
+  // useful when workers have BOTH workday hours AND completed jobs on
+  // the same days. The state-only fixtures above cover the UI states
+  // but don't tie to specific jobs. This pass walks every completed
+  // occurrence in the seed and ensures the assignees have a workday
+  // for that date — so the reconciliation tab shows a "healthy"
+  // period view with hours, jobs, and meaningful hourly rates,
+  // alongside the deliberately-anomalous rows above.
+  //
+  // Uses upsert so the per-state fixtures take precedence (won't
+  // overwrite an open IN_PROGRESS row for ADMIN_WORKER yesterday with
+  // a closed one here).
+  console.log("    Workday backfill aligned with completed jobs...");
+  const completedOccs = await prisma.jobOccurrence.findMany({
+    where: {
+      completedAt: { not: null },
+      workflow: { in: ["STANDARD", "ONE_OFF", "ESTIMATE"] },
+    },
+    select: {
+      completedAt: true,
+      assignees: {
+        where: { role: { not: "observer" } },
+        select: { userId: true },
+      },
+    },
+  });
+  // Bucket by (userId, workdayDate) so each worker gets exactly one
+  // workday per date even if they did multiple jobs that day.
+  const workdayKeys = new Set<string>();
+  for (const occ of completedOccs) {
+    if (!occ.completedAt) continue;
+    const dateKey = etFormatDate(occ.completedAt);
+    for (const a of occ.assignees) {
+      workdayKeys.add(`${a.userId}|${dateKey}`);
+    }
+  }
+  let backfilledCount = 0;
+  for (const key of workdayKeys) {
+    const [userId, dateKey] = key.split("|");
+    // Build an 8 AM → 5 PM ET workday with a 30-minute lunch break.
+    // Easy to read on the Workdays tab and lands the effective hourly
+    // in a realistic ballpark. Anchor on the ET date the job was
+    // completed; `daysAgo` math runs in local time so it lines up.
+    const [y, m, d] = dateKey.split("-").map(Number);
+    const startedAt = new Date(`${dateKey}T08:00:00-04:00`);
+    const endedAt = new Date(`${dateKey}T17:00:00-04:00`);
+    // Skip future dates (DST safety + paranoia)
+    if (endedAt.getTime() > Date.now() + 60 * 1000) continue;
+    await prisma.workerWorkday.upsert({
+      where: { userId_workdayDate: { userId, workdayDate: dateKey } },
+      create: {
+        userId,
+        workdayDate: dateKey,
+        startedAt,
+        endedAt,
+        totalPausedMs: mins(30),
+      },
+      // Don't clobber the state-only fixtures above — those carry
+      // deliberate IN_PROGRESS / PAUSED / NEEDS_ENDING shapes the UI
+      // tests rely on.
+      update: {},
+    });
+    backfilledCount += 1;
+    void y; void m; void d;
+  }
+  console.log(`    Backfilled ${backfilledCount} workday rows from ${completedOccs.length} completed occurrences.`);
 }
 
 // ── Payments-focused template ──────────────────────────────────────────────

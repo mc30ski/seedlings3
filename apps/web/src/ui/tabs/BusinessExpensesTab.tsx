@@ -1065,6 +1065,46 @@ export default function BusinessExpensesTab() {
                           Supply: {e.supplyPurchase.supply.name} × {e.supplyPurchase.quantity} →
                         </Badge>
                       )}
+                      {/* Equipment link — purchases tied to a specific piece
+                          of equipment (repairs, accessories, fuel, etc.).
+                          Clickable: stashes the equipment id in
+                          sessionStorage (same hand-off the Equipment tab
+                          reads on mount) and navigates to it. Orange
+                          distinguishes it from the supply (blue) / job
+                          (teal) / category (purple) badges. */}
+                      {e.equipmentId && e.equipment && (
+                        <Badge
+                          size="sm"
+                          colorPalette="orange"
+                          variant="subtle"
+                          borderRadius="full"
+                          px="2"
+                          cursor="pointer"
+                          _hover={{ bg: "orange.100" }}
+                          title="View this equipment on the Equipment tab"
+                          onClick={() => {
+                            try {
+                              window.sessionStorage.setItem(
+                                "equipmentHighlightId",
+                                e.equipmentId!,
+                              );
+                            } catch {}
+                            window.dispatchEvent(
+                              new CustomEvent("navigate:adminTab", {
+                                detail: { tab: "equipment" },
+                              }),
+                            );
+                          }}
+                        >
+                          Equipment: {
+                            [e.equipment.brand, e.equipment.model]
+                              .filter(Boolean)
+                              .join(" ")
+                            || e.equipment.shortDesc
+                            || "(unnamed)"
+                          } →
+                        </Badge>
+                      )}
                     </HStack>
                     <HStack gap={3} fontSize="xs" color="fg.muted" wrap="wrap">
                       <Text>{fmtDate(e.date)}</Text>
