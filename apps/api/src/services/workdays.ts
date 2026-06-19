@@ -1026,6 +1026,137 @@ export async function superUnapproveWorkday(
 }
 
 /**
+ * Backfill a workday for a worker who forgot to start one. Used by the
+ * Super → Workdays tab's "Didn't work" section: when the operator
+ * notices a worker missed their clock-in, they can retroactively
+ * create the row with start / end / paused-minutes.
+ *
+ * Constraints:
+ *   • `workdayDate` must be today or earlier — can't create future rows
+ *   • Refuses if a row already exists for (userId, workdayDate) — use
+ *     superEditWorkdayTimes for those
+ *   • Same time-window validation as the worker End path
+ *   • Records the backfill in the audit log with `action: "super-create"`
+ *     so the trail makes it obvious this wasn't a worker-initiated row
+ *
+ * NOT subject to the approval-window cutoff — Super needs to be able
+ * to fix gaps even on the same day. The created row lands in PENDING
+ * APPROVAL until Super approves it.
+ */
+export async function superCreateWorkday(
+  userId: string,
+  workdayDate: string,
+  input: {
+    startedAt?: string | null;
+    endedAt?: string | null;
+    totalPausedMs?: number | null;
+  },
+  audit: AuditContext,
+): Promise<SuperWorkdayRow> {
+  // Future-date guard. workdayDate is ET YYYY-MM-DD; lexicographic
+  // comparison against todayEt() is correct for that format.
+  if (workdayDate > todayEt()) {
+    throw new ServiceError(
+      "OUT_OF_RANGE",
+      "Can't create a workday for a future date.",
+      400,
+    );
+  }
+  // Duplicate guard. The unique constraint would catch this too, but
+  // an explicit check returns a useful error instead of a raw Prisma
+  // collision.
+  const existing = await prisma.workerWorkday.findUnique({
+    where: { userId_workdayDate: { userId, workdayDate } },
+  });
+  if (existing) {
+    throw new ServiceError(
+      "CONFLICT",
+      "A workday already exists for this worker on this date — edit it instead.",
+      409,
+    );
+  }
+  // Verify the worker exists before writing — better error than an FK
+  // violation if the operator passed a stale userId.
+  const worker = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true },
+  });
+  if (!worker) throw new ServiceError("NOT_FOUND", "Worker not found.", 404);
+
+  const now = new Date();
+  const startedAt = input.startedAt ? new Date(input.startedAt) : null;
+  const endedAt = input.endedAt ? new Date(input.endedAt) : null;
+  const totalPausedMs = input.totalPausedMs ?? 0;
+
+  if (!startedAt) {
+    throw new ServiceError("INVALID_INPUT", "Start time is required.", 400);
+  }
+  assertInWindow(startedAt, "startedAt", dayMidnightEt(workdayDate), now);
+  if (endedAt) {
+    if (endedAt.getTime() <= startedAt.getTime()) {
+      throw new ServiceError("OUT_OF_RANGE", "End time must be after start time.", 400);
+    }
+    const ceiling = Math.max(now.getTime() + CLOCK_SKEW_MS, dayEndEt(workdayDate).getTime());
+    if (endedAt.getTime() > ceiling) {
+      throw new ServiceError(
+        "OUT_OF_RANGE",
+        "End time is past the workday's end-of-day window.",
+        400,
+      );
+    }
+  }
+  if (totalPausedMs < 0) {
+    throw new ServiceError("OUT_OF_RANGE", "Pause total can't be negative.", 400);
+  }
+  if (endedAt) {
+    const elapsedMs = endedAt.getTime() - startedAt.getTime();
+    if (totalPausedMs > elapsedMs) {
+      throw new ServiceError(
+        "OUT_OF_RANGE",
+        "Pause total can't exceed the elapsed workday duration.",
+        400,
+      );
+    }
+  }
+
+  const created = await prisma.$transaction(async (tx) => {
+    const row = await tx.workerWorkday.create({
+      data: {
+        userId,
+        workdayDate,
+        startedAt,
+        endedAt,
+        totalPausedMs,
+      },
+      include: {
+        user: { select: { id: true, displayName: true, email: true, workerType: true } },
+        approvedBy: { select: { id: true, displayName: true, email: true } },
+      },
+    });
+    await writeAudit(tx, AUDIT.WORKDAY.CREATED, audit.actorId, {
+      workdayId: row.id,
+      workerId: userId,
+      workdayDate,
+      action: "super-create",
+      startedAt: startedAt.toISOString(),
+      endedAt: endedAt ? endedAt.toISOString() : null,
+      totalPausedMs,
+      ...impersonationDetail(audit, userId),
+    });
+    return row;
+  });
+  const windowOpen = await isApprovalWindowOpen(workdayDate);
+  return {
+    ...summarize(created),
+    user: created.user,
+    approvedBy: created.approvedBy,
+    uiState: deriveUiState(created),
+    isOpen: created.endedAt == null,
+    adminWindowOpen: windowOpen,
+  };
+}
+
+/**
  * Bulk approve N pending workdays in one call. Each row is processed
  * independently — one failure doesn't roll back the others. The return
  * value tells the UI which ids succeeded and which failed (and why).
