@@ -322,6 +322,11 @@ export async function buildReconcileWorkers(
         grossEarnings: number;
         feesOrMargin: number;
         topUps: number;
+        // Owner-earnings attributed to this day's occurrences.
+        // Populated ONLY for users who receive owner-earnings splits.
+        // Surfaced via the day-level netPaid so the daily breakdown
+        // reconciles with the owner row's headline total.
+        ownerEarnings: number;
         jobs: ReconcileJobRow[];
       }
     >;
@@ -372,7 +377,7 @@ export async function buildReconcileWorkers(
   function getDay(a: Accum, date: string) {
     let d = a.byDay.get(date);
     if (!d) {
-      d = { hoursMs: 0, jobsCompleted: 0, grossEarnings: 0, feesOrMargin: 0, topUps: 0, jobs: [] };
+      d = { hoursMs: 0, jobsCompleted: 0, grossEarnings: 0, feesOrMargin: 0, topUps: 0, ownerEarnings: 0, jobs: [] };
       a.byDay.set(date, d);
     }
     return d;
@@ -526,6 +531,38 @@ export async function buildReconcileWorkers(
         // Find or build accum for this user. They may not be an
         // assignee (owner-earnings can be a separate row).
         const u = occ.assignees.find((a) => a.userId === sp.userId)?.user;
+        // Helper: attribute owner-earnings to a day + push a job entry
+        // so the per-day breakdown reconciles with the headline total.
+        // Without this the owner row's headline shows $42 but the
+        // daily breakdown shows $0 (owner-earnings flowed but never
+        // landed on any day). Day key = occ.completedAt (ET).
+        function applyOwnerEarnings(a: Accum) {
+          const amount = sp.amount ?? 0;
+          a.ownerEarnings += amount;
+          a.ownerEarningOccurrenceIds.add(occ.id);
+          // Day-level attribution so the breakdown numbers tie out.
+          a.daysSet.add(day);
+          const d = getDay(a, day);
+          d.ownerEarnings += amount;
+          d.jobsCompleted += 1;
+          d.jobs.push({
+            occurrenceId: occ.id,
+            title: titleLabel,
+            client: clientName,
+            property: propertyName,
+            completedAt: occ.completedAt!.toISOString(),
+            // Personal-wage fields stay zero — this is an owner draw,
+            // not wage. netPaid carries the full owner cut so the
+            // day-row math reads correctly.
+            grossShare: 0,
+            feeOrMargin: 0,
+            topUp: 0,
+            netPaid: round2(amount),
+            paymentConfirmed,
+            paymentWrittenOff,
+            source: "snapshot",
+          });
+        }
         if (u) {
           const a = getAcc(normalizeUser({
             id: sp.userId,
@@ -535,8 +572,7 @@ export async function buildReconcileWorkers(
             hourlyWage: (u as any).hourlyWage,
             isOwner: (u as any).isOwner,
           }));
-          a.ownerEarnings += sp.amount ?? 0;
-          a.ownerEarningOccurrenceIds.add(occ.id);
+          applyOwnerEarnings(a);
         } else {
           // User not in assignees — still attribute. Look up minimally.
           // Cheap path: load from a small lookup map. We skip the extra
@@ -548,8 +584,7 @@ export async function buildReconcileWorkers(
             email: null,
             workerType: null,
           }));
-          a.ownerEarnings += sp.amount ?? 0;
-          a.ownerEarningOccurrenceIds.add(occ.id);
+          applyOwnerEarnings(a);
         }
       }
     }
@@ -621,7 +656,10 @@ export async function buildReconcileWorkers(
         grossEarnings: round2(d.grossEarnings),
         feesOrMargin: round2(d.feesOrMargin),
         topUps: round2(d.topUps),
-        netPaid: round2(d.grossEarnings - d.feesOrMargin + d.topUps),
+        // Include ownerEarnings in the day-level netPaid so the
+        // breakdown reconciles with the owner row's headline. For
+        // non-owners, ownerEarnings is always 0 so this is a no-op.
+        netPaid: round2(d.grossEarnings - d.feesOrMargin + d.topUps + d.ownerEarnings),
         jobs: d.jobs,
       };
     });
