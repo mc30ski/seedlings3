@@ -405,6 +405,11 @@ export const users: ServicesUsers = {
       homeBaseAddress: user!.homeBaseAddress ?? null,
       availableDays: user!.availableDays ? JSON.parse(user!.availableDays) : [],
       availableHoursPerDay: user!.availableHoursPerDay ?? 4,
+      // Hourly wage — read-only for the user themselves; only a SUPER
+      // can update it via PATCH /admin/users/:id/profile. Surfaced
+      // here so workers can see what's on file for them in their
+      // profile.
+      hourlyWage: Number(user!.hourlyWage ?? 0),
       hasInsuranceCert: !!user!.insuranceCertR2Key,
       isInsuranceValid,
       insuranceExpiresAt: user!.insuranceExpiresAt?.toISOString() ?? null,

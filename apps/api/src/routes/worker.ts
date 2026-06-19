@@ -1178,10 +1178,13 @@ export default async function workerRoutes(app: FastifyInstance) {
         },
         orderBy: { createdAt: "desc" },
       });
-      // Group by property, take last 3 per property
+      // Group by property, take last 3 per property. Reminders + tasks
+      // can have a null `job` (no parent property), so skip those —
+      // they aren't relevant to property-level photo grouping.
       const byProperty = new Map<string, any[]>();
       for (const p of photos) {
-        const pid = p.occurrence.job.propertyId;
+        const pid = p.occurrence.job?.propertyId;
+        if (!pid) continue;
         if (!byProperty.has(pid)) byProperty.set(pid, []);
         const arr = byProperty.get(pid)!;
         if (arr.length < 3) arr.push(p);

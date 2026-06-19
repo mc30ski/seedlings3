@@ -1642,7 +1642,7 @@ export const jobs: ServicesJobs = {
     if (params?.to) dateRange.lte = etEndOfDay(params.to);
     const hasDates = params?.from || params?.to;
 
-    return prisma.jobOccurrence.findMany({
+    const occs = await prisma.jobOccurrence.findMany({
       where: {
         status: { not: JobOccurrenceStatus.ARCHIVED },
         ...(hasDates ? { startAt: dateRange } : {}),
@@ -1803,14 +1803,15 @@ export const jobs: ServicesJobs = {
       // with different team sizes; consumers divide by current team size for display.
       const byJob: Record<string, number[]> = {};
       for (const o of completedOccs) {
-        if (!o.jobId) continue;
-        if (!byJob[o.jobId]) byJob[o.jobId] = [];
-        if (byJob[o.jobId].length >= 8) continue;
+        const jobId = o.jobId;
+        if (!jobId) continue;
         if (!o.startedAt || !o.completedAt) continue;
+        if (!byJob[jobId]) byJob[jobId] = [];
+        if (byJob[jobId].length >= 8) continue;
         const wallclockMin = (new Date(o.completedAt).getTime() - new Date(o.startedAt).getTime() - (o.totalPausedMs ?? 0)) / 60000;
         if (wallclockMin <= 0) continue;
         const teamSize = Math.max(1, ((o as any).assignees ?? []).filter((a: any) => a.role !== "observer").length);
-        byJob[o.jobId].push(wallclockMin * teamSize);
+        byJob[jobId].push(wallclockMin * teamSize);
       }
       for (const [jobId, durations] of Object.entries(byJob)) {
         if (durations.length < 3) continue; // need at least 3 samples for a meaningful average

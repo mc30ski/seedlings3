@@ -99,6 +99,10 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
   const [savedAvailableDays, setSavedAvailableDays] = useState<number[]>([]);
   const [availableHours, setAvailableHours] = useState(4);
   const [savedAvailableHours, setSavedAvailableHours] = useState(4);
+  // Hourly wage — admin-only field; used by the Reconcile → Payroll
+  // export to compute regular wages vs additional earnings.
+  const [hourlyWage, setHourlyWage] = useState("0.00");
+  const [savedHourlyWage, setSavedHourlyWage] = useState("0.00");
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -115,13 +119,18 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
 
   const phoneError = phone.trim() !== "" && normalizePhone(phone) === null;
 
+  // Hourly wage only counts toward unsaved-changes when the viewer is
+  // a SUPER — non-super viewers see it read-only and the input is
+  // disabled.
+  const hourlyWageChanged = isSuper && hourlyWage !== savedHourlyWage;
   const hasChanges = firstName !== savedFirstName ||
     lastName !== savedLastName ||
     displayName !== savedDisplayName ||
     phone !== savedPhone ||
     homeBase !== savedHomeBase ||
     JSON.stringify(availableDays) !== JSON.stringify(savedAvailableDays) ||
-    availableHours !== savedAvailableHours;
+    availableHours !== savedAvailableHours ||
+    hourlyWageChanged;
 
   // Warn on page refresh/close with unsaved changes
   useEffect(() => {
@@ -182,6 +191,9 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
       setHomeBase(me.homeBaseAddress ?? ""); setSavedHomeBase(me.homeBaseAddress ?? "");
       setAvailableDays(me.availableDays ?? []); setSavedAvailableDays(me.availableDays ?? []);
       setAvailableHours(me.availableHoursPerDay ?? 4); setSavedAvailableHours(me.availableHoursPerDay ?? 4);
+      const meWage = (me as any).hourlyWage;
+      const meWageStr = meWage == null ? "0.00" : Number(meWage).toFixed(2);
+      setHourlyWage(meWageStr); setSavedHourlyWage(meWageStr);
       setCommsMode(me.paymentCommsMode ?? null);
       return;
     }
@@ -199,6 +211,10 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
         const hours = u?.availableHoursPerDay ?? 4;
         setAvailableHours(hours);
         setSavedAvailableHours(hours);
+        const uWage = u?.hourlyWage;
+        const uWageStr = uWage == null ? "0.00" : Number(uWage).toFixed(2);
+        setHourlyWage(uWageStr);
+        setSavedHourlyWage(uWageStr);
         setCommsMode(u?.paymentCommsMode ?? null);
       })
       .catch(() => {})
@@ -237,7 +253,10 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
         ? `/api/admin/users/${targetUserId}/profile`
         : "/api/me/profile";
       const normPhone = phone.trim() ? normalizePhone(phone) : null;
-      await apiPatch(endpoint, {
+      // hourlyWage is admin-only — only include it in the payload when
+      // an admin is the one editing (avoid sending an irrelevant field
+      // from /api/me/profile where it would be rejected).
+      const payload: any = {
         firstName,
         lastName,
         displayName,
@@ -245,7 +264,15 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
         homeBaseAddress: homeBase,
         availableDays,
         availableHoursPerDay: availableHours,
-      });
+      };
+      // hourlyWage is SUPER-only on the write side. Only include it
+      // when the viewer is on the Super Profile tab with the SUPER
+      // role — the server enforces the same gate independently.
+      if (isSuper) {
+        const wageNum = Number(hourlyWage);
+        payload.hourlyWage = Number.isFinite(wageNum) && wageNum >= 0 ? wageNum : 0;
+      }
+      await apiPatch(endpoint, payload);
       const phoneDisplay = formatPhoneDisplay(normPhone ?? "");
       setPhone(phoneDisplay);
       setSavedPhone(phoneDisplay);
@@ -255,6 +282,7 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
       setSavedHomeBase(homeBase);
       setSavedAvailableDays([...availableDays]);
       setSavedAvailableHours(availableHours);
+      setSavedHourlyWage(hourlyWage);
       publishInlineMessage({ type: "SUCCESS", text: "Profile saved." });
       onProfileUpdated?.();
     } catch (err: any) {
@@ -698,6 +726,58 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
                   <Text fontSize="sm" fontWeight="semibold" minW="50px" textAlign="center">
                     {availableHours}h
                   </Text>
+                </HStack>
+              </VStack>
+            </Card.Body>
+          </Card.Root>
+
+          {/* Hourly Wage — visible to everyone (workers see their own
+              rate on file). Editable only by a SUPER on the Super
+              Profile tab; the server enforces the same gate via
+              `req.user.roles.includes("SUPER")`. Drives the
+              Reconcile → Payroll export's Regular Wages column.
+              $0.00 is treated as "no rate on file" — Regular Wages
+              renders as $0 and Additional Earnings absorbs the full
+              target gross, matching how contractors are paid
+              through Gusto. */}
+          <Card.Root variant="outline">
+            <Card.Header py="2" px="3" pb="0">
+              <Text fontWeight="semibold">Hourly Wage</Text>
+            </Card.Header>
+            <Card.Body py="2" px="3">
+              <VStack align="stretch" gap={2}>
+                <Text fontSize="xs" color="fg.muted">
+                  {isSuper
+                    ? "Used by Reconcile → Payroll. For employees/trainees, this is the rate Gusto auto-applies to logged hours. Contractors typically leave this at $0 (paid lump-sum via Additional Earnings)."
+                    : isSelf
+                      ? "Your hourly rate on file. Only a Super admin can update this."
+                      : "Hourly rate on file. Only a Super admin can update this."}
+                </Text>
+                <HStack gap={2} align="center">
+                  <Text fontSize="sm" fontWeight="semibold">$</Text>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.25}
+                    value={hourlyWage}
+                    disabled={!isSuper}
+                    onChange={(e) => setHourlyWage(e.target.value)}
+                    onBlur={() => {
+                      const n = Number(hourlyWage);
+                      setHourlyWage(Number.isFinite(n) && n >= 0 ? n.toFixed(2) : "0.00");
+                    }}
+                    style={{
+                      flex: 1,
+                      padding: "4px 8px",
+                      border: "1px solid var(--chakra-colors-border-default)",
+                      borderRadius: "4px",
+                      fontSize: "14px",
+                      background: isSuper ? undefined : "var(--chakra-colors-gray-100)",
+                      color: isSuper ? undefined : "var(--chakra-colors-fg-muted)",
+                      cursor: isSuper ? "text" : "not-allowed",
+                    }}
+                  />
+                  <Text fontSize="sm" color="fg.muted">/hr</Text>
                 </HStack>
               </VStack>
             </Card.Body>

@@ -280,6 +280,28 @@ async function seedDatabase() {
     });
   }
 
+  // ── Hourly wage on seed workers ──────────────────────────────────────────
+  // Drives the Reconcile → Payroll export's Regular Wages column. W-2
+  // workers (Employee + Trainee + the admin who also works field) get
+  // realistic rates; the contractor + the LLC owner stay at 0 (paid
+  // lump-sum / via draws, not Gusto wages).
+  console.log("  Setting hourly wage on seed workers...");
+  const wageUpdates: Array<{ id: string; hourlyWage: number; note: string }> = [
+    { id: ADMIN_WORKER_ID, hourlyWage: 25.00, note: "Admin who also works field" },
+    { id: EMPLOYEE_ID,     hourlyWage: 18.00, note: "Field employee" },
+    { id: TRAINEE_ID,      hourlyWage: 15.00, note: "Trainee" },
+    { id: CONTRACTOR_ID,   hourlyWage:  0.00, note: "Contractor — paid lump-sum" },
+    { id: MICHAEL_ID,      hourlyWage:  0.00, note: "LLC owner — takes draws, not wages" },
+  ];
+  for (const w of wageUpdates) {
+    await prisma.user.update({
+      where: { id: w.id },
+      data: { hourlyWage: w.hourlyWage },
+    }).catch((err) => {
+      console.warn(`  ⚠ skipped wage seed for ${w.id}: ${err?.message ?? err}`);
+    });
+  }
+
   // ── Clients (12) ──────────────────────────────────────────────────────────
   console.log("  Creating clients...");
 
