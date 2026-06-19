@@ -184,13 +184,29 @@ export async function buildPnLReport(
   // ── Income ─────────────────────────────────────────────────────────────────
   const servicesTotal = sum(payments.map((p) => p.amountPaid ?? 0));
   const equipmentRentalTotal = sum(equipmentRentals.map((c) => c.rentalCost ?? 0));
+  // Processor fees (Venmo / Zelle / card transaction fees) net against
+  // the gross collected, NOT against operating expenses — the business
+  // never actually receives those dollars; the processor takes them
+  // off the top before deposit. Modeling them as a contra-revenue
+  // line under Income gives the operator a clean "this is what
+  // actually hit the bank" picture without lumping a third-party
+  // skim in with discretionary spend.
+  const processorFeesTotal = sum(feePayments.map((p) => p.processorFeeAmount ?? 0));
   const incomeRows: PnLRow[] = [];
   if (servicesTotal > 0) incomeRows.push({ qbAccount: INCOME_ACCOUNT_SERVICES, total: servicesTotal });
   if (equipmentRentalTotal > 0) incomeRows.push({ qbAccount: rentalIncomeConfig, total: equipmentRentalTotal });
+  // Render the contra-revenue line as a negative — the web side picks
+  // up negative totals and formats with parentheses (QB convention).
+  if (processorFeesTotal > 0) {
+    incomeRows.push({
+      qbAccount: SYNTHETIC_PL_CATEGORIES.PROCESSOR_FEES.qbAccount,
+      total: -round2(processorFeesTotal),
+    });
+  }
   // Alphabetical sort — matches QB's P&L row ordering. Same pattern applies
   // to COGS and Expenses (sorted further down).
   incomeRows.sort((a, b) => a.qbAccount.localeCompare(b.qbAccount));
-  const incomeTotal = round2(servicesTotal + equipmentRentalTotal);
+  const incomeTotal = round2(servicesTotal + equipmentRentalTotal - processorFeesTotal);
 
   // ── Expenses + COGS ───────────────────────────────────────────────────────
   // Bucket every expense row by qbAccount, tagged with its plSection.
@@ -224,15 +240,12 @@ export async function buildPnLReport(
     addToAccount(qbAccount, section, r.cost);
   }
 
-  // Synthetic: Payment Processing Fees.
-  const processorFeesTotal = sum(feePayments.map((p) => p.processorFeeAmount ?? 0));
-  if (processorFeesTotal > 0) {
-    addToAccount(
-      SYNTHETIC_PL_CATEGORIES.PROCESSOR_FEES.qbAccount,
-      SYNTHETIC_PL_CATEGORIES.PROCESSOR_FEES.plSection,
-      processorFeesTotal,
-    );
-  }
+  // Processor fees used to land here as an operating expense — they're
+  // now modeled as a contra-revenue line under Income (see above), so
+  // the dollars never reach the expense side. Net Operating Income
+  // ends up identical either way; the difference is presentation —
+  // Income now shows what actually deposited, and Expenses no longer
+  // includes a third-party skim mixed in with discretionary spend.
 
   // Synthetic: Contract Labor — non-employee, non-GP-flagged splits +
   // GP advance disbursements (exportedAt-anchored). Same filter the QB
@@ -452,7 +465,11 @@ export async function pnlReportDetails(
     return { qbAccount, rows, total: round2(sum(rows.map((r) => r.amount))) };
   }
 
-  // ── Expense: Payment Processing Fees (synthetic) ───────────────────────
+  // ── Income contra: Payment Processing Fees (synthetic) ─────────────────
+  // Modeled as contra-revenue on the parent report (line shows
+  // negative on Income). Drill-down rows mirror that sign so the
+  // expanded amounts sum cleanly to the header total — the operator
+  // doesn't have to mentally negate.
   if (qbAccount === SYNTHETIC_PL_CATEGORIES.PROCESSOR_FEES.qbAccount) {
     const payments = await prisma.payment.findMany({
       where: {
@@ -484,7 +501,7 @@ export async function pnlReportDetails(
       date: p.confirmedAt ? etFormatDate(p.confirmedAt) : "",
       primary: p.occurrence?.job?.property?.client?.displayName ?? "(unknown client)",
       secondary: `${p.method ?? ""} fee on $${round2(p.grossCharged ?? 0).toFixed(2)} gross`,
-      amount: round2(p.processorFeeAmount ?? 0),
+      amount: -round2(p.processorFeeAmount ?? 0),
     }));
     return { qbAccount, rows, total: round2(sum(rows.map((r) => r.amount))) };
   }

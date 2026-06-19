@@ -158,9 +158,12 @@ type PayrollRow = {
 };
 
 function fmtUSD(n: number): string {
+  // Accounting / P&L convention: negatives render as `($30.45)`
+  // rather than `−$30.45`. Easier to spot at a glance in a column of
+  // figures and matches how QuickBooks displays the same numbers.
   const abs = Math.abs(n);
   const formatted = abs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return n < 0 ? `−$${formatted}` : `$${formatted}`;
+  return n < 0 ? `($${formatted})` : `$${formatted}`;
 }
 
 function leafName(qbAccount: string): string {
@@ -383,7 +386,7 @@ export default function ReconcileTab() {
     income: {
       title: "Income",
       body:
-        "Every inflow in the window: each worker's share of every service payment, the owner's cut back to the business, and equipment rental income. Includes gross / processor fee / net per payment so you can match against deposit entries.",
+        "Every inflow in the window — one row per service payment (or equipment rental), with a Workers column listing who worked the job. Payment Net is the bank-deposit figure; Worker Payouts and Owner Earnings sum to Payment Net per row.",
     },
     expenses: {
       title: "Expenses",

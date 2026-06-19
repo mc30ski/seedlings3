@@ -755,28 +755,28 @@ export async function capitalCsv(start: Date, end: Date): Promise<CsvResult> {
 }
 
 export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
-  // Comprehensive per-row view of every dollar that came IN during the
-  // window:
+  // Service-income view of every dollar that came IN during the window.
+  // ONE ROW PER PAYMENT (or per equipment rental) — not per
+  // PaymentSplit. The earlier split-per-row layout was diagnostic-
+  // shaped (great for debugging individual worker shares) but made
+  // bank-deposit reconciliation harder because every multi-worker
+  // payment appeared as N rows whose Payment Gross / Processor Fee /
+  // Payment Net repeated identically. Operators were summing those
+  // columns and getting over-counts.
   //
-  //   • Service payments → one row per PaymentSplit on every confirmed,
-  //     non-written-off payment. Both worker payouts AND owner-earnings
-  //     splits surface (the owner-earnings ones are the business's own
-  //     cut of the payment, which is income to the business). Each row
-  //     also carries the parent payment's Gross / Processor Fee / Net
-  //     so the operator can reconcile against bank deposit entries.
+  //   • Service payments → one row per confirmed, non-written-off
+  //     Payment. A Workers column lists the displayNames of every
+  //     non-owner-earnings split recipient (the people who actually
+  //     worked the job). Worker Payouts + Owner Earnings sum to
+  //     Payment Net per row.
   //
   //   • Equipment rental income → one row per Checkout with
-  //     `rentalCost > 0` released in window. Income to the business
-  //     from a contractor renter; processor fee is zero.
+  //     `rentalCost > 0` released in window. The renter goes in the
+  //     Client / Renter column; the entire rental cost flows to
+  //     Payment Net (no processor fee, no worker split).
   //
-  // The Amount column on each row is that row's own contribution to
-  // income; summing Amount across the whole file = total inflow for
-  // the period. The TOTALS row also sums every other numeric column
-  // for cross-check convenience — note that the payment-level columns
-  // (Payment Gross / Processor Fee / Payment Net) repeat across splits
-  // of the same payment, so their totals OVER-count when payments
-  // have multiple splits. The Amount column is the only one that's a
-  // pure sum of distinct contributions.
+  // The Payment Net column is the canonical bank-reconciliation
+  // figure. Sum it → total cash deposits for the period.
   const [payments, rentals] = await Promise.all([
     loadConfirmedPayments(start, end),
     prisma.checkout.findMany({
@@ -791,20 +791,6 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
       orderBy: { releasedAt: "asc" },
     }),
   ]);
-
-  // Recipient-type label (operator-facing). For service payments this
-  // is the split user's WorkerType; for owner-earnings splits we
-  // override to "Owner" so the operator can see at a glance which
-  // rows are the business's own cut. Equipment rental is its own
-  // category since the recipient ("Business") isn't a worker.
-  function recipientType(t: string | null | undefined): string {
-    switch (t) {
-      case "EMPLOYEE": return "Employee";
-      case "TRAINEE": return "Trainee";
-      case "CONTRACTOR": return "Contractor";
-      default: return "Unclassified";
-    }
-  }
 
   // Fallback for the Job column when neither JobOccurrence.title nor
   // Job.description is set (typical for STANDARD recurring service
@@ -824,35 +810,19 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
     }
   }
 
-  // Numeric column cells render as a string when populated, empty when
-  // null — distinguishes "not applicable" from "zero." Rental rows
-  // skip every fee column; Contractor Fee + Business Margin + Top-up
-  // are mutually exclusive on Service rows by worker type:
-  //   • Contractor row  → Contractor Fee populated; Margin, Top-up blank
-  //   • Employee/Trainee → Business Margin + Top-up populated; Fee blank
-  //   • Owner / Rental  → all three blank
-  // With this layout the math reads explicitly per row:
-  //   Amount = Gross Share − Contractor Fee
-  //   Amount = Gross Share − Business Margin + Top-up
-  // No hidden bookkeeping — every dollar that moves shows in a column.
   type Row = {
     date: string;
     source: string;
-    recipient: string;
-    recipientType: string;
-    recipientEmail: string;
     client: string;
     property: string;
     job: string;
+    workers: string;
     method: string;
     paymentGross: number | null;
     processorFee: number | null;
     paymentNet: number | null;
-    grossShare: number | null;
-    contractorFee: number | null;
-    businessMargin: number | null;
-    topUp: number | null;
-    amount: number;
+    workerPayouts: number | null;
+    ownerEarnings: number | null;
   };
   const rows: Row[] = [];
 
@@ -867,65 +837,47 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
     const dateLabel = p.confirmedAt ? toIsoDate(p.confirmedAt) : "";
     const propertyName = property?.displayName ?? "";
     const clientName = client?.displayName ?? "";
-    // Job label: explicit title → job description → workflow-derived
-    // phrase. Never empty for service-payment rows.
     const jobTitle =
       occ?.title?.trim() ||
       job?.description?.trim() ||
       workflowLabel(occ?.workflow);
     const method = p.method ?? "";
+
+    // Aggregate the splits into the per-payment view: worker payouts
+    // vs owner earnings, plus a comma-separated list of worker names.
+    let workerPayouts = 0;
+    let ownerEarnings = 0;
+    const workerNames: string[] = [];
+    const seenWorkerIds = new Set<string>();
     for (const sp of p.splits) {
-      const user = sp.user;
       const spAny = sp as any;
       const isOwnerCut = spAny.ownerEarnings === true;
-      // Pre-deduction row fields fall back to `amount` when historical
-      // splits (pre-reconciliation migration) don't have the breakdown
-      // populated — better to show the final number on both sides than
-      // a misleading blank where a zero would imply "no gross share."
-      const grossShare = spAny.grossAmount != null
-        ? round2(spAny.grossAmount)
-        : round2(sp.amount ?? 0);
-      // PaymentSplit.feeAmount holds either the contractor platform
-      // fee OR the business margin, depending on the user's
-      // workerType. Split into two columns so the operator sees at a
-      // glance which deduction applied. Owner-earnings rows are the
-      // business's own cut — no fee/margin applies. Same logic as
-      // services/payments.ts rateFor().
-      const feeRaw = spAny.feeAmount != null ? round2(spAny.feeAmount) : null;
-      const isEmployeeRow = !isOwnerCut && isEmployeeClass(user.workerType);
-      const isContractorRow = !isOwnerCut && !isEmployeeClass(user.workerType);
-      const contractorFee = isContractorRow ? feeRaw : null;
-      const businessMargin = isEmployeeRow ? feeRaw : null;
-      // Top-up only applies to employee/trainee rows (the make-whole
-      // adjustment when their gross share falls below the hourly
-      // floor). Contractors are paid pro-rata, owner-earnings is just
-      // the business's own cut — both blank. We surface 0.00 (rather
-      // than blank) for employees who didn't need a top-up so the
-      // operator can see at a glance "no adjustment applied here" vs
-      // "not applicable to this row type."
-      const topUp = isEmployeeRow
-        ? round2(spAny.topUpAmount ?? 0)
-        : null;
-      rows.push({
-        date: dateLabel,
-        source: "Service",
-        recipient: user.displayName ?? user.email ?? "(unnamed)",
-        recipientType: isOwnerCut ? "Owner" : recipientType(user.workerType),
-        recipientEmail: user.email ?? "",
-        client: clientName,
-        property: propertyName,
-        job: jobTitle,
-        method,
-        paymentGross,
-        processorFee,
-        paymentNet,
-        grossShare,
-        contractorFee,
-        businessMargin,
-        topUp,
-        amount: round2(sp.amount ?? 0),
-      });
+      if (isOwnerCut) {
+        ownerEarnings += sp.amount ?? 0;
+      } else {
+        workerPayouts += sp.amount ?? 0;
+        const uid = (sp as any).userId as string | undefined;
+        const name = sp.user?.displayName ?? sp.user?.email ?? null;
+        if (name && uid && !seenWorkerIds.has(uid)) {
+          seenWorkerIds.add(uid);
+          workerNames.push(name);
+        }
+      }
     }
+    rows.push({
+      date: dateLabel,
+      source: "Service",
+      client: clientName,
+      property: propertyName,
+      job: jobTitle,
+      workers: workerNames.sort((a, b) => a.localeCompare(b)).join(", "),
+      method,
+      paymentGross,
+      processorFee,
+      paymentNet,
+      workerPayouts: round2(workerPayouts),
+      ownerEarnings: round2(ownerEarnings),
+    });
   }
 
   for (const c of rentals) {
@@ -934,95 +886,61 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
       c.equipment?.shortDesc ||
       "Equipment rental";
     const rentalCost = round2(c.rentalCost ?? 0);
-    // Equipment rentals have no payment-processor leg and no
-    // platform-fee bookkeeping — those fields stay null so the CSV
-    // renders blank cells (avoids "0.00" reading as a real zero-dollar
-    // deduction).
+    // Rentals: all cash flows straight to the business bank — no
+    // processor leg, no worker split, no owner-earnings line. Payment
+    // Net carries the full amount so the column-total ties out to
+    // every dollar deposited.
     rows.push({
       date: c.releasedAt ? toIsoDate(c.releasedAt) : "",
       source: "Equipment Rental",
-      recipient: "Business",
-      recipientType: "Business",
-      recipientEmail: "",
       client: c.user?.displayName ?? c.user?.email ?? "",
       property: equipName,
       job: "",
+      workers: "",
       method: "",
       paymentGross: rentalCost,
       processorFee: null,
       paymentNet: rentalCost,
-      grossShare: rentalCost,
-      contractorFee: null,
-      businessMargin: null,
-      topUp: null,
-      amount: rentalCost,
+      workerPayouts: null,
+      ownerEarnings: null,
     });
   }
 
   // Date ASC, then by source (Equipment Rental sorts after Service —
-  // payments first for each day), then by recipient.
+  // payments first for each day), then by client.
   rows.sort((a, b) => {
     const dateDiff = a.date.localeCompare(b.date);
     if (dateDiff !== 0) return dateDiff;
     const sourceDiff = a.source.localeCompare(b.source);
     if (sourceDiff !== 0) return sourceDiff;
-    return a.recipient.localeCompare(b.recipient);
+    return a.client.localeCompare(b.client);
   });
 
-  // Column layout tells the story per row: payment-level context
-  // (what the client paid + what landed in the bank), then the
-  // per-row breakdown (this person's share of gross → adjustments →
-  // final Amount). Adjustments are exclusive by worker type so the
-  // math always reconciles on the row:
-  //
-  //   Contractor row     → Amount = Gross Share − Contractor Fee
-  //   Employee / Trainee → Amount = Gross Share − Business Margin + Top-up
-  //   Owner / Rental row → Amount = Gross Share  (no adjustments)
-  //
-  // Top-up is the make-whole-on-underpay adjustment (employee/trainee
-  // hourly-floor guarantee). Surfaces as 0.00 on employee rows that
-  // didn't need a top-up (so the operator sees "no adjustment" rather
-  // than wondering whether the column applies). Blank on every other
-  // row type. See docs/FINANCIAL_SYSTEM.md for the full math.
   const header = [
     "Date",
     "Source",
-    "Recipient",
-    "Recipient Type",
-    "Recipient Email",
     "Client / Renter",
     "Property / Equipment",
     "Job",
+    "Workers",
     "Payment Method",
     "Payment Gross",
     "Processor Fee",
     "Payment Net",
-    "Gross Share",
-    "Contractor Fee",
-    "Business Margin",
-    "Top-up",
-    "Amount",
+    "Worker Payouts",
+    "Owner Earnings",
   ];
   const lines: string[] = [csvRow(header)];
-  // Sum every numeric column. Null cells (e.g. rentals have no
-  // platform-fee / top-up) count as zero in the total. The Amount
-  // column is the canonical "total inflow" line; the others are sums
-  // of their column's raw values and are useful as cross-checks
-  // against bank/processor reports — note that Payment Gross /
-  // Processor Fee / Payment Net repeat across splits of the same
-  // payment, so their totals over-count when payments have multiple
-  // splits (intentional: the operator can divide by split count or
-  // de-dupe externally when needed).
+  // Now that there's one row per payment (not per split), every
+  // numeric-column total sums cleanly without over-counting.
+  // Sanity identity: Payment Net = Worker Payouts + Owner Earnings
+  // for each Service row, and Payment Net = Payment Gross for each
+  // Rental row (no processor fee, no split).
   let paymentGrossTotal = 0;
   let processorFeeTotal = 0;
   let paymentNetTotal = 0;
-  let grossShareTotal = 0;
-  let contractorFeeTotal = 0;
-  let businessMarginTotal = 0;
-  let topUpTotal = 0;
-  let amountTotal = 0;
-  // Empty cell when the underlying number is null (rentals); fixed-2
-  // string otherwise. Matches the rest of the file's number formatting.
+  let workerPayoutsTotal = 0;
+  let ownerEarningsTotal = 0;
   function fmtNum(n: number | null): string {
     return n == null ? "" : n.toFixed(2);
   }
@@ -1031,47 +949,38 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
       csvRow([
         r.date,
         r.source,
-        r.recipient,
-        r.recipientType,
-        r.recipientEmail,
         r.client,
         r.property,
         r.job,
+        r.workers,
         r.method,
         fmtNum(r.paymentGross),
         fmtNum(r.processorFee),
         fmtNum(r.paymentNet),
-        fmtNum(r.grossShare),
-        fmtNum(r.contractorFee),
-        fmtNum(r.businessMargin),
-        fmtNum(r.topUp),
-        r.amount.toFixed(2),
+        fmtNum(r.workerPayouts),
+        fmtNum(r.ownerEarnings),
       ]),
     );
     paymentGrossTotal += r.paymentGross ?? 0;
     processorFeeTotal += r.processorFee ?? 0;
     paymentNetTotal += r.paymentNet ?? 0;
-    grossShareTotal += r.grossShare ?? 0;
-    contractorFeeTotal += r.contractorFee ?? 0;
-    businessMarginTotal += r.businessMargin ?? 0;
-    topUpTotal += r.topUp ?? 0;
-    amountTotal += r.amount;
+    workerPayoutsTotal += r.workerPayouts ?? 0;
+    ownerEarningsTotal += r.ownerEarnings ?? 0;
   }
+  // 7 leading empties for: Date, Source, Client, Property, Job,
+  // Workers, Payment Method — then the five numeric column totals.
   lines.push(
     csvRow([
       "TOTALS",
-      "", "", "", "", "", "", "", "",
+      "", "", "", "", "", "",
       round2(paymentGrossTotal).toFixed(2),
       round2(processorFeeTotal).toFixed(2),
       round2(paymentNetTotal).toFixed(2),
-      round2(grossShareTotal).toFixed(2),
-      round2(contractorFeeTotal).toFixed(2),
-      round2(businessMarginTotal).toFixed(2),
-      round2(topUpTotal).toFixed(2),
-      round2(amountTotal).toFixed(2),
+      round2(workerPayoutsTotal).toFixed(2),
+      round2(ownerEarningsTotal).toFixed(2),
     ]),
   );
-  return { csv: finalizeCsv(lines), rowCount: rows.length, total: round2(amountTotal) };
+  return { csv: finalizeCsv(lines), rowCount: rows.length, total: round2(paymentNetTotal) };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
