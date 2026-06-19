@@ -410,9 +410,15 @@ export async function buildReconcileWorkers(
       }
     }
 
-    // Compute the computeBreakdown fallback if snapshot absent.
-    let computed: Map<string, { gross: number; fee: number; net: number }> | null = null;
-    if (!snapshot) {
+    // Always build the computeBreakdown fallback. Snapshots can be
+    // sparse — e.g. when a JobOccurrence was completed before the
+    // snapshot feature, when an assignee was added after completion,
+    // or when the snapshot was written before the full assignee list
+    // was finalized. Without an always-on fallback, those assignees
+    // silently fall through to $0 even when the payment confirmed
+    // their share. Snapshot still wins where it has a per-userId
+    // entry; computeBreakdown fills the gaps.
+    const computed: Map<string, { gross: number; fee: number; net: number }> = (() => {
       const priceTotal =
         (occ.price ?? 0) +
         (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
@@ -428,8 +434,8 @@ export async function buildReconcileWorkers(
         splitPercent: splitPctById.get(aa.userId) ?? fallbackPct,
       }));
       const br = computeBreakdown(priceTotal, expTotal, workers, rates);
-      computed = new Map(br.map((r) => [r.userId, { gross: r.gross, fee: r.fee, net: r.net }]));
-    }
+      return new Map(br.map((r) => [r.userId, { gross: r.gross, fee: r.fee, net: r.net }]));
+    })();
 
     // Per-assignee row. Owner-earnings tracked separately so personal
     // wage totals stay clean.
@@ -448,10 +454,14 @@ export async function buildReconcileWorkers(
       const a = getAcc(user);
 
       const snap = snapshot?.get(assignee.userId);
-      const comp = computed?.get(assignee.userId);
+      const comp = computed.get(assignee.userId);
       const split = splitsByUser.get(assignee.userId);
 
-      // Source priority: snapshot → computeBreakdown.
+      // Source priority: snapshot per-userId → computeBreakdown
+      // (always built so sparse snapshots can't strand an assignee
+      // at $0) → PaymentSplit amounts (covers edge cases where the
+      // snapshot AND fallback math both come back empty but a split
+      // row exists).
       const gross = snap?.gross ?? comp?.gross ?? split?.gross ?? 0;
       const fee = snap?.fee ?? comp?.fee ?? split?.fee ?? 0;
       const topUp = split?.topUp ?? 0; // top-ups only known at payment time
@@ -598,13 +608,23 @@ export async function buildReconcileWorkers(
     });
 
     // Payroll row — `totalGross` is what the worker should be paid for
-    // the period (matches `netPaid` from above). Regular wages =
-    // hours × on-file hourlyWage; additional earnings absorbs the
-    // delta. For contractors and unconfigured workers (hourlyWage = 0)
-    // the full totalGross flows into additionalEarnings.
+    // the period. Regular wages = hours × on-file hourlyWage;
+    // additional earnings absorbs the delta. For contractors and
+    // unconfigured workers (hourlyWage = 0) the full totalGross flows
+    // into additionalEarnings.
+    //
+    // OWNER special case: the LLC owner takes draws on the business's
+    // cut of revenue (tracked separately in `ownerEarnings` to keep
+    // personal-wage totals clean elsewhere). For the payroll surface,
+    // we WANT to show the operator the full money flowing to the
+    // owner in the period — so we include `ownerEarnings` in the
+    // owner's totalGross. Non-owner workers see only their personal
+    // netPaid as before.
     const hourlyWage = round2(a.user.hourlyWage);
     const regularWages = round2(hoursActive * hourlyWage);
-    const totalGross = netPaid;
+    const totalGross = a.user.isOwner
+      ? round2(netPaid + ownerEarnings)
+      : netPaid;
     const additionalEarnings = round2(totalGross - regularWages);
     const equivalentHourlyRate = hoursActive > 0 ? round2(totalGross / hoursActive) : null;
     payroll.push({
@@ -730,7 +750,15 @@ export async function buildReconcileWorkers(
 function payrollCsvEscape(v: unknown): string {
   if (v == null) return "";
   let s = String(v);
-  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  // Formula-injection defense (OWASP). A field STARTING with `=`,
+  // `+`, `-`, `@`, tab, or CR is interpreted by Excel/LibreOffice as
+  // a formula — a worker named `=cmd|/c calc!` would execute on
+  // open. We defuse by prepending the single-quote "literal" marker.
+  // BUT: a plain signed number like `-370.45` is not a formula and
+  // doesn't need the prefix — Excel renders it as a number. Skip the
+  // escape when the value matches a pure numeric pattern.
+  const isPureNumber = /^-?\d+(\.\d+)?$/.test(s);
+  if (!isPureNumber && /^[=+\-@\t\r]/.test(s)) s = "'" + s;
   if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;
 }

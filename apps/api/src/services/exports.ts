@@ -36,7 +36,13 @@ function csvEscape(v: unknown): string {
   let s = String(v);
   // Strip leading/trailing whitespace AFTER the formula check — leading
   // whitespace would mask a `\t=...` payload otherwise.
-  if (/^[=+\-@\t\r]/.test(s)) {
+  // A plain signed number like `-370.45` is not a formula and Excel
+  // renders it as a number; skip the literal prefix so numeric
+  // columns don't render as `'-370.45`. The injection vector is
+  // formula-shaped strings (e.g. `=cmd|/c calc!`, `-2+3*cmd`), not
+  // pure numerics.
+  const isPureNumber = /^-?\d+(\.\d+)?$/.test(s);
+  if (!isPureNumber && /^[=+\-@\t\r]/.test(s)) {
     s = "'" + s; // Excel-safe literal prefix
   }
   if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
