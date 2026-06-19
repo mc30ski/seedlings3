@@ -6349,4 +6349,34 @@ Respond ONLY with valid JSON in this exact format:
     return workdayAdmin.superBulkApprove(ids, superWorkdayAudit(req));
   });
 
+  // Backfill workday — Super → Workdays "Didn't work" section calls
+  // this when a worker forgot to clock in for a past date. Required
+  // body: userId, workdayDate (YYYY-MM-DD ET), startedAt; optional
+  // endedAt, totalPausedMs. See superCreateWorkday.
+  app.post("/super/workdays/create", superGuard, async (req: any) => {
+    const body = (req.body || {}) as {
+      userId?: string;
+      workdayDate?: string;
+      startedAt?: string | null;
+      endedAt?: string | null;
+      totalPausedMs?: number | null;
+    };
+    const userId = String(body.userId ?? "");
+    const workdayDate = String(body.workdayDate ?? "");
+    if (!userId) throw app.httpErrors.badRequest("userId required.");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(workdayDate)) {
+      throw app.httpErrors.badRequest("workdayDate must be YYYY-MM-DD.");
+    }
+    return workdayAdmin.superCreateWorkday(
+      userId,
+      workdayDate,
+      {
+        startedAt: body.startedAt ?? null,
+        endedAt: body.endedAt ?? null,
+        totalPausedMs: body.totalPausedMs ?? null,
+      },
+      superWorkdayAudit(req),
+    );
+  });
+
 }

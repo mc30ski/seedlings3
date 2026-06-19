@@ -22,6 +22,7 @@ import {
   bizAddDays,
   bizToLocalInputValue,
   bizParseLocalInputValue,
+  bizInstantFromEtParts,
   fmtTimeOpts,
   fmtDateOpts,
 } from "@/src/lib/lib";
@@ -134,6 +135,9 @@ export default function WorkdaysTab({
   const [reviewRow, setReviewRow] = useState<SuperWorkdayRow | null>(null);
   const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
+  // Backfill dialog state — Super clicks "Add workday" in the Didn't
+  // Work section to create a row for a worker who forgot to clock in.
+  const [createForUser, setCreateForUser] = useState<DidntWorkUser | null>(null);
 
   // External jump from the alert badge. Re-runs each time the parent
   // bumps the nonce, so repeat clicks always re-route even if the user
@@ -419,7 +423,9 @@ export default function WorkdaysTab({
           )}
 
           {/* DIDN'T WORK — short list of workers without a row, restricted
-              to users with ≥1 workday in history (server enforces). */}
+              to users with ≥1 workday in history (server enforces).
+              Each row gets an "Add workday" affordance so Super can
+              backfill a row for a worker who forgot to clock in. */}
           {data.didntWork.length > 0 && (
             <SectionCard title="Didn't work" color="gray" count={data.didntWork.length} muted>
               <VStack align="stretch" gap={0}>
@@ -427,6 +433,13 @@ export default function WorkdaysTab({
                   <HStack key={u.userId} py={1} fontSize="sm" color="fg.muted">
                     <Text flex="1">{workerLabel(u)}</Text>
                     {u.workerType && <Badge size="xs" variant="outline">{u.workerType}</Badge>}
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() => setCreateForUser(u)}
+                    >
+                      Add workday
+                    </Button>
                   </HStack>
                 ))}
               </VStack>
@@ -451,6 +464,21 @@ export default function WorkdaysTab({
           row={reviewRow}
           onClose={() => setReviewRow(null)}
           onAfter={() => { void load(); setReviewRow(null); onApprovalsChanged?.(); }}
+        />
+      )}
+
+      {/* Backfill dialog — Super creates a workday for someone in the
+          "Didn't work" section who forgot to clock in. */}
+      {createForUser && (
+        <CreateWorkdayDialog
+          worker={createForUser}
+          workdayDate={selectedDate}
+          onClose={() => setCreateForUser(null)}
+          onAfter={() => {
+            void load();
+            setCreateForUser(null);
+            onApprovalsChanged?.();
+          }}
         />
       )}
 
@@ -818,6 +846,162 @@ function BulkApproveConfirm({
                 <Button variant="ghost" onClick={onCancel}>Cancel</Button>
                 <Button colorPalette="green" onClick={onConfirm}>
                   Approve all {count}
+                </Button>
+              </HStack>
+            </Dialog.Footer>
+          </Dialog.Content>
+        </Dialog.Positioner>
+      </Portal>
+    </Dialog.Root>
+  );
+}
+
+// ── Backfill dialog ───────────────────────────────────────────────────────
+
+function CreateWorkdayDialog({
+  worker,
+  workdayDate,
+  onClose,
+  onAfter,
+}: {
+  worker: DidntWorkUser;
+  workdayDate: string;
+  onClose: () => void;
+  onAfter: () => void;
+}) {
+  // Default to the same shape the seed backfill uses: 8 AM → 5 PM ET
+  // with 30 minutes of pause. That's a realistic-looking standard
+  // workday — Super edits the fields as needed before saving.
+  const defaultStartIso = useMemo(
+    () => bizInstantFromEtParts(workdayDate, "08:00"),
+    [workdayDate],
+  );
+  const defaultEndIso = useMemo(
+    () => bizInstantFromEtParts(workdayDate, "17:00"),
+    [workdayDate],
+  );
+  const [startedAt, setStartedAt] = useState(bizToLocalInputValue(defaultStartIso));
+  const [endedAt, setEndedAt] = useState(bizToLocalInputValue(defaultEndIso));
+  const [pausedMin, setPausedMin] = useState(30);
+  const [saving, setSaving] = useState(false);
+
+  const liveActive = useMemo(() => {
+    const startIso = bizParseLocalInputValue(startedAt);
+    const endIso = endedAt ? bizParseLocalInputValue(endedAt) : null;
+    if (!startIso) return 0;
+    const startMs = Date.parse(startIso);
+    const endMs = endIso ? Date.parse(endIso) : Date.now();
+    return Math.max(0, endMs - startMs - pausedMin * 60000);
+  }, [startedAt, endedAt, pausedMin]);
+
+  async function submit() {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await apiPost("/api/super/workdays/create", {
+        userId: worker.userId,
+        workdayDate,
+        startedAt: bizParseLocalInputValue(startedAt) || null,
+        endedAt: endedAt ? bizParseLocalInputValue(endedAt) : null,
+        totalPausedMs: pausedMin * 60000,
+      });
+      publishInlineMessage({ type: "SUCCESS", text: "Workday created." });
+      onAfter();
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to create workday.", err) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const friendlyDate = fmtDateOpts(`${workdayDate}T12:00:00Z`, {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+
+  return (
+    <Dialog.Root open onOpenChange={(e) => { if (!e.open) onClose(); }} placement="center">
+      <Portal>
+        <Dialog.Backdrop />
+        <Dialog.Positioner>
+          <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg">
+            <Dialog.Header>
+              <Dialog.Title>Add workday · {workerLabel(worker)}</Dialog.Title>
+            </Dialog.Header>
+            <Dialog.Body>
+              <VStack align="stretch" gap={3}>
+                <Box p={2} bg="blue.50" borderWidth="1px" borderColor="blue.300" borderRadius="md">
+                  <Text fontSize="xs" color="blue.900">
+                    Backfilling a workday for <b>{workerLabel(worker)}</b> on <b>{friendlyDate}</b>.
+                    The row will land in PENDING APPROVAL — you can approve it after creating.
+                    Audit logs the action as a Super-side create.
+                  </Text>
+                </Box>
+                <Box>
+                  <Text fontSize="xs" color="fg.muted" mb={1}>Started at</Text>
+                  <input
+                    type="datetime-local"
+                    value={startedAt}
+                    onChange={(e) => setStartedAt(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: "6px 8px",
+                      fontSize: "14px",
+                      border: "1px solid var(--chakra-colors-gray-200)",
+                      borderRadius: "6px",
+                    }}
+                  />
+                </Box>
+                <Box>
+                  <Text fontSize="xs" color="fg.muted" mb={1}>Ended at</Text>
+                  <input
+                    type="datetime-local"
+                    value={endedAt}
+                    onChange={(e) => setEndedAt(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: "6px 8px",
+                      fontSize: "14px",
+                      border: "1px solid var(--chakra-colors-gray-200)",
+                      borderRadius: "6px",
+                    }}
+                  />
+                </Box>
+                <Box>
+                  <Text fontSize="xs" color="fg.muted" mb={1}>Paused (minutes)</Text>
+                  <input
+                    type="number"
+                    min={0}
+                    value={pausedMin}
+                    onChange={(e) => setPausedMin(Math.max(0, Number(e.target.value) || 0))}
+                    style={{
+                      width: "100%",
+                      padding: "6px 8px",
+                      fontSize: "14px",
+                      border: "1px solid var(--chakra-colors-gray-200)",
+                      borderRadius: "6px",
+                    }}
+                  />
+                </Box>
+                <HStack justify="space-between" pt={1} borderTopWidth="1px" borderColor="gray.200">
+                  <Text fontSize="sm" fontWeight="semibold">Active total</Text>
+                  <Text fontSize="sm" fontWeight="semibold">
+                    {(liveActive / 3600000).toFixed(2)} h
+                  </Text>
+                </HStack>
+              </VStack>
+            </Dialog.Body>
+            <Dialog.Footer>
+              <HStack justify="flex-end" w="full" gap={2}>
+                <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
+                <Button
+                  colorPalette="blue"
+                  onClick={() => void submit()}
+                  disabled={saving || !startedAt}
+                >
+                  {saving ? <Spinner size="xs" /> : "Create workday"}
                 </Button>
               </HStack>
             </Dialog.Footer>
