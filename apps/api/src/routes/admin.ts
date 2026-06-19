@@ -3295,6 +3295,14 @@ Respond ONLY with valid JSON in this exact format:
         throw app.httpErrors.badRequest(err?.message || "Invalid EXPENSE_CATEGORIES JSON.");
       }
     }
+    if (key === "PAYMENT_FROM_OPTIONS") {
+      const { validatePaymentFromOptionsJson } = await import("../services/paymentFromOptions");
+      try {
+        validatePaymentFromOptionsJson(value);
+      } catch (err: any) {
+        throw app.httpErrors.badRequest(err?.message || "Invalid PAYMENT_FROM_OPTIONS JSON.");
+      }
+    }
     if (key === "PAYMENT_METHODS") {
       const { validatePaymentMethodsJson } = await import("../services/paymentMethods");
       try {

@@ -146,6 +146,7 @@ const SETTING_SECTIONS: Record<string, string> = {
   CONTRACTOR_PLATFORM_FEE_PERCENT: "payments",
   EMPLOYEE_BUSINESS_MARGIN_PERCENT: "payments",
   PAYMENT_METHODS: "payments",
+  PAYMENT_FROM_OPTIONS: "catalogs",
   PAYROLL_PERIOD_CADENCE: "payments",
   HIGH_VALUE_JOB_THRESHOLD: "payments",
   HOURS_APPROVAL_VARIANCE_THRESHOLD_PERCENT: "payments",
@@ -1910,6 +1911,18 @@ async function seedDatabase() {
         },
       ]),
       description: "Configurable taxonomy of accepted payment methods. Each entry controls fee, where it's shown, deep link, and client instructions. Adding a method here changes the UI without code changes.",
+    },
+    {
+      key: "PAYMENT_FROM_OPTIONS",
+      value: JSON.stringify([
+        { label: "Chase business card" },
+        { label: "Chase business checking" },
+        { label: "Owner cash" },
+        { label: "Owner personal card" },
+        { label: "Venmo balance" },
+        { label: "Zelle (bank transfer)" },
+      ]),
+      description: "Presets for the 'Payment From' picker in the Super → Money → Ledger Add Expense dialog. Each entry is a free-form label (e.g., 'Chase business card', 'Owner cash'). Operator can still leave the field blank or pick 'Other' and type a custom value. Used for matching expense rows to bank/card statements at month-end.",
     },
     {
       key: "EXPENSE_CATEGORIES",

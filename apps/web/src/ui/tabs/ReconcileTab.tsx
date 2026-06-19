@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Badge, Box, Button, Card, HStack, Select, Spinner, Table, Text, VStack, createListCollection } from "@chakra-ui/react";
 import { FiDownload, FiInfo } from "react-icons/fi";
-import { ChevronDown, ChevronRight, AlertTriangle, Copy } from "lucide-react";
+import { ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
 import { apiGet, apiDownload } from "@/src/lib/api";
 import DateInput from "@/src/ui/components/DateInput";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
@@ -241,7 +241,7 @@ export default function ReconcileTab() {
   // intentionally always visible since picking the date range is the
   // entry point for everything below.
   const SECTION_KEYS = useMemo(
-    () => ["download", "pnl", "summary", "targets", "payroll", "workers"] as const,
+    () => ["download", "pnl", "summary", "payroll", "workers"] as const,
     [],
   );
   const [sectionCollapsed, setSectionCollapsed] = useState<Record<string, boolean>>(
@@ -257,21 +257,45 @@ export default function ReconcileTab() {
   const allExpanded = SECTION_KEYS.every((k) => !sectionCollapsed[k]);
   const allCollapsed = SECTION_KEYS.every((k) => !!sectionCollapsed[k]);
 
+  // Monotonic request token. Each load() bumps this; the resolved
+  // fetches check that their token still matches the latest before
+  // calling setReport / setPeriod. Prevents an in-flight fetch from
+  // an old date range overwriting a newer load.
+  const requestTokenRef = useRef(0);
+
   const load = useCallback(async () => {
     if (!start || !end) return;
+    const token = ++requestTokenRef.current;
     setLoading(true);
     setPeriodLoading(true);
     // Run both fetches in parallel so the user doesn't wait on one to
     // start the other. Each failure surfaces its own toast — the
-    // other side still renders if available.
+    // other side still renders if available. Each handler guards on
+    // the request token so a stale response can't clobber the latest.
     const pnlPromise = apiGet<PnLReport>(`/api/admin/business-expenses/pnl-report?from=${start}&to=${end}`)
-      .then((r) => setReport(r))
-      .catch((err) => publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load the P&L.", err) }))
-      .finally(() => setLoading(false));
+      .then((r) => {
+        if (token === requestTokenRef.current) setReport(r);
+      })
+      .catch((err) => {
+        if (token === requestTokenRef.current) {
+          publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load the P&L.", err) });
+        }
+      })
+      .finally(() => {
+        if (token === requestTokenRef.current) setLoading(false);
+      });
     const periodPromise = apiGet<Period>(`/api/super/reconcile/period?from=${start}&to=${end}`)
-      .then((p) => setPeriod(p))
-      .catch((err) => publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load period totals.", err) }))
-      .finally(() => setPeriodLoading(false));
+      .then((p) => {
+        if (token === requestTokenRef.current) setPeriod(p);
+      })
+      .catch((err) => {
+        if (token === requestTokenRef.current) {
+          publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load period totals.", err) });
+        }
+      })
+      .finally(() => {
+        if (token === requestTokenRef.current) setPeriodLoading(false);
+      });
     await Promise.all([pnlPromise, periodPromise]);
   }, [start, end]);
 
@@ -279,10 +303,12 @@ export default function ReconcileTab() {
     void load();
   }, [load]);
 
-  // Date-range change → drop any expanded drill-downs. Their rows
-  // belonged to the previous window and would now disagree with the
-  // section totals on screen. Same applies to the worker drill-downs.
+  // Date-range change → clear ALL window-scoped state synchronously so
+  // the operator never sees stale numbers belonging to the prior
+  // window. The fetches kicked off by `load` re-populate fresh.
   useEffect(() => {
+    setReport(null);
+    setPeriod(null);
     setExpanded(new Set());
     setDetails({});
     setExpandedWorkers(new Set());
@@ -833,47 +859,6 @@ export default function ReconcileTab() {
                 <SummaryStat label="Top-ups" value={fmtUSD(period.totals.totalTopUps)} />
                 <SummaryStat label="Owner earnings" value={fmtUSD(period.totals.totalOwnerEarnings)} />
               </HStack>
-            </Card.Body>
-            )}
-          </Card.Root>
-
-          {/* Reconciliation targets — the actual numbers to paste */}
-          <Card.Root bg="indigo.50" borderColor="indigo.200">
-            <CardSectionHeader
-              title="Reconciliation Targets"
-              subtitle="Copy these numbers and verify against the corresponding line in Gusto / QuickBooks. Click any value to copy."
-              collapsed={isSectionCollapsed("targets")}
-              onToggle={() => toggleSection("targets")}
-            />
-            {!isSectionCollapsed("targets") && (
-            <Card.Body>
-              <VStack align="stretch" gap={2}>
-                <TargetRow
-                  label="Gusto · Employee + Trainee wages (gross + top-ups)"
-                  value={period.reconciliationTargets.gustoEmployeeWages}
-                  hint="Sum of W-2 worker promised gross + top-ups. What Gusto needs to pay through payroll."
-                />
-                <TargetRow
-                  label="QB · Service income"
-                  value={period.reconciliationTargets.qbServiceIncome}
-                  hint="Confirmed Payment.amountPaid sum (cash basis, anchored on confirmedAt)."
-                />
-                <TargetRow
-                  label="QB · Equipment rental income"
-                  value={period.reconciliationTargets.qbEquipmentRentalIncome}
-                  hint="Checkout.rentalCost sum on releases in this window."
-                />
-                <TargetRow
-                  label="QB · Processor fees"
-                  value={period.reconciliationTargets.qbProcessorFees}
-                  hint="Payment.processorFeeAmount sum (Venmo/Zelle/card fees absorbed)."
-                />
-                <TargetRow
-                  label="QB · Contract labor"
-                  value={period.reconciliationTargets.qbContractLabor}
-                  hint="Sum of contractor net payouts (excludes employees & GP-flagged splits)."
-                />
-              </VStack>
             </Card.Body>
             )}
           </Card.Root>
@@ -1447,41 +1432,6 @@ function SummaryStat({
       <Text fontSize="xs" color="fg.muted">{label}</Text>
       <Text fontSize="md" fontWeight="bold" color={color}>{value}</Text>
     </Box>
-  );
-}
-
-function TargetRow({
-  label,
-  value,
-  hint,
-}: {
-  label: string;
-  value: number;
-  hint: string;
-}) {
-  const display = fmtUSD(value);
-  return (
-    <HStack
-      gap={3}
-      align="flex-start"
-      py={1.5}
-      borderBottomWidth="1px"
-      borderColor="indigo.100"
-    >
-      <Box flex="1" minW={0}>
-        <Text fontSize="sm" fontWeight="medium">{label}</Text>
-        <Text fontSize="2xs" color="fg.muted">{hint}</Text>
-      </Box>
-      <Button
-        size="sm"
-        variant="ghost"
-        onClick={() => void copyToClipboard(value.toFixed(2))}
-        title="Click to copy"
-      >
-        <Text fontSize="md" fontWeight="bold" fontFamily="mono">{display}</Text>
-        <Copy size={12} style={{ marginLeft: 6 }} />
-      </Button>
-    </HStack>
   );
 }
 

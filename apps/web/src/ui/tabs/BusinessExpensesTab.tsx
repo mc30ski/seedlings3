@@ -320,6 +320,12 @@ export default function BusinessExpensesTab() {
   const [fVendor, setFVendor] = useState("");
   const [fInvoiceNumber, setFInvoiceNumber] = useState("");
   const [fPaymentFrom, setFPaymentFrom] = useState("");
+  // Preset list pulled from the PAYMENT_FROM_OPTIONS setting. The
+  // dialog renders these as a Select dropdown plus an "Other" escape
+  // hatch that flips to a free-text input. The persisted value is
+  // either a preset label, a user-typed string, or null/blank.
+  const [paymentFromOptions, setPaymentFromOptions] = useState<string[]>([]);
+  const [paymentFromIsOther, setPaymentFromIsOther] = useState(false);
   const [fNotes, setFNotes] = useState("");
   const [fEquipmentId, setFEquipmentId] = useState<string>("");
   const [fRecurrence, setFRecurrence] = useState<string>(""); // "" = one-off
@@ -381,9 +387,27 @@ export default function BusinessExpensesTab() {
     apiGet<Array<{ key: string; value: string }>>("/api/settings")
       .then((rows) => {
         if (!Array.isArray(rows)) return;
-        const row = rows.find((r) => r.key === "FIXED_ASSET_MIN_COST");
-        const n = Number(row?.value);
+        const fixedAssetRow = rows.find((r) => r.key === "FIXED_ASSET_MIN_COST");
+        const n = Number(fixedAssetRow?.value);
         if (Number.isFinite(n) && n > 0) setFixedAssetThreshold(n);
+        // PAYMENT_FROM_OPTIONS — JSON array of {label} objects. Pulled
+        // out as a flat string[] for the Select dropdown. Defensive
+        // about malformed entries since this drives the picker UI.
+        const pfRow = rows.find((r) => r.key === "PAYMENT_FROM_OPTIONS");
+        if (pfRow?.value) {
+          try {
+            const parsed = JSON.parse(pfRow.value);
+            if (Array.isArray(parsed)) {
+              setPaymentFromOptions(
+                parsed
+                  .map((o: any) => (typeof o?.label === "string" ? o.label.trim() : ""))
+                  .filter(Boolean),
+              );
+            }
+          } catch {
+            /* keep default empty */
+          }
+        }
       })
       .catch(() => {
         /* keep default */
@@ -418,6 +442,7 @@ export default function BusinessExpensesTab() {
     setFVendor("");
     setFInvoiceNumber("");
     setFPaymentFrom("");
+    setPaymentFromIsOther(false);
     setFNotes("");
     setFEquipmentId("");
     setFRecurrence("");
@@ -439,6 +464,15 @@ export default function BusinessExpensesTab() {
     setFVendor(e.vendor ?? "");
     setFInvoiceNumber(e.invoiceNumber ?? "");
     setFPaymentFrom(e.paymentFrom ?? "");
+    // If the existing value isn't blank and isn't in the current
+    // presets, treat as "Other" so the free-text input is visible.
+    // Existing rows from before the presets were configured still
+    // display correctly.
+    setPaymentFromIsOther(
+      !!e.paymentFrom &&
+        e.paymentFrom.trim() !== "" &&
+        !paymentFromOptions.includes(e.paymentFrom),
+    );
     setFNotes(e.notes ?? "");
     setFEquipmentId(e.equipmentId ?? "");
     setFRecurrence(e.recurrence ?? "");
@@ -461,6 +495,7 @@ export default function BusinessExpensesTab() {
     setFVendor(s.prefill.vendor ?? "");
     setFInvoiceNumber("");
     setFPaymentFrom("");
+    setPaymentFromIsOther(false);
     setFNotes("");
     setFEquipmentId(s.prefill.equipmentId ?? "");
     setFRecurrence(s.prefill.recurrence);
@@ -618,6 +653,24 @@ export default function BusinessExpensesTab() {
     for (const e of expenses) if (e.category) seen.add(e.category);
     return Array.from(seen).sort();
   }, [expenses]);
+
+  // Sentinel value used inside the Payment From Select to represent the
+  // "Other (specify…)" choice — distinct from "" (blank) so the picker
+  // can route those two intents to different downstream behaviors. The
+  // actual persisted value is whatever the operator types into the
+  // free-text Input that appears once "Other" is picked.
+  const PAYMENT_FROM_OTHER = "__other__";
+  const paymentFromCollection = useMemo(
+    () =>
+      createListCollection({
+        items: [
+          { label: "(blank)", value: "" },
+          ...paymentFromOptions.map((label) => ({ label, value: label })),
+          { label: "Other (specify…)", value: PAYMENT_FROM_OTHER },
+        ],
+      }),
+    [paymentFromOptions],
+  );
 
   function clearFilters() {
     setQ("");
@@ -1370,12 +1423,55 @@ export default function BusinessExpensesTab() {
                       </Box>
                     </>
                   )}
-                  {/* Optional source-of-funds note. Pure free text — never
-                      categorized or fed to tax line items. Useful for
-                      matching to bank/card statements at month-end. */}
+                  {/* Optional source-of-funds note. Presets pulled from
+                      the PAYMENT_FROM_OPTIONS setting; "Other" flips to
+                      a free-text input so the operator can type a
+                      custom value. Persisted verbatim — never
+                      categorized or fed to tax line items, just used
+                      for matching to bank/card statements. */}
                   <Box>
                     <Text fontSize="sm" mb={1}>Payment From <Text as="span" fontSize="xs" color="fg.muted">(optional)</Text></Text>
-                    <Input size="sm" value={fPaymentFrom} onChange={(e) => setFPaymentFrom(e.target.value)} placeholder="e.g., Chase business card, Owner cash" />
+                    <Select.Root
+                      collection={paymentFromCollection}
+                      value={[paymentFromIsOther ? PAYMENT_FROM_OTHER : fPaymentFrom]}
+                      onValueChange={(e) => {
+                        const v = e.value?.[0] ?? "";
+                        if (v === PAYMENT_FROM_OTHER) {
+                          setPaymentFromIsOther(true);
+                          setFPaymentFrom("");
+                        } else {
+                          setPaymentFromIsOther(false);
+                          setFPaymentFrom(v);
+                        }
+                      }}
+                      size="sm"
+                      positioning={{ strategy: "fixed", hideWhenDetached: true }}
+                    >
+                      <Select.Control>
+                        <Select.Trigger w="full">
+                          <Select.ValueText placeholder="Select…" />
+                        </Select.Trigger>
+                      </Select.Control>
+                      <Select.Positioner>
+                        <Select.Content>
+                          {paymentFromCollection.items.map((it) => (
+                            <Select.Item key={it.value} item={it.value}>
+                              <Select.ItemText>{it.label}</Select.ItemText>
+                            </Select.Item>
+                          ))}
+                        </Select.Content>
+                      </Select.Positioner>
+                    </Select.Root>
+                    {paymentFromIsOther && (
+                      <Input
+                        mt={2}
+                        size="sm"
+                        value={fPaymentFrom}
+                        onChange={(e) => setFPaymentFrom(e.target.value)}
+                        placeholder="Type the source of payment"
+                        autoFocus
+                      />
+                    )}
                   </Box>
                   <Box>
                     <Text fontSize="sm" mb={1}>Notes</Text>

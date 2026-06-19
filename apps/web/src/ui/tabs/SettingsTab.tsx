@@ -593,6 +593,77 @@ type JsonArrayItem = {
   singleton?: boolean;
   description?: string;
 };
+/** Dedicated editor for the PAYMENT_FROM_OPTIONS taxonomy — a flat list
+ *  of preset labels for the Money Ledger → Add Expense dialog's
+ *  "Payment From" picker. Add/remove rows; each row is just a label.
+ *  Operator can still leave the field blank or pick "Other" + type a
+ *  custom value in the dialog. */
+type PaymentFromOptionRow = { label: string };
+
+function PaymentFromOptionsEditor({ value, onChange, onSave, onCancel, saving }: {
+  value: string;
+  onChange: (v: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  saving: boolean;
+}) {
+  let items: PaymentFromOptionRow[] = [];
+  let parseError: string | null = null;
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) throw new Error("must be an array");
+    items = parsed.map((r: any) => ({ label: String(r.label ?? "") }));
+  } catch (e: any) {
+    parseError = e?.message ?? "invalid JSON";
+  }
+
+  function update(idx: number, patch: Partial<PaymentFromOptionRow>) {
+    onChange(JSON.stringify(items.map((row, i) => (i === idx ? { ...row, ...patch } : row))));
+  }
+  function remove(idx: number) {
+    onChange(JSON.stringify(items.filter((_, i) => i !== idx)));
+  }
+  function add() {
+    onChange(JSON.stringify([...items, { label: "" }]));
+  }
+
+  if (parseError) {
+    return (
+      <VStack align="stretch" gap={2} w="full">
+        <Text fontSize="xs" color="red.600">PAYMENT_FROM_OPTIONS JSON is malformed: {parseError}</Text>
+        <Button size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>
+      </VStack>
+    );
+  }
+
+  return (
+    <VStack align="stretch" gap={2} w="full">
+      <Text fontSize="2xs" color="fg.muted">
+        Presets for the "Payment From" picker in the Add Expense dialog (e.g. "Chase business card", "Owner cash", "Venmo"). The operator can still leave the field blank or pick <Text as="span" fontWeight="semibold">Other</Text> and type a custom value.
+      </Text>
+      <VStack align="stretch" gap={1} w="full">
+        {items.map((row, idx) => (
+          <HStack key={idx} gap={2} w="full">
+            <Input
+              size="sm"
+              value={row.label}
+              onChange={(e) => update(idx, { label: e.target.value })}
+              placeholder="e.g., Chase business card"
+              flex="1"
+            />
+            <Button size="sm" variant="ghost" colorPalette="red" onClick={() => remove(idx)}>×</Button>
+          </HStack>
+        ))}
+        <Button size="xs" variant="outline" onClick={add} alignSelf="flex-start">+ Add option</Button>
+      </VStack>
+      <HStack gap={2} justify="flex-end">
+        <Button size="sm" variant="ghost" onClick={onCancel} disabled={saving}>Cancel</Button>
+        <Button size="sm" onClick={onSave} loading={saving}>Save</Button>
+      </HStack>
+    </VStack>
+  );
+}
+
 /** Dedicated editor for the EXPENSE_CATEGORIES taxonomy — label, Schedule C
  *  line, QuickBooks chart-of-accounts mapping, and the selectable flag
  *  (off = export-only synthetic category). qbAccount is stored as
@@ -1120,6 +1191,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
         "EMPLOYEE_BUSINESS_MARGIN_PERCENT",
         "MIN_WAGE_PER_HOUR",
         "PAYMENT_METHODS",
+        "PAYMENT_FROM_OPTIONS",
         "HIGH_VALUE_JOB_THRESHOLD",
         "EQUIPMENT_KINDS",
         "SERVICE_TYPES",
@@ -1510,6 +1582,11 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                         if (s.key === "EXPENSE_CATEGORIES") {
                           return <ExpenseCategoriesEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} />;
                         }
+                        // Dedicated editor for PAYMENT_FROM_OPTIONS — flat
+                        // list of preset labels for the Add Expense dialog.
+                        if (s.key === "PAYMENT_FROM_OPTIONS") {
+                          return <PaymentFromOptionsEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} />;
+                        }
                         // Dedicated editor for OUTGOING_COMMS_CC — two
                         // independent email/phone lists.
                         if (s.key === "OUTGOING_COMMS_CC") {
@@ -1564,6 +1641,35 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                                 ))}
                               </Box>
                             );
+                          } catch {}
+                        }
+                        // PAYMENT_FROM_OPTIONS — flat list of `{label}`
+                        // objects. Render each as a badge so the picker
+                        // contents are visible at a glance without
+                        // opening the editor.
+                        if (s.key === "PAYMENT_FROM_OPTIONS") {
+                          try {
+                            const opts = JSON.parse(s.value);
+                            if (Array.isArray(opts) && opts.length > 0) {
+                              return (
+                                <Box display="flex" gap="4px" flexWrap="wrap">
+                                  {opts.map((o: any, i: number) => (
+                                    <Badge
+                                      key={`${o.label}:${i}`}
+                                      size="sm"
+                                      variant="solid"
+                                      colorPalette="blue"
+                                      px="2"
+                                      borderRadius="full"
+                                      fontSize="xs"
+                                    >
+                                      {o.label}
+                                    </Badge>
+                                  ))}
+                                </Box>
+                              );
+                            }
+                            return <Text fontSize="xs" color="fg.muted" fontStyle="italic">No presets configured</Text>;
                           } catch {}
                         }
                         // EXPENSE_CATEGORIES items are keyed on `label`, not
