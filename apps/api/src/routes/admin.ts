@@ -2206,6 +2206,7 @@ Respond ONLY with valid JSON in this exact format:
       where: { id: userId },
       select: {
         id: true, email: true, phone: true, firstName: true, lastName: true, displayName: true, workerType: true, homeBaseAddress: true, availableDays: true, availableHoursPerDay: true,
+        hourlyWage: true,
         isApproved: true, insuranceExpiresAt: true, contractorAgreedAt: true, w9Collected: true,
         paymentCommsMode: true,
       },
@@ -2354,6 +2355,19 @@ Respond ONLY with valid JSON in this exact format:
     if (body.homeBaseAddress !== undefined) data.homeBaseAddress = body.homeBaseAddress ? String(body.homeBaseAddress).trim() : null;
     if (body.availableDays !== undefined) data.availableDays = Array.isArray(body.availableDays) ? JSON.stringify(body.availableDays) : null;
     if (body.availableHoursPerDay !== undefined) data.availableHoursPerDay = body.availableHoursPerDay != null ? Number(body.availableHoursPerDay) : null;
+    // Hourly wage is SUPER-only — admins can VIEW the field on any
+    // profile, but only a SUPER can update it. Reject silently-elevated
+    // attempts so the field can't be set through this endpoint by
+    // an admin who doesn't have payroll authority.
+    if (body.hourlyWage !== undefined) {
+      const callerRoles = (req.user?.roles ?? []) as string[];
+      if (!callerRoles.includes("SUPER")) {
+        throw app.httpErrors.forbidden("Only a Super may update hourlyWage.");
+      }
+      const n = body.hourlyWage == null ? 0 : Number(body.hourlyWage);
+      if (!Number.isFinite(n) || n < 0) throw app.httpErrors.badRequest("hourlyWage must be a non-negative number.");
+      data.hourlyWage = Math.round(n * 100) / 100;
+    }
     if (body.phone !== undefined) {
       if (!body.phone || !String(body.phone).trim()) {
         data.phone = null;
@@ -3792,7 +3806,7 @@ Respond ONLY with valid JSON in this exact format:
       const issues: AuditIssue[] = [];
       for (const [, group] of jobMap) {
         if (group.length > 1) {
-          const active = group.filter((j) => j.status === "ACTIVE");
+          const active = group.filter((j) => j.status !== "ARCHIVED");
           if (active.length > 1) {
             const clientName = (group[0].property as any)?.client?.displayName ?? "";
             issues.push({
@@ -6256,6 +6270,22 @@ Respond ONLY with valid JSON in this exact format:
     const endStr = String(req.query.end);
     const result = await workdaysCsv(start, end);
     return deliverPlainCsv(reply, "workdays", { startStr, endStr }, result.csv);
+  });
+
+  // Payroll — flat per-worker rows shaped for Gusto entry. Hours +
+  // hourly wage + regular wages + additional earnings + total gross +
+  // equivalent hourly rate. Same window/cutoff treatment as the
+  // reconcile/period endpoint (BUSINESS_START_DATE clamps the lower
+  // bound). Service in reconcileWorkers.ts.
+  app.get("/admin/exports/payroll.csv", superGuard, async (req: any, reply: FastifyReply) => {
+    let { start, end } = readDateRange(req);
+    const startStr = String(req.query.start);
+    const endStr = String(req.query.end);
+    const cutoff = await resolveCutoff(req);
+    if (cutoff && cutoff > start) start = cutoff;
+    const { payrollCsv } = await import("../services/reconcileWorkers");
+    const result = await payrollCsv(start, end);
+    return deliverPlainCsv(reply, "payroll", { startStr, endStr }, result.csv);
   });
 
   // ── Super → Workdays administration ────────────────────────────────────

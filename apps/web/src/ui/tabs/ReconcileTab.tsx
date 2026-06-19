@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Badge, Box, Button, Card, HStack, Spinner, Text, VStack } from "@chakra-ui/react";
+import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
+import { Badge, Box, Button, Card, HStack, Select, Spinner, Table, Text, VStack, createListCollection } from "@chakra-ui/react";
 import { FiDownload, FiInfo } from "react-icons/fi";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, AlertTriangle, Copy } from "lucide-react";
 import { apiGet, apiDownload } from "@/src/lib/api";
 import DateInput from "@/src/ui/components/DateInput";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
@@ -60,6 +60,103 @@ type PnLDetail = {
 };
 type DetailState = PnLDetail | "loading" | { error: string };
 
+// ── Worker reconciliation (period) types — sourced from /api/super/reconcile/period
+//
+// Previously rendered in a standalone "Workers Reconcile" tab; folded
+// into this surface so the P&L and the per-worker drill-downs share
+// a single date range and a single page.
+type WorkerJobRow = {
+  occurrenceId: string;
+  title: string;
+  client: string | null;
+  property: string | null;
+  completedAt: string | null;
+  grossShare: number;
+  feeOrMargin: number;
+  topUp: number;
+  netPaid: number;
+  paymentConfirmed: boolean;
+  paymentWrittenOff: boolean;
+  source: "snapshot" | "computed";
+};
+
+type WorkerDayRow = {
+  date: string;
+  hoursActive: number;
+  jobsCompleted: number;
+  grossEarnings: number;
+  feesOrMargin: number;
+  topUps: number;
+  netPaid: number;
+  jobs: WorkerJobRow[];
+};
+
+type WorkerRow = {
+  userId: string;
+  displayName: string | null;
+  email: string | null;
+  workerType: string | null;
+  isOwner: boolean;
+  hoursActive: number;
+  daysWorked: number;
+  jobsCompleted: number;
+  grossEarnings: number;
+  feesOrMargin: number;
+  topUps: number;
+  netPaid: number;
+  ownerEarnings: number;
+  effectiveHourly: number | null;
+  preTopUpHourly: number | null;
+  belowMinWage: boolean;
+  anomalies: string[];
+  days: WorkerDayRow[];
+};
+
+type Period = {
+  range: { from: string; to: string };
+  minWagePerHour: number;
+  totals: {
+    workersActive: number;
+    totalHours: number;
+    totalDaysLogged: number;
+    totalJobsCompleted: number;
+    totalRevenue: number;
+    totalEquipmentRental: number;
+    totalProcessorFees: number;
+    totalWorkerGross: number;
+    totalBusinessMargin: number;
+    totalContractorFees: number;
+    totalTopUps: number;
+    totalWorkerNetPaid: number;
+    totalOwnerEarnings: number;
+    netOperatingIncome: number;
+    anomalies: number;
+  };
+  reconciliationTargets: {
+    gustoEmployeeWages: number;
+    qbServiceIncome: number;
+    qbEquipmentRentalIncome: number;
+    qbProcessorFees: number;
+    qbContractLabor: number;
+  };
+  workers: WorkerRow[];
+  payroll: PayrollRow[];
+};
+
+type PayrollRow = {
+  userId: string;
+  displayName: string | null;
+  email: string | null;
+  workerType: string | null;
+  isOwner: boolean;
+  hours: number;
+  hourlyWage: number;
+  regularWages: number;
+  additionalEarnings: number;
+  totalGross: number;
+  equivalentHourlyRate: number | null;
+};
+
 function fmtUSD(n: number): string {
   const abs = Math.abs(n);
   const formatted = abs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -71,36 +168,111 @@ function leafName(qbAccount: string): string {
   return colon < 0 ? qbAccount : qbAccount.slice(colon + 1).trim();
 }
 
+function workerTypeLabel(t: string | null | undefined, isOwner: boolean): string {
+  // LLC owner takes draws, not W-2 wages — surface that distinction
+  // in the badge so the operator doesn't accidentally try to run the
+  // owner through Gusto payroll.
+  if (isOwner) return "Owner";
+  switch (t) {
+    case "EMPLOYEE": return "Employee";
+    case "TRAINEE": return "Trainee";
+    case "CONTRACTOR": return "Contractor";
+    default: return "Unclassified";
+  }
+}
+
+function workerTypePalette(t: string | null | undefined, isOwner: boolean): string {
+  if (isOwner) return "orange";
+  switch (t) {
+    case "EMPLOYEE": return "blue";
+    case "TRAINEE": return "purple";
+    case "CONTRACTOR": return "green";
+    default: return "gray";
+  }
+}
+
+async function copyToClipboard(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    publishInlineMessage({ type: "SUCCESS", text: `Copied: ${text}` });
+  } catch {
+    publishInlineMessage({ type: "ERROR", text: "Copy failed — clipboard unavailable." });
+  }
+}
+
 export default function ReconcileTab() {
   const thisMondayDefault = bizMondayOnOrBefore();
   const [start, setStart] = useState(thisMondayDefault);
   const [end, setEnd] = useState(bizAddDays(thisMondayDefault, 6));
   const [report, setReport] = useState<PnLReport | null>(null);
   const [loading, setLoading] = useState(false);
+  // Period (worker-side) state — fetched in parallel with the P&L
+  // from the same date range. Drives the Period Summary,
+  // Reconciliation Targets, and per-worker drill-downs at the bottom
+  // of the page (folded in from the old Workers Reconcile tab).
+  const [period, setPeriod] = useState<Period | null>(null);
+  const [periodLoading, setPeriodLoading] = useState(false);
+  // Per-worker expand state for the worker drill-downs.
+  const [expandedWorkers, setExpandedWorkers] = useState<Set<string>>(new Set());
+  const [expandedWorkerDays, setExpandedWorkerDays] = useState<Set<string>>(new Set());
   // Per-qbAccount expand state + cached details. Cleared whenever the
   // date range changes (the rows would no longer match the report).
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [details, setDetails] = useState<Record<string, DetailState>>({});
   // Independent loading state for the CSV downloads so we can disable
   // the right button while its file is streaming.
-  const [downloading, setDownloading] = useState<"capital" | "income" | "expenses" | "workdays" | null>(null);
+  const [downloading, setDownloading] = useState<"capital" | "income" | "expenses" | "workdays" | "payroll" | null>(null);
+  // Active selection in the download-type dropdown. Drives both the
+  // Download button and the informational description below it.
+  // Default to "payroll" since it's the freshest export — operator
+  // can switch to any other type without leaving the section.
+  const [downloadKind, setDownloadKind] = useState<"capital" | "income" | "expenses" | "workdays" | "payroll">("payroll");
   // Active preset key + dropdown visibility for the green-chip preset
   // picker (matching PaymentsTab + Ledger). `null` means the operator
   // typed the dates by hand — the chip reads "Custom dates".
   const [selectedPreset, setSelectedPreset] = useState<string | null>("this-week");
   const [quickDateMenuOpen, setQuickDateMenuOpen] = useState(false);
+  // Top-of-page info banner — collapsed by default so the page opens to
+  // the dates + P&L; click the header to expand the explanation.
+  const [infoExpanded, setInfoExpanded] = useState(false);
+  // Per-section collapse state. ALL collapsed by default — the page
+  // opens to a tight list of section headers so the operator can pick
+  // which sections to dig into. Timeframe is not in this map — it's
+  // intentionally always visible since picking the date range is the
+  // entry point for everything below.
+  const SECTION_KEYS = useMemo(
+    () => ["download", "pnl", "summary", "targets", "payroll", "workers"] as const,
+    [],
+  );
+  const [sectionCollapsed, setSectionCollapsed] = useState<Record<string, boolean>>(
+    () => Object.fromEntries(SECTION_KEYS.map((k) => [k, true])),
+  );
+  const toggleSection = (key: string) =>
+    setSectionCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
+  const isSectionCollapsed = (key: string) => !!sectionCollapsed[key];
+  const expandAllSections = () =>
+    setSectionCollapsed(Object.fromEntries(SECTION_KEYS.map((k) => [k, false])));
+  const collapseAllSections = () =>
+    setSectionCollapsed(Object.fromEntries(SECTION_KEYS.map((k) => [k, true])));
+  const allExpanded = SECTION_KEYS.every((k) => !sectionCollapsed[k]);
+  const allCollapsed = SECTION_KEYS.every((k) => !!sectionCollapsed[k]);
 
   const load = useCallback(async () => {
     if (!start || !end) return;
     setLoading(true);
-    try {
-      const r = await apiGet<PnLReport>(`/api/admin/business-expenses/pnl-report?from=${start}&to=${end}`);
-      setReport(r);
-    } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load the report.", err) });
-    } finally {
-      setLoading(false);
-    }
+    setPeriodLoading(true);
+    // Run both fetches in parallel so the user doesn't wait on one to
+    // start the other. Each failure surfaces its own toast — the
+    // other side still renders if available.
+    const pnlPromise = apiGet<PnLReport>(`/api/admin/business-expenses/pnl-report?from=${start}&to=${end}`)
+      .then((r) => setReport(r))
+      .catch((err) => publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load the P&L.", err) }))
+      .finally(() => setLoading(false));
+    const periodPromise = apiGet<Period>(`/api/super/reconcile/period?from=${start}&to=${end}`)
+      .then((p) => setPeriod(p))
+      .catch((err) => publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load period totals.", err) }))
+      .finally(() => setPeriodLoading(false));
+    await Promise.all([pnlPromise, periodPromise]);
   }, [start, end]);
 
   useEffect(() => {
@@ -109,10 +281,12 @@ export default function ReconcileTab() {
 
   // Date-range change → drop any expanded drill-downs. Their rows
   // belonged to the previous window and would now disagree with the
-  // section totals on screen.
+  // section totals on screen. Same applies to the worker drill-downs.
   useEffect(() => {
     setExpanded(new Set());
     setDetails({});
+    setExpandedWorkers(new Set());
+    setExpandedWorkerDays(new Set());
   }, [start, end]);
 
   async function toggleAccount(qbAccount: string) {
@@ -138,7 +312,7 @@ export default function ReconcileTab() {
     });
   }
 
-  async function downloadCsv(kind: "capital" | "income" | "expenses" | "workdays") {
+  async function downloadCsv(kind: "capital" | "income" | "expenses" | "workdays" | "payroll") {
     if (downloading) return;
     setDownloading(kind);
     try {
@@ -155,6 +329,53 @@ export default function ReconcileTab() {
       setDownloading(null);
     }
   }
+
+  // Dropdown items + per-type description for the download section.
+  // Keep the order operator-meaningful: money first (Capital → Income
+  // → Expenses), then labor (Workdays → Payroll). The description map
+  // is keyed by the same `value` strings so the info box swaps as the
+  // dropdown selection changes.
+  const downloadKindCollection = useMemo(
+    () =>
+      createListCollection({
+        items: [
+          { label: "Capital", value: "capital" },
+          { label: "Income", value: "income" },
+          { label: "Expenses", value: "expenses" },
+          { label: "Workdays", value: "workdays" },
+          { label: "Payroll", value: "payroll" },
+        ],
+      }),
+    [],
+  );
+  const downloadDescriptions: Record<typeof downloadKind, { title: string; body: string }> = {
+    capital: {
+      title: "Capital",
+      body:
+        "Capital contributions (owner money in) and owner draws (owner money out). Equity entries — match against the equity accounts in your accounting software.",
+    },
+    income: {
+      title: "Income",
+      body:
+        "Every inflow in the window: each worker's share of every service payment, the owner's cut back to the business, and equipment rental income. Includes gross / processor fee / net per payment so you can match against deposit entries.",
+    },
+    expenses: {
+      title: "Expenses",
+      body:
+        "Operating business expenses (the P&L side) in the selected window. Use to validate spend categories against your accounting software.",
+    },
+    workdays: {
+      title: "Workdays",
+      body:
+        "One row per worker per workday in the window: start / end times, paused minutes, active hours, and approval status. Use to reconcile against Gusto payroll hours.",
+    },
+    payroll: {
+      title: "Payroll",
+      body:
+        "One row per worker shaped for Gusto: hours, hourly wage, regular wages, additional earnings, total gross, and equivalent hourly rate. Type the hours and additional earnings into Gusto for each worker.",
+    },
+  };
+  const selectedDescription = downloadDescriptions[downloadKind];
 
   const presets = useMemo(
     () => [
@@ -208,23 +429,62 @@ export default function ReconcileTab() {
 
   return (
     <VStack align="stretch" gap={4}>
-      {/* Informational banner — explains the reconciliation use case. */}
-      <Box p={3} bg="blue.50" borderLeftWidth="3px" borderColor="blue.400" borderRadius="md">
-        <HStack align="flex-start" gap={2}>
+      {/* Informational banner — collapsible, collapsed by default.
+          When closed, just shows the headline + chevron so the page
+          opens straight to the dates + report. */}
+      <Box bg="blue.50" borderLeftWidth="3px" borderColor="blue.400" borderRadius="md">
+        <HStack
+          as="button"
+          onClick={() => setInfoExpanded((v) => !v)}
+          gap={2}
+          p={3}
+          w="full"
+          textAlign="left"
+          align="flex-start"
+          cursor="pointer"
+          _hover={{ bg: "blue.100" }}
+          borderRadius="md"
+        >
           <Box pt={0.5}><FiInfo /></Box>
-          <VStack align="stretch" gap={1} flex="1" minW={0}>
-            <Text fontSize="sm" fontWeight="semibold" color="blue.900">
-              Use this tab to validate against your accounting software
+          <Text flex="1" fontSize="sm" fontWeight="semibold" color="blue.900">
+            Use this tab to double-check your books against your accounting software
+          </Text>
+          <Box pt={0.5} color="blue.900">
+            {infoExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+          </Box>
+        </HStack>
+        {infoExpanded && (
+          <VStack align="stretch" gap={2} px={3} pb={3} pl={10}>
+            <Text fontSize="xs" color="blue.900">
+              Your accounting software is the source of truth — it&apos;s wired straight to the bank. Use this tab to spot-check that everything lines up: pick a date range, glance at the Profit and Loss numbers next to the same report in your accounting software, and download a CSV when you want a side-by-side look at money in, money out, or owner contributions and draws. Click any line in the P&amp;L to see the rows behind it.
             </Text>
             <Text fontSize="xs" color="blue.900">
-              Your accounting software is the source of truth (wired directly to the bank). This view is a quick scan: pick a date range, eyeball the P&L against your accounting software&apos;s Profit and Loss report, and download a flat CSV when you need a side-by-side check of capital activity, income, or expenses. Every P&L line expands to show the underlying rows.
+              The lower sections show what was actually worked and earned in the same date range: hours clocked, jobs completed, and what each worker took home after fees, top-ups, and the owner&apos;s cut. Workers earning below ${(period?.minWagePerHour ?? 7.25).toFixed(2)}/hr (the minimum wage from settings) are flagged so you can catch shortfalls before payroll runs.
             </Text>
+            {/* Red callout — overtime is a known gap; surface it loudly
+                so the operator doesn't trust the numbers blindly when
+                someone has worked more than 40 hours in a week. */}
+            <Box mt={1} p={2} bg="red.50" borderLeftWidth="3px" borderColor="red.500" borderRadius="sm">
+              <Text fontSize="xs" color="red.900" fontWeight="semibold">
+                Heads up: overtime isn&apos;t included yet
+              </Text>
+              <Text fontSize="xs" color="red.900">
+                This tab doesn&apos;t currently calculate the 1.5× overtime premium owed when an hourly worker logs more than 40 hours in a workweek. If anyone goes into overtime, you&apos;ll need to add the premium manually in payroll until this gets wired up.
+              </Text>
+            </Box>
           </VStack>
-        </HStack>
+        )}
       </Box>
 
-      {/* Date range picker + presets. */}
+      {/* Date range picker + presets. Intentionally non-collapsible
+          — picking the date range is the entry point for every other
+          section, so it's always visible. */}
       <Card.Root>
+        <CardSectionHeader
+          title="Select Timeframe"
+          subtitle="Pick a date range or use a preset. Every section below scopes its numbers to this window."
+          collapsible={false}
+        />
         <Card.Body>
           <VStack align="stretch" gap={3}>
             {/* Timeframe row — DateInput + dash + DateInput + green preset
@@ -330,8 +590,113 @@ export default function ReconcileTab() {
         </Card.Body>
       </Card.Root>
 
+      {/* Expand/Collapse all — sits between the timeframe (always
+          visible) and the first collapsible section so the operator
+          can open everything at once after picking a date range. */}
+      <HStack justify="flex-end" gap={2}>
+        <Button
+          size="xs"
+          variant="ghost"
+          onClick={expandAllSections}
+          disabled={allExpanded}
+        >
+          Expand all
+        </Button>
+        <Button
+          size="xs"
+          variant="ghost"
+          onClick={collapseAllSections}
+          disabled={allCollapsed}
+        >
+          Collapse all
+        </Button>
+      </HStack>
+
+      {/* CSV downloads — flat files for accounting-software cross-checks.
+          Positioned first below the dates so the operator can grab the
+          CSVs without scrolling past the rendered P&L. */}
+      <Card.Root>
+        <CardSectionHeader
+          title="Download CSV"
+          subtitle="Files for cross-checking against accounting software to reconcile accounts."
+          collapsed={isSectionCollapsed("download")}
+          onToggle={() => toggleSection("download")}
+        />
+        {!isSectionCollapsed("download") && (
+        <Card.Body>
+          <VStack align="stretch" gap={3}>
+            {/* Type picker + single Download button. Replaced the
+                five-button row so the section is compact regardless of
+                how many file types we add later. */}
+            <HStack gap={2} wrap="wrap" align="center">
+              <Select.Root
+                collection={downloadKindCollection}
+                value={[downloadKind]}
+                onValueChange={(e) => {
+                  const v = e.value[0] as typeof downloadKind | undefined;
+                  if (v) setDownloadKind(v);
+                }}
+                size="sm"
+                positioning={{ strategy: "fixed", hideWhenDetached: true }}
+                css={{ width: "auto", flex: "0 0 auto" }}
+              >
+                <Select.Control>
+                  <Select.Trigger w="auto" minW="160px" px="2" title="Select download type">
+                    <Select.ValueText />
+                  </Select.Trigger>
+                </Select.Control>
+                <Select.Positioner>
+                  <Select.Content>
+                    {downloadKindCollection.items.map((it) => (
+                      <Select.Item key={it.value} item={it.value}>
+                        <Select.ItemText>{it.label}</Select.ItemText>
+                      </Select.Item>
+                    ))}
+                  </Select.Content>
+                </Select.Positioner>
+              </Select.Root>
+              <Button
+                size="sm"
+                colorPalette="blue"
+                onClick={() => void downloadCsv(downloadKind)}
+                disabled={downloading !== null || loading}
+              >
+                {downloading === downloadKind ? <Spinner size="xs" /> : <FiDownload />}
+                <Text ml={2}>Download</Text>
+              </Button>
+            </HStack>
+            {/* Description box — swaps based on the selected type so
+                operator sees only the relevant explanation. Styled as
+                a light gray info panel to read as informational, not
+                actionable. */}
+            <Box
+              p={3}
+              bg="gray.50"
+              borderLeftWidth="3px"
+              borderColor="gray.300"
+              borderRadius="md"
+            >
+              <Text fontSize="sm" fontWeight="semibold" mb={1}>
+                {selectedDescription.title}
+              </Text>
+              <Text fontSize="xs" color="fg.muted">
+                {selectedDescription.body}
+              </Text>
+            </Box>
+          </VStack>
+        </Card.Body>
+        )}
+      </Card.Root>
+
       {/* P&L Report rendering with expand/collapse. */}
       <Card.Root>
+        <CardSectionHeader
+          title="Profit and Loss"
+          subtitle="Cash-basis P&L for the selected window. Tap any line to drill into the underlying rows."
+          collapsed={isSectionCollapsed("pnl")}
+          onToggle={() => toggleSection("pnl")}
+        />
+        {!isSectionCollapsed("pnl") && (
         <Card.Body>
           {loading && !report ? (
             <HStack justify="center" py={6}><Spinner /></HStack>
@@ -339,13 +704,6 @@ export default function ReconcileTab() {
             <Text fontSize="sm" color="fg.muted">Pick a date range to view the report.</Text>
           ) : (
             <VStack align="stretch" gap={0}>
-              <Box textAlign="center" pb={3}>
-                <Text fontSize="md" fontWeight="bold">Profit and Loss</Text>
-                <Text fontSize="xs" color="fg.muted">
-                  {report.range.from} → {report.range.to}
-                </Text>
-              </Box>
-
               {/* Income */}
               <SectionHeader label="Income" />
               {report.income.rows.length === 0 ? (
@@ -425,80 +783,375 @@ export default function ReconcileTab() {
             </VStack>
           )}
         </Card.Body>
+        )}
       </Card.Root>
 
-      {/* CSV downloads — two flat files for QB cross-checks. */}
-      <Card.Root>
-        <Card.Body>
-          <VStack align="stretch" gap={3}>
-            <Text fontSize="sm" fontWeight="medium">Download CSV</Text>
-            <Text fontSize="xs" color="fg.muted">
-              Files for cross-checking against accounting software to reconcile accounts.
-            </Text>
-            <HStack gap={2} wrap="wrap">
-              <Button
-                size="sm"
-                colorPalette="blue"
-                onClick={() => void downloadCsv("capital")}
-                disabled={downloading !== null || loading}
-              >
-                {downloading === "capital" ? <Spinner size="xs" /> : <FiDownload />}
-                <Text ml={2}>Capital</Text>
-              </Button>
-              <Button
-                size="sm"
-                colorPalette="blue"
-                onClick={() => void downloadCsv("income")}
-                disabled={downloading !== null || loading}
-              >
-                {downloading === "income" ? <Spinner size="xs" /> : <FiDownload />}
-                <Text ml={2}>Income</Text>
-              </Button>
-              <Button
-                size="sm"
-                colorPalette="blue"
-                onClick={() => void downloadCsv("expenses")}
-                disabled={downloading !== null || loading}
-              >
-                {downloading === "expenses" ? <Spinner size="xs" /> : <FiDownload />}
-                <Text ml={2}>Expenses</Text>
-              </Button>
-              <Button
-                size="sm"
-                colorPalette="blue"
-                onClick={() => void downloadCsv("workdays")}
-                disabled={downloading !== null || loading}
-              >
-                {downloading === "workdays" ? <Spinner size="xs" /> : <FiDownload />}
-                <Text ml={2}>Workdays</Text>
-              </Button>
-            </HStack>
-            <Box as="ul" fontSize="xs" color="fg.muted" pl={5} m={0} css={{ listStyleType: "disc" }}>
-              <Box as="li" mb={1}>
-                <b>Capital</b> — capital contributions (owner money in) and owner draws (owner money out). Equity entries — match against the equity accounts in your accounting software.
-              </Box>
-              <Box as="li" mb={1}>
-                <b>Income</b> — every inflow in the window: each worker&apos;s share of every service payment, the owner&apos;s cut back to the business, and equipment rental income. Includes gross / processor fee / net per payment so you can match against deposit entries.
-              </Box>
-              <Box as="li" mb={1}>
-                <b>Expenses</b> — operating business expenses (the P&amp;L side) in the selected window. Use to validate spend categories against your accounting software.
-              </Box>
-              <Box as="li">
-                <b>Workdays</b> — one row per worker per workday in the window: start / end times, paused minutes, active hours, and approval status. Use to reconcile against Gusto payroll hours.
-              </Box>
-            </Box>
-          </VStack>
-        </Card.Body>
-      </Card.Root>
+      {/* Period summary — the trust ledger. Folded in from the old
+          Workers Reconcile tab. Loads in parallel with the P&L using
+          the same date range. */}
+      {periodLoading && !period ? (
+        <HStack justify="center" py={6}><Spinner /></HStack>
+      ) : !period ? null : (
+        <>
+          <Card.Root>
+            <CardSectionHeader
+              title="Period Summary"
+              subtitle="Roll-up of activity in the window: hours, jobs, revenue, payouts, and net operating income."
+              collapsed={isSectionCollapsed("summary")}
+              onToggle={() => toggleSection("summary")}
+            />
+            {!isSectionCollapsed("summary") && (
+            <Card.Body>
+              <HStack gap={4} wrap="wrap" align="stretch">
+                <SummaryStat label="Workers" value={period.totals.workersActive.toString()} />
+                <SummaryStat label="Hours" value={period.totals.totalHours.toFixed(2)} />
+                <SummaryStat label="Days logged" value={period.totals.totalDaysLogged.toString()} />
+                <SummaryStat label="Jobs done" value={period.totals.totalJobsCompleted.toString()} />
+                <SummaryStat
+                  label="Anomalies"
+                  value={period.totals.anomalies.toString()}
+                  emphasis={period.totals.anomalies > 0 ? "warn" : undefined}
+                />
+              </HStack>
+              <Box borderTopWidth="1px" borderColor="gray.200" my={3} />
+              <HStack gap={4} wrap="wrap" align="stretch">
+                <SummaryStat label="Revenue" value={fmtUSD(period.totals.totalRevenue)} />
+                <SummaryStat label="Equipment rental" value={fmtUSD(period.totals.totalEquipmentRental)} />
+                <SummaryStat label="Processor fees" value={fmtUSD(period.totals.totalProcessorFees)} emphasis="neg" />
+                <SummaryStat label="Worker payouts" value={fmtUSD(period.totals.totalWorkerNetPaid)} emphasis="neg" />
+                <SummaryStat
+                  label="Net operating income"
+                  value={fmtUSD(period.totals.netOperatingIncome)}
+                  emphasis={period.totals.netOperatingIncome < 0 ? "neg" : "pos"}
+                />
+              </HStack>
+              <Box borderTopWidth="1px" borderColor="gray.200" my={3} />
+              <HStack gap={4} wrap="wrap" align="stretch">
+                <SummaryStat label="Worker gross" value={fmtUSD(period.totals.totalWorkerGross)} />
+                <SummaryStat label="Business margin (W-2)" value={fmtUSD(period.totals.totalBusinessMargin)} />
+                <SummaryStat label="Contractor fees" value={fmtUSD(period.totals.totalContractorFees)} />
+                <SummaryStat label="Top-ups" value={fmtUSD(period.totals.totalTopUps)} />
+                <SummaryStat label="Owner earnings" value={fmtUSD(period.totals.totalOwnerEarnings)} />
+              </HStack>
+            </Card.Body>
+            )}
+          </Card.Root>
 
-      <Text fontSize="xs" color="fg.muted">
-        Cash basis. ET-anchored date boundaries. Excludes fixed-asset purchases (capitalized to balance sheet) and uncompleted future-dated jobs.
-      </Text>
+          {/* Reconciliation targets — the actual numbers to paste */}
+          <Card.Root bg="indigo.50" borderColor="indigo.200">
+            <CardSectionHeader
+              title="Reconciliation Targets"
+              subtitle="Copy these numbers and verify against the corresponding line in Gusto / QuickBooks. Click any value to copy."
+              collapsed={isSectionCollapsed("targets")}
+              onToggle={() => toggleSection("targets")}
+            />
+            {!isSectionCollapsed("targets") && (
+            <Card.Body>
+              <VStack align="stretch" gap={2}>
+                <TargetRow
+                  label="Gusto · Employee + Trainee wages (gross + top-ups)"
+                  value={period.reconciliationTargets.gustoEmployeeWages}
+                  hint="Sum of W-2 worker promised gross + top-ups. What Gusto needs to pay through payroll."
+                />
+                <TargetRow
+                  label="QB · Service income"
+                  value={period.reconciliationTargets.qbServiceIncome}
+                  hint="Confirmed Payment.amountPaid sum (cash basis, anchored on confirmedAt)."
+                />
+                <TargetRow
+                  label="QB · Equipment rental income"
+                  value={period.reconciliationTargets.qbEquipmentRentalIncome}
+                  hint="Checkout.rentalCost sum on releases in this window."
+                />
+                <TargetRow
+                  label="QB · Processor fees"
+                  value={period.reconciliationTargets.qbProcessorFees}
+                  hint="Payment.processorFeeAmount sum (Venmo/Zelle/card fees absorbed)."
+                />
+                <TargetRow
+                  label="QB · Contract labor"
+                  value={period.reconciliationTargets.qbContractLabor}
+                  hint="Sum of contractor net payouts (excludes employees & GP-flagged splits)."
+                />
+              </VStack>
+            </Card.Body>
+            )}
+          </Card.Root>
+
+          {/* Payroll — Gusto-shaped per-worker row set. Click any
+              numeric cell to copy. Hours + Additional Earnings are the
+              two values the operator types into Gusto per worker;
+              Regular Wages is what Gusto auto-computes from the on-file
+              hourly rate. Equivalent Hourly Rate is the sanity-check
+              column. */}
+          <Card.Root>
+            <CardSectionHeader
+              title="Payroll"
+              subtitle={
+                <>
+                  For each worker: type <b>Hours</b> and <b>Additional Earnings</b> into Gusto. Tap any number to copy.
+                </>
+              }
+              collapsed={isSectionCollapsed("payroll")}
+              onToggle={() => toggleSection("payroll")}
+            />
+            {!isSectionCollapsed("payroll") && (
+            <Card.Body>
+              {period.payroll.length === 0 ? (
+                <Text fontSize="sm" color="fg.muted" textAlign="center">
+                  No active workers in this window.
+                </Text>
+              ) : (
+                <Box overflowX="auto">
+                  <Table.Root size="sm" variant="line">
+                    <Table.Header>
+                      <Table.Row>
+                        <Table.ColumnHeader fontSize="2xs">Worker</Table.ColumnHeader>
+                        <Table.ColumnHeader fontSize="2xs">Type</Table.ColumnHeader>
+                        <Table.ColumnHeader fontSize="2xs" textAlign="right">Hours</Table.ColumnHeader>
+                        <Table.ColumnHeader fontSize="2xs" textAlign="right">Hourly Wage</Table.ColumnHeader>
+                        <Table.ColumnHeader fontSize="2xs" textAlign="right">Regular Wages</Table.ColumnHeader>
+                        <Table.ColumnHeader fontSize="2xs" textAlign="right">Additional Earnings</Table.ColumnHeader>
+                        <Table.ColumnHeader fontSize="2xs" textAlign="right">Total Gross</Table.ColumnHeader>
+                        <Table.ColumnHeader fontSize="2xs" textAlign="right">Equivalent Hourly Rate</Table.ColumnHeader>
+                      </Table.Row>
+                    </Table.Header>
+                    <Table.Body>
+                      {period.payroll.map((p) => {
+                        const belowMin =
+                          p.equivalentHourlyRate != null &&
+                          p.equivalentHourlyRate > 0 &&
+                          p.equivalentHourlyRate < (period.minWagePerHour ?? 7.25);
+                        return (
+                          <Table.Row key={p.userId}>
+                            <Table.Cell fontSize="xs" fontWeight="semibold">
+                              {p.displayName ?? p.email ?? "(unnamed)"}
+                            </Table.Cell>
+                            <Table.Cell fontSize="xs">
+                              <Badge size="xs" colorPalette={workerTypePalette(p.workerType, p.isOwner)} variant="subtle">
+                                {workerTypeLabel(p.workerType, p.isOwner)}
+                              </Badge>
+                            </Table.Cell>
+                            <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono">
+                              <Button
+                                size="xs"
+                                variant="ghost"
+                                onClick={() => void copyToClipboard(p.hours.toFixed(2))}
+                                title="Click to copy"
+                              >
+                                {p.hours.toFixed(2)}
+                              </Button>
+                            </Table.Cell>
+                            <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono">
+                              <Button
+                                size="xs"
+                                variant="ghost"
+                                onClick={() => void copyToClipboard(p.hourlyWage.toFixed(2))}
+                                title="Click to copy"
+                              >
+                                {fmtUSD(p.hourlyWage)}
+                              </Button>
+                            </Table.Cell>
+                            <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono">
+                              <Button
+                                size="xs"
+                                variant="ghost"
+                                onClick={() => void copyToClipboard(p.regularWages.toFixed(2))}
+                                title="Click to copy"
+                              >
+                                {fmtUSD(p.regularWages)}
+                              </Button>
+                            </Table.Cell>
+                            <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono">
+                              <Button
+                                size="xs"
+                                variant="ghost"
+                                onClick={() => void copyToClipboard(p.additionalEarnings.toFixed(2))}
+                                title="Click to copy"
+                              >
+                                {fmtUSD(p.additionalEarnings)}
+                              </Button>
+                            </Table.Cell>
+                            <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono" fontWeight="bold">
+                              <Button
+                                size="xs"
+                                variant="ghost"
+                                onClick={() => void copyToClipboard(p.totalGross.toFixed(2))}
+                                title="Click to copy"
+                              >
+                                {fmtUSD(p.totalGross)}
+                              </Button>
+                            </Table.Cell>
+                            <Table.Cell
+                              fontSize="xs"
+                              textAlign="right"
+                              fontFamily="mono"
+                              color={belowMin ? "red.600" : "fg.default"}
+                              fontWeight={belowMin ? "semibold" : undefined}
+                            >
+                              {p.equivalentHourlyRate == null ? "—" : `${fmtUSD(p.equivalentHourlyRate)}/hr`}
+                            </Table.Cell>
+                          </Table.Row>
+                        );
+                      })}
+                    </Table.Body>
+                  </Table.Root>
+                </Box>
+              )}
+            </Card.Body>
+            )}
+          </Card.Root>
+
+          {/* Per-worker rows */}
+          <Card.Root>
+            <CardSectionHeader
+              title={
+                <>
+                  Workers ({period.workers.length})
+                  {period.totals.anomalies > 0 && (
+                    <Badge ml={2} size="xs" colorPalette="yellow" variant="subtle">
+                      {period.totals.anomalies} anomaly{period.totals.anomalies === 1 ? "" : "ies"}
+                    </Badge>
+                  )}
+                </>
+              }
+              subtitle="Rows sorted by anomaly count (most first), then net paid. Tap a worker to see the day-by-day breakdown; tap a day to see each job's contribution."
+              collapsed={isSectionCollapsed("workers")}
+              onToggle={() => toggleSection("workers")}
+            />
+            {!isSectionCollapsed("workers") && (
+            <Card.Body>
+              {period.workers.length === 0 ? (
+                <Text fontSize="sm" color="fg.muted" textAlign="center" py={4}>
+                  No workers logged in this window.
+                </Text>
+              ) : (
+                <VStack align="stretch" gap={1}>
+                  {period.workers.map((w) => (
+                    <WorkerCard
+                      key={w.userId}
+                      worker={w}
+                      minWage={period.minWagePerHour}
+                      expanded={expandedWorkers.has(w.userId)}
+                      onToggle={() =>
+                        setExpandedWorkers((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(w.userId)) next.delete(w.userId);
+                          else next.add(w.userId);
+                          return next;
+                        })
+                      }
+                      expandedDays={expandedWorkerDays}
+                      onToggleDay={(dayKey) =>
+                        setExpandedWorkerDays((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(dayKey)) next.delete(dayKey);
+                          else next.add(dayKey);
+                          return next;
+                        })
+                      }
+                    />
+                  ))}
+                </VStack>
+              )}
+            </Card.Body>
+            )}
+          </Card.Root>
+        </>
+      )}
+
     </VStack>
   );
 }
 
 // ── Render helpers ───────────────────────────────────────────────────────────
+
+/**
+ * Prominent header bar for a Card.Root. Used as a sibling to
+ * Card.Body so the title sits in a colored band at the top of the
+ * card. When `collapsible` is true, the bar is clickable and shows a
+ * chevron that reflects `collapsed`; callers gate Card.Body
+ * rendering on the corresponding state.
+ *
+ * Background palette defaults to slate; pass a different palette
+ * (e.g. "indigo") for sections that already have a colored card body
+ * so the header reads as a deeper tone of the same family.
+ */
+function CardSectionHeader({
+  title,
+  subtitle,
+  collapsible = true,
+  collapsed = false,
+  onToggle,
+  palette = "gray",
+}: {
+  title: ReactNode;
+  subtitle?: ReactNode;
+  collapsible?: boolean;
+  collapsed?: boolean;
+  onToggle?: () => void;
+  palette?: string;
+}) {
+  // Pre-built palette table so Chakra's static class generator sees
+  // each color reference at build time. Dynamic string interpolation
+  // (`${palette}.200`) works at runtime but can fall through to white
+  // when the variant isn't recognized.
+  const palettes: Record<string, { bg: string; hoverBg: string; borderColor: string }> = {
+    gray:   { bg: "gray.100",   hoverBg: "gray.200",   borderColor: "gray.200" },
+    // Custom indigo tokens only define .50 / .200 / .700 / .900 in this
+    // codebase. The Reconciliation Targets card body is already
+    // `indigo.50`, so the header has to be a DEEPER shade (.200) to
+    // visually separate from the body — otherwise the bar disappears
+    // into the card.
+    indigo: { bg: "indigo.200", hoverBg: "indigo.200", borderColor: "indigo.200" },
+    blue:   { bg: "blue.100",   hoverBg: "blue.200",   borderColor: "blue.200" },
+    green:  { bg: "green.100",  hoverBg: "green.200",  borderColor: "green.200" },
+  };
+  const { bg, hoverBg, borderColor } = palettes[palette] ?? palettes.gray;
+  // Render as a div (not button). Browser user-agent stylesheets
+  // apply their own background to <button> elements which was
+  // overriding the Chakra `bg` prop and showing as white. Keep the
+  // keyboard semantics via role="button" + tabIndex when clickable.
+  return (
+    <Box
+      onClick={collapsible ? onToggle : undefined}
+      role={collapsible ? "button" : undefined}
+      tabIndex={collapsible ? 0 : undefined}
+      onKeyDown={collapsible
+        ? (e: KeyboardEvent) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onToggle?.();
+            }
+          }
+        : undefined}
+      w="full"
+      textAlign="left"
+      bg={bg}
+      borderTopRadius="md"
+      borderBottomWidth="1px"
+      borderColor={borderColor}
+      px={4}
+      py={2.5}
+      cursor={collapsible ? "pointer" : "default"}
+      _hover={collapsible ? { bg: hoverBg } : undefined}
+    >
+      <HStack justify="space-between" align="center" w="full">
+        <VStack align="start" gap={0} flex="1" minW={0}>
+          <Text fontSize="md" fontWeight="bold">{title}</Text>
+          {subtitle && (
+            <Text fontSize="xs" color="fg.muted">{subtitle}</Text>
+          )}
+        </VStack>
+        {collapsible && (
+          <Box flexShrink={0} color="fg.muted">
+            {collapsed ? <ChevronRight size={18} /> : <ChevronDown size={18} />}
+          </Box>
+        )}
+      </HStack>
+    </Box>
+  );
+}
 
 function SectionHeader({ label }: { label: string }) {
   return (
@@ -769,6 +1422,283 @@ function ExpenseCategoryChips({ report }: { report: PnLReport }) {
           </Badge>
         ))}
       </HStack>
+    </Box>
+  );
+}
+
+// ── Worker-side sub-components (folded in from ReconcileWorkersTab) ─────────
+
+function SummaryStat({
+  label,
+  value,
+  emphasis,
+}: {
+  label: string;
+  value: string;
+  emphasis?: "pos" | "neg" | "warn";
+}) {
+  const color =
+    emphasis === "pos" ? "green.700" :
+    emphasis === "neg" ? "red.600" :
+    emphasis === "warn" ? "yellow.700" :
+    "fg.default";
+  return (
+    <Box minW="120px">
+      <Text fontSize="xs" color="fg.muted">{label}</Text>
+      <Text fontSize="md" fontWeight="bold" color={color}>{value}</Text>
+    </Box>
+  );
+}
+
+function TargetRow({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: number;
+  hint: string;
+}) {
+  const display = fmtUSD(value);
+  return (
+    <HStack
+      gap={3}
+      align="flex-start"
+      py={1.5}
+      borderBottomWidth="1px"
+      borderColor="indigo.100"
+    >
+      <Box flex="1" minW={0}>
+        <Text fontSize="sm" fontWeight="medium">{label}</Text>
+        <Text fontSize="2xs" color="fg.muted">{hint}</Text>
+      </Box>
+      <Button
+        size="sm"
+        variant="ghost"
+        onClick={() => void copyToClipboard(value.toFixed(2))}
+        title="Click to copy"
+      >
+        <Text fontSize="md" fontWeight="bold" fontFamily="mono">{display}</Text>
+        <Copy size={12} style={{ marginLeft: 6 }} />
+      </Button>
+    </HStack>
+  );
+}
+
+function WorkerCard({
+  worker,
+  minWage,
+  expanded,
+  onToggle,
+  expandedDays,
+  onToggleDay,
+}: {
+  worker: WorkerRow;
+  minWage: number;
+  expanded: boolean;
+  onToggle: () => void;
+  expandedDays: Set<string>;
+  onToggleDay: (dayKey: string) => void;
+}) {
+  void minWage;
+  return (
+    <Box
+      borderWidth="1px"
+      borderColor={worker.anomalies.length > 0 ? "yellow.300" : "gray.200"}
+      borderRadius="md"
+      bg={worker.anomalies.length > 0 ? "yellow.50" : undefined}
+    >
+      <HStack
+        as="button"
+        onClick={onToggle}
+        gap={2}
+        p={2.5}
+        w="full"
+        textAlign="left"
+        align="center"
+        _hover={{ bg: "blackAlpha.50" }}
+        cursor="pointer"
+        wrap="wrap"
+      >
+        <Box flexShrink={0} color="fg.muted">
+          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        </Box>
+        <VStack align="start" gap={0} flex="1" minW="180px">
+          <HStack gap={2} wrap="wrap">
+            <Text fontSize="sm" fontWeight="semibold">
+              {worker.displayName ?? worker.email ?? "(unnamed)"}
+            </Text>
+            <Badge size="xs" colorPalette={workerTypePalette(worker.workerType, worker.isOwner)} variant="subtle">
+              {workerTypeLabel(worker.workerType, worker.isOwner)}
+            </Badge>
+            {worker.belowMinWage && (
+              <Badge size="xs" colorPalette="red" variant="solid">
+                Below min wage
+              </Badge>
+            )}
+            {worker.anomalies.length > 0 && !worker.belowMinWage && (
+              <Badge size="xs" colorPalette="yellow" variant="solid">
+                ⚠ {worker.anomalies.length}
+              </Badge>
+            )}
+          </HStack>
+          <Text fontSize="xs" color="fg.muted">
+            {worker.hoursActive.toFixed(2)}h · {worker.daysWorked} day{worker.daysWorked === 1 ? "" : "s"}
+            · {worker.jobsCompleted} job{worker.jobsCompleted === 1 ? "" : "s"}
+            {worker.ownerEarnings > 0 && ` · owner cut ${fmtUSD(worker.ownerEarnings)}`}
+          </Text>
+        </VStack>
+        <VStack align="end" gap={0} flexShrink={0}>
+          <Text fontSize="sm" fontWeight="bold">{fmtUSD(worker.netPaid)}</Text>
+          {worker.effectiveHourly != null && (
+            <Text
+              fontSize="xs"
+              color={worker.belowMinWage ? "red.600" : "fg.muted"}
+              fontWeight={worker.belowMinWage ? "semibold" : undefined}
+            >
+              {fmtUSD(worker.effectiveHourly)}/hr
+              {worker.preTopUpHourly != null &&
+                worker.preTopUpHourly !== worker.effectiveHourly &&
+                ` · pre-top-up ${fmtUSD(worker.preTopUpHourly)}/hr`}
+            </Text>
+          )}
+        </VStack>
+      </HStack>
+
+      {expanded && (
+        <Box px={3} pb={3} pt={1} borderTopWidth="1px" borderColor="gray.200">
+          {worker.anomalies.length > 0 && (
+            <Box mb={2} p={2} bg="yellow.100" borderRadius="md">
+              <HStack gap={2} align="flex-start">
+                <Box pt={0.5}><AlertTriangle size={14} color="var(--chakra-colors-yellow-800)" /></Box>
+                <VStack align="start" gap={0}>
+                  {worker.anomalies.map((a, i) => (
+                    <Text key={i} fontSize="xs" color="yellow.900">
+                      • {a}
+                    </Text>
+                  ))}
+                </VStack>
+              </HStack>
+            </Box>
+          )}
+
+          {/* Earnings breakdown summary */}
+          <HStack gap={4} mb={3} wrap="wrap">
+            <BreakdownStat label="Gross" value={fmtUSD(worker.grossEarnings)} />
+            <BreakdownStat label="Fee/margin" value={fmtUSD(-worker.feesOrMargin)} />
+            <BreakdownStat label="Top-ups" value={fmtUSD(worker.topUps)} />
+            <BreakdownStat label="Net paid" value={fmtUSD(worker.netPaid)} bold />
+          </HStack>
+
+          {/* Day-by-day breakdown */}
+          <Text fontSize="xs" fontWeight="semibold" color="fg.muted" mb={1}>
+            Daily breakdown
+          </Text>
+          {worker.days.length === 0 ? (
+            <Text fontSize="xs" color="fg.muted" fontStyle="italic">No activity recorded.</Text>
+          ) : (
+            <VStack align="stretch" gap={1}>
+              {worker.days.map((d) => {
+                const dayKey = `${worker.userId}|${d.date}`;
+                const dayExpanded = expandedDays.has(dayKey);
+                return (
+                  <Box
+                    key={d.date}
+                    borderWidth="1px"
+                    borderColor="gray.200"
+                    borderRadius="md"
+                    bg="white"
+                  >
+                    <HStack
+                      as="button"
+                      onClick={() => onToggleDay(dayKey)}
+                      gap={2}
+                      px={2.5}
+                      py={1.5}
+                      w="full"
+                      textAlign="left"
+                      align="center"
+                      _hover={{ bg: "blackAlpha.50" }}
+                      cursor="pointer"
+                      wrap="wrap"
+                    >
+                      <Box flexShrink={0} color="fg.muted">
+                        {dayExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                      </Box>
+                      <Text fontSize="xs" fontFamily="mono" minW="90px">{d.date}</Text>
+                      <Text fontSize="xs" color="fg.muted" flex="1" minW="80px">
+                        {d.hoursActive.toFixed(2)}h · {d.jobsCompleted} job{d.jobsCompleted === 1 ? "" : "s"}
+                      </Text>
+                      <Text fontSize="xs" fontWeight="semibold">{fmtUSD(d.netPaid)}</Text>
+                    </HStack>
+                    {dayExpanded && d.jobs.length > 0 && (
+                      <Box px={2.5} pb={2} pt={0.5} borderTopWidth="1px" borderColor="gray.100">
+                        <Table.Root size="sm" variant="line">
+                          <Table.Header>
+                            <Table.Row>
+                              <Table.ColumnHeader fontSize="2xs">Job</Table.ColumnHeader>
+                              <Table.ColumnHeader fontSize="2xs" textAlign="right">Gross</Table.ColumnHeader>
+                              <Table.ColumnHeader fontSize="2xs" textAlign="right">Fee/margin</Table.ColumnHeader>
+                              <Table.ColumnHeader fontSize="2xs" textAlign="right">Top-up</Table.ColumnHeader>
+                              <Table.ColumnHeader fontSize="2xs" textAlign="right">Net</Table.ColumnHeader>
+                              <Table.ColumnHeader fontSize="2xs">Status</Table.ColumnHeader>
+                            </Table.Row>
+                          </Table.Header>
+                          <Table.Body>
+                            {d.jobs.map((j) => (
+                              <Table.Row key={j.occurrenceId}>
+                                <Table.Cell fontSize="xs">
+                                  <Text>{j.title}</Text>
+                                  {j.client && (
+                                    <Text fontSize="2xs" color="fg.muted">{j.client}</Text>
+                                  )}
+                                </Table.Cell>
+                                <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono">
+                                  {fmtUSD(j.grossShare)}
+                                </Table.Cell>
+                                <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono">
+                                  {fmtUSD(-j.feeOrMargin)}
+                                </Table.Cell>
+                                <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono">
+                                  {j.topUp > 0 ? fmtUSD(j.topUp) : "—"}
+                                </Table.Cell>
+                                <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono" fontWeight="semibold">
+                                  {fmtUSD(j.netPaid)}
+                                </Table.Cell>
+                                <Table.Cell fontSize="2xs">
+                                  {j.paymentWrittenOff ? (
+                                    <Badge size="xs" colorPalette="gray" variant="subtle">written off</Badge>
+                                  ) : j.paymentConfirmed ? (
+                                    <Badge size="xs" colorPalette="green" variant="subtle">paid</Badge>
+                                  ) : (
+                                    <Badge size="xs" colorPalette="yellow" variant="subtle">unpaid</Badge>
+                                  )}
+                                  {j.source === "computed" && (
+                                    <Badge ml={1} size="xs" colorPalette="orange" variant="outline">computed</Badge>
+                                  )}
+                                </Table.Cell>
+                              </Table.Row>
+                            ))}
+                          </Table.Body>
+                        </Table.Root>
+                      </Box>
+                    )}
+                  </Box>
+                );
+              })}
+            </VStack>
+          )}
+        </Box>
+      )}
+    </Box>
+  );
+}
+
+function BreakdownStat({ label, value, bold }: { label: string; value: string; bold?: boolean }) {
+  return (
+    <Box>
+      <Text fontSize="2xs" color="fg.muted">{label}</Text>
+      <Text fontSize="sm" fontWeight={bold ? "bold" : undefined} fontFamily="mono">{value}</Text>
     </Box>
   );
 }

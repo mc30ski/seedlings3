@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "User" ADD COLUMN     "hourlyWage" DECIMAL(10,2) NOT NULL DEFAULT 0;

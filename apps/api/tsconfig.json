@@ -7,7 +7,15 @@
     "strict": true,
     "skipLibCheck": true,
     "types": ["node"],
-    "outDir": "dist"
+    "outDir": "dist",
+    "baseUrl": ".",
+    "paths": {
+      "@web-lib/*": ["../web/src/lib/*"],
+      // Mirror the web package's `@/*` alias so cross-package imports
+      // from web/src/lib/lib.ts (used by the web-date-helpers build-gate
+      // test) resolve when tsc walks into them.
+      "@/*": ["../web/*"]
+    }
   },
   "include": ["src", "api"]
 }

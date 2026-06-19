@@ -856,9 +856,9 @@ export const payments: ServicesPayments = {
           jobTags: (fullOcc as any).jobTags ?? null,
           pinnedNote: null,
           pinnedNoteRepeats: true,
-          notes: fullOcc.notes ?? fullOcc.job.notes ?? null,
-          price: fullOcc.price ?? fullOcc.job.defaultPrice ?? null,
-          estimatedMinutes: fullOcc.estimatedMinutes ?? fullOcc.job.estimatedMinutes ?? null,
+          notes: fullOcc.notes ?? fullOcc.job?.notes ?? null,
+          price: fullOcc.price ?? fullOcc.job?.defaultPrice ?? null,
+          estimatedMinutes: fullOcc.estimatedMinutes ?? fullOcc.job?.estimatedMinutes ?? null,
           frequencyDays: fullOcc.frequencyDays ?? null,
         } as any,
       });

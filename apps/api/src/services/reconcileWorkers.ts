@@ -64,6 +64,7 @@ export type ReconcileWorkerRow = {
   displayName: string | null;
   email: string | null;
   workerType: string | null;
+  isOwner: boolean;
 
   // Time
   hoursActive: number;
@@ -89,6 +90,26 @@ export type ReconcileWorkerRow = {
 
   // Drill-down
   days: ReconcileDayRow[];
+};
+
+// One row per active worker — the inputs an operator types into Gusto
+// for a pay period. Computed from `hoursActive` × `User.hourlyWage`
+// plus the worker's actual target gross from the period. `null`
+// `hourlyWage` is treated as 0 by the caller's choice (contractor
+// rows and unconfigured workers absorb everything into
+// `additionalEarnings`).
+export type PayrollRow = {
+  userId: string;
+  displayName: string | null;
+  email: string | null;
+  workerType: string | null;
+  isOwner: boolean;
+  hours: number;
+  hourlyWage: number;
+  regularWages: number;       // hours × hourlyWage
+  additionalEarnings: number; // totalGross − regularWages
+  totalGross: number;         // worker's target take-home for the period
+  equivalentHourlyRate: number | null; // totalGross ÷ hours (null when hours = 0)
 };
 
 export type ReconcilePeriod = {
@@ -120,6 +141,14 @@ export type ReconcilePeriod = {
     qbContractLabor: number;        // contractor splits (non-GP-flagged)
   };
   workers: ReconcileWorkerRow[];
+  // Per-worker payroll inputs (Gusto-style). One row per active
+  // worker; `hourlyWage` is whatever's on `User.hourlyWage` (defaults
+  // to 0 for unconfigured workers + contractors), and
+  // `additionalEarnings` is the gap between target take-home and
+  // hours × wage. Operator types `hours` + `additionalEarnings` into
+  // Gusto; the platform auto-computes regularWages from the on-file
+  // rate.
+  payroll: PayrollRow[];
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -174,7 +203,7 @@ export async function buildReconcileWorkers(
     prisma.workerWorkday.findMany({
       where: { workdayDate: { gte: fromKey, lte: toKey } },
       include: {
-        user: { select: { id: true, displayName: true, email: true, workerType: true } },
+        user: { select: { id: true, displayName: true, email: true, workerType: true, hourlyWage: true, isOwner: true } },
       },
     }),
     // Occurrences whose work happened in window — anchored on completedAt
@@ -208,7 +237,7 @@ export async function buildReconcileWorkers(
           where: { role: { not: "observer" } },
           select: {
             userId: true,
-            user: { select: { displayName: true, email: true, workerType: true } },
+            user: { select: { displayName: true, email: true, workerType: true, hourlyWage: true, isOwner: true } },
           },
         },
         payment: {
@@ -257,7 +286,14 @@ export async function buildReconcileWorkers(
 
   // ── Per-worker accumulator ─────────────────────────────────────────────
   type Accum = {
-    user: { id: string; displayName: string | null; email: string | null; workerType: string | null };
+    user: {
+      id: string;
+      displayName: string | null;
+      email: string | null;
+      workerType: string | null;
+      hourlyWage: number;
+      isOwner: boolean;
+    };
     hoursMs: number;
     daysSet: Set<string>;
     jobsCompleted: number;
@@ -279,6 +315,29 @@ export async function buildReconcileWorkers(
     >;
   };
   const acc = new Map<string, Accum>();
+  // Coerce a raw Prisma user row (where hourlyWage is a Decimal) into
+  // the Accum user shape (hourlyWage as a JS number, defaulting to 0
+  // when missing — e.g. owner-only attribution paths).
+  function normalizeUser(u: {
+    id: string;
+    displayName: string | null;
+    email: string | null;
+    workerType: string | null;
+    hourlyWage?: unknown;
+    isOwner?: boolean | null;
+  }): Accum["user"] {
+    const raw = u.hourlyWage;
+    const wage =
+      raw == null ? 0 : typeof raw === "number" ? raw : Number(raw.toString());
+    return {
+      id: u.id,
+      displayName: u.displayName,
+      email: u.email,
+      workerType: u.workerType,
+      hourlyWage: Number.isFinite(wage) ? wage : 0,
+      isOwner: !!u.isOwner,
+    };
+  }
   function getAcc(user: Accum["user"]): Accum {
     let a = acc.get(user.id);
     if (!a) {
@@ -308,7 +367,7 @@ export async function buildReconcileWorkers(
 
   // ── Apply workdays → hours + days worked ───────────────────────────────
   for (const w of workdays) {
-    const a = getAcc(w.user);
+    const a = getAcc(normalizeUser(w.user));
     const ms = activeMs(w.startedAt, w.endedAt, w.totalPausedMs);
     a.hoursMs += ms;
     if (w.endedAt) a.daysSet.add(w.workdayDate);
@@ -376,12 +435,14 @@ export async function buildReconcileWorkers(
     // wage totals stay clean.
     for (const assignee of occ.assignees) {
       const user = assignee.user
-        ? {
+        ? normalizeUser({
             id: assignee.userId,
             displayName: assignee.user.displayName,
             email: assignee.user.email,
             workerType: assignee.user.workerType,
-          }
+            hourlyWage: (assignee.user as any).hourlyWage,
+            isOwner: (assignee.user as any).isOwner,
+          })
         : null;
       if (!user) continue;
       const a = getAcc(user);
@@ -433,14 +494,26 @@ export async function buildReconcileWorkers(
         // assignee (owner-earnings can be a separate row).
         const u = occ.assignees.find((a) => a.userId === sp.userId)?.user;
         if (u) {
-          const a = getAcc({ id: sp.userId, displayName: u.displayName, email: u.email, workerType: u.workerType });
+          const a = getAcc(normalizeUser({
+            id: sp.userId,
+            displayName: u.displayName,
+            email: u.email,
+            workerType: u.workerType,
+            hourlyWage: (u as any).hourlyWage,
+            isOwner: (u as any).isOwner,
+          }));
           a.ownerEarnings += sp.amount ?? 0;
         } else {
           // User not in assignees — still attribute. Look up minimally.
           // Cheap path: load from a small lookup map. We skip the extra
           // DB call and just attribute under the userId without a name;
           // the UI will fall back to "(owner)" when displayName is null.
-          const a = getAcc({ id: sp.userId, displayName: null, email: null, workerType: null });
+          const a = getAcc(normalizeUser({
+            id: sp.userId,
+            displayName: null,
+            email: null,
+            workerType: null,
+          }));
           a.ownerEarnings += sp.amount ?? 0;
         }
       }
@@ -449,6 +522,7 @@ export async function buildReconcileWorkers(
 
   // ── Build per-worker rows + anomalies ──────────────────────────────────
   const workers: ReconcileWorkerRow[] = [];
+  const payroll: PayrollRow[] = [];
   let totalAnomalies = 0;
 
   for (const a of acc.values()) {
@@ -507,6 +581,7 @@ export async function buildReconcileWorkers(
       displayName: a.user.displayName,
       email: a.user.email,
       workerType: a.user.workerType,
+      isOwner: a.user.isOwner,
       hoursActive,
       daysWorked: a.daysSet.size,
       jobsCompleted: a.jobsCompleted,
@@ -521,12 +596,47 @@ export async function buildReconcileWorkers(
       anomalies,
       days,
     });
+
+    // Payroll row — `totalGross` is what the worker should be paid for
+    // the period (matches `netPaid` from above). Regular wages =
+    // hours × on-file hourlyWage; additional earnings absorbs the
+    // delta. For contractors and unconfigured workers (hourlyWage = 0)
+    // the full totalGross flows into additionalEarnings.
+    const hourlyWage = round2(a.user.hourlyWage);
+    const regularWages = round2(hoursActive * hourlyWage);
+    const totalGross = netPaid;
+    const additionalEarnings = round2(totalGross - regularWages);
+    const equivalentHourlyRate = hoursActive > 0 ? round2(totalGross / hoursActive) : null;
+    payroll.push({
+      userId: a.user.id,
+      displayName: a.user.displayName,
+      email: a.user.email,
+      workerType: a.user.workerType,
+      isOwner: a.user.isOwner,
+      hours: hoursActive,
+      hourlyWage,
+      regularWages,
+      additionalEarnings,
+      totalGross,
+      equivalentHourlyRate,
+    });
   }
 
   // Sort: anomalies first, then by net paid desc.
   workers.sort((a, b) => {
     if (a.anomalies.length !== b.anomalies.length) return b.anomalies.length - a.anomalies.length;
     return b.netPaid - a.netPaid;
+  });
+
+  // Payroll order: W-2 (employee+trainee) first, then contractors,
+  // alphabetical by display name within each group. Matches how the
+  // operator scans Gusto: salaried/hourly W-2 entry, then 1099
+  // contractor payments.
+  payroll.sort((a, b) => {
+    const aEmp = isEmployeeClass(a.workerType) ? 0 : 1;
+    const bEmp = isEmployeeClass(b.workerType) ? 0 : 1;
+    if (aEmp !== bEmp) return aEmp - bEmp;
+    return (a.displayName ?? "").localeCompare(b.displayName ?? "");
   });
 
   // ── Period totals ──────────────────────────────────────────────────────
@@ -601,5 +711,104 @@ export async function buildReconcileWorkers(
       qbContractLabor,
     },
     workers,
+    payroll,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Payroll CSV — flat-file form of the on-screen Payroll card. One row
+// per worker active in the window, in the same order the UI renders
+// them (W-2 first, then contractors, alpha by name). Designed to be
+// scanned alongside Gusto's payroll entry form: type the hours and
+// the additional-earnings cell into Gusto for each worker.
+//
+// Same CSV-injection-safe escaping rules as exports.ts (matches RFC
+// 4180 with a UTF-8 BOM and CRLF terminators) so Excel-on-Windows
+// renders it identically to the other reconciliation files.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function payrollCsvEscape(v: unknown): string {
+  if (v == null) return "";
+  let s = String(v);
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function payrollCsvRow(cells: unknown[]): string {
+  return cells.map(payrollCsvEscape).join(",");
+}
+
+function payrollFinalizeCsv(lines: string[]): string {
+  const UTF8_BOM = "﻿";
+  return UTF8_BOM + lines.join("\r\n") + "\r\n";
+}
+
+function payrollTypeLabel(t: string | null | undefined, isOwner: boolean): string {
+  // LLC owner is paid via draws (not W-2 wages) so they show as
+  // "Owner" regardless of their workerType setting on the User row.
+  // Matches the on-screen badge in the Workers + Payroll cards.
+  if (isOwner) return "Owner";
+  switch (t) {
+    case "EMPLOYEE": return "Employee";
+    case "TRAINEE": return "Trainee";
+    case "CONTRACTOR": return "Contractor";
+    default: return "Unclassified";
+  }
+}
+
+export async function payrollCsv(
+  start: Date,
+  end: Date,
+): Promise<{ csv: string; rowCount: number; total: number }> {
+  const fromKey = etFormatDate(start);
+  const toKey = etFormatDate(end);
+  const period = await buildReconcileWorkers(start, end, { fromKey, toKey });
+
+  const header = [
+    "Worker",
+    "Type",
+    "Email",
+    "Hours",
+    "Hourly Wage",
+    "Regular Wages",
+    "Additional Earnings",
+    "Total Gross",
+    "Equivalent Hourly Rate",
+  ];
+  const rows = period.payroll.map((p) => [
+    p.displayName ?? "(unnamed)",
+    payrollTypeLabel(p.workerType, p.isOwner),
+    p.email ?? "",
+    p.hours.toFixed(2),
+    p.hourlyWage.toFixed(2),
+    p.regularWages.toFixed(2),
+    p.additionalEarnings.toFixed(2),
+    p.totalGross.toFixed(2),
+    p.equivalentHourlyRate == null ? "" : p.equivalentHourlyRate.toFixed(2),
+  ]);
+  const totalGross = period.payroll.reduce((s, p) => s + p.totalGross, 0);
+  const totalHours = period.payroll.reduce((s, p) => s + p.hours, 0);
+  const totalsRow = [
+    "TOTALS",
+    "",
+    "",
+    totalHours.toFixed(2),
+    "",
+    "",
+    "",
+    totalGross.toFixed(2),
+    "",
+  ];
+
+  const lines = [
+    payrollCsvRow(header),
+    ...rows.map((r) => payrollCsvRow(r)),
+    payrollCsvRow(totalsRow),
+  ];
+  return {
+    csv: payrollFinalizeCsv(lines),
+    rowCount: rows.length,
+    total: Math.round(totalGross * 100) / 100,
   };
 }

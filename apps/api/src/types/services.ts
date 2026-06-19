@@ -136,6 +136,8 @@ export type PropertyUpsert = Pick<
   | "country"
   | "accessNotes"
   | "pointOfContactId"
+  | "lotSize"
+  | "lotSizeUnit"
 > & { id?: string };
 
 export type PropertyListItemParams = {
@@ -454,6 +456,7 @@ export type CreateOccurrenceInput = {
   // one-off or manual scheduling
   kind?: JobKind;
   name?: string | null;
+  title?: string | null;
   startAt?: string | Date | null;
   endAt?: string | Date | null;
   notes?: string | null;
@@ -466,6 +469,10 @@ export type CreateOccurrenceInput = {
   isEstimate?: boolean;
   isAdminOnly?: boolean;
   jobType?: string | null;
+  jobTags?: string | null;
+  pinnedNote?: string | null;
+  pinnedNoteRepeats?: boolean;
+  frequencyDays?: number | null;
 
   // optional assignees at creation time
   assigneeUserIds?: string[];
@@ -491,7 +498,11 @@ export type ServicesJobs = {
   getOccurrencesByIds(ids: string[], cutoff?: Date | null): Promise<any[]>;
   listMyOccurrences(userId: string, options?: { isAdmin?: boolean }): Promise<any[]>;
   listAvailableOccurrences(): Promise<any[]>;
-  claimOccurrence(currentUserId: string, occurrenceId: string): Promise<{ claimed: true }>;
+  claimOccurrence(
+    currentUserId: string,
+    occurrenceId: string,
+    opts?: { groupId?: string | null },
+  ): Promise<{ claimed: true }>;
   updateOccurrenceStatus(
     currentUserId: string,
     occurrenceId: string,
@@ -622,6 +633,54 @@ export type ServicesJobs = {
     occurrenceId: string,
     input: AssignOccurrenceInput
   ): Promise<{ updated: true }>;
+
+  // Admin-only: move ownership of an occurrence to another worker.
+  reassignClaimer(
+    adminUserId: string,
+    occurrenceId: string,
+    newClaimerUserId: string
+  ): Promise<any>;
+
+  // Admin-only: change a specific assignee's role on an occurrence.
+  // `newRole` of null clears the role override.
+  changeAssigneeRole(
+    adminUserId: string,
+    occurrenceId: string,
+    targetUserId: string,
+    newRole: string | null
+  ): Promise<any>;
+
+  // Admin-only: lightweight estimate creation from the dispatch flow.
+  createLightEstimate(
+    adminUserId: string,
+    input: {
+      title: string;
+      notes?: string;
+      startAt: string;
+      contactName?: string;
+      contactPhone?: string;
+      contactEmail?: string;
+      estimateAddress?: string;
+      proposalAmount?: number;
+      proposalNotes?: string;
+      jobTags?: string;
+      jobType?: string;
+      assigneeUserIds?: string[];
+      jobId?: string;
+    }
+  ): Promise<JobOccurrence>;
+
+  // Worker/admin: standalone reminder (no parent job/occurrence).
+  createStandaloneReminder(
+    currentUserId: string,
+    input: {
+      title: string;
+      notes?: string;
+      startAt: string;
+      linkedOccurrenceId?: string;
+      isHighPriority?: boolean;
+    }
+  ): Promise<JobOccurrence>;
 };
 
 export type ServicesPayments = {
@@ -632,6 +691,11 @@ export type ServicesPayments = {
       amountPaid: number;
       method: string;
       note?: string | null;
+      // Optional processor fee — set by admin paths when the payment
+      // method has a known fee (Venmo/Zelle/card). Computed and
+      // persisted on the resulting Payment row so the income/expense
+      // exports tie out.
+      processorFeeAmount?: number | null;
       // Worker percentages set by the claimer in the Take Payment dialog.
       // Server persists these to JobOccurrence.completionSplits and re-
       // snapshots promisedPayouts before creating the Payment row.
@@ -681,7 +745,12 @@ export type ServicesPayments = {
   adminMarkInvoicePaid(
     currentUserId: string,
     occurrenceId: string,
-    input: { amountPaid: number; method: string; note?: string | null },
+    input: {
+      amountPaid: number;
+      method: string;
+      note?: string | null;
+      processorFeeAmount?: number | null;
+    },
   ): Promise<any>;
 
   /**

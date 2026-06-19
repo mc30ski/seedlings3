@@ -24,7 +24,6 @@ import WorkdaysTab from "@/src/ui/tabs/WorkdaysTab";
 import AuditTab from "@/src/ui/tabs/AuditTab";
 import BusinessExpensesTab from "@/src/ui/tabs/BusinessExpensesTab";
 import ReconcileTab from "@/src/ui/tabs/ReconcileTab";
-import ReconcileWorkersTab from "@/src/ui/tabs/ReconcileWorkersTab";
 import SuppliesTab from "@/src/ui/tabs/SuppliesTab";
 import DocumentsTab from "@/src/ui/tabs/DocumentsTab";
 import TimelineTab from "@/src/ui/tabs/TimelineTab";
@@ -1047,20 +1046,6 @@ export default function HomePage() {
           label: "Reconcile",
           icon: FiBarChart2,
           content: wrapWithInlineMessage(<ReconcileTab />),
-          category: "Records",
-          categoryIcon: FiBarChart2,
-        },
-        {
-          // Worker Reconciliation Cockpit — EXPERIMENTAL. Single-window
-          // tie-out of worker hours + jobs + earnings against Gusto +
-          // QuickBooks. May get yanked if it doesn't earn its keep —
-          // contained as a single tab + service file + route so it's
-          // easy to remove. See ReconcileWorkersTab.tsx +
-          // services/reconcileWorkers.ts.
-          value: "reconcile-workers",
-          label: "Workers · Reconcile",
-          icon: FiUsers,
-          content: wrapWithInlineMessage(<ReconcileWorkersTab />),
           category: "Records",
           categoryIcon: FiBarChart2,
         },
@@ -2929,19 +2914,29 @@ export default function HomePage() {
                 dotColor: "#EAB308",
                 onClick: goToGuaranteedPayoutExpiring,
               });
-              if (isSuper && pendingPayments > 0) alerts.push({ label: "Pending Payments", count: pendingPayments, bg: "#DCFCE7", color: "#14532D", dotColor: "#16A34A", onClick: goToPaymentApprovals });
+              // Payments to review — combined alert that rolls up
+              // pending-admin-approval payments + outstanding client
+              // payment requests. Both used to be separate entries
+              // that routed to the same Super → Payments tab, so we
+              // collapsed them into a single, generically-named item.
+              // Stale-aware color: when ANY outstanding request has
+              // aged past the threshold, the alert switches to orange
+              // tones as a visual prompt to follow up — same logic
+              // the old "Awaiting payment" entry used.
+              if (isSuper) {
+                const paymentsToReview = pendingPayments + awaitingClientPaymentCount;
+                if (paymentsToReview > 0) {
+                  alerts.push({
+                    label: "Payments to review",
+                    count: paymentsToReview,
+                    bg: staleRequestCount > 0 ? "#FFEDD5" : "#DCFCE7",
+                    color: staleRequestCount > 0 ? "#9A3412" : "#14532D",
+                    dotColor: staleRequestCount > 0 ? "#FB923C" : "#16A34A",
+                    onClick: goToPaymentApprovals,
+                  });
+                }
+              }
               if (isSuper && pendingWorkdays > 0) alerts.push({ label: "Workdays to approve", count: pendingWorkdays, bg: "#E0E7FF", color: "#3730A3", dotColor: "#6366F1", onClick: goToWorkdayApprovals });
-              if (isSuper && awaitingClientPaymentCount > 0) alerts.push({
-                label: "Awaiting payment",
-                count: awaitingClientPaymentCount,
-                // Switch to orange tones when ANY of the outstanding requests
-                // have aged past the stale threshold — visual signal that
-                // some of them need active follow-up, not just monitoring.
-                bg: staleRequestCount > 0 ? "#FFEDD5" : "#F3E8FF",
-                color: staleRequestCount > 0 ? "#9A3412" : "#6B21A8",
-                dotColor: staleRequestCount > 0 ? "#FB923C" : "#9333EA",
-                onClick: goToPaymentApprovals,
-              });
               if (isAdmin && changeRequestCount > 0) alerts.push({ label: "Client requests", count: changeRequestCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToClientRequests });
               if (isAdmin && estimateFollowupCount > 0) alerts.push({ label: "Estimate follow-ups", count: estimateFollowupCount, bg: "#FCE7F3", color: "#9D174D", dotColor: "#EC4899", onClick: goToEstimateFollowups });
               if (isAdmin && unapprovedHoursCount > 0) alerts.push({ label: "Job hours awaiting review", count: unapprovedHoursCount, bg: "#FEF3C7", color: "#92400E", dotColor: "#F59E0B", onClick: goToUnapprovedHours });

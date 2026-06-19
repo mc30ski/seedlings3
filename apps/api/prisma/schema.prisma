@@ -105,6 +105,15 @@ model User {
   availableDays        String? // JSON array of day numbers, e.g. "[1,2,3,4,5]" (0=Sun,6=Sat)
   availableHoursPerDay Float? // default 4 if null
 
+  // Hourly pay rate used for the Reconcile → Payroll export. Set per
+  // worker so the Payroll card can render `hours × hourlyWage` =
+  // regular wages, and the operator types `additionalEarnings` (the
+  // delta between target gross and regular wages) into Gusto.
+  // Defaults to 0 so contractors (paid lump-sum) and unconfigured
+  // workers render predictably — Regular Wages = 0, Additional
+  // Earnings absorbs the full target gross.
+  hourlyWage           Decimal     @default(0) @db.Decimal(10, 2)
+
   // Privilege overrides. Null = follow workerType default (resolved in app
   // code via DEFAULTS_BY_WORKERTYPE). True/false = explicit override.
   //

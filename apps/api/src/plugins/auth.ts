@@ -34,13 +34,17 @@ export default fp(async function auth(app: FastifyInstance) {
       })) as Claims;
 
       // Extracts sub (the Clerk user id). If missing, logs a warning and continues.
-      const clerkUserId =
+      const rawClerkUserId =
         claims && typeof claims.sub === "string" ? claims.sub : undefined;
-      if (!clerkUserId) {
+      if (!rawClerkUserId) {
         app.log.warn({ where: "auth", reason: "no-sub-in-claims" });
         (req as any).auth = {};
         return;
       }
+      // Narrowed const for use inside the nested fetchClerkUser closure
+      // — TS doesn't propagate the early-return narrowing across a
+      // function boundary.
+      const clerkUserId: string = rawClerkUserId;
 
       // On success, attaches for downstream handlers.
       (req as any).auth = { clerkUserId };

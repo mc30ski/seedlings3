@@ -308,7 +308,7 @@ export default async function clientRoutes(app: FastifyInstance) {
           completedAt: occ.completedAt,
           jobType: occ.jobType,
           price: occ.price,
-          property: occ.job.property,
+          property: occ.job?.property ?? null,
           // Return full displayName ("First Last") — receipts need the
           // full name. Casual UI uses workerLabel() to extract the first
           // name for friendlier "Crew: Mark & Sarah" rendering.
