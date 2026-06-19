@@ -558,15 +558,30 @@ export async function buildReconcileWorkers(
     const netPaid = round2(grossEarnings - feesOrMargin + topUps);
     const ownerEarnings = round2(a.ownerEarnings);
 
-    const effectiveHourly = hoursActive > 0 ? round2(netPaid / hoursActive) : null;
+    // For owners, the "display total" includes their owner-earnings
+    // draw — that's the money actually flowing to them in the
+    // window. For everyone else, displayNet is just netPaid. This
+    // keeps the Workers card headline in sync with the Payroll
+    // surface's `totalGross` calc.
+    const displayNet = a.user.isOwner ? round2(netPaid + ownerEarnings) : netPaid;
+    const effectiveHourly = hoursActive > 0 ? round2(displayNet / hoursActive) : null;
     const preTopUpHourly = hoursActive > 0 ? round2((grossEarnings - feesOrMargin) / hoursActive) : null;
+    // Owners are excluded from the minimum-wage check — they take
+    // draws, not W-2 wages, so the federal/state hourly floor
+    // doesn't apply. Same reason the Payroll card labels them
+    // "Owner" instead of "Employee" even when their workerType
+    // happens to be EMPLOYEE in the data.
     const belowMinWage =
+      !a.user.isOwner &&
       isEmployeeClass(a.user.workerType) &&
       preTopUpHourly != null &&
       preTopUpHourly < minWage;
 
     const anomalies: string[] = [];
-    if (hoursActive > 0 && a.jobsCompleted === 0) {
+    // Skip the "no completed jobs" anomaly for owners — they
+    // often clock in for supervisory / admin work without being
+    // listed as an assignee on any specific job.
+    if (!a.user.isOwner && hoursActive > 0 && a.jobsCompleted === 0) {
       anomalies.push("Logged hours but no completed jobs in window");
     }
     if (a.jobsCompleted > 0 && hoursActive === 0) {
@@ -613,7 +628,10 @@ export async function buildReconcileWorkers(
       grossEarnings,
       feesOrMargin,
       topUps,
-      netPaid,
+      // Owners report `displayNet` (= netPaid + ownerEarnings) so the
+      // Workers card headline matches the Payroll Total Gross. For
+      // non-owners, displayNet === netPaid so this is a no-op.
+      netPaid: displayNet,
       ownerEarnings,
       effectiveHourly,
       preTopUpHourly,
