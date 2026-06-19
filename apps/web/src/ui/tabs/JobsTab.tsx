@@ -2145,15 +2145,18 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         } else {
           if (occ.startAt) candidates.push(bizDateKey(occ.startAt));
           if ((occ as any).completedAt) candidates.push(bizDateKey((occ as any).completedAt));
-          // An attached reminder also makes the row "present" in the
-          // range — without this, an Observer's reminder on a completed
-          // past job (or any reminder set on a finished job that's
-          // outside the reminderBypassFinished window) silently
-          // disappears because the API doesn't ship a ghost when the
-          // occurrence itself was loaded (e.g. via observership).
-          // dayGroups suppresses the past-dated original below so only
-          // the reminder ghost surfaces in the visible window.
-          if ((occ as any).reminder?.remindAt) {
+          // An attached reminder makes the row "present" in the range
+          // — but only on the WORKER view, where the dayGroups block
+          // below adds a future ghost card at the reminder date and
+          // suppresses the past-dated original. In ADMIN view there's
+          // no ghost machinery: the row would pass the filter via the
+          // reminder date but get grouped at its natural startAt,
+          // leaking observer-only / past jobs into the visible window
+          // (e.g. an admin's reminder on a completed observer job
+          // from 9 days ago appearing under "Wed Jun 10" inside a
+          // "this week" filter). Admins browsing by date want jobs
+          // whose actual scheduled / completed date is in range.
+          if (isWorkerView && (occ as any).reminder?.remindAt) {
             candidates.push(bizDateKey((occ as any).reminder.remindAt));
           }
         }
