@@ -456,11 +456,21 @@ export async function buildReconcileWorkers(
           })
         : null;
       if (!user) continue;
+
+      const split = splitsByUser.get(assignee.userId);
+      // Owner-earnings splits are NOT personal wage — they're the
+      // business's cut, handled by the separate accumulator block
+      // below (`a.ownerEarnings += sp.amount`). Skip this assignee
+      // here so the same dollars don't land in BOTH `grossEarnings`
+      // (via the per-assignee path) AND `ownerEarnings` (via the
+      // dedicated block) — which would double-count on the Payroll
+      // surface (`totalGross = netPaid + ownerEarnings`).
+      if (split?.isOwnerEarnings) continue;
+
       const a = getAcc(user);
 
       const snap = snapshot?.get(assignee.userId);
       const comp = computed.get(assignee.userId);
-      const split = splitsByUser.get(assignee.userId);
 
       // Source priority: snapshot per-userId → computeBreakdown
       // (always built so sparse snapshots can't strand an assignee
