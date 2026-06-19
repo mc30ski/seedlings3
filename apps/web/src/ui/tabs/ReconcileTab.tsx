@@ -45,6 +45,11 @@ type PnLReport = {
   grossProfit: number;
   expenses: PnLBucket;
   netOperatingIncome: number;
+  /** Categories explicitly opted out of the P&L. Visibility-only —
+   *  the dollars here do NOT roll into expenses or netOperatingIncome.
+   *  Surfaced in a dedicated section at the bottom so the operator can
+   *  confirm every Ledger entry is accounted for somewhere. */
+  excluded: PnLBucket;
 };
 
 type PnLDetailRow = {
@@ -809,6 +814,39 @@ export default function ReconcileTab() {
                   {fmtUSD(report.netOperatingIncome)}
                 </Text>
               </HStack>
+
+              {/* Excluded from P&L — categories the operator explicitly
+                  opted out of via `plSection: EXCLUDE_FROM_PNL`.
+                  Visibility only: dollars do NOT count toward Net
+                  Operating Income. Surfaced so no Ledger entry can
+                  silently disappear from the financial surface;
+                  drill-down works the same as any other row. */}
+              {(report.excluded?.flat.length > 0 || report.excluded?.groups.length > 0) && (
+                <>
+                  <Box mt={4} px={3} py={1.5} bg="gray.100" borderTopWidth="1px" borderColor="gray.300">
+                    <Text fontSize="xs" fontWeight="semibold" color="fg.muted" textTransform="uppercase" letterSpacing="wide">
+                      Excluded from P&amp;L
+                    </Text>
+                    <Text fontSize="2xs" color="fg.muted">
+                      Categories opted out via Settings. Not counted toward Net Operating Income — shown for visibility so every Ledger entry is accounted for somewhere.
+                    </Text>
+                  </Box>
+                  <BucketRows bucket={report.excluded} expanded={expanded} details={details} onToggle={toggleAccount} />
+                  <HStack
+                    justify="space-between"
+                    px={3}
+                    py={1.5}
+                    bg="gray.50"
+                    borderTopWidth="1px"
+                    borderColor="gray.200"
+                  >
+                    <Text fontSize="sm" fontWeight="semibold" color="fg.muted">Total Excluded</Text>
+                    <Text fontSize="sm" fontWeight="semibold" color="fg.muted" fontStyle="italic">
+                      {fmtUSD(report.excluded.total)}
+                    </Text>
+                  </HStack>
+                </>
+              )}
             </VStack>
           )}
         </Card.Body>

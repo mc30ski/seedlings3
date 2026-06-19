@@ -69,6 +69,12 @@ export type PnLReport = {
   grossProfit: number;
   expenses: PnLBucket;
   netOperatingIncome: number;
+  /** Categories explicitly opted out of the P&L (`plSection: EXCLUDE_FROM_PNL`).
+   *  Visibility-only — the dollars here do NOT roll into expenses or
+   *  netOperatingIncome. Surfaced so silent exclusion can't bite the
+   *  operator: every line in the Ledger is accounted for somewhere on
+   *  the report. */
+  excluded: PnLBucket;
 };
 
 const INCOME_ACCOUNT_SERVICES = "Services";
@@ -223,6 +229,23 @@ export async function buildPnLReport(
     }
   };
 
+  // Parallel bucket for explicitly EXCLUDE_FROM_PNL categories. These
+  // dollars do NOT roll into Net Operating Income, but we surface
+  // them in a dedicated section at the bottom of the report so the
+  // operator can verify that every Ledger entry is accounted for
+  // SOMEWHERE — silent disappearance was the problem this whole
+  // thread chased down.
+  const excludedByAccount = new Map<string, { total: number; section: PlSection }>();
+  const addToExcludedAccount = (qbAccount: string, amount: number) => {
+    if (amount === 0) return;
+    const existing = excludedByAccount.get(qbAccount);
+    if (existing) {
+      existing.total += amount;
+    } else {
+      excludedByAccount.set(qbAccount, { total: amount, section: "EXCLUDE_FROM_PNL" });
+    }
+  };
+
   // Operating expense rows from BusinessExpense (fixed assets excluded —
   // they're capitalized to balance sheet, never on the P&L).
   for (const r of operatingExpenses) {
@@ -230,14 +253,16 @@ export async function buildPnLReport(
     // the QB Expenses CSV's split (see effectiveExpenseDate).
     if (isFixedAsset({ cost: r.cost, date: effectiveExpenseDate(r) }, fixedAssetMinCost)) continue;
     const meta = catMeta.get(r.category ?? "Other");
-    // If the category was explicitly marked EXCLUDE_FROM_PNL by the
-    // operator (an opt-out), respect that and drop the row. Otherwise
-    // — for unknown categories OR categories with no plSection set —
+    if (meta?.plSection === "EXCLUDE_FROM_PNL") {
+      // Explicit opt-out — still surface under "Excluded from P&L"
+      // for visibility (not counted in any total).
+      addToExcludedAccount(meta.qbAccount ?? "Unmapped", r.cost);
+      continue;
+    }
+    // Unknown categories OR categories with no plSection set →
     // default to OPERATING_EXPENSE under "Unmapped" so the dollars
-    // SHOW UP on the report instead of vanishing. The Unmapped bucket
-    // is the operator's prompt to reclassify; silent drop was the
-    // pre-fix behavior that caused expenses to look missing.
-    if (meta?.plSection === "EXCLUDE_FROM_PNL") continue;
+    // SHOW UP on the report instead of vanishing. The Unmapped
+    // bucket is the operator's prompt to reclassify.
     const section: PlSection = meta?.plSection ?? "OPERATING_EXPENSE";
     const qbAccount = meta?.qbAccount ?? "Unmapped";
     addToAccount(qbAccount, section, r.cost);
@@ -285,6 +310,16 @@ export async function buildPnLReport(
   const cogs = groupByParent(cogsRaw);
   const expenses = groupByParent(expenseRaw);
 
+  // Excluded bucket — same shape as cogs/expenses so the renderer
+  // can reuse the BucketRows component. Total exists for the section
+  // subtotal display; it intentionally does NOT roll into
+  // netOperatingIncome.
+  const excludedRaw: PnLRow[] = [];
+  for (const [qbAccount, { total }] of excludedByAccount) {
+    excludedRaw.push({ qbAccount, total: round2(total) });
+  }
+  const excluded = groupByParent(excludedRaw);
+
   const grossProfit = round2(incomeTotal - cogs.total);
   const netOperatingIncome = round2(grossProfit - expenses.total);
 
@@ -294,6 +329,7 @@ export async function buildPnLReport(
     cogs,
     grossProfit,
     expenses,
+    excluded,
     netOperatingIncome,
   };
 }
