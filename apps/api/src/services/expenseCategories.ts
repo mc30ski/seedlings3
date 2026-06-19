@@ -88,14 +88,20 @@ export function parseExpenseCategoriesSetting(raw: string | null | undefined): E
       const trimmed = row.qbAccount.trim();
       qbAccount = trimmed === "" ? null : trimmed;
     }
-    // plSection is optional in storage. Missing / unknown values default
-    // to EXCLUDE_FROM_PNL — the operator must proactively classify a
-    // category as COGS or OPERATING_EXPENSE before it appears on the P&L.
-    // This is the safer default: a category whose section hasn't been
-    // reviewed silently disappears from the report rather than getting
-    // lumped into a section that might be wrong. Validate only when
-    // present so a typo can't silently swap a section.
-    let plSection: PlSection = "EXCLUDE_FROM_PNL";
+    // plSection is optional in storage. Missing values default to
+    // OPERATING_EXPENSE so the category SHOWS UP on the report —
+    // possibly under "Unmapped" if qbAccount is blank — rather than
+    // silently disappearing. The previous default (EXCLUDE_FROM_PNL)
+    // forced "proactive classification" but the practical effect
+    // was silent data loss: operators added expenses, didn't see
+    // them on the P&L, and got no signal explaining why. Showing
+    // it under Unmapped is recoverable; hiding it isn't.
+    //
+    // Categories that legitimately should NOT appear on the P&L
+    // (e.g. tracked-but-excluded line items) can still be explicitly
+    // set to EXCLUDE_FROM_PNL by the operator — that's an opt-out,
+    // not the default.
+    let plSection: PlSection = "OPERATING_EXPENSE";
     if (row.plSection != null) {
       if (typeof row.plSection !== "string" || !PL_SECTION_VALUES.includes(row.plSection as PlSection)) {
         throw new Error(

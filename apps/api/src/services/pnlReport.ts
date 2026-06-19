@@ -230,12 +230,15 @@ export async function buildPnLReport(
     // the QB Expenses CSV's split (see effectiveExpenseDate).
     if (isFixedAsset({ cost: r.cost, date: effectiveExpenseDate(r) }, fixedAssetMinCost)) continue;
     const meta = catMeta.get(r.category ?? "Other");
-    // Categories explicitly marked EXCLUDE_FROM_PNL (or any category not
-    // in the taxonomy at all — the loader default) silently drop out of
-    // the P&L. Forces the operator to opt in via Settings before a
-    // category contributes to the report.
-    const section = meta?.plSection ?? "EXCLUDE_FROM_PNL";
-    if (section === "EXCLUDE_FROM_PNL") continue;
+    // If the category was explicitly marked EXCLUDE_FROM_PNL by the
+    // operator (an opt-out), respect that and drop the row. Otherwise
+    // — for unknown categories OR categories with no plSection set —
+    // default to OPERATING_EXPENSE under "Unmapped" so the dollars
+    // SHOW UP on the report instead of vanishing. The Unmapped bucket
+    // is the operator's prompt to reclassify; silent drop was the
+    // pre-fix behavior that caused expenses to look missing.
+    if (meta?.plSection === "EXCLUDE_FROM_PNL") continue;
+    const section: PlSection = meta?.plSection ?? "OPERATING_EXPENSE";
     const qbAccount = meta?.qbAccount ?? "Unmapped";
     addToAccount(qbAccount, section, r.cost);
   }
