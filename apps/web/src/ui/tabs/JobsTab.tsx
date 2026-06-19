@@ -7238,6 +7238,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           myId={me?.id || ""}
           currentAssignees={(manageOccurrence.assignees ?? []).map((a) => ({
             userId: a.userId,
+            // CRITICAL: assignedById is the ONLY signal the dialog
+            // uses to identify the claimer (an assignee with
+            // assignedById === userId = self-claimed). Without it,
+            // TeamMemberList's getClaimerUserId falls back to
+            // "first non-observer wins," which can mislabel the
+            // claimer when the assignees array order doesn't match
+            // claim order.
+            assignedById: (a as any).assignedById,
             role: a.role,
             user: a.user,
           }))}
