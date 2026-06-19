@@ -234,7 +234,12 @@ export async function buildReconcileWorkers(
           },
         },
         assignees: {
-          where: { role: { not: "observer" } },
+          // role IS NULL means "regular worker — no special role set",
+          // which is the common case. SQL `role != 'observer'` returns
+          // UNKNOWN (not TRUE) for NULL rows, so we'd silently drop
+          // the entire $0-on-Jacob-style class of bugs without the
+          // OR null clause.
+          where: { OR: [{ role: null }, { role: { not: "observer" } }] },
           select: {
             userId: true,
             user: { select: { displayName: true, email: true, workerType: true, hourlyWage: true, isOwner: true } },

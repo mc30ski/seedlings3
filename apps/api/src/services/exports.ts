@@ -1145,7 +1145,11 @@ export async function workdaysCsv(start: Date, end: Date): Promise<CsvResult> {
         addons: { select: { price: true } },
         expenses: { select: { cost: true } },
         assignees: {
-          where: { role: { not: "observer" } },
+          // role IS NULL is the common "regular worker" case — SQL
+          // would drop those rows with a bare `role != 'observer'`
+          // since NULL comparisons evaluate to UNKNOWN. Match the
+          // pattern used elsewhere in the codebase.
+          where: { OR: [{ role: null }, { role: { not: "observer" } }] },
           select: {
             userId: true,
             user: { select: { workerType: true } },

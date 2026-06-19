@@ -2799,6 +2799,19 @@ Respond ONLY with valid JSON in this exact format:
     const netRevenue = totalRevenue - totalExpenses;
     const totalPlatformFees = paidOccs.reduce((s, o) => s + (o.payment?.platformFeeAmount ?? 0), 0);
     const totalBusinessMargin = paidOccs.reduce((s, o) => s + (o.payment?.businessMarginAmount ?? 0), 0);
+    // W-2 make-whole spend (top-ups) + LLC owner draws on the business's
+    // cut. Both are sourced from PaymentSplit rows already loaded above
+    // via `payment.splits`. Surfaced here so Operations carries the
+    // internal payment-flow numbers that previously lived only in the
+    // Money → Reconcile "Period Summary" card (now removed).
+    let totalTopUps = 0;
+    let totalOwnerEarnings = 0;
+    for (const o of paidOccs) {
+      for (const sp of o.payment?.splits ?? []) {
+        totalTopUps += sp.topUpAmount ?? 0;
+        if (sp.ownerEarnings) totalOwnerEarnings += sp.amount ?? 0;
+      }
+    }
     const avgJobPrice = jobsCompleted > 0 ? totalRevenue / jobsCompleted : 0;
 
     const paymentsByMethod: Record<string, number> = {};
@@ -3214,6 +3227,8 @@ Respond ONLY with valid JSON in this exact format:
         netRevenue,
         totalPlatformFees,
         totalBusinessMargin,
+        totalTopUps,
+        totalOwnerEarnings,
         avgJobPrice,
         paymentsByMethod,
       },

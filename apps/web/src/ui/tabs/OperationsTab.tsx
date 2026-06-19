@@ -56,7 +56,7 @@ type WorkerStat = {
 
 type OpsData = {
   jobs: { scheduled: number; inProgress: number; completed: number; canceled: number; overdue: number; unclaimed: number };
-  financial: { totalRevenue: number; totalExpenses: number; netRevenue: number; totalPlatformFees: number; totalBusinessMargin: number; avgJobPrice: number; paymentsByMethod: Record<string, number> };
+  financial: { totalRevenue: number; totalExpenses: number; netRevenue: number; totalPlatformFees: number; totalBusinessMargin: number; totalTopUps: number; totalOwnerEarnings: number; avgJobPrice: number; paymentsByMethod: Record<string, number> };
   team: { activeInWindow: number; workersByTypeInWindow: Record<string, number>; topWorkers: { name: string; jobs: number; earnings: number }[] };
   equipment: {
     total: number; available: number; checkedOut: number; reserved: number; inMaintenance: number;
@@ -499,6 +499,13 @@ export default function OperationsTab() {
               <MetricCard label="Expenses" value={fmt(data.financial.totalExpenses)} color="red.500" />
               <MetricCard label="Platform Fees" value={fmt(data.financial.totalPlatformFees)} color="orange.600" />
               <MetricCard label="Business Margin" value={fmt(data.financial.totalBusinessMargin)} color="blue.600" />
+              {/* Top-ups + Owner earnings — moved here from the
+                  Money → Reconcile "Period Summary" card so the
+                  internal payment-flow picture stays available. Both
+                  are sourced from PaymentSplit rows in the same
+                  window. */}
+              <MetricCard label="Top-ups" value={fmt(data.financial.totalTopUps)} color="purple.600" sub="W-2 make-whole" />
+              <MetricCard label="Owner Earnings" value={fmt(data.financial.totalOwnerEarnings)} color="teal.600" sub="LLC owner's cut" />
             </Box>
             {data.financial.avgJobPrice > 0 && (
               <Text fontSize="xs" color="fg.muted" mt={1} px={1}>Avg job price: {fmt(data.financial.avgJobPrice)}</Text>

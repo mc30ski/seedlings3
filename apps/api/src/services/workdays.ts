@@ -202,7 +202,10 @@ export async function checkBlockingActiveJobs(userId: string): Promise<JobBlocki
       // Only the claimer can mutate an occurrence (see services/jobs.ts).
       // assignedById === userId is the canonical "I claimed this" predicate.
       assignedById: userId,
-      role: { not: "observer" },
+      // Include rows with role = NULL (default "worker"); SQL would
+      // drop them with a bare `role != 'observer'` predicate because
+      // NULL comparisons evaluate to UNKNOWN.
+      OR: [{ role: null }, { role: { not: "observer" } }],
       occurrence: { status: { in: ["IN_PROGRESS", "PAUSED"] as any } },
     },
     select: {
