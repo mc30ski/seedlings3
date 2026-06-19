@@ -241,7 +241,7 @@ export default function ReconcileTab() {
   // intentionally always visible since picking the date range is the
   // entry point for everything below.
   const SECTION_KEYS = useMemo(
-    () => ["download", "pnl", "summary", "payroll", "workers"] as const,
+    () => ["download", "pnl", "payroll", "workers"] as const,
     [],
   );
   const [sectionCollapsed, setSectionCollapsed] = useState<Record<string, boolean>>(
@@ -819,50 +819,6 @@ export default function ReconcileTab() {
         <HStack justify="center" py={6}><Spinner /></HStack>
       ) : !period ? null : (
         <>
-          <Card.Root>
-            <CardSectionHeader
-              title="Period Summary"
-              subtitle="Roll-up of activity in the window: hours, jobs, revenue, payouts, and net operating income."
-              collapsed={isSectionCollapsed("summary")}
-              onToggle={() => toggleSection("summary")}
-            />
-            {!isSectionCollapsed("summary") && (
-            <Card.Body>
-              <HStack gap={4} wrap="wrap" align="stretch">
-                <SummaryStat label="Workers" value={period.totals.workersActive.toString()} />
-                <SummaryStat label="Hours" value={period.totals.totalHours.toFixed(2)} />
-                <SummaryStat label="Days logged" value={period.totals.totalDaysLogged.toString()} />
-                <SummaryStat label="Jobs done" value={period.totals.totalJobsCompleted.toString()} />
-                <SummaryStat
-                  label="Anomalies"
-                  value={period.totals.anomalies.toString()}
-                  emphasis={period.totals.anomalies > 0 ? "warn" : undefined}
-                />
-              </HStack>
-              <Box borderTopWidth="1px" borderColor="gray.200" my={3} />
-              <HStack gap={4} wrap="wrap" align="stretch">
-                <SummaryStat label="Revenue" value={fmtUSD(period.totals.totalRevenue)} />
-                <SummaryStat label="Equipment rental" value={fmtUSD(period.totals.totalEquipmentRental)} />
-                <SummaryStat label="Processor fees" value={fmtUSD(period.totals.totalProcessorFees)} emphasis="neg" />
-                <SummaryStat label="Worker payouts" value={fmtUSD(period.totals.totalWorkerNetPaid)} emphasis="neg" />
-                <SummaryStat
-                  label="Net operating income"
-                  value={fmtUSD(period.totals.netOperatingIncome)}
-                  emphasis={period.totals.netOperatingIncome < 0 ? "neg" : "pos"}
-                />
-              </HStack>
-              <Box borderTopWidth="1px" borderColor="gray.200" my={3} />
-              <HStack gap={4} wrap="wrap" align="stretch">
-                <SummaryStat label="Worker gross" value={fmtUSD(period.totals.totalWorkerGross)} />
-                <SummaryStat label="Business margin (W-2)" value={fmtUSD(period.totals.totalBusinessMargin)} />
-                <SummaryStat label="Contractor fees" value={fmtUSD(period.totals.totalContractorFees)} />
-                <SummaryStat label="Top-ups" value={fmtUSD(period.totals.totalTopUps)} />
-                <SummaryStat label="Owner earnings" value={fmtUSD(period.totals.totalOwnerEarnings)} />
-              </HStack>
-            </Card.Body>
-            )}
-          </Card.Root>
-
           {/* Payroll — Gusto-shaped per-worker row set. Click any
               numeric cell to copy. Hours + Additional Earnings are the
               two values the operator types into Gusto per worker;
@@ -1412,28 +1368,6 @@ function ExpenseCategoryChips({ report }: { report: PnLReport }) {
 }
 
 // ── Worker-side sub-components (folded in from ReconcileWorkersTab) ─────────
-
-function SummaryStat({
-  label,
-  value,
-  emphasis,
-}: {
-  label: string;
-  value: string;
-  emphasis?: "pos" | "neg" | "warn";
-}) {
-  const color =
-    emphasis === "pos" ? "green.700" :
-    emphasis === "neg" ? "red.600" :
-    emphasis === "warn" ? "yellow.700" :
-    "fg.default";
-  return (
-    <Box minW="120px">
-      <Text fontSize="xs" color="fg.muted">{label}</Text>
-      <Text fontSize="md" fontWeight="bold" color={color}>{value}</Text>
-    </Box>
-  );
-}
 
 function WorkerCard({
   worker,
