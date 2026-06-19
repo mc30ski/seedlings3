@@ -106,9 +106,22 @@ async function loadConfirmedPayments(start: Date, end: Date) {
           completedAt: true,
           totalPausedMs: true,
           assignees: {
+            // Include user displayName/email so the Income CSV's
+            // Workers column can list the people who actually did
+            // the work, not just the people who received non-owner-
+            // earnings PaymentSplit rows. Without the user join,
+            // owner-only jobs (where the only split is owner-
+            // earnings) render with an empty Workers column even
+            // though the owner did the work.
             select: {
               userId: true,
               role: true,
+              user: {
+                select: {
+                  displayName: true,
+                  email: true,
+                },
+              },
             },
           },
           job: {
@@ -837,18 +850,19 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
     const dateLabel = p.confirmedAt ? toIsoDate(p.confirmedAt) : "";
     const propertyName = property?.displayName ?? "";
     const clientName = client?.displayName ?? "";
-    const jobTitle =
-      occ?.title?.trim() ||
-      job?.description?.trim() ||
-      workflowLabel(occ?.workflow);
+    // Job column: explicit title → workflow-derived label. We
+    // intentionally do NOT fall back to job.description here — that
+    // field can be a multi-sentence note about a property, which
+    // clutters the CSV column when surfaced as a "job" label. The
+    // description still appears on the job detail page in-app; the
+    // CSV uses the consistent workflow label for any untitled row.
+    const jobTitle = occ?.title?.trim() || workflowLabel(occ?.workflow);
     const method = p.method ?? "";
 
     // Aggregate the splits into the per-payment view: worker payouts
-    // vs owner earnings, plus a comma-separated list of worker names.
+    // vs owner earnings totals.
     let workerPayouts = 0;
     let ownerEarnings = 0;
-    const workerNames: string[] = [];
-    const seenWorkerIds = new Set<string>();
     for (const sp of p.splits) {
       const spAny = sp as any;
       const isOwnerCut = spAny.ownerEarnings === true;
@@ -856,12 +870,27 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
         ownerEarnings += sp.amount ?? 0;
       } else {
         workerPayouts += sp.amount ?? 0;
-        const uid = (sp as any).userId as string | undefined;
-        const name = sp.user?.displayName ?? sp.user?.email ?? null;
-        if (name && uid && !seenWorkerIds.has(uid)) {
-          seenWorkerIds.add(uid);
-          workerNames.push(name);
-        }
+      }
+    }
+
+    // Workers column — built from the JobOccurrence assignees, NOT
+    // from the PaymentSplit rows. Splits would mislead in two cases:
+    // (a) owner-only jobs where the only split is owner-earnings and
+    // the worker column would render empty; (b) jobs where the
+    // assignee list and split list don't match (rare but possible
+    // when the operator created splits manually). The assignee list
+    // is the canonical "who did the work" answer.
+    const workerNames: string[] = [];
+    const seenWorkerIds = new Set<string>();
+    for (const a of (occ?.assignees ?? []) as Array<{ userId: string; role: string | null; user: { displayName: string | null; email: string | null } | null }>) {
+      // Same NULL-role inclusion rule used everywhere else in the
+      // codebase — `role IS NULL` means "regular worker, no special
+      // role." Only `observer` is excluded.
+      if (a.role === "observer") continue;
+      const name = a.user?.displayName ?? a.user?.email ?? null;
+      if (name && !seenWorkerIds.has(a.userId)) {
+        seenWorkerIds.add(a.userId);
+        workerNames.push(name);
       }
     }
     rows.push({

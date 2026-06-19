@@ -306,6 +306,13 @@ export async function buildReconcileWorkers(
     feesOrMargin: number;
     topUps: number;
     ownerEarnings: number;
+    // Set of occurrence IDs that fed owner-earnings to this user.
+    // Used ONLY for owner-row display so the headline jobs count
+    // reflects "jobs that contributed to your draws" rather than
+    // jobs the owner personally was an assignee on (which is often
+    // zero, even when owner-earnings are non-zero). Non-owner rows
+    // don't read this — their `jobsCompleted` semantic is unchanged.
+    ownerEarningOccurrenceIds: Set<string>;
     // Per-day map for drill-down
     byDay: Map<
       string,
@@ -355,6 +362,7 @@ export async function buildReconcileWorkers(
         feesOrMargin: 0,
         topUps: 0,
         ownerEarnings: 0,
+        ownerEarningOccurrenceIds: new Set(),
         byDay: new Map(),
       };
       acc.set(user.id, a);
@@ -528,6 +536,7 @@ export async function buildReconcileWorkers(
             isOwner: (u as any).isOwner,
           }));
           a.ownerEarnings += sp.amount ?? 0;
+          a.ownerEarningOccurrenceIds.add(occ.id);
         } else {
           // User not in assignees — still attribute. Look up minimally.
           // Cheap path: load from a small lookup map. We skip the extra
@@ -540,6 +549,7 @@ export async function buildReconcileWorkers(
             workerType: null,
           }));
           a.ownerEarnings += sp.amount ?? 0;
+          a.ownerEarningOccurrenceIds.add(occ.id);
         }
       }
     }
@@ -624,7 +634,17 @@ export async function buildReconcileWorkers(
       isOwner: a.user.isOwner,
       hoursActive,
       daysWorked: a.daysSet.size,
-      jobsCompleted: a.jobsCompleted,
+      // For owners, include occurrences that fed owner-earnings (the
+      // owner often isn't an assignee on jobs where they collect the
+      // business's cut). De-duped via a Set so a worker who's BOTH
+      // an assignee AND received an owner split on the same occ
+      // counts once. Non-owner semantics unchanged.
+      jobsCompleted: a.user.isOwner
+        ? new Set([
+            ...a.ownerEarningOccurrenceIds,
+            ...Array.from(a.byDay.values()).flatMap((d) => d.jobs.map((j) => j.occurrenceId)),
+          ]).size
+        : a.jobsCompleted,
       grossEarnings,
       feesOrMargin,
       topUps,
