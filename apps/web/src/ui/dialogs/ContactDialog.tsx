@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, useRef } from "react";
 import {
+  Box,
   Button,
   Dialog,
   HStack,
@@ -86,9 +87,21 @@ export default function ClientDialog({
     phone: string | null;
     normalizedPhone: string | null;
     isPrimary: boolean;
+    // Populated when the matching contact has already been bound
+    // to a Clerk login. If non-null, adding a new contact with
+    // matching email/phone will auto-bind the new row to the SAME
+    // Clerk identity so a single sign-in surfaces every client
+    // they belong to.
+    clerkUserId: string | null;
     client: { id: string; displayName: string };
   };
   const [contactMatches, setContactMatches] = useState<ContactMatch[]>([]);
+  // On UPDATE mode, when this contact shares a clerkUserId with
+  // other rows on other clients, default-checked to propagate
+  // identity changes (name/email/phone) to all linked siblings. The
+  // operator can uncheck to make this edit local to the current
+  // client only.
+  const [applyToLinked, setApplyToLinked] = useState(true);
 
   // Primary-contact invariant: every client must have exactly one primary.
   // We force isPrimary=true and disable the checkbox when:
@@ -130,12 +143,19 @@ export default function ClientDialog({
 
   function ableToSave() {
     const digits = phone.replace(/\D/g, "");
+    // Same-client duplicates are a hard block: the operator should
+    // either edit the existing contact or change the identity here.
+    // Cross-client matches are intentional (same person, new role)
+    // and DON'T block save — the inline blue panel explains the
+    // consequences and the admin can proceed.
+    const sameClientDup = contactMatches.some((m) => m.client.id === clientId);
     return (
       statusValue &&
       kindValue &&
       firstName &&
       (!email || EMAIL_RE.test(email)) &&
-      (!phone || digits.length >= 10)
+      (!phone || digits.length >= 10) &&
+      !sameClientDup
     );
   }
 
@@ -274,6 +294,11 @@ export default function ClientDialog({
     }
     setShowMissingWarning(false);
 
+    // On UPDATE mode: if this contact has cross-client linked
+    // siblings AND the operator hasn't unchecked propagation, set
+    // applyToLinked so the backend updates the sibling rows' identity
+    // fields too. Default ON because that's almost always the intent.
+    const hasOtherClientMatches = contactMatches.some((m) => m.client.id !== clientId);
     const payload = {
       role: (kindValue[0] as ContactKind) ?? CONTACT_KIND[0],
       status: (statusValue[0] as ContactStatus) ?? CONTACT_STATUS[0],
@@ -283,6 +308,7 @@ export default function ClientDialog({
       email: email.trim(),
       phone: phone.trim(),
       isPrimary,
+      ...(mode === "UPDATE" && hasOtherClientMatches ? { applyToLinked } : {}),
     };
 
     if (deferSave) {
@@ -457,56 +483,118 @@ export default function ClientDialog({
                     placeholder="15551234567"
                   />
                 </div>
-                {contactMatches.length > 0 && (
-                  <div
-                    style={{
-                      padding: "10px 12px",
-                      borderRadius: 8,
-                      backgroundColor: "var(--chakra-colors-orange-50)",
-                      borderWidth: 1,
-                      borderStyle: "solid",
-                      borderColor: "var(--chakra-colors-orange-300)",
-                      borderLeftWidth: 4,
-                      borderLeftColor: "var(--chakra-colors-orange-500)",
-                    }}
-                  >
-                    <Text fontSize="sm" fontWeight="semibold" color="orange.800" mb={1}>
-                      Already in use
-                    </Text>
-                    <Text fontSize="xs" color="orange.700" mb={1}>
-                      {contactMatches.length === 1
-                        ? "A contact with this email or phone already exists:"
-                        : `${contactMatches.length} other contacts share this email or phone:`}
-                    </Text>
-                    <VStack align="stretch" gap={0.5}>
-                      {contactMatches.map((m) => {
-                        const matchesEmail =
-                          !!m.email && !!email.trim() && m.email.toLowerCase() === email.trim().toLowerCase();
-                        const matchesPhone =
-                          (!!m.phone && !!phone.trim() && m.phone === phone.trim()) ||
-                          (!!m.normalizedPhone && !!phone.trim() && m.normalizedPhone === phone.trim());
-                        const why =
-                          matchesEmail && matchesPhone
-                            ? "email + phone"
-                            : matchesEmail
-                              ? "email"
-                              : matchesPhone
-                                ? "phone"
-                                : "match";
-                        return (
-                          <Text key={m.id} fontSize="xs" color="orange.800">
-                            • <Text as="span" fontWeight="semibold">{m.firstName} {m.lastName}</Text>
-                            {" "}— on <Text as="span" fontWeight="semibold">{m.client.displayName}</Text>
-                            {" "}({why})
+                {contactMatches.length > 0 && (() => {
+                  // Categorize matches: same-client (almost always a
+                  // duplicate to block) vs other-client (the
+                  // legitimate cross-client case — same person, new
+                  // role). The two render differently: same-client
+                  // is a hard warning, other-client is informational
+                  // with consequence explainer.
+                  const sameClient = contactMatches.filter((m) => m.client.id === clientId);
+                  const otherClient = contactMatches.filter((m) => m.client.id !== clientId);
+                  const anyLinkedToClerk = contactMatches.some((m) => !!m.clerkUserId);
+                  return (
+                    <VStack align="stretch" gap={2}>
+                      {sameClient.length > 0 && (
+                        <div
+                          style={{
+                            padding: "10px 12px",
+                            borderRadius: 8,
+                            backgroundColor: "var(--chakra-colors-red-50)",
+                            borderWidth: 1,
+                            borderStyle: "solid",
+                            borderColor: "var(--chakra-colors-red-300)",
+                            borderLeftWidth: 4,
+                            borderLeftColor: "var(--chakra-colors-red-500)",
+                          }}
+                        >
+                          <Text fontSize="sm" fontWeight="semibold" color="red.800" mb={1}>
+                            Duplicate on this client
                           </Text>
-                        );
-                      })}
+                          <Text fontSize="xs" color="red.700" mb={1}>
+                            A contact with this email or phone already exists on this client:
+                          </Text>
+                          <VStack align="stretch" gap={0.5}>
+                            {sameClient.map((m) => (
+                              <Text key={m.id} fontSize="xs" color="red.800">
+                                • <Text as="span" fontWeight="semibold">{m.firstName} {m.lastName}</Text>
+                                {m.isPrimary && <Text as="span"> · primary</Text>}
+                              </Text>
+                            ))}
+                          </VStack>
+                          <Text fontSize="xs" color="red.700" mt={1.5}>
+                            Edit the existing contact instead, or change the email/phone here.
+                          </Text>
+                        </div>
+                      )}
+                      {otherClient.length > 0 && (
+                        <div
+                          style={{
+                            padding: "10px 12px",
+                            borderRadius: 8,
+                            backgroundColor: "var(--chakra-colors-blue-50)",
+                            borderWidth: 1,
+                            borderStyle: "solid",
+                            borderColor: "var(--chakra-colors-blue-300)",
+                            borderLeftWidth: 4,
+                            borderLeftColor: "var(--chakra-colors-blue-500)",
+                          }}
+                        >
+                          <Text fontSize="sm" fontWeight="semibold" color="blue.800" mb={1}>
+                            {otherClient.length === 1
+                              ? "This person is already a contact on another client"
+                              : `This person is already a contact on ${otherClient.length} other clients`}
+                          </Text>
+                          <VStack align="stretch" gap={0.5} mb={1.5}>
+                            {otherClient.map((m) => (
+                              <Text key={m.id} fontSize="xs" color="blue.800">
+                                • <Text as="span" fontWeight="semibold">{m.firstName} {m.lastName}</Text>
+                                {" "}— on <Text as="span" fontWeight="semibold">{m.client.displayName}</Text>
+                                {m.clerkUserId && <Text as="span" color="blue.600"> · has login</Text>}
+                              </Text>
+                            ))}
+                          </VStack>
+                          <Text fontSize="xs" color="blue.800" fontWeight="semibold" mb={0.5}>
+                            If this is the same person, adding them here will:
+                          </Text>
+                          <VStack align="stretch" gap={0} mb={1}>
+                            <Text fontSize="xs" color="blue.700">
+                              • {anyLinkedToClerk
+                                ? "Share the existing login account — they'll see jobs from both clients when they log in."
+                                : "Share a login account if they ever sign up — they'll see jobs from both clients."}
+                            </Text>
+                            <Text fontSize="xs" color="blue.700">
+                              • Edits to their name, phone, or email will offer to propagate to all linked contacts.
+                            </Text>
+                          </VStack>
+                          <Text fontSize="xs" color="blue.700" fontStyle="italic">
+                            If this is a different person who happens to share an email or phone, change the email/phone here before saving.
+                          </Text>
+                          {mode === "UPDATE" && (
+                            <Box mt={2.5} pt={2} borderTopWidth="1px" borderColor="blue.200">
+                              <HStack as="label" align="flex-start" gap={2} cursor="pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={applyToLinked}
+                                  onChange={(e) => setApplyToLinked(e.target.checked)}
+                                  style={{ marginTop: 3 }}
+                                />
+                                <VStack align="start" gap={0}>
+                                  <Text fontSize="xs" color="blue.900" fontWeight="semibold">
+                                    Apply name, email, and phone changes to all {otherClient.length + 1} linked contacts
+                                  </Text>
+                                  <Text fontSize="2xs" color="blue.700">
+                                    Uncheck to make this edit local to this client only (identity will drift between rows).
+                                  </Text>
+                                </VStack>
+                              </HStack>
+                            </Box>
+                          )}
+                        </div>
+                      )}
                     </VStack>
-                    <Text fontSize="xs" color="orange.700" mt={1.5}>
-                      Use a different email/phone, or open the existing client to reuse that contact.
-                    </Text>
-                  </div>
-                )}
+                  );
+                })()}
                 <VStack align="stretch" gap={1}>
                   <Checkbox.Root
                     checked={isPrimary}

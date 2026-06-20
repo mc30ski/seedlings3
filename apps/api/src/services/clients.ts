@@ -338,6 +338,30 @@ export const clients: ServicesClients = {
       const willBeOnlyActive = existingActive === 0 && (cp.status ?? "ACTIVE") === "ACTIVE";
       const isPrimary = willBeOnlyActive ? true : cp.isPrimary;
 
+      // Propagate clerkUserId from any existing ClientContact rows
+      // that share this person's email or normalized phone. This is
+      // the multi-client identity glue: when the admin adds an
+      // existing person as a contact on a new Client, the new row
+      // gets bound to the same Clerk identity the person already
+      // has, so a single sign-in surfaces every client they belong
+      // to. The admin-side dialog runs a separate pre-flight check
+      // and shows the operator a confirmation — if they get here,
+      // they've explicitly opted into this. See /admin/contacts/lookup.
+      let inheritedClerkUserId: string | null = null;
+      if (cp.email || cp.normalizedPhone) {
+        const identityMatch = await tx.clientContact.findFirst({
+          where: {
+            clerkUserId: { not: null },
+            OR: [
+              ...(cp.email ? [{ email: { equals: cp.email, mode: "insensitive" as const } }] : []),
+              ...(cp.normalizedPhone ? [{ normalizedPhone: cp.normalizedPhone }] : []),
+            ],
+          },
+          select: { clerkUserId: true },
+        });
+        inheritedClerkUserId = identityMatch?.clerkUserId ?? null;
+      }
+
       const data = {
         clientId,
         status: cp.status ?? "ACTIVE",
@@ -349,6 +373,7 @@ export const clients: ServicesClients = {
         normalizedPhone: cp.normalizedPhone,
         role: cp.role,
         isPrimary,
+        ...(inheritedClerkUserId ? { clerkUserId: inheritedClerkUserId } : {}),
       };
       const contact = await tx.clientContact.create({ data });
       if (isPrimary) {
@@ -430,6 +455,41 @@ export const clients: ServicesClients = {
           data: { isPrimary: false },
         });
       }
+
+      // Multi-client identity propagation. When the operator
+      // explicitly opts in (`applyToLinked: true`), apply the
+      // identity-side fields to every other ClientContact bound
+      // to the same Clerk identity. The relationship-side fields
+      // (status, role, isPrimary, clientId) STAY per-row — those
+      // describe the person's role within a specific client and
+      // should never propagate. Edited contact has no clerkUserId?
+      // Nothing to propagate; updateMany is a no-op.
+      const applyToLinked = payload?.applyToLinked === true;
+      if (applyToLinked && updated.clerkUserId) {
+        const linkedFields = {
+          firstName: cp.firstName,
+          lastName: cp.lastName,
+          nickname: cp.nickname,
+          email: cp.email,
+          phone: cp.phone,
+          normalizedPhone: cp.normalizedPhone,
+        };
+        const linkedResult = await tx.clientContact.updateMany({
+          where: {
+            clerkUserId: updated.clerkUserId,
+            NOT: { id: contactId },
+          },
+          data: linkedFields,
+        });
+        await writeAudit(tx, AUDIT.CLIENT.CONTACT_UPDATED, currentUserId, {
+          clientId,
+          contactId,
+          contactRecord: { ...updated },
+          identityPropagatedToCount: linkedResult.count,
+        });
+        return updated;
+      }
+
       await writeAudit(tx, AUDIT.CLIENT.CONTACT_UPDATED, currentUserId, {
         clientId,
         contactId,

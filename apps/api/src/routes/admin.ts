@@ -549,6 +549,12 @@ export default async function adminRoutes(app: FastifyInstance) {
         phone: true,
         normalizedPhone: true,
         isPrimary: true,
+        // Surfaced so the warning dialog can call out "this person
+        // already has a login account" — if any match has
+        // clerkUserId set, adding this new contact will auto-bind
+        // it to the same Clerk identity (the create flow
+        // propagates from existing matches).
+        clerkUserId: true,
         client: { select: { id: true, displayName: true } },
       },
       take: 10,
@@ -607,11 +613,28 @@ export default async function adminRoutes(app: FastifyInstance) {
     const targetUser = await prisma.user.findUnique({ where: { clerkUserId } });
     if (!targetUser) throw app.httpErrors.notFound("Clerk user not found.");
 
-    const existing = await prisma.clientContact.findUnique({ where: { clerkUserId } });
-    if (existing && existing.id !== contactId && !force) {
-      throw app.httpErrors.conflict(
-        "That Clerk account is already linked to a different contact. Pass force=true to repoint it.",
+    // clerkUserId is no longer globally unique on ClientContact —
+    // the same Clerk identity can be linked to multiple contacts
+    // (one per Client) as long as they represent the same person.
+    // We only flag the "wrong contact" conflict when the existing
+    // link is on a contact whose IDENTITY (email/phone) doesn't
+    // match the one we're about to repoint. Cross-client linking
+    // of the same person is now legitimate, not a conflict.
+    const otherLinked = await prisma.clientContact.findMany({
+      where: { clerkUserId, NOT: { id: contactId } },
+      select: { id: true, email: true, normalizedPhone: true },
+    });
+    if (otherLinked.length > 0 && !force) {
+      const sameIdentity = otherLinked.every(
+        (c) =>
+          (c.email && contact.email && c.email.toLowerCase() === contact.email.toLowerCase()) ||
+          (c.normalizedPhone && c.normalizedPhone === contact.normalizedPhone),
       );
+      if (!sameIdentity) {
+        throw app.httpErrors.conflict(
+          "That Clerk account is already linked to a contact with different identity. Pass force=true to repoint it.",
+        );
+      }
     }
     if (contact.clerkUserId && contact.clerkUserId !== clerkUserId && !force) {
       throw app.httpErrors.conflict(
@@ -619,19 +642,31 @@ export default async function adminRoutes(app: FastifyInstance) {
       );
     }
 
+    // Repoint candidates: any existing link on a contact whose
+    // identity (email/phone) DOESN'T match the target contact's.
+    // Same-identity links stay — those are the legitimate multi-
+    // client shared-login case and shouldn't be cleared.
+    const repointTargets = otherLinked.filter(
+      (c) =>
+        !(c.email && contact.email && c.email.toLowerCase() === contact.email.toLowerCase()) &&
+        !(c.normalizedPhone && contact.normalizedPhone && c.normalizedPhone === contact.normalizedPhone),
+    );
+
     return prisma.$transaction(async (tx) => {
-      // If we're repointing the Clerk user away from another contact, clear
-      // the old link first so the unique constraint on clerkUserId is happy.
-      if (existing && existing.id !== contactId) {
-        await tx.clientContact.update({
-          where: { id: existing.id },
+      // If forcing a repoint, clear stale clerkUserId on the non-
+      // matching contacts. Same-identity siblings keep their link.
+      if (force && repointTargets.length > 0) {
+        await tx.clientContact.updateMany({
+          where: { id: { in: repointTargets.map((r) => r.id) } },
           data: { clerkUserId: null },
         });
-        await writeAudit(tx, AUDIT.CLIENT.CONTACT_UNLINKED, uid, {
-          contactId: existing.id,
-          clerkUserId,
-          reason: "repointed",
-        });
+        for (const r of repointTargets) {
+          await writeAudit(tx, AUDIT.CLIENT.CONTACT_UNLINKED, uid, {
+            contactId: r.id,
+            clerkUserId,
+            reason: "repointed",
+          });
+        }
       }
       const updated = await tx.clientContact.update({
         where: { id: contactId },
