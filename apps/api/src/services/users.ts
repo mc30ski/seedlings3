@@ -303,17 +303,23 @@ export const users: ServicesUsers = {
     // the email-magic-link Clerk setup doesn't carry a phone number.
     if (user.email) {
       try {
-        const linkedContact = await prisma.clientContact.findUnique({
+        // Post multi-client refactor, a single Clerk identity may be
+        // bound to N ClientContact rows (one per Client). Sync the
+        // Clerk-side email to ALL of them whose stored email has
+        // drifted — keeps identity consistent across the cross-
+        // client roles for the same person.
+        const linkedContacts = await prisma.clientContact.findMany({
           where: { clerkUserId },
           select: { id: true, email: true },
         });
-        if (
-          linkedContact &&
-          (linkedContact.email ?? "").toLowerCase() !== user.email.toLowerCase()
-        ) {
-          await prisma.clientContact.update({
-            where: { id: linkedContact.id },
-            data: { email: user.email },
+        const targetEmail = user.email;
+        const stale = linkedContacts.filter(
+          (c) => (c.email ?? "").toLowerCase() !== targetEmail.toLowerCase(),
+        );
+        if (stale.length > 0) {
+          await prisma.clientContact.updateMany({
+            where: { id: { in: stale.map((c) => c.id) } },
+            data: { email: targetEmail },
           });
         }
       } catch (e) {

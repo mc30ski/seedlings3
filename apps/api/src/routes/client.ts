@@ -25,10 +25,22 @@ export default async function clientRoutes(app: FastifyInstance) {
     },
   };
 
-  /** Helper: get the client contact linked to this Clerk user, or null */
-  async function getLinkedContact(clerkUserId: string) {
-    return prisma.clientContact.findUnique({
+  /** Helper: get ALL ClientContact rows linked to this Clerk user. A
+   *  single person can be a contact across multiple Clients (e.g.,
+   *  a person who pays for a rental AND has us service their own
+   *  home), and `clerkUserId` is intentionally not unique — each
+   *  matching row represents one client-relationship for the same
+   *  underlying person. Returns [] when not linked.
+   *
+   *  Stable order: oldest first by createdAt. The first row is the
+   *  "primary identity carrier" used for the self-view (name/email/
+   *  phone on /client/me); the union of `contact.client.properties`
+   *  across all rows is what every other client-portal endpoint
+   *  scopes its data by. */
+  async function getLinkedContacts(clerkUserId: string) {
+    return prisma.clientContact.findMany({
       where: { clerkUserId },
+      orderBy: { createdAt: "asc" },
       include: {
         client: {
           include: {
@@ -42,33 +54,46 @@ export default async function clientRoutes(app: FastifyInstance) {
     });
   }
 
-  // Auto-link: try to match Clerk email to a ClientContact email
+  // Auto-link: try to match Clerk email to ClientContact email(s).
+  // After the multi-client refactor, a single Clerk identity can be
+  // bound to ClientContact rows on multiple Clients. We link ALL
+  // matching unlinked rows in one shot so the portal sees every
+  // client/property the person belongs to from their first session.
   app.post("/client/link", clientGuard, async (req: any) => {
     const clerkUserId = req.auth.clerkUserId!;
 
-    // Already linked?
-    const existing = await prisma.clientContact.findUnique({ where: { clerkUserId } });
+    // Already linked to at least one contact? Short-circuit — we're done.
+    const existing = await prisma.clientContact.findFirst({ where: { clerkUserId } });
     if (existing) return { linked: true, contactId: existing.id };
 
     // Get the user's email from the User table (provisioned by auth plugin)
     const user = await prisma.user.findUnique({ where: { clerkUserId } });
     if (!user?.email) return { linked: false, reason: "no_email" };
 
-    // Find a matching ClientContact by email (case-insensitive)
-    const contact = await prisma.clientContact.findFirst({
+    // Find EVERY matching ClientContact by email (case-insensitive)
+    // that isn't already bound to a different Clerk user. Returns
+    // [] when no match.
+    const matches = await prisma.clientContact.findMany({
       where: {
         email: { equals: user.email, mode: "insensitive" },
-        clerkUserId: null, // not already linked to another account
+        clerkUserId: null,
       },
+      select: { id: true },
     });
 
-    if (contact) {
-      // Email match — link directly.
-      await prisma.clientContact.update({
-        where: { id: contact.id },
+    if (matches.length > 0) {
+      // Bind every matching contact to the same Clerk identity in
+      // a single updateMany. Subsequent logins will resolve via the
+      // clerkUserId index across all of them.
+      await prisma.clientContact.updateMany({
+        where: { id: { in: matches.map((m) => m.id) } },
         data: { clerkUserId },
       });
-      return { linked: true, contactId: contact.id };
+      // The portal's existing flows assume a single contactId in
+      // the response — return the first match (stable across
+      // retries via primary-then-createdAt ordering on the source
+      // list).
+      return { linked: true, contactId: matches[0].id, linkedCount: matches.length };
     }
 
     // Smart-hint fallback: did this Clerk user recently come from a payment
@@ -138,8 +163,10 @@ export default async function clientRoutes(app: FastifyInstance) {
       body.contactId != null ? String(body.contactId) : null;
     if (!clientId) throw app.httpErrors.badRequest("clientId is required.");
 
-    // If already linked (race with another tab) — short-circuit success.
-    const existing = await prisma.clientContact.findUnique({ where: { clerkUserId } });
+    // If already linked to at least one contact (race with another tab)
+    // — short-circuit success. clerkUserId is no longer unique post-
+    // multi-client refactor, so findFirst is correct here.
+    const existing = await prisma.clientContact.findFirst({ where: { clerkUserId } });
     if (existing) return { linked: true, contactId: existing.id };
 
     const WINDOW_DAYS = 7;
@@ -174,33 +201,53 @@ export default async function clientRoutes(app: FastifyInstance) {
   // Get client profile
   app.get("/client/me", clientGuard, async (req: any) => {
     const clerkUserId = req.auth.clerkUserId!;
-    const contact = await getLinkedContact(clerkUserId);
-    if (!contact) return { linked: false };
+    const contacts = await getLinkedContacts(clerkUserId);
+    if (contacts.length === 0) return { linked: false };
+
+    // Identity comes from the oldest contact row (stable across
+    // multi-client setups). The properties payload is the union
+    // across every linked client so the portal can show all of
+    // them in one list.
+    const primary = contacts[0];
+    const allProperties = contacts.flatMap((c) => c.client.properties);
 
     return {
       linked: true,
       contact: {
-        id: contact.id,
-        firstName: contact.firstName,
-        lastName: contact.lastName,
-        email: contact.email,
-        phone: contact.phone,
+        id: primary.id,
+        firstName: primary.firstName,
+        lastName: primary.lastName,
+        email: primary.email,
+        phone: primary.phone,
       },
+      // Back-compat for single-client clients: the `client` field
+      // still exists and points at the first (and usually only)
+      // Client. Multi-client clients additionally read `clients[]`
+      // for the full list — UI can group properties by client when
+      // it's more than one.
       client: {
-        id: contact.client.id,
-        displayName: contact.client.displayName,
-        properties: contact.client.properties,
+        id: primary.client.id,
+        displayName: primary.client.displayName,
+        properties: allProperties,
       },
+      clients: contacts.map((c) => ({
+        id: c.client.id,
+        displayName: c.client.displayName,
+        properties: c.client.properties,
+      })),
     };
   });
 
   // Get completed jobs for client's properties
   app.get("/client/jobs", clientGuard, async (req: any) => {
     const clerkUserId = req.auth.clerkUserId!;
-    const contact = await getLinkedContact(clerkUserId);
-    if (!contact) return { items: [], monthsBack: 1, maxMonthsBack: 12, hasMore: false };
+    const contacts = await getLinkedContacts(clerkUserId);
+    if (contacts.length === 0) return { items: [], monthsBack: 1, maxMonthsBack: 12, hasMore: false };
 
-    const propertyIds = contact.client.properties.map((p) => p.id);
+    // Union of property IDs across every linked Client. A client
+    // who's a contact on more than one Client sees jobs from all of
+    // their properties in one stream.
+    const propertyIds = contacts.flatMap((c) => c.client.properties.map((p) => p.id));
     if (propertyIds.length === 0) return { items: [], monthsBack: 1, maxMonthsBack: 12, hasMore: false };
 
     // Service history window: monthsBack=N covers the current calendar
@@ -358,10 +405,10 @@ export default async function clientRoutes(app: FastifyInstance) {
   // Get upcoming scheduled jobs for client's properties
   app.get("/client/upcoming", clientGuard, async (req: any) => {
     const clerkUserId = req.auth.clerkUserId!;
-    const contact = await getLinkedContact(clerkUserId);
-    if (!contact) return { items: [] };
+    const contacts = await getLinkedContacts(clerkUserId);
+    if (contacts.length === 0) return { items: [] };
 
-    const propertyIds = contact.client.properties.map((p) => p.id);
+    const propertyIds = contacts.flatMap((c) => c.client.properties.map((p) => p.id));
     if (propertyIds.length === 0) return { items: [] };
 
     const occurrences = await prisma.jobOccurrence.findMany({
@@ -493,9 +540,9 @@ export default async function clientRoutes(app: FastifyInstance) {
 
   /** Verify the client may request changes on this occurrence (i.e. it belongs to one of their properties). */
   async function verifyOccurrenceForClient(occurrenceId: string, clerkUserId: string) {
-    const contact = await getLinkedContact(clerkUserId);
-    if (!contact) throw app.httpErrors.forbidden("Account not linked to a client.");
-    const propertyIds = new Set(contact.client.properties.map((p) => p.id));
+    const contacts = await getLinkedContacts(clerkUserId);
+    if (contacts.length === 0) throw app.httpErrors.forbidden("Account not linked to a client.");
+    const propertyIds = new Set(contacts.flatMap((c) => c.client.properties.map((p) => p.id)));
     const occ = await prisma.jobOccurrence.findUnique({
       where: { id: occurrenceId },
       select: {

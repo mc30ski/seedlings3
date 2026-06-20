@@ -497,7 +497,21 @@ model ClientContact {
   role      ContactRole?
   isPrimary Boolean      @default(false)
 
-  clerkUserId String? @unique
+  // The Clerk identity that this contact record is bound to (set at
+  // signup-time via /client/link or at contact-create-time when an
+  // existing match already has one). NOT unique: a single Clerk user
+  // can be bound to multiple ClientContact records when the same
+  // person appears as a contact across multiple Clients (e.g., a
+  // person who pays for a rental AND has the company service their
+  // own home). All matching rows get updated together at link-time.
+  clerkUserId String?
+
+  // Nullable forward-compat hook. When/if we ever promote contact
+  // identity to a first-class `Person` table, we'll populate this
+  // FK; for now it stays null. The column existing lets that
+  // migration be additive instead of requiring a schema change on
+  // a large table later.
+  personId String?
 
   // Auto-learned from each approved payment — used to pre-select the method
   // in the worker's Record Payment dialog and to highlight the same method
@@ -519,18 +533,25 @@ model ClientContact {
 
   jobContacts JobContact[]
 
-  // Email + normalizedPhone are GLOBALLY unique. That's load-bearing for
-  // the Clerk auto-link in /client/link: when a new Clerk user signs in,
-  // we find their ClientContact by email match. If two contacts on
-  // different clients shared the same email, that lookup would be
-  // non-deterministic and risk binding the Clerk identity to the wrong
-  // client. One identity, one contact. The recreate-after-delete edge
-  // case is handled by surfacing the existing contact via the pre-flight
-  // check in ContactDialog (admin clears the old row before reusing the
-  // email).
-  // Postgres allows multiple NULLs in UNIQUE constraints—works for optional fields:
-  @@unique([email])
-  @@unique([normalizedPhone])
+  // Email, normalizedPhone, and clerkUserId are intentionally NOT
+  // globally unique. A single person can appear as a contact across
+  // multiple Clients (e.g., the person who pays for a rental AND
+  // has us service their own home). All matching rows can share
+  // identity fields AND a Clerk binding. Identity drift between
+  // rows is prevented at the UX layer:
+  //   • On create: the admin dialog runs a pre-flight lookup by
+  //     phone/email and surfaces matches, requiring an explicit
+  //     "yes, add anyway" before writing.
+  //   • On edit: the dialog detects linked rows (same clerkUserId
+  //     or same identity) and offers to propagate changes.
+  // The Clerk auto-link in /client/link finds ALL matching contacts
+  // by email and updates them together, not just the first.
+  // findMany / updateMany are the canonical access patterns for
+  // these fields; findUnique on any of them is a bug.
+  @@index([email])
+  @@index([normalizedPhone])
+  @@index([clerkUserId])
+  @@index([personId])
   @@index([clientId, status])
 }
 
