@@ -31,6 +31,10 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import {
+  DialogErrorAlert,
+  useDialogError,
+} from "@/src/ui/components/DialogErrorAlert";
 import EquipmentPhotos from "@/src/ui/components/EquipmentPhotos";
 import EquipmentInstructionsDialog from "@/src/ui/dialogs/EquipmentInstructionsDialog";
 import type { EquipmentInstruction } from "@/src/lib/types";
@@ -55,6 +59,7 @@ export default function EquipmentDialog({
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const isAdmin = role === "ADMIN";
   const [busy, setBusy] = useState(false);
+  const dlgErr = useDialogError();
 
   // --- Form state
   const [type, setType] = useState<string[]>([EQUIPMENT_KIND[0]]);
@@ -153,6 +158,7 @@ export default function EquipmentDialog({
   }, [open, mode, initial]);
 
   async function handleSave() {
+    dlgErr.clear();
     const payload = {
       type: (type[0] as EquipmentKind) ?? EQUIPMENT_KIND[0],
       qrSlug: qrSlug,
@@ -199,15 +205,14 @@ export default function EquipmentDialog({
       }
       onSaved?.(saved);
     } catch (err) {
-      publishInlineMessage({
-        type: "ERROR",
-        text: getErrorMessage(
+      dlgErr.setError(
+        getErrorMessage(
           mode === "CREATE"
             ? "Create equipment failed"
             : "Update equipment failed",
           err
-        ),
-      });
+        )
+      );
     } finally {
       // Close on both CREATE and UPDATE. The old "stay open after CREATE so
       // the user can manage photos/instructions" behavior was intentional
@@ -491,6 +496,7 @@ export default function EquipmentDialog({
                 })()}
               </VStack>
             </Dialog.Body>
+            <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
                 <Button

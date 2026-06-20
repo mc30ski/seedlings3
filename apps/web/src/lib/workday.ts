@@ -1,4 +1,5 @@
 import { apiGet, apiPost, apiPatch } from "@/src/lib/api";
+import { bumpWorkday } from "@/src/lib/bus";
 import {
   bizToLocalInputValue,
   bizParseLocalInputValue,
@@ -48,6 +49,12 @@ export type WorkdayTodayPayload = {
   activeJobs: JobBlockingSummary[];
   activeCheckouts: EquipmentCheckoutSummary[];
   openPrior: WorkdaySummary[];
+  /** Today's job counts for the worker (working assignments only — observer
+   *  roles are excluded). Used by the WorkdayStrip to decide whether the
+   *  NOT_STARTED card should pulse ("you have jobs today") or the
+   *  IN_PROGRESS card should pulse ("you finished everything, time to
+   *  clock out"). */
+  todayJobs: { scheduled: number; remaining: number };
 };
 
 /** When `viewAsUserId` is set, the call operates on that worker's workday
@@ -66,28 +73,54 @@ export async function fetchWorkdayToday(opts?: AsParam): Promise<WorkdayTodayPay
   return apiGet<WorkdayTodayPayload>(`/api/me/workday/today${asQuery(opts)}`);
 }
 
+// Every mutation helper below fires `bumpWorkday()` after the server
+// confirms — broadcasting "workday state may have changed" to any
+// component subscribed via window's seedlings:workday-changed event
+// (e.g. WorkdayStrip on Worker Home). This is what keeps the strip in
+// sync when the start-job flow's gate dialog starts/resumes/reopens
+// the workday from a different React tree.
+
 export async function startWorkday(
   input: { startedAt?: string | null },
   opts?: AsParam,
 ): Promise<{ workday: WorkdaySummary; created: boolean }> {
-  return apiPost<{ workday: WorkdaySummary; created: boolean }>(
+  const r = await apiPost<{ workday: WorkdaySummary; created: boolean }>(
     `/api/me/workday/start${asQuery(opts)}`,
     input,
   );
+  bumpWorkday();
+  return r;
 }
 
 export async function pauseWorkday(opts?: AsParam): Promise<WorkdaySummary> {
-  return apiPost<WorkdaySummary>(`/api/me/workday/pause${asQuery(opts)}`, {});
+  const r = await apiPost<WorkdaySummary>(`/api/me/workday/pause${asQuery(opts)}`, {});
+  bumpWorkday();
+  return r;
 }
 
 export async function resumeWorkday(opts?: AsParam): Promise<WorkdaySummary> {
-  return apiPost<WorkdaySummary>(`/api/me/workday/resume${asQuery(opts)}`, {});
+  const r = await apiPost<WorkdaySummary>(`/api/me/workday/resume${asQuery(opts)}`, {});
+  bumpWorkday();
+  return r;
+}
+
+/** Re-open today's workday after it was ended (typically by mistake).
+ *  The gap between the bad endedAt and now is added to totalPausedMs
+ *  server-side so off-the-clock time doesn't count as payable hours.
+ *  Refused once the same-day edit window has closed or if the row
+ *  has been approved. */
+export async function reopenWorkday(opts?: AsParam): Promise<WorkdaySummary> {
+  const r = await apiPost<WorkdaySummary>(`/api/me/workday/reopen${asQuery(opts)}`, {});
+  bumpWorkday();
+  return r;
 }
 
 /** Cancel today's workday — hard-deletes the row. Server refuses if the
  *  workday is already COMPLETED (use the End-times edit flow instead). */
 export async function cancelWorkday(opts?: AsParam): Promise<{ cancelled: true }> {
-  return apiPost<{ cancelled: true }>(`/api/me/workday/cancel${asQuery(opts)}`, {});
+  const r = await apiPost<{ cancelled: true }>(`/api/me/workday/cancel${asQuery(opts)}`, {});
+  bumpWorkday();
+  return r;
 }
 
 export async function endWorkday(
@@ -99,7 +132,9 @@ export async function endWorkday(
   },
   opts?: AsParam,
 ): Promise<WorkdaySummary> {
-  return apiPost<WorkdaySummary>(`/api/me/workday/end${asQuery(opts)}`, input);
+  const r = await apiPost<WorkdaySummary>(`/api/me/workday/end${asQuery(opts)}`, input);
+  bumpWorkday();
+  return r;
 }
 
 export async function editWorkdayTimes(
@@ -111,7 +146,9 @@ export async function editWorkdayTimes(
   },
   opts?: AsParam,
 ): Promise<WorkdaySummary> {
-  return apiPatch<WorkdaySummary>(`/api/me/workday/${workdayId}${asQuery(opts)}`, input);
+  const r = await apiPatch<WorkdaySummary>(`/api/me/workday/${workdayId}${asQuery(opts)}`, input);
+  bumpWorkday();
+  return r;
 }
 
 // ── Math helpers ────────────────────────────────────────────────────────

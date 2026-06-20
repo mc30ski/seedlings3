@@ -41,9 +41,17 @@ function shouldSkipFile(repoRelPath: string): boolean {
   return false;
 }
 
-// The forbidden pattern. We match across whitespace so
-// `role:{not:"observer"}` and `role: { not: 'observer' }` both hit.
-const FORBIDDEN = /role\s*:\s*\{\s*not\s*:\s*["']observer["']\s*\}/;
+// The forbidden patterns. Two equivalent Prisma syntaxes can
+// produce the same broken SQL — both must be caught:
+//   • `role: { not: "observer" }`     ← Prisma "field-level not" form
+//   • `NOT: { role: "observer" }`     ← Prisma "object-level NOT" form
+// Both translate to `role != 'observer'` which excludes NULL roles
+// via Postgres three-valued logic. We match across whitespace so
+// minified and pretty-printed variants both hit.
+const FORBIDDEN_PATTERNS: RegExp[] = [
+  /role\s*:\s*\{\s*not\s*:\s*["']observer["']\s*\}/,
+  /NOT\s*:\s*\{\s*role\s*:\s*["']observer["']\s*\}/,
+];
 
 // A nearby `{ role: null }` within ~120 chars BEFORE the forbidden
 // match indicates the safe `OR: [{ role: null }, { role: { not: "observer" } }]`
@@ -61,7 +69,7 @@ function scanFile(absPath: string, repoRelPath: string): Violation[] {
   const violations: Violation[] = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const m = line.match(FORBIDDEN);
+    const m = FORBIDDEN_PATTERNS.some((re) => re.test(line));
     if (!m) continue;
 
     // Per-line suppression on the immediately preceding line.

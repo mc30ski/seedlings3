@@ -18,6 +18,10 @@ import {
   getErrorMessage,
   publishInlineMessage,
 } from "@/src/ui/components/InlineMessage";
+import {
+  DialogErrorAlert,
+  useDialogError,
+} from "@/src/ui/components/DialogErrorAlert";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import { useExpenseCategories } from "@/src/lib/useExpenseCategories";
 
@@ -62,6 +66,7 @@ export default function AddExpenseDialog({
   const showInventoryToggle = !!holdsEndpoint && !disableInventory;
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [busy, setBusy] = useState(false);
+  const dlgErr = useDialogError();
   const [mode, setMode] = useState<"custom" | "inventory">("custom");
   const { selectableCategories } = useExpenseCategories();
   const [cost, setCost] = useState("");
@@ -128,6 +133,7 @@ export default function AddExpenseDialog({
   }, [open, holdsEndpoint]);
 
   async function handleSubmit() {
+    dlgErr.clear();
     if (mode === "inventory") {
       if (!holdsEndpoint || !pickedSupply) return;
       const qty = Math.round(Number(pickedQty));
@@ -147,7 +153,7 @@ export default function AddExpenseDialog({
         onOpenChange(false);
         onAdded();
       } catch (err) {
-        publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to add from inventory.", err) });
+        dlgErr.setError(getErrorMessage("Failed to add from inventory.", err));
       } finally {
         setBusy(false);
       }
@@ -178,10 +184,7 @@ export default function AddExpenseDialog({
       onOpenChange(false);
       onAdded();
     } catch (err) {
-      publishInlineMessage({
-        type: "ERROR",
-        text: getErrorMessage("Failed to add expense.", err),
-      });
+      dlgErr.setError(getErrorMessage("Failed to add expense.", err));
     } finally {
       setBusy(false);
     }
@@ -352,6 +355,7 @@ export default function AddExpenseDialog({
               </VStack>
             </Dialog.Body>
 
+            <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
                 <Button

@@ -237,6 +237,56 @@ export async function checkBlockingActiveJobs(userId: string): Promise<JobBlocki
   }));
 }
 
+/** Today's job counts for the worker — drives the conditional "pulse"
+ *  on the workday card so the UI can flag:
+ *    - NOT_STARTED + `remaining > 0` → "you have work today, start your day"
+ *    - IN_PROGRESS + `scheduled > 0 && remaining === 0` → "you finished
+ *      everything for today, time to end your workday"
+ *
+ *  Working assignments only (role !== "observer"). Counts scheduled
+ *  STANDARD/ONE_OFF/ESTIMATE occurrences that start today (ET).
+ *  `scheduled` includes completed jobs; `remaining` is the still-open
+ *  subset (SCHEDULED/IN_PROGRESS/PAUSED). */
+export async function getTodayJobCounts(userId: string): Promise<{
+  scheduled: number;
+  remaining: number;
+}> {
+  // Fetch all of the worker's assignments and filter out observers in
+  // JS — the Prisma-side "exclude observer" predicate silently drops
+  // NULL-role rows under Postgres 3VL. See the observer-filter build
+  // gate for the canonical safe pattern.
+  const myAssignments = await prisma.jobOccurrenceAssignee.findMany({
+    where: { userId },
+    select: { occurrenceId: true, role: true },
+  });
+  const myWorkingOccIds = myAssignments
+    .filter((a) => a.role !== "observer")
+    .map((a) => a.occurrenceId);
+  if (myWorkingOccIds.length === 0) return { scheduled: 0, remaining: 0 };
+  const today = todayEt();
+  const todayMidnight = etMidnight(today);
+  const tomorrowMidnight = etMidnight(etAddDays(today, 1));
+  const [scheduled, remaining] = await Promise.all([
+    prisma.jobOccurrence.count({
+      where: {
+        id: { in: myWorkingOccIds },
+        startAt: { gte: todayMidnight, lt: tomorrowMidnight },
+        status: { notIn: ["CANCELED", "ARCHIVED"] as any },
+        workflow: { in: ["STANDARD", "ONE_OFF", "ESTIMATE"] as any },
+      },
+    }),
+    prisma.jobOccurrence.count({
+      where: {
+        id: { in: myWorkingOccIds },
+        startAt: { gte: todayMidnight, lt: tomorrowMidnight },
+        status: { in: ["SCHEDULED", "IN_PROGRESS", "PAUSED"] as any },
+        workflow: { in: ["STANDARD", "ONE_OFF", "ESTIMATE"] as any },
+      },
+    }),
+  ]);
+  return { scheduled, remaining };
+}
+
 /** Currently-checked-out equipment for this worker (releasedAt is null).
  *  Soft warning on End Workday — many workers legitimately keep equipment
  *  across days. */
@@ -386,6 +436,79 @@ export async function pauseWorkday(
 /** Resume today's workday. Closes the open pause segment by accumulating
  *  its duration into totalPausedMs, then clears pausedAt. Refuses if not
  *  currently paused. */
+/**
+ * Re-open a workday that was ended by mistake. Symmetric with `endWorkday`:
+ * clears `endedAt` (back to IN_PROGRESS) and adds the gap between the old
+ * endedAt and now to `totalPausedMs` so the accounting honestly reflects
+ * the time the worker was off the clock. Audited as `reopen` so the
+ * pattern can be spotted by admins (e.g. a worker who repeatedly ends
+ * and reopens may need coaching on Pause vs End).
+ *
+ * Refused once the same-day edit window has closed — past the approval
+ * cutoff the worker can't self-correct anymore; an admin must adjust.
+ * Refused if the workday has been approved (approved records are
+ * final). A row that was never ended falls through as a no-op summary
+ * so the caller can invoke this idempotently from a UI that's not sure
+ * of the current state.
+ */
+export async function reopenWorkday(
+  userId: string,
+  audit: AuditContext,
+): Promise<WorkdaySummary> {
+  const today = todayEt();
+  const row = await prisma.workerWorkday.findUnique({
+    where: { userId_workdayDate: { userId, workdayDate: today } },
+  });
+  if (!row) {
+    throw new ServiceError("NOT_FOUND", "No workday for today.", 404);
+  }
+  if (!row.endedAt) {
+    // Already running — nothing to undo.
+    return summarize(row);
+  }
+  if (row.approvedAt) {
+    throw new ServiceError(
+      "INVALID_STATE",
+      "Workday has been approved and can no longer be reopened.",
+      409,
+    );
+  }
+  if (await isApprovalWindowOpen(row.workdayDate)) {
+    throw new ServiceError(
+      "OUT_OF_WINDOW",
+      "Edit window has passed — ask an admin to reopen this workday.",
+      409,
+    );
+  }
+
+  const now = new Date();
+  // Time between the bad ending and now becomes pause time: the worker
+  // wasn't actively working in that gap, so it shouldn't accrue
+  // payable hours. Clamp to 0 in the unlikely case endedAt is in the
+  // future (e.g. weird admin edit).
+  const gapMs = Math.max(0, now.getTime() - row.endedAt.getTime());
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const updatedRow = await tx.workerWorkday.update({
+      where: { id: row.id },
+      data: {
+        endedAt: null,
+        totalPausedMs: row.totalPausedMs + gapMs,
+      },
+    });
+    await writeAudit(tx, AUDIT.WORKDAY.UPDATED, audit.actorId, {
+      workdayId: row.id,
+      workerId: userId,
+      action: "reopen",
+      previousEndedAt: row.endedAt!.toISOString(),
+      gapMsAddedToPause: gapMs,
+      ...impersonationDetail(audit, userId),
+    });
+    return updatedRow;
+  });
+  return summarize(updated);
+}
+
 export async function resumeWorkday(
   userId: string,
   audit: AuditContext,

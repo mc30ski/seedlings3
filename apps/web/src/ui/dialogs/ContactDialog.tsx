@@ -29,6 +29,10 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import {
+  DialogErrorAlert,
+  useDialogError,
+} from "@/src/ui/components/DialogErrorAlert";
 
 type Props = {
   open: boolean;
@@ -62,6 +66,7 @@ export default function ClientDialog({
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const isAdmin = role === "ADMIN";
   const [busy, setBusy] = useState(false);
+  const dlgErr = useDialogError();
 
   // --- Form state ---
   const [statusValue, setStatusValue] = useState<string[]>([CONTACT_STATUS[0]]);
@@ -279,6 +284,7 @@ export default function ClientDialog({
   }, [open, email, phone, initial?.id]);
 
   async function handleSave() {
+    dlgErr.clear();
     if (!firstName.trim()) {
       publishInlineMessage({
         type: "WARNING",
@@ -342,13 +348,12 @@ export default function ClientDialog({
       }
       onSaved?.(saved);
     } catch (err) {
-      publishInlineMessage({
-        type: "ERROR",
-        text: getErrorMessage(
+      dlgErr.setError(
+        getErrorMessage(
           mode === "CREATE" ? "Create contact failed" : "Update contact failed",
           err
-        ),
-      });
+        )
+      );
     } finally {
       onOpenChange(false);
       setBusy(false);
@@ -627,6 +632,7 @@ export default function ClientDialog({
                 </Text>
               </VStack>
             )}
+            <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
                 <Button

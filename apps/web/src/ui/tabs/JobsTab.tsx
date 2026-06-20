@@ -19,7 +19,11 @@ import {
 } from "@chakra-ui/react";
 import { AlertCircle, AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, Eye, Filter, Hand, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, PinOff, Play, RefreshCw, Repeat, Share2, Star, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
-import { useWorkdayGate } from "@/src/ui/dialogs/WorkdayRequiredDialog";
+import {
+  useWorkdayGate,
+  useTeamWorkdayDialog,
+  type NotReadyTeammate,
+} from "@/src/ui/dialogs/WorkdayRequiredDialog";
 import ImpersonationWarning from "@/src/ui/components/ImpersonationWarning";
 import WorkdayStrip from "@/src/ui/components/WorkdayStrip";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
@@ -259,6 +263,27 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   // Worker-purpose only — admins acting on jobs aren't bound by the gate
   // (matches the server-side bypass in services/jobs.ts).
   const workdayGate = useWorkdayGate();
+  const teamWorkdayDialog = useTeamWorkdayDialog();
+
+  // Inspect a thrown error from a job-start call. If it's the
+  // backend TEAM_WORKDAY_NOT_ACTIVE 409 (a teammate hasn't clocked
+  // in), surface the rich modal listing the names and return true
+  // so the caller skips the generic toast. Otherwise return false
+  // and let the caller render the toast as before.
+  function handleTeamWorkdayError(err: any): boolean {
+    if (err?.code !== "TEAM_WORKDAY_NOT_ACTIVE") return false;
+    const raw = err?.details?.notReady;
+    if (!Array.isArray(raw)) return false;
+    const list: NotReadyTeammate[] = raw
+      .map((r: any) => ({
+        userId: String(r?.userId ?? ""),
+        name: String(r?.name ?? "(unnamed)"),
+      }))
+      .filter((r) => r.userId);
+    if (list.length === 0) return false;
+    teamWorkdayDialog.show(list);
+    return true;
+  }
   const useWorkdayGuard = purpose === "WORKER" && !forAdmin;
   // Effective viewAs name for the ImpersonationWarning blocks rendered
   // inside mutation dialogs. Only meaningful when admin is viewing a
@@ -1952,12 +1977,39 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   // toast. Used by every density (ultra, semi, expanded) so the behavior is
   // identical everywhere — including the busy-indicator handling.
   function openStartJobDialog(occ: WorkerOccurrence) {
-    // Workday gate — blocks until the worker confirms / starts their
-    // workday. Skipped for admin views and offline (offline still queues;
-    // the server enforces when sync runs). Cancel from the dialog throws
-    // a recognized error which we silently swallow.
+    // Two-stage gate. Skipped for admin views and offline (offline
+    // still queues; the server enforces when sync runs). Cancel from
+    // either dialog throws a recognized error which we silently swallow.
+    //
+    //   Stage 1 (claimer): withWorkday blocks until THE ACTOR confirms
+    //                      or starts their own workday.
+    //   Stage 2 (team):    once the claimer is on the clock, the
+    //                      server-backed team-workday-check returns
+    //                      any teammates who AREN'T ready. If any,
+    //                      the team-not-ready dialog opens and the
+    //                      time picker stays closed — the user
+    //                      shouldn't have to type a start time only
+    //                      to be rejected after submitting.
+    //   Only when both stages pass do we open the time picker.
     if (useWorkdayGuard && !isOffline) {
       void workdayGate.withWorkday(async () => {
+        // Stage 2 — pre-check teammates' workday state. Server-side
+        // /start gate remains in place as defense in depth.
+        try {
+          const check = await apiGet<{ notReady: NotReadyTeammate[] }>(
+            `/api/occurrences/${occ.id}/team-workday-check`,
+          );
+          if (Array.isArray(check?.notReady) && check.notReady.length > 0) {
+            teamWorkdayDialog.show(check.notReady);
+            return;
+          }
+        } catch {
+          // Fail-open: if the pre-check errors (network blip, etc.)
+          // fall through to the time picker. The /start endpoint
+          // still enforces the gate and the reactive
+          // handleTeamWorkdayError catch will surface the dialog
+          // afterward.
+        }
         openStartJobDialogInner(occ);
       }).catch((err: any) => {
         if (err?.message !== "GATE_CANCELLED") throw err;
@@ -3340,57 +3392,63 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     {group.items.length}
                   </Badge>
                   <HolidayChip dateKey={group.key} />
+                  {/* Route → / Plan → chips — inline with the section header
+                      so they don't burn a whole row. Tightened padding + 2xs
+                      font to match the count badge so the centered header
+                      stays on one line. */}
+                  {isWorkerView && group.label === "Today" && group.items.some((o) => (o.workflow === "STANDARD" || o.workflow === "ONE_OFF" || o.workflow === "ESTIMATE") && (o.assignees ?? []).some((a) => a.userId === myId)) && (
+                    <Badge
+                      size="sm"
+                      variant="solid"
+                      bg="blue.400"
+                      color="white"
+                      px="2"
+                      py="0.5"
+                      borderRadius="full"
+                      cursor="pointer"
+                      fontSize="2xs"
+                      lineHeight="1.3"
+                      whiteSpace="nowrap"
+                      _hover={{ opacity: 0.85 }}
+                      onClick={(e: any) => {
+                        e.stopPropagation();
+                        try {
+                          // ET-anchored "today" so a worker checking late
+                          // evening doesn't land tomorrow's route preview.
+                          localStorage.setItem("seedlings_preview_targetDate", JSON.stringify(bizToday()));
+                        } catch {}
+                        window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "routes", autoAnalyze: true } }));
+                      }}
+                    >
+                      Route →
+                    </Badge>
+                  )}
+                  {isWorkerView && group.label === "Tomorrow" && group.items.some((o) => (o.workflow === "STANDARD" || o.workflow === "ONE_OFF" || o.workflow === "ESTIMATE") && (o.assignees ?? []).some((a) => a.userId === myId)) && (
+                    <Badge
+                      size="sm"
+                      variant="solid"
+                      bg="blue.400"
+                      color="white"
+                      px="2"
+                      py="0.5"
+                      borderRadius="full"
+                      cursor="pointer"
+                      fontSize="2xs"
+                      lineHeight="1.3"
+                      whiteSpace="nowrap"
+                      _hover={{ opacity: 0.85 }}
+                      onClick={(e: any) => {
+                        e.stopPropagation();
+                        window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "reminders" } }));
+                      }}
+                    >
+                      Plan →
+                    </Badge>
+                  )}
                   <Text fontSize="xs" color="gray.400">{collapsedGroups.has(group.key) ? "▶" : "▼"}</Text>
                 </HStack>
                 <Box flex="1" borderBottomWidth="2px" borderColor="gray.300" />
               </HStack>
-              {isWorkerView && group.label === "Tomorrow" && group.items.some((o) => (o.workflow === "STANDARD" || o.workflow === "ONE_OFF" || o.workflow === "ESTIMATE") && (o.assignees ?? []).some((a) => a.userId === myId)) && (
-                <Badge
-                  size="sm"
-                  variant="solid"
-                  bg="blue.400"
-                  color="white"
-                  ml="2"
-                  px="3"
-                  py="1"
-                  borderRadius="full"
-                  cursor="pointer"
-                  mb={3}
-                  _hover={{ opacity: 0.85 }}
-                  onClick={(e: any) => {
-                    e.stopPropagation();
-                    window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "reminders" } }));
-                  }}
-                >
-                  Plan tomorrow →
-                </Badge>
-              )}
-              {isWorkerView && group.label === "Today" && group.items.some((o) => (o.workflow === "STANDARD" || o.workflow === "ONE_OFF" || o.workflow === "ESTIMATE") && (o.assignees ?? []).some((a) => a.userId === myId)) && (
-                <Badge
-                  size="sm"
-                  variant="solid"
-                  bg="blue.400"
-                  color="white"
-                  ml="2"
-                  px="3"
-                  py="1"
-                  borderRadius="full"
-                  cursor="pointer"
-                  mb={3}
-                  _hover={{ opacity: 0.85 }}
-                  onClick={(e: any) => {
-                    e.stopPropagation();
-                    try {
-                      // ET-anchored "today" so a worker checking late
-                      // evening doesn't land tomorrow's route preview.
-                      localStorage.setItem("seedlings_preview_targetDate", JSON.stringify(bizToday()));
-                    } catch {}
-                    window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "routes", autoAnalyze: true } }));
-                  }}
-                >
-                  Plan route →
-                </Badge>
-              )}
               {!collapsedGroups.has(group.key) && <VStack align="stretch" gap={3}>
           {group.items.map((occ, occIdx) => {
             // Admin-only foreign rows (Timeline activities + doc expirations)
@@ -3818,7 +3876,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               );
             }
 
-            // Pinned ghost cards — a reference in the regular feed, same color as original card type
+            // Pinned ghost cards — a reference in the regular feed, same
+            // color as the original card type. Mirrors the reminder-ghost
+            // density model:
+            //   ultra    — single scan row
+            //   semi     — title strip + body + "View Pinned" button
+            //   expanded — same as semi PLUS a pinned-details panel
+            // Tap the title strip to cycle ultra → semi → expanded → ultra.
             if (occ._isPinnedGhost) {
               const ghostIsTask = occ.workflow === "TASK";
               const ghostIsReminder = occ.workflow === "REMINDER";
@@ -3831,37 +3895,163 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 : ghostIsTentative ? "orange"
                 : ghostIsAssigned ? "teal"
                 : "gray";
+              const pinTitle = ghostIsTask ? (occ.title || "Task")
+                : ghostIsReminder ? (occ.title || "Reminder")
+                : (occ.job?.property?.displayName ?? "Job");
+              const pinClient = occ.job?.property?.client?.displayName
+                ? ` — ${clientLabel(occ.job.property.client.displayName)}`
+                : "";
+              const pinTags = parseJobTags(occ).length > 0
+                ? ` · ${parseJobTags(occ).map(jobTagLabel).join(", ")}`
+                : "";
+              const pinAddons = (occ.addons ?? []).length > 0
+                ? ` + ${(occ.addons ?? []).map((a: any) => a.tag ? jobTagLabel(a.tag) : a.customLabel).join(", ")}`
+                : "";
+              const pinCss = {
+                borderLeft: `4px dashed var(--chakra-colors-${ghostColor}-400)`,
+                borderStyle: "dashed",
+                opacity: 0.8,
+              };
+              if (cardMode === "ultra") {
+                return (
+                  <Card.Root
+                    key={`pin-ghost-${occ.id}-${occIdx}`}
+                    variant="outline"
+                    overflow="hidden"
+                    borderColor={`${ghostColor}.300`}
+                    bg={`${ghostColor}.50`}
+                    cursor="pointer"
+                    onClick={toggleCard}
+                    css={pinCss}
+                  >
+                    <HStack px="3" py="1" gap={2} minH="32px" align="center" fontSize="xs">
+                      <Pin size={13} fill="currentColor" style={{ color: `var(--chakra-colors-${ghostColor}-600)`, flexShrink: 0 }} />
+                      <Badge colorPalette={ghostColor} variant="solid" fontSize="xs" px="1.5" borderRadius="full" flexShrink={0}>Pinned</Badge>
+                      <Text fontWeight="medium" flex="1" minW={0} overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
+                        {pinTitle}{pinClient}
+                      </Text>
+                    </HStack>
+                  </Card.Root>
+                );
+              }
               return (
                 <Card.Root
                   key={`pin-ghost-${occ.id}-${occIdx}`}
                   variant="outline"
                   borderColor={`${ghostColor}.300`}
                   bg={`${ghostColor}.50`}
-                  css={{
-                    borderLeft: `4px dashed var(--chakra-colors-${ghostColor}-400)`,
-                    borderStyle: "dashed",
-                    opacity: 0.8,
-                  }}
+                  css={pinCss}
                 >
                   <Card.Body py="2" px="3">
                     <VStack align="start" gap={1}>
-                      <HStack gap={2} align="center">
+                      {/* Title strip — the tap target for the density cycle.
+                          Same darker-strip pattern as the reminder ghost:
+                          bleeds past Card.Body padding via negative margins
+                          so the strip is flush with the card edges. */}
+                      <HStack
+                        gap={2}
+                        align="center"
+                        mx="-3"
+                        mt="-2"
+                        mb={1}
+                        px="3"
+                        py="2"
+                        w="calc(100% + 24px)"
+                        bg="blackAlpha.100"
+                        cursor="pointer"
+                        userSelect="none"
+                        _hover={{ bg: "blackAlpha.200" }}
+                        onClick={(e: any) => {
+                          const el = e.target as HTMLElement;
+                          if (el?.closest?.("a, button")) return;
+                          toggleCard();
+                        }}
+                      >
                         <Pin size={14} fill="currentColor" style={{ color: `var(--chakra-colors-${ghostColor}-600)` }} />
                         <Badge colorPalette={ghostColor} variant="solid" fontSize="xs" px="2" borderRadius="full">Pinned</Badge>
                       </HStack>
                       <Text fontSize="xs" color="fg.muted">
-                        {ghostIsTask ? (occ.title || "Task") : ghostIsReminder ? (occ.title || "Reminder") : (occ.job?.property?.displayName ?? "Job")}
-                        {occ.job?.property?.client?.displayName && ` — ${clientLabel(occ.job.property.client.displayName)}`}
-                        {parseJobTags(occ).length > 0 && ` · ${parseJobTags(occ).map(jobTagLabel).join(", ")}`}
-                        {(occ.addons ?? []).length > 0 && ` + ${(occ.addons ?? []).map((a: any) => a.tag ? jobTagLabel(a.tag) : a.customLabel).join(", ")}`}
+                        {pinTitle}{pinClient}{pinTags}{pinAddons}
                         {(occ as any).jobType && ` · ${(occ as any).jobType}`}
                         {occ.startAt && ` · Scheduled: ${fmtDate(occ.startAt)}`}
                       </Text>
+                      {/* Fully-expanded ghost card adds a pinned-details
+                          panel: status, full schedule date, untruncated
+                          notes. Click the title strip again to collapse
+                          back to ultra; this is the 3rd state of the
+                          density cycle. */}
+                      {cardMode === "expanded" && (
+                        <Box
+                          w="full"
+                          px="3"
+                          py="2"
+                          bg={`${ghostColor}.100`}
+                          borderRadius="md"
+                          borderWidth="1px"
+                          borderColor={`${ghostColor}.200`}
+                        >
+                          <Text fontSize="2xs" fontWeight="semibold" color={`${ghostColor}.800`} textTransform="uppercase" letterSpacing="wide" mb={1}>
+                            Pinned details
+                          </Text>
+                          <VStack align="stretch" gap={1}>
+                            {/* Full address — semi only shows the property
+                                display name; this surfaces the street. */}
+                            {occ.job?.property?.street1 && (
+                              <Text fontSize="xs" color={`${ghostColor}.700`}>
+                                📍 {occ.job.property.street1}
+                                {occ.job.property.city && `, ${occ.job.property.city}`}
+                                {occ.job.property.state && ` ${occ.job.property.state}`}
+                              </Text>
+                            )}
+                            {/* Assignees — who else is on this occurrence.
+                                Useful to know before you tap View Pinned. */}
+                            {(occ.assignees ?? []).length > 0 && (
+                              <Text fontSize="xs" color={`${ghostColor}.700`}>
+                                👥 {(occ.assignees ?? []).map((a) =>
+                                  a.user?.displayName || a.user?.email || "Worker"
+                                ).join(", ")}
+                              </Text>
+                            )}
+                            {/* Status — meaningful for non-default values. */}
+                            {occ.status && occ.status !== "SCHEDULED" && (
+                              <Text fontSize="xs" color={`${ghostColor}.700`}>
+                                · {occ.status.replace(/_/g, " ").toLowerCase()}
+                              </Text>
+                            )}
+                            {/* Price — when the job's value is set. */}
+                            {(occ.price ?? 0) > 0 && (
+                              <Text fontSize="xs" color={`${ghostColor}.700`}>
+                                💰 ${occ.price?.toFixed(2)}
+                              </Text>
+                            )}
+                            {/* Per-occurrence instructions — pinned notes
+                                often live here (PinnedNoteDialog writes to
+                                this list). Strip presets so this panel only
+                                shows the custom notes the user actually
+                                added on top. */}
+                            {(occ.instructions ?? []).filter((i) => !i.isPreset).length > 0 && (
+                              <Box mt={1}>
+                                <Text fontSize="2xs" fontWeight="semibold" color={`${ghostColor}.700`} textTransform="uppercase" mb={0.5}>
+                                  Notes
+                                </Text>
+                                <VStack align="stretch" gap={0.5}>
+                                  {(occ.instructions ?? []).filter((i) => !i.isPreset).map((inst) => (
+                                    <Text key={inst.id} fontSize="xs" color={`${ghostColor}.900`} whiteSpace="pre-wrap">
+                                      • {inst.text}
+                                    </Text>
+                                  ))}
+                                </VStack>
+                              </Box>
+                            )}
+                          </VStack>
+                        </Box>
+                      )}
                       <Button
                         size="xs"
                         variant="outline"
                         colorPalette={ghostColor}
-                        onClick={() => {
+                        onClick={(e: any) => {
+                          e.stopPropagation();
                           setHighlightOccId(occ.id);
                           setCardOverrides(new Map([[occ.id, "expanded"]]));
                           setFilterJobId(null);
@@ -7673,7 +7863,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         bumpTitleBarEarnings();
                         await load(false);
                       } catch (err) {
-                        publishInlineMessage({ type: "ERROR", text: getErrorMessage("Start failed.", err) });
+                        if (!handleTeamWorkdayError(err)) {
+                          publishInlineMessage({ type: "ERROR", text: getErrorMessage("Start failed.", err) });
+                        }
                       }
                       setBusyOccId(null);
                     }}
@@ -7707,7 +7899,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         bumpTitleBarEarnings();
                         await load(false);
                       } catch (err) {
-                        publishInlineMessage({ type: "ERROR", text: getErrorMessage("Start failed.", err) });
+                        if (!handleTeamWorkdayError(err)) {
+                          publishInlineMessage({ type: "ERROR", text: getErrorMessage("Start failed.", err) });
+                        }
                       }
                       setBusyOccId(null);
                     }}
@@ -8735,6 +8929,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           that happens to be open. The hook's `withWorkday` opens it when
           a worker tries to start/resume a job without an active workday. */}
       {workdayGate.dialog}
+      {teamWorkdayDialog.dialog}
     </Box>
   );
 }

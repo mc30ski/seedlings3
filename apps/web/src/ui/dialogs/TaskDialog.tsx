@@ -22,6 +22,10 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import {
+  DialogErrorAlert,
+  useDialogError,
+} from "@/src/ui/components/DialogErrorAlert";
 
 type EditTask = {
   id: string;
@@ -67,6 +71,7 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask, mo
   const [saving, setSaving] = useState(false);
   const [isHighPriority, setIsHighPriority] = useState(false);
   const isEdit = !!editTask;
+  const dlgErr = useDialogError();
 
   // Occurrence linking
   const [occSearch, setOccSearch] = useState("");
@@ -156,6 +161,7 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask, mo
   const apiBase = isReminder ? "/api/standalone-reminders" : "/api/tasks";
 
   async function handleSave() {
+    dlgErr.clear();
     if (!title.trim() || !date) return;
     setSaving(true);
     try {
@@ -182,7 +188,7 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask, mo
       onOpenChange(false);
       onCreated?.();
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage(isEdit ? `Failed to update ${entityLabel.toLowerCase()}.` : `Failed to create ${entityLabel.toLowerCase()}.`, err) });
+      dlgErr.setError(getErrorMessage(isEdit ? `Failed to update ${entityLabel.toLowerCase()}.` : `Failed to create ${entityLabel.toLowerCase()}.`, err));
     }
     setSaving(false);
   }
@@ -333,6 +339,7 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask, mo
                 </Box>
               </VStack>
             </Dialog.Body>
+            <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
             <Dialog.Footer>
               <HStack justify="flex-end" gap={2}>
                 <Button ref={cancelRef} variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>

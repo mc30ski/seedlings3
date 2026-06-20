@@ -28,6 +28,17 @@ if (!PUBLISHABLE_KEY) {
 function AppInner({ Component, pageProps }: AppProps) {
   const { getToken, userId } = useAuth();
 
+  // Wire Clerk token into API client SYNCHRONOUSLY during render rather
+  // than inside a useEffect. Reason: child components mount on first paint
+  // and may fire API calls before any effect runs. If `fetchAuthToken` is
+  // still null at that point, authHeaders no-ops and the server rejects
+  // with 401 "Missing auth". Setting it synchronously closes the race —
+  // by the time React commits the tree (and children's effects run),
+  // the fetcher is already in place. setAuthTokenFetcher is idempotent
+  // (just assigns a module-level variable), so re-running on every render
+  // keeps the closure in sync if Clerk's `getToken` identity changes.
+  setAuthTokenFetcher(() => getToken());
+
   // Clear localStorage when user changes (sign-out → sign-in as different user)
   useEffect(() => {
     const lastUser = localStorage.getItem("seedlings_lastUserId");
@@ -37,11 +48,6 @@ function AppInner({ Component, pageProps }: AppProps) {
     if (userId) localStorage.setItem("seedlings_lastUserId", userId);
   }, [userId]);
   const offlineState = useOffline();
-
-  // Wire Clerk token into API client
-  useEffect(() => {
-    setAuthTokenFetcher(() => getToken());
-  }, [getToken]);
 
   // Register service worker for offline support & init offline executor
   useEffect(() => {

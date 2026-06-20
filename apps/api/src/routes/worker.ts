@@ -1441,6 +1441,62 @@ export default async function workerRoutes(app: FastifyInstance) {
     return services.paymentRequests.listOutstanding({ claimerUserId: req.user.id, cutoff });
   });
 
+  // Pre-flight check for the team-workday gate. Returns the list of
+  // non-observer assignees on this occurrence (excluding the caller)
+  // who don't currently have an active workday. The Start flow calls
+  // this BEFORE opening the time-of-day picker so it can surface the
+  // team-not-ready dialog up front — the user shouldn't have to type
+  // a start time only to be rejected after submitting.
+  //
+  // "Active" matches the gate definition in services/jobs.ts: today's
+  // WorkerWorkday exists, endedAt IS NULL, and pausedAt IS NULL.
+  // Mirrors the server-side gate so the client + server agree on
+  // who counts as ready.
+  app.get("/occurrences/:id/team-workday-check", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    const assignees = await prisma.jobOccurrenceAssignee.findMany({
+      where: {
+        occurrenceId,
+        // NULL-role rows are canonical "regular worker"; observers
+        // are excluded since they don't do the work.
+        OR: [{ role: null }, { role: { not: "observer" } }],
+      },
+      select: {
+        userId: true,
+        user: { select: { displayName: true, email: true } },
+      },
+    });
+    // Exclude the caller themselves — their own workday is gated
+    // separately by `assertWorkdayActiveOrPrompt` on the client side
+    // and again on /start. This check is specifically for teammates.
+    const others = assignees.filter((a) => a.userId !== uid);
+    if (others.length === 0) return { notReady: [] };
+
+    const todayKey = etFormatDate(new Date());
+    const workdays = await prisma.workerWorkday.findMany({
+      where: {
+        userId: { in: others.map((a) => a.userId) },
+        workdayDate: todayKey,
+      },
+      select: { userId: true, endedAt: true, pausedAt: true },
+    });
+    const wdByUser = new Map(workdays.map((w) => [w.userId, w]));
+
+    const notReady = others
+      .filter((a) => {
+        const wd = wdByUser.get(a.userId);
+        // Not ready = no row OR ended OR paused.
+        return !wd || wd.endedAt != null || wd.pausedAt != null;
+      })
+      .map((a) => ({
+        userId: a.userId,
+        name: a.user?.displayName ?? a.user?.email ?? "(unnamed)",
+      }));
+
+    return { notReady };
+  });
+
   app.post("/occurrences/:id/start", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const body = req.body || {};
@@ -1609,7 +1665,13 @@ export default async function workerRoutes(app: FastifyInstance) {
   app.get("/occurrences/:id/comms-handoff", workerGuard, async (req: any) => {
     const occurrenceId = String(req.params.id);
     const claimerAssignee = await prisma.jobOccurrenceAssignee.findFirst({
-      where: { occurrenceId, NOT: { role: "observer" } },
+      // NULL-role rows are the canonical "regular worker." `NOT:
+      // { role: 'observer' }` would silently exclude them via SQL
+      // three-valued logic — use the OR pattern.
+      where: {
+        occurrenceId,
+        OR: [{ role: null }, { role: { not: "observer" } }],
+      },
       orderBy: { assignedAt: "asc" },
       select: { userId: true },
     });
@@ -4095,13 +4157,14 @@ export default async function workerRoutes(app: FastifyInstance) {
   // pays one round-trip.
   app.get("/me/workday/today", workerGuard, async (req: any) => {
     const { targetUserId } = await resolveWorkdayTarget(req, { allowImpersonationFor: "read" });
-    const [state, activeJobs, activeCheckouts, openPrior] = await Promise.all([
+    const [state, activeJobs, activeCheckouts, openPrior, todayJobs] = await Promise.all([
       workdays.getTodayWorkday(targetUserId),
       workdays.checkBlockingActiveJobs(targetUserId),
       workdays.checkActiveEquipmentCheckouts(targetUserId),
       workdays.listMyOpenWorkdays(targetUserId),
+      workdays.getTodayJobCounts(targetUserId),
     ]);
-    return { today: state, activeJobs, activeCheckouts, openPrior };
+    return { today: state, activeJobs, activeCheckouts, openPrior, todayJobs };
   });
 
   // Standalone open-prior list — used when the UI just needs to know
@@ -4130,6 +4193,16 @@ export default async function workerRoutes(app: FastifyInstance) {
   app.post("/me/workday/resume", workerGuard, async (req: any) => {
     const { targetUserId, isImpersonating } = await resolveWorkdayTarget(req, { allowImpersonationFor: "mutate" });
     return workdays.resumeWorkday(targetUserId, workdayAuditContext(req, isImpersonating ? targetUserId : null));
+  });
+
+  // Re-open today's workday after it was ended (typically by mistake).
+  // The gap between the bad endedAt and now is added to totalPausedMs
+  // so payable hours don't include the off-the-clock interval. Refused
+  // once the same-day edit window has closed or if the row has been
+  // approved — see services/workdays.ts reopenWorkday.
+  app.post("/me/workday/reopen", workerGuard, async (req: any) => {
+    const { targetUserId, isImpersonating } = await resolveWorkdayTarget(req, { allowImpersonationFor: "mutate" });
+    return workdays.reopenWorkday(targetUserId, workdayAuditContext(req, isImpersonating ? targetUserId : null));
   });
 
   // Cancel today's workday — hard-deletes the row. Used when the worker

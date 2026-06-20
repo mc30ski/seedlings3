@@ -519,6 +519,22 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
           </Card.Root>
         )}
 
+        {/* Workday strip — per-worker clock-in/out for the day. Renders
+            for the personal view only (not the team overview / aggregate).
+            When admin/super "view-as" another worker, the strip targets
+            that worker's record via the viewAsUserId prop; the server
+            gates mutations to Super-only and the UI hides action buttons
+            for non-Super admins (read-only view).
+            See ui/components/WorkdayStrip.tsx for the lifecycle UI. */}
+        {!isAggregate && (
+          <WorkdayStrip
+            viewAsUserId={viewAsUserId ?? null}
+            viewAsDisplayName={isViewingOther ? (viewAsDisplayName ?? null) : null}
+            canImpersonate={!!me?.realRoles?.includes("SUPER")}
+            noBottomMargin
+          />
+        )}
+
         {!isViewingOther && !showJustEnabledHelp && !pushBannerDismissed && (push.status === "default" || push.status === "needs-pwa-install" || (push.status === "granted-no-sub" && push.explicitlyDisabled)) && (
           <Card.Root
             variant="outline"
@@ -527,29 +543,22 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
             borderWidth="2px"
             style={{ animation: "seedlings-pulse 2.5s ease-in-out infinite" }}
           >
-            <Card.Body p={4}>
-              <Box
-                display="flex"
-                flexDirection={{ base: "column", sm: "row" }}
-                alignItems={{ base: "stretch", sm: "center" }}
-                gap={3}
-              >
-                <HStack flex={1} minW={0} gap={3} align="center">
-                  <Box bg="pink.200" color="pink.800" p={2} borderRadius="lg" flexShrink={0}>
-                    <FiBell size={18} />
-                  </Box>
-                  <VStack align="start" gap={0} flex={1} minW={0}>
-                    <Text fontSize="sm" fontWeight="semibold" color="pink.900">
-                      Get a phone alert for tomorrow's plan
-                    </Text>
-                    <Text fontSize="xs" color="pink.800">
-                      {push.status === "needs-pwa-install"
-                        ? "Add Seedlings to your Home Screen to enable notifications."
-                        : "Tap Enable to receive a push notification each evening."}
-                    </Text>
-                  </VStack>
-                </HStack>
-                <HStack gap={2} justifyContent="flex-end" flexShrink={0}>
+            <Card.Body p={2}>
+              <HStack gap={2} align="center" wrap="wrap">
+                <Box bg="pink.200" color="pink.800" p={1.5} borderRadius="md" flexShrink={0}>
+                  <FiBell size={16} />
+                </Box>
+                <VStack align="start" gap={0} flex="1" minW="180px">
+                  <Text fontSize="sm" fontWeight="semibold" color="pink.900" lineHeight="1.2">
+                    Get a phone alert for tomorrow's plan
+                  </Text>
+                  <Text fontSize="xs" color="pink.800" lineHeight="1.3">
+                    {push.status === "needs-pwa-install"
+                      ? "Add Seedlings to your Home Screen to enable notifications."
+                      : "Tap Enable to receive a push notification each evening."}
+                  </Text>
+                </VStack>
+                <HStack gap={1} flexShrink={0}>
                   {push.status !== "needs-pwa-install" && (
                     <Button
                       size="sm"
@@ -580,7 +589,7 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
                     Dismiss
                   </Button>
                 </HStack>
-              </Box>
+              </HStack>
             </Card.Body>
           </Card.Root>
         )}
@@ -800,21 +809,6 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
               </VStack>
             </Card.Body>
           </Card.Root>
-        )}
-
-        {/* Workday strip — per-worker clock-in/out for the day. Renders
-            for the personal view only (not the team overview / aggregate).
-            When admin/super "view-as" another worker, the strip targets
-            that worker's record via the viewAsUserId prop; the server
-            gates mutations to Super-only and the UI hides action buttons
-            for non-Super admins (read-only view).
-            See ui/components/WorkdayStrip.tsx for the lifecycle UI. */}
-        {!isAggregate && (
-          <WorkdayStrip
-            viewAsUserId={viewAsUserId ?? null}
-            viewAsDisplayName={isViewingOther ? (viewAsDisplayName ?? null) : null}
-            canImpersonate={!!me?.realRoles?.includes("SUPER")}
-          />
         )}
 
         {/* Hero CTA: Resume active work (any time) */}

@@ -20,6 +20,10 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import {
+  DialogErrorAlert,
+  useDialogError,
+} from "@/src/ui/components/DialogErrorAlert";
 
 type EditEvent = {
   id: string;
@@ -62,6 +66,7 @@ export default function EventDialog({ open, onOpenChange, onCreated, editEvent }
   const [repeatMode, setRepeatMode] = useState<"weekly" | "monthly" | "yearly" | "custom">("weekly");
   const [customDays, setCustomDays] = useState("14");
   const [saving, setSaving] = useState(false);
+  const dlgErr = useDialogError();
   const isEdit = !!editEvent;
 
   useEffect(() => {
@@ -99,6 +104,7 @@ export default function EventDialog({ open, onOpenChange, onCreated, editEvent }
   }
 
   async function handleSave() {
+    dlgErr.clear();
     if (!title.trim() || !date || !eventTime) return;
     setSaving(true);
     try {
@@ -131,7 +137,7 @@ export default function EventDialog({ open, onOpenChange, onCreated, editEvent }
       onOpenChange(false);
       onCreated?.();
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to save event.", err) });
+      dlgErr.setError(getErrorMessage("Failed to save event.", err));
     }
     setSaving(false);
   }
@@ -241,6 +247,7 @@ export default function EventDialog({ open, onOpenChange, onCreated, editEvent }
                 )}
               </VStack>
             </Dialog.Body>
+            <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
             <Dialog.Footer>
               <HStack justify="flex-end" gap={2}>
                 <Button ref={cancelRef} variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>

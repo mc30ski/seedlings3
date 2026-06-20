@@ -13,7 +13,8 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { Clock, Pause, Play, AlertTriangle, Edit3 } from "lucide-react";
+import { Clock, Pause, Play, Check, X, AlertTriangle, Edit3, CheckCircle2, ChevronDown, ChevronUp } from "lucide-react";
+import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
   type WorkdayState,
   type WorkdayTodayPayload,
@@ -24,6 +25,7 @@ import {
   startWorkday,
   pauseWorkday,
   resumeWorkday,
+  reopenWorkday,
   endWorkday,
   cancelWorkday,
   editWorkdayTimes,
@@ -39,8 +41,11 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
-import { bizInstantFromEtParts } from "@/src/lib/lib";
+import { bizInstantFromEtParts, bizToday } from "@/src/lib/lib";
+import { useOffline } from "@/src/lib/offline";
+import { enqueueAction, type QueuedActionType } from "@/src/lib/offlineQueue";
 import ImpersonationWarning from "@/src/ui/components/ImpersonationWarning";
+import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Workday Hero strip + lifecycle dialogs.
@@ -59,9 +64,15 @@ import ImpersonationWarning from "@/src/ui/components/ImpersonationWarning";
 // ─────────────────────────────────────────────────────────────────────────
 
 type DialogMode =
+  // Pre-flight confirmation shown when the worker taps Start with zero
+  // jobs scheduled today. Confirm → opens the regular { kind: "start" }
+  // datetime-picker dialog; cancel → bails out. Skipped entirely when at
+  // least one job is on today's docket.
+  | { kind: "confirmNoJobs" }
   | { kind: "start" }
   | { kind: "pause"; workday: WorkdaySummary }
   | { kind: "resume"; workday: WorkdaySummary }
+  | { kind: "reopen"; workday: WorkdaySummary }
   | { kind: "end"; workday: WorkdaySummary; activeJobs: JobBlockingSummary[]; activeCheckouts: EquipmentCheckoutSummary[] }
   | { kind: "edit"; workday: WorkdaySummary }
   | { kind: "forgotPrior"; workday: WorkdaySummary }
@@ -80,16 +91,167 @@ type DialogMode =
  *                        this prop hides the action buttons preemptively
  *                        so a non-Super admin sees a clean read-only view.
  */
+// ─────────────────────────────────────────────────────────────────────────
+// Cross-tab optimistic sync (offline).
+// WorkdayStrip mounts on every Worker → Work tab (Home / Reminders / Jobs
+// / Routes). When the worker mutates their workday offline, the active
+// strip applies the change to its local React state — but switching to a
+// sibling tab remounts that tab's strip and re-fetches from the SW cache,
+// which still has the OLD state. To prevent a flicker back to the stale
+// view, we mirror the optimistic payload to sessionStorage + dispatch a
+// same-tab event. The mirror clears the moment a fresh online fetch
+// lands (server is authoritative again).
+//
+// Scoped to the self-service path only — admin "view-as another worker"
+// mutations are blocked offline anyway, so we never persist someone
+// else's data under this key.
+// ─────────────────────────────────────────────────────────────────────────
+const OPTIMISTIC_PAYLOAD_KEY = "seedlings_workdayOptimisticPayload";
+const OPTIMISTIC_EVENT = "seedlings:workday-optimistic";
+
+function readOptimisticPayload(): WorkdayTodayPayload | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(OPTIMISTIC_PAYLOAD_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as WorkdayTodayPayload;
+  } catch {
+    return null;
+  }
+}
+
+function writeOptimisticPayload(payload: WorkdayTodayPayload) {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.setItem(OPTIMISTIC_PAYLOAD_KEY, JSON.stringify(payload));
+    window.dispatchEvent(new CustomEvent(OPTIMISTIC_EVENT, { detail: payload }));
+  } catch {
+    // quota / disabled storage — fail silently. The active strip still
+    // has the optimistic update in React state; only cross-tab sync is
+    // lost, which degrades gracefully to "stale until reconnect".
+  }
+}
+
+function clearOptimisticPayload() {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.removeItem(OPTIMISTIC_PAYLOAD_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 type Props = {
   viewAsUserId?: string | null;
   viewAsDisplayName?: string | null;
   canImpersonate?: boolean;
+  /** Suppress the default `mb={3}` on each state card. Use when the
+   *  parent already provides spacing (e.g. a VStack with `gap`), to
+   *  avoid doubling up the visual gap. */
+  noBottomMargin?: boolean;
 };
+
+// ─────────────────────────────────────────────────────────────────────────
+// Offline support: optimistic local state update for queued workday
+// mutations. When a user starts/pauses/etc. their workday while offline,
+// we apply the same state transition the server would do, so the UI
+// reflects the change immediately. The action is then enqueued and
+// replays against the real server when the device reconnects.
+//
+// The local IDs use a `local-<workdayDate>` prefix to make it obvious in
+// audit logs and easy to grep for in case of bugs. They get replaced by
+// the real server IDs on the next successful `fetchWorkdayToday`.
+// ─────────────────────────────────────────────────────────────────────────
+
+type WorkdayMutationType =
+  | "START_WORKDAY"
+  | "PAUSE_WORKDAY"
+  | "RESUME_WORKDAY"
+  | "END_WORKDAY"
+  | "REOPEN_WORKDAY"
+  | "CANCEL_WORKDAY";
+
+function applyOptimisticWorkdayUpdate(
+  payload: WorkdayTodayPayload,
+  type: WorkdayMutationType,
+  workdayDate: string,
+  input?: { startedAt?: string | null; endedAt?: string | null; totalPausedMs?: number | null },
+): WorkdayTodayPayload {
+  const now = new Date().toISOString();
+  switch (type) {
+    case "START_WORKDAY": {
+      const localWorkday: WorkdaySummary = {
+        id: `local-${workdayDate}`,
+        userId: "local",
+        workdayDate,
+        startedAt: input?.startedAt ?? now,
+        endedAt: null,
+        pausedAt: null,
+        totalPausedMs: 0,
+        approvedAt: null,
+      };
+      return { ...payload, today: { state: "IN_PROGRESS", workday: localWorkday } };
+    }
+    case "PAUSE_WORKDAY": {
+      if (payload.today.state !== "IN_PROGRESS") return payload;
+      return {
+        ...payload,
+        today: { state: "PAUSED", workday: { ...payload.today.workday, pausedAt: now } },
+      };
+    }
+    case "RESUME_WORKDAY": {
+      if (payload.today.state !== "PAUSED") return payload;
+      const wd = payload.today.workday;
+      const pauseStart = wd.pausedAt ? Date.parse(wd.pausedAt) : Date.now();
+      const additionalPaused = Math.max(0, Date.now() - pauseStart);
+      return {
+        ...payload,
+        today: {
+          state: "IN_PROGRESS",
+          workday: { ...wd, pausedAt: null, totalPausedMs: wd.totalPausedMs + additionalPaused },
+        },
+      };
+    }
+    case "END_WORKDAY": {
+      if (payload.today.state === "NOT_STARTED") return payload;
+      const wd = payload.today.workday;
+      return {
+        ...payload,
+        today: {
+          state: "COMPLETED",
+          workday: {
+            ...wd,
+            startedAt: input?.startedAt ?? wd.startedAt,
+            endedAt: input?.endedAt ?? now,
+            pausedAt: null,
+            totalPausedMs: input?.totalPausedMs ?? wd.totalPausedMs,
+          },
+        },
+      };
+    }
+    case "REOPEN_WORKDAY": {
+      if (payload.today.state !== "COMPLETED") return payload;
+      const wd = payload.today.workday;
+      const endTime = wd.endedAt ? Date.parse(wd.endedAt) : Date.now();
+      const gap = Math.max(0, Date.now() - endTime);
+      return {
+        ...payload,
+        today: {
+          state: "IN_PROGRESS",
+          workday: { ...wd, endedAt: null, totalPausedMs: wd.totalPausedMs + gap },
+        },
+      };
+    }
+    case "CANCEL_WORKDAY":
+      return { ...payload, today: { state: "NOT_STARTED" } };
+  }
+}
 
 export default function WorkdayStrip({
   viewAsUserId = null,
   viewAsDisplayName = null,
   canImpersonate = false,
+  noBottomMargin = false,
 }: Props = {}) {
   // Stable opts object passed to every API call. `undefined` when not
   // viewing as someone else — the lib falls through to the self-service
@@ -100,12 +262,25 @@ export default function WorkdayStrip({
     [viewAsUserId],
   );
   const isViewingAs = !!viewAsUserId;
+  const { isOffline } = useOffline();
+  // Offline workday mutations only run for the self-service path (not
+  // view-as). Admin "view as a worker" while offline is a niche flow and
+  // the offline executor talks to the self-service endpoints, which would
+  // mutate the WRONG user. Force online for that case.
+  const canQueueOffline = isOffline && !isViewingAs;
   // Whether the actor is authorized to mutate. False for admin viewing
   // as a worker; they get a read-only view. The server is the actual
   // gate — this just trims confusing UI for them.
   const canAct = !isViewingAs || canImpersonate;
 
-  const [payload, setPayload] = useState<WorkdayTodayPayload | null>(null);
+  // Seed initial payload from sessionStorage when present (self-service
+  // only — view-as never reads cross-tab optimistic state). Survives
+  // remounts triggered by Worker→Work tab switches so an offline
+  // mutation made on Home doesn't flash back to NOT_STARTED when the
+  // user navigates to Reminders/Jobs/Routes.
+  const [payload, setPayload] = useState<WorkdayTodayPayload | null>(() => {
+    return viewAsUserId ? null : readOptimisticPayload();
+  });
   const [loading, setLoading] = useState(false);
   const [dialog, setDialog] = useState<DialogMode>(null);
   // Drives the live "X active" / "X paused" tick on the status line. We
@@ -114,20 +289,44 @@ export default function WorkdayStrip({
   // workday is completed.
   const [, setTick] = useState(0);
 
+  // isOffline read via ref so `load` doesn't have to depend on it (the
+  // ref always reflects current state; depending on the value would
+  // re-fire every tab switch). When offline, the SW falls back to a
+  // cached response if any; if it returns the 503 "offline" envelope,
+  // we silently swallow the error — toast spam from 4 simultaneous
+  // strip mounts (Home/Reminders/Jobs/Routes) is worse than no signal.
+  const isOfflineRef = useRef(isOffline);
+  isOfflineRef.current = isOffline;
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const r = await fetchWorkdayToday(asOpts);
-      setPayload(r);
+      // Offline-and-self-service: the SW likely served a stale cache.
+      // If we have an optimistic payload from a prior offline mutation
+      // in this tab, prefer it over the cache — otherwise the user sees
+      // their just-tapped Start "reverse" on tab switch. View-as never
+      // consumes the optimistic key (it belongs to a different worker).
+      if (isOfflineRef.current && !viewAsUserId) {
+        const opt = readOptimisticPayload();
+        setPayload(opt ?? r);
+      } else {
+        // Online (or view-as): server response is authoritative. Clear
+        // any leftover optimistic state — the queue has by now drained
+        // (or will shortly) and the server reflects reality.
+        setPayload(r);
+        if (!viewAsUserId) clearOptimisticPayload();
+      }
     } catch (err) {
-      publishInlineMessage({
-        type: "ERROR",
-        text: getErrorMessage("Failed to load workday.", err),
-      });
+      if (!isOfflineRef.current) {
+        publishInlineMessage({
+          type: "ERROR",
+          text: getErrorMessage("Failed to load workday.", err),
+        });
+      }
     } finally {
       setLoading(false);
     }
-  }, [asOpts]);
+  }, [asOpts, viewAsUserId]);
 
   useEffect(() => {
     void load();
@@ -147,6 +346,33 @@ export default function WorkdayStrip({
     };
   }, [load]);
 
+  // Refetch when any workday mutation fires the bus event — covers the
+  // start-job gate dialog (separate React tree, can't call our `load`
+  // directly). Without this, the strip kept showing NOT_STARTED until a
+  // hard refresh after the gate dialog started the workday.
+  useEffect(() => {
+    const onChanged = () => void load();
+    window.addEventListener("seedlings:workday-changed", onChanged);
+    return () =>
+      window.removeEventListener("seedlings:workday-changed", onChanged);
+  }, [load]);
+
+  // Same-tab optimistic broadcast — when another mounted WorkdayStrip
+  // applies an offline mutation, it dispatches the new payload via
+  // `seedlings:workday-optimistic`. Currently-mounted siblings (e.g. the
+  // Home strip + the Jobs strip both visible briefly during a swipe)
+  // update in lock-step. Late-mounters get the same data from
+  // sessionStorage via the useState initializer above.
+  useEffect(() => {
+    if (viewAsUserId) return; // view-as never consumes self-service state
+    const onOptimistic = (e: Event) => {
+      const detail = (e as CustomEvent<WorkdayTodayPayload>).detail;
+      if (detail) setPayload(detail);
+    };
+    window.addEventListener(OPTIMISTIC_EVENT, onOptimistic);
+    return () => window.removeEventListener(OPTIMISTIC_EVENT, onOptimistic);
+  }, [viewAsUserId]);
+
   // 1s tick while IN_PROGRESS or PAUSED so the duration text updates live.
   // Stops once the workday is COMPLETED to avoid a no-op render loop.
   const today = payload?.today;
@@ -161,7 +387,49 @@ export default function WorkdayStrip({
   // bubble through getErrorMessage so the user sees the server's reason
   // text (e.g. "End time can't be in the future"). ─────────────────────
 
+  // ── Action wrappers — all close + refetch on success and PROPAGATE
+  // errors to the dialog's local catch. We deliberately do NOT call
+  // publishInlineMessage on error here: a toast over a centered dialog
+  // is hidden on mobile. The dialog catches the throw and renders the
+  // failure reason inline via DialogShell's inlineError strip. Success
+  // toasts are still fine — at that point the dialog is gone.
+  //
+  // When offline + self-service path, the same handlers enqueue the
+  // mutation through `enqueueAction` and apply an optimistic state
+  // transition locally so the UI updates immediately. The queue replays
+  // against the real server when the device reconnects. ────────
+
+  // Synthetic per-day "entity id" used to group same-day workday
+  // mutations in the offline queue. Matches the queue's failedOccurrences
+  // skip semantic — if e.g. START_WORKDAY fails server-side, queued
+  // PAUSE/END for the same day will be skipped instead of fanning out
+  // confusing errors.
+  const workdayEntityId = `workday:${bizToday()}`;
+
+  async function enqueueWorkdayLocally(
+    type: WorkdayMutationType,
+    label: string,
+    payloadBody: Record<string, unknown>,
+    input?: { startedAt?: string | null; endedAt?: string | null; totalPausedMs?: number | null },
+  ) {
+    await enqueueAction(type as QueuedActionType, workdayEntityId, label, payloadBody);
+    // Apply locally + mirror to sessionStorage + broadcast same-tab
+    // event so any sibling WorkdayStrip (other Worker→Work tab) picks
+    // up the change. Without this, navigating away and back showed the
+    // stale SW-cached state.
+    if (!payload) return;
+    const next = applyOptimisticWorkdayUpdate(payload, type, bizToday(), input);
+    setPayload(next);
+    writeOptimisticPayload(next);
+  }
+
   async function handleStart(input: { startedAt?: string | null }) {
+    if (canQueueOffline) {
+      await enqueueWorkdayLocally("START_WORKDAY", "Start workday", input, input);
+      setDialog(null);
+      publishInlineMessage({ type: "INFO", text: "Workday started (queued for sync)." });
+      return;
+    }
     await startWorkday(input, asOpts);
     setDialog(null);
     void load();
@@ -169,15 +437,42 @@ export default function WorkdayStrip({
   }
 
   async function handlePause() {
+    if (canQueueOffline) {
+      await enqueueWorkdayLocally("PAUSE_WORKDAY", "Pause workday", {});
+      setDialog(null);
+      publishInlineMessage({ type: "INFO", text: "Workday paused (queued for sync)." });
+      return;
+    }
     await pauseWorkday(asOpts);
+    setDialog(null);
     void load();
     publishInlineMessage({ type: "SUCCESS", text: "Workday paused." });
   }
 
   async function handleResume() {
+    if (canQueueOffline) {
+      await enqueueWorkdayLocally("RESUME_WORKDAY", "Resume workday", {});
+      setDialog(null);
+      publishInlineMessage({ type: "INFO", text: "Workday resumed (queued for sync)." });
+      return;
+    }
     await resumeWorkday(asOpts);
+    setDialog(null);
     void load();
     publishInlineMessage({ type: "SUCCESS", text: "Workday resumed." });
+  }
+
+  async function handleReopen() {
+    if (canQueueOffline) {
+      await enqueueWorkdayLocally("REOPEN_WORKDAY", "Continue workday", {});
+      setDialog(null);
+      publishInlineMessage({ type: "INFO", text: "Workday continued (queued for sync)." });
+      return;
+    }
+    await reopenWorkday(asOpts);
+    setDialog(null);
+    void load();
+    publishInlineMessage({ type: "SUCCESS", text: "Workday continued." });
   }
 
   async function handleEnd(input: {
@@ -186,6 +481,12 @@ export default function WorkdayStrip({
     endedAt?: string | null;
     totalPausedMs?: number | null;
   }) {
+    if (canQueueOffline) {
+      await enqueueWorkdayLocally("END_WORKDAY", "End workday", input as Record<string, unknown>, input);
+      setDialog(null);
+      publishInlineMessage({ type: "INFO", text: "Workday ended (queued for sync)." });
+      return;
+    }
     await endWorkday(input, asOpts);
     setDialog(null);
     void load();
@@ -200,6 +501,10 @@ export default function WorkdayStrip({
       totalPausedMs?: number | null;
     },
   ) {
+    // Edit times intentionally NOT offline-queueable. The endpoint takes
+    // a server-assigned `workdayId`; offline we may only have the
+    // synthetic `local-…` placeholder. Falls back to the inline error
+    // ("Failed to update") which the dialog renders.
     await editWorkdayTimes(workdayId, input, asOpts);
     setDialog(null);
     void load();
@@ -207,23 +512,26 @@ export default function WorkdayStrip({
   }
 
   async function handleCancel() {
-    try {
-      await cancelWorkday(asOpts);
+    if (canQueueOffline) {
+      await enqueueWorkdayLocally("CANCEL_WORKDAY", "Cancel workday", {});
       setDialog(null);
-      void load();
-      publishInlineMessage({ type: "SUCCESS", text: "Workday cancelled." });
-    } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Cancel failed.", err) });
+      publishInlineMessage({ type: "INFO", text: "Workday cancelled (queued for sync)." });
+      return;
     }
+    await cancelWorkday(asOpts);
+    setDialog(null);
+    void load();
+    publishInlineMessage({ type: "SUCCESS", text: "Workday cancelled." });
   }
 
   // ── Render ────────────────────────────────────────────────────────────
 
   // While the first load is in flight, show a skeleton so the slot doesn't
   // pop in jarringly. Subsequent loads keep showing the prior state.
+  const cardMb = noBottomMargin ? 0 : 3;
   if (!payload && loading) {
     return (
-      <Card.Root variant="outline" mb={3}>
+      <Card.Root variant="outline" mb={cardMb}>
         <Card.Body p={3}>
           <HStack gap={2}>
             <Spinner size="sm" />
@@ -247,7 +555,7 @@ export default function WorkdayStrip({
           bg="orange.50"
           borderColor="orange.400"
           borderWidth="2px"
-          mb={3}
+          mb={cardMb}
         >
           <Card.Body p={3}>
             <ForgotPriorRow
@@ -267,9 +575,29 @@ export default function WorkdayStrip({
         today={payload.today}
         viewAsName={viewAsDisplayName}
         canAct={canAct}
-        onStart={() => setDialog({ kind: "start" })}
+        noBottomMargin={noBottomMargin}
+        // Defensive default — a pre-deploy cached `/api/me/workday/today`
+        // response (served by the service worker when offline or stale)
+        // will lack `todayJobs` since the field was added recently. Without
+        // this fallback, accessing `payload.todayJobs.scheduled` in
+        // WorkdayCard would crash. Safe to default to 0/0 — the pulse
+        // logic just won't fire until the cache refreshes.
+        todayJobs={payload.todayJobs ?? { scheduled: 0, remaining: 0 }}
+        onStart={() => {
+          // Pre-flight: if the worker has nothing scheduled today, surface
+          // a confirm dialog so accidental morning taps don't silently
+          // clock them in on a day off. Confirming drops through to the
+          // regular Start datetime-picker dialog.
+          const scheduled = payload.todayJobs?.scheduled ?? 0;
+          if (scheduled === 0) {
+            setDialog({ kind: "confirmNoJobs" });
+            return;
+          }
+          setDialog({ kind: "start" });
+        }}
         onPause={(w) => setDialog({ kind: "pause", workday: w })}
         onResume={(w) => setDialog({ kind: "resume", workday: w })}
+        onReopen={(w) => setDialog({ kind: "reopen", workday: w })}
         onEnd={(w) =>
           setDialog({
             kind: "end",
@@ -285,6 +613,27 @@ export default function WorkdayStrip({
       {/* Dialogs — only one of these renders at a time. Each gets the
           viewAs name so the in-dialog impersonation block can call out
           whose record is about to be mutated. */}
+      {/* Pre-flight: only fires when the worker has zero jobs scheduled
+          today. Confirming drops through to the regular Start dialog so
+          the worker can still backdate their start time if they want. */}
+      {dialog?.kind === "confirmNoJobs" && (
+        <ConfirmDialog
+          open
+          title="No jobs scheduled today"
+          message={
+            viewAsDisplayName
+              ? `${viewAsDisplayName} has no jobs scheduled for today. Start the workday anyway?`
+              : "You don't have any jobs scheduled for today. Start your workday anyway?"
+          }
+          warning="Workdays still need admin approval — this is just a quick check so you don't accidentally clock in on a day off."
+          confirmLabel="Start workday"
+          confirmColorPalette="orange"
+          cancelLabel="Never mind"
+          onConfirm={() => setDialog({ kind: "start" })}
+          onCancel={() => setDialog(null)}
+          viewAsName={viewAsDisplayName}
+        />
+      )}
       {dialog?.kind === "start" && (
         <StartWorkdayDialog
           viewAsName={viewAsDisplayName}
@@ -297,10 +646,7 @@ export default function WorkdayStrip({
           workday={dialog.workday}
           viewAsName={viewAsDisplayName}
           onClose={() => setDialog(null)}
-          onConfirm={() => {
-            setDialog(null);
-            void handlePause();
-          }}
+          onConfirm={handlePause}
         />
       )}
       {dialog?.kind === "resume" && (
@@ -308,10 +654,15 @@ export default function WorkdayStrip({
           workday={dialog.workday}
           viewAsName={viewAsDisplayName}
           onClose={() => setDialog(null)}
-          onConfirm={() => {
-            setDialog(null);
-            void handleResume();
-          }}
+          onConfirm={handleResume}
+        />
+      )}
+      {dialog?.kind === "reopen" && (
+        <ReopenWorkdayDialog
+          workday={dialog.workday}
+          viewAsName={viewAsDisplayName}
+          onClose={() => setDialog(null)}
+          onConfirm={handleReopen}
         />
       )}
       {dialog?.kind === "end" && (
@@ -345,7 +696,7 @@ export default function WorkdayStrip({
           workday={dialog.workday}
           viewAsName={viewAsDisplayName}
           onClose={() => setDialog(null)}
-          onConfirm={() => void handleCancel()}
+          onConfirm={handleCancel}
         />
       )}
     </>
@@ -359,22 +710,70 @@ function WorkdayCard({
   onStart,
   onPause,
   onResume,
+  onReopen,
   onEnd,
   onEdit,
   onCancel,
   viewAsName,
   canAct,
+  noBottomMargin = false,
+  todayJobs,
 }: {
   today: WorkdayState;
   onStart: () => void;
   onPause: (w: WorkdaySummary) => void;
   onResume: (w: WorkdaySummary) => void;
+  onReopen: (w: WorkdaySummary) => void;
   onEnd: (w: WorkdaySummary) => void;
   onEdit: (w: WorkdaySummary) => void;
   onCancel: (w: WorkdaySummary) => void;
   viewAsName?: string | null;
   canAct: boolean;
+  noBottomMargin?: boolean;
+  todayJobs: { scheduled: number; remaining: number };
 }) {
+  const cardMb = noBottomMargin ? 0 : 3;
+  // Conditional pulse:
+  //   NOT_STARTED → orange pulse only when the worker actually has work
+  //     scheduled today. No pulse on days off so the card recedes.
+  //   IN_PROGRESS → green pulse only when they've completed everything
+  //     scheduled today — a "you can clock out now" cue.
+  const pulseNotStarted = todayJobs.remaining > 0;
+  const pulseInProgress = todayJobs.scheduled > 0 && todayJobs.remaining === 0;
+  const orangePulseStyle = { animation: "seedlings-pulse-orange 2.5s ease-in-out infinite" } as const;
+  const greenPulseStyle = { animation: "seedlings-pulse-green 2.5s ease-in-out infinite" } as const;
+  // Collapse pref — persisted per-viewer (not per-worker) so it survives
+  // reloads. Default expanded; the user opts in to compact mode.
+  const [collapsed, setCollapsed] = usePersistedState<boolean>("workdayStripCollapsed", false);
+  const toggleButton = (
+    <Button
+      size="xs"
+      variant="ghost"
+      aria-label={collapsed ? "Show full workday details" : "Collapse workday card"}
+      title={collapsed ? "Expand" : "Collapse"}
+      onClick={(e) => { e.stopPropagation(); setCollapsed(!collapsed); }}
+      px={1}
+      minW="auto"
+    >
+      {collapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+    </Button>
+  );
+  // Card-body-level click target: tapping any non-button surface inside
+  // the card toggles collapse. Buttons + icon quick-action use
+  // stopPropagation so the action fires WITHOUT also flipping collapse.
+  const bodyClickProps = {
+    cursor: "pointer" as const,
+    onClick: () => setCollapsed(!collapsed),
+  };
+  // For expanded cards: pin the toggle to the top-right corner so it
+  // doesn't get pushed to a new row when the action buttons wrap on
+  // narrow screens. Each expanded Card.Root must be `position="relative"`
+  // for this to anchor correctly.
+  const cornerToggle = (
+    <Box position="absolute" top="6px" right="6px" zIndex={1}>
+      {toggleButton}
+    </Box>
+  );
   // Read-only banner — shown when the caller is viewing-as a worker
   // (Admin only; Super gets canAct = true). The card itself still
   // renders in full so admin can see the worker's current state for
@@ -393,6 +792,126 @@ function WorkdayCard({
       </Text>
     </Box>
   ) : null;
+
+  // ── COLLAPSED ────────────────────────────────────────────────────────
+  // One compact row per state: icon chip + summary text + the primary
+  // quick action + a chevron to expand. Sub-actions (Pause, Cancel, Edit
+  // times, etc.) are hidden behind the chevron so the card matches the
+  // size of a job-card row.
+  if (collapsed) {
+    let bg = "gray.50", borderColor = "gray.300", iconBg = "gray.500";
+    let icon: React.ReactNode = <CheckCircle2 size={18} />;
+    let summary: React.ReactNode = "";
+    let primary: React.ReactNode = null;
+    // The icon doubles as a quick-tap target for the same default
+    // action exposed by the primary button. Set both together so they
+    // stay in sync. `null` = no default action (e.g. COMPLETED, or
+    // read-only view).
+    let primaryAction: (() => void) | null = null;
+    let primaryActionLabel = "";
+    if (today.state === "NOT_STARTED") {
+      bg = "orange.50"; borderColor = "orange.400"; iconBg = "orange.500";
+      icon = <Clock size={18} />;
+      summary = viewAsName ? `${viewAsName} hasn't started` : "Start your workday";
+      if (canAct) {
+        primaryAction = onStart;
+        primaryActionLabel = "Start workday";
+      }
+      // No explicit Start button on the collapsed row — tapping the
+      // orange clock icon starts the workday. Keeps the row at
+      // job-card height.
+    } else if (today.state === "IN_PROGRESS") {
+      bg = "green.50"; borderColor = "green.400"; iconBg = "green.500";
+      icon = <Clock size={18} />;
+      const active = activeMs(today.workday);
+      const allDone = pulseInProgress; // same condition that drives the pulse
+      summary = `${viewAsName ? `${viewAsName} on the clock` : "On the clock"} · ${fmtDuration(active)}${allDone ? " · all jobs completed" : ""}`;
+      if (canAct) {
+        primaryAction = () => onEnd(today.workday);
+        primaryActionLabel = "End workday";
+      }
+      // No explicit End button on the collapsed row — tapping the green
+      // clock icon ends the workday. Keeps the row at job-card height.
+    } else if (today.state === "PAUSED") {
+      bg = "yellow.50"; borderColor = "yellow.400"; iconBg = "yellow.500";
+      icon = <Pause size={18} />;
+      const pausedMs = totalPausedMsLive(today.workday);
+      summary = `Paused · ${fmtDuration(pausedMs)}`;
+      if (canAct) {
+        primaryAction = () => onResume(today.workday);
+        primaryActionLabel = "Resume workday";
+      }
+      primary = primaryAction ? (
+        <Button size="xs" colorPalette="yellow" onClick={(e) => { e.stopPropagation(); primaryAction!(); }}>
+          <Play size={12} /> <Text ml={1}>Resume</Text>
+        </Button>
+      ) : null;
+    } else if (today.state === "COMPLETED") {
+      bg = "gray.50"; borderColor = "gray.300"; iconBg = "gray.500";
+      icon = <CheckCircle2 size={18} />;
+      const active = activeMs(today.workday);
+      summary = `Workday complete · ${fmtDuration(active)}`;
+      // Tap the icon to Edit times — the common case (worker realizing
+      // their end-of-day time was off). The "Continue" mistake-recovery
+      // action stays accessible via expand.
+      if (canAct) {
+        primaryAction = () => onEdit(today.workday);
+        primaryActionLabel = "Edit times";
+      }
+    }
+    const collapsedPulseStyle =
+      today.state === "NOT_STARTED" && pulseNotStarted ? orangePulseStyle :
+      today.state === "IN_PROGRESS" && pulseInProgress ? greenPulseStyle :
+      undefined;
+    return (
+      <Card.Root
+        variant="outline"
+        bg={bg}
+        borderColor={borderColor}
+        mb={cardMb}
+        style={collapsedPulseStyle}
+      >
+        <Card.Body p={2} {...bodyClickProps}>
+          {readOnlyBanner}
+          <HStack gap={2} align="center" wrap="nowrap">
+            <Box
+              bg={iconBg}
+              color="white"
+              p={1}
+              borderRadius="full"
+              flexShrink={0}
+              cursor={primaryAction ? "pointer" : "default"}
+              transition="all 0.15s"
+              _hover={primaryAction ? { opacity: 0.85, transform: "scale(1.08)" } : undefined}
+              onClick={primaryAction ? (e: React.MouseEvent) => {
+                e.stopPropagation();
+                primaryAction!();
+              } : undefined}
+              role={primaryAction ? "button" : undefined}
+              tabIndex={primaryAction ? 0 : undefined}
+              aria-label={primaryAction ? primaryActionLabel : undefined}
+              title={primaryAction ? primaryActionLabel : undefined}
+              onKeyDown={primaryAction ? (e: React.KeyboardEvent) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  primaryAction!();
+                }
+              } : undefined}
+            >
+              {icon}
+            </Box>
+            <Text fontSize="sm" fontWeight="medium" flex="1" minW="0" lineClamp={1}>
+              {summary}
+            </Text>
+            {primary}
+            {toggleButton}
+          </HStack>
+        </Card.Body>
+      </Card.Root>
+    );
+  }
+
   // ── NOT_STARTED ─────────────────────────────────────────────────────
   // The loudest state — orange card with a thicker border, larger icon
   // and CTA button so the worker can't miss the one thing they have to
@@ -404,32 +923,39 @@ function WorkdayCard({
         bg="orange.50"
         borderColor="orange.400"
         borderWidth="2px"
-        mb={3}
+        mb={cardMb}
         shadow="sm"
+        position="relative"
+        style={pulseNotStarted ? orangePulseStyle : undefined}
       >
-        <Card.Body p={4}>
+        <Card.Body p={3} pr={9} {...bodyClickProps}>
           {readOnlyBanner}
-          <HStack gap={3} align="center" wrap="wrap">
-            <Box bg="orange.500" color="white" p={2} borderRadius="full" flexShrink={0}>
-              <Clock size={22} />
-            </Box>
-            <VStack align="start" gap={0} flex="1" minW="180px">
-              <Text fontSize="md" fontWeight="bold" color="orange.900">
-                {viewAsName ? `${viewAsName} hasn't started their workday` : "Start your workday"}
-              </Text>
-              <Text fontSize="xs" color="orange.800">
-                {viewAsName
-                  ? "Their workday must be started before they can begin any jobs. Start of workday is when they reach their first location."
-                  : "You need to start your workday before you can begin any jobs. Start of workday is when you reach your first location."}
-              </Text>
-            </VStack>
+          <VStack align="stretch" gap={2}>
+            <HStack gap={3} align="center">
+              <Box bg="orange.500" color="white" p={1.5} borderRadius="full" flexShrink={0}>
+                <Clock size={18} />
+              </Box>
+              <VStack align="start" gap={0} flex="1" minW="0">
+                <Text fontSize="sm" fontWeight="bold" color="orange.900">
+                  {viewAsName ? `${viewAsName} hasn't started their workday` : "Start your workday"}
+                </Text>
+                <Text fontSize="xs" color="orange.800">
+                  {viewAsName
+                    ? "Required before they can begin any jobs. Start when they reach their first location."
+                    : "Required before you can begin any jobs. Start when you reach your first location."}
+                </Text>
+              </VStack>
+            </HStack>
             {canAct && (
-              <Button size="md" colorPalette="green" onClick={onStart}>
-                <Play size={16} /> <Text ml={1}>Start workday</Text>
-              </Button>
+              <HStack>
+                <Button size="xs" colorPalette="orange" onClick={(e) => { e.stopPropagation(); onStart(); }}>
+                  <Play size={12} /> <Text ml={1}>Start</Text>
+                </Button>
+              </HStack>
             )}
-          </HStack>
+          </VStack>
         </Card.Body>
+        {cornerToggle}
       </Card.Root>
     );
   }
@@ -448,60 +974,44 @@ function WorkdayCard({
         bg="green.50"
         borderColor="green.400"
         borderWidth="2px"
-        mb={3}
+        mb={cardMb}
+        position="relative"
+        style={pulseInProgress ? greenPulseStyle : undefined}
       >
-        <Card.Body p={4}>
+        <Card.Body p={3} pr={9} {...bodyClickProps}>
           {readOnlyBanner}
-          <HStack gap={3} align="center" wrap="wrap">
-            <Box position="relative" flexShrink={0}>
-              <Box bg="green.500" color="white" p={2} borderRadius="full">
-                <Clock size={22} />
+          <VStack align="stretch" gap={2}>
+            <HStack gap={3} align="center">
+              <Box bg="green.500" color="white" p={1.5} borderRadius="full" flexShrink={0}>
+                <Clock size={18} />
               </Box>
-              {/* Pulse dot — "live" affordance, only animates when the
-                  workday is actively ticking (not paused/completed). */}
-              <Box
-                position="absolute"
-                top="-2px"
-                right="-2px"
-                w="10px"
-                h="10px"
-                borderRadius="full"
-                bg="red.500"
-                borderWidth="2px"
-                borderColor="green.50"
-                css={{
-                  animation: "wd-pulse 1.6s ease-in-out infinite",
-                  "@keyframes wd-pulse": {
-                    "0%, 100%": { opacity: 1 },
-                    "50%": { opacity: 0.35 },
-                  },
-                }}
-              />
-            </Box>
-            <VStack align="start" gap={0} flex="1" minW="180px">
-              <Text fontSize="md" fontWeight="bold" color="green.900">
-                {viewAsName ? `${viewAsName} is on the clock` : "On the clock"} · {fmtDuration(active)} active
-              </Text>
-              <Text fontSize="xs" color="green.800">
-                Started at {fmtClockTime(today.workday.startedAt)}
-                {paused > 0 && ` · ${fmtDuration(paused)} paused so far`}
-              </Text>
-            </VStack>
+              <VStack align="start" gap={0} flex="1" minW="0">
+                <Text fontSize="sm" fontWeight="bold" color="green.900">
+                  {viewAsName ? `${viewAsName} is on the clock` : "On the clock"} · {fmtDuration(active)} active
+                  {pulseInProgress && " · all jobs completed"}
+                </Text>
+                <Text fontSize="xs" color="green.800">
+                  Started at {fmtClockTime(today.workday.startedAt)}
+                  {paused > 0 && ` · ${fmtDuration(paused)} paused so far`}
+                </Text>
+              </VStack>
+            </HStack>
             {canAct && (
-              <HStack gap={1} wrap="wrap">
-                <Button size="sm" variant="ghost" onClick={() => onCancel(today.workday)}>
-                  Cancel
+              <HStack gap={2} wrap="wrap">
+                <Button size="xs" colorPalette="green" onClick={(e) => { e.stopPropagation(); onEnd(today.workday); }}>
+                  <Check size={14} strokeWidth={3} /> <Text ml={1}>Complete</Text>
                 </Button>
-                <Button size="sm" variant="outline" colorPalette="yellow" onClick={() => onPause(today.workday)}>
-                  <Pause size={14} /> <Text ml={1}>Pause</Text>
+                <Button size="xs" colorPalette="yellow" onClick={(e) => { e.stopPropagation(); onPause(today.workday); }}>
+                  <Pause size={12} /> <Text ml={1}>Pause</Text>
                 </Button>
-                <Button size="sm" colorPalette="red" onClick={() => onEnd(today.workday)}>
-                  End workday
+                <Button size="xs" colorPalette="red" onClick={(e) => { e.stopPropagation(); onCancel(today.workday); }}>
+                  <X size={12} /> <Text ml={1}>Cancel</Text>
                 </Button>
               </HStack>
             )}
-          </HStack>
+          </VStack>
         </Card.Body>
+        {cornerToggle}
       </Card.Root>
     );
   }
@@ -519,37 +1029,41 @@ function WorkdayCard({
         bg="yellow.50"
         borderColor="yellow.400"
         borderWidth="2px"
-        mb={3}
+        mb={cardMb}
+        position="relative"
       >
-        <Card.Body p={4}>
+        <Card.Body p={3} pr={9} {...bodyClickProps}>
           {readOnlyBanner}
-          <HStack gap={3} align="center" wrap="wrap">
-            <Box bg="yellow.500" color="white" p={2} borderRadius="full" flexShrink={0}>
-              <Pause size={22} />
-            </Box>
-            <VStack align="start" gap={0} flex="1" minW="180px">
-              <Text fontSize="md" fontWeight="bold" color="yellow.900">
-                {viewAsName ? `${viewAsName}'s workday paused` : "Workday paused"} · {fmtDuration(paused)} paused
-              </Text>
-              <Text fontSize="xs" color="yellow.800">
-                Paused at {fmtClockTime(today.workday.pausedAt!)} · {fmtDuration(active)} active so far
-              </Text>
-            </VStack>
+          <VStack align="stretch" gap={2}>
+            <HStack gap={3} align="center">
+              <Box bg="yellow.500" color="white" p={1.5} borderRadius="full" flexShrink={0}>
+                <Pause size={18} />
+              </Box>
+              <VStack align="start" gap={0} flex="1" minW="0">
+                <Text fontSize="sm" fontWeight="bold" color="yellow.900">
+                  {viewAsName ? `${viewAsName}'s workday paused` : "Workday paused"} · {fmtDuration(paused)} paused
+                </Text>
+                <Text fontSize="xs" color="yellow.800">
+                  Paused at {fmtClockTime(today.workday.pausedAt!)} · {fmtDuration(active)} active so far
+                </Text>
+              </VStack>
+            </HStack>
             {canAct && (
-              <HStack gap={1} wrap="wrap">
-                <Button size="sm" variant="ghost" onClick={() => onCancel(today.workday)}>
-                  Cancel
+              <HStack gap={2} wrap="wrap">
+                <Button size="xs" colorPalette="green" onClick={(e) => { e.stopPropagation(); onEnd(today.workday); }}>
+                  <Check size={14} strokeWidth={3} /> <Text ml={1}>Complete</Text>
                 </Button>
-                <Button size="sm" colorPalette="green" onClick={() => onResume(today.workday)}>
-                  <Play size={14} /> <Text ml={1}>Resume</Text>
+                <Button size="xs" colorPalette="yellow" onClick={(e) => { e.stopPropagation(); onResume(today.workday); }}>
+                  <Play size={12} /> <Text ml={1}>Resume</Text>
                 </Button>
-                <Button size="sm" variant="outline" colorPalette="red" onClick={() => onEnd(today.workday)}>
-                  End workday
+                <Button size="xs" colorPalette="red" onClick={(e) => { e.stopPropagation(); onCancel(today.workday); }}>
+                  <X size={12} /> <Text ml={1}>Cancel</Text>
                 </Button>
               </HStack>
             )}
-          </HStack>
+          </VStack>
         </Card.Body>
+        {cornerToggle}
       </Card.Root>
     );
   }
@@ -560,30 +1074,41 @@ function WorkdayCard({
   const active = activeMs(today.workday);
   const paused = today.workday.totalPausedMs;
   return (
-    <Card.Root variant="outline" bg="gray.50" mb={3}>
-      <Card.Body p={3}>
+    <Card.Root variant="outline" bg="gray.50" mb={cardMb} position="relative">
+      <Card.Body p={3} pr={9} {...bodyClickProps}>
         {readOnlyBanner}
-        <HStack gap={2} align="center" wrap="wrap">
-          <Box color="gray.500" flexShrink={0}>
-            <Clock size={16} />
-          </Box>
-          <VStack align="start" gap={0} flex="1" minW="180px">
-            <Text fontSize="sm" fontWeight="medium">
-              {viewAsName ? `${viewAsName}'s workday complete` : "Workday complete"} · {fmtDuration(active)} active
-            </Text>
-            <Text fontSize="xs" color="fg.muted">
-              {fmtClockTime(today.workday.startedAt)}
-              {today.workday.endedAt && ` – ${fmtClockTime(today.workday.endedAt)}`}
-              {paused > 0 && ` · ${fmtDuration(paused)} paused`}
-            </Text>
-          </VStack>
+        <VStack align="stretch" gap={2}>
+          <HStack gap={3} align="center">
+            <Box bg="gray.500" color="white" p={1.5} borderRadius="full" flexShrink={0}>
+              <CheckCircle2 size={18} />
+            </Box>
+            <VStack align="start" gap={0} flex="1" minW="0">
+              <Text fontSize="sm" fontWeight="medium">
+                {viewAsName ? `${viewAsName}'s workday complete` : "Workday complete"} · {fmtDuration(active)} active
+              </Text>
+              <Text fontSize="xs" color="fg.muted">
+                {fmtClockTime(today.workday.startedAt)}
+                {today.workday.endedAt && ` – ${fmtClockTime(today.workday.endedAt)}`}
+                {paused > 0 && ` · ${fmtDuration(paused)} paused`}
+              </Text>
+            </VStack>
+          </HStack>
           {canAct && (
-            <Button size="xs" variant="ghost" onClick={() => onEdit(today.workday)}>
-              <Edit3 size={12} /> <Text ml={1}>Edit times</Text>
-            </Button>
+            <HStack gap={2} wrap="wrap">
+              <Button size="xs" bg="gray.400" color="white" _hover={{ bg: "gray.500" }} onClick={(e) => { e.stopPropagation(); onEdit(today.workday); }}>
+                <Edit3 size={12} /> <Text ml={1}>Edit times</Text>
+              </Button>
+              {/* "Continue" — for ending the workday by mistake. Server adds
+                  the gap between endedAt and now to totalPausedMs so the
+                  off-the-clock interval doesn't count as payable hours. */}
+              <Button size="xs" colorPalette="green" onClick={(e) => { e.stopPropagation(); onReopen(today.workday); }}>
+                <Play size={12} /> <Text ml={1}>Continue</Text>
+              </Button>
+            </HStack>
           )}
-        </HStack>
+        </VStack>
       </Card.Body>
+      {cornerToggle}
     </Card.Root>
   );
 }
@@ -629,6 +1154,8 @@ function DialogShell({
   footer,
   onClose,
   viewAsName,
+  inlineError,
+  onDismissInlineError,
 }: {
   open: boolean;
   title: string;
@@ -636,6 +1163,15 @@ function DialogShell({
   footer: React.ReactNode;
   onClose: () => void;
   viewAsName?: string | null;
+  /** Inline error from the dialog's own confirm action. Renders as a red
+   *  alert strip between the body and the footer, so on mobile (where a
+   *  bottom-anchored toast would be hidden behind a centered dialog) the
+   *  user still sees the failure reason without leaving the dialog. */
+  inlineError?: string | null;
+  /** Optional close-x on the error strip — pass when the error is
+   *  recoverable (most cases). Omit if the only path is to dismiss the
+   *  dialog. */
+  onDismissInlineError?: () => void;
 }) {
   return (
     <Dialog.Root
@@ -654,6 +1190,39 @@ function DialogShell({
               <ImpersonationWarningBlock viewAsName={viewAsName} />
               {children}
             </Dialog.Body>
+            {inlineError && (
+              <Box
+                mt={2}
+                mb={1}
+                p={2}
+                bg="red.50"
+                borderWidth="1px"
+                borderColor="red.300"
+                borderRadius="md"
+                role="alert"
+              >
+                <HStack gap={2} align="start">
+                  <Box color="red.600" flexShrink={0} mt="2px">
+                    <AlertTriangle size={14} />
+                  </Box>
+                  <Text fontSize="sm" color="red.900" flex="1">
+                    {inlineError}
+                  </Text>
+                  {onDismissInlineError && (
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      colorPalette="red"
+                      onClick={onDismissInlineError}
+                      px={2}
+                      minW="auto"
+                    >
+                      ×
+                    </Button>
+                  )}
+                </HStack>
+              </Box>
+            )}
             <Dialog.Footer>{footer}</Dialog.Footer>
           </Dialog.Content>
         </Dialog.Positioner>
@@ -673,9 +1242,10 @@ function StartWorkdayDialog({
 }) {
   const [startedAt, setStartedAt] = useState(() => isoToLocal(new Date().toISOString()));
   const [saving, setSaving] = useState(false);
-  const errorRef = useRef<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   async function submit() {
+    setError(null);
     setSaving(true);
     try {
       // Empty input → server uses "now". Allows the simple case of "just
@@ -684,8 +1254,7 @@ function StartWorkdayDialog({
       const iso = localToIso(startedAt);
       await onConfirm({ startedAt: iso ?? null });
     } catch (err) {
-      errorRef.current = getErrorMessage("Failed to start.", err);
-      publishInlineMessage({ type: "ERROR", text: errorRef.current });
+      setError(getErrorMessage("Failed to start.", err));
     } finally {
       setSaving(false);
     }
@@ -697,10 +1266,12 @@ function StartWorkdayDialog({
       title="Start workday"
       viewAsName={viewAsName}
       onClose={onClose}
+      inlineError={error}
+      onDismissInlineError={() => setError(null)}
       footer={
         <HStack justify="flex-end" w="full" gap={2}>
           <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
-          <Button colorPalette="green" onClick={() => void submit()} disabled={saving}>
+          <Button colorPalette="orange" onClick={() => void submit()} disabled={saving}>
             {saving ? <Spinner size="xs" /> : "Start workday"}
           </Button>
         </HStack>
@@ -757,6 +1328,7 @@ function EndWorkdayDialog({
   const [endedAt, setEndedAt] = useState(isoToLocal(new Date().toISOString()));
   const [pausedMin, setPausedMin] = useState(initialPausedMin);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const liveActive = useMemo(() => {
     const startMs = Date.parse(localToIso(startedAt) ?? workday.startedAt);
@@ -766,6 +1338,7 @@ function EndWorkdayDialog({
   }, [startedAt, endedAt, pausedMin, workday.startedAt]);
 
   async function submit() {
+    setError(null);
     setSaving(true);
     try {
       await onConfirm({
@@ -774,7 +1347,7 @@ function EndWorkdayDialog({
         totalPausedMs: pausedMin * 60000,
       });
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to end.", err) });
+      setError(getErrorMessage("Failed to end.", err));
     } finally {
       setSaving(false);
     }
@@ -786,10 +1359,12 @@ function EndWorkdayDialog({
       title="End workday"
       viewAsName={viewAsName}
       onClose={onClose}
+      inlineError={error}
+      onDismissInlineError={() => setError(null)}
       footer={
         <HStack justify="flex-end" w="full" gap={2}>
           <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
-          <Button colorPalette="red" onClick={() => void submit()} disabled={saving}>
+          <Button colorPalette="green" onClick={() => void submit()} disabled={saving}>
             {saving ? <Spinner size="xs" /> : "End anyway"}
           </Button>
         </HStack>
@@ -913,6 +1488,7 @@ function EditWorkdayDialog({
   const [endedAt, setEndedAt] = useState(isoToLocal(workday.endedAt));
   const [pausedMin, setPausedMin] = useState(initialPausedMin);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const liveActive = useMemo(() => {
     const startMs = Date.parse(localToIso(startedAt) ?? workday.startedAt);
@@ -922,6 +1498,7 @@ function EditWorkdayDialog({
   }, [startedAt, endedAt, pausedMin, workday.startedAt, workday.endedAt]);
 
   async function submit() {
+    setError(null);
     setSaving(true);
     try {
       await onConfirm({
@@ -930,7 +1507,7 @@ function EditWorkdayDialog({
         totalPausedMs: pausedMin * 60000,
       });
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to update.", err) });
+      setError(getErrorMessage("Failed to update.", err));
     } finally {
       setSaving(false);
     }
@@ -942,6 +1519,8 @@ function EditWorkdayDialog({
       title="Edit workday times"
       viewAsName={viewAsName}
       onClose={onClose}
+      inlineError={error}
+      onDismissInlineError={() => setError(null)}
       footer={
         <HStack justify="flex-end" w="full" gap={2}>
           <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
@@ -1042,6 +1621,7 @@ function ForgotPriorDialog({
   const [endedAt, setEndedAt] = useState(isoToLocal(defaultEndIso));
   const [pausedMin, setPausedMin] = useState(initialPausedMin);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const liveActive = useMemo(() => {
     const startMs = Date.parse(localToIso(startedAt) ?? workday.startedAt);
@@ -1051,6 +1631,7 @@ function ForgotPriorDialog({
   }, [startedAt, endedAt, pausedMin, workday.startedAt, defaultEndIso]);
 
   async function submit() {
+    setError(null);
     setSaving(true);
     try {
       await onConfirm({
@@ -1059,7 +1640,7 @@ function ForgotPriorDialog({
         totalPausedMs: pausedMin * 60000,
       });
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to end.", err) });
+      setError(getErrorMessage("Failed to end.", err));
     } finally {
       setSaving(false);
     }
@@ -1071,6 +1652,8 @@ function ForgotPriorDialog({
       title={`End workday for ${fmtWorkdayDate(workday.workdayDate)}`}
       viewAsName={viewAsName}
       onClose={onClose}
+      inlineError={error}
+      onDismissInlineError={() => setError(null)}
       footer={
         <HStack justify="flex-end" w="full" gap={2}>
           <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
@@ -1148,24 +1731,39 @@ function CancelWorkdayDialog({
 }: {
   workday: WorkdaySummary;
   onClose: () => void;
-  onConfirm: () => void;
+  onConfirm: () => Promise<void>;
   viewAsName?: string | null;
 }) {
   const startedDuration = useMemo(
     () => fmtDuration(activeMs(workday)),
     [workday],
   );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function confirm() {
+    setError(null);
+    setSaving(true);
+    try {
+      await onConfirm();
+    } catch (err) {
+      setError(getErrorMessage("Cancel failed.", err));
+    } finally {
+      setSaving(false);
+    }
+  }
   return (
     <DialogShell
       open
       title="Cancel this workday?"
       viewAsName={viewAsName}
       onClose={onClose}
+      inlineError={error}
+      onDismissInlineError={() => setError(null)}
       footer={
         <HStack justify="flex-end" w="full" gap={2}>
-          <Button variant="ghost" onClick={onClose}>Keep workday</Button>
-          <Button colorPalette="red" onClick={onConfirm}>
-            Cancel workday
+          <Button variant="ghost" onClick={onClose} disabled={saving}>Keep workday</Button>
+          <Button colorPalette="red" onClick={() => void confirm()} disabled={saving}>
+            {saving ? <Spinner size="xs" /> : "Cancel workday"}
           </Button>
         </HStack>
       }
@@ -1194,24 +1792,39 @@ function PauseWorkdayDialog({
 }: {
   workday: WorkdaySummary;
   onClose: () => void;
-  onConfirm: () => void;
+  onConfirm: () => Promise<void>;
   viewAsName?: string | null;
 }) {
   const activeSoFar = useMemo(
     () => fmtDuration(activeMs(workday)),
     [workday],
   );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function confirm() {
+    setError(null);
+    setSaving(true);
+    try {
+      await onConfirm();
+    } catch (err) {
+      setError(getErrorMessage("Pause failed.", err));
+    } finally {
+      setSaving(false);
+    }
+  }
   return (
     <DialogShell
       open
       title="Pause workday?"
       viewAsName={viewAsName}
       onClose={onClose}
+      inlineError={error}
+      onDismissInlineError={() => setError(null)}
       footer={
         <HStack justify="flex-end" w="full" gap={2}>
-          <Button variant="ghost" onClick={onClose}>Keep going</Button>
-          <Button colorPalette="yellow" onClick={onConfirm}>
-            Pause workday
+          <Button variant="ghost" onClick={onClose} disabled={saving}>Keep going</Button>
+          <Button colorPalette="yellow" onClick={() => void confirm()} disabled={saving}>
+            {saving ? <Spinner size="xs" /> : "Pause workday"}
           </Button>
         </HStack>
       }
@@ -1237,24 +1850,39 @@ function ResumeWorkdayDialog({
 }: {
   workday: WorkdaySummary;
   onClose: () => void;
-  onConfirm: () => void;
+  onConfirm: () => Promise<void>;
   viewAsName?: string | null;
 }) {
   const pausedSoFar = useMemo(
     () => fmtDuration(totalPausedMsLive(workday)),
     [workday],
   );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function confirm() {
+    setError(null);
+    setSaving(true);
+    try {
+      await onConfirm();
+    } catch (err) {
+      setError(getErrorMessage("Resume failed.", err));
+    } finally {
+      setSaving(false);
+    }
+  }
   return (
     <DialogShell
       open
       title="Resume workday?"
       viewAsName={viewAsName}
       onClose={onClose}
+      inlineError={error}
+      onDismissInlineError={() => setError(null)}
       footer={
         <HStack justify="flex-end" w="full" gap={2}>
-          <Button variant="ghost" onClick={onClose}>Stay paused</Button>
-          <Button colorPalette="green" onClick={onConfirm}>
-            Resume workday
+          <Button variant="ghost" onClick={onClose} disabled={saving}>Stay paused</Button>
+          <Button colorPalette="yellow" onClick={() => void confirm()} disabled={saving}>
+            {saving ? <Spinner size="xs" /> : "Resume workday"}
           </Button>
         </HStack>
       }
@@ -1262,6 +1890,76 @@ function ResumeWorkdayDialog({
       <VStack align="stretch" gap={2}>
         <Text fontSize="sm">
           The clock will start again from this moment. Paused for {pausedSoFar} so far.
+        </Text>
+      </VStack>
+    </DialogShell>
+  );
+}
+
+function ReopenWorkdayDialog({
+  workday,
+  onClose,
+  onConfirm,
+  viewAsName,
+}: {
+  workday: WorkdaySummary;
+  onClose: () => void;
+  onConfirm: () => Promise<void>;
+  viewAsName?: string | null;
+}) {
+  // Live gap between the bad endedAt and now — what the server will add to
+  // totalPausedMs so the off-the-clock interval doesn't count toward hours.
+  // Cheap useState + interval; this dialog only renders for a moment so a
+  // re-render-per-second is fine.
+  const [now, setNow] = useState<number>(() => Date.parse(workday.endedAt!));
+  useEffect(() => {
+    setNow(Date.parse(new Date().toISOString()));
+    const id = setInterval(
+      () => setNow(Date.parse(new Date().toISOString())),
+      1000,
+    );
+    return () => clearInterval(id);
+  }, []);
+  const gapMs = Math.max(0, now - Date.parse(workday.endedAt!));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function confirm() {
+    setError(null);
+    setSaving(true);
+    try {
+      await onConfirm();
+    } catch (err) {
+      setError(getErrorMessage("Couldn't continue workday.", err));
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <DialogShell
+      open
+      title="Continue workday?"
+      viewAsName={viewAsName}
+      onClose={onClose}
+      inlineError={error}
+      onDismissInlineError={() => setError(null)}
+      footer={
+        <HStack justify="flex-end" w="full" gap={2}>
+          <Button variant="ghost" onClick={onClose} disabled={saving}>Stay ended</Button>
+          <Button colorPalette="green" onClick={() => void confirm()} disabled={saving}>
+            {saving ? <Spinner size="xs" /> : "Continue workday"}
+          </Button>
+        </HStack>
+      }
+    >
+      <VStack align="stretch" gap={2}>
+        <Text fontSize="sm">
+          You ended at <b>{fmtClockTime(workday.endedAt!)}</b>. If that was a mistake,
+          continue your workday now — the <b>{fmtDuration(gapMs)}</b> between then and
+          now will be recorded as a pause so it doesn't count toward your hours.
+        </Text>
+        <Text fontSize="xs" color="fg.muted">
+          Once an admin has approved this workday, or the same-day edit window has
+          closed, you'll have to ask an admin to re-open it.
         </Text>
       </VStack>
     </DialogShell>

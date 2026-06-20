@@ -29,6 +29,10 @@ import {
   getErrorMessage,
   publishInlineMessage,
 } from "@/src/ui/components/InlineMessage";
+import {
+  DialogErrorAlert,
+  useDialogError,
+} from "@/src/ui/components/DialogErrorAlert";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 
 type PropertyLite = {
@@ -66,6 +70,7 @@ export default function JobDialog({
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [busy, setBusy] = useState(false);
+  const dlgErr = useDialogError();
 
   const [properties, setProperties] = useState<PropertyLite[]>([]);
   const [propertyValue, setPropertyValue] = useState<string[]>([]);
@@ -193,6 +198,7 @@ export default function JobDialog({
   );
 
   async function handleSave() {
+    dlgErr.clear();
     const pid = propertyValue[0];
     if (!pid) {
       publishInlineMessage({ type: "WARNING", text: "Please select a property." });
@@ -241,13 +247,10 @@ export default function JobDialog({
         onSaved?.();
       }
     } catch (err) {
-      publishInlineMessage({
-        type: "ERROR",
-        text: getErrorMessage(
-          mode === "CREATE" ? "Create job failed." : "Update job failed.",
-          err
-        ),
-      });
+      dlgErr.setError(getErrorMessage(
+        mode === "CREATE" ? "Create job failed." : "Update job failed.",
+        err
+      ));
     } finally {
       setBusy(false);
     }
@@ -457,6 +460,7 @@ export default function JobDialog({
               </VStack>
             </Dialog.Body>
 
+            <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
                 {onBack && <Button variant="outline" onClick={onBack}>Back</Button>}

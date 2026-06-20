@@ -4,6 +4,10 @@ import { useEffect, useState } from "react";
 import { Box, Button, Dialog, Portal, Text, Textarea, VStack } from "@chakra-ui/react";
 import { apiPatch, apiPut } from "@/src/lib/api";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
+import {
+  DialogErrorAlert,
+  useDialogError,
+} from "@/src/ui/components/DialogErrorAlert";
 import JobPropertyPhotosPicker from "@/src/ui/components/JobPropertyPhotosPicker";
 
 type Props = {
@@ -26,6 +30,7 @@ export default function JobDefaultGuidanceDialog({ open, onOpenChange, jobId, pr
   const [note, setNote] = useState(guidanceNote ?? "");
   const [photoIds, setPhotoIds] = useState<string[] | null>(null);
   const [saving, setSaving] = useState(false);
+  const dlgErr = useDialogError();
 
   useEffect(() => {
     if (open) {
@@ -35,6 +40,7 @@ export default function JobDefaultGuidanceDialog({ open, onOpenChange, jobId, pr
   }, [open, guidanceNote]);
 
   async function save() {
+    dlgErr.clear();
     setSaving(true);
     try {
       await apiPatch(`/api/admin/jobs/${jobId}`, { guidanceNote: note.trim() || null });
@@ -45,7 +51,7 @@ export default function JobDefaultGuidanceDialog({ open, onOpenChange, jobId, pr
       onSaved?.();
       onOpenChange(false);
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Save failed.", err) });
+      dlgErr.setError(getErrorMessage("Save failed.", err));
     }
     setSaving(false);
   }
@@ -79,6 +85,7 @@ export default function JobDefaultGuidanceDialog({ open, onOpenChange, jobId, pr
                 <JobPropertyPhotosPicker jobId={jobId} propertyId={propertyId} onSelectionChange={setPhotoIds} />
               </VStack>
             </Dialog.Body>
+            <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
             <Dialog.Footer>
               <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
               <Button colorPalette="blue" loading={saving} onClick={() => void save()}>Save</Button>

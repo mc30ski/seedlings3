@@ -24,6 +24,10 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import {
+  DialogErrorAlert,
+  useDialogError,
+} from "@/src/ui/components/DialogErrorAlert";
 
 type ClientItem = { id: string; displayName: string };
 type JobItem = { id: string; propertyName: string; clientName: string };
@@ -70,6 +74,7 @@ export default function FollowupDialog({ open, onOpenChange, onCreated, editFoll
   const [repeatMode, setRepeatMode] = useState<"weekly" | "monthly" | "yearly" | "custom">("weekly");
   const [customDays, setCustomDays] = useState("14");
   const [saving, setSaving] = useState(false);
+  const dlgErr = useDialogError();
   const isEdit = !!editFollowup;
 
   // Client picker
@@ -177,6 +182,7 @@ export default function FollowupDialog({ open, onOpenChange, onCreated, editFoll
   }
 
   async function handleSave() {
+    dlgErr.clear();
     if (!title.trim() || !date) return;
     setSaving(true);
     try {
@@ -200,7 +206,7 @@ export default function FollowupDialog({ open, onOpenChange, onCreated, editFoll
       onOpenChange(false);
       onCreated?.();
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to save followup.", err) });
+      dlgErr.setError(getErrorMessage("Failed to save followup.", err));
     }
     setSaving(false);
   }
@@ -397,6 +403,7 @@ export default function FollowupDialog({ open, onOpenChange, onCreated, editFoll
                 )}
               </VStack>
             </Dialog.Body>
+            <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
             <Dialog.Footer>
               <HStack justify="flex-end" gap={2}>
                 <Button ref={cancelRef} variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>

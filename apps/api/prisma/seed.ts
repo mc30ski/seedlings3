@@ -999,9 +999,32 @@ async function seedDatabase() {
     }
     const o = await prisma.jobOccurrence.create({ data });
     if (assignees?.length) {
+      // Identify the claimer = the first NON-OBSERVER assignee.
+      // The claimer's row gets assignedById === userId (the
+      // canonical "self-assigned = claimer" predicate the rest
+      // of the app uses to identify claim ownership). Everyone
+      // else's row gets assignedById === claimer.userId (assigned
+      // by the claimer). This matches the real claim flow in
+      // production. Without this, seed jobs where the team doesn't
+      // happen to include the admin worker ended up with NO
+      // self-assigned assignee — i.e., no claimer at all — which
+      // breaks the strict `assignedById === userId` check that the
+      // job-card UI uses to surface the Claimer badge. If the team
+      // is observers-only (no first non-observer), we fall back to
+      // ADMIN_WORKER_ID so assignedById is never null — but that
+      // path means the job effectively stays unclaimable until the
+      // admin reassigns.
+      const claimer = assignees.find((a) => a.role !== "observer");
+      const claimerUserId = claimer?.userId ?? null;
       for (const a of assignees) {
+        const isClaimer = !!claimerUserId && a.userId === claimerUserId;
         await prisma.jobOccurrenceAssignee.create({
-          data: { occurrenceId: o.id, userId: a.userId, role: a.role ?? null, assignedById: ADMIN_WORKER_ID },
+          data: {
+            occurrenceId: o.id,
+            userId: a.userId,
+            role: a.role ?? null,
+            assignedById: isClaimer ? a.userId : (claimerUserId ?? ADMIN_WORKER_ID),
+          },
         });
       }
     }
@@ -1183,6 +1206,46 @@ async function seedDatabase() {
   // Unclaimed today
   await occ({ jobId: martinezBiweekly.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(0, 9), endAt: addMinutes(daysFromNow(0, 9), 40), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 55.0, estimatedMinutes: 40 });
   await occ({ jobId: churchWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(0, 14), endAt: addMinutes(daysFromNow(0, 14), 90), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 200.0, estimatedMinutes: 90 });
+
+  // ── Team workday gate fixture ────────────────────────────────────────
+  // A job scheduled for today on a property/job that isn't used
+  // anywhere else today, with a claimer who's clocked in and a helper
+  // who has NOT started their workday today. Exercises the new
+  // TEAM_WORKDAY_NOT_ACTIVE gate end to end: when the claimer presses
+  // Start, the server rejects with a 409 and the frontend opens the
+  // TeamWorkdayRequiredDialog naming the helper.
+  //   • Property: thompsonGuestMow → "Guest House" — unique today-card
+  //     label so the operator can find this fixture unambiguously.
+  //   • Claimer: EMPLOYEE_ID — first non-observer in the assignees
+  //     list, so the occ() helper makes them the self-assigned
+  //     claimer. They have IN_PROGRESS workday today, so their OWN
+  //     workday gate passes and the call reaches the team check.
+  //   • Helper: ADMIN_WORKER_ID — assigned by the claimer (Employee).
+  //     Has NO workday row for today (only yesterday's dangling row),
+  //     so the team gate trips on them.
+  // Verify by: log in (or View-as) as Employee Worker → Worker Jobs →
+  // find the "Guest House" card with the "TEST: Team workday gate"
+  // pinned note → tap Start → dialog should list "Admin Worker."
+  await occ(
+    {
+      jobId: thompsonGuestMow.id,
+      kind: "SINGLE_ADDRESS",
+      startAt: daysFromNow(0, 17),
+      endAt: addMinutes(daysFromNow(0, 17), 30),
+      status: "SCHEDULED",
+      workflow: "STANDARD",
+      jobTags: '["MOW","TRIM"]',
+      price: 55.0,
+      estimatedMinutes: 30,
+      isClientConfirmed: true,
+      pinnedNote: "TEST: Team workday gate — try to Start to see the dialog",
+      pinnedNoteRepeats: false,
+    },
+    [
+      { userId: EMPLOYEE_ID, role: "primary" },
+      { userId: ADMIN_WORKER_ID, role: "helper" },
+    ],
+  );
 
   // Assigned tomorrow
   const tomorrowChenLeaf = await occ(
@@ -2836,7 +2899,13 @@ async function seedDatabase() {
  * setup. Anchored on the actual current wall-clock so all the live
  * durations tick correctly in the strip.
  *
- *   EMPLOYEE_ID    → IN_PROGRESS (started 3h ago, no pauses)
+ *   EMPLOYEE_ID    → NOT_STARTED (no row — surfaces the "Start workday"
+ *                    button; required for the team-workday-gate fixture
+ *                    on the "Guest House" today card where Employee is
+ *                    the claimer. After tapping Start on that card, the
+ *                    claimer-workday dialog fires; clicking "Start
+ *                    workday & continue" then trips the team-workday
+ *                    pre-check on Admin Worker.)
  *   CONTRACTOR_ID  → PAUSED (started 4h ago, paused 30m ago, 12m prior pause)
  *   TRAINEE_ID     → COMPLETED (8h day with 30m lunch — today's edit window
  *                    is still open so the "Edit times" affordance fires)
@@ -2853,14 +2922,11 @@ async function seedWorkdayFixtures() {
   const mins = (n: number) => n * 60 * 1000;
   const hrs = (n: number) => n * 60 * 60 * 1000;
 
-  // ── EMPLOYEE_ID: IN_PROGRESS ────────────────────────────────────────
-  await prisma.workerWorkday.create({
-    data: {
-      userId: EMPLOYEE_ID,
-      workdayDate: today,
-      startedAt: new Date(now.getTime() - hrs(3)),
-    },
-  });
+  // ── EMPLOYEE_ID: NOT_STARTED ────────────────────────────────────────
+  // Deliberately no row today. This drives the two-stage team-workday
+  // gate demo on the "Guest House" card: tapping Start fires the
+  // claimer-workday dialog first, and accepting it ("Start workday &
+  // continue") then trips the team-workday-check on Admin Worker.
 
   // ── CONTRACTOR_ID: PAUSED ──────────────────────────────────────────
   // Started 4h ago, took a 12-minute break that's already accumulated

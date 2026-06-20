@@ -30,6 +30,10 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import {
+  DialogErrorAlert,
+  useDialogError,
+} from "@/src/ui/components/DialogErrorAlert";
 
 type ClientLite = { id: string; displayName: string };
 type ContactLite = {
@@ -76,6 +80,7 @@ export default function PropertyDialog({
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const isAdmin = role === "ADMIN";
   const [busy, setBusy] = useState(false);
+  const dlgErr = useDialogError();
 
   // clients (for selection)
   const [clients, setClients] = useState<ClientLite[]>([]);
@@ -368,6 +373,7 @@ export default function PropertyDialog({
   }, [clientValue, isAdmin]);
 
   async function handleSave() {
+    dlgErr.clear();
     const cid = clientValue[0];
     if (!cid) {
       publishInlineMessage({
@@ -442,15 +448,12 @@ export default function PropertyDialog({
       }
       onSaved?.(saved);
     } catch (err) {
-      publishInlineMessage({
-        type: "ERROR",
-        text: getErrorMessage(
-          mode === "CREATE"
-            ? "Create property failed"
-            : "Update property failed",
-          err
-        ),
-      });
+      dlgErr.setError(getErrorMessage(
+        mode === "CREATE"
+          ? "Create property failed"
+          : "Update property failed",
+        err
+      ));
     } finally {
       onOpenChange(false);
       setBusy(false);
@@ -728,6 +731,7 @@ export default function PropertyDialog({
                 </div>
               </VStack>
             </Dialog.Body>
+            <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
                 {onBack && <Button variant="outline" onClick={onBack}>Back</Button>}

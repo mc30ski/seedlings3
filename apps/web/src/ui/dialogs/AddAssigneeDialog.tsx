@@ -18,6 +18,10 @@ import {
   getErrorMessage,
   publishInlineMessage,
 } from "@/src/ui/components/InlineMessage";
+import {
+  DialogErrorAlert,
+  useDialogError,
+} from "@/src/ui/components/DialogErrorAlert";
 import TeamMemberList, { type TeamMember } from "@/src/ui/components/TeamMemberList";
 
 type WorkerLite = { id: string; displayName?: string | null; email?: string | null };
@@ -57,6 +61,7 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
   const [groups, setGroups] = useState<GroupBrief[]>([]);
   const [pickGroupId, setPickGroupId] = useState("");
   const [groupBusy, setGroupBusy] = useState(false);
+  const dlgErr = useDialogError();
 
   const groupCollection = useMemo(
     () =>
@@ -93,6 +98,7 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
 
   async function attachGroup() {
     if (!pickGroupId) return;
+    dlgErr.clear();
     setGroupBusy(true);
     try {
       await apiPost(`/api/admin/occurrences/${occurrenceId}/attach-group`, { groupId: pickGroupId });
@@ -100,13 +106,14 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
       onChanged?.();
       onOpenChange(false);
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Could not attach group.", err) });
+      dlgErr.setError(getErrorMessage("Could not attach group.", err));
     } finally {
       setGroupBusy(false);
     }
   }
 
   async function detachGroup() {
+    dlgErr.clear();
     setGroupBusy(true);
     try {
       await apiPost(`/api/admin/occurrences/${occurrenceId}/detach-group`, {});
@@ -114,13 +121,14 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
       onChanged?.();
       onOpenChange(false);
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Could not detach group.", err) });
+      dlgErr.setError(getErrorMessage("Could not detach group.", err));
     } finally {
       setGroupBusy(false);
     }
   }
 
   async function handleAdd(userIds: string[], role: string | null) {
+    dlgErr.clear();
     setAddBusy(true);
     try {
       for (const userId of userIds) {
@@ -140,11 +148,12 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
       publishInlineMessage({ type: "SUCCESS", text: userIds.length === 1 ? "Team member added." : `${userIds.length} team members added.` });
       onChanged?.();
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to add team member.", err) });
+      dlgErr.setError(getErrorMessage("Failed to add team member.", err));
     } finally { setAddBusy(false); }
   }
 
   async function handleRemove(userId: string) {
+    dlgErr.clear();
     setBusyId(userId);
     try {
       const endpoint = isAdmin
@@ -158,7 +167,7 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
       if (err?.code === "CLAIMER_CANNOT_BE_REMOVED") {
         publishInlineMessage({ type: "WARNING", text: "Reassign the claimer role to someone else before removing this person." });
       } else {
-        publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to remove team member.", err) });
+        dlgErr.setError(getErrorMessage("Failed to remove team member.", err));
       }
     } finally { setBusyId(""); }
   }
@@ -169,6 +178,7 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
 
   async function handleMakeClaimer(userId: string) {
     if (!isAdmin && !isClaimer) return;
+    dlgErr.clear();
     setBusyId(userId);
     try {
       const endpoint = isAdmin
@@ -183,13 +193,14 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
       publishInlineMessage({ type: "SUCCESS", text: "Claimer reassigned." });
       onChanged?.();
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to reassign claimer.", err) });
+      dlgErr.setError(getErrorMessage("Failed to reassign claimer.", err));
     } finally { setBusyId(""); }
   }
 
   async function handleToggleRole(userId: string, currentRole: string | null) {
     if (!isAdmin && !isClaimer) return;
     const newRole = currentRole === "observer" ? null : "observer";
+    dlgErr.clear();
     setBusyId(userId);
     try {
       const endpoint = isAdmin
@@ -208,7 +219,7 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
       if (err?.code === "CLAIMER_CANNOT_BE_OBSERVER") {
         publishInlineMessage({ type: "WARNING", text: "Reassign the claimer role before changing this person to observer." });
       } else {
-        publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to change role.", err) });
+        dlgErr.setError(getErrorMessage("Failed to change role.", err));
       }
     } finally { setBusyId(""); }
   }
@@ -298,6 +309,7 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
                 />
               )}
             </Dialog.Body>
+            <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
                 <Button ref={cancelRef} onClick={() => onOpenChange(false)} disabled={addBusy || busyId !== ""}>Done</Button>

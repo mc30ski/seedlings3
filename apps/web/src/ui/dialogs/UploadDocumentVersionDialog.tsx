@@ -18,6 +18,10 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import {
+  DialogErrorAlert,
+  useDialogError,
+} from "@/src/ui/components/DialogErrorAlert";
 
 type Props = {
   open: boolean;
@@ -55,6 +59,7 @@ export default function UploadDocumentVersionDialog({
   const [expiresAt, setExpiresAt] = useState("");
   const [showExpiration, setShowExpiration] = useState(false);
   const [busy, setBusy] = useState(false);
+  const dlgErr = useDialogError();
 
   useEffect(() => {
     if (open) {
@@ -66,6 +71,7 @@ export default function UploadDocumentVersionDialog({
   }, [open, defaultExpiresAt]);
 
   async function handleUpload() {
+    dlgErr.clear();
     if (!documentId || !file) return;
     setBusy(true);
     try {
@@ -88,7 +94,7 @@ export default function UploadDocumentVersionDialog({
       onUploaded();
       onOpenChange(false);
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Upload failed.", err) });
+      dlgErr.setError(getErrorMessage("Upload failed.", err));
     } finally {
       setBusy(false);
     }
@@ -125,6 +131,7 @@ export default function UploadDocumentVersionDialog({
                 )}
               </VStack>
             </Dialog.Body>
+            <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
                 <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>

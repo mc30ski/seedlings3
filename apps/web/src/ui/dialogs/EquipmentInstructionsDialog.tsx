@@ -18,6 +18,10 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import {
+  DialogErrorAlert,
+  useDialogError,
+} from "@/src/ui/components/DialogErrorAlert";
 import { type EquipmentInstruction } from "@/src/lib/types";
 
 const PRESETS = [
@@ -50,6 +54,7 @@ export default function EquipmentInstructionsDialog({
 }: Props) {
   const [instructions, setInstructions] = useState<EquipmentInstruction[]>([]);
   const [customText, setCustomText] = useState("");
+  const dlgErr = useDialogError();
 
   useEffect(() => {
     if (open) {
@@ -61,6 +66,7 @@ export default function EquipmentInstructionsDialog({
   const usedPresets = new Set(instructions.filter((i) => i.isPreset).map((i) => i.text));
 
   async function addPreset(text: string) {
+    dlgErr.clear();
     try {
       const created = await apiPost<EquipmentInstruction>(`/api/admin/equipment/${equipmentId}/instructions`, {
         text,
@@ -68,11 +74,12 @@ export default function EquipmentInstructionsDialog({
       });
       setInstructions((prev) => [...prev, created]);
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to add.", err) });
+      dlgErr.setError(getErrorMessage("Failed to add.", err));
     }
   }
 
   async function addCustom() {
+    dlgErr.clear();
     if (!customText.trim()) return;
     try {
       const created = await apiPost<EquipmentInstruction>(`/api/admin/equipment/${equipmentId}/instructions`, {
@@ -82,16 +89,17 @@ export default function EquipmentInstructionsDialog({
       setInstructions((prev) => [...prev, created]);
       setCustomText("");
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to add.", err) });
+      dlgErr.setError(getErrorMessage("Failed to add.", err));
     }
   }
 
   async function removeInstruction(id: string) {
+    dlgErr.clear();
     try {
       await apiDelete(`/api/admin/equipment/${equipmentId}/instructions/${id}`);
       setInstructions((prev) => prev.filter((i) => i.id !== id));
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to remove.", err) });
+      dlgErr.setError(getErrorMessage("Failed to remove.", err));
     }
   }
 
@@ -177,6 +185,7 @@ export default function EquipmentInstructionsDialog({
                 </Box>
               </VStack>
             </Dialog.Body>
+            <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
             <Dialog.Footer>
               <Button variant="ghost" onClick={handleClose}>Done</Button>
             </Dialog.Footer>

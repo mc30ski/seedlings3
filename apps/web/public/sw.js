@@ -1,5 +1,5 @@
 // Seedlings Service Worker — offline cache + web-push handlers
-const CACHE_NAME = "seedlings-v2";
+const CACHE_NAME = "seedlings-v3";
 const APP_SHELL = [
   "/",
   "/seedlings-icon.png",

@@ -156,10 +156,12 @@ export async function request<T>(
   if (!res.ok) {
     let message = `HTTP ${res.status}`;
     let code: string | undefined;
+    let details: unknown;
     try {
       const data = await res.clone().json();
       message = data?.message || message;
       code = data?.code;
+      details = data?.details;
     } catch {
       try {
         message = await res.text();
@@ -168,9 +170,11 @@ export async function request<T>(
     const err = new Error(message) as Error & {
       status?: number;
       code?: string;
+      details?: unknown;
     };
     err.status = res.status;
     if (code) err.code = code;
+    if (details !== undefined) err.details = details;
     throw err;
   }
 

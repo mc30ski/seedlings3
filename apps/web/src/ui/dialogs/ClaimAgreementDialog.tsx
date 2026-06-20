@@ -13,10 +13,11 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { apiPost } from "@/src/lib/api";
+import { getErrorMessage } from "@/src/ui/components/InlineMessage";
 import {
-  publishInlineMessage,
-  getErrorMessage,
-} from "@/src/ui/components/InlineMessage";
+  DialogErrorAlert,
+  useDialogError,
+} from "@/src/ui/components/DialogErrorAlert";
 import type { Me, WorkerOccurrence } from "@/src/lib/types";
 
 type Props = {
@@ -45,6 +46,7 @@ export default function ClaimAgreementDialog({
 }: Props) {
   const [checked, setChecked] = useState(false);
   const [busy, setBusy] = useState(false);
+  const dlgErr = useDialogError();
 
   const isContractor = me?.workerType === "CONTRACTOR" || !me?.workerType;
   const isEmployee = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
@@ -65,6 +67,7 @@ export default function ClaimAgreementDialog({
   const label = isEmployee ? "Business Margin" : "Commission";
 
   async function handleSubmit() {
+    dlgErr.clear();
     setBusy(true);
     try {
       if (isContractor) {
@@ -73,7 +76,7 @@ export default function ClaimAgreementDialog({
       onAgreed();
       onOpenChange(false);
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed.", err) });
+      dlgErr.setError(getErrorMessage("Failed.", err));
     } finally {
       setBusy(false);
       setChecked(false);
@@ -196,6 +199,7 @@ export default function ClaimAgreementDialog({
                 </Checkbox.Root>
               </VStack>
             </Dialog.Body>
+            <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
                 <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>

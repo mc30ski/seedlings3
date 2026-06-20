@@ -18,6 +18,10 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import {
+  DialogErrorAlert,
+  useDialogError,
+} from "@/src/ui/components/DialogErrorAlert";
 
 type EditAnnouncement = {
   id: string;
@@ -39,6 +43,7 @@ export default function AnnouncementDialog({ open, onOpenChange, onCreated, edit
   const [date, setDate] = useState(() => bizDateKey(new Date()));
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  const dlgErr = useDialogError();
   const isEdit = !!editAnnouncement;
 
   useEffect(() => {
@@ -59,6 +64,7 @@ export default function AnnouncementDialog({ open, onOpenChange, onCreated, edit
   }
 
   async function handleSave() {
+    dlgErr.clear();
     if (!title.trim() || !date) return;
     setSaving(true);
     try {
@@ -81,7 +87,7 @@ export default function AnnouncementDialog({ open, onOpenChange, onCreated, edit
       onOpenChange(false);
       onCreated?.();
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to save announcement.", err) });
+      dlgErr.setError(getErrorMessage("Failed to save announcement.", err));
     }
     setSaving(false);
   }
@@ -136,6 +142,7 @@ export default function AnnouncementDialog({ open, onOpenChange, onCreated, edit
                 </Box>
               </VStack>
             </Dialog.Body>
+            <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
             <Dialog.Footer>
               <HStack justify="flex-end" gap={2}>
                 <Button ref={cancelRef} variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>

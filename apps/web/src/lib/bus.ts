@@ -40,6 +40,17 @@ export function bumpAdminPayments() {
   window.dispatchEvent(new CustomEvent("seedlings:admin-payments-changed"));
 }
 
+// Signals the WorkdayStrip (and any other listener) to re-fetch
+// workday state. Fired by the lib/workday.ts mutation helpers after
+// every successful POST/PATCH so any UI that started/paused/resumed/
+// reopened/ended/cancelled the workday — including the cross-component
+// workday-required gate dialog used by the start-job flow — keeps
+// the home-screen strip in sync without a hard refresh.
+export function bumpWorkday() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent("seedlings:workday-changed"));
+}
+
 export function onEventSearchRun(
   eventName: EventTypes,
   setQ: (q: string) => void,

@@ -20,6 +20,10 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import {
+  DialogErrorAlert,
+  useDialogError,
+} from "@/src/ui/components/DialogErrorAlert";
 import AddressAutocomplete from "@/src/ui/components/AddressAutocomplete";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import JobTagPicker, { type JobTagConfig } from "@/src/ui/components/JobTagPicker";
@@ -81,6 +85,7 @@ export default function EstimateDialog({ open, onOpenChange, onCreated, myId, ed
   const [saving, setSaving] = useState(false);
   const [jobTags, setJobTags] = useState<string[]>([]);
   const [jobTagNote, setJobTagNote] = useState("");
+  const dlgErr = useDialogError();
 
   // Optional Job Service link
   const [jobs, setJobs] = useState<JobListItem[]>([]);
@@ -201,6 +206,7 @@ export default function EstimateDialog({ open, onOpenChange, onCreated, myId, ed
   }
 
   async function handleSave() {
+    dlgErr.clear();
     if (!title.trim() || !date) return;
     setSaving(true);
     try {
@@ -234,7 +240,7 @@ export default function EstimateDialog({ open, onOpenChange, onCreated, myId, ed
       onOpenChange(false);
       onCreated?.();
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to create light estimate.", err) });
+      dlgErr.setError(getErrorMessage("Failed to create light estimate.", err));
     }
     setSaving(false);
   }
@@ -494,6 +500,7 @@ export default function EstimateDialog({ open, onOpenChange, onCreated, myId, ed
                 )}
               </VStack>
             </Dialog.Body>
+            <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
             <Dialog.Footer>
               <HStack justify="flex-end" gap={2}>
                 <Button ref={cancelRef} variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>

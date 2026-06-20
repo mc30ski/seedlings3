@@ -33,6 +33,8 @@ import {
   IMPERSONATION_OPTIONS,
   type ImpersonationValue,
 } from "@/src/lib/impersonation";
+import { useClerk } from "@clerk/clerk-react";
+import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
 type Worker = { id: string; displayName?: string | null; email?: string | null; workerType?: string | null };
 
@@ -382,33 +384,14 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
         <Box py={10} textAlign="center"><Spinner size="lg" /></Box>
       ) : (
         <VStack align="stretch" gap={4} w="full">
+          {/* Account — pinned to the top so Manage Account + Sign Out
+              are the first things you see when you land on the page
+              from the title-bar avatar. */}
+          {isSelf && <AccountSection />}
           {/* Name & info card */}
           <Card.Root variant="outline">
             <Card.Header py="2" px="3" pb="0">
-              <HStack justify="space-between" align="center">
-                <Text fontWeight="semibold">Personal Information</Text>
-                {isSelf && (
-                  <VStack align="end" gap={0.5}>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      colorPalette="blue"
-                      onClick={async () => {
-                        try {
-                          await apiPost("/api/me/sync");
-                          onProfileUpdated?.();
-                          publishInlineMessage({ type: "SUCCESS", text: "Profile synced from Clerk." });
-                        } catch (e) {
-                          publishInlineMessage({ type: "ERROR", text: getErrorMessage("Sync failed", e) });
-                        }
-                      }}
-                    >
-                      Sync Authentication
-                    </Button>
-                    <Text fontSize="2xs" color="fg.muted">Pull latest email and name from your Clerk account</Text>
-                  </VStack>
-                )}
-              </HStack>
+              <Text fontWeight="semibold">Personal Information</Text>
             </Card.Header>
             <Card.Body py="2" px="3">
               <VStack align="stretch" gap={3}>
@@ -520,6 +503,32 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
                     </HStack>
                   );
                 })()}
+                {isSelf && (
+                  <Box pt={2} borderTopWidth="1px" borderColor="gray.200">
+                    <VStack align="stretch" gap={1}>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        colorPalette="blue"
+                        alignSelf="flex-start"
+                        onClick={async () => {
+                          try {
+                            await apiPost("/api/me/sync");
+                            onProfileUpdated?.();
+                            publishInlineMessage({ type: "SUCCESS", text: "Profile synced from Clerk." });
+                          } catch (e) {
+                            publishInlineMessage({ type: "ERROR", text: getErrorMessage("Sync failed", e) });
+                          }
+                        }}
+                      >
+                        Sync Authentication
+                      </Button>
+                      <Text fontSize="2xs" color="fg.muted">
+                        Pull the latest email and name from your Clerk account.
+                      </Text>
+                    </VStack>
+                  </Box>
+                )}
               </VStack>
             </Card.Body>
           </Card.Root>
@@ -819,6 +828,63 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
         </VStack>
       )}
     </Box>
+  );
+}
+
+function AccountSection() {
+  const { openUserProfile, signOut } = useClerk();
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
+  return (
+    <Card.Root variant="outline">
+      <Card.Header py="2" px="3" pb="0">
+        <Text fontWeight="semibold">Account</Text>
+      </Card.Header>
+      <Card.Body py="3" px="3">
+        <VStack align="stretch" gap={2}>
+          <HStack gap={3} align="flex-start">
+            <Button
+              size="sm"
+              variant="outline"
+              colorPalette="blue"
+              onClick={() => openUserProfile()}
+            >
+              Manage Account
+            </Button>
+            <Text fontSize="xs" color="fg.muted" flex="1" pt={1}>
+              Email, phone, password, two-factor, connected accounts, and active sessions.
+            </Text>
+          </HStack>
+          <HStack gap={3} align="flex-start">
+            <Button
+              size="sm"
+              variant="outline"
+              colorPalette="red"
+              onClick={() => setConfirmSignOut(true)}
+            >
+              Sign Out
+            </Button>
+            <Text fontSize="xs" color="fg.muted" flex="1" pt={1}>
+              Ends your session on this device.
+            </Text>
+          </HStack>
+        </VStack>
+      </Card.Body>
+      <ConfirmDialog
+        open={confirmSignOut}
+        title="Sign out?"
+        message="You'll be returned to the public homepage and have to sign in again to continue."
+        confirmLabel="Sign out"
+        confirmColorPalette="red"
+        onCancel={() => setConfirmSignOut(false)}
+        onConfirm={async () => {
+          setConfirmSignOut(false);
+          // Redirect to "/" after the session ends so the page reflects
+          // the signed-out state cleanly (rather than landing on a
+          // signed-in-only tab whose data has gone stale).
+          await signOut(() => { window.location.href = "/"; });
+        }}
+      />
+    </Card.Root>
   );
 }
 
