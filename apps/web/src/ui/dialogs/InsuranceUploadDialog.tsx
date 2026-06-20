@@ -16,6 +16,10 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import {
+  DialogErrorAlert,
+  useDialogError,
+} from "@/src/ui/components/DialogErrorAlert";
 
 type Props = {
   open: boolean;
@@ -27,6 +31,7 @@ export default function InsuranceUploadDialog({ open, onOpenChange, onUploaded }
   const [file, setFile] = useState<File | null>(null);
   const [expiresAt, setExpiresAt] = useState("");
   const [busy, setBusy] = useState(false);
+  const dlgErr = useDialogError();
 
   function reset() {
     setFile(null);
@@ -35,6 +40,7 @@ export default function InsuranceUploadDialog({ open, onOpenChange, onUploaded }
 
   async function handleUpload() {
     if (!file || !expiresAt) return;
+    dlgErr.clear();
     setBusy(true);
     try {
       const contentType = file.type || "application/pdf";
@@ -68,7 +74,7 @@ export default function InsuranceUploadDialog({ open, onOpenChange, onUploaded }
       onUploaded();
       onOpenChange(false);
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Upload failed.", err) });
+      dlgErr.setError(getErrorMessage("Upload failed.", err));
     } finally {
       setBusy(false);
     }
@@ -108,6 +114,7 @@ export default function InsuranceUploadDialog({ open, onOpenChange, onUploaded }
                 </div>
               </VStack>
             </Dialog.Body>
+            <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
                 <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>

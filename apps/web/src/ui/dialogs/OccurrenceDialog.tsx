@@ -23,6 +23,10 @@ import {
   getErrorMessage,
   publishInlineMessage,
 } from "@/src/ui/components/InlineMessage";
+import {
+  DialogErrorAlert,
+  useDialogError,
+} from "@/src/ui/components/DialogErrorAlert";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import JobTagPicker, { jobTagLabel as _jobTagLabel, JOB_TAGS, type JobTagConfig } from "@/src/ui/components/JobTagPicker";
 import JobPropertyPhotosPicker from "@/src/ui/components/JobPropertyPhotosPicker";
@@ -143,6 +147,7 @@ export default function OccurrenceDialog({
   const jobTagLabel = (tag: string) => _jobTagLabel(tag, jobTagsConfig ?? undefined);
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [busy, setBusy] = useState(false);
+  const dlgErr = useDialogError();
   const [status, setStatus] = useState("");
   const [kind, setKind] = useState("");
   const [startAt, setStartAt] = useState("");
@@ -361,6 +366,7 @@ export default function OccurrenceDialog({
   }, [open]);
 
   async function handleSave() {
+    dlgErr.clear();
     if (!startAt) {
       publishInlineMessage({ type: "WARNING", text: "Please select a start date." });
       return;
@@ -528,13 +534,10 @@ export default function OccurrenceDialog({
       onSaved?.();
       onOpenChange(false);
     } catch (err) {
-      publishInlineMessage({
-        type: "ERROR",
-        text: getErrorMessage(
-          mode === "CREATE" ? "Create occurrence failed." : "Update occurrence failed.",
-          err
-        ),
-      });
+      dlgErr.setError(getErrorMessage(
+        mode === "CREATE" ? "Create occurrence failed." : "Update occurrence failed.",
+        err
+      ));
     } finally {
       setBusy(false);
     }
@@ -1183,7 +1186,7 @@ export default function OccurrenceDialog({
                                   });
                                   setAddons((prev) => [...prev, created]);
                                 } catch (err) {
-                                  publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed.", err) });
+                                  dlgErr.setError(getErrorMessage("Failed.", err));
                                   return;
                                 }
                               } else {
@@ -1204,6 +1207,7 @@ export default function OccurrenceDialog({
               </VStack>
             </Dialog.Body>
 
+            <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
                 {onBack && <Button variant="outline" onClick={onBack}>Back</Button>}

@@ -12,7 +12,7 @@ import { computeDatesFromPreset } from "@/src/lib/datePresets";
 import BrandLabel from "@/src/ui/helpers/BrandLabel";
 import { useRouter } from "next/router";
 import Link from "next/link";
-import { UserButton, useAuth } from "@clerk/clerk-react";
+import { UserButton, useAuth, useUser } from "@clerk/clerk-react";
 
 import UsersTab from "@/src/ui/tabs/UsersTab";
 import ActivityTab from "@/src/ui/tabs/ActivityTab";
@@ -27,7 +27,8 @@ import ReconcileTab from "@/src/ui/tabs/ReconcileTab";
 import SuppliesTab from "@/src/ui/tabs/SuppliesTab";
 import DocumentsTab from "@/src/ui/tabs/DocumentsTab";
 import TimelineTab from "@/src/ui/tabs/TimelineTab";
-import WeatherBar from "@/src/ui/components/WeatherBar";
+import WeatherBar, { WeatherIcon, type WeatherBarMode } from "@/src/ui/components/WeatherBar";
+import WorkdayStrip from "@/src/ui/components/WorkdayStrip";
 import EquipmentTab from "@/src/ui/tabs/EquipmentTab";
 import JobsTab from "@/src/ui/tabs/JobsTab";
 import ClientsTab from "@/src/ui/tabs/ClientsTab";
@@ -114,6 +115,9 @@ const hasRole = (roles: Me["roles"] | undefined, role: Role) =>
 export default function HomePage() {
   const router = useRouter();
   const { isSignedIn, isLoaded: authLoaded } = useAuth();
+  // Clerk user (image, initials) — drives the title-bar avatar that
+  // replaces the Clerk UserButton for staff. Clients still see UserButton.
+  const { user: clerkUser } = useUser();
   const { isOffline, isForceOffline, setForceOffline, queueCount } = useOffline();
   const [queueDialogOpen, setQueueDialogOpen] = useState(false);
 
@@ -578,7 +582,7 @@ export default function HomePage() {
       value: "reminders",
       label: "Planning",
       icon: FiBell,
-      content: wrapWithInlineMessage(<RemindersTab myId={me?.id} me={me} />),
+      content: wrapWithInlineMessage(<><WorkdayStrip /><RemindersTab myId={me?.id} me={me} /></>),
     },
     {
       value: "jobs",
@@ -591,7 +595,7 @@ export default function HomePage() {
       label: "Routes",
       icon: FiNavigation,
       visible: () => !!me?.workerType,
-      content: wrapWithInlineMessage(<PreviewRoutesTab />),
+      content: wrapWithInlineMessage(<><WorkdayStrip /><PreviewRoutesTab /></>),
     },
     {
       value: "tasks",
@@ -1427,6 +1431,30 @@ export default function HomePage() {
   const EARNINGS_LABELS: Record<EarningsPeriod, string> = { today: "Today", thisWeek: "Wk", thisMonth: "Mo", allTime: "All" };
   const [earnings, setEarnings] = useState<{ today: number; thisWeek: number; thisMonth: number; allTime: number } | null>(null);
   const [earningsPeriod, setEarningsPeriod] = usePersistedState<EarningsPeriod>("titleEarningsPeriod", "thisWeek");
+
+  // Title-bar weather chip + bar visibility.
+  // Click cycle: hidden → collapsed → expanded → hidden. Persisted so the
+  // user's chosen state survives reloads. WeatherBar is still mounted in
+  // hidden mode so its fetch continues running and broadcasts current temp.
+  const [weatherMode, setWeatherMode] = usePersistedState<WeatherBarMode>("titleWeatherMode", "hidden");
+  const [titleWeather, setTitleWeather] = useState<{ temp: number; icon: string } | null>(() => {
+    if (typeof window === "undefined") return null;
+    const cached = (window as any).__seedlingsWeather?.current;
+    return cached ? { temp: cached.temp, icon: cached.icon } : null;
+  });
+  useEffect(() => {
+    function onWeather(e: any) {
+      const d = e?.detail;
+      if (d && typeof d.temp === "number" && typeof d.icon === "string") {
+        setTitleWeather({ temp: d.temp, icon: d.icon });
+      }
+    }
+    window.addEventListener("seedlings:weather", onWeather);
+    return () => window.removeEventListener("seedlings:weather", onWeather);
+  }, []);
+  function cycleWeatherMode() {
+    setWeatherMode((m) => m === "hidden" ? "collapsed" : m === "collapsed" ? "expanded" : "hidden");
+  }
   // Legacy migration: anyone with "allTime" persisted in localStorage from
   // when the cycle included it gets bumped back to "thisWeek" on next load.
   useEffect(() => {
@@ -2721,7 +2749,7 @@ export default function HomePage() {
       {/* Super-only impersonation banner — sits above the Container so it
           spans the full viewport width and sticks to the top of every page. */}
       <ImpersonationBanner me={me} />
-    <Container maxW="5xl" pt={4} pb={8}>
+    <Container maxW="5xl" px={{ base: 3, md: 4 }} pt={3} pb={6}>
       {isDev && (
         <Box
           position="fixed"
@@ -2747,10 +2775,10 @@ export default function HomePage() {
         as="header"
         bg="#dce5d0"
         bgGradient="linear(to-b, #dce5d0, #e8eedf)"
-        borderWidth="1px"
+        borderWidth="2px"
         borderColor="#8a9e72"
-        px={{ base: 3, md: 4 }}
-        py={{ base: 2, md: 3 }}
+        px={{ base: 2.5, md: 3.5 }}
+        py={{ base: 2, md: 2.5 }}
         borderRadius="md"
         mb={1}
       >
@@ -2759,7 +2787,7 @@ export default function HomePage() {
           display="grid"
           gridTemplateColumns="1fr 1fr"
           alignItems="center"
-          columnGap={3}
+          columnGap={2}
           minH={`${BRAND_ICON_H}px`}
           position="relative"
         >
@@ -2783,24 +2811,54 @@ export default function HomePage() {
                   50% { opacity: 0.6; transform: scale(1.5); box-shadow: 0 0 6px 3px rgba(234,179,8,0.25); }
                 }
               `}</style>
-              {/* Online/offline indicator + queue badge are operational
-               *  signals for staff (workers/admins/supers) — clients have
-               *  no offline-queued actions and shouldn't see network state
-               *  in the chrome. Gate behind hasAnyRole. */}
-              {hasAnyRole && (
-                <Box
-                  w="10px"
-                  h="10px"
-                  borderRadius="full"
-                  bg={isOffline ? (isForceOffline ? "orange.400" : "red.400") : queueCount > 0 ? "yellow.400" : "green.400"}
-                  flexShrink={0}
-                  cursor="pointer"
-                  _hover={{ transform: "scale(1.3)" }}
-                  transition="transform 0.1s"
-                  onClick={() => setNetworkInfoOpen(true)}
-                  style={!isOffline && queueCount > 0 ? { animation: "pulse-dot 1.2s ease-in-out infinite" } : undefined}
-                />
-              )}
+              {/* Online/offline indicator is now an overlay dot on the top-right
+               *  corner of the Seedlings icon (staff only — clients have no
+               *  offline-queued actions and shouldn't see network state in the
+               *  chrome). The queue badge stays separate when count > 0 because
+               *  it shows the count number, which needs more space than a dot. */}
+              <Box
+                position="relative"
+                cursor="pointer"
+                onClick={() => {
+                  // Record current location before navigating, so the back button works.
+                  const current = getCurrentNavState();
+                  if (isWorker || isAdmin) {
+                    if (current.outer !== "worker" || current.inner !== "jobs") pushNavHistory(current);
+                    setTopTab("worker");
+                    setWorkerInnerTab("jobs" as any);
+                    // Reset JobsTab filters to the default "Now (3 days)" view.
+                    setTimeout(() => {
+                      window.dispatchEvent(new CustomEvent("jobs:applyFilter", { detail: { datePreset: "now" } }));
+                    }, 300);
+                  } else {
+                    if (current.outer !== "client") pushNavHistory(current);
+                    setTopTab("client");
+                  }
+                }}
+                _hover={{ opacity: 0.8 }}
+              >
+                <BrandLabel size={BRAND_ICON_H} showText showUserControls={false} />
+                {hasAnyRole && (
+                  <Box
+                    position="absolute"
+                    top="-2px"
+                    left={`${BRAND_ICON_H - 8}px`}
+                    w="10px"
+                    h="10px"
+                    borderRadius="full"
+                    bg={isOffline ? (isForceOffline ? "orange.400" : "red.400") : queueCount > 0 ? "yellow.400" : "green.400"}
+                    borderWidth="2px"
+                    borderColor="white"
+                    cursor="pointer"
+                    _hover={{ transform: "scale(1.3)" }}
+                    transition="transform 0.1s"
+                    onClick={(e: any) => { e.stopPropagation(); setNetworkInfoOpen(true); }}
+                    style={!isOffline && queueCount > 0 ? { animation: "pulse-dot 1.2s ease-in-out infinite" } : undefined}
+                    aria-label={isOffline ? (isForceOffline ? "Forced offline" : "Offline") : queueCount > 0 ? "Online — actions syncing" : "Online"}
+                    title={isOffline ? (isForceOffline ? "Forced offline" : "Offline") : queueCount > 0 ? "Online — actions syncing" : "Online"}
+                  />
+                )}
+              </Box>
               {hasAnyRole && queueCount > 0 && (
                 <Box
                   as="button"
@@ -2824,28 +2882,6 @@ export default function HomePage() {
                   {queueCount}
                 </Box>
               )}
-              <Box
-                cursor="pointer"
-                onClick={() => {
-                  // Record current location before navigating, so the back button works.
-                  const current = getCurrentNavState();
-                  if (isWorker || isAdmin) {
-                    if (current.outer !== "worker" || current.inner !== "jobs") pushNavHistory(current);
-                    setTopTab("worker");
-                    setWorkerInnerTab("jobs" as any);
-                    // Reset JobsTab filters to the default "Now (3 days)" view.
-                    setTimeout(() => {
-                      window.dispatchEvent(new CustomEvent("jobs:applyFilter", { detail: { datePreset: "now" } }));
-                    }, 300);
-                  } else {
-                    if (current.outer !== "client") pushNavHistory(current);
-                    setTopTab("client");
-                  }
-                }}
-                _hover={{ opacity: 0.8 }}
-              >
-                <BrandLabel size={BRAND_ICON_H} showText showUserControls={false} />
-              </Box>
             </HStack>
           </Box>
 
@@ -2856,11 +2892,45 @@ export default function HomePage() {
               justifySelf: "end",
               display: "flex",
               alignItems: "center",
-              gap: "8px",
+              gap: "6px",
               lineHeight: 0,
               minHeight: `${BRAND_ICON_H}px`,
             }}
           >
+            {/* Weather chip — small current-temp + icon in the title bar.
+                Click cycles the bar below through hidden → collapsed →
+                expanded → hidden. Renders whenever weather data is known
+                regardless of role (clients can use it too). */}
+            {titleWeather != null && (
+              <Box
+                as="button"
+                cursor="pointer"
+                px="2"
+                py="1"
+                borderRadius="md"
+                bg="blue.50"
+                color="blue.700"
+                _hover={{ bg: "blue.100" }}
+                title={
+                  weatherMode === "hidden"
+                    ? "Weather — click to show forecast bar"
+                    : weatherMode === "collapsed"
+                    ? "Weather — click to expand the forecast bar"
+                    : "Weather — click to hide the forecast bar"
+                }
+                aria-label="Toggle weather forecast bar"
+                onClick={cycleWeatherMode}
+                display="inline-flex"
+                alignItems="center"
+                gap="1"
+                flexShrink={0}
+              >
+                <WeatherIcon icon={titleWeather.icon} size={14} />
+                <Text fontSize="sm" fontWeight="semibold" lineHeight="1" whiteSpace="nowrap">
+                  {Math.round(titleWeather.temp)}°
+                </Text>
+              </Box>
+            )}
             {/* Earnings pill — click cycles Today → Wk → Mo → All.
                 (Experiment: replaced the weather toggle. To revert, restore from git.) */}
             {earnings != null && (
@@ -3061,35 +3131,57 @@ export default function HomePage() {
                 </Box>
               );
             })()}
-            {me && hasAnyRole && (
-              <Badge
-                size="sm"
-                variant="subtle"
-                colorPalette={
-                  me.workerType === "EMPLOYEE" ? "blue"
-                  : me.workerType === "CONTRACTOR" ? "orange"
-                  : me.workerType === "TRAINEE" ? "cyan"
-                  : "gray"
-                }
-                lineHeight="normal"
-                cursor="pointer"
-                onClick={() => {
-                  setTopTab("worker");
-                  setWorkerInnerTab("profile" as any);
-                }}
-              >
-                {me.workerType === "EMPLOYEE" ? "E"
-                  : me.workerType === "CONTRACTOR" ? "C"
-                  : me.workerType === "TRAINEE" ? "T"
-                  : "?"}
-              </Badge>
-            )}
             {isSignedIn && !hasAnyRole && me?.isApproved && (
               <Badge size="sm" variant="subtle" colorPalette="green" lineHeight="normal">
                 Client
               </Badge>
             )}
-            {mounted && isSignedIn ? (
+            {/* Staff get a custom avatar that navigates to the in-app
+                Profile tab (where Manage Account + Sign Out live). Clients
+                still see Clerk's UserButton because they don't have an
+                in-app Profile page to land on. */}
+            {mounted && isSignedIn && hasAnyRole ? (
+              <Box
+                as="button"
+                aria-label="Open profile"
+                title="Profile"
+                onClick={() => {
+                  const current = getCurrentNavState();
+                  if (current.outer !== "worker" || current.inner !== "profile") {
+                    pushNavHistory(current);
+                  }
+                  setTopTab("worker");
+                  setWorkerInnerTab("profile" as any);
+                }}
+                width="28px"
+                height="28px"
+                borderRadius="full"
+                overflow="hidden"
+                bg="gray.200"
+                color="gray.700"
+                display="flex"
+                alignItems="center"
+                justifyContent="center"
+                cursor="pointer"
+                _hover={{ opacity: 0.85 }}
+                flexShrink={0}
+              >
+                {clerkUser?.imageUrl ? (
+                  <img
+                    src={clerkUser.imageUrl}
+                    alt=""
+                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                  />
+                ) : (
+                  <Text fontSize="xs" fontWeight="semibold">
+                    {(
+                      (clerkUser?.firstName?.[0] ?? "") +
+                      (clerkUser?.lastName?.[0] ?? "")
+                    ).toUpperCase() || "?"}
+                  </Text>
+                )}
+              </Box>
+            ) : mounted && isSignedIn ? (
               <UserButton
                 appearance={{
                   elements: {
@@ -3129,7 +3221,11 @@ export default function HomePage() {
       {/* Only ask for geolocation when the signed-in user is an approved
           worker/admin/super. Logged-out visitors and signed-in clients still
           see weather (via IP-based fallback) without a permission prompt. */}
-      <WeatherBar allowGeolocation={!!(me?.isApproved && hasAnyRole)} />
+      <WeatherBar
+        allowGeolocation={!!(me?.isApproved && hasAnyRole)}
+        mode={weatherMode}
+        onModeChange={setWeatherMode}
+      />
       {!meLoading && me && !me.isApproved && <AwaitingApprovalNotice />}
       {!meLoading && me?.isApproved && !hasAnyRole && topTab !== "client" && <NoRoleNotice />}
       {authLoaded && (!isSignedIn || me) && (

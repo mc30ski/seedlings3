@@ -56,6 +56,10 @@ export type ReconcileDayRow = {
   feesOrMargin: number;
   topUps: number;
   netPaid: number;
+  // True when this day's workday hasn't ended yet. `hoursActive`
+  // counts live elapsed time but is not finalized — the worker may
+  // pause / unpause / change tasks. Frontend renders a badge.
+  inProgress: boolean;
   jobs: ReconcileJobRow[];
 };
 
@@ -86,6 +90,10 @@ export type ReconcileWorkerRow = {
 
   // Flags
   belowMinWage: boolean;
+  /** True when the worker has at least one workday in the window
+   *  that hasn't ended yet. Headline hours / days include the live
+   *  elapsed time so the dashboard reflects in-progress activity. */
+  hasInProgressWorkday: boolean;
   anomalies: string[];
 
   // Drill-down
@@ -165,9 +173,31 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-function activeMs(start: Date, end: Date | null, totalPausedMs: number): number {
-  if (!end) return 0;
-  return Math.max(0, end.getTime() - start.getTime() - totalPausedMs);
+/** Active milliseconds for a workday.
+ *
+ *  • Ended workday  → end = endedAt
+ *  • Currently paused (active before pause) → end = pausedAt (time frozen)
+ *  • Otherwise (running)                    → end = now (live tick)
+ *
+ *  Pre-fix this always returned 0 when endedAt was null, which made
+ *  in-progress workdays invisible on the Reconcile surface — the
+ *  operator would look at the tab mid-day and see "0.00h" for workers
+ *  who were actively on a job. Live elapsed time is now included so
+ *  the dashboard reflects current state; the day-row carries an
+ *  `inProgress` flag so the UI can mark it "not yet finalized." */
+function activeMs(
+  start: Date,
+  end: Date | null,
+  pausedAt: Date | null,
+  totalPausedMs: number,
+  now: Date,
+): number {
+  const endMs = end
+    ? end.getTime()
+    : pausedAt
+      ? pausedAt.getTime()
+      : now.getTime();
+  return Math.max(0, endMs - start.getTime() - totalPausedMs);
 }
 
 // Read the JobOccurrence.promisedPayouts snapshot into a map.
@@ -327,6 +357,11 @@ export async function buildReconcileWorkers(
         // Surfaced via the day-level netPaid so the daily breakdown
         // reconciles with the owner row's headline total.
         ownerEarnings: number;
+        // True when ANY workday on this date is still in progress
+        // (no endedAt). Drives a "in progress" badge on the day row
+        // so the operator knows the hours / jobs / earnings displayed
+        // are live snapshots, not finalized totals.
+        inProgress: boolean;
         jobs: ReconcileJobRow[];
       }
     >;
@@ -377,20 +412,30 @@ export async function buildReconcileWorkers(
   function getDay(a: Accum, date: string) {
     let d = a.byDay.get(date);
     if (!d) {
-      d = { hoursMs: 0, jobsCompleted: 0, grossEarnings: 0, feesOrMargin: 0, topUps: 0, ownerEarnings: 0, jobs: [] };
+      d = { hoursMs: 0, jobsCompleted: 0, grossEarnings: 0, feesOrMargin: 0, topUps: 0, ownerEarnings: 0, inProgress: false, jobs: [] };
       a.byDay.set(date, d);
     }
     return d;
   }
 
+  // Single "now" anchor for the whole request — every in-progress
+  // workday computes elapsed time against the same instant so
+  // numbers don't drift across rows in a single response.
+  const NOW = new Date();
+
   // ── Apply workdays → hours + days worked ───────────────────────────────
   for (const w of workdays) {
     const a = getAcc(normalizeUser(w.user));
-    const ms = activeMs(w.startedAt, w.endedAt, w.totalPausedMs);
+    const ms = activeMs(w.startedAt, w.endedAt, w.pausedAt, w.totalPausedMs, NOW);
     a.hoursMs += ms;
-    if (w.endedAt) a.daysSet.add(w.workdayDate);
+    // Days count: ALL workdays the worker started in the window, not
+    // just ended ones. An in-progress workday is still a day the
+    // worker showed up. Operator can see in-progress days are not
+    // finalized via the per-day `inProgress` flag.
+    a.daysSet.add(w.workdayDate);
     const d = getDay(a, w.workdayDate);
     d.hoursMs += ms;
+    if (!w.endedAt) d.inProgress = true;
   }
 
   // ── Apply occurrences → jobs + per-worker earnings ─────────────────────
@@ -660,9 +705,11 @@ export async function buildReconcileWorkers(
         // breakdown reconciles with the owner row's headline. For
         // non-owners, ownerEarnings is always 0 so this is a no-op.
         netPaid: round2(d.grossEarnings - d.feesOrMargin + d.topUps + d.ownerEarnings),
+        inProgress: d.inProgress,
         jobs: d.jobs,
       };
     });
+    const hasInProgressWorkday = days.some((d) => d.inProgress);
 
     workers.push({
       userId: a.user.id,
@@ -694,6 +741,7 @@ export async function buildReconcileWorkers(
       effectiveHourly,
       preTopUpHourly,
       belowMinWage,
+      hasInProgressWorkday,
       anomalies,
       days,
     });

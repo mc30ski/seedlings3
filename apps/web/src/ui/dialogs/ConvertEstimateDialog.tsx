@@ -19,6 +19,10 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import {
+  DialogErrorAlert,
+  useDialogError,
+} from "@/src/ui/components/DialogErrorAlert";
 import AddressAutocomplete from "@/src/ui/components/AddressAutocomplete";
 
 type Props = {
@@ -119,6 +123,7 @@ export default function ConvertEstimateDialog({
   const [jobNotes, setJobNotes] = useState("");
 
   const [saving, setSaving] = useState(false);
+  const dlgErr = useDialogError();
 
   useEffect(() => {
     if (!open) return;
@@ -172,6 +177,7 @@ export default function ConvertEstimateDialog({
   }
 
   async function handleSave() {
+    dlgErr.clear();
     setSaving(true);
     try {
       const body: Record<string, unknown> = {
@@ -210,10 +216,7 @@ export default function ConvertEstimateDialog({
       onOpenChange(false);
       onConverted?.();
     } catch (err) {
-      publishInlineMessage({
-        type: "ERROR",
-        text: getErrorMessage("Failed to convert estimate.", err),
-      });
+      dlgErr.setError(getErrorMessage("Failed to convert estimate.", err));
     }
     setSaving(false);
   }
@@ -541,6 +544,7 @@ export default function ConvertEstimateDialog({
                 </Box>
               </VStack>
             </Dialog.Body>
+            <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
             <Dialog.Footer>
               <HStack justify="flex-end" gap={2}>
                 <Button

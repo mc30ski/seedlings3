@@ -93,6 +93,9 @@ type WorkerDayRow = {
   feesOrMargin: number;
   topUps: number;
   netPaid: number;
+  /** True when the worker's workday on this date hasn't ended yet —
+   *  hoursActive is a live snapshot, not finalized. */
+  inProgress: boolean;
   jobs: WorkerJobRow[];
 };
 
@@ -113,6 +116,9 @@ type WorkerRow = {
   effectiveHourly: number | null;
   preTopUpHourly: number | null;
   belowMinWage: boolean;
+  /** True when the worker has at least one in-progress workday in
+   *  the window. Headline hours include live elapsed time. */
+  hasInProgressWorkday: boolean;
   anomalies: string[];
   days: WorkerDayRow[];
 };
@@ -1456,6 +1462,11 @@ function WorkerCard({
             <Badge size="xs" colorPalette={workerTypePalette(worker.workerType, worker.isOwner)} variant="subtle">
               {workerTypeLabel(worker.workerType, worker.isOwner)}
             </Badge>
+            {worker.hasInProgressWorkday && (
+              <Badge size="xs" colorPalette="green" variant="solid">
+                On the clock
+              </Badge>
+            )}
             {worker.belowMinWage && (
               <Badge size="xs" colorPalette="red" variant="solid">
                 Below min wage
@@ -1468,7 +1479,7 @@ function WorkerCard({
             )}
           </HStack>
           <Text fontSize="xs" color="fg.muted">
-            {worker.hoursActive.toFixed(2)}h · {worker.daysWorked} day{worker.daysWorked === 1 ? "" : "s"}
+            {worker.hoursActive.toFixed(2)}h{worker.hasInProgressWorkday && " (live)"} · {worker.daysWorked} day{worker.daysWorked === 1 ? "" : "s"}
             · {worker.jobsCompleted} job{worker.jobsCompleted === 1 ? "" : "s"}
             {worker.ownerEarnings > 0 && ` · owner cut ${fmtUSD(worker.ownerEarnings)}`}
           </Text>
@@ -1551,8 +1562,11 @@ function WorkerCard({
                         {dayExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                       </Box>
                       <Text fontSize="xs" fontFamily="mono" minW="90px">{d.date}</Text>
+                      {d.inProgress && (
+                        <Badge size="xs" colorPalette="green" variant="subtle">in progress</Badge>
+                      )}
                       <Text fontSize="xs" color="fg.muted" flex="1" minW="80px">
-                        {d.hoursActive.toFixed(2)}h · {d.jobsCompleted} job{d.jobsCompleted === 1 ? "" : "s"}
+                        {d.hoursActive.toFixed(2)}h{d.inProgress && " (live)"} · {d.jobsCompleted} job{d.jobsCompleted === 1 ? "" : "s"}
                       </Text>
                       <Text fontSize="xs" fontWeight="semibold">{fmtUSD(d.netPaid)}</Text>
                     </HStack>

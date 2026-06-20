@@ -15,6 +15,10 @@ import {
   getErrorMessage,
   publishInlineMessage,
 } from "@/src/ui/components/InlineMessage";
+import {
+  DialogErrorAlert,
+  useDialogError,
+} from "@/src/ui/components/DialogErrorAlert";
 import TeamMemberList, { type TeamMember } from "@/src/ui/components/TeamMemberList";
 import { type JobOccurrenceAssigneeWithUser } from "@/src/lib/types";
 
@@ -38,6 +42,7 @@ export default function AssigneeDialog({ open, onOpenChange, occurrenceId, curre
   const [assigneesChanged, setAssigneesChanged] = useState(false);
   const [showRecalcPrompt, setShowRecalcPrompt] = useState(false);
   const [recalcBusy, setRecalcBusy] = useState(false);
+  const dlgErr = useDialogError();
 
   useEffect(() => {
     if (!open) return;
@@ -58,6 +63,7 @@ export default function AssigneeDialog({ open, onOpenChange, occurrenceId, curre
   }, [open]);
 
   async function handleAdd(userIds: string[], role: string | null) {
+    dlgErr.clear();
     setAddBusy(true);
     try {
       for (const userId of userIds) {
@@ -80,11 +86,12 @@ export default function AssigneeDialog({ open, onOpenChange, occurrenceId, curre
       publishInlineMessage({ type: "SUCCESS", text: userIds.length === 1 ? "Worker assigned." : `${userIds.length} workers assigned.` });
       onChanged?.();
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to assign worker.", err) });
+      dlgErr.setError(getErrorMessage("Failed to assign worker.", err));
     } finally { setAddBusy(false); }
   }
 
   async function handleRemove(userId: string) {
+    dlgErr.clear();
     setBusyId(userId);
     try {
       await apiDelete(`/api/admin/occurrences/${occurrenceId}/assignees/${userId}`);
@@ -96,12 +103,13 @@ export default function AssigneeDialog({ open, onOpenChange, occurrenceId, curre
       if (err?.code === "CLAIMER_CANNOT_BE_REMOVED") {
         publishInlineMessage({ type: "WARNING", text: "Reassign the claimer role to someone else before removing this person." });
       } else {
-        publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to remove worker.", err) });
+        dlgErr.setError(getErrorMessage("Failed to remove worker.", err));
       }
     } finally { setBusyId(""); }
   }
 
   async function handleMakeClaimer(userId: string) {
+    dlgErr.clear();
     setBusyId(userId);
     try {
       await apiPost(`/api/admin/occurrences/${occurrenceId}/reassign-claimer`, { userId });
@@ -114,12 +122,13 @@ export default function AssigneeDialog({ open, onOpenChange, occurrenceId, curre
       publishInlineMessage({ type: "SUCCESS", text: "Claimer reassigned." });
       onChanged?.();
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to reassign claimer.", err) });
+      dlgErr.setError(getErrorMessage("Failed to reassign claimer.", err));
     } finally { setBusyId(""); }
   }
 
   async function handleToggleRole(userId: string, currentRole: string | null) {
     const newRole = currentRole === "observer" ? null : "observer";
+    dlgErr.clear();
     setBusyId(userId);
     try {
       await apiPatch(`/api/admin/occurrences/${occurrenceId}/assignees/${userId}/role`, { role: newRole ?? undefined });
@@ -136,7 +145,7 @@ export default function AssigneeDialog({ open, onOpenChange, occurrenceId, curre
       if (err?.code === "CLAIMER_CANNOT_BE_OBSERVER") {
         publishInlineMessage({ type: "WARNING", text: "Reassign the claimer role before changing this person to observer." });
       } else {
-        publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to change role.", err) });
+        dlgErr.setError(getErrorMessage("Failed to change role.", err));
       }
     } finally { setBusyId(""); }
   }
@@ -195,6 +204,7 @@ export default function AssigneeDialog({ open, onOpenChange, occurrenceId, curre
                       colorPalette="orange"
                       loading={recalcBusy}
                       onClick={async () => {
+                        dlgErr.clear();
                         setRecalcBusy(true);
                         try {
                           await apiPost(`/api/admin/occurrences/${occurrenceId}/recalculate-splits`);
@@ -203,7 +213,7 @@ export default function AssigneeDialog({ open, onOpenChange, occurrenceId, curre
                           setShowRecalcPrompt(false);
                           onOpenChange(false);
                         } catch (err) {
-                          publishInlineMessage({ type: "ERROR", text: getErrorMessage("Recalculate failed.", err) });
+                          dlgErr.setError(getErrorMessage("Recalculate failed.", err));
                         } finally { setRecalcBusy(false); }
                       }}
                     >
@@ -214,6 +224,7 @@ export default function AssigneeDialog({ open, onOpenChange, occurrenceId, curre
               </Box>
             )}
 
+            <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
                 <Button

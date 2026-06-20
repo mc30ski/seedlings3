@@ -19,6 +19,10 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import {
+  DialogErrorAlert,
+  useDialogError,
+} from "@/src/ui/components/DialogErrorAlert";
 
 const PRESETS = [
   "Cut shorter",
@@ -64,6 +68,7 @@ export default function PinnedNoteDialog({
   const [instructions, setInstructions] = useState<Instruction[]>([]);
   const [customText, setCustomText] = useState("");
   const [newRepeats, setNewRepeats] = useState(true);
+  const dlgErr = useDialogError();
 
   useEffect(() => {
     if (open) {
@@ -76,6 +81,7 @@ export default function PinnedNoteDialog({
   const usedPresets = new Set(instructions.filter((i) => i.isPreset).map((i) => i.text));
 
   async function addPreset(text: string) {
+    dlgErr.clear();
     try {
       const created = await apiPost<Instruction>(`/api/occurrences/${occurrenceId}/instructions`, {
         text,
@@ -84,11 +90,12 @@ export default function PinnedNoteDialog({
       });
       setInstructions((prev) => [...prev, created]);
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to add.", err) });
+      dlgErr.setError(getErrorMessage("Failed to add.", err));
     }
   }
 
   async function addCustom() {
+    dlgErr.clear();
     if (!customText.trim()) return;
     try {
       const created = await apiPost<Instruction>(`/api/occurrences/${occurrenceId}/instructions`, {
@@ -99,25 +106,27 @@ export default function PinnedNoteDialog({
       setInstructions((prev) => [...prev, created]);
       setCustomText("");
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to add.", err) });
+      dlgErr.setError(getErrorMessage("Failed to add.", err));
     }
   }
 
   async function removeInstruction(id: string) {
+    dlgErr.clear();
     try {
       await apiDelete(`/api/occurrences/${occurrenceId}/instructions/${id}`);
       setInstructions((prev) => prev.filter((i) => i.id !== id));
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to remove.", err) });
+      dlgErr.setError(getErrorMessage("Failed to remove.", err));
     }
   }
 
   async function toggleRepeats(id: string, current: boolean) {
+    dlgErr.clear();
     try {
       await apiPatch(`/api/occurrences/${occurrenceId}/instructions/${id}`, { repeats: !current });
       setInstructions((prev) => prev.map((i) => i.id === id ? { ...i, repeats: !current } : i));
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to update.", err) });
+      dlgErr.setError(getErrorMessage("Failed to update.", err));
     }
   }
 
@@ -226,6 +235,7 @@ export default function PinnedNoteDialog({
                 </Box>
               </VStack>
             </Dialog.Body>
+            <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
             <Dialog.Footer>
               <Button variant="ghost" onClick={handleClose}>Done</Button>
             </Dialog.Footer>

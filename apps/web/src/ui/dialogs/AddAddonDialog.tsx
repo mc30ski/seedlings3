@@ -17,6 +17,10 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import {
+  DialogErrorAlert,
+  useDialogError,
+} from "@/src/ui/components/DialogErrorAlert";
 import { jobTagLabel as _jobTagLabel, pricingJobTags, type ServiceTypeConfig } from "@/src/ui/components/JobTagPicker";
 import PricingGuideDialog from "@/src/ui/dialogs/PricingGuideDialog";
 
@@ -49,6 +53,7 @@ export default function AddAddonDialog({ occurrenceId, onClose, serviceTypes, fo
   const [customLabel, setCustomLabel] = useState("");
   const [price, setPrice] = useState("");
   const [busy, setBusy] = useState(false);
+  const dlgErr = useDialogError();
 
   // Pricing hints: loaded once when the dialog opens. Matching by jobTag
   // surfaces a single inline-reference chip; the View Pricing Guide chip
@@ -76,6 +81,7 @@ export default function AddAddonDialog({ occurrenceId, onClose, serviceTypes, fo
 
   async function handleAdd() {
     if (!occurrenceId) return;
+    dlgErr.clear();
     setBusy(true);
     try {
       const created = await apiPost<{ id: string; tag?: string | null; customLabel?: string | null; price: number }>(
@@ -90,7 +96,7 @@ export default function AddAddonDialog({ occurrenceId, onClose, serviceTypes, fo
       onAdded?.(created);
       onClose();
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to add service.", err) });
+      dlgErr.setError(getErrorMessage("Failed to add service.", err));
     } finally {
       setBusy(false);
     }
@@ -172,6 +178,7 @@ export default function AddAddonDialog({ occurrenceId, onClose, serviceTypes, fo
                 </Box>
               </VStack>
             </Dialog.Body>
+            <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
                 <Button variant="ghost" onClick={onClose}>Cancel</Button>

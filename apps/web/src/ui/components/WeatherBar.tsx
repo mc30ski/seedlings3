@@ -32,7 +32,7 @@ type WeatherResponse = {
   lng: number;
 };
 
-function WeatherIcon({ icon, size = 14 }: { icon: string; size?: number }) {
+export function WeatherIcon({ icon, size = 14 }: { icon: string; size?: number }) {
   if (icon.startsWith("01")) return <Sun size={size} />;
   if (icon.startsWith("02")) return <CloudSun size={size} />;
   if (icon.startsWith("03") || icon.startsWith("04")) return <Cloud size={size} />;
@@ -67,18 +67,60 @@ function getTheme(icon: string, rainChance: number) {
   return { bg: "blue.200", border: "blue.400", text: "blue.800", sub: "blue.600" };
 }
 
-export default function WeatherBar({ allowGeolocation = false }: { allowGeolocation?: boolean }) {
+export type WeatherBarMode = "hidden" | "collapsed" | "expanded";
+
+export default function WeatherBar({
+  allowGeolocation = false,
+  mode = "collapsed",
+  onModeChange,
+}: {
+  allowGeolocation?: boolean;
+  /** Visibility/expansion is fully controlled by the parent. The title-bar
+   *  weather chip cycles this; the bar itself only requests changes via
+   *  `onModeChange`. When `mode === "hidden"` the component still mounts
+   *  and fetches, but renders nothing — so the current-temp broadcast that
+   *  the title chip subscribes to keeps firing even while the bar is closed. */
+  mode?: WeatherBarMode;
+  onModeChange?: (mode: WeatherBarMode) => void;
+}) {
   const [data, setData] = useState<WeatherResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeDay, setActiveDay] = useState(0);
   const [userPaused] = useState(false);
-  const [expanded, setExpanded] = useState(false);
+  const expanded = mode === "expanded";
   const [prevDay, setPrevDay] = useState(0);
   const [sliding, setSliding] = useState(false);
   const slideTimer = useRef<ReturnType<typeof setTimeout>>();
-  // Visibility toggle removed — bar is always visible. (To revert, restore the prior
-  // `visible` state, localStorage handling, and toggle event listener from git.)
+
+  // Rehydrate from localStorage on first mount so the title-bar weather
+  // chip + bar can render cached values when offline (or before the
+  // network fetch completes on cold boot). Keyed `seedlings_weatherCache`.
+  // The window cache is rebuilt from the persisted value too, so other
+  // subscribers (the title chip's mount-time read) get a stable answer.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if ((window as any).__seedlingsWeather) return; // already populated this session
+    try {
+      const raw = localStorage.getItem("seedlings_weatherCache");
+      if (!raw) return;
+      const cached = JSON.parse(raw) as WeatherResponse | null;
+      if (!cached || !cached.current || !cached.forecast) return;
+      setData(cached);
+      setLoading(false);
+      (window as any).__seedlingsWeather = {
+        current: { temp: cached.current.temp, icon: cached.current.icon },
+        forecast: cached.forecast,
+      };
+      // Broadcast so the title chip refreshes from the cached temp
+      // immediately, rather than waiting for the network fetch to finish.
+      window.dispatchEvent(new CustomEvent("seedlings:weather", {
+        detail: { temp: cached.current.temp, icon: cached.current.icon, forecast: cached.forecast },
+      }));
+    } catch {
+      // localStorage in private mode / disabled storage — just skip.
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -110,8 +152,20 @@ export default function WeatherBar({ allowGeolocation = false }: { allowGeolocat
           setData(result);
           setLoading(false);
           // Cache the latest weather on window so consumers that mount after
-          // the fetch completes can read it synchronously.
-          (window as any).__seedlingsWeather = { forecast: result.forecast };
+          // the fetch completes can read it synchronously — including the
+          // title-bar weather chip which needs `current` to render.
+          (window as any).__seedlingsWeather = {
+            current: { temp: result.current.temp, icon: result.current.icon },
+            forecast: result.forecast,
+          };
+          // Also persist to localStorage so the chip + bar render cached
+          // weather instantly on subsequent cold boots — important for
+          // offline mode where the network fetch will fail.
+          try {
+            localStorage.setItem("seedlings_weatherCache", JSON.stringify(result));
+          } catch {
+            // ignore quota / disabled-storage errors
+          }
           // Broadcast current temp for title bar plus the full forecast so
           // tiles can show tomorrow's inclement-weather indicator.
           window.dispatchEvent(new CustomEvent("seedlings:weather", {
@@ -156,6 +210,11 @@ export default function WeatherBar({ allowGeolocation = false }: { allowGeolocat
     }, 4000);
     return () => clearInterval(interval);
   }, [data, userPaused]);
+
+  // Hidden mode: stay mounted (so the fetch effect keeps running and the
+  // current-temp broadcast keeps firing for the title chip), but render
+  // nothing.
+  if (mode === "hidden") return null;
 
   if (loading && !data) return (
     <Box px={2} py={1.5} bg="gray.200" borderRadius="md" mb={1} borderWidth="1px" borderColor="gray.400" overflow="hidden" position="relative">
@@ -235,7 +294,7 @@ export default function WeatherBar({ allowGeolocation = false }: { allowGeolocat
 
   if (expanded) {
     return (
-      <Box borderRadius="md" mb={1} borderWidth="1px" borderColor="gray.400" overflow="hidden" cursor="pointer" onClick={() => setExpanded(false)}>
+      <Box borderRadius="md" mb={1} borderWidth="1px" borderColor="gray.400" overflow="hidden" cursor="pointer" onClick={() => onModeChange?.("collapsed")}>
         <HStack alignItems="stretch" gap={0}>
           <NowCell borderColor={theme.border} sub={theme.sub} text={theme.text} />
           <Box flex="1" minW={0}>
@@ -269,7 +328,7 @@ export default function WeatherBar({ allowGeolocation = false }: { allowGeolocat
       transition="background 0.3s ease, border-color 0.3s ease"
       overflow="hidden"
       style={{ height: ROW_H + 12 }}
-      onClick={() => setExpanded(true)}
+      onClick={() => onModeChange?.("expanded")}
     >
       <HStack alignItems="stretch" gap={0} h="full">
         <NowCell borderColor={theme.border} sub={theme.sub} text={theme.text} />

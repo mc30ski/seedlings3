@@ -220,7 +220,7 @@ export default function BreadcrumbNav({
 
   return (
     <Box>
-      <HStack gap={1} pt={1} pb={2} px={1} align="center" flexWrap="nowrap" overflowX="auto" css={{ "&::-webkit-scrollbar": { display: "none" }, scrollbarWidth: "none" }}>
+      <HStack gap={1} pt={1} pb={2} pl={0} pr={1} align="center" flexWrap="nowrap" overflowX="auto" css={{ "&::-webkit-scrollbar": { display: "none" }, scrollbarWidth: "none" }}>
         {headerLeft}
         {/* Level 1: Outer (Client/Worker/Admin/Super) */}
         <Box position="relative" ref={outerRef}>

@@ -20,6 +20,10 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import {
+  DialogErrorAlert,
+  useDialogError,
+} from "@/src/ui/components/DialogErrorAlert";
 
 type DocMeta = {
   id: string;
@@ -63,6 +67,7 @@ export default function EditDocumentMetadataDialog({
   const [showExpiration, setShowExpiration] = useState(false);
   const [adminHidden, setAdminHidden] = useState(false);
   const [busy, setBusy] = useState(false);
+  const dlgErr = useDialogError();
 
   useEffect(() => {
     if (open && doc) {
@@ -77,6 +82,7 @@ export default function EditDocumentMetadataDialog({
 
   async function handleSave() {
     if (!doc) return;
+    dlgErr.clear();
     setBusy(true);
     try {
       await apiPatch(`${apiBase}/${doc.id}`, {
@@ -94,7 +100,7 @@ export default function EditDocumentMetadataDialog({
       onSaved();
       onOpenChange(false);
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Update failed.", err) });
+      dlgErr.setError(getErrorMessage("Update failed.", err));
     } finally {
       setBusy(false);
     }
@@ -145,6 +151,7 @@ export default function EditDocumentMetadataDialog({
                 </Checkbox.Root>
               </VStack>
             </Dialog.Body>
+            <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
                 <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>

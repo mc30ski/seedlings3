@@ -21,6 +21,10 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import {
+  DialogErrorAlert,
+  useDialogError,
+} from "@/src/ui/components/DialogErrorAlert";
 
 type Expense = {
   id: string;
@@ -135,6 +139,7 @@ export default function ManageExpensesDialog({
   const [editCost, setEditCost] = useState("");
   const [editDesc, setEditDesc] = useState("");
   const [editCategory, setEditCategory] = useState("Supplies");
+  const dlgErr = useDialogError();
 
   const collection = useMemo(() => createListCollection({ items: CATEGORY_ITEMS }), []);
 
@@ -199,6 +204,7 @@ export default function ManageExpensesDialog({
   async function handleAdd() {
     const cost = parseFloat(newCost);
     if (isNaN(cost) || cost <= 0 || !newDesc.trim()) return;
+    dlgErr.clear();
     try {
       const created = await apiPost<Expense>(expensesEndpoint, {
         cost,
@@ -211,7 +217,7 @@ export default function ManageExpensesDialog({
       setNewCategory("Supplies");
       onChanged?.();
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to add expense.", err) });
+      dlgErr.setError(getErrorMessage("Failed to add expense.", err));
     }
   }
 
@@ -229,6 +235,7 @@ export default function ManageExpensesDialog({
       });
       return;
     }
+    dlgErr.clear();
     try {
       const created = await apiPost<any>(holdsEndpoint, {
         supplyId: pickedSupplyId,
@@ -249,21 +256,19 @@ export default function ManageExpensesDialog({
       setPickedQty("");
       onChanged?.();
     } catch (err) {
-      publishInlineMessage({
-        type: "ERROR",
-        text: getErrorMessage("Failed to add from inventory.", err),
-      });
+      dlgErr.setError(getErrorMessage("Failed to add from inventory.", err));
     }
   }
 
   async function handleDelete(id: string) {
+    dlgErr.clear();
     try {
       const deleteEndpoint = isAdmin ? `/api/admin/expenses/${id}` : `/api/expenses/${id}`;
       await apiDelete(deleteEndpoint);
       setExpenses((prev) => prev.filter((e) => e.id !== id));
       onChanged?.();
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to delete expense.", err) });
+      dlgErr.setError(getErrorMessage("Failed to delete expense.", err));
     }
   }
 
@@ -273,6 +278,7 @@ export default function ManageExpensesDialog({
   // lists afterward so costs and availability stay exact.
   async function handleAdjustHold(holdId: string, newQty: number) {
     if (newQty < 1 || holdBusy) return;
+    dlgErr.clear();
     setHoldBusy(true);
     try {
       const endpoint = isAdmin
@@ -299,10 +305,7 @@ export default function ManageExpensesDialog({
       }
       onChanged?.();
     } catch (err) {
-      publishInlineMessage({
-        type: "ERROR",
-        text: getErrorMessage("Failed to adjust supply quantity.", err),
-      });
+      dlgErr.setError(getErrorMessage("Failed to adjust supply quantity.", err));
     } finally {
       setHoldBusy(false);
       // Drop the typed draft so the input reflects the (refetched) server qty.
@@ -349,6 +352,7 @@ export default function ManageExpensesDialog({
     if (!editingId) return;
     const cost = parseFloat(editCost);
     if (isNaN(cost) || cost <= 0 || !editDesc.trim()) return;
+    dlgErr.clear();
     try {
       const updated = await apiPatch<Expense>(`/api/expenses/${editingId}`, {
         cost,
@@ -361,7 +365,7 @@ export default function ManageExpensesDialog({
       setEditingId(null);
       onChanged?.();
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to update expense.", err) });
+      dlgErr.setError(getErrorMessage("Failed to update expense.", err));
     }
   }
 
@@ -710,6 +714,7 @@ export default function ManageExpensesDialog({
                 </Box>
               </VStack>
             </Dialog.Body>
+            <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
                 <Button variant="outline" onClick={() => onOpenChange(false)}>

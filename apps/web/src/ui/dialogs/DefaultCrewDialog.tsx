@@ -18,6 +18,10 @@ import {
   getErrorMessage,
   publishInlineMessage,
 } from "@/src/ui/components/InlineMessage";
+import {
+  DialogErrorAlert,
+  useDialogError,
+} from "@/src/ui/components/DialogErrorAlert";
 import TeamMemberList, { type TeamMember } from "@/src/ui/components/TeamMemberList";
 
 type WorkerLite = { id: string; displayName?: string | null; email?: string | null };
@@ -55,6 +59,7 @@ export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAs
   // default group server-side). Without this the orange "default group X
   // is set" warning would stay visible until the dialog was reopened.
   const [activeGroup, setActiveGroup] = useState<{ id: string; name: string } | null>(null);
+  const dlgErr = useDialogError();
 
   const groupCollection = useMemo(
     () => createListCollection({
@@ -87,6 +92,7 @@ export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAs
   }, [open]);
 
   async function setDefaultGroup(groupId: string | null) {
+    dlgErr.clear();
     setGroupBusy(true);
     try {
       await apiPut(`/api/admin/jobs/${jobId}/default-group`, { groupId });
@@ -108,13 +114,14 @@ export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAs
       }
       onChanged?.();
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to set default group.", err) });
+      dlgErr.setError(getErrorMessage("Failed to set default group.", err));
     } finally {
       setGroupBusy(false);
     }
   }
 
   async function handleAdd(userIds: string[], role: string | null) {
+    dlgErr.clear();
     setAddBusy(true);
     try {
       for (const userId of userIds) {
@@ -132,11 +139,12 @@ export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAs
       publishInlineMessage({ type: "SUCCESS", text: userIds.length === 1 ? "Worker added to default team." : `${userIds.length} workers added.` });
       onChanged?.();
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to add worker.", err) });
+      dlgErr.setError(getErrorMessage("Failed to add worker.", err));
     } finally { setAddBusy(false); }
   }
 
   async function handleRemove(userId: string) {
+    dlgErr.clear();
     setBusyId(userId);
     try {
       await apiDelete(`/api/admin/jobs/${jobId}/default-assignees/${userId}`);
@@ -144,12 +152,13 @@ export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAs
       publishInlineMessage({ type: "SUCCESS", text: "Worker removed from default team." });
       onChanged?.();
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to remove worker.", err) });
+      dlgErr.setError(getErrorMessage("Failed to remove worker.", err));
     } finally { setBusyId(""); }
   }
 
   async function handleToggleRole(userId: string, currentRole: string | null) {
     const newRole = currentRole === "observer" ? null : "observer";
+    dlgErr.clear();
     setBusyId(userId);
     try {
       await apiPatch(`/api/admin/jobs/${jobId}/default-assignees/${userId}/role`, { role: newRole });
@@ -157,11 +166,12 @@ export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAs
       publishInlineMessage({ type: "SUCCESS", text: newRole === "observer" ? "Changed to observer." : "Changed to worker." });
       onChanged?.();
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to change role.", err) });
+      dlgErr.setError(getErrorMessage("Failed to change role.", err));
     } finally { setBusyId(""); }
   }
 
   async function handleMakeClaimer(userId: string) {
+    dlgErr.clear();
     setBusyId(userId);
     try {
       await apiPost(`/api/admin/jobs/${jobId}/default-assignees/${userId}/make-claimer`, {});
@@ -177,7 +187,7 @@ export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAs
       publishInlineMessage({ type: "SUCCESS", text: "Default claimer updated." });
       onChanged?.();
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to set claimer.", err) });
+      dlgErr.setError(getErrorMessage("Failed to set claimer.", err));
     } finally { setBusyId(""); }
   }
 
@@ -315,6 +325,7 @@ export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAs
                 )}
               </VStack>
             </Dialog.Body>
+            <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
                 <Button ref={cancelRef} onClick={() => onOpenChange(false)} disabled={addBusy || busyId !== ""}>Done</Button>

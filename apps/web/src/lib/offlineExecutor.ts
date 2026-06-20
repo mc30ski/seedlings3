@@ -65,6 +65,29 @@ export function initOfflineExecutor() {
       case "DISMISS_REMINDER":
         await apiPost(`/api/standalone-reminders/${occId}/dismiss`);
         break;
+      // ── Workday lifecycle ─────────────────────────────────────────
+      // `payload` carries the original input to the lib helper (empty
+      // object for parameterless actions like pause/resume). Routes
+      // are the same self-service endpoints used when online — no
+      // special "queued mutation" backdoor.
+      case "START_WORKDAY":
+        await apiPost("/api/me/workday/start", payload);
+        break;
+      case "PAUSE_WORKDAY":
+        await apiPost("/api/me/workday/pause", payload);
+        break;
+      case "RESUME_WORKDAY":
+        await apiPost("/api/me/workday/resume", payload);
+        break;
+      case "END_WORKDAY":
+        await apiPost("/api/me/workday/end", payload);
+        break;
+      case "REOPEN_WORKDAY":
+        await apiPost("/api/me/workday/reopen", payload);
+        break;
+      case "CANCEL_WORKDAY":
+        await apiPost("/api/me/workday/cancel", payload);
+        break;
       default:
         throw new Error(`Unknown action type: ${type}`);
     }

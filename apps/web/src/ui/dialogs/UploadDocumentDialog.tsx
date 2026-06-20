@@ -22,6 +22,10 @@ import {
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 import {
+  DialogErrorAlert,
+  useDialogError,
+} from "@/src/ui/components/DialogErrorAlert";
+import {
   DEFAULT_DOCUMENT_TYPES,
   type DocumentTypeConfig,
 } from "@/src/ui/components/DocumentTypePicker";
@@ -58,6 +62,7 @@ export default function UploadDocumentDialog({
   const [adminHidden, setAdminHidden] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
+  const dlgErr = useDialogError();
 
   useEffect(() => {
     if (open) {
@@ -99,6 +104,7 @@ export default function UploadDocumentDialog({
   }
 
   async function handleUpload() {
+    dlgErr.clear();
     if (!type || !title.trim() || !file) return;
     setBusy(true);
     try {
@@ -134,7 +140,7 @@ export default function UploadDocumentDialog({
       onCreated();
       onOpenChange(false);
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Upload failed.", err) });
+      dlgErr.setError(getErrorMessage("Upload failed.", err));
     } finally {
       setBusy(false);
     }
@@ -221,6 +227,7 @@ export default function UploadDocumentDialog({
                 </Checkbox.Root>
               </VStack>
             </Dialog.Body>
+            <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
                 <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>

@@ -2518,6 +2518,12 @@ export const jobs: ServicesJobs = {
       // an active workday. Admins are exempt (they may be cleaning up).
       // The PAUSED → IN_PROGRESS path (resume) is also gated since it
       // resumes work and should require an open workday.
+      //
+      // The gate fires on BOTH the actor (claimer) AND every other
+      // non-observer assignee. If the claimer presses Start while a
+      // teammate hasn't clocked in yet, the start is blocked with a
+      // 409 listing the teammates who need to start their workday.
+      // Observers are exempt (they're not doing the work).
       if (
         !isAdmin &&
         finalStatus === JobOccurrenceStatus.IN_PROGRESS &&
@@ -2531,6 +2537,67 @@ export const jobs: ServicesJobs = {
             "Start your workday before starting a job.",
             409,
           );
+        }
+
+        // Team workday gate: every non-observer assignee must also be
+        // actively on the clock. Single batched query.
+        const teamAssignees = await tx.jobOccurrenceAssignee.findMany({
+          where: {
+            occurrenceId,
+            // Claimer is in this list and was already checked above;
+            // including them here is harmless because their workday
+            // is active. Excluding the actor's own row would also
+            // work but it's simpler to include and let the active
+            // check pass through.
+            OR: [{ role: null }, { role: { not: "observer" } }],
+          },
+          select: {
+            userId: true,
+            user: { select: { displayName: true, email: true } },
+          },
+        });
+        // No teammates beyond the claimer → nothing to check.
+        const otherTeam = teamAssignees.filter((a) => a.userId !== currentUserId);
+        if (otherTeam.length > 0) {
+          const todayKey = etFormatDate(new Date());
+          const teamWorkdays = await tx.workerWorkday.findMany({
+            where: {
+              userId: { in: otherTeam.map((a) => a.userId) },
+              workdayDate: todayKey,
+            },
+            select: {
+              userId: true,
+              endedAt: true,
+              pausedAt: true,
+            },
+          });
+          // "Active" = today's row exists AND is not ended AND is not
+          // paused. Same definition the claimer gate uses (via
+          // assertWorkdayActiveOrPrompt). PAUSED is explicitly NOT
+          // active — those workers need to resume first.
+          const wdByUser = new Map(teamWorkdays.map((w) => [w.userId, w]));
+          const notReady: { userId: string; name: string }[] = [];
+          for (const a of otherTeam) {
+            const wd = wdByUser.get(a.userId);
+            const isActive = !!wd && wd.endedAt == null && wd.pausedAt == null;
+            if (!isActive) {
+              notReady.push({
+                userId: a.userId,
+                name: a.user?.displayName ?? a.user?.email ?? "(unnamed)",
+              });
+            }
+          }
+          if (notReady.length > 0) {
+            const names = notReady.map((n) => n.name).join(", ");
+            const noun = notReady.length === 1 ? "teammate" : "teammates";
+            const verb = notReady.length === 1 ? "hasn't" : "haven't";
+            throw new ServiceError(
+              "TEAM_WORKDAY_NOT_ACTIVE",
+              `Can't start yet — ${noun} ${verb} started their workday: ${names}`,
+              409,
+              { notReady },
+            );
+          }
         }
       }
 
@@ -2625,7 +2692,17 @@ export const jobs: ServicesJobs = {
               : (occ.totalPausedMs ?? 0);
         if (effectiveCompletedAt) {
           const activeAssignees = await tx.jobOccurrenceAssignee.count({
-            where: { occurrenceId, NOT: { role: "observer" } },
+            // NULL-role rows are the canonical "regular worker" — must
+            // be included. A direct exclusion of observers via Prisma's
+            // not-equal forms translates to SQL `role != 'observer'`
+            // which excludes NULL via Postgres three-valued logic,
+            // silently undercounting the team and breaking the
+            // variance-threshold auto-approve math. Use the OR pattern
+            // that the rest of the codebase uses.
+            where: {
+              occurrenceId,
+              OR: [{ role: null }, { role: { not: "observer" } }],
+            },
           });
           const varianceThreshold = await loadHoursApprovalVarianceThreshold();
           const approval = evaluateHoursApproval({

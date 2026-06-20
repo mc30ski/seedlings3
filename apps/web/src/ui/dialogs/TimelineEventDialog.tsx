@@ -20,6 +20,10 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import {
+  DialogErrorAlert,
+  useDialogError,
+} from "@/src/ui/components/DialogErrorAlert";
 import RRuleEditor from "@/src/ui/components/RRuleEditor";
 import {
   DEFAULT_TIMELINE_CATEGORIES,
@@ -64,6 +68,7 @@ export default function TimelineEventDialog({ open, onOpenChange, event, onSaved
   const [rrule, setRRule] = useState("");
   const [adminHidden, setAdminHidden] = useState(false);
   const [busy, setBusy] = useState(false);
+  const dlgErr = useDialogError();
 
   // Categories come from the TIMELINE_CATEGORIES setting (configurable). Falls
   // back to the hardcoded defaults if the setting isn't present.
@@ -92,6 +97,7 @@ export default function TimelineEventDialog({ open, onOpenChange, event, onSaved
   }, [open, event]);
 
   async function handleSave() {
+    dlgErr.clear();
     if (!title.trim() || !anchorDate) return;
     setBusy(true);
     try {
@@ -122,7 +128,7 @@ export default function TimelineEventDialog({ open, onOpenChange, event, onSaved
       onSaved();
       onOpenChange(false);
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Save failed.", err) });
+      dlgErr.setError(getErrorMessage("Save failed.", err));
     } finally {
       setBusy(false);
     }
@@ -188,6 +194,7 @@ export default function TimelineEventDialog({ open, onOpenChange, event, onSaved
                 </Checkbox.Root>
               </VStack>
             </Dialog.Body>
+            <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
                 <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>

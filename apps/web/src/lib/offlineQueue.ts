@@ -29,7 +29,17 @@ export type QueuedActionType =
   | "UNPIN"
   | "LIKE"
   | "UNLIKE"
-  | "DISMISS_REMINDER";
+  | "DISMISS_REMINDER"
+  // Workday lifecycle — `occurrenceId` is repurposed to a synthetic
+  // `workday:YYYY-MM-DD` key so the queue's per-occurrence "skip
+  // dependent actions on failure" semantic groups same-day workday
+  // mutations correctly.
+  | "START_WORKDAY"
+  | "PAUSE_WORKDAY"
+  | "RESUME_WORKDAY"
+  | "END_WORKDAY"
+  | "REOPEN_WORKDAY"
+  | "CANCEL_WORKDAY";
 
 export type QueuedActionStatus = "pending" | "syncing" | "synced" | "failed";
 

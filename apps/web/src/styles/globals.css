@@ -12,3 +12,18 @@
   0%, 100% { box-shadow: 0 0 0 0 rgba(236, 72, 153, 0.45); }
   50% { box-shadow: 0 0 0 8px rgba(236, 72, 153, 0); }
 }
+
+/* Orange pulse — used on the NOT_STARTED workday card so workers
+   notice the morning "Start your workday" call to action. */
+@keyframes seedlings-pulse-orange {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.45); }
+  50% { box-shadow: 0 0 0 8px rgba(249, 115, 22, 0); }
+}
+
+/* Green pulse — used on the IN_PROGRESS workday card when all of the
+   worker's scheduled jobs are done for the day, signaling "time to
+   clock out". */
+@keyframes seedlings-pulse-green {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.45); }
+  50% { box-shadow: 0 0 0 8px rgba(22, 163, 74, 0); }
+}

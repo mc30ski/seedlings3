@@ -34,6 +34,10 @@ import {
   getErrorMessage,
   publishInlineMessage,
 } from "@/src/ui/components/InlineMessage";
+import {
+  DialogErrorAlert,
+  useDialogError,
+} from "@/src/ui/components/DialogErrorAlert";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import ImpersonationWarning from "@/src/ui/components/ImpersonationWarning";
 
@@ -124,6 +128,7 @@ export default function AcceptPaymentDialog({
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [busy, setBusy] = useState(false);
   const [requestBusy, setRequestBusy] = useState(false);
+  const dlgErr = useDialogError();
 
   // PAYMENT_METHODS taxonomy — loaded once on open. Filtered by
   // supportsOnSite for the on-site collection surface. Method dropdown +
@@ -365,6 +370,7 @@ export default function AcceptPaymentDialog({
   // job hit PENDING_PAYMENT; we still update splits and close. In CLAIMER
   // mode we open the device SMS/mailto handler in the user gesture.
   async function handleRequestPayment() {
+    dlgErr.clear();
     if (!handoff || !occurrenceId) {
       publishInlineMessage({ type: "WARNING", text: "Couldn't load contact info — refresh and try again." });
       return;
@@ -392,7 +398,7 @@ export default function AcceptPaymentDialog({
           onAccepted({ requestSent: true });
         })
         .catch((err) => {
-          publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to save splits.", err) });
+          dlgErr.setError(getErrorMessage("Failed to save splits.", err));
         })
         .finally(() => setRequestBusy(false));
       return;
@@ -401,20 +407,18 @@ export default function AcceptPaymentDialog({
     // contact only. If empty, the client has no primary set — surface that
     // explicitly so the admin can fix the data invariant.
     if (handoff.missingPrimaryContact || handoff.contacts.length === 0) {
-      publishInlineMessage({
-        type: "ERROR",
-        text: "No primary contact set for this client. Open the client's contacts and mark one as Primary before requesting payment.",
-      });
+      dlgErr.setError(
+        "No primary contact set for this client. Open the client's contacts and mark one as Primary before requesting payment.",
+      );
       return;
     }
     const primaryContact = handoff.contacts[0];
     const phoneContact = primaryContact.phone ? primaryContact : null;
     const emailContact = primaryContact.email ? primaryContact : null;
     if (!phoneContact && !emailContact) {
-      publishInlineMessage({
-        type: "ERROR",
-        text: "Primary contact has no phone or email on file. Update their contact info before requesting payment.",
-      });
+      dlgErr.setError(
+        "Primary contact has no phone or email on file. Update their contact info before requesting payment.",
+      );
       return;
     }
     const useSms = !!phoneContact?.phone;
@@ -437,7 +441,7 @@ export default function AcceptPaymentDialog({
         onAccepted({ requestSent: true });
       })
       .catch((err) => {
-        publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to record request.", err) });
+        dlgErr.setError(getErrorMessage("Failed to record request.", err));
       })
       .finally(() => setRequestBusy(false));
   }
@@ -446,6 +450,7 @@ export default function AcceptPaymentDialog({
   // actual amount received. The Amount Paid field on the main dialog stays
   // locked to the invoice total; this is the single override point.
   async function handleAcceptConfirmed(amountReceived: number) {
+    dlgErr.clear();
     if (!Number.isFinite(amountReceived) || amountReceived < 0) {
       publishInlineMessage({ type: "WARNING", text: "Please enter a valid amount." });
       return;
@@ -479,10 +484,7 @@ export default function AcceptPaymentDialog({
       onOpenChange(false);
       onAccepted(result);
     } catch (err) {
-      publishInlineMessage({
-        type: "ERROR",
-        text: getErrorMessage("Accept payment failed.", err),
-      });
+      dlgErr.setError(getErrorMessage("Accept payment failed.", err));
     } finally {
       setBusy(false);
     }
@@ -630,6 +632,7 @@ export default function AcceptPaymentDialog({
                     </div>
                   </VStack>
                 </Dialog.Body>
+                <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
                 <Dialog.Footer>
                   <HStack justify="flex-end" w="full" wrap="wrap" gap={2}>
                     <Button
@@ -644,9 +647,10 @@ export default function AcceptPaymentDialog({
                       variant="solid"
                       colorPalette="green"
                       onClick={() => {
+                        dlgErr.clear();
                         const parsed = Number.parseFloat((confirmAmount ?? "").trim());
                         if (!Number.isFinite(parsed) || parsed < 0) {
-                          publishInlineMessage({ type: "ERROR", text: "Enter a valid amount." });
+                          dlgErr.setError("Enter a valid amount.");
                           return;
                         }
                         void handleAcceptConfirmed(parsed);
@@ -726,6 +730,7 @@ export default function AcceptPaymentDialog({
                     })()}
                   </VStack>
                 </Dialog.Body>
+                <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
                 <Dialog.Footer>
                   <HStack justify="flex-end" w="full" wrap="wrap" gap={2}>
                     <Button
@@ -933,6 +938,7 @@ export default function AcceptPaymentDialog({
               </VStack>
             </Dialog.Body>
 
+            <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
             <Dialog.Footer>
               <HStack justify="flex-end" w="full" wrap="wrap" gap={2}>
                 <Button
