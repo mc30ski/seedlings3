@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Box, HStack, Icon, Text } from "@chakra-ui/react";
-import { ChevronDown } from "lucide-react";
+import { Badge, Box, HStack, Icon, Text } from "@chakra-ui/react";
+import { ArrowUpRight, ChevronDown } from "lucide-react";
 
 export type InnerTab = {
   value: string;
@@ -122,9 +122,50 @@ export default function BreadcrumbNav({
   // Resolve active inner tab within the category
   const activeInnerResolved = categoryTabs.find((t) => t.value === innerValue) ?? categoryTabs[0] ?? activeInner ?? visibleInner[0];
 
+  // Cross-role targets: for a given inner-tab value, which OTHER outer
+  // tabs (Worker/Admin/Super) contain the same tab AND are visible to
+  // this user. Drives the small role-jump chips inside the inner-tab
+  // dropdown so the user can hop from e.g. Worker→Pricing straight to
+  // Admin→Pricing without rebuilding their navigation path.
+  //
+  // Equivalence is the inner value string — same value across roles =
+  // same conceptual tab. No per-tab annotation needed; new shared tabs
+  // become role-jumpable automatically the moment they're registered
+  // under the same value in multiple outer entries.
+  function computeCrossRoleTargets(innerVal: string): {
+    outerValue: string;
+    label: string;
+    icon?: React.ElementType;
+  }[] {
+    const targets: { outerValue: string; label: string; icon?: React.ElementType }[] = [];
+    for (const o of outerTabs) {
+      if (o.value === outerValue) continue; // skip current
+      if (!isVisible(o.visible)) continue;   // skip roles the user can't access
+      const match = o.innerTabs.find((t) => t.value === innerVal && isVisible(t.visible));
+      if (match) targets.push({ outerValue: o.value, label: o.label, icon: o.icon });
+    }
+    return targets;
+  }
+
+  function jumpToCrossRole(innerVal: string, targetOuter: string) {
+    onOuterChange(targetOuter);
+    onInnerChange(innerVal, targetOuter);
+    closeAll();
+  }
+
   function renderDropdown(
     ref: React.RefObject<HTMLDivElement | null>,
-    items: { value: string; label: string; icon?: React.ElementType; highlight?: boolean; chip?: boolean }[],
+    items: {
+      value: string;
+      label: string;
+      icon?: React.ElementType;
+      highlight?: boolean;
+      chip?: boolean;
+      /** When set, render small role-jump badges on the right of the
+       *  dropdown row. Each badge navigates to the same inner tab under
+       *  a different outer role. Empty/undefined → no badges shown. */
+      crossRoleTargets?: { outerValue: string; label: string; icon?: React.ElementType }[];
+    }[],
     activeValue: string,
     onSelect: (value: string) => void,
   ) {
@@ -139,16 +180,31 @@ export default function BreadcrumbNav({
         shadow="lg"
         mt={1}
         minW="180px"
+        maxW="calc(100vw - 16px)"
         maxH="400px"
         overflowY="auto"
         py={1}
-        style={{
-          top: (ref.current?.getBoundingClientRect().bottom ?? 0) + 4,
-          left: Math.min(
-            ref.current?.getBoundingClientRect().left ?? 0,
-            (typeof window !== "undefined" ? window.innerWidth : 400) - 200
-          ),
-        }}
+        style={(() => {
+          // Position computed below the trigger, then clamped horizontally so
+          // the right edge of the dropdown stays inside the viewport — needed
+          // on narrow mobile screens where the inner-tab trigger sits well
+          // past the midpoint AND the cross-role chips can push content past
+          // the old 200px-budget clamp. We over-estimate at 320px to leave
+          // headroom; maxW on the Box clamps the visible width as a safety
+          // net so the chip column never spills past the right edge.
+          const rect = ref.current?.getBoundingClientRect();
+          const viewportW = typeof window !== "undefined" ? window.innerWidth : 400;
+          const margin = 8;
+          const estimatedW = 320;
+          const left = Math.max(
+            margin,
+            Math.min(rect?.left ?? 0, viewportW - estimatedW - margin),
+          );
+          return {
+            top: (rect?.bottom ?? 0) + 4,
+            left,
+          };
+        })()}
       >
         {items.map((t) => (
           <HStack
@@ -211,6 +267,42 @@ export default function BreadcrumbNav({
                   {t.label}
                 </Text>
               </>
+            )}
+            {/* Cross-role jump badges — render only when this inner tab
+                exists under another outer role the user can access. Each
+                badge skips the parent row's onClick via stopPropagation
+                so tapping the chip doesn't ALSO select the tab within
+                the current role first. */}
+            {t.crossRoleTargets && t.crossRoleTargets.length > 0 && (
+              <HStack gap={1} ml="auto" flexShrink={0}>
+                {t.crossRoleTargets.map((target) => (
+                  <Badge
+                    key={target.outerValue}
+                    as="button"
+                    size="xs"
+                    variant="outline"
+                    colorPalette="gray"
+                    borderRadius="full"
+                    px="1.5"
+                    cursor="pointer"
+                    title={`Open ${t.label} in ${target.label}`}
+                    aria-label={`Open ${t.label} in ${target.label}`}
+                    onClick={(e: any) => {
+                      e.stopPropagation();
+                      jumpToCrossRole(t.value, target.outerValue);
+                    }}
+                    _hover={{ bg: "gray.100", borderColor: "gray.400" }}
+                  >
+                    <HStack gap={1} align="center">
+                      {target.icon && <Icon as={target.icon} boxSize={3} />}
+                      <Text fontSize="2xs" lineHeight="1">
+                        {target.label.charAt(0).toUpperCase()}
+                      </Text>
+                      <ArrowUpRight size={10} />
+                    </HStack>
+                  </Badge>
+                ))}
+              </HStack>
             )}
           </HStack>
         ))}
@@ -311,7 +403,13 @@ export default function BreadcrumbNav({
                   </HStack>
                   {innerOpen && renderDropdown(
                     innerRef,
-                    categoryTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, chip: t.chip })),
+                    categoryTabs.map((t) => ({
+                      value: t.value,
+                      label: t.label,
+                      icon: t.icon,
+                      chip: t.chip,
+                      crossRoleTargets: computeCrossRoleTargets(t.value),
+                    })),
                     innerValue,
                     (v) => { onInnerChange(v); setInnerOpen(false); },
                   )}
@@ -340,7 +438,13 @@ export default function BreadcrumbNav({
             </HStack>
             {innerOpen && renderDropdown(
               innerRef,
-              visibleInner.map((t) => ({ value: t.value, label: t.label, icon: t.icon, chip: t.chip })),
+              visibleInner.map((t) => ({
+                value: t.value,
+                label: t.label,
+                icon: t.icon,
+                chip: t.chip,
+                crossRoleTargets: computeCrossRoleTargets(t.value),
+              })),
               innerValue,
               (v) => { onInnerChange(v); setInnerOpen(false); },
             )}

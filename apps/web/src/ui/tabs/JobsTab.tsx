@@ -6359,7 +6359,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 </Card.Body>
                 )}
 
-                {!isCardCompact && !isTrainee && (isUnassigned || isActiveAssignee || (forAdmin && (isAdmin || isSuper))) && !isTentative && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || (occ.status as string) === "PAUSED" || occ.status === "PENDING_PAYMENT" || occ.status === "CLOSED" || occ.status === "PROPOSAL_SUBMITTED") && (
+                {/* Action footer — admin/super always see it (so tentative
+                    jobs can be confirmed, rescheduled, team-changed before
+                    client confirmation). Workers/observers see it only on
+                    non-tentative jobs since the start/complete affordances
+                    don't apply until the client has confirmed. */}
+                {!isCardCompact && !isTrainee && (isUnassigned || isActiveAssignee || (forAdmin && (isAdmin || isSuper))) && (!isTentative || (forAdmin && (isAdmin || isSuper))) && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || (occ.status as string) === "PAUSED" || occ.status === "PENDING_PAYMENT" || occ.status === "CLOSED" || occ.status === "PROPOSAL_SUBMITTED") && (
                   <Card.Footer py="2" px="3" pt="0">
                     {/* HStack (not VStack) so Manage in Services lands on
                         the same row as the per-status primary action
@@ -7049,7 +7054,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           Delete
                         </Button>
                       )}
-                      {(isClaimer || isActiveAssignee || forAdmin) && !isTaskOrReminder && occ.status === "SCHEDULED" && !isTentative && !isOffline && (
+                      {/* Reschedule — workers/claimer only when not tentative
+                          (no point rescheduling a job whose client hasn't
+                          confirmed); admin/super can reschedule regardless. */}
+                      {(isClaimer || isActiveAssignee || forAdmin) && !isTaskOrReminder && occ.status === "SCHEDULED" && (!isTentative || (forAdmin && (isAdmin || isSuper))) && !isOffline && (
                         <Button
                           size="sm"
                           variant="outline"
