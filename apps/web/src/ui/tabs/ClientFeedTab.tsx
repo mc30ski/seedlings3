@@ -108,7 +108,7 @@ export default function ClientFeedTab() {
   const [viewerPhoto, setViewerPhoto] = useState<string | null>(null);
   const [viewerPhotos, setViewerPhotos] = useState<FeedPhoto[]>([]);
   const [viewerIdx, setViewerIdx] = useState(0);
-  const [viewMode, setViewMode] = usePersistedState<"list" | "tiles">("clientFeed_viewMode", "list");
+  const [viewMode, setViewMode] = usePersistedState<"list" | "tiles">("clientFeed_viewMode", "tiles");
 
   // Global keyboard handler for photo viewer
   const viewerIdxRef = useRef(viewerIdx);
