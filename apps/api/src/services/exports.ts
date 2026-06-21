@@ -780,8 +780,10 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
   //   • Service payments → one row per confirmed, non-written-off
   //     Payment. A Workers column lists the displayNames of every
   //     non-owner-earnings split recipient (the people who actually
-  //     worked the job). Worker Payouts + Owner Earnings sum to
-  //     Payment Net per row.
+  //     worked the job). Worker Payouts + Business Margin sum to
+  //     Payment Net per row — Business Margin is what the company
+  //     keeps after worker payouts (and after processor fees, which
+  //     are already netted out of Payment Net upstream).
   //
   //   • Equipment rental income → one row per Checkout with
   //     `rentalCost > 0` released in window. The renter goes in the
@@ -843,7 +845,14 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
     processorFee: number | null;
     paymentNet: number | null;
     workerPayouts: number | null;
-    ownerEarnings: number | null;
+    /** What the business keeps after worker payouts. For service rows
+     *  this is Payment Net − Worker Payouts; for rentals (no splits) it
+     *  equals Payment Net. Owner-only jobs land here at 100% of
+     *  Payment Net since `workerPayouts` is 0. Same number that used
+     *  to be labeled "Owner Earnings" — renamed because it's actually
+     *  the company's margin, of which owner-only payouts are just the
+     *  special case where the owner did all the work. */
+    businessMargin: number | null;
   };
   const rows: Row[] = [];
 
@@ -868,19 +877,21 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
     const jobTitle = occ?.title?.trim() || workflowLabel(occ?.workflow);
     const method = p.method ?? "";
 
-    // Aggregate the splits into the per-payment view: worker payouts
-    // vs owner earnings totals.
+    // Sum worker payouts (every split NOT flagged ownerEarnings). The
+    // business margin is then derived from Payment Net minus that — same
+    // number you'd get by summing the owner-earnings splits, but expressed
+    // as the canonical "what the business actually made" formula so the
+    // CSV column header and the math agree:
+    //   Business Margin = Payment Net − Worker Payouts
     let workerPayouts = 0;
-    let ownerEarnings = 0;
     for (const sp of p.splits) {
       const spAny = sp as any;
       const isOwnerCut = spAny.ownerEarnings === true;
-      if (isOwnerCut) {
-        ownerEarnings += sp.amount ?? 0;
-      } else {
+      if (!isOwnerCut) {
         workerPayouts += sp.amount ?? 0;
       }
     }
+    const businessMargin = round2(paymentNet - round2(workerPayouts));
 
     // Workers column — built from the JobOccurrence assignees, NOT
     // from the PaymentSplit rows. Splits would mislead in two cases:
@@ -915,7 +926,7 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
       processorFee,
       paymentNet,
       workerPayouts: round2(workerPayouts),
-      ownerEarnings: round2(ownerEarnings),
+      businessMargin,
     });
   }
 
@@ -926,9 +937,10 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
       "Equipment rental";
     const rentalCost = round2(c.rentalCost ?? 0);
     // Rentals: all cash flows straight to the business bank — no
-    // processor leg, no worker split, no owner-earnings line. Payment
-    // Net carries the full amount so the column-total ties out to
-    // every dollar deposited.
+    // processor leg, no worker split, no per-job costs. Payment Net
+    // carries the full amount and Business Margin matches it 1:1
+    // (workerPayouts is intentionally null, not 0, so the column reads
+    // as "n/a" rather than implying a $0 worker split occurred).
     rows.push({
       date: c.releasedAt ? toIsoDate(c.releasedAt) : "",
       // No underlying job for equipment rentals — leave blank so the
@@ -944,7 +956,7 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
       processorFee: null,
       paymentNet: rentalCost,
       workerPayouts: null,
-      ownerEarnings: null,
+      businessMargin: rentalCost,
     });
   }
 
@@ -971,19 +983,20 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
     "Processor Fee",
     "Payment Net",
     "Worker Payouts",
-    "Owner Earnings",
+    "Business Margin",
   ];
   const lines: string[] = [csvRow(header)];
   // Now that there's one row per payment (not per split), every
   // numeric-column total sums cleanly without over-counting.
-  // Sanity identity: Payment Net = Worker Payouts + Owner Earnings
-  // for each Service row, and Payment Net = Payment Gross for each
-  // Rental row (no processor fee, no split).
+  // Sanity identity: Payment Net = Worker Payouts + Business Margin
+  // for each Service row, and Payment Net = Payment Gross = Business
+  // Margin for each Rental row (no processor fee, no split — every
+  // dollar lands in the company's margin).
   let paymentGrossTotal = 0;
   let processorFeeTotal = 0;
   let paymentNetTotal = 0;
   let workerPayoutsTotal = 0;
-  let ownerEarningsTotal = 0;
+  let businessMarginTotal = 0;
   function fmtNum(n: number | null): string {
     return n == null ? "" : n.toFixed(2);
   }
@@ -1002,14 +1015,14 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
         fmtNum(r.processorFee),
         fmtNum(r.paymentNet),
         fmtNum(r.workerPayouts),
-        fmtNum(r.ownerEarnings),
+        fmtNum(r.businessMargin),
       ]),
     );
     paymentGrossTotal += r.paymentGross ?? 0;
     processorFeeTotal += r.processorFee ?? 0;
     paymentNetTotal += r.paymentNet ?? 0;
     workerPayoutsTotal += r.workerPayouts ?? 0;
-    ownerEarningsTotal += r.ownerEarnings ?? 0;
+    businessMarginTotal += r.businessMargin ?? 0;
   }
   // 7 leading empties for: Service Date, Source, Client, Property, Job,
   // Workers, Payment Method — then the five numeric column totals. (The
@@ -1022,7 +1035,7 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
       round2(processorFeeTotal).toFixed(2),
       round2(paymentNetTotal).toFixed(2),
       round2(workerPayoutsTotal).toFixed(2),
-      round2(ownerEarningsTotal).toFixed(2),
+      round2(businessMarginTotal).toFixed(2),
     ]),
   );
   return { csv: finalizeCsv(lines), rowCount: rows.length, total: round2(paymentNetTotal) };
