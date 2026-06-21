@@ -859,22 +859,25 @@ export async function superListWorkdaysForDate(workdayDate: string): Promise<{
   });
   const rowsByUserId = new Map(rows.map((r) => [r.userId, r]));
 
-  // "DIDN'T WORK" — users with ≥1 workday in history who don't have a row
-  // on the selected day. Loose semantics (see the planning thread): we
-  // don't filter out new hires or departed workers. Operator handles the
-  // edge cases mentally.
-  const allWorkerIdsWithHistory = await prisma.workerWorkday.findMany({
-    distinct: ["userId"],
-    select: { userId: true },
+  // "DIDN'T WORK" — every approved worker (workerType set, isApproved)
+  // who doesn't have a row on the selected day. Loose semantics: we
+  // don't filter out new hires (they appear immediately so the operator
+  // can backfill a first-day shift) or departed workers (admin manually
+  // archives the User when they leave). Operator handles the edge cases
+  // mentally.
+  //
+  // Previously the eligibility set was derived from `workerWorkday`
+  // history (≥1 prior workday) which silently excluded brand-new
+  // trainees — making backfill impossible for their first shift. Anchor
+  // on the User table instead so first-time workers show up immediately.
+  const eligibleWorkers = await prisma.user.findMany({
+    where: {
+      workerType: { not: null },
+      isApproved: true,
+    },
+    select: { id: true, displayName: true, email: true, workerType: true },
   });
-  const eligibleUserIds = new Set(allWorkerIdsWithHistory.map((r) => r.userId));
-  const didntWorkIds = Array.from(eligibleUserIds).filter((id) => !rowsByUserId.has(id));
-  const didntWorkUsers = didntWorkIds.length
-    ? await prisma.user.findMany({
-        where: { id: { in: didntWorkIds } },
-        select: { id: true, displayName: true, email: true, workerType: true },
-      })
-    : [];
+  const didntWorkUsers = eligibleWorkers.filter((u) => !rowsByUserId.has(u.id));
   didntWorkUsers.sort((a, b) =>
     (a.displayName ?? a.email ?? "").localeCompare(b.displayName ?? b.email ?? ""),
   );
