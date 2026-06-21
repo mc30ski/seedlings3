@@ -825,6 +825,14 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
 
   type Row = {
     date: string;
+    /** Original service date — when the underlying job was completed
+     *  (occurrence.completedAt). For payments that arrive days/weeks
+     *  after the work (mailed checks, late invoices), the receipt-date
+     *  column and the service-date column diverge — this column lets
+     *  operators tie a payment back to when the work actually happened
+     *  for accrual-vs-cash reconciliation. Blank for equipment rentals
+     *  (no underlying job). */
+    serviceDate: string;
     source: string;
     client: string;
     property: string;
@@ -848,6 +856,7 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
     const processorFee = round2((p as any).processorFeeAmount ?? 0);
     const paymentNet = round2(paymentGross - processorFee);
     const dateLabel = p.confirmedAt ? toIsoDate(p.confirmedAt) : "";
+    const serviceDateLabel = occ?.completedAt ? toIsoDate(occ.completedAt) : "";
     const propertyName = property?.displayName ?? "";
     const clientName = client?.displayName ?? "";
     // Job column: explicit title → workflow-derived label. We
@@ -895,6 +904,7 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
     }
     rows.push({
       date: dateLabel,
+      serviceDate: serviceDateLabel,
       source: "Service",
       client: clientName,
       property: propertyName,
@@ -921,6 +931,9 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
     // every dollar deposited.
     rows.push({
       date: c.releasedAt ? toIsoDate(c.releasedAt) : "",
+      // No underlying job for equipment rentals — leave blank so the
+      // service-date column is unambiguously "service-only."
+      serviceDate: "",
       source: "Equipment Rental",
       client: c.user?.displayName ?? c.user?.email ?? "",
       property: equipName,
@@ -947,6 +960,7 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
 
   const header = [
     "Date",
+    "Service Date",
     "Source",
     "Client / Renter",
     "Property / Equipment",
@@ -977,6 +991,7 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
     lines.push(
       csvRow([
         r.date,
+        r.serviceDate,
         r.source,
         r.client,
         r.property,
@@ -996,12 +1011,13 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
     workerPayoutsTotal += r.workerPayouts ?? 0;
     ownerEarningsTotal += r.ownerEarnings ?? 0;
   }
-  // 7 leading empties for: Date, Source, Client, Property, Job,
-  // Workers, Payment Method — then the five numeric column totals.
+  // 7 leading empties for: Service Date, Source, Client, Property, Job,
+  // Workers, Payment Method — then the five numeric column totals. (The
+  // leading "TOTALS" label occupies the Date column, hence 7 not 8.)
   lines.push(
     csvRow([
       "TOTALS",
-      "", "", "", "", "", "",
+      "", "", "", "", "", "", "",
       round2(paymentGrossTotal).toFixed(2),
       round2(processorFeeTotal).toFixed(2),
       round2(paymentNetTotal).toFixed(2),
