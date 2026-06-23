@@ -37,6 +37,7 @@ enum AuditScope {
   PAYMENT
   EXPORT
   WORKDAY
+  LEDGER_FOLLOWUP
   // add more scopes as you expand the schema
 }
 
@@ -232,6 +233,13 @@ model User {
   // doesn't need a follow-up migration).
   workdays           WorkerWorkday[] @relation("WorkdayWorker")
   workdaysApproved   WorkerWorkday[] @relation("WorkdayApprover")
+
+  // Money-Ledger followup flags this Super created and (separately) resolved.
+  // Two relations because creator and resolver can differ — one Super flags,
+  // another resolves. The flag itself targets any of Payment / BusinessExpense
+  // / Checkout via the polymorphic (entityType, entityId) pair on the row.
+  ledgerFollowupsCreated  LedgerFollowup[] @relation("LedgerFollowupCreator")
+  ledgerFollowupsResolved LedgerFollowup[] @relation("LedgerFollowupResolver")
 }
 
 model NotificationTemplate {
@@ -2085,4 +2093,48 @@ model WorkerWorkday {
   @@unique([userId, workdayDate])
   @@index([userId, startedAt])
   @@index([workdayDate])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Money-Ledger followup flag — polymorphic. A Super can flag any row that
+// appears on the Super → Money → Ledger view (Payment, BusinessExpense, or
+// Checkout rental income) for follow-up — e.g. "waiting on ACH to post",
+// "vendor disputing", "reconcile against bank statement next month."
+//
+// One open flag per underlying row at a time (enforced by the unique
+// partial-ish index pattern: (entityType, entityId, resolvedAt) — resolved
+// rows can coexist with a fresh open flag because resolvedAt differs). The
+// resolved row stays on the table so audit history is queryable.
+//
+// `entityType` is a free-form string (lowercase model name): "payment" |
+// "businessExpense" | "checkout". Polymorphic so adding a new ledger row
+// type later (e.g. Refund) doesn't need a schema migration.
+//
+// Audit trail: the route layer writes AuditEvent rows for FLAG / EDIT /
+// RESOLVE actions — this model itself is just the indexable state.
+// ─────────────────────────────────────────────────────────────────────────────
+model LedgerFollowup {
+  id String @id @default(cuid())
+
+  entityType String // "payment" | "businessExpense" | "checkout"
+  entityId   String
+
+  note String? @db.Text
+
+  createdAt    DateTime @default(now())
+  createdById  String
+  createdBy    User     @relation("LedgerFollowupCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  // Null = open. Stamped on resolve; the resolving Super may differ from
+  // the creator (one flags, another resolves).
+  resolvedAt   DateTime?
+  resolvedById String?
+  resolvedBy   User?     @relation("LedgerFollowupResolver", fields: [resolvedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  updatedAt DateTime @updatedAt
+
+  // Drives the title-bar count fast — `WHERE resolvedAt IS NULL`.
+  @@index([resolvedAt])
+  // Drives "is this row flagged?" lookups on the Ledger render path.
+  @@index([entityType, entityId, resolvedAt])
 }

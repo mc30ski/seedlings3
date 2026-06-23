@@ -4439,6 +4439,9 @@ Respond ONLY with valid JSON in this exact format:
       // Optional type filter: EXPENSE | CAPITAL_CONTRIBUTION | OWNER_DRAW.
       // Unspecified → all types (the unfiltered Accounting view).
       type?: string;
+      // When "true", narrow to rows that have an open LedgerFollowup
+      // flag. Drives the "Followups only" filter chip on the Ledger tab.
+      flagOnly?: string;
     };
     const where: any = {};
     if (q.from || q.to) {
@@ -4474,6 +4477,21 @@ Respond ONLY with valid JSON in this exact format:
         { vendor: { contains: term, mode: "insensitive" } },
         { notes: { contains: term, mode: "insensitive" } },
       ];
+    }
+    // Followups-only narrowing — fetch the entityIds of every OPEN
+    // BusinessExpense followup and restrict the BE query to that set.
+    // Cheap: single index hit on (entityType, resolvedAt) returns just the
+    // ids; the BE query then joins those into its existing where clause.
+    if (q.flagOnly === "true") {
+      const flagged = await prisma.ledgerFollowup.findMany({
+        where: { entityType: "businessExpense", resolvedAt: null },
+        select: { entityId: true },
+      });
+      const ids = flagged.map((f) => f.entityId);
+      if (ids.length === 0) {
+        return { rows: [], total: 0 };
+      }
+      where.id = { in: ids };
     }
     // Business Start Date filter — pre-cutoff BusinessExpense rows hidden
     // from the Accounting tab. If a from-date is already set, the cutoff is
@@ -6467,4 +6485,70 @@ Respond ONLY with valid JSON in this exact format:
     );
   });
 
+  // ── Ledger followups (Super) ────────────────────────────────────────────
+  // Lets a Super flag any Payment / BusinessExpense / Checkout row on the
+  // Money → Ledger view for follow-up (e.g. "ACH didn't post," "vendor
+  // dispute," "reconcile next month"). The count powers the alerts-dropdown
+  // entry; the list powers the Ledger filter chip; create/edit/resolve are
+  // the lifecycle mutations.
+  const ledgerFollowups = await import("../services/ledgerFollowups");
+
+  app.get("/super/ledger-followups/count", superGuard, async () => {
+    const count = await ledgerFollowups.countOpenFollowups();
+    return { count };
+  });
+
+  app.get("/super/ledger-followups", superGuard, async (req: any) => {
+    // ?includeResolved=true → history view; default is open-only.
+    const includeResolved = req.query?.includeResolved === "true";
+    const rows = await ledgerFollowups.listFollowups({ includeResolved });
+    return { rows };
+  });
+
+  // Map of `${entityType}:${entityId}` → open followup, for the Ledger tab
+  // to render flag icons per-row without an N+1.
+  app.get("/super/ledger-followups/map", superGuard, async () => {
+    const map = await ledgerFollowups.openFollowupMap();
+    return { map };
+  });
+
+  app.post("/super/ledger-followups", superGuard, async (req: any) => {
+    const body = (req.body ?? {}) as { entityType?: string; entityId?: string; note?: string | null };
+    if (!body.entityType || !body.entityId) {
+      throw app.httpErrors.badRequest("entityType and entityId are required");
+    }
+    const actorId = await currentUserId(req);
+    return ledgerFollowups.createFollowup({
+      entityType: body.entityType,
+      entityId: body.entityId,
+      note: body.note ?? null,
+      actorId,
+    });
+  });
+
+  app.patch("/super/ledger-followups/:id", superGuard, async (req: any) => {
+    const body = (req.body ?? {}) as { note?: string | null };
+    const actorId = await currentUserId(req);
+    return ledgerFollowups.updateFollowupNote({
+      id: req.params.id,
+      note: body.note ?? null,
+      actorId,
+    });
+  });
+
+  app.post("/super/ledger-followups/:id/resolve", superGuard, async (req: any) => {
+    const body = (req.body ?? {}) as { resolutionNote?: string | null };
+    const actorId = await currentUserId(req);
+    return ledgerFollowups.resolveFollowup({
+      id: req.params.id,
+      resolutionNote: body.resolutionNote ?? null,
+      actorId,
+    });
+  });
+
+  app.delete("/super/ledger-followups/:id", superGuard, async (req: any) => {
+    const actorId = await currentUserId(req);
+    await ledgerFollowups.deleteFollowup({ id: req.params.id, actorId });
+    return { ok: true };
+  });
 }
