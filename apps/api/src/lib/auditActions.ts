@@ -158,6 +158,15 @@ export const AUDIT = {
     OWNER_EARNINGS_RECORDED: [AuditScope.PAYMENT, AuditVerb.OWNER_EARNINGS_RECORDED] as const,
     FEE_APPLIED: [AuditScope.PAYMENT, AuditVerb.FEE_APPLIED] as const,
   },
+  LEDGER_FOLLOWUP: {
+    CREATED: [AuditScope.LEDGER_FOLLOWUP, AuditVerb.CREATED] as const,
+    UPDATED: [AuditScope.LEDGER_FOLLOWUP, AuditVerb.UPDATED] as const,
+    // Reusing COMPLETED for "resolved" — same semantic ("finished
+    // working on this item") and keeps the verb enum small. Metadata
+    // payload carries any resolution note.
+    RESOLVED: [AuditScope.LEDGER_FOLLOWUP, AuditVerb.COMPLETED] as const,
+    DELETED: [AuditScope.LEDGER_FOLLOWUP, AuditVerb.DELETED] as const,
+  },
 } as const;
 
 // Useful types

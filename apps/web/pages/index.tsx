@@ -151,6 +151,10 @@ export default function HomePage() {
   const [workdaysJumpDate, setWorkdaysJumpDate] = useState<string | null>(null);
   const [workdaysJumpNonce, setWorkdaysJumpNonce] = useState(0);
   const loadPendingWorkdaysRef = useRef<() => Promise<void>>(async () => {});
+  // Super-only: count of open ledger followups (Money → Ledger flags
+  // waiting on the operator). Drives the "Ledger followups" entry in the
+  // alerts dropdown and pre-applies the "Followups only" filter on click.
+  const [ledgerFollowupCount, setLedgerFollowupCount] = useState<number>(0);
 
   // Handle /e/[slug] QR redirect — navigate to equipment tab
   useEffect(() => {
@@ -1588,6 +1592,21 @@ export default function HomePage() {
     markAlertLoaded("pendingWorkdays");
   }, [isSuper]);
 
+  const loadLedgerFollowupCount = useCallback(async () => {
+    if (!isSuper) {
+      setLedgerFollowupCount(0);
+      markAlertLoaded("ledgerFollowups");
+      return;
+    }
+    try {
+      const r = await apiGet<{ count: number }>("/api/super/ledger-followups/count");
+      setLedgerFollowupCount(r?.count ?? 0);
+    } catch {
+      setLedgerFollowupCount(0);
+    }
+    markAlertLoaded("ledgerFollowups");
+  }, [isSuper]);
+
   // Keep the ref in sync so the tab's onApprovalsChanged callback,
   // which was bound up at the top of the component body, can call
   // through to the latest version.
@@ -1598,6 +1617,16 @@ export default function HomePage() {
   useEffect(() => {
     void loadPendingWorkdays();
   }, [loadPendingWorkdays]);
+
+  // Initial fetch of the ledger-followup count + listener for the
+  // cross-tab bus event so the alerts dot stays in sync when a Super
+  // flags/resolves a row from the Ledger tab.
+  useEffect(() => {
+    void loadLedgerFollowupCount();
+    const onChanged = () => void loadLedgerFollowupCount();
+    window.addEventListener("seedlings:ledger-followups-changed", onChanged);
+    return () => window.removeEventListener("seedlings:ledger-followups-changed", onChanged);
+  }, [loadLedgerFollowupCount]);
 
   // ---- Awaiting-client-payment badge (super only) ----
   // Counts every outstanding payment request — sent to a client, not paid
@@ -1842,7 +1871,7 @@ export default function HomePage() {
     return () => { clearTimeout(timer); document.removeEventListener("click", close); };
   }, [alertDropdownOpen]);
   const [alertsLoaded, setAlertsLoaded] = useState<Record<string, boolean>>({});
-  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.planning && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests && alertsLoaded.estimateFollowups && alertsLoaded.unapprovedHours && alertsLoaded.guaranteedPayout && alertsLoaded.pendingWorkdays);
+  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.planning && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests && alertsLoaded.estimateFollowups && alertsLoaded.unapprovedHours && alertsLoaded.guaranteedPayout && alertsLoaded.pendingWorkdays && alertsLoaded.ledgerFollowups);
   const markAlertLoaded = useCallback((key: string) => setAlertsLoaded((prev) => prev[key] ? prev : { ...prev, [key]: true }), []);
   const loadAnnouncementCount = useCallback(async () => {
     if (!me?.isApproved) { setAnnouncementCount(0); if (me) markAlertLoaded("announcements"); return; }
@@ -2024,6 +2053,7 @@ export default function HomePage() {
         loadAnnouncementCount(),
         loadDashboardSummary(),
         loadTimelineCount(),
+        loadLedgerFollowupCount(),
       ]);
     } finally {
       setAlertsRefreshing(false);
@@ -2032,7 +2062,7 @@ export default function HomePage() {
     loadPending, loadPendingPayments, loadPendingWorkdays, loadAwaitingClientPayment,
     loadOverdue, loadChangeRequestCount, loadEstimateFollowupCount,
     loadUnapprovedHoursCount, loadUnclaimed, loadAnnouncementCount,
-    loadDashboardSummary, loadTimelineCount,
+    loadDashboardSummary, loadTimelineCount, loadLedgerFollowupCount,
   ]);
 
   const goToTimeline = useCallback(() => {
@@ -2742,6 +2772,20 @@ export default function HomePage() {
     setWorkdaysJumpNonce((n) => n + 1);
   }, [pendingWorkdaysByDate]);
 
+  // Land on Super → Money → Ledger with the "Followups only" filter
+  // pre-applied. The Ledger tab listens for this event on mount and
+  // flips its filter chip on. A short timeout gives the tab content
+  // a tick to mount before the event fires (event before subscribe ⇒
+  // missed signal).
+  const goToLedgerFollowups = useCallback(() => {
+    setTopTab("super");
+    setSuperCategory("Money");
+    setSuperInnerTab("ledger" as any);
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent("seedlings:open-ledger-followups"));
+    }, 150);
+  }, []);
+
   const isDev = process.env.NEXT_PUBLIC_VERCEL_ENV !== "production" && process.env.NODE_ENV !== "production";
 
   return (
@@ -3007,6 +3051,7 @@ export default function HomePage() {
                 }
               }
               if (isSuper && pendingWorkdays > 0) alerts.push({ label: "Workdays to approve", count: pendingWorkdays, bg: "#E0E7FF", color: "#3730A3", dotColor: "#6366F1", onClick: goToWorkdayApprovals });
+              if (isSuper && ledgerFollowupCount > 0) alerts.push({ label: "Ledger followups", count: ledgerFollowupCount, bg: "#FEF3C7", color: "#92400E", dotColor: "#F59E0B", onClick: goToLedgerFollowups });
               if (isAdmin && changeRequestCount > 0) alerts.push({ label: "Client requests", count: changeRequestCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToClientRequests });
               if (isAdmin && estimateFollowupCount > 0) alerts.push({ label: "Estimate follow-ups", count: estimateFollowupCount, bg: "#FCE7F3", color: "#9D174D", dotColor: "#EC4899", onClick: goToEstimateFollowups });
               if (isAdmin && unapprovedHoursCount > 0) alerts.push({ label: "Job hours awaiting review", count: unapprovedHoursCount, bg: "#FEF3C7", color: "#92400E", dotColor: "#F59E0B", onClick: goToUnapprovedHours });

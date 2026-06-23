@@ -59,7 +59,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { ChevronDown, ChevronUp, Eye, Info, Paperclip, Pencil, Plus, Repeat, Search, Trash2, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Eye, Flag, Info, Paperclip, Pencil, Plus, Repeat, Search, Trash2, X } from "lucide-react";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import { bizToday, bizAddDays, bizStartOfMonth, bizStartOfYear, fmtDate, fmtDateOpts } from "@/src/lib/lib";
 import {
@@ -276,6 +276,9 @@ export default function BusinessExpensesTab() {
   const [filterCategory, setFilterCategory] = useState("");
   // "" = all types. EXPENSE | CAPITAL_CONTRIBUTION | OWNER_DRAW narrows.
   const [filterType, setFilterType] = useState<"" | EntryType>("");
+  // Followups-only filter — Super-only affordance. Server passes flagOnly=true,
+  // which restricts the BE list to rows with an open LedgerFollowup.
+  const [filterFollowupsOnly, setFilterFollowupsOnly] = useState(false);
   const [expensePreset, setExpensePreset] = useState<ExpensePreset>("last30");
   // Quick-date popover visibility. Matches PaymentsTab's pattern — the
   // active preset is shown in a green chip; clicking it toggles the
@@ -346,6 +349,120 @@ export default function BusinessExpensesTab() {
   const [confirmAlreadyRecorded, setConfirmAlreadyRecorded] =
     useState<DueSoonSuggestion | null>(null);
 
+  // ── Ledger followups (Super-only flag/resolve UI) ────────────────────
+  // Map keyed by `${entityType}:${entityId}` → open followup row, used to
+  // render the flag affordance per-row. Refetched alongside the BE list.
+  type FollowupRow = {
+    id: string;
+    entityType: string;
+    entityId: string;
+    note: string | null;
+    createdAt: string;
+    createdBy: { id: string; displayName: string | null; email: string | null };
+  };
+  const [followupMap, setFollowupMap] = useState<Record<string, FollowupRow>>({});
+  // Dialog state — { row, mode } where mode is "flag" (no existing) or
+  // "edit-or-resolve" (an existing open followup on this row).
+  const [followupDialog, setFollowupDialog] = useState<
+    | { mode: "flag"; row: BusinessExpense; existing?: undefined }
+    | { mode: "edit"; row: BusinessExpense; existing: FollowupRow }
+    | null
+  >(null);
+  const [followupNoteDraft, setFollowupNoteDraft] = useState("");
+  const [followupSaving, setFollowupSaving] = useState(false);
+
+  async function loadFollowupMap() {
+    try {
+      const r = await apiGet<{ map: Record<string, FollowupRow> }>(
+        "/api/super/ledger-followups/map",
+      );
+      setFollowupMap(r.map ?? {});
+    } catch {
+      // 403 for non-supers → leave map empty so the flag icons just don't render.
+      setFollowupMap({});
+    }
+  }
+
+  function openFollowupDialog(e: BusinessExpense) {
+    const existing = followupMap[`businessExpense:${e.id}`];
+    if (existing) {
+      setFollowupDialog({ mode: "edit", row: e, existing });
+      setFollowupNoteDraft(existing.note ?? "");
+    } else {
+      setFollowupDialog({ mode: "flag", row: e });
+      setFollowupNoteDraft("");
+    }
+  }
+
+  function closeFollowupDialog() {
+    setFollowupDialog(null);
+    setFollowupNoteDraft("");
+    setFollowupSaving(false);
+  }
+
+  async function submitCreateFollowup() {
+    if (!followupDialog || followupDialog.mode !== "flag") return;
+    setFollowupSaving(true);
+    try {
+      await apiPost("/api/super/ledger-followups", {
+        entityType: "businessExpense",
+        entityId: followupDialog.row.id,
+        note: followupNoteDraft.trim() || null,
+      });
+      publishInlineMessage({ type: "SUCCESS", text: "Flagged for followup." });
+      closeFollowupDialog();
+      await loadFollowupMap();
+      window.dispatchEvent(new CustomEvent("seedlings:ledger-followups-changed"));
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Couldn't flag.", err) });
+      setFollowupSaving(false);
+    }
+  }
+
+  async function submitEditFollowup() {
+    if (!followupDialog || followupDialog.mode !== "edit") return;
+    setFollowupSaving(true);
+    try {
+      await apiPatch(`/api/super/ledger-followups/${followupDialog.existing.id}`, {
+        note: followupNoteDraft.trim() || null,
+      });
+      publishInlineMessage({ type: "SUCCESS", text: "Followup updated." });
+      closeFollowupDialog();
+      await loadFollowupMap();
+      window.dispatchEvent(new CustomEvent("seedlings:ledger-followups-changed"));
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Couldn't update.", err) });
+      setFollowupSaving(false);
+    }
+  }
+
+  async function submitResolveFollowup() {
+    if (!followupDialog || followupDialog.mode !== "edit") return;
+    setFollowupSaving(true);
+    try {
+      // Take the current draft as the resolution note when it differs
+      // from the existing note — preserves the operator's "here's what
+      // happened" context on the audit row.
+      const draft = followupNoteDraft.trim();
+      const resolution = draft && draft !== (followupDialog.existing.note ?? "") ? draft : null;
+      await apiPost(`/api/super/ledger-followups/${followupDialog.existing.id}/resolve`, {
+        resolutionNote: resolution,
+      });
+      publishInlineMessage({ type: "SUCCESS", text: "Followup resolved." });
+      closeFollowupDialog();
+      await loadFollowupMap();
+      // If we're in "Followups only" view, refresh the list so the
+      // resolved row drops out immediately.
+      if (filterFollowupsOnly) {
+        await load();
+      }
+      window.dispatchEvent(new CustomEvent("seedlings:ledger-followups-changed"));
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Couldn't resolve.", err) });
+      setFollowupSaving(false);
+    }
+  }
+
   async function load() {
     setLoading(true);
     try {
@@ -354,6 +471,7 @@ export default function BusinessExpensesTab() {
       if (filterTo) params.set("to", filterTo);
       if (filterCategory) params.set("category", filterCategory);
       if (filterType) params.set("type", filterType);
+      if (filterFollowupsOnly) params.set("flagOnly", "true");
       if (q.trim()) params.set("q", q.trim());
       params.set("limit", String(pageSize));
       params.set("offset", String((page - 1) * pageSize));
@@ -420,7 +538,7 @@ export default function BusinessExpensesTab() {
   useEffect(() => {
     setPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, filterFrom, filterTo, filterCategory, filterType, pageSize]);
+  }, [q, filterFrom, filterTo, filterCategory, filterType, filterFollowupsOnly, pageSize]);
 
   // Re-load when filters or pagination change. Search is debounced; page/
   // pageSize changes load immediately.
@@ -428,7 +546,26 @@ export default function BusinessExpensesTab() {
     const t = setTimeout(() => void load(), 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, filterFrom, filterTo, filterCategory, filterType, page, pageSize]);
+  }, [q, filterFrom, filterTo, filterCategory, filterType, filterFollowupsOnly, page, pageSize]);
+
+  // Load the followup map once on mount and refresh on the cross-tab
+  // bus event. Quiet 403 (non-supers won't see the affordance anyway).
+  useEffect(() => {
+    void loadFollowupMap();
+    const onChanged = () => void loadFollowupMap();
+    window.addEventListener("seedlings:ledger-followups-changed", onChanged);
+    return () => window.removeEventListener("seedlings:ledger-followups-changed", onChanged);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Deep-link: when the user opens this tab from the alerts dropdown's
+  // "Ledger followups" entry, pre-apply the Followups-only filter so the
+  // first view is the actionable subset.
+  useEffect(() => {
+    const onOpen = () => setFilterFollowupsOnly(true);
+    window.addEventListener("seedlings:open-ledger-followups", onOpen);
+    return () => window.removeEventListener("seedlings:open-ledger-followups", onOpen);
+  }, []);
 
   function openCreate() {
     setEditing(null);
@@ -676,6 +813,7 @@ export default function BusinessExpensesTab() {
     setQ("");
     setFilterCategory("");
     setFilterType("");
+    setFilterFollowupsOnly(false);
     // Reset the date range to the default last-30-days window rather than
     // dumping the user into the full-history "All time" view.
     const r = rangeForExpensePreset("last30");
@@ -684,7 +822,7 @@ export default function BusinessExpensesTab() {
     setExpensePreset("last30");
   }
 
-  const hasFilters = !!(q || filterFrom || filterTo || filterCategory || filterType);
+  const hasFilters = !!(q || filterFrom || filterTo || filterCategory || filterType || filterFollowupsOnly);
 
   return (
     <Box w="full" position="relative">
@@ -985,13 +1123,33 @@ export default function BusinessExpensesTab() {
               />
             </Box>
           </HStack>
-          {hasFilters && (
-            <HStack justify="flex-end" mt={2}>
+          {/* Followups-only toggle — amber pill that narrows the list to
+              BusinessExpense rows with an open LedgerFollowup. Quiet for
+              non-supers since the flagged set is empty for them. */}
+          <HStack mt={2} gap={2} justify="space-between" wrap="wrap">
+            <Button
+              size="xs"
+              variant={filterFollowupsOnly ? "solid" : "outline"}
+              colorPalette={filterFollowupsOnly ? "yellow" : "gray"}
+              onClick={() => setFilterFollowupsOnly((v) => !v)}
+              title="Show only entries flagged for follow-up"
+            >
+              <Flag size={12} />
+              <Text ml="1">
+                Followups only
+                {Object.keys(followupMap).length > 0 && (
+                  <Text as="span" ml={1} opacity={0.85}>
+                    ({Object.keys(followupMap).length})
+                  </Text>
+                )}
+              </Text>
+            </Button>
+            {hasFilters && (
               <Button size="xs" variant="ghost" onClick={clearFilters}>
                 <X size={12} /> Clear
               </Button>
-            </HStack>
-          )}
+            )}
+          </HStack>
         </Card.Body>
       </Card.Root>
 
@@ -1169,6 +1327,45 @@ export default function BusinessExpensesTab() {
                     {e.notes && (
                       <Text fontSize="xs" color="fg.muted" mt={1}>{e.notes}</Text>
                     )}
+                    {/* Inline followup banner — only when this row has an
+                        open LedgerFollowup. Click anywhere on it to open
+                        the edit/resolve dialog. Same amber palette as the
+                        title-bar alerts entry. */}
+                    {(() => {
+                      const f = followupMap[`businessExpense:${e.id}`];
+                      if (!f) return null;
+                      return (
+                        <Box
+                          mt={2}
+                          p={2}
+                          bg="yellow.50"
+                          borderWidth="1px"
+                          borderColor="yellow.300"
+                          borderRadius="md"
+                          cursor="pointer"
+                          _hover={{ bg: "yellow.100" }}
+                          onClick={() => openFollowupDialog(e)}
+                        >
+                          <HStack gap={2} align="start">
+                            <Box color="yellow.700" flexShrink={0} mt="2px">
+                              <Flag size={12} fill="currentColor" />
+                            </Box>
+                            <Box flex="1" minW={0}>
+                              <Text fontSize="xs" color="yellow.900" fontWeight="semibold">
+                                Followup
+                                {f.createdBy?.displayName ? ` · ${f.createdBy.displayName}` : ""}
+                                {" · "}{fmtDate(f.createdAt)}
+                              </Text>
+                              {f.note && (
+                                <Text fontSize="xs" color="yellow.900" whiteSpace="pre-wrap" mt={0.5}>
+                                  {f.note}
+                                </Text>
+                              )}
+                            </Box>
+                          </HStack>
+                        </Box>
+                      );
+                    })()}
                   </Box>
                   <VStack align="end" gap={1}>
                     <Text fontSize="md" fontWeight="bold" color="orange.600">{fmtUSD(e.cost)}</Text>
@@ -1201,6 +1398,23 @@ export default function BusinessExpensesTab() {
                       <Button size="xs" variant="ghost" onClick={() => openEdit(e)} title="Edit">
                         <Pencil size={12} />
                       </Button>
+                      {/* Followup flag — amber when this row has an open
+                          followup, gray-outline when not. Click opens the
+                          flag/edit/resolve dialog. */}
+                      {(() => {
+                        const f = followupMap[`businessExpense:${e.id}`];
+                        return (
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            colorPalette={f ? "yellow" : "gray"}
+                            onClick={() => openFollowupDialog(e)}
+                            title={f ? "Open followup — edit or resolve" : "Flag for followup"}
+                          >
+                            <Flag size={12} fill={f ? "currentColor" : "none"} />
+                          </Button>
+                        );
+                      })()}
                       <Button size="xs" variant="ghost" colorPalette="red" onClick={() => setConfirmDelete(e)} title="Delete">
                         <Trash2 size={12} />
                       </Button>
@@ -1657,6 +1871,96 @@ export default function BusinessExpensesTab() {
                   <Button colorPalette="red" onClick={() => { if (confirmDelete) { void doDelete(confirmDelete.id); setConfirmDelete(null); } }}>
                     Delete
                   </Button>
+                </HStack>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
+
+      {/* Followup flag/edit/resolve dialog. One dialog handles both the
+          "no flag yet → flag this" and "existing open flag → edit note
+          or resolve" cases, picking the right footer buttons via the
+          mode discriminator. */}
+      <Dialog.Root
+        open={!!followupDialog}
+        onOpenChange={(e) => { if (!e.open) closeFollowupDialog(); }}
+      >
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg">
+              <Dialog.Header>
+                <Dialog.Title>
+                  {followupDialog?.mode === "edit"
+                    ? "Edit followup"
+                    : "Flag for followup"}
+                </Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <VStack align="stretch" gap={3}>
+                  {followupDialog?.row && (
+                    <Box p={2} bg="gray.50" borderWidth="1px" borderColor="gray.200" borderRadius="md">
+                      <Text fontSize="sm" fontWeight="semibold">{followupDialog.row.description}</Text>
+                      <Text fontSize="xs" color="fg.muted">
+                        {fmtDate(followupDialog.row.date)} · {fmtUSD(followupDialog.row.cost)}
+                      </Text>
+                    </Box>
+                  )}
+                  <Box>
+                    <Text fontSize="sm" mb={1}>
+                      Why does this need followup?{" "}
+                      <Text as="span" color="fg.muted">(optional but recommended)</Text>
+                    </Text>
+                    <Textarea
+                      size="sm"
+                      rows={3}
+                      placeholder="e.g. Waiting for ACH to post by end of week"
+                      value={followupNoteDraft}
+                      onChange={(e) => setFollowupNoteDraft(e.target.value)}
+                    />
+                  </Box>
+                  {followupDialog?.mode === "edit" && (
+                    <Text fontSize="xs" color="fg.muted">
+                      Resolving moves this followup to history. The current note
+                      (or any edits you've made) is preserved as the resolution
+                      record on the audit log.
+                    </Text>
+                  )}
+                </VStack>
+              </Dialog.Body>
+              <Dialog.Footer>
+                <HStack justify="flex-end" w="full" gap={2}>
+                  <Button variant="ghost" onClick={closeFollowupDialog} disabled={followupSaving}>
+                    Cancel
+                  </Button>
+                  {followupDialog?.mode === "edit" ? (
+                    <>
+                      <Button
+                        variant="outline"
+                        colorPalette="gray"
+                        onClick={() => void submitEditFollowup()}
+                        disabled={followupSaving}
+                      >
+                        Save note
+                      </Button>
+                      <Button
+                        colorPalette="green"
+                        onClick={() => void submitResolveFollowup()}
+                        disabled={followupSaving}
+                      >
+                        Resolve
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      colorPalette="yellow"
+                      onClick={() => void submitCreateFollowup()}
+                      disabled={followupSaving}
+                    >
+                      Flag for followup
+                    </Button>
+                  )}
                 </HStack>
               </Dialog.Footer>
             </Dialog.Content>
