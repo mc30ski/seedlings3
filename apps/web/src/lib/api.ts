@@ -133,6 +133,16 @@ export async function request<T>(
   if (body !== undefined) {
     headers.set("Content-Type", "application/json");
     init.body = JSON.stringify(body);
+  } else if (method === "POST" || method === "PUT" || method === "PATCH") {
+    // Fastify's content-type parser rejects write-method requests that
+    // lack a Content-Type header as 415 "Unsupported Media Type:
+    // undefined" — even when the handler doesn't read `req.body`. Send
+    // an explicit empty JSON body for parameterless writes so the parser
+    // passes. (GET / DELETE skip this because servers don't require a
+    // Content-Type for those; spec-wise neither is supposed to carry a
+    // body in the first place.)
+    headers.set("Content-Type", "application/json");
+    init.body = "{}";
   }
 
   // Add Vercel preview-bypass headers (recommended by Vercel)

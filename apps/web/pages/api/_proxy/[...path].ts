@@ -163,15 +163,20 @@ export default async function handler(
     cache: "no-store",
   };
 
-  // Stream body for non-GET/HEAD
+  // Stream body for non-GET/HEAD. We attach the body — even an empty
+  // Buffer — for write methods, because skipping the attachment on empty
+  // bodies broke parameterless POSTs in prod: undici defaults to
+  // `Transfer-Encoding: chunked` when no body is attached to a POST,
+  // which makes upstream Fastify look for a Content-Type parser, find
+  // none (parameterless POSTs send no Content-Type), and throw
+  // `FST_ERR_CTP_INVALID_MEDIA_TYPE: Unsupported Media Type: undefined`.
+  // Attaching `Buffer.alloc(0)` causes undici to send `Content-Length: 0`
+  // explicitly instead, and Fastify skips the parser entirely.
   if (req.method !== "GET" && req.method !== "HEAD") {
     const chunks: Uint8Array[] = [];
     for await (const chunk of req as any)
       chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-    const buf = Buffer.concat(chunks);
-    // Only attach a body when there is one — forwarding an empty Buffer as a
-    // `fetch` body is a known source of upstream-request failures.
-    if (buf.length > 0) (init as any).body = buf;
+    (init as any).body = Buffer.concat(chunks);
   }
 
   const upstream = await fetchFollowWithCookie(target.toString(), {
