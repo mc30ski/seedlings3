@@ -64,7 +64,15 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
         const isAssigned = (occ.assignees ?? []).some((a) => a.userId === myId);
         if (!isAssigned) return false;
         const isActive = occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS";
-        return isActive;
+        if (!isActive) return false;
+        // Anchor to today (ET) or earlier. The /api/occurrences endpoint
+        // intentionally merges pinned/liked/observed rows that fall
+        // OUTSIDE the requested date range (so they stay visible on the
+        // JobsTab when the operator narrows the date filter). For the
+        // Today's Overview dialog we DON'T want a pinned next-week job
+        // showing up alongside today's work — re-anchor on the client.
+        const occDate = occ.startAt ? bizDateKey(occ.startAt) : "";
+        return !!occDate && occDate <= today;
       });
       // Sort: overdue first, then by startAt
       myJobs.sort((a, b) => {
@@ -98,11 +106,16 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
   async function loadTasks() {
     try {
       const list = await apiGet<WorkerOccurrence[]>(`/api/occurrences?from=${today}&to=${today}`);
-      const myTasks = (Array.isArray(list) ? list : []).filter((occ) =>
-        occ.workflow === "TASK" &&
-        occ.status === "SCHEDULED" &&
-        (occ.assignees ?? []).some((a) => a.userId === myId)
-      );
+      const myTasks = (Array.isArray(list) ? list : []).filter((occ) => {
+        if (occ.workflow !== "TASK") return false;
+        if (occ.status !== "SCHEDULED") return false;
+        if (!(occ.assignees ?? []).some((a) => a.userId === myId)) return false;
+        // Same merge caveat as loadTodaysJobs — the server adds
+        // pinned/liked/observed rows that fall outside the date range.
+        // Restrict to today's ET date so a pinned future task can't
+        // sneak into the "Tasks for Today" list.
+        return !!occ.startAt && bizDateKey(occ.startAt) === today;
+      });
       setTasks(myTasks);
     } catch {
       setTasks([]);
@@ -182,7 +195,7 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
       <Portal>
         <Dialog.Backdrop />
         <Dialog.Positioner>
-          <Dialog.Content maxW="md" mx={{ base: "3", md: "4" }} w="full">
+          <Dialog.Content maxW="md" mx={{ base: "3", md: "4" }} w="full" rounded="2xl" p="4" shadow="lg">
             {/* Loading */}
             {step === "loading" && (
               <>
