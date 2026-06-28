@@ -4216,12 +4216,17 @@ Respond ONLY with valid JSON in this exact format:
           nextStart.setDate(nextStart.getDate() + effectiveFreq);
           const nextEnd = occ.endAt ? new Date(occ.endAt) : null;
           if (nextEnd) nextEnd.setDate(nextEnd.getDate() + effectiveFreq);
-          // Dedupe: don't create a second occurrence at the same date.
+          // Dedupe: don't create a second occurrence on the same ET
+          // calendar day. Exact-instant match used to miss occurrences
+          // booked at slightly different times of day; the day-window
+          // match in approvePayment uses the same approach (see
+          // payments.ts).
+          const nextDayKey = etFormatDate(nextStart);
           const existingNext = await tx.jobOccurrence.findFirst({
             where: {
               jobId: occ.jobId,
               status: "SCHEDULED",
-              startAt: nextStart,
+              startAt: { gte: etMidnight(nextDayKey), lte: etEndOfDay(nextDayKey) },
               workflow: "STANDARD",
               isOneOff: false,
             },

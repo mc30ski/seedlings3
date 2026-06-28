@@ -460,6 +460,17 @@ export const jobs: ServicesJobs = {
 
   async update(currentUserId, id, payload) {
     return prisma.$transaction(async (tx) => {
+      // Capture prior status so we can detect the PAUSED → ACTIVE
+      // transition and rebuild the recurring chain (see unpause block
+      // below). The pause branch wipes future SCHEDULED occurrences;
+      // without symmetric regeneration on resume the cycle stays
+      // permanently broken and the operator has to manually click
+      // Generate Next on a closed occurrence.
+      const prior = await tx.job.findUnique({
+        where: { id },
+        select: { status: true },
+      });
+
       const record = await tx.job.update({
         where: { id },
         data: {
@@ -492,6 +503,140 @@ export const jobs: ServicesJobs = {
             action: "PAUSED_REMOVED_FUTURE_OCCURRENCES",
             removedCount: deleted.count,
           });
+        }
+      }
+
+      // When unpausing (PAUSED → ACTIVE), restart the recurring chain.
+      // Anchor on the most-recent existing occurrence's startAt +
+      // frequencyDays. If that lands in the past (e.g. the job was
+      // paused for several cycles), advance forward by one freq at a
+      // time until the next occurrence sits today or later — backdated
+      // "next" rows would surface as overdue noise and aren't useful.
+      // Dedupe against any future SCHEDULED occurrence already on the
+      // job so a manual "Force Create Next" click between unpause
+      // attempts doesn't double up.
+      if (
+        prior?.status === JobStatus.PAUSED &&
+        payload.status === JobStatus.ACCEPTED &&
+        (record as any).frequencyDays &&
+        (record as any).frequencyDays > 0
+      ) {
+        const freq = (record as any).frequencyDays as number;
+        const existingFuture = await tx.jobOccurrence.findFirst({
+          where: {
+            jobId: id,
+            status: JobOccurrenceStatus.SCHEDULED,
+            workflow: OccurrenceWorkflow.STANDARD,
+            startAt: { gt: new Date() },
+          },
+          select: { id: true },
+        });
+        if (!existingFuture) {
+          const lastOcc = await tx.jobOccurrence.findFirst({
+            where: {
+              jobId: id,
+              workflow: OccurrenceWorkflow.STANDARD,
+              isOneOff: false,
+            },
+            orderBy: { startAt: "desc" },
+            include: {
+              job: {
+                select: {
+                  kind: true,
+                  defaultPrice: true,
+                  estimatedMinutes: true,
+                  notes: true,
+                  defaultGroupId: true,
+                  defaultAssignees: {
+                    where: { active: true },
+                    select: { userId: true, role: true },
+                  },
+                },
+              },
+            },
+          });
+          if (lastOcc?.startAt && lastOcc.job) {
+            const nextStart = new Date(lastOcc.startAt);
+            // date-handling-allow: recurrence — adds calendar days to the
+            // last occurrence's startAt to compute the next cycle. Same
+            // pattern as approvePayment / forceCreateNextOccurrence; the
+            // documented Vercel-UTC exemption applies (see
+            // date-handling-build-gate.test.ts rule 8).
+            nextStart.setDate(nextStart.getDate() + freq);
+            const now = new Date();
+            // Advance past today if the last occurrence is so old that
+            // a single freq-step still lands in the past.
+            while (nextStart.getTime() < now.getTime()) {
+              nextStart.setDate(nextStart.getDate() + freq);
+            }
+            const nextEnd = lastOcc.endAt
+              ? new Date(nextStart.getTime() + (lastOcc.endAt.getTime() - lastOcc.startAt.getTime()))
+              : null;
+            const nextOcc = await tx.jobOccurrence.create({
+              data: {
+                jobId: id,
+                kind: lastOcc.kind,
+                startAt: nextStart,
+                endAt: nextEnd,
+                status: JobOccurrenceStatus.SCHEDULED,
+                source: JobOccurrenceSource.GENERATED,
+                workflow: OccurrenceWorkflow.STANDARD,
+                isAdminOnly: !!(lastOcc as any).isAdminOnly,
+                jobType: (lastOcc as any).jobType ?? null,
+                jobTags: (lastOcc as any).jobTags ?? null,
+                notes: lastOcc.notes ?? lastOcc.job.notes ?? null,
+                price: lastOcc.price ?? lastOcc.job.defaultPrice ?? null,
+                estimatedMinutes: lastOcc.estimatedMinutes ?? lastOcc.job.estimatedMinutes ?? null,
+                frequencyDays: (lastOcc as any).frequencyDays ?? null,
+              } as any,
+            });
+            // Mirror approvePayment's default-crew resolution: group
+            // default wins; archived groups leave the occurrence
+            // unassigned (admin can claim).
+            const assigneeSource: { userId: string; role: string | null }[] = [];
+            const defaultGroupId = lastOcc.job.defaultGroupId as string | null;
+            if (defaultGroupId) {
+              const group = await tx.group.findUnique({
+                where: { id: defaultGroupId },
+                include: { members: { select: { userId: true, role: true } } },
+              });
+              if (group && !group.archivedAt) {
+                await tx.jobOccurrence.update({
+                  where: { id: nextOcc.id },
+                  data: { assignedGroupId: group.id } as any,
+                });
+                assigneeSource.push({ userId: group.claimerUserId, role: null });
+                for (const m of group.members) {
+                  assigneeSource.push({
+                    userId: m.userId,
+                    role: m.role === "observer" ? "observer" : null,
+                  });
+                }
+              }
+            } else {
+              for (const d of lastOcc.job.defaultAssignees) {
+                assigneeSource.push({ userId: d.userId, role: d.role ?? null });
+              }
+            }
+            if (assigneeSource.length > 0) {
+              const claimerId = assigneeSource[0].userId;
+              await tx.jobOccurrenceAssignee.createMany({
+                data: assigneeSource.map((d, i) => ({
+                  occurrenceId: nextOcc.id,
+                  userId: d.userId,
+                  role: d.role,
+                  assignedById: i === 0 ? d.userId : claimerId,
+                })),
+                skipDuplicates: true,
+              });
+            }
+            await writeAudit(tx, AUDIT.JOB.UPDATED, currentUserId, {
+              id,
+              action: "UNPAUSED_REGENERATED_NEXT_OCCURRENCE",
+              occurrenceId: nextOcc.id,
+              startAt: nextStart.toISOString(),
+            });
+          }
         }
       }
 

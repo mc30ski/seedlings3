@@ -30,6 +30,7 @@ import {
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import JobTagPicker, { jobTagLabel as _jobTagLabel, JOB_TAGS, type JobTagConfig } from "@/src/ui/components/JobTagPicker";
 import JobPropertyPhotosPicker from "@/src/ui/components/JobPropertyPhotosPicker";
+import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { JOB_KIND, JOB_OCCURRENCE_STATUS } from "@/src/lib/types";
 import { validNextStatuses } from "@/src/lib/jobTransitions";
 
@@ -149,6 +150,13 @@ export default function OccurrenceDialog({
   const [busy, setBusy] = useState(false);
   const dlgErr = useDialogError();
   const [status, setStatus] = useState("");
+  // Destructive-transition confirm: changing CLOSED → SCHEDULED / PENDING_PAYMENT
+  // triggers the server's revert cascade in services/jobs.ts (deletes the
+  // confirmed Payment, ghost-cancels the auto-created next occurrence, and
+  // resets paymentRequestSentAt — which is irreversible without manual
+  // recovery). Prompt before submitting. ARCHIVED is excluded since the
+  // server guard treats it as a non-destructive transition.
+  const [revertConfirmOpen, setRevertConfirmOpen] = useState(false);
   const [kind, setKind] = useState("");
   const [startAt, setStartAt] = useState("");
   const [endAt, setEndAt] = useState("");
@@ -365,10 +373,27 @@ export default function OccurrenceDialog({
     }
   }, [open]);
 
-  async function handleSave() {
+  async function handleSave(bypassRevertConfirm = false) {
     dlgErr.clear();
     if (!startAt) {
       publishInlineMessage({ type: "WARNING", text: "Please select a start date." });
+      return;
+    }
+    // Mirror the server-side revert guard in services/jobs.ts: a transition
+    // FROM CLOSED to anything other than CLOSED/ARCHIVED will delete the
+    // payment + ghost-cancel the next occurrence. Prompt the operator
+    // before submitting so an accidental dropdown selection can't silently
+    // destroy an already-paid record (the exact failure mode we shipped a
+    // fix for on the server, but this guard belongs at the UI too).
+    if (
+      !bypassRevertConfirm &&
+      mode === "UPDATE" &&
+      defaultStatus === "CLOSED" &&
+      status &&
+      status !== "CLOSED" &&
+      status !== "ARCHIVED"
+    ) {
+      setRevertConfirmOpen(true);
       return;
     }
     const effectiveFreq = occFrequencyDays !== "" ? Number(occFrequencyDays) : jobFrequencyDays;
@@ -544,6 +569,7 @@ export default function OccurrenceDialog({
   }
 
   return (
+    <>
     <Dialog.Root
       open={open}
       onOpenChange={(e) => onOpenChange(e.open)}
@@ -1224,7 +1250,7 @@ export default function OccurrenceDialog({
                     warning toast — disabling here just suppressed that
                     feedback, leaving users staring at a non-responsive button
                     (see the "Create Everything" silent-failure regression). */}
-                <Button onClick={handleSave} loading={busy} disabled={busy}>
+                <Button onClick={() => void handleSave()} loading={busy} disabled={busy}>
                   {submitLabel ?? (mode === "CREATE" ? "Create" : "Save")}
                 </Button>
               </HStack>
@@ -1233,5 +1259,23 @@ export default function OccurrenceDialog({
         </Dialog.Positioner>
       </Portal>
     </Dialog.Root>
+    <ConfirmDialog
+      open={revertConfirmOpen}
+      title="Revert this paid job?"
+      message={
+        status === "PENDING_PAYMENT"
+          ? "Changing status from Closed to Awaiting Payment will DELETE the recorded payment (and its worker splits), and remove the auto-created next occurrence if it hasn't been started. The original payment request token will also be reactivated. This is the same effect as the Revert Payment button — proceed only if you actually mean to undo the collection."
+          : "Changing status from Closed to a pre-payment state will DELETE the recorded payment (and its worker splits), and remove the auto-created next occurrence if it hasn't been started. Proceed only if you mean to undo the collection."
+      }
+      warning="The payment row, splits, and (if untouched) the next-occurrence ghost will all be removed. This cannot be undone from the UI."
+      confirmLabel="Yes, revert and delete payment"
+      confirmColorPalette="red"
+      onConfirm={() => {
+        setRevertConfirmOpen(false);
+        void handleSave(true);
+      }}
+      onCancel={() => setRevertConfirmOpen(false)}
+    />
+    </>
   );
 }
