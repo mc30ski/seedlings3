@@ -1567,8 +1567,25 @@ export default function ServicesTab({
                                   onClick={async (e) => {
                                     e.stopPropagation();
                                     try {
-                                      await apiPost(`/api/admin/occurrences/${occ.id}/force-next`, {});
-                                      publishInlineMessage({ type: "SUCCESS", text: "Next occurrence created." });
+                                      // forceCreateNextOccurrence returns
+                                      // `{ ok, nextOccurrence }` — show
+                                      // the scheduled date explicitly so
+                                      // the operator knows when the new
+                                      // occurrence lives, not just that
+                                      // *something* was created.
+                                      const result = await apiPost<{ ok: boolean; nextOccurrence?: { startAt?: string | null } | null }>(
+                                        `/api/admin/occurrences/${occ.id}/force-next`,
+                                        {},
+                                      );
+                                      const when = result?.nextOccurrence?.startAt
+                                        ? fmtDate(result.nextOccurrence.startAt)
+                                        : null;
+                                      publishInlineMessage({
+                                        type: "SUCCESS",
+                                        text: when
+                                          ? `Next occurrence created for ${when}.`
+                                          : "Next occurrence created.",
+                                      });
                                       void loadDetail(job.id, true);
                                       void load(false);
                                     } catch (err) {
@@ -2689,13 +2706,17 @@ export default function ServicesTab({
             isClaimer: a.assignedById === a.userId,
           }))}
           isSuper={isSuper}
-          onAccepted={(result) => {
+          onAccepted={(_result) => {
+            // The accept-payment endpoint calls createPayment, which
+            // INTENTIONALLY does NOT auto-create the next occurrence —
+            // that happens at admin-approval time (see
+            // services/payments.ts:approvePayment). AcceptPaymentDialog
+            // publishes its own "Payment submitted for approval" toast;
+            // no need to re-toast next-occurrence info here (there is
+            // none). Keep the reload + state cleanup.
             const jobId = acceptPaymentJobId;
             if (jobId) void loadDetail(jobId, true);
             window.dispatchEvent(new CustomEvent("seedlings3:jobs-changed"));
-            if (result?.nextOccurrence) {
-              publishInlineMessage({ type: "SUCCESS", text: `Next occurrence auto-scheduled for ${fmtDate(result.nextOccurrence.startAt)}.` });
-            }
             setAcceptPaymentOcc(null);
           }}
         />

@@ -15,8 +15,10 @@ import {
   createListCollection,
 } from "@chakra-ui/react";
 import { apiGet, apiPost } from "@/src/lib/api";
+import { bumpAdminPayments } from "@/src/lib/bus";
 import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
 import { prettyStatus } from "@/src/lib/lib";
+import { composePaymentMessage } from "@/src/lib/paymentMessages";
 
 // PAYMENT_METHODS taxonomy row shape. Mirrors the server-side type.
 type PaymentMethodConfig = {
@@ -437,6 +439,9 @@ export default function AcceptPaymentDialog({
     })
       .then(() => {
         publishInlineMessage({ type: "SUCCESS", text: "Payment request sent." });
+        // New outstanding request — bump so the alerts dropdown's
+        // "Payments to review" counter picks it up immediately.
+        bumpAdminPayments();
         onOpenChange(false);
         onAccepted({ requestSent: true });
       })
@@ -477,10 +482,24 @@ export default function AcceptPaymentDialog({
         note: note.trim() || null,
         completionSplits: splitsPayload,
       });
+      // Worker accept-payment lands the row in the approval queue; the
+      // next-occurrence chain only advances at admin approval (see
+      // services/payments.ts:approvePayment), so there's nothing to
+      // report about a scheduled next visit yet — that surfaces on the
+      // approval toast instead. Same "Payment {verb}." shape as every
+      // other payment toast for consistency.
       publishInlineMessage({
         type: "INFO",
-        text: "Payment submitted for admin approval. The job stays in Pending Payment until admin verifies.",
+        text: composePaymentMessage(
+          "submitted for approval",
+          null,
+          "The job stays in Pending Payment until an admin verifies it. The next occurrence (if any) will be scheduled at approval time.",
+        ),
       });
+      // New Payment row in PENDING_APPROVAL state — bump so the alerts
+      // dropdown's "Payments to review" counter picks it up across any
+      // admin/super tab the operator currently has open.
+      bumpAdminPayments();
       onOpenChange(false);
       onAccepted(result);
     } catch (err) {

@@ -708,7 +708,10 @@ export default function HomePage() {
     },
     {
       // ── Work ──
-      value: "admin-home",
+      // Inner value matches the Worker shell's Home tab so BreadcrumbNav's
+      // cross-role jump chip pairs them — one tap in the inner dropdown
+      // takes Admin → Worker Home and vice versa.
+      value: "home",
       label: "Home",
       icon: FiHome,
       content: wrapWithInlineMessage(<AdminHomeTab me={me} />),
@@ -985,7 +988,7 @@ export default function HomePage() {
       ),
       innerTabs: (() => {
         const catMap: Record<string, string> = {
-          "admin-home": "Work", reminders: "Work", "admin-jobs": "Work", routes: "Work", jobs: "Work", tasks: "Work",
+          home: "Work", reminders: "Work", "admin-jobs": "Work", routes: "Work", jobs: "Work", tasks: "Work",
           equipment: "Equipment", collections: "Equipment", usage: "Equipment",
           clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
           payments: "Money", pricing: "Money", supplies: "Money",
@@ -1562,6 +1565,14 @@ export default function HomePage() {
 
   useEffect(() => {
     void loadPendingPayments();
+    // Refresh in-place when any Payment row mutates anywhere in the app
+    // — approve, reject, write-off, edit, revert, mark-paid, worker
+    // accept-payment, etc. all fire bumpAdminPayments() which emits this
+    // event. Without this subscription the "Payments to review" badge
+    // stays stale until a hard refresh after an approval.
+    const onChanged = () => void loadPendingPayments();
+    window.addEventListener("seedlings:admin-payments-changed", onChanged);
+    return () => window.removeEventListener("seedlings:admin-payments-changed", onChanged);
   }, [loadPendingPayments]);
 
   // ---- Pending workday approvals badge (super only) ----
@@ -1657,6 +1668,14 @@ export default function HomePage() {
 
   useEffect(() => {
     void loadAwaitingClientPayment();
+    // Same event the pending-approvals counter subscribes to — when a
+    // payment lands (approve, admin-mark-paid, etc.), the matching
+    // outstanding request disappears from this list, so the badge has
+    // to recount too. Kept on the same bus so any payment mutation
+    // refreshes both halves of "Payments to review" together.
+    const onChanged = () => void loadAwaitingClientPayment();
+    window.addEventListener("seedlings:admin-payments-changed", onChanged);
+    return () => window.removeEventListener("seedlings:admin-payments-changed", onChanged);
   }, [loadAwaitingClientPayment]);
 
   // Guaranteed-payout summary (super-only). `active` = currently in an
@@ -2192,7 +2211,7 @@ export default function HomePage() {
   // the inner-tab bar can render the wrong set of tabs.
   useEffect(() => {
     const adminCatMap: Record<string, string> = {
-      "admin-home": "Work", reminders: "Work", "admin-jobs": "Work", routes: "Work", jobs: "Work", tasks: "Work",
+      home: "Work", reminders: "Work", "admin-jobs": "Work", routes: "Work", jobs: "Work", tasks: "Work",
       equipment: "Equipment", collections: "Equipment", usage: "Equipment",
       clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
       payments: "Money", pricing: "Money", supplies: "Money",

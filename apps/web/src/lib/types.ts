@@ -2,7 +2,7 @@ export type Role = "SUPER" | "ADMIN" | "WORKER";
 
 export type AdminTabs =
   | "tasks"
-  | "admin-home"
+  | "home"
   | "reminders"
   | "equipment"
   | "clients"

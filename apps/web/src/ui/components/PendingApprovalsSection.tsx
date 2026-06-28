@@ -25,6 +25,7 @@ import {
 import { Check, ExternalLink, Pencil, RefreshCw, Slash, XCircle } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
 import { fmtDate as fmtDateLib } from "@/src/lib/lib";
+import { composePaymentMessage, type PaymentActionResult } from "@/src/lib/paymentMessages";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -151,31 +152,25 @@ export default function PendingApprovalsSection() {
       // snapshot on change — sending the unchanged method would still
       // pass but trips needless validation.
       if (overrideMethod && overrideMethod !== row.method) body.method = overrideMethod;
-      const result = await apiPost<{ nextOccurrence?: { startAt?: string | null } | null; nextOccurrenceSkipReason?: string | null }>(
+      // Server returns the next-occurrence outcome on the approval path
+      // (a populated `nextOccurrence` when the cycle advanced, or
+      // `nextOccurrenceSkipReason` when it didn't). composePaymentMessage
+      // formats both branches identically across every payment toast in
+      // the app — see lib/paymentMessages.ts.
+      const result: PaymentActionResult = await apiPost(
         `/api/admin/payments/${row.id}/approve`,
         body,
       );
-      if (result?.nextOccurrence?.startAt) {
-        const when = fmtDate(result.nextOccurrence.startAt);
-        publishInlineMessage({
-          type: "SUCCESS",
-          text: `Payment approved. Next occurrence scheduled for ${when}.`,
-        });
-      } else if (result?.nextOccurrenceSkipReason && result.nextOccurrenceSkipReason !== "one_off") {
-        const reasons: Record<string, string> = {
-          no_frequency_set: "No repeat frequency is set on the job or occurrence.",
-          job_paused: "The job service is paused.",
-          duplicate_exists: "A scheduled occurrence already exists on the next date.",
-          occurrence_or_job_not_found: "Could not find the job service.",
-        };
-        const msg = reasons[result.nextOccurrenceSkipReason] ?? result.nextOccurrenceSkipReason;
-        publishInlineMessage({
-          type: "WARNING",
-          text: `Payment approved. Next occurrence was NOT auto-created: ${msg}`,
-        });
-      } else {
-        publishInlineMessage({ type: "SUCCESS", text: "Payment approved." });
-      }
+      // Skip-reasons other than `one_off` represent a misconfiguration
+      // the operator should notice (no frequency, job paused, etc.) —
+      // surface those as WARNING so the toast doesn't get dismissed
+      // unread alongside other green confirmations.
+      const skip = result?.nextOccurrenceSkipReason;
+      const tone = skip && skip !== "one_off" ? "WARNING" : "SUCCESS";
+      publishInlineMessage({
+        type: tone,
+        text: composePaymentMessage("approved", result),
+      });
       setRows((prev) => prev.filter((r) => r.id !== row.id));
       bumpAdminPayments();
       void load();
@@ -187,7 +182,7 @@ export default function PendingApprovalsSection() {
   async function performReject(row: PendingRow, reason: string) {
     try {
       await apiPost(`/api/admin/payments/${row.id}/reject`, { reason });
-      publishInlineMessage({ type: "SUCCESS", text: "Payment rejected." });
+      publishInlineMessage({ type: "SUCCESS", text: composePaymentMessage("rejected") });
       setRows((prev) => prev.filter((r) => r.id !== row.id));
       bumpAdminPayments();
     } catch (err) {
@@ -197,10 +192,24 @@ export default function PendingApprovalsSection() {
 
   async function performWriteOff(row: PendingRow, reason: string) {
     try {
-      await apiPost(`/api/admin/payments/${row.id}/write-off`, { reason });
+      // write-off runs the standard approval pipeline server-side with
+      // amountPaid=0 (see services/payments.ts), so it returns the same
+      // next-occurrence info as approvePayment. Use composePaymentMessage
+      // to surface that consistently, with the write-off-specific
+      // addendum about where the employee money came from.
+      const result: PaymentActionResult = await apiPost(
+        `/api/admin/payments/${row.id}/write-off`,
+        { reason },
+      );
+      const skip = result?.nextOccurrenceSkipReason;
+      const tone = skip && skip !== "one_off" ? "WARNING" : "SUCCESS";
       publishInlineMessage({
-        type: "SUCCESS",
-        text: "Payment written off. Employees were paid their promised amounts from business funds.",
+        type: tone,
+        text: composePaymentMessage(
+          "written off",
+          result,
+          "Employees were paid their promised amounts from business funds.",
+        ),
       });
       setRows((prev) => prev.filter((r) => r.id !== row.id));
       bumpAdminPayments();

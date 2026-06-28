@@ -23,6 +23,7 @@ import { Role } from "@/src/lib/types";
 import { openEventSearch } from "@/src/lib/bus";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
+import ApproveAndLinkClientDialog from "@/src/ui/dialogs/ApproveAndLinkClientDialog";
 import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import {
@@ -212,6 +213,15 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
   // the Confirm button enables (typed-confirmation gate).
   const [approveWorkerTarget, setApproveWorkerTarget] = useState<ApproveWorkerTarget>(null);
   const [approveWorkerBusy, setApproveWorkerBusy] = useState(false);
+  // "Approve as Client" target. Opens the contact-picker dialog so the
+  // approval and the Clerk→ClientContact link happen in a single
+  // transaction. Previously this was a one-click approve; see
+  // services/users.ts approve() and ApproveAndLinkClientDialog.
+  const [approveClientTarget, setApproveClientTarget] = useState<{
+    id: string;
+    displayName: string | null;
+    email: string | null;
+  } | null>(null);
 
   // Listen for programmatic open: set status filter
   useEffect(() => {
@@ -374,25 +384,6 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
     return rows;
   }, [filtered, workerTypeFilter, guaranteedPayoutFilter]);
   const clientUsers = useMemo(() => filtered.filter(isClientUser), [filtered]);
-
-  async function approve(userId: string) {
-    try {
-      await apiPost(`/api/admin/users/${userId}/approve`);
-      try {
-        window.dispatchEvent(new Event("seedlings3:users-changed"));
-      } catch {}
-      publishInlineMessage({
-        type: "SUCCESS",
-        text: "User approved",
-      });
-      load();
-    } catch (err) {
-      publishInlineMessage({
-        type: "ERROR",
-        text: getErrorMessage("Approve failed", err),
-      });
-    }
-  }
 
   async function addRole(userId: string, accessRole: Role) {
     try {
@@ -882,7 +873,13 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
                           <>
                             <Button
                               size={{ base: "xs", md: "sm" }}
-                              onClick={() => approve(u.id)}
+                              onClick={() =>
+                                setApproveClientTarget({
+                                  id: u.id,
+                                  displayName: u.displayName ?? null,
+                                  email: u.email ?? null,
+                                })
+                              }
                             >
                               Approve as Client
                             </Button>
@@ -1615,6 +1612,18 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
           setApproveWorkerTarget(null);
         }}
       />
+
+      {approveClientTarget && (
+        <ApproveAndLinkClientDialog
+          open={!!approveClientTarget}
+          user={approveClientTarget}
+          onClose={() => setApproveClientTarget(null)}
+          onApproved={() => {
+            setApproveClientTarget(null);
+            void load();
+          }}
+        />
+      )}
     </Box>
   );
 }
