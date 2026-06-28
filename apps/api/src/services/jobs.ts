@@ -1407,7 +1407,24 @@ export const jobs: ServicesJobs = {
       // AND the auto-created next occurrence (if still untouched). This used
       // to be split across the deletePayment service and updateOccurrence —
       // unified here so Revert Payment is the single canonical undo path.
-      if (data.status && data.status !== JobOccurrenceStatus.CLOSED && data.status !== JobOccurrenceStatus.ARCHIVED) {
+      //
+      // CRITICAL — must check BOTH original AND new status. Earlier versions
+      // checked only `data.status !== CLOSED/ARCHIVED`, which silently nuked
+      // payments any time an admin saved a non-CLOSED occurrence that
+      // happened to have a payment row (e.g. an OccurrenceDialog save on a
+      // PENDING_PAYMENT occurrence with a pending-approval payment, or any
+      // PATCH that re-sent `status: "PENDING_PAYMENT"` for an already-paid
+      // job whose dialog state was stale). That caused paid jobs to reappear
+      // in the "Awaiting payment" list with the old `paymentRequestSentAt`
+      // marked as "pay link expired." The revert path is the ONLY caller
+      // that legitimately wants this cleanup, and it always sends
+      // `status: PENDING_PAYMENT` against an `original.status === CLOSED`.
+      const isExplicitRevertFromClosed =
+        original.status === JobOccurrenceStatus.CLOSED &&
+        data.status &&
+        data.status !== JobOccurrenceStatus.CLOSED &&
+        data.status !== JobOccurrenceStatus.ARCHIVED;
+      if (isExplicitRevertFromClosed) {
         const existingPayment = await tx.payment.findUnique({ where: { occurrenceId } });
         if (existingPayment) {
           // Find the auto-created next occurrence (if any). The cron-driven
