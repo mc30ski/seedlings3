@@ -2,6 +2,8 @@ import fp from "fastify-plugin";
 import type { FastifyInstance } from "fastify";
 import { verifyToken, createClerkClient } from "@clerk/backend";
 import { prisma } from "../db/prisma";
+import { AUDIT } from "../lib/auditActions";
+import { writeAudit } from "../lib/auditLogger";
 
 // Fastify auth plugin for Clerk JWTs that also auto-provisions a matching user row in your database.
 // This plugin does not reject unauthenticated requests; routes must check req.auth?.clerkUserId and enforce as needed.
@@ -10,7 +12,40 @@ import { prisma } from "../db/prisma";
 const CLERK_SECRET_KEY = process.env.CLERK_SECRET_KEY!;
 const clerk = createClerkClient({ secretKey: CLERK_SECRET_KEY });
 
-type Claims = { sub?: string; [k: string]: unknown };
+type Claims = { sub?: string; iat?: number; [k: string]: unknown };
+
+// Best-effort sign-in recorder. Writes a USER.SIGN_IN audit row and
+// refreshes the User.lastSignInAt + lastSessionIat columns whenever a
+// JWT arrives with a previously-unseen `iat` for this user. Distinct
+// sessions mint distinct iat values (Clerk re-signs on sign-in), so
+// per-session deduplication falls out naturally — a single session's
+// many requests all share one iat and write the audit row once.
+//
+// Errors are swallowed; recording a sign-in is observability, not
+// functionality, and a hiccup here must NOT block the request path.
+async function recordSignInIfNew(
+  app: FastifyInstance,
+  userId: string,
+  iat: number | undefined,
+  knownIat: number | null,
+) {
+  if (!iat || iat === knownIat) return;
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: userId },
+        data: { lastSignInAt: new Date(iat * 1000), lastSessionIat: iat },
+      });
+      await writeAudit(tx, AUDIT.USER.SIGN_IN, userId, { iat });
+    });
+  } catch (e) {
+    app.log.warn({
+      where: "auth",
+      reason: "recordSignInIfNew failed",
+      err: (e as Error).message,
+    });
+  }
+}
 
 export default fp(async function auth(app: FastifyInstance) {
   // Registers an onRequest hook (via fastify-plugin) that runs on every request.
@@ -79,11 +114,13 @@ export default fp(async function auth(app: FastifyInstance) {
         return { email, phone, firstName, lastName, displayName };
       }
 
+      const iat = typeof claims?.iat === "number" ? claims.iat : undefined;
+
       if (!existing) {
         const u = await fetchClerkUser();
         const { email, phone, firstName, lastName, displayName } = extractClerkData(u);
 
-        await prisma.user.create({
+        const created = await prisma.user.create({
           data: {
             clerkUserId,
             email: email ?? undefined,
@@ -94,6 +131,9 @@ export default fp(async function auth(app: FastifyInstance) {
             isApproved: false,
           },
         });
+        // Brand-new user → record their first sign-in. lastSessionIat is
+        // null by definition, so any iat counts as new.
+        void recordSignInIfNew(app, created.id, iat, null);
       } else {
         // Existing user — sync fields from Clerk periodically (every ~1 hour) or when fields are missing
         const syncAge = Date.now() - (existing.updatedAt?.getTime() ?? 0);
@@ -115,6 +155,9 @@ export default fp(async function auth(app: FastifyInstance) {
             });
           }
         }
+        // Fire-and-forget so the per-session sign-in record never blocks
+        // the request. Internally a no-op when iat hasn't changed.
+        void recordSignInIfNew(app, existing.id, iat, existing.lastSessionIat ?? null);
       }
     } catch (e) {
       app.log.warn({

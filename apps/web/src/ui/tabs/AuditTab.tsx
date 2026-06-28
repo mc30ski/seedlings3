@@ -360,8 +360,8 @@ export default function AuditTab() {
                                 onClick={() => {
                                   // Navigate to Admin Jobs → specific occurrence
                                   window.sessionStorage.setItem("servicesTabToJobsNav", `${issue.occurrenceId}|`);
-                                  // Trigger tab switch to admin > admin-jobs
-                                  window.dispatchEvent(new CustomEvent("seedlings:switchTab", { detail: { outer: "admin", inner: "admin-jobs" } }));
+                                  // Trigger tab switch to admin > jobs
+                                  window.dispatchEvent(new CustomEvent("seedlings:switchTab", { detail: { outer: "admin", inner: "jobs" } }));
                                 }}
                                 title="View Occurrence in Jobs"
                               >

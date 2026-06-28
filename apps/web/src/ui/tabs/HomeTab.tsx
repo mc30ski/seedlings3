@@ -207,11 +207,11 @@ function navigateWithFilter(
     }
   }
 
-  // Admin destination tab values: jobs → "admin-jobs", payments → "payments", equipment → "equipment".
-  // Worker destination tab values match the worker tab values exactly.
-  const destTab = adminMode && tab === "jobs" ? "admin-jobs" : tab;
+  // Admin and Worker share inner-tab value names for the Work-category
+  // tabs (jobs/payments/equipment), so the destination is the same
+  // string in both modes — no remap needed.
   const eventName = adminMode ? "navigate:adminTab" : "navigate:workerTab";
-  window.dispatchEvent(new CustomEvent(eventName, { detail: { tab: destTab, remount: true } }));
+  window.dispatchEvent(new CustomEvent(eventName, { detail: { tab, remount: true } }));
 }
 
 /** Plain navigation (no filter), used when the destination tab manages its own state.
@@ -661,7 +661,7 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
                             } catch {}
                             window.dispatchEvent(
                               new CustomEvent("navigate:adminTab", {
-                                detail: { tab: "admin-jobs", remount: true },
+                                detail: { tab: "jobs", remount: true },
                               }),
                             );
                           }}
@@ -775,7 +775,7 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
                             } catch {}
                             window.dispatchEvent(
                               new CustomEvent("navigate:adminTab", {
-                                detail: { tab: "admin-jobs", remount: true },
+                                detail: { tab: "jobs", remount: true },
                               }),
                             );
                           }}

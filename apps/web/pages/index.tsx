@@ -131,7 +131,7 @@ export default function HomePage() {
   const [topTab, setTopTab] = usePersistedState<"client" | "worker" | "admin" | "super">("topTab", "client");
 
   const [clientInnerTab, setClientInnerTab] = usePersistedState<ClientTabs>("clientTab", "public");
-  const [adminInnerTab, setAdminInnerTab] = usePersistedState<AdminTabs>("adminTab", "admin-jobs");
+  const [adminInnerTab, setAdminInnerTab] = usePersistedState<AdminTabs>("adminTab", "jobs");
   const [workerInnerTab, setWorkerInnerTab] = usePersistedState<WorkerTabs>("workerTab", "reminders");
   const [workerCategory, setWorkerCategory] = usePersistedState<string>("workerCategory", "Work");
   const [adminCategory, setAdminCategory] = usePersistedState<string>("adminCategory", "Work");
@@ -723,7 +723,7 @@ export default function HomePage() {
       content: wrapWithInlineMessage(<AdminRemindersTab key={`arem-${adminRemindersRemountKey}`} me={me} />),
     },
     {
-      value: "admin-jobs",
+      value: "jobs",
       label: "Jobs",
       icon: FiClipboard,
       content: wrapWithInlineMessage(<AdminJobsTab key={`ajobs-${adminJobsRemountKey}`} me={me} purpose="ADMIN" />),
@@ -735,7 +735,12 @@ export default function HomePage() {
       content: wrapWithInlineMessage(<AdminRoutesTab />),
     },
     {
-      value: "jobs",
+      // Was `value: "jobs"`, but Worker's Jobs tab also uses `"jobs"` —
+      // that collision made BreadcrumbNav's cross-role chip from
+      // Worker → Jobs land here (Services) instead of on Admin → Jobs.
+      // Renamed to `"services"` so the chip pairing is unambiguous:
+      // Jobs ↔ Jobs (the Admin Jobs tab below uses `value: "jobs"`).
+      value: "services",
       label: "Services",
       icon: FiBriefcase,
       content: wrapWithInlineMessage(<ServicesTab me={me} purpose="ADMIN" />),
@@ -971,7 +976,7 @@ export default function HomePage() {
               if (jobId) {
                 // Navigate to Admin Services tab and highlight the new job
                 setTopTab("admin");
-                setAdminInnerTab("jobs" as any);
+                setAdminInnerTab("services" as any);
                 setTimeout(() => {
                   window.dispatchEvent(new CustomEvent("open:jobsTabToServicesTabSearch", { detail: { q: jobId, forAdmin: true, entityId: jobId } }));
                 }, 200);
@@ -988,7 +993,7 @@ export default function HomePage() {
       ),
       innerTabs: (() => {
         const catMap: Record<string, string> = {
-          home: "Work", reminders: "Work", "admin-jobs": "Work", routes: "Work", jobs: "Work", tasks: "Work",
+          home: "Work", reminders: "Work", jobs: "Work", routes: "Work", services: "Work", tasks: "Work",
           equipment: "Equipment", collections: "Equipment", usage: "Equipment",
           clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
           payments: "Money", pricing: "Money", supplies: "Money",
@@ -1278,7 +1283,7 @@ export default function HomePage() {
       pushNavHistory(getCurrentNavState());
       if (forAdmin) {
         setTopTab("admin");
-        setAdminInnerTab("admin-jobs");
+        setAdminInnerTab("jobs");
       } else {
         setTopTab("worker");
         setWorkerInnerTab("jobs");
@@ -1293,7 +1298,7 @@ export default function HomePage() {
   }, []);
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const onAdminJobs = topTab === "admin" && adminInnerTab === "admin-jobs";
+    const onAdminJobs = topTab === "admin" && adminInnerTab === "jobs";
     const onWorkerJobs = topTab === "worker" && workerInnerTab === "jobs";
     if (!onAdminJobs && !onWorkerJobs) return;
     const raw = window.sessionStorage.getItem("paymentsTabToJobsNav");
@@ -1332,14 +1337,14 @@ export default function HomePage() {
     return () => window.removeEventListener("seedlings:switchTab", onSwitch as EventListener);
   }, []);
 
-  // Services → Admin Jobs (special: targets "admin-jobs" inner tab)
+  // Services → Admin Jobs (special: targets "jobs" inner tab)
   useEffect(() => {
     if (typeof window === "undefined") return;
     const onEvent = (e: Event) => {
       const { entityId } = (e as CustomEvent).detail || {};
       if (!entityId) return;
       setTopTab("admin");
-      setAdminInnerTab("admin-jobs");
+      setAdminInnerTab("jobs");
       window.sessionStorage.setItem("servicesTabToJobsNav", entityId);
     };
     window.addEventListener("open:servicesTabToJobsTabSearch", onEvent as EventListener);
@@ -1347,7 +1352,7 @@ export default function HomePage() {
   }, []);
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (adminInnerTab !== "admin-jobs") return;
+    if (adminInnerTab !== "jobs") return;
     const entityId = window.sessionStorage.getItem("servicesTabToJobsNav");
     if (!entityId) return;
     window.sessionStorage.removeItem("servicesTabToJobsNav");
@@ -1365,7 +1370,7 @@ export default function HomePage() {
     return () => clearInterval(interval);
   }, [topTab, adminInnerTab]);
 
-  // Reminders → Jobs: admin goes to admin-jobs, worker goes to jobs
+  // Reminders → Jobs: both admin and worker route to their own `jobs` tab
   useEffect(() => {
     if (typeof window === "undefined") return;
     const onEvent = (e: Event) => {
@@ -1373,7 +1378,7 @@ export default function HomePage() {
       if (!q && !entityId) return;
       if (forAdmin) {
         setTopTab("admin");
-        setAdminInnerTab("admin-jobs");
+        setAdminInnerTab("jobs");
       } else {
         setTopTab("worker");
         setWorkerInnerTab("jobs");
@@ -1829,7 +1834,7 @@ export default function HomePage() {
       localStorage.setItem("seedlings_adminjobs_workers", JSON.stringify([]));
     } catch {}
     setTopTab("admin");
-    setAdminInnerTab("admin-jobs");
+    setAdminInnerTab("jobs");
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent("adminJobs:showUnapprovedHours"));
     }, 100);
@@ -1845,7 +1850,7 @@ export default function HomePage() {
       localStorage.setItem("seedlings_adminjobs_workers", JSON.stringify([]));
     } catch {}
     setTopTab("admin");
-    setAdminInnerTab("admin-jobs");
+    setAdminInnerTab("jobs");
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent("adminJobs:showEstimateFollowups"));
     }, 100);
@@ -1933,7 +1938,7 @@ export default function HomePage() {
 
   const goToUnclaimed = useCallback(() => {
     setTopTab("admin");
-    setAdminInnerTab("admin-jobs");
+    setAdminInnerTab("jobs");
     // Signal the Jobs tab to apply unclaimed filter
     try { localStorage.setItem("seedlings_adminJobs_showUnclaimed", "1"); } catch {}
     // Also dispatch event in case the tab is already mounted
@@ -1949,7 +1954,7 @@ export default function HomePage() {
       localStorage.setItem("seedlings_adminjobs_workers", JSON.stringify([]));
     } catch {}
     setTopTab("admin");
-    setAdminInnerTab("admin-jobs");
+    setAdminInnerTab("jobs");
     // Also dispatch event for when component is already mounted
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent("adminJobs:showOverdue"));
@@ -1961,7 +1966,7 @@ export default function HomePage() {
   // navigate there and then scroll-into-view its anchor.
   const goToClientRequests = useCallback(() => {
     setTopTab("admin");
-    setAdminInnerTab("admin-jobs");
+    setAdminInnerTab("jobs");
     setTimeout(() => {
       const el = document.getElementById("client-requests-section");
       if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -2211,7 +2216,7 @@ export default function HomePage() {
   // the inner-tab bar can render the wrong set of tabs.
   useEffect(() => {
     const adminCatMap: Record<string, string> = {
-      home: "Work", reminders: "Work", "admin-jobs": "Work", routes: "Work", jobs: "Work", tasks: "Work",
+      home: "Work", reminders: "Work", jobs: "Work", routes: "Work", services: "Work", tasks: "Work",
       equipment: "Equipment", collections: "Equipment", usage: "Equipment",
       clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
       payments: "Money", pricing: "Money", supplies: "Money",
@@ -2230,7 +2235,7 @@ export default function HomePage() {
       const destCategory = adminCatMap[tab];
       if (destCategory) setAdminCategory(destCategory);
       if (remount) {
-        if (tab === "admin-jobs") setAdminJobsRemountKey((k) => k + 1);
+        if (tab === "jobs") setAdminJobsRemountKey((k) => k + 1);
         else if (tab === "equipment") setAdminEquipmentRemountKey((k) => k + 1);
         else if (tab === "payments") setAdminPaymentsRemountKey((k) => k + 1);
         else if (tab === "reminders") setAdminRemindersRemountKey((k) => k + 1);
@@ -2656,7 +2661,7 @@ export default function HomePage() {
     }
     if (view === "admin") {
       setTopTab("admin");
-      setAdminInnerTab("admin-jobs");
+      setAdminInnerTab("jobs");
     } else {
       setTopTab("worker");
       setWorkerInnerTab("jobs" as any);

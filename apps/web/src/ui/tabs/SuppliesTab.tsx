@@ -736,7 +736,7 @@ export default function SuppliesTab({
                                 } catch {}
                                 window.dispatchEvent(
                                   new CustomEvent("navigate:adminTab", {
-                                    detail: { tab: "admin-jobs", remount: true },
+                                    detail: { tab: "jobs", remount: true },
                                   }),
                                 );
                               }}
