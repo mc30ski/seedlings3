@@ -1751,12 +1751,17 @@ export const payments: ServicesPayments = {
         const isAdminOnly = !!fullOcc.isAdminOnly;
 
         // Guard against duplicate: skip creation if a SCHEDULED repeating
-        // occurrence already exists at this date for this job.
+        // occurrence already exists on the same ET calendar day for this
+        // job. Previously matched on exact-instant `startAt: nextStart`,
+        // which let two paths land an occurrence at 9:00 and 9:01 AM the
+        // same day. Day-window match catches those AND mirrors how a human
+        // would think about "we already have a visit booked that day."
+        const nextDayKey = etFormatDate(nextStart);
         const existingNext = await tx.jobOccurrence.findFirst({
           where: {
             jobId: fullOcc.jobId,
             status: JobOccurrenceStatus.SCHEDULED,
-            startAt: nextStart,
+            startAt: { gte: etMidnight(nextDayKey), lte: etEndOfDay(nextDayKey) },
             workflow: "STANDARD",
             isOneOff: false,
           },
@@ -1836,7 +1841,14 @@ export const payments: ServicesPayments = {
 
       // Carry over likes + property photo instructions + repeating
       // occurrence instructions to the new occurrence.
-      if (nextOccurrence) {
+      //
+      // Only when we CREATED the next occurrence in this transaction.
+      // When the dedupe matched a pre-existing SCHEDULED occurrence
+      // (skipReason === "duplicate_exists"), it may have been created by
+      // an unrelated path (admin manual create, prior force-create, etc.)
+      // and stamping it with this Payment's carryover data would silently
+      // overwrite legitimate state on a row that wasn't ours to touch.
+      if (nextOccurrence && nextOccurrenceSkipReason !== "duplicate_exists") {
         const existingLikes = await tx.likedOccurrence.findMany({
           where: { occurrenceId: existing.occurrence.id },
           select: { userId: true },
