@@ -263,7 +263,11 @@ export type ServicesUsers = {
   // Reserved + checked-out items (flat list used by AdminUsers UI)
   listHoldings(): Promise<AdminUserHolding[]>;
 
-  approve(clerkUserId: string, userId: string): Promise<User>;
+  approve(
+    clerkUserId: string,
+    userId: string,
+    opts?: { linkContactId?: string | null },
+  ): Promise<User>;
   addRole(clerkUserId: string, userId: string, role: Role): Promise<UserRole>;
   removeRole(
     clerkUserId: string,

@@ -193,9 +193,16 @@ export default async function adminRoutes(app: FastifyInstance) {
     });
   });
 
-  app.post("/admin/users/:id/approve", adminGuard, async (req: any) =>
-    services.users.approve(await currentUserId(req), req.params.id)
-  );
+  // Approve a pending sign-up. Optional `linkContactId` in the body folds
+  // the link-to-ClientContact step into the same transaction so the
+  // operator can't accidentally leave the new user as a phantom — see
+  // services/users.ts approve() for the full rationale.
+  app.post("/admin/users/:id/approve", adminGuard, async (req: any) => {
+    const body = (req.body || {}) as { linkContactId?: string | null };
+    return services.users.approve(await currentUserId(req), req.params.id, {
+      linkContactId: body.linkContactId ?? null,
+    });
+  });
 
   app.post("/admin/users/:id/roles", adminGuard, async (req: any) => {
     const id = req.params.id as string;
@@ -6407,11 +6414,16 @@ Respond ONLY with valid JSON in this exact format:
 
   // Edit a workday's recorded times (works for open, pending, and
   // approved rows — see superEditWorkdayTimes for the per-state policy).
+  // `allowSameDay` mirrors the approve route — when true, lets the edit
+  // through even on a workday whose approval window hasn't opened yet
+  // (so the operator can correct same-day times in the Review dialog
+  // before clicking Approve).
   app.patch("/super/workdays/:id", superGuard, async (req: any) => {
     const body = (req.body || {}) as {
       startedAt?: string | null;
       endedAt?: string | null;
       totalPausedMs?: number | null;
+      allowSameDay?: boolean;
     };
     return workdayAdmin.superEditWorkdayTimes(
       String(req.params.id),
@@ -6419,6 +6431,7 @@ Respond ONLY with valid JSON in this exact format:
         startedAt: body.startedAt ?? null,
         endedAt: body.endedAt ?? null,
         totalPausedMs: body.totalPausedMs ?? null,
+        allowSameDay: !!body.allowSameDay,
       },
       superWorkdayAudit(req),
     );
@@ -6426,11 +6439,17 @@ Respond ONLY with valid JSON in this exact format:
 
   // Approve (with optional edits in the same call). Refuses if row is
   // still open — must include an endedAt in the body or call PATCH first.
+  // `allowSameDay: true` bypasses the 4 AM ET cutoff so an operator can
+  // approve a workday on the same calendar day the worker finished it.
+  // The UI prompts a double-confirm (typed-input ConfirmDialog) before
+  // sending; the bypass is audited via `sameDayBypass: true` in the
+  // WORKDAY.APPROVED audit row.
   app.post("/super/workdays/:id/approve", superGuard, async (req: any) => {
     const body = (req.body || {}) as {
       startedAt?: string | null;
       endedAt?: string | null;
       totalPausedMs?: number | null;
+      allowSameDay?: boolean;
     };
     return workdayAdmin.superApproveWorkday(
       String(req.params.id),
@@ -6438,6 +6457,7 @@ Respond ONLY with valid JSON in this exact format:
         startedAt: body.startedAt ?? null,
         endedAt: body.endedAt ?? null,
         totalPausedMs: body.totalPausedMs ?? null,
+        allowSameDay: !!body.allowSameDay,
       },
       superWorkdayAudit(req),
     );
@@ -6450,14 +6470,16 @@ Respond ONLY with valid JSON in this exact format:
     );
   });
 
-  // Bulk approve — per-row results. Body: { workdayIds: string[] }
+  // Bulk approve — per-row results. Body: { workdayIds, allowSameDay? }
   app.post("/super/workdays/bulk-approve", superGuard, async (req: any) => {
-    const body = (req.body || {}) as { workdayIds?: string[] };
+    const body = (req.body || {}) as { workdayIds?: string[]; allowSameDay?: boolean };
     const ids = Array.isArray(body.workdayIds) ? body.workdayIds : [];
     if (ids.length === 0) {
       throw app.httpErrors.badRequest("workdayIds array required.");
     }
-    return workdayAdmin.superBulkApprove(ids, superWorkdayAudit(req));
+    return workdayAdmin.superBulkApprove(ids, superWorkdayAudit(req), {
+      allowSameDay: !!body.allowSameDay,
+    });
   });
 
   // Backfill workday — Super → Workdays "Didn't work" section calls

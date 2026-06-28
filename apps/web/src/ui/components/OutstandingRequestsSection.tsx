@@ -25,6 +25,7 @@ import {
 } from "@chakra-ui/react";
 import { Check, ExternalLink, RefreshCw } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
+import { bumpAdminPayments } from "@/src/lib/bus";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import PaymentCommsButtons from "@/src/ui/components/PaymentCommsButtons";
 
@@ -194,6 +195,9 @@ export default function OutstandingRequestsSection() {
         type: "SUCCESS",
         text: "Invoice marked paid — next occurrence generated for repeating jobs.",
       });
+      // Notify the alerts dropdown + the PaymentsTab so their counters
+      // and lists update without waiting for the next page refresh.
+      bumpAdminPayments();
       closeMarkPaid();
       await load();
     } catch (err) {

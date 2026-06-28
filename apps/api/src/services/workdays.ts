@@ -927,6 +927,13 @@ type SuperEditInput = {
   startedAt?: string | null;
   endedAt?: string | null;
   totalPausedMs?: number | null;
+  // Super-only opt-in bypass for the 4 AM ET cutoff. Required by the
+  // Workdays tab when an operator approves a same-day workday before the
+  // approval window opens (e.g. workers finished early and the operator
+  // wants to clear the queue before tomorrow). The route layer surfaces
+  // a double-confirm; the bypass is recorded in the audit metadata so
+  // the override is traceable.
+  allowSameDay?: boolean;
 };
 
 /**
@@ -945,7 +952,7 @@ export async function superEditWorkdayTimes(
   input: SuperEditInput,
   audit: AuditContext,
 ): Promise<SuperWorkdayRow> {
-  const row = await loadSuperWorkday(workdayId);
+  const row = await loadSuperWorkday(workdayId, { requireOpenWindow: !input.allowSameDay });
   const now = new Date();
   const startedAt = input.startedAt ? new Date(input.startedAt) : row.startedAt;
   // endedAt: if input supplied use it; else keep existing if any; else null
@@ -1019,6 +1026,7 @@ export async function superEditWorkdayTimes(
         endedAt: endedAt ? endedAt.toISOString() : null,
         totalPausedMs,
       },
+      ...(input.allowSameDay ? { sameDayBypass: true } : {}),
       ...impersonationDetail(audit, row.userId),
     });
     return updatedRow;
@@ -1055,7 +1063,7 @@ export async function superApproveWorkday(
     await superEditWorkdayTimes(workdayId, input, audit);
   }
 
-  const row = await loadSuperWorkday(workdayId);
+  const row = await loadSuperWorkday(workdayId, { requireOpenWindow: !input.allowSameDay });
   if (!row.endedAt) {
     throw new ServiceError(
       "NOT_CLOSED",
@@ -1098,6 +1106,7 @@ export async function superApproveWorkday(
       workdayId: row.id,
       workerId: row.userId,
       workdayDate: row.workdayDate,
+      ...(input.allowSameDay ? { sameDayBypass: true } : {}),
       ...impersonationDetail(audit, row.userId),
     });
     return updatedRow;
@@ -1299,6 +1308,7 @@ export async function superCreateWorkday(
 export async function superBulkApprove(
   workdayIds: string[],
   audit: AuditContext,
+  opts: { allowSameDay?: boolean } = {},
 ): Promise<{
   approved: string[];
   alreadyApproved: string[];
@@ -1322,10 +1332,12 @@ export async function superBulkApprove(
         failed.push({ id, reason: "Workday must be ended before it can be approved." });
         continue;
       }
-      if (!(await isApprovalWindowOpen(row.workdayDate))) {
+      const windowOpen = await isApprovalWindowOpen(row.workdayDate);
+      if (!windowOpen && !opts.allowSameDay) {
         failed.push({ id, reason: "Approval window is not open yet." });
         continue;
       }
+      const sameDayBypass = !windowOpen && !!opts.allowSameDay;
       await prisma.$transaction(async (tx) => {
         await tx.workerWorkday.update({
           where: { id: row.id },
@@ -1336,6 +1348,7 @@ export async function superBulkApprove(
           workerId: row.userId,
           workdayDate: row.workdayDate,
           bulk: true,
+          ...(sameDayBypass ? { sameDayBypass: true } : {}),
           ...impersonationDetail(audit, row.userId),
         });
       });

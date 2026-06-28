@@ -24,6 +24,7 @@ import DateInput from "@/src/ui/components/DateInput";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import { apiGet, apiPatch, apiDelete, apiPost } from "@/src/lib/api";
 import { determineRoles, prettyStatus, clientLabel, fmtDate, bizDateKey, bizToday, bizAddDays, bizAddYears } from "@/src/lib/lib";
+import { composePaymentMessage } from "@/src/lib/paymentMessages";
 import { resolveBillingMode, shortBillingChip } from "@/src/lib/equipmentBilling";
 import { useEquipmentBillingEnabled } from "@/src/lib/useEquipmentBillingEnabled";
 import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
@@ -43,7 +44,7 @@ import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import StatusButton from "@/src/ui/components/StatusButton";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { TextLink } from "@/src/ui/helpers/Link";
-import { openEventSearch } from "@/src/lib/bus";
+import { openEventSearch, bumpAdminPayments } from "@/src/lib/bus";
 import PendingApprovalsSection from "@/src/ui/components/PendingApprovalsSection";
 import OutstandingRequestsSection from "@/src/ui/components/OutstandingRequestsSection";
 
@@ -1499,7 +1500,12 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
         note: editNote.trim() || null,
         splits,
       });
-      publishInlineMessage({ type: "SUCCESS", text: "Payment updated." });
+      publishInlineMessage({ type: "SUCCESS", text: composePaymentMessage("updated") });
+      // Keep the alerts dropdown's "Payments to review" counter in
+      // lockstep with the PaymentsTab list — edits can shift a row
+      // between confirmed/unconfirmed buckets server-side, so the
+      // badge needs to recount alongside.
+      bumpAdminPayments();
       setEditPayment(null);
       void load();
     } catch (err) {
@@ -1512,7 +1518,19 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
   async function doRevert(p: PaymentListItem, reason: string) {
     try {
       await apiPost(`/api/admin/payments/${p.id}/revert`, { reason: reason.trim() || null });
-      publishInlineMessage({ type: "SUCCESS", text: "Payment reverted. The job is back to Pending Payment." });
+      // Revert always returns the occurrence to PENDING_PAYMENT and
+      // ghost-cancels the auto-created next occurrence (see
+      // services/jobs.ts updateOccurrence). Keep the extra context
+      // about where the job lands now, since revert is the inverse of
+      // approve and operators need to know what just happened.
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: composePaymentMessage("reverted", null, "The job is back to Pending Payment and the auto-created next occurrence (if any) was removed."),
+      });
+      // Revert un-confirms a payment, which puts the occurrence back
+      // into the "Awaiting client payment" bucket — both the alerts
+      // badge counter and any in-tab list need to recount.
+      bumpAdminPayments();
       void load();
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Revert failed.", err) });

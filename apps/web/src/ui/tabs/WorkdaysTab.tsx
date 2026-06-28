@@ -17,6 +17,7 @@ import {
 import { ChevronLeft, ChevronRight, AlertTriangle, CheckCircle2, Edit3, RotateCcw } from "lucide-react";
 import { apiGet, apiPost, apiPatch } from "@/src/lib/api";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
+import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import {
   bizToday,
   bizAddDays,
@@ -36,9 +37,14 @@ import {
 // times + approve / unapprove). Bulk approve sits at the bottom of the
 // pending bucket.
 //
-// The 4 AM rule (settings-driven) is enforced server-side; this UI just
-// reads `adminWindowOpen` from the response and disables the action
-// buttons when false.
+// The 4 AM rule (settings-driven) is enforced server-side; this UI reads
+// `adminWindowOpen` from the response and switches into a "same-day
+// approval" mode when false — actions are still allowed but the operator
+// has to clear a typed double-confirm before the request goes out (and
+// the server stamps `sameDayBypass: true` in the audit log). Same-day
+// approval is risky because the worker's edit window is still open; if
+// they discover a missed pause after we lock in the times, the row's
+// already approved and they're stuck.
 // ─────────────────────────────────────────────────────────────────────────
 
 type WorkerLite = {
@@ -219,9 +225,17 @@ export default function WorkdaysTab({
   async function runBulkApprove() {
     setBulkConfirmOpen(false);
     try {
+      // `allowSameDay` mirrors the per-row Review dialog: when the
+      // operator is bulk-approving before the cutoff, send the opt-in
+      // bypass so the server doesn't fail every row with
+      // "Approval window is not open yet." BulkApproveConfirm has
+      // already required the typed double-confirm in that mode.
       const r = await apiPost<{ approved: string[]; alreadyApproved: string[]; failed: { id: string; reason: string }[] }>(
         "/api/super/workdays/bulk-approve",
-        { workdayIds: Array.from(bulkSelected) },
+        {
+          workdayIds: Array.from(bulkSelected),
+          allowSameDay: !!data && !data.adminWindowOpen,
+        },
       );
       const msg = `Approved ${r.approved.length}${r.alreadyApproved.length ? `, ${r.alreadyApproved.length} already approved` : ""}${r.failed.length ? `, ${r.failed.length} failed` : ""}.`;
       publishInlineMessage({
@@ -309,7 +323,7 @@ export default function WorkdaysTab({
                   {grouped.approved.length} approved · {grouped.pending.length} pending
                   {grouped.needsEnding.length > 0 && ` · ${grouped.needsEnding.length} needs ending`}
                   {data.didntWork.length > 0 && ` · ${data.didntWork.length} didn't work`}
-                  {!data.adminWindowOpen && " · approval locked until cutoff"}
+                  {!data.adminWindowOpen && " · same-day approval (risky)"}
                 </Text>
               )}
             </Box>
@@ -344,11 +358,17 @@ export default function WorkdaysTab({
             </HStack>
           </HStack>
           {!data?.adminWindowOpen && (
-            <Box mt={2} p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" borderRadius="md">
-              <HStack gap={2}>
-                <AlertTriangle size={14} color="var(--chakra-colors-yellow-700)" />
-                <Text fontSize="xs" color="yellow.900">
-                  Workdays for this date can't be approved yet. The approval window opens at the configured cutoff (default 4 AM ET the next morning).
+            <Box mt={2} p={2} bg="orange.50" borderWidth="1px" borderColor="orange.300" borderRadius="md">
+              <HStack gap={2} align="start">
+                <AlertTriangle size={14} color="var(--chakra-colors-orange-700)" style={{ marginTop: 2 }} />
+                <Text fontSize="xs" color="orange.900">
+                  <strong>Same-day approval is risky.</strong> The approval window
+                  normally opens at the configured cutoff (default 4 AM ET the next
+                  morning) so workers have time to fix things they noticed after
+                  clocking out (a missed pause, a wrong end time). Approving now
+                  closes that door — any correction the worker discovers later will
+                  be locked behind an unapprove. Only approve same-day if you're
+                  certain the workday is final.
                 </Text>
               </HStack>
             </Box>
@@ -488,6 +508,7 @@ export default function WorkdaysTab({
         count={bulkStats.count}
         totalHours={bulkStats.totalHours}
         outliers={bulkStats.outliers}
+        sameDay={!!data && !data.adminWindowOpen}
         onCancel={() => setBulkConfirmOpen(false)}
         onConfirm={() => void runBulkApprove()}
       />
@@ -590,7 +611,6 @@ function WorkdayRow({
         variant={row.uiState === "APPROVED" ? "outline" : "solid"}
         colorPalette={row.uiState === "APPROVED" ? "gray" : "blue"}
         onClick={onReview}
-        disabled={!row.adminWindowOpen}
       >
         Review
       </Button>
@@ -617,6 +637,13 @@ function ReviewDialog({
   );
   const [pausedMin, setPausedMin] = useState(initialPausedMin);
   const [saving, setSaving] = useState(false);
+  // Same-day approval double-confirm. Only opens when the operator is
+  // approving a row whose approval window hasn't opened (today's date).
+  // Uses ConfirmDialog's requiredInputValue so the button stays disabled
+  // until the operator types APPROVE — that's the second "are you sure"
+  // beyond the click that opened the confirm.
+  const [sameDayConfirmOpen, setSameDayConfirmOpen] = useState(false);
+  const sameDay = !row.adminWindowOpen;
 
   const dirty = useMemo(() => {
     if (bizToLocalInputValue(row.startedAt) !== startedAt) return true;
@@ -639,6 +666,11 @@ function ReviewDialog({
       startedAt: bizParseLocalInputValue(startedAt) || null,
       endedAt: endedAt ? bizParseLocalInputValue(endedAt) : null,
       totalPausedMs: pausedMin * 60000,
+      // Server gates same-day edits + approvals on this flag. When
+      // false (cutoff passed), the server enforces normally; when true
+      // and the cutoff hasn't passed, the server lets the action through
+      // and stamps `sameDayBypass: true` in the audit row.
+      allowSameDay: sameDay,
     };
   }
 
@@ -654,6 +686,17 @@ function ReviewDialog({
     } finally {
       setSaving(false);
     }
+  }
+
+  function onApproveClick() {
+    // Same-day approval intercepts here and routes through the typed
+    // double-confirm before sending. Post-cutoff approval goes straight
+    // through (the regular bulk-confirm gate is enough for those).
+    if (sameDay) {
+      setSameDayConfirmOpen(true);
+      return;
+    }
+    void approve();
   }
 
   async function approve() {
@@ -687,6 +730,7 @@ function ReviewDialog({
   const isApproved = row.uiState === "APPROVED";
 
   return (
+    <>
     <Dialog.Root open onOpenChange={(e) => { if (!e.open) onClose(); }} placement="center">
       <Portal>
         <Dialog.Backdrop />
@@ -699,6 +743,19 @@ function ReviewDialog({
             </Dialog.Header>
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
+                {sameDay && (
+                  <Box p={2} bg="orange.50" borderWidth="1px" borderColor="orange.400" borderRadius="md">
+                    <HStack gap={2} align="start">
+                      <AlertTriangle size={14} color="var(--chakra-colors-orange-700)" style={{ marginTop: 2 }} />
+                      <Text fontSize="xs" color="orange.900">
+                        <strong>Same-day approval.</strong> The cutoff hasn't passed
+                        yet, so this worker can still edit their own row until then.
+                        Approving now locks them out of any correction they discover
+                        later. You'll be asked to type APPROVE to confirm.
+                      </Text>
+                    </HStack>
+                  </Box>
+                )}
                 {row.isOpen && (
                   <Box p={2} bg="orange.50" borderWidth="1px" borderColor="orange.300" borderRadius="md">
                     <HStack gap={2}>
@@ -782,8 +839,16 @@ function ReviewDialog({
                     <Edit3 size={12} /> <Text ml={1}>Save edits</Text>
                   </Button>
                 )}
-                <Button colorPalette="green" onClick={() => void approve()} disabled={saving || !endedAt}>
-                  {saving ? <Spinner size="xs" /> : isApproved ? "Re-approve" : "Approve"}
+                <Button
+                  colorPalette={sameDay ? "orange" : "green"}
+                  onClick={onApproveClick}
+                  disabled={saving || !endedAt}
+                >
+                  {saving
+                    ? <Spinner size="xs" />
+                    : sameDay
+                      ? (isApproved ? "Re-approve (same day)" : "Approve (same day)")
+                      : (isApproved ? "Re-approve" : "Approve")}
                 </Button>
               </HStack>
             </Dialog.Footer>
@@ -791,6 +856,23 @@ function ReviewDialog({
         </Dialog.Positioner>
       </Portal>
     </Dialog.Root>
+    <ConfirmDialog
+      open={sameDayConfirmOpen}
+      title="Approve same-day workday?"
+      message={`You're approving ${workerLabel(row.user)}'s workday before the cutoff. The worker can no longer fix their own row after this. Only confirm if the workday is genuinely final.`}
+      warning="Type APPROVE below to confirm. The override is recorded in the audit log."
+      inputLabel="Type APPROVE to enable Confirm"
+      inputPlaceholder="APPROVE"
+      requiredInputValue="APPROVE"
+      confirmLabel="Approve anyway"
+      confirmColorPalette="orange"
+      onConfirm={() => {
+        setSameDayConfirmOpen(false);
+        void approve();
+      }}
+      onCancel={() => setSameDayConfirmOpen(false)}
+    />
+    </>
   );
 }
 
@@ -801,6 +883,7 @@ function BulkApproveConfirm({
   count,
   totalHours,
   outliers,
+  sameDay,
   onCancel,
   onConfirm,
 }: {
@@ -808,9 +891,21 @@ function BulkApproveConfirm({
   count: number;
   totalHours: number;
   outliers: number;
+  // True when the operator is bulk-approving BEFORE the approval cutoff.
+  // Surfaces the risk callout and gates the Approve button behind a
+  // typed "APPROVE" confirmation. Server stamps `sameDayBypass: true` in
+  // the audit log for every row approved this way.
+  sameDay: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const [typed, setTyped] = useState("");
+  // Reset the typed value whenever the dialog reopens so a previous
+  // confirmation can't carry over into a fresh open.
+  useEffect(() => {
+    if (open) setTyped("");
+  }, [open]);
+  const typedOk = !sameDay || typed.trim().toUpperCase() === "APPROVE";
   return (
     <Dialog.Root open={open} onOpenChange={(e) => { if (!e.open) onCancel(); }} placement="center">
       <Portal>
@@ -818,13 +913,28 @@ function BulkApproveConfirm({
         <Dialog.Positioner>
           <Dialog.Content mx="4" maxW="sm" w="full" rounded="2xl" p="4" shadow="lg">
             <Dialog.Header>
-              <Dialog.Title>Approve {count} workday{count === 1 ? "" : "s"}?</Dialog.Title>
+              <Dialog.Title>
+                {sameDay ? "Approve same-day workdays?" : `Approve ${count} workday${count === 1 ? "" : "s"}?`}
+              </Dialog.Title>
             </Dialog.Header>
             <Dialog.Body>
               <VStack align="stretch" gap={2}>
                 <Text fontSize="sm">
                   {count} workday{count === 1 ? "" : "s"} · {totalHours.toFixed(1)} active hours total
                 </Text>
+                {sameDay && (
+                  <Box p={2} bg="orange.50" borderWidth="1px" borderColor="orange.400" borderRadius="md">
+                    <HStack gap={2} align="start">
+                      <AlertTriangle size={14} color="var(--chakra-colors-orange-700)" style={{ marginTop: 2 }} />
+                      <Text fontSize="xs" color="orange.900">
+                        <strong>Same-day approval.</strong> The cutoff hasn't passed.
+                        Workers can still edit their own rows until then; approving
+                        now locks them out of corrections they may discover later.
+                        Type <strong>APPROVE</strong> below to enable the button.
+                      </Text>
+                    </HStack>
+                  </Box>
+                )}
                 {outliers > 0 ? (
                   <Box p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" borderRadius="md">
                     <HStack gap={2}>
@@ -839,13 +949,34 @@ function BulkApproveConfirm({
                     All workdays are within the typical 4–10 hour range.
                   </Text>
                 )}
+                {sameDay && (
+                  <input
+                    type="text"
+                    value={typed}
+                    onChange={(e) => setTyped(e.target.value)}
+                    placeholder="APPROVE"
+                    autoFocus
+                    style={{
+                      width: "100%",
+                      padding: "6px 10px",
+                      fontSize: "14px",
+                      border: "1px solid var(--chakra-colors-orange-300)",
+                      borderRadius: "6px",
+                      letterSpacing: "0.05em",
+                    }}
+                  />
+                )}
               </VStack>
             </Dialog.Body>
             <Dialog.Footer>
               <HStack justify="flex-end" w="full" gap={2}>
                 <Button variant="ghost" onClick={onCancel}>Cancel</Button>
-                <Button colorPalette="green" onClick={onConfirm}>
-                  Approve all {count}
+                <Button
+                  colorPalette={sameDay ? "orange" : "green"}
+                  onClick={onConfirm}
+                  disabled={!typedOk}
+                >
+                  {sameDay ? `Approve same-day (${count})` : `Approve all ${count}`}
                 </Button>
               </HStack>
             </Dialog.Footer>

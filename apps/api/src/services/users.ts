@@ -72,15 +72,80 @@ export const users: ServicesUsers = {
     }));
   },
 
-  async approve(currentUserId, userId) {
+  async approve(currentUserId, userId, opts) {
+    // Optional `linkContactId` folds the "link Clerk account to a
+    // ClientContact" step into the same transaction so the approval
+    // surface in Super → Users guarantees a wired-up client. Previously
+    // "Approve as Client" only flipped isApproved, leaving the link as a
+    // separate step that often got forgotten — the contact landed in the
+    // Admin → Directory → Clients "Unlinked client accounts" worklist
+    // even though the operator believed approval did everything.
     return prisma.$transaction(async (tx) => {
       const updated = await tx.user.update({
         where: { id: userId },
         data: { isApproved: true },
       });
 
+      if (opts?.linkContactId) {
+        if (!updated.clerkUserId) {
+          throw new ServiceError(
+            "USER_HAS_NO_CLERK",
+            "Can't link a contact — this user has no Clerk account on file.",
+            400,
+          );
+        }
+        const contact = await tx.clientContact.findUnique({
+          where: { id: opts.linkContactId },
+          select: { id: true, clerkUserId: true, status: true, email: true, normalizedPhone: true },
+        });
+        if (!contact) {
+          throw new ServiceError("CONTACT_NOT_FOUND", "Contact to link was not found.", 404);
+        }
+        if (contact.status !== "ACTIVE") {
+          throw new ServiceError(
+            "CONTACT_INACTIVE",
+            "Can't link to an inactive contact — pick an active one.",
+            409,
+          );
+        }
+        // Defense-in-depth race guard. The picker only shows unlinked
+        // contacts, but another admin could have linked this one in the
+        // window between the picker loading and submit.
+        if (contact.clerkUserId && contact.clerkUserId !== updated.clerkUserId) {
+          throw new ServiceError(
+            "CONTACT_ALREADY_LINKED",
+            "This contact is already linked to a different Clerk account. Reload the picker and choose another.",
+            409,
+          );
+        }
+        if (!contact.clerkUserId) {
+          // Backfill the contact's email with the Clerk email when the
+          // contact has none. A contact created without an email is
+            // useful as a stub but blocks email-based comms and breaks
+          // the existing auto-link path on every subsequent sign-in.
+          // The Clerk-provided email is the most-reliable address we
+          // have for this person, so promoting it to the contact record
+          // closes both gaps in one step.
+          const backfillEmail = !contact.email && !!updated.email;
+          await tx.clientContact.update({
+            where: { id: contact.id },
+            data: {
+              clerkUserId: updated.clerkUserId,
+              ...(backfillEmail ? { email: updated.email } : {}),
+            },
+          });
+          await writeAudit(tx, AUDIT.CLIENT.CONTACT_LINKED, currentUserId, {
+            contactId: contact.id,
+            clerkUserId: updated.clerkUserId,
+            viaApprove: true,
+            ...(backfillEmail ? { emailBackfilledFromClerk: updated.email } : {}),
+          });
+        }
+      }
+
       await writeAudit(tx, AUDIT.USER.APPROVED, currentUserId, {
         userRecord: { ...updated },
+        ...(opts?.linkContactId ? { linkedContactId: opts.linkContactId } : {}),
       });
 
       return updated;
