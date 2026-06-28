@@ -24,6 +24,7 @@ import { openEventSearch } from "@/src/lib/bus";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import ApproveAndLinkClientDialog from "@/src/ui/dialogs/ApproveAndLinkClientDialog";
+import UserActivitySection from "@/src/ui/components/UserActivitySection";
 import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import {
@@ -59,6 +60,13 @@ type ApiUser = {
   // Per-user privilege overrides. Null = follow workerType default.
   canPullInventory?: boolean | null;
   canChargeBusinessExpenses?: boolean | null;
+  // Last time the auth plugin saw a new JWT `iat` for this user. Null
+  // when the user has never signed in (e.g. a pending sign-up the
+  // operator hasn't approved yet — though in practice that case won't
+  // appear, since visiting the app at all mints a JWT). Used to render
+  // "Last signed in" on the card; the full sign-in history lives in the
+  // paged activity section.
+  lastSignInAt?: string | null;
 };
 
 type Me = {
@@ -1251,6 +1259,14 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
                     >{`${h.shortDesc} (${h.qrSlug}) - ${prettyStatus(h.state)}`}</Badge>
                   ))}
                 </Stack>
+              )}
+
+              {/* Sign-ins & activity — Super only. readOnly is true in
+                  the Admin Directory → Users surface, false in Super →
+                  Users; the API route is also superGuard'd as a second
+                  line of defense. */}
+              {!readOnly && (
+                <UserActivitySection userId={u.id} lastSignInAt={u.lastSignInAt ?? null} />
               )}
             </Box>
           );

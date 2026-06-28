@@ -102,8 +102,9 @@ type OutstandingReq = {
 function viewOnJobs(occId: string, startAt: string | null | undefined, forAdmin?: boolean) {
   try { localStorage.setItem("seedlings_jobs_pendingHighlight", `${occId}|${startAt ?? ""}`); } catch {}
   const eventName = forAdmin ? "navigate:adminTab" : "navigate:workerTab";
-  const tab = forAdmin ? "admin-jobs" : "jobs";
-  window.dispatchEvent(new CustomEvent(eventName, { detail: { tab, remount: true } }));
+  // Admin and Worker now share the `"jobs"` inner-tab value, so the
+  // destination is the same string for both roles.
+  window.dispatchEvent(new CustomEvent(eventName, { detail: { tab: "jobs", remount: true } }));
 }
 
 /** Does this occurrence need client confirmation? */

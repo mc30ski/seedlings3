@@ -471,6 +471,49 @@ export default async function adminRoutes(app: FastifyInstance) {
     return services.activity.listUserActivity();
   });
 
+  // Per-user activity feed for the Super → Users "Sign-ins & activity"
+  // section. Returns AuditEvent rows where this user is the actor,
+  // newest-first, cursor-paged (cursor = createdAt ISO string of the
+  // oldest row in the previous page; pass nothing to get the first
+  // page). Super-only — exposes other users' raw audit history, which
+  // is broader access than the Admin shell should grant.
+  app.get("/super/users/:userId/activity", superGuard, async (req: any) => {
+    const userId = String(req.params.userId);
+    const { cursor, limit } = (req.query || {}) as {
+      cursor?: string;
+      limit?: string;
+    };
+    // Clamp to keep payloads predictable. The UI's "Load more" button
+    // pages at this size; larger requests need a bigger UI surface that
+    // doesn't yet exist.
+    const take = Math.min(50, Math.max(1, Number(limit) || 20));
+    const where: any = { actorUserId: userId };
+    if (cursor) {
+      const d = new Date(cursor);
+      if (!Number.isNaN(d.getTime())) where.createdAt = { lt: d };
+    }
+    // Pull `take + 1` so we can detect whether there's another page
+    // without a second roundtrip. The extra row is dropped before
+    // returning; its createdAt becomes the next cursor.
+    const rows = await prisma.auditEvent.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      take: take + 1,
+      select: {
+        id: true,
+        scope: true,
+        verb: true,
+        action: true,
+        metadata: true,
+        createdAt: true,
+      },
+    });
+    const hasMore = rows.length > take;
+    const items = hasMore ? rows.slice(0, take) : rows;
+    const nextCursor = hasMore ? items[items.length - 1].createdAt.toISOString() : null;
+    return { items, nextCursor, hasMore };
+  });
+
   app.get("/admin/clients", adminGuard, async (req: any) => {
     const { q, status, limit } = (req.query || {}) as {
       q?: string;

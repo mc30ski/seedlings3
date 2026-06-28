@@ -82,6 +82,7 @@ enum AuditVerb {
   PAYMENT_METHOD_UPDATED
   GUARANTEED_PAYOUT_STARTED
   GUARANTEED_PAYOUT_ENDED
+  SIGN_IN
   // add new verbs as needed
 }
 
@@ -170,6 +171,16 @@ model User {
   // Per-user override for payment-request delivery channel.
   // null = use the org-wide DEFAULT_PAYMENT_COMMUNICATIONS_MODE setting.
   paymentCommsMode PaymentCommsMode?
+
+  // Sign-in tracking. The auth plugin records a SIGN_IN audit event the
+  // first time it sees a new JWT `iat` for this user (distinct sessions
+  // mint distinct iat values; subsequent requests in the same session
+  // reuse the same iat and don't re-record). `lastSignInAt` mirrors the
+  // most-recent SIGN_IN audit row so the Super → Users card can render
+  // "Last signed in" without a per-row audit query. `lastSessionIat` is
+  // the deduplication key — equal to claims.iat (seconds since epoch).
+  lastSignInAt    DateTime?
+  lastSessionIat  Int?
 
   roles          UserRole[]
   checkouts      Checkout[]

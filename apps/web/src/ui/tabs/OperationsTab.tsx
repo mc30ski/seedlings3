@@ -292,7 +292,7 @@ export default function OperationsTab() {
     } catch {}
     window.dispatchEvent(
       new CustomEvent("navigate:adminTab", {
-        detail: { tab: "admin-jobs", remount: true },
+        detail: { tab: "jobs", remount: true },
       }),
     );
   }
@@ -638,7 +638,7 @@ export default function OperationsTab() {
                                 try {
                                   localStorage.setItem("seedlings_adminJobs_showUnapprovedHours", "1");
                                 } catch {}
-                                window.dispatchEvent(new CustomEvent("navigate:adminTab", { detail: { tab: "admin-jobs", remount: true } }));
+                                window.dispatchEvent(new CustomEvent("navigate:adminTab", { detail: { tab: "jobs", remount: true } }));
                                 setTimeout(() => {
                                   window.dispatchEvent(new CustomEvent("adminJobs:showUnapprovedHours"));
                                 }, 100);
