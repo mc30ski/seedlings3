@@ -172,15 +172,17 @@ model User {
   // null = use the org-wide DEFAULT_PAYMENT_COMMUNICATIONS_MODE setting.
   paymentCommsMode PaymentCommsMode?
 
-  // Sign-in tracking. The auth plugin records a SIGN_IN audit event the
-  // first time it sees a new JWT `iat` for this user (distinct sessions
-  // mint distinct iat values; subsequent requests in the same session
-  // reuse the same iat and don't re-record). `lastSignInAt` mirrors the
-  // most-recent SIGN_IN audit row so the Super → Users card can render
-  // "Last signed in" without a per-row audit query. `lastSessionIat` is
-  // the deduplication key — equal to claims.iat (seconds since epoch).
+  // Sign-in tracking. The auth plugin records a SIGN_IN audit event
+  // the first time it sees a new Clerk session id (`sid` claim) for
+  // this user. `sid` is stable across the silent JWT refreshes that
+  // happen every ~60 seconds while a tab is open, so each real
+  // browser session records ONE sign-in (not one per minute). A
+  // prior implementation used `iat`, which changes on every refresh —
+  // that produced a spurious SIGN_IN entry every time the SDK rotated
+  // the token, even for idle tabs. `lastSignInAt` mirrors the most-
+  // recent SIGN_IN audit row for fast card rendering.
   lastSignInAt    DateTime?
-  lastSessionIat  Int?
+  lastSessionId   String?
 
   roles          UserRole[]
   checkouts      Checkout[]

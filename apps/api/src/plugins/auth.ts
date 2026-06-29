@@ -12,31 +12,42 @@ import { writeAudit } from "../lib/auditLogger";
 const CLERK_SECRET_KEY = process.env.CLERK_SECRET_KEY!;
 const clerk = createClerkClient({ secretKey: CLERK_SECRET_KEY });
 
-type Claims = { sub?: string; iat?: number; [k: string]: unknown };
+type Claims = { sub?: string; sid?: string; iat?: number; [k: string]: unknown };
 
 // Best-effort sign-in recorder. Writes a USER.SIGN_IN audit row and
-// refreshes the User.lastSignInAt + lastSessionIat columns whenever a
-// JWT arrives with a previously-unseen `iat` for this user. Distinct
-// sessions mint distinct iat values (Clerk re-signs on sign-in), so
-// per-session deduplication falls out naturally — a single session's
-// many requests all share one iat and write the audit row once.
+// refreshes User.lastSignInAt + lastSessionId whenever a JWT arrives
+// with a previously-unseen Clerk session id (`sid` claim) for this
+// user.
+//
+// IMPORTANT: dedupe on `sid`, NOT `iat`. Clerk silently refreshes the
+// JWT every ~60s while a tab is open — each refresh mints a fresh
+// `iat` but reuses the same `sid` for the entire browser session. A
+// prior version of this function used iat and produced one SIGN_IN
+// audit row per refresh (i.e. ~one per minute per open tab); sid
+// makes it ONE per actual browser session.
 //
 // Errors are swallowed; recording a sign-in is observability, not
 // functionality, and a hiccup here must NOT block the request path.
 async function recordSignInIfNew(
   app: FastifyInstance,
   userId: string,
+  sid: string | undefined,
   iat: number | undefined,
-  knownIat: number | null,
+  knownSid: string | null,
 ) {
-  if (!iat || iat === knownIat) return;
+  if (!sid || sid === knownSid) return;
+  // `iat` (when the JWT was issued) is the closest proxy we have for
+  // "session started at" — Clerk doesn't expose a separate
+  // session-start claim in the standard JWT. Falling back to now() so
+  // a missing iat doesn't poison the timeline.
+  const signedInAt = iat ? new Date(iat * 1000) : new Date();
   try {
     await prisma.$transaction(async (tx) => {
       await tx.user.update({
         where: { id: userId },
-        data: { lastSignInAt: new Date(iat * 1000), lastSessionIat: iat },
+        data: { lastSignInAt: signedInAt, lastSessionId: sid },
       });
-      await writeAudit(tx, AUDIT.USER.SIGN_IN, userId, { iat });
+      await writeAudit(tx, AUDIT.USER.SIGN_IN, userId, { sid, iat });
     });
   } catch (e) {
     app.log.warn({
@@ -115,6 +126,7 @@ export default fp(async function auth(app: FastifyInstance) {
       }
 
       const iat = typeof claims?.iat === "number" ? claims.iat : undefined;
+      const sid = typeof claims?.sid === "string" ? claims.sid : undefined;
 
       if (!existing) {
         const u = await fetchClerkUser();
@@ -131,9 +143,9 @@ export default fp(async function auth(app: FastifyInstance) {
             isApproved: false,
           },
         });
-        // Brand-new user → record their first sign-in. lastSessionIat is
-        // null by definition, so any iat counts as new.
-        void recordSignInIfNew(app, created.id, iat, null);
+        // Brand-new user → record their first sign-in. lastSessionId is
+        // null by definition, so any sid counts as new.
+        void recordSignInIfNew(app, created.id, sid, iat, null);
       } else {
         // Existing user — sync fields from Clerk periodically (every ~1 hour) or when fields are missing
         const syncAge = Date.now() - (existing.updatedAt?.getTime() ?? 0);
@@ -156,8 +168,10 @@ export default fp(async function auth(app: FastifyInstance) {
           }
         }
         // Fire-and-forget so the per-session sign-in record never blocks
-        // the request. Internally a no-op when iat hasn't changed.
-        void recordSignInIfNew(app, existing.id, iat, existing.lastSessionIat ?? null);
+        // the request. Internally a no-op when sid hasn't changed —
+        // which is the common case, since most requests reuse an active
+        // session whose JWTs share a sid across silent refreshes.
+        void recordSignInIfNew(app, existing.id, sid, iat, existing.lastSessionId ?? null);
       }
     } catch (e) {
       app.log.warn({
