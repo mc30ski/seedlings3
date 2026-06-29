@@ -2886,6 +2886,166 @@ async function seedDatabase() {
   });
   await prisma.jobOccurrenceAssignee.create({ data: { occurrenceId: ann8.id, userId: MICHAEL_ID, assignedById: MICHAEL_ID } });
 
+  // ── Alert-dropdown fixtures ────────────────────────────────────────────
+  // Each block produces at least one row visible in the title-bar alerts
+  // dropdown so the Tasks page renders with examples of every category.
+  // Anchored on existing fixtures (CONTRACTOR_ID, a real Job, a real
+  // BusinessExpense) where possible to avoid drifting from the rest of
+  // the seed. Self-contained — anything that fails here only affects
+  // the alert it was meant to surface.
+  console.log("  Creating alert-dropdown fixtures...");
+
+  const alertAnchorJob = await prisma.job.findFirst({
+    where: { schedule: { is: { active: true } } },
+    orderBy: { createdAt: "asc" },
+    include: { property: { include: { client: true } } },
+  });
+  const alertAnchorExpense = await prisma.businessExpense.findFirst({ orderBy: { createdAt: "asc" } });
+
+  // 1. Guaranteed payout expiring — flip CONTRACTOR_ID into a GP window
+  //    that ends in 3 days. Drives the title-bar "Guaranteed payout
+  //    expiring" alert + the matching Tasks shortcut card.
+  await prisma.user.update({
+    where: { id: CONTRACTOR_ID },
+    data: {
+      guaranteedPayoutStartedAt: daysAgo(57, 9),
+      guaranteedPayoutUntil: daysFromNow(3, 9),
+    },
+  });
+
+  // 2. Pending payment approvals + outstanding client invoices.
+  //    Two PENDING_PAYMENT occurrences anchored on the same job:
+  //      (a) Has an unconfirmed Payment row → admin approval queue.
+  //      (b) Has paymentRequestSentAt + no Payment → outstanding invoices.
+  if (alertAnchorJob) {
+    const alertPendingPayApprovalOcc = await prisma.jobOccurrence.create({
+      data: {
+        jobId: alertAnchorJob.id,
+        kind: alertAnchorJob.kind,
+        startAt: daysAgo(2, 9),
+        endAt: daysAgo(2, 11),
+        status: "PENDING_PAYMENT",
+        source: "MANUAL",
+        workflow: "STANDARD",
+        completedAt: daysAgo(2, 11),
+        startedAt: daysAgo(2, 9),
+        notes: "Alert fixture — pending admin approval",
+        price: 150,
+        estimatedMinutes: 120,
+      } as any,
+    });
+    await prisma.jobOccurrenceAssignee.create({
+      data: { occurrenceId: alertPendingPayApprovalOcc.id, userId: ADMIN_WORKER_ID, assignedById: ADMIN_WORKER_ID },
+    });
+    await prisma.payment.create({
+      data: {
+        ledgerId: `seed-alert-pending-${Date.now()}`,
+        occurrenceId: alertPendingPayApprovalOcc.id,
+        amountPaid: 150,
+        method: "CASH",
+        note: "Alert fixture — waiting on admin approval",
+        collectedById: ADMIN_WORKER_ID,
+        confirmed: false,
+        selfReported: false,
+        grossCharged: 150,
+        netReceived: 150,
+      } as any,
+    });
+
+    const alertOutstandingInvoiceOcc = await prisma.jobOccurrence.create({
+      data: {
+        jobId: alertAnchorJob.id,
+        kind: alertAnchorJob.kind,
+        startAt: daysAgo(5, 9),
+        endAt: daysAgo(5, 11),
+        status: "PENDING_PAYMENT",
+        source: "MANUAL",
+        workflow: "STANDARD",
+        completedAt: daysAgo(5, 11),
+        startedAt: daysAgo(5, 9),
+        notes: "Alert fixture — outstanding client invoice",
+        price: 200,
+        estimatedMinutes: 120,
+        paymentRequestSentAt: daysAgo(5, 12),
+        paymentRequestToken: `seed-alert-outstanding-${Date.now()}`,
+        paymentRequestTokenCreatedAt: daysAgo(5, 12),
+      } as any,
+    });
+    await prisma.jobOccurrenceAssignee.create({
+      data: { occurrenceId: alertOutstandingInvoiceOcc.id, userId: ADMIN_WORKER_ID, assignedById: ADMIN_WORKER_ID },
+    });
+
+    // 3. Change request — a client asked to reschedule the upcoming
+    //    occurrence of this job. Status PENDING + resolvedAt null
+    //    surfaces in the admin Client requests counter.
+    const alertChangeReqOcc = await prisma.jobOccurrence.create({
+      data: {
+        jobId: alertAnchorJob.id,
+        kind: alertAnchorJob.kind,
+        startAt: daysFromNow(7, 9),
+        endAt: daysFromNow(7, 11),
+        status: "SCHEDULED",
+        source: "GENERATED",
+        workflow: "STANDARD",
+        notes: "Alert fixture — has open change request",
+        price: 150,
+        estimatedMinutes: 120,
+      } as any,
+    });
+    await prisma.jobOccurrenceAssignee.create({
+      data: { occurrenceId: alertChangeReqOcc.id, userId: ADMIN_WORKER_ID, assignedById: ADMIN_WORKER_ID },
+    });
+    await prisma.occurrenceChangeRequest.create({
+      data: {
+        occurrenceId: alertChangeReqOcc.id,
+        requestedById: CLIENT_USER_ID,
+        kind: "RESCHEDULE",
+        status: "PENDING",
+        proposedStartAt: daysFromNow(10, 9),
+        comment: "Alert fixture — would like to push this visit to the following week.",
+      } as any,
+    });
+  }
+
+  // 4. Stale estimate followup — an ESTIMATE-workflow occurrence with
+  //    status PROPOSAL_SUBMITTED dated 14 days ago lands in the
+  //    7–28-day stale-followup window the title-bar counter uses
+  //    (admin.ts:/admin/estimates/stale-followup-count).
+  if (alertAnchorJob) {
+    const alertStaleEstimateOcc = await prisma.jobOccurrence.create({
+      data: {
+        jobId: alertAnchorJob.id,
+        kind: "SINGLE_ADDRESS",
+        startAt: daysAgo(14, 10),
+        endAt: daysAgo(14, 11),
+        status: "PROPOSAL_SUBMITTED",
+        source: "MANUAL",
+        workflow: "ESTIMATE",
+        isEstimate: true,
+        isAdminOnly: true,
+        proposalAmount: 600,
+        proposalNotes: "Alert fixture — stale estimate awaiting client follow-up.",
+      } as any,
+    });
+    await prisma.jobOccurrenceAssignee.create({
+      data: { occurrenceId: alertStaleEstimateOcc.id, userId: MICHAEL_ID, assignedById: MICHAEL_ID },
+    });
+  }
+
+  // 5. Ledger followup — flag the first BusinessExpense as needing
+  //    follow-up (e.g. "ACH didn't post / verify next month"). Drives
+  //    the Super → Ledger followups counter + Tasks shortcut.
+  if (alertAnchorExpense) {
+    await prisma.ledgerFollowup.create({
+      data: {
+        entityType: "businessExpense",
+        entityId: alertAnchorExpense.id,
+        note: "Alert fixture — verify ACH posted next month.",
+        createdById: MICHAEL_ID,
+      },
+    });
+  }
+
   await seedWorkdayFixtures();
 
   await applySettingSections();

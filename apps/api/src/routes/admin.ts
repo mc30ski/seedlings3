@@ -197,7 +197,12 @@ export default async function adminRoutes(app: FastifyInstance) {
   // the link-to-ClientContact step into the same transaction so the
   // operator can't accidentally leave the new user as a phantom — see
   // services/users.ts approve() for the full rationale.
-  app.post("/admin/users/:id/approve", adminGuard, async (req: any) => {
+  //
+  // SUPER ONLY at the boundary even though the path is under /admin/.
+  // The UsersTab mutation surface was already Super-gated client-side
+  // (Admin Directory renders in readOnly mode), but the route accepted
+  // any admin — defense-in-depth tightening locks the policy here too.
+  app.post("/admin/users/:id/approve", superGuard, async (req: any) => {
     const body = (req.body || {}) as { linkContactId?: string | null };
     return services.users.approve(await currentUserId(req), req.params.id, {
       linkContactId: body.linkContactId ?? null,
@@ -4427,6 +4432,51 @@ Respond ONLY with valid JSON in this exact format:
       },
     });
     return { count };
+  });
+
+  // Listing companion to the count endpoint above — same predicate,
+  // returns the rows the Tasks page's inline UnapprovedHoursSection
+  // needs to show variance vs. estimate and the Approve button. Kept
+  // separate from /admin/occurrences (which is the broad occurrence
+  // listing) because the variance display wants worker labels +
+  // start/pause math without pulling the heavier per-occurrence
+  // include set the JobsTab uses.
+  app.get("/admin/occurrences/unapproved-hours", adminGuard, async (_req: any) => {
+    const rows = await prisma.jobOccurrence.findMany({
+      where: {
+        completedAt: { not: null },
+        hoursApprovedAt: null,
+        workflow: { in: ["STANDARD", "ONE_OFF"] },
+      },
+      orderBy: { completedAt: "asc" },
+      select: {
+        id: true,
+        title: true,
+        startedAt: true,
+        completedAt: true,
+        totalPausedMs: true,
+        estimatedMinutes: true,
+        job: {
+          select: {
+            id: true,
+            property: {
+              select: {
+                displayName: true,
+                client: { select: { displayName: true } },
+              },
+            },
+          },
+        },
+        assignees: {
+          where: { OR: [{ role: null }, { role: { not: "observer" } }] },
+          select: {
+            userId: true,
+            user: { select: { displayName: true, email: true, workerType: true } },
+          },
+        },
+      },
+    });
+    return rows;
   });
 
   // Approve payroll hours on a single occurrence. Idempotent — calling
