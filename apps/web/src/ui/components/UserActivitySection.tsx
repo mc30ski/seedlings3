@@ -166,20 +166,22 @@ export default function UserActivitySection({ userId, lastSignInAt }: Props) {
   }
 
   return (
-    <Box mt={3} borderTopWidth="1px" borderColor="gray.200" pt={2}>
+    <Box mt={3} pt={3} borderTopWidth="1px" borderColor="gray.200">
+      {/* Header chrome matches the sibling Permissions section in
+          UsersTab so the two collapsible rows line up at the same left
+          edge and share the same hover-on-color affordance. Earlier
+          revision wrapped the row in an `as="button"` with px+w=full
+          which produced an unintended ~4px indent versus Permissions. */}
       <HStack
-        as="button"
-        gap={2}
+        gap={1}
         cursor="pointer"
-        w="full"
-        py={1}
         onClick={toggle}
-        _hover={{ bg: "gray.50" }}
-        borderRadius="md"
-        px={1}
+        _hover={{ color: "fg" }}
+        color="fg.muted"
+        userSelect="none"
       >
         {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        <Text fontSize="xs" fontWeight="semibold">Sign-ins &amp; activity</Text>
+        <Text fontSize="xs" fontWeight="medium">Sign-ins &amp; activity</Text>
         <Badge
           size="xs"
           variant="subtle"

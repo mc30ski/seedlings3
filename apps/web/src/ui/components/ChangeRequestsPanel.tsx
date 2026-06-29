@@ -25,10 +25,19 @@ type ChangeRequest = {
   requestedBy: { id: string; displayName?: string | null; email?: string | null };
 };
 
-export default function ChangeRequestsPanel() {
+type Props = {
+  // When true, render only the list of items — skip the outer Card +
+  // header row + own collapse toggle. Used by surfaces that provide
+  // their own chrome around the list (e.g. TasksPage wraps this in
+  // CollapsibleSectionCard so every section there reads the same).
+  // Default false preserves the existing ServicesTab behavior.
+  bare?: boolean;
+};
+
+export default function ChangeRequestsPanel({ bare = false }: Props = {}) {
   const [items, setItems] = useState<ChangeRequest[]>([]);
   const [loading, setLoading] = useState(true);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(bare);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [denyDialog, setDenyDialog] = useState<{ id: string; note: string } | null>(null);
 
@@ -78,18 +87,10 @@ export default function ChangeRequestsPanel() {
   if (loading && items.length === 0) return null;
   if (items.length === 0) return null;
 
-  return (
-    <Card.Root variant="outline" borderColor="orange.300" mb={3}>
-      <Card.Body p={3}>
-        <HStack justify="space-between" cursor="pointer" onClick={() => setExpanded((v) => !v)}>
-          <HStack gap={2}>
-            <Text fontWeight="semibold" fontSize="sm" color="orange.800">Client Change Requests</Text>
-            <Badge colorPalette="orange" variant="solid" borderRadius="full" px="2" fontSize="xs">{items.length}</Badge>
-          </HStack>
-          {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-        </HStack>
-        {expanded && (
-          <VStack align="stretch" gap={2} mt={3}>
+  // List body is identical in both modes — only the outer chrome
+  // differs. Extract it once so the two return branches don't drift.
+  const listBody = (
+    <VStack align="stretch" gap={2} mt={bare ? 0 : 3}>
             {items.map((cr) => {
               const propName = cr.occurrence.job?.property?.displayName ?? "Unknown";
               const clientName = cr.occurrence.job?.property?.client?.displayName ?? "";
@@ -163,8 +164,22 @@ export default function ChangeRequestsPanel() {
                 </Box>
               );
             })}
-          </VStack>
-        )}
+    </VStack>
+  );
+
+  if (bare) return listBody;
+
+  return (
+    <Card.Root variant="outline" borderColor="orange.300" mb={3}>
+      <Card.Body p={3}>
+        <HStack justify="space-between" cursor="pointer" onClick={() => setExpanded((v) => !v)}>
+          <HStack gap={2}>
+            <Text fontWeight="semibold" fontSize="sm" color="orange.800">Client Change Requests</Text>
+            <Badge colorPalette="orange" variant="solid" borderRadius="full" px="2" fontSize="xs">{items.length}</Badge>
+          </HStack>
+          {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+        </HStack>
+        {expanded && listBody}
       </Card.Body>
     </Card.Root>
   );

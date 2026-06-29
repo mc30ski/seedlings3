@@ -108,6 +108,7 @@ import ScrollableUnderlineTabs, {
   TabItem,
 } from "../src/ui/components/ScrollableUnderlineTabs";
 import BreadcrumbNav from "@/src/ui/components/BreadcrumbNav";
+import TasksPage from "@/src/ui/pages/TasksPage";
 
 const hasRole = (roles: Me["roles"] | undefined, role: Role) =>
   !!roles?.includes(role);
@@ -129,6 +130,14 @@ export default function HomePage() {
   const hasAnyRole = (me?.roles?.length ?? 0) > 0;
 
   const [topTab, setTopTab] = usePersistedState<"client" | "worker" | "admin" | "super">("topTab", "client");
+
+  // "Tasks" page open-state. Intentionally NOT persisted across page
+  // loads — Tasks is a transient worklist surface; a reload always
+  // returns the operator to their underlying tab tree. Toggled from the
+  // alerts dropdown's "Tasks" link, the in-page Back button, and an
+  // Escape-key handler installed below. See ui/pages/TasksPage.tsx for
+  // the page itself.
+  const [tasksOpen, setTasksOpen] = useState(false);
 
   const [clientInnerTab, setClientInnerTab] = usePersistedState<ClientTabs>("clientTab", "public");
   const [adminInnerTab, setAdminInnerTab] = usePersistedState<AdminTabs>("adminTab", "jobs");
@@ -312,6 +321,19 @@ export default function HomePage() {
     window.addEventListener("navigate:workerTab", onCheck);
     return () => { window.removeEventListener("storage", check); window.removeEventListener("navigate:workerTab", onCheck); };
   }, []);
+
+  // Escape closes the Tasks page — third close affordance alongside
+  // the in-page Back button and the alerts-dropdown "Tasks" link
+  // toggle. Skips when Tasks isn't open so we don't intercept Escape
+  // for the rest of the app.
+  useEffect(() => {
+    if (!tasksOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setTasksOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [tasksOpen]);
 
   const [confirmAction, setConfirmAction] = useState<{
     title: string;
@@ -1973,6 +1995,16 @@ export default function HomePage() {
     }, 150);
   }, []);
 
+  // Lands on Admin → Directory → Clients where the
+  // UnlinkedClientAccountsSection is hosted. Used by Tasks page's
+  // collapsible card's "Goto Task" icon button so the operator can
+  // jump to the section's home tab if they prefer working there.
+  const goToUnlinkedAccounts = useCallback(() => {
+    setTopTab("admin");
+    setAdminCategory("Directory");
+    setAdminInnerTab("clients");
+  }, []);
+
   // Planning badge count — items on the worker's Planning tab that haven't been dismissed
   const [planningCount, setPlanningCount] = useState(0);
   // Single dashboard summary replaces multiple separate API calls for badge counts
@@ -3142,6 +3174,60 @@ export default function HomePage() {
                         }
                       }}
                     >
+                      {/* "Tasks" — opens the consolidated worklist
+                          page. Sits above the per-alert deep-links so
+                          it's the first thing the operator sees; the
+                          per-alert jumps remain for people who want to
+                          land directly in a specific tab's context.
+                          Hidden from clients (no role to act). The
+                          right-side Refresh button shares this row so
+                          the manual-recount affordance is reachable
+                          without scrolling to the bottom — was a
+                          separate trailing row before. */}
+                      {hasAnyRole && (
+                        <>
+                          <HStack w="full" gap={1}>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              flex={1}
+                              justifyContent="start"
+                              gap={2}
+                              onClick={() => {
+                                setAlertDropdownOpen(false);
+                                setTasksOpen((v) => !v);
+                              }}
+                            >
+                              <Box
+                                w="22px" h="22px" minW="22px" borderRadius="full"
+                                display="flex" alignItems="center" justifyContent="center"
+                                flexShrink={0}
+                                style={{ background: "#0F172A", color: "#fff" }}
+                              >
+                                {total}
+                              </Box>
+                              <Text flex="1" textAlign="left" fontWeight="semibold">
+                                {tasksOpen ? "Close Tasks" : "Tasks"}
+                              </Text>
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              color="fg.muted"
+                              flexShrink={0}
+                              minW="32px"
+                              px={2}
+                              disabled={alertsRefreshing}
+                              onClick={(e) => { e.stopPropagation(); void refreshAllAlerts(); }}
+                              aria-label="Refresh counts"
+                              title="Refresh counts"
+                            >
+                              {alertsRefreshing ? <Spinner size="xs" /> : <FiRefreshCw size={14} />}
+                            </Button>
+                          </HStack>
+                          <Box w="full" h="1px" bg="gray.300" my={1} />
+                        </>
+                      )}
                       {alerts.map((a) => (
                         <Button
                           key={a.label}
@@ -3170,31 +3256,6 @@ export default function HomePage() {
                           <Text flex="1" textAlign="left">{a.label}</Text>
                         </Button>
                       ))}
-                      {/* Manual refresh — re-fires every alert count so the
-                          dropdown stays accurate after actions whose event
-                          plumbing might not have reached every listener. */}
-                      <Box w="full" h="1px" bg="gray.300" my={1} />
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        w="full"
-                        justifyContent="start"
-                        gap={2}
-                        color="fg.muted"
-                        disabled={alertsRefreshing}
-                        onClick={(e) => { e.stopPropagation(); void refreshAllAlerts(); }}
-                      >
-                        {/* Same 22px slot as the count-dot above so the
-                            label text aligns under the alert labels. */}
-                        <Box
-                          w="22px" h="22px" minW="22px"
-                          display="flex" alignItems="center" justifyContent="center"
-                          flexShrink={0}
-                        >
-                          {alertsRefreshing ? <Spinner size="xs" /> : <FiRefreshCw size={14} />}
-                        </Box>
-                        <Text flex="1" textAlign="left">Refresh</Text>
-                      </Button>
                     </VStack>
                   )}
                 </Box>
@@ -3297,7 +3358,49 @@ export default function HomePage() {
       />
       {!meLoading && me && !me.isApproved && <AwaitingApprovalNotice />}
       {!meLoading && me?.isApproved && !hasAnyRole && topTab !== "client" && <NoRoleNotice />}
-      {authLoaded && (!isSignedIn || me) && (
+      {/* Tasks page — orthogonal worklist surface. Takes over the
+          BreadcrumbNav slot when open; closing returns the operator to
+          the exact tab they were on (state never gets cleared). The
+          role pills are intentionally hidden while Tasks is rendered so
+          this reads as a distinct area of the app, not a tab. */}
+      {authLoaded && (!isSignedIn || me) && tasksOpen && hasAnyRole && (
+        <TasksPage
+          isWorker={isWorker}
+          isAdmin={isAdmin}
+          isSuper={isSuper}
+          counts={{
+            pendingWorkdays,
+            unapprovedHoursCount,
+            ledgerFollowupCount,
+            guaranteedPayoutExpiringCount,
+            pendingUsersCount: pending,
+            estimateFollowupCount,
+            overdueCount,
+            unclaimedCount,
+            timelineUrgentCount,
+            planningCount,
+            announcementCount,
+          }}
+          handlers={{
+            goToWorkdayApprovals,
+            goToUnapprovedHours,
+            goToLedgerFollowups,
+            goToGuaranteedPayoutExpiring,
+            goToApprovals,
+            goToEstimateFollowups,
+            goToOverdue,
+            goToUnclaimed,
+            goToTimeline,
+            goToPaymentApprovals,
+            goToClientRequests,
+            goToUnlinkedAccounts,
+            goToPlanning,
+            goToAnnouncements,
+          }}
+          onClose={() => setTasksOpen(false)}
+        />
+      )}
+      {authLoaded && (!isSignedIn || me) && !tasksOpen && (
         <BreadcrumbNav
           outerTabs={navTabs}
           outerValue={topTab}
