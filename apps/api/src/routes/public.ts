@@ -612,6 +612,10 @@ export default async function publicRoutes(app: FastifyInstance) {
       // (e.g. Zelle). Resolved same as the other text fields so
       // `{ZELLE_ADDRESS}` etc. flow through.
       payToTarget: m.payToTarget ? resolvePlaceholders(m.payToTarget, settings, runtime) : null,
+      // QR code image to render alongside the tag — currently used for
+      // Zelle so personal-account senders can scan instead of typing.
+      // Data URL is passed through verbatim (no placeholder resolution).
+      payToTargetQrUrl: m.payToTargetQrUrl,
     }));
 
     // Best-effort audit row (don't fail the response if it errors).

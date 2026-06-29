@@ -30,6 +30,13 @@ export type PaymentMethodConfig = {
    *  target plus the `instructions` text. Same `{SETTING_KEY}` /
    *  `{{runtimeValue}}` placeholder resolution as the other text fields. */
   payToTarget: string | null;
+  /** Optional QR code image (data URL — `data:image/png;base64,...`) shown
+   *  inline in the manual-pay modal alongside `payToTarget`. Use for
+   *  methods like Zelle where a tag-only target works from the recipient's
+   *  bank but personal-account senders need to scan a code instead.
+   *  Stored as a data URL so the setting is self-contained (no separate
+   *  asset storage). Typical QR PNG is a few KB. */
+  payToTargetQrUrl: string | null;
   /** When false, hidden everywhere; historical records preserved. */
   active: boolean;
   /** Flagged as a preferred method — badged and floated to the top on the
@@ -49,6 +56,7 @@ const ALLOWED_KEYS = new Set([
   "deepLinkTemplate",
   "instructions",
   "payToTarget",
+  "payToTargetQrUrl",
   "active",
   "preferred",
 ]);
@@ -94,6 +102,11 @@ export function parsePaymentMethodsSetting(raw: string | null | undefined): Paym
       deepLinkTemplate: row.deepLinkTemplate == null ? null : String(row.deepLinkTemplate),
       instructions: row.instructions == null ? null : String(row.instructions),
       payToTarget: row.payToTarget == null ? null : String(row.payToTarget),
+      // Pass through as-is — validation of data URL shape happens at
+      // the editor layer; the server treats it as opaque text so a
+      // future hosted-URL implementation can swap in without a
+      // taxonomy change.
+      payToTargetQrUrl: row.payToTargetQrUrl == null ? null : String(row.payToTargetQrUrl),
       active: row.active !== false, // default true if omitted
       preferred: row.preferred === true, // default false if omitted
     };
