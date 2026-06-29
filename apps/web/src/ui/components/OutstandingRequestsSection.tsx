@@ -26,6 +26,7 @@ import {
 import { Check, ExternalLink, RefreshCw } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
 import { bumpAdminPayments } from "@/src/lib/bus";
+import { formatNextOccurrenceOutcome, type PaymentActionResult } from "@/src/lib/paymentMessages";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import PaymentCommsButtons from "@/src/ui/components/PaymentCommsButtons";
 
@@ -185,15 +186,28 @@ export default function OutstandingRequestsSection() {
     }
     setMarkPaidBusy(true);
     try {
-      await apiPost(`/api/admin/occurrences/${markPaidRow.occurrenceId}/admin-mark-paid`, {
-        amountPaid: amount,
-        method: markPaidMethod,
-        note: markPaidNote.trim() || null,
-        ...(processorFeeAmount !== undefined ? { processorFeeAmount } : {}),
-      });
+      // admin-mark-paid runs createPayment + approvePayment internally,
+      // so the response carries the same next-occurrence shape every
+      // other payment-action toast uses. Plumb it through the shared
+      // formatter so the wording (with date / skip-reason) matches
+      // PendingApprovals + WriteOff + the rest. Static "next occurrence
+      // generated for repeating jobs" wasn't telling the operator the
+      // actual date or whether a skip-reason applied.
+      const result: PaymentActionResult = await apiPost(
+        `/api/admin/occurrences/${markPaidRow.occurrenceId}/admin-mark-paid`,
+        {
+          amountPaid: amount,
+          method: markPaidMethod,
+          note: markPaidNote.trim() || null,
+          ...(processorFeeAmount !== undefined ? { processorFeeAmount } : {}),
+        },
+      );
+      const nextLine = formatNextOccurrenceOutcome(result);
+      const skip = result?.nextOccurrenceSkipReason;
+      const tone = skip && skip !== "one_off" ? "WARNING" : "SUCCESS";
       publishInlineMessage({
-        type: "SUCCESS",
-        text: "Invoice marked paid — next occurrence generated for repeating jobs.",
+        type: tone,
+        text: nextLine ? `Invoice marked paid. ${nextLine}` : "Invoice marked paid.",
       });
       // Notify the alerts dropdown + the PaymentsTab so their counters
       // and lists update without waiting for the next page refresh.

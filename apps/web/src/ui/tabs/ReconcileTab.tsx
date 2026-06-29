@@ -235,7 +235,12 @@ export default function ReconcileTab() {
   const [details, setDetails] = useState<Record<string, DetailState>>({});
   // Independent loading state for the CSV downloads so we can disable
   // the right button while its file is streaming.
-  const [downloading, setDownloading] = useState<"capital" | "income" | "expenses" | "workdays" | "payroll" | null>(null);
+  // `downloading` doubles as a busy flag AND a progress label. Single-
+  // CSV downloads stamp the exact kind so only that button spins; the
+  // "Download All" path stamps "all" so both buttons disable together
+  // while the sequential fetch loop runs.
+  const [downloading, setDownloading] = useState<"capital" | "income" | "expenses" | "workdays" | "payroll" | "all" | null>(null);
+  const [downloadAllProgress, setDownloadAllProgress] = useState<{ done: number; total: number } | null>(null);
   // Active selection in the download-type dropdown. Drives both the
   // Download button and the informational description below it.
   // Default to "payroll" since it's the freshest export — operator
@@ -367,6 +372,55 @@ export default function ReconcileTab() {
       });
     } finally {
       setDownloading(null);
+    }
+  }
+
+  // Fetches all five exports for the selected date range, one at a
+  // time. Sequential because triggering five blob-anchor clicks at
+  // once tends to get browser-blocked after the first two; serial
+  // gives every file a clean user-gesture chain via the running
+  // promise. Failures on any single CSV log a toast and continue with
+  // the remaining files instead of aborting the whole batch.
+  async function downloadAllCsvs() {
+    if (downloading) return;
+    const kinds: ("capital" | "income" | "expenses" | "workdays" | "payroll")[] = [
+      "capital",
+      "income",
+      "expenses",
+      "workdays",
+      "payroll",
+    ];
+    setDownloading("all");
+    setDownloadAllProgress({ done: 0, total: kinds.length });
+    let failures = 0;
+    for (let i = 0; i < kinds.length; i++) {
+      const kind = kinds[i];
+      try {
+        await apiDownload(
+          `/api/admin/exports/${kind}.csv?start=${start}&end=${end}`,
+          `${kind}-${start}_${end}.csv`,
+        );
+      } catch (err) {
+        failures += 1;
+        publishInlineMessage({
+          type: "ERROR",
+          text: getErrorMessage(`Failed to download ${kind} CSV.`, err),
+        });
+      }
+      setDownloadAllProgress({ done: i + 1, total: kinds.length });
+    }
+    setDownloading(null);
+    setDownloadAllProgress(null);
+    if (failures === 0) {
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: `Downloaded all ${kinds.length} CSVs.`,
+      });
+    } else if (failures < kinds.length) {
+      publishInlineMessage({
+        type: "WARNING",
+        text: `Downloaded ${kinds.length - failures} of ${kinds.length} CSVs (${failures} failed).`,
+      });
     }
   }
 
@@ -703,6 +757,26 @@ export default function ReconcileTab() {
               >
                 {downloading === downloadKind ? <Spinner size="xs" /> : <FiDownload />}
                 <Text ml={2}>Download</Text>
+              </Button>
+              {/* "Download All" — sequentially fetches every CSV type
+                  for the selected date range. Disabled while either
+                  the single Download or another All-batch is running.
+                  Label flips to a progress count while in-flight so
+                  the operator knows the batch is grinding through. */}
+              <Button
+                size="sm"
+                colorPalette="blue"
+                variant="outline"
+                onClick={() => void downloadAllCsvs()}
+                disabled={downloading !== null || loading}
+                title="Download every CSV type for the selected date range, one after another."
+              >
+                {downloading === "all" ? <Spinner size="xs" /> : <FiDownload />}
+                <Text ml={2}>
+                  {downloading === "all" && downloadAllProgress
+                    ? `Downloading ${downloadAllProgress.done}/${downloadAllProgress.total}…`
+                    : "Download All"}
+                </Text>
               </Button>
             </HStack>
             {/* Description box — swaps based on the selected type so

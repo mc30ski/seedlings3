@@ -2433,7 +2433,17 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                                     {row.topUp && row.topUp > 0 ? ` + $${row.topUp.toFixed(2)} top-up` : ""}
                                     {" = "}
                                     <Text as="span" fontWeight="semibold" color={row.isOwner ? "purple.700" : "green.700"}>
-                                      ${(row.share - row.deduction).toFixed(2)}
+                                      {/* Total must include the top-up addend
+                                          to match the equation rendered just
+                                          above. Without it, an employee made
+                                          whole on a write-off / underpayment
+                                          displays `share − margin + $X.XX
+                                          top-up = $0.00`, which contradicts
+                                          itself. `row.topUp` is null/0 for
+                                          rows with no top-up so this is a
+                                          no-op in the common (full-pay)
+                                          case. */}
+                                      ${(row.share - row.deduction + (row.topUp ?? 0)).toFixed(2)}
                                     </Text>
                                     {showPromised && (
                                       <Text as="span" color="fg.muted"> promised (pending approval)</Text>
