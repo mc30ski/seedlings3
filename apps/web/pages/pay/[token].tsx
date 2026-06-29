@@ -30,7 +30,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { AlertTriangle, Check, CheckCircle, ChevronLeft, ChevronRight, Copy, ExternalLink, Loader, X } from "lucide-react";
+import { AlertTriangle, Check, CheckCircle, ChevronLeft, ChevronRight, Copy, Download, ExternalLink, Loader, X } from "lucide-react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
@@ -49,6 +49,11 @@ type ResolvedPaymentMethod = {
    *  Zelle address, Cash App tag). Shown in large text in a modal when
    *  the client taps the orange button. Server resolves placeholders. */
   payToTarget: string | null;
+  /** Optional QR-code image (data URL). When present, the manual-pay
+   *  modal renders it inline + offers a Download button so a sender
+   *  whose bank app can't paste a tag can scan the code on their
+   *  phone instead. Currently used for Zelle. */
+  payToTargetQrUrl: string | null;
 };
 
 type ResolveResponse = {
@@ -907,54 +912,134 @@ function PaymentMethodCard({
                     </Dialog.Header>
                     <Dialog.Body p="4">
                       <VStack align="stretch" gap={3}>
-                        <Text fontSize="xs" color="fg.muted" textTransform="uppercase" letterSpacing="wide" fontWeight="semibold">
-                          Send ${amountDue.toFixed(2)} to:
-                        </Text>
-                        {/* Target — large, copy-friendly, selectable. */}
-                        <Box
-                          p={3}
-                          bg="gray.50"
-                          borderWidth="1px"
-                          borderColor="gray.300"
-                          rounded="lg"
-                        >
-                          <Text
-                            fontSize="xl"
-                            fontWeight="bold"
-                            wordBreak="break-all"
-                            userSelect="all"
-                            textAlign="center"
-                            lineHeight="1.3"
-                          >
-                            {config.payToTarget}
-                          </Text>
-                        </Box>
-                        <Button
-                          size="md"
-                          colorPalette="teal"
-                          variant="solid"
-                          onClick={copyTarget}
-                        >
-                          {copied ? <Check size={16} /> : <Copy size={16} />}
-                          {copied ? "Copied!" : "Copy"}
-                        </Button>
-                        {/* `instructions` deliberately NOT shown here — it's
-                            the card-context text (rendered before the user
-                            taps the button). Inside the modal the recipient
-                            is right above and the orange callout below
-                            already explains what to do; duplicating
-                            `instructions` here only adds redundant text
-                            that doesn't fit this context. */}
+                        {/* Informational callout — leads with the QR
+                            because most personal bank accounts can't
+                            send to a Zelle tag directly, so the QR is
+                            the path that works for almost everyone. Tag
+                            kept as a secondary fallback below for the
+                            small subset of senders whose bank supports
+                            tag-paste. Blue palette to signal info, not
+                            warning. */}
                         <Box
                           p={2.5}
-                          bg="orange.50"
+                          bg="blue.50"
                           borderWidth="1px"
-                          borderColor="orange.200"
+                          borderColor="blue.200"
                           rounded="md"
                         >
-                          <Text fontSize="xs" color="orange.800">
-                            {config.label} can&apos;t open automatically like Venmo. Open your bank&apos;s {config.label} feature, paste the recipient above, and send <b>${amountDue.toFixed(2)}</b>.
+                          <Text fontSize="xs" color="blue.900">
+                            {config.label} can&apos;t open automatically like Venmo.{" "}
+                            {config.payToTargetQrUrl ? (
+                              <>
+                                If your bank&apos;s {config.label} lets you send straight to a username, copy the recipient at the bottom. Otherwise, tap <b>Download QR</b> below to save the code, then open it from your phone&apos;s Photos app — your camera will read the QR and open {config.label} to send <b>${amountDue.toFixed(2)}</b>.
+                              </>
+                            ) : (
+                              <>
+                                Open your bank&apos;s {config.label} feature, paste the recipient below, and send <b>${amountDue.toFixed(2)}</b>.
+                              </>
+                            )}
                           </Text>
+                        </Box>
+                        {/* QR code — primary path. Renders only when the
+                            method has a QR configured (currently Zelle).
+                            Methods without one (Cash App tag, etc.) skip
+                            this entirely and fall through to the tag
+                            section below. */}
+                        {config.payToTargetQrUrl && (
+                          <VStack align="stretch" gap={2}>
+                            <Box
+                              p={3}
+                              bg="white"
+                              borderWidth="1px"
+                              borderColor="gray.300"
+                              rounded="lg"
+                              display="flex"
+                              justifyContent="center"
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={config.payToTargetQrUrl}
+                                alt={`${config.label} QR code`}
+                                style={{ maxWidth: "240px", width: "100%", height: "auto" }}
+                              />
+                            </Box>
+                            <Button
+                              size="md"
+                              colorPalette="green"
+                              variant="solid"
+                              onClick={() => {
+                                if (!config.payToTargetQrUrl) return;
+                                const a = document.createElement("a");
+                                a.href = config.payToTargetQrUrl;
+                                a.download = `${config.label.toLowerCase().replace(/\s+/g, "-")}-qr.png`;
+                                document.body.appendChild(a);
+                                a.click();
+                                a.remove();
+                              }}
+                            >
+                              <Download size={16} />
+                              Download QR
+                            </Button>
+                          </VStack>
+                        )}
+                        {/* Tag/handle fallback — kept below the QR because
+                            most senders can't actually use it from a
+                            personal bank account; only the small subset
+                            whose bank supports tag-paste benefits from
+                            it. The label uses muted styling to signal
+                            "alternative" rather than "primary action". */}
+                        <Text fontSize="2xs" color="fg.muted" textTransform="uppercase" letterSpacing="wide" fontWeight="semibold" mt={1}>
+                          {config.payToTargetQrUrl ? "Or send to:" : `Send $${amountDue.toFixed(2)} to:`}
+                        </Text>
+                        {/* Tag + Copy merged into a single click target.
+                            The recipient text reads as the big label;
+                            tapping anywhere on the row triggers the copy
+                            and flips the trailing icon/label to "Copied!".
+                            When a QR is configured the tag is the
+                            de-emphasized fallback (gray outline); without
+                            a QR it's the primary action (teal solid). */}
+                        <Box
+                          as="button"
+                          w="full"
+                          px={3}
+                          py={3}
+                          rounded="lg"
+                          borderWidth="1px"
+                          textAlign="left"
+                          cursor="pointer"
+                          bg={config.payToTargetQrUrl ? "white" : "teal.500"}
+                          color={config.payToTargetQrUrl ? "gray.900" : "white"}
+                          borderColor={config.payToTargetQrUrl ? "gray.300" : "teal.500"}
+                          _hover={{
+                            bg: config.payToTargetQrUrl ? "gray.50" : "teal.600",
+                            borderColor: config.payToTargetQrUrl ? "gray.400" : "teal.600",
+                          }}
+                          onClick={copyTarget}
+                          aria-label={`Copy ${config.label} recipient ${config.payToTarget}`}
+                        >
+                          <HStack justify="space-between" align="center" gap={3}>
+                            <Text
+                              fontSize="xl"
+                              fontWeight="bold"
+                              wordBreak="break-all"
+                              userSelect="all"
+                              lineHeight="1.3"
+                              flex={1}
+                              textAlign="center"
+                            >
+                              {config.payToTarget}
+                            </Text>
+                            <HStack
+                              gap={1}
+                              flexShrink={0}
+                              fontSize="xs"
+                              fontWeight="semibold"
+                              opacity={0.85}
+                            >
+                              {copied ? <Check size={14} /> : <Copy size={14} />}
+                              <Text>{copied ? "Copied!" : "Copy"}</Text>
+                            </HStack>
+                          </HStack>
                         </Box>
                       </VStack>
                     </Dialog.Body>

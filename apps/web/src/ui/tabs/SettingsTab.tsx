@@ -390,6 +390,11 @@ type PaymentMethodRow = {
   // the deep-link app-open behavior. See pages/pay/[token].tsx and
   // services/paymentMethods.ts.
   payToTarget: string | null;
+  // QR code image stored as a data URL — rendered inline in the
+  // manual-pay modal alongside `payToTarget`. Used for Zelle today
+  // since bank apps for personal accounts often can't send to a tag
+  // but DO accept a scanned QR.
+  payToTargetQrUrl: string | null;
   active: boolean;
   preferred: boolean;
 };
@@ -417,6 +422,7 @@ function PaymentMethodsEditor({ value, onChange, onSave, onCancel, saving, origi
       deepLinkTemplate: r.deepLinkTemplate == null ? null : String(r.deepLinkTemplate),
       instructions: r.instructions == null ? null : String(r.instructions),
       payToTarget: r.payToTarget == null ? null : String(r.payToTarget),
+      payToTargetQrUrl: r.payToTargetQrUrl == null ? null : String(r.payToTargetQrUrl),
       active: r.active !== false,
       preferred: r.preferred === true,
     }));
@@ -445,6 +451,7 @@ function PaymentMethodsEditor({ value, onChange, onSave, onCancel, saving, origi
       deepLinkTemplate: null,
       instructions: null,
       payToTarget: null,
+      payToTargetQrUrl: null,
       active: true,
       preferred: false,
     };
@@ -522,7 +529,7 @@ function PaymentMethodsEditor({ value, onChange, onSave, onCancel, saving, origi
             </Box>
             <Box flex="1" />
             <Button size="xs" variant="outline" onClick={() => setExpandedIdx(expandedIdx === idx ? null : idx)}>
-              {expandedIdx === idx ? "Hide" : "Edit text"}
+              {expandedIdx === idx ? "Hide" : "Edit"}
             </Button>
             <Button size="xs" variant="ghost" colorPalette="red" onClick={() => remove(idx)}>
               <Trash2 size={12} />
@@ -566,6 +573,79 @@ function PaymentMethodsEditor({ value, onChange, onSave, onCancel, saving, origi
                   placeholder="{ZELLE_ADDRESS}"
                   fontFamily="mono"
                 />
+              </Box>
+              <Box>
+                <Text fontSize="2xs" color="fg.muted" mb={1}>
+                  QR code image — optional. Renders inline in the manual-pay modal alongside the Pay-to target above, with a Download button so a sender on mobile can save it and feed it to their bank app's QR scanner. Use this when a method&apos;s tag won&apos;t work from personal accounts (e.g. Zelle). Image is stored inline in the setting (base64 data URL) — keep it small.
+                </Text>
+                {row.payToTargetQrUrl ? (
+                  <HStack gap={2} align="start">
+                    <Box
+                      p={2}
+                      bg="white"
+                      borderWidth="1px"
+                      borderColor="gray.300"
+                      rounded="md"
+                      flexShrink={0}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={row.payToTargetQrUrl}
+                        alt="QR preview"
+                        style={{ width: "96px", height: "96px", objectFit: "contain" }}
+                      />
+                    </Box>
+                    <VStack align="stretch" gap={1} flex={1}>
+                      <Text fontSize="2xs" color="fg.muted">
+                        QR code uploaded. Approx {Math.round((row.payToTargetQrUrl.length * 3) / 4 / 1024)} KB encoded.
+                      </Text>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        colorPalette="red"
+                        onClick={() => update(idx, { payToTargetQrUrl: null })}
+                      >
+                        <Trash2 size={12} /> Remove QR
+                      </Button>
+                    </VStack>
+                  </HStack>
+                ) : (
+                  <Input
+                    type="file"
+                    accept="image/png,image/jpeg,image/svg+xml"
+                    size="sm"
+                    onChange={(e) => {
+                      const file = (e.target as HTMLInputElement).files?.[0];
+                      if (!file) return;
+                      // Sanity cap — settings rows are loaded into memory
+                      // and round-tripped through a single Setting row,
+                      // so we don't want an enormous image bloating the
+                      // taxonomy. 200 KB is plenty for a QR PNG.
+                      if (file.size > 200 * 1024) {
+                        publishInlineMessage({
+                          type: "ERROR",
+                          text: "QR image is over 200 KB — pick a smaller or lower-res image.",
+                        });
+                        (e.target as HTMLInputElement).value = "";
+                        return;
+                      }
+                      const reader = new FileReader();
+                      reader.onload = () => {
+                        const result = reader.result;
+                        if (typeof result === "string") {
+                          update(idx, { payToTargetQrUrl: result });
+                        }
+                      };
+                      reader.onerror = () => {
+                        publishInlineMessage({
+                          type: "ERROR",
+                          text: "Could not read the image file.",
+                        });
+                      };
+                      reader.readAsDataURL(file);
+                    }}
+                  />
+                )}
               </Box>
             </VStack>
           )}

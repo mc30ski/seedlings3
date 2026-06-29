@@ -39,6 +39,15 @@ import {
 } from "@chakra-ui/react";
 import { ArrowUpRight, CheckCircle2, ChevronDown, ChevronUp, X } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
+// Every regular tab in pages/index.tsx renders an `<InlineMessage />`
+// via wrapWithInlineMessage so the publishInlineMessage event has a
+// subscriber. Tasks bypasses the tab tree, so we mount our own here
+// — otherwise toasts published from any section action (Approve a
+// payment, Resolve a follow-up, etc.) fire into the void and the
+// operator sees nothing after a successful action. The InlineMessage
+// component is a singleton subscriber — one mounted at the page
+// level is all every nested section's toasts need.
+import InlineMessage from "@/src/ui/components/InlineMessage";
 import PendingApprovalsSection from "@/src/ui/components/PendingApprovalsSection";
 import OutstandingRequestsSection from "@/src/ui/components/OutstandingRequestsSection";
 import UnlinkedClientAccountsSection from "@/src/ui/components/UnlinkedClientAccountsSection";
@@ -214,6 +223,7 @@ export default function TasksPage({
   if (!isAdmin && !isSuper) {
     return (
       <Box maxW="720px" mx="auto" w="full" p={3}>
+        <InlineMessage />
         <BackHeader visibleCount={visibleCount} onClose={onClose} />
         <Box mt={3}>
           <WorkdayStrip />
@@ -228,7 +238,8 @@ export default function TasksPage({
   }
 
   return (
-    <Box maxW="900px" mx="auto" w="full" p={3}>
+    <Box maxW="720px" mx="auto" w="full" p={3}>
+      <InlineMessage />
       <BackHeader visibleCount={visibleCount} onClose={onClose} />
 
       {visibleCount === 0 ? (
