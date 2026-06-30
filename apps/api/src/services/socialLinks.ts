@@ -24,14 +24,14 @@ export type SocialLink = {
    *  the invoice page. */
   url: string;
   /** Brand icon as a data URL (`data:image/...`). Required — there's no
-   *  default-glyph fallback. Uploaded via the SettingsTab editor and
-   *  capped at 50 KB so the SOCIAL_LINKS row doesn't bloat the public
-   *  pay payload. */
+   *  default-glyph fallback. Uploaded via the SettingsTab editor. No
+   *  size cap — the super admin is the only editor and is responsible
+   *  for keeping the icon small enough not to bloat the public pay
+   *  payload. */
   iconDataUrl: string;
 };
 
 const ALLOWED_KEYS = new Set(["label", "url", "iconDataUrl"]);
-const MAX_ICON_BYTES = 50 * 1024;
 
 /**
  * Parse the raw JSON value of the SOCIAL_LINKS setting into a typed array.
@@ -103,14 +103,6 @@ export function validateSocialLinksJson(raw: string): SocialLink[] {
     }
     if (!r.iconDataUrl.startsWith("data:image/")) {
       throw new Error(`SOCIAL_LINKS[${i}].iconDataUrl must be a data URL (data:image/...).`);
-    }
-    // Rough byte-size check — data URL length × 0.75 ≈ decoded byte
-    // count. Cheap to compute, accurate enough for the 50 KB cap.
-    const approxBytes = Math.round((r.iconDataUrl.length * 3) / 4);
-    if (approxBytes > MAX_ICON_BYTES) {
-      throw new Error(
-        `SOCIAL_LINKS[${i}].iconDataUrl is approximately ${Math.round(approxBytes / 1024)} KB; must be ${Math.round(MAX_ICON_BYTES / 1024)} KB or smaller.`,
-      );
     }
   }
   return rows;
