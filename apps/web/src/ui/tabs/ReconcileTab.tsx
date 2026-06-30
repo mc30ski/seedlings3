@@ -555,6 +555,14 @@ export default function ReconcileTab() {
   const grossProfitPct = report && report.income.total > 0
     ? Math.round((report.grossProfit / report.income.total) * 1000) / 10
     : null;
+  // Net Operating Margin — the "what % of revenue ends up as operating
+  // profit" badge alongside Net Operating Income. For service
+  // businesses this is the genuinely meaningful margin since Gross
+  // Profit % is artificially high when labor sits in Expenses (per QB
+  // convention) rather than COGS.
+  const netOperatingPct = report && report.income.total > 0
+    ? Math.round((report.netOperatingIncome / report.income.total) * 1000) / 10
+    : null;
 
   return (
     <VStack align="stretch" gap={4}>
@@ -920,7 +928,12 @@ export default function ReconcileTab() {
                 borderColor="gray.300"
                 mt={2}
               >
-                <Text fontSize="md" fontWeight="bold">Net Operating Income</Text>
+                <HStack gap={2} align="baseline">
+                  <Text fontSize="md" fontWeight="bold">Net Operating Income</Text>
+                  {netOperatingPct !== null && (
+                    <Text fontSize="xs" color="fg.muted">({netOperatingPct}%)</Text>
+                  )}
+                </HStack>
                 <Text
                   fontSize="md"
                   fontWeight="bold"
