@@ -19,11 +19,14 @@ import {
 } from "./payrollTaxEstimates";
 
 // qbAccount labels for the two synthetic operator-perspective lines.
-// Flat (no colon) so they render as their own top-level rows; the
-// "(accrued)" / "(est.)" suffixes signal divergence from QB so an
-// operator reconciling against QB knows where the gap will be.
-const ACCOUNT_WAGES_ACCRUED = "Wages (accrued)";
-const ACCOUNT_EMPLOYER_PAYROLL_TAXES = "Employer payroll taxes (est.)";
+// Both share a "Payroll" parent so they render grouped (same colon-
+// parsed parent/child pattern Vehicle expenses uses) — keeps related
+// labor costs together with a "Total for Payroll" subtotal instead of
+// scattered across the Expenses section. The "(accrued)" / "(est.)"
+// suffixes signal divergence from QB so an operator reconciling
+// against QB knows where the gap will be.
+const ACCOUNT_WAGES_ACCRUED = "Payroll:Wages (accrued)";
+const ACCOUNT_EMPLOYER_PAYROLL_TAXES = "Payroll:Employer payroll taxes (est.)";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // P&L Report — structured Profit & Loss for the in-app P&L Report tab.
