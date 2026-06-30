@@ -406,29 +406,31 @@ function PaymentPageInner() {
 
   return (
     <PageShell>
-      <VStack gap={3} align="stretch">
-        <Card.Root variant="outline">
-          <Card.Body p={3}>
-            <VStack gap={1} align="stretch">
-              <Text fontSize="xs" color="fg.muted">Invoice for</Text>
-              <Text fontSize="md" fontWeight="semibold" lineClamp={2}>{data.propertyLabel}</Text>
-              {data.propertyAddress && data.propertyAddress !== data.propertyLabel && (
-                <Text fontSize="xs" color="fg.muted">{data.propertyAddress}</Text>
-              )}
-              {data.serviceDate && (
-                <Text fontSize="xs" color="fg.muted">Service: {fmtDate(data.serviceDate)}</Text>
-              )}
-              <HStack mt={2} align="baseline" justify="space-between">
-                <Text fontSize="xs" color="fg.muted">Total due</Text>
-                <Text fontSize="2xl" fontWeight="bold" color="teal.700">{dollar(data.amountDue)}</Text>
-              </HStack>
-            </VStack>
-          </Card.Body>
-        </Card.Root>
+      <VStack gap={5} align="stretch">
+        <Box>
+          <SectionHeader>Invoice for</SectionHeader>
+          <Card.Root variant="outline">
+            <Card.Body p={3}>
+              <VStack gap={1} align="stretch">
+                <Text fontSize="md" fontWeight="semibold" lineClamp={2}>{data.propertyLabel}</Text>
+                {data.propertyAddress && data.propertyAddress !== data.propertyLabel && (
+                  <Text fontSize="xs" color="fg.muted">{data.propertyAddress}</Text>
+                )}
+                {data.serviceDate && (
+                  <Text fontSize="xs" color="fg.muted">Service: {fmtDate(data.serviceDate)}</Text>
+                )}
+                <HStack mt={2} align="baseline" justify="space-between">
+                  <Text fontSize="xs" color="fg.muted">Total due</Text>
+                  <Text fontSize="2xl" fontWeight="bold" color="teal.700">{dollar(data.amountDue)}</Text>
+                </HStack>
+              </VStack>
+            </Card.Body>
+          </Card.Root>
+        </Box>
 
         {data.photos.length > 0 && (
           <Box>
-            <Text fontSize="xs" color="fg.muted" mb={1.5}>What was done:</Text>
+            <SectionHeader>What was done</SectionHeader>
             <SimpleGrid columns={{ base: 3, md: 4 }} gap={2}>
               {data.photos.map((p, i) => (
                 <Box
@@ -484,7 +486,7 @@ function PaymentPageInner() {
           </Box>
         ) : (
           <Box>
-            <Text fontSize="sm" fontWeight="semibold" mb={2}>How do you intend to pay?</Text>
+            <SectionHeader>How do you intend to pay?</SectionHeader>
             <Box
               mb={3}
               p={3}
@@ -583,6 +585,25 @@ function PaymentPageInner() {
 
 // ── Sub-components ────────────────────────────────────────────────────────
 
+/** Section header — single source of truth for the consistent title style
+ *  used above each top-level section on the invoice/pay page ("Invoice
+ *  for", "What was done", "Follow us", "How do you intend to pay?").
+ *  Defining it once keeps the four headers visually identical without
+ *  repeating fontSize/fontWeight/color/mb everywhere. */
+function SectionHeader({ children }: { children: React.ReactNode }) {
+  return (
+    <Text
+      fontSize="md"
+      fontWeight="bold"
+      color="fg.default"
+      mb={2}
+      letterSpacing="tight"
+    >
+      {children}
+    </Text>
+  );
+}
+
 /** Slim row of clickable social-media tiles shown under the property photo
  *  grid. Each tile is the uploaded brand icon — operator supplies the
  *  icon from each platform's published brand assets via the SettingsTab
@@ -593,7 +614,7 @@ function SocialLinksRow({ links }: { links: SocialLink[] }) {
   if (links.length === 0) return null;
   return (
     <Box>
-      <Text fontSize="xs" color="fg.muted" mb={1.5}>Follow us:</Text>
+      <SectionHeader>Follow us</SectionHeader>
       <HStack gap={2} flexWrap="wrap">
         {links.map((l, i) => (
           <a
