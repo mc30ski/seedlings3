@@ -3420,6 +3420,14 @@ Respond ONLY with valid JSON in this exact format:
         );
       }
     }
+    if (key === "SOCIAL_LINKS") {
+      const { validateSocialLinksJson } = await import("../services/socialLinks");
+      try {
+        validateSocialLinksJson(value);
+      } catch (err: any) {
+        throw app.httpErrors.badRequest(err?.message || "Invalid SOCIAL_LINKS JSON.");
+      }
+    }
     if (key === "PAYMENT_METHODS") {
       const { validatePaymentMethodsJson } = await import("../services/paymentMethods");
       try {

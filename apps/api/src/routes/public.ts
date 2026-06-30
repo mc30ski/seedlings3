@@ -583,6 +583,12 @@ export default async function publicRoutes(app: FastifyInstance) {
       await import("../services/paymentMethods");
     const methodsList = await loadPaymentMethods(prisma);
     const clientMethods = listActivePaymentMethods(methodsList, "CLIENT_REQUEST");
+    // Operator-tunable list of social media links. Rendered as a row of
+    // icon tiles under the property photos on the public pay page.
+    // Empty array when the setting is missing or unconfigured — the row
+    // self-hides client-side in that case.
+    const { loadSocialLinks } = await import("../services/socialLinks");
+    const socialLinks = await loadSocialLinks(prisma);
     // Memo line used for {{note}} in deep links + suggested-memo display.
     // ET-anchored so the date the client sees matches the date the job
     // happened on the operator's calendar (not the UTC server's locale).
@@ -654,6 +660,7 @@ export default async function publicRoutes(app: FastifyInstance) {
       // clients can still consume paymentOptions; new clients should prefer
       // `paymentMethods` (resolved instructions + deep links).
       paymentMethods: resolvedMethods,
+      socialLinks,
       expiresAt: resolved.expiresAt,
     };
   });

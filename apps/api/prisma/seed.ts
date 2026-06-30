@@ -167,6 +167,7 @@ const SETTING_SECTIONS: Record<string, string> = {
   OUTGOING_COMMS_CC: "client_requests",
   VENMO_BUSINESS_HANDLE: "client_requests",
   ZELLE_ADDRESS: "client_requests",
+  SOCIAL_LINKS: "client_requests",
   // Catalogs & Taxonomies
   SERVICE_TYPES: "catalogs",
   EQUIPMENT_KINDS: "catalogs",
@@ -2173,6 +2174,28 @@ async function seedDatabase() {
     update: {
       description:
         "Operator-tunable employer-side payroll tax rates (Social Security, Medicare, FUTA, SUTA) used on the Reconcile P&L's 'Employer payroll taxes (est.)' line. Defaults are NC small-employer estimates; replace SUTA with your NCDES rate notice value.",
+      updatedById: MICHAEL_ID,
+    },
+  });
+
+  // ── Social media links ───────────────────────────────────────────────────
+  // Operator-tunable list of social media links shown as a row of
+  // clickable brand-icon tiles under the property photos on the public
+  // /pay/[token] invoice page. Empty by default; operator adds entries
+  // via the SettingsTab editor (label + URL + uploaded icon). Each icon
+  // is a data URL — no asset upload pipeline needed.
+  const socialLinksDescription =
+    "List of social media links shown as a row of clickable brand-icon tiles under the property photos on the public invoice/pay page. Each entry stores a display label, the destination URL, and a brand icon uploaded as a data URL (50 KB max).";
+  await prisma.setting.upsert({
+    where: { key: "SOCIAL_LINKS" },
+    create: {
+      key: "SOCIAL_LINKS",
+      value: JSON.stringify({ links: [] }),
+      description: socialLinksDescription,
+      updatedById: MICHAEL_ID,
+    },
+    update: {
+      description: socialLinksDescription,
       updatedById: MICHAEL_ID,
     },
   });

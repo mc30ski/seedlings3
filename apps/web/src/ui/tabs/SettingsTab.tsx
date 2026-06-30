@@ -849,6 +849,233 @@ function PayrollTaxEstimatesEditor({ value, onChange, onSave, onCancel, saving, 
   );
 }
 
+// ── SOCIAL_LINKS editor ──────────────────────────────────────────────────
+// Repeatable rows for the social media list shown on the public pay
+// page under the property photos. Each row: a display label, a target
+// URL, and an uploaded brand icon (data URL — same pattern as Zelle's
+// payToTargetQrUrl on PAYMENT_METHODS). Operator pastes the URL and
+// uploads the icon from each platform's published brand assets.
+type SocialLinkRow = {
+  label: string;
+  url: string;
+  iconDataUrl: string | null;
+};
+
+function SocialLinksEditor({ value, onChange, onSave, onCancel, saving, originalValue }: {
+  value: string;
+  onChange: (v: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  saving: boolean;
+  originalValue: string;
+}) {
+  let items: SocialLinkRow[] = [];
+  let parseError: string | null = null;
+  try {
+    const parsed = JSON.parse(value);
+    // Accept either `{links: [...]}` (canonical) or a bare `[...]`. The
+    // editor always writes the canonical shape on save.
+    const rows: any[] = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed?.links)
+        ? parsed.links
+        : (() => { throw new Error("must be an object with a `links` array"); })();
+    items = rows.map((r) => ({
+      label: String(r.label ?? ""),
+      url: String(r.url ?? ""),
+      iconDataUrl: r.iconDataUrl == null ? null : String(r.iconDataUrl),
+    }));
+  } catch (e: any) {
+    parseError = e?.message ?? "invalid JSON";
+  }
+
+  function writeBack(next: SocialLinkRow[]) {
+    onChange(JSON.stringify({ links: next }));
+  }
+  function update(idx: number, patch: Partial<SocialLinkRow>) {
+    writeBack(items.map((row, i) => (i === idx ? { ...row, ...patch } : row)));
+  }
+  function remove(idx: number) {
+    writeBack(items.filter((_, i) => i !== idx));
+  }
+  function add() {
+    writeBack([...items, { label: "", url: "", iconDataUrl: null }]);
+  }
+
+  if (parseError) {
+    return (
+      <VStack align="stretch" gap={2} w="full">
+        <Text fontSize="xs" color="red.600">SOCIAL_LINKS JSON is malformed: {parseError}</Text>
+        <Button size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>
+      </VStack>
+    );
+  }
+
+  // Disable Save when any row is incomplete or has a bad URL prefix.
+  // Mirrors the server validator so the operator gets immediate feedback
+  // before the API rejects the PATCH.
+  const allValid = items.every(
+    (r) =>
+      r.label.trim().length > 0 &&
+      r.label.length <= 60 &&
+      r.url.startsWith("https://") &&
+      r.url.length <= 500 &&
+      !!r.iconDataUrl,
+  );
+
+  return (
+    <VStack align="stretch" gap={2} w="full">
+      <Text fontSize="2xs" color="fg.muted">
+        Add one row per social link. URLs must start with{" "}
+        <Text as="span" fontFamily="mono">https://</Text>. Icons should come from
+        each platform&apos;s official brand assets — keep them under 50 KB so
+        the invoice page payload stays small.
+      </Text>
+      {items.map((row, idx) => (
+        <Box key={idx} borderWidth="1px" borderColor="gray.200" borderRadius="md" p={2}>
+          <VStack align="stretch" gap={2}>
+            <HStack gap={2} align="start">
+              {/* Icon thumbnail / uploader column. Square (64×64) so the
+                  preview always matches how the icon will render on the
+                  pay page. Hidden native file input + a Chakra Button
+                  trigger — the browser's default "Choose File" control
+                  has unconstrained width and overflows the column. */}
+              <Box w="64px" flexShrink={0}>
+                {row.iconDataUrl ? (
+                  <VStack gap={1} align="stretch">
+                    <Box
+                      p={1.5}
+                      bg="white"
+                      borderWidth="1px"
+                      borderColor="gray.300"
+                      rounded="md"
+                      h="64px"
+                      display="flex"
+                      alignItems="center"
+                      justifyContent="center"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={row.iconDataUrl}
+                        alt={`${row.label || "icon"} preview`}
+                        style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", display: "block" }}
+                      />
+                    </Box>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      colorPalette="red"
+                      w="full"
+                      onClick={() => update(idx, { iconDataUrl: null })}
+                    >
+                      <Trash2 size={10} />
+                    </Button>
+                  </VStack>
+                ) : (
+                  <label
+                    htmlFor={`social-icon-${idx}`}
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: "64px",
+                      height: "64px",
+                      borderWidth: "1px",
+                      borderStyle: "dashed",
+                      borderColor: "var(--chakra-colors-gray-400)",
+                      borderRadius: "var(--chakra-radii-md)",
+                      background: "var(--chakra-colors-gray-50)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <Plus size={16} />
+                    <Text fontSize="2xs" color="fg.muted" mt={0.5}>Icon</Text>
+                    <input
+                      id={`social-icon-${idx}`}
+                      type="file"
+                      accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                      style={{ display: "none" }}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        // 50 KB cap mirrors the server-side check in
+                        // validateSocialLinksJson. Settings rows ship
+                        // on every public pay-page load — keep it
+                        // small.
+                        if (file.size > 50 * 1024) {
+                          publishInlineMessage({
+                            type: "ERROR",
+                            text: "Icon is over 50 KB — pick a smaller file (try SVG or a low-res PNG).",
+                          });
+                          e.target.value = "";
+                          return;
+                        }
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                          const result = reader.result;
+                          if (typeof result === "string") {
+                            update(idx, { iconDataUrl: result });
+                          }
+                        };
+                        reader.onerror = () => {
+                          publishInlineMessage({
+                            type: "ERROR",
+                            text: "Could not read the icon file.",
+                          });
+                        };
+                        reader.readAsDataURL(file);
+                      }}
+                    />
+                  </label>
+                )}
+              </Box>
+              {/* Label + URL column. */}
+              <VStack flex="1" align="stretch" gap={1.5}>
+                <Box>
+                  <Text fontSize="2xs" color="fg.muted" mb={0.5}>Label</Text>
+                  <Input
+                    size="sm"
+                    value={row.label}
+                    onChange={(e) => update(idx, { label: e.target.value })}
+                    placeholder="Instagram"
+                    maxLength={60}
+                  />
+                </Box>
+                <Box>
+                  <Text fontSize="2xs" color="fg.muted" mb={0.5}>URL</Text>
+                  <Input
+                    size="sm"
+                    value={row.url}
+                    onChange={(e) => update(idx, { url: e.target.value })}
+                    placeholder="https://instagram.com/seedlingslawncare"
+                    fontFamily="mono"
+                  />
+                  {row.url.trim().length > 0 && !row.url.startsWith("https://") && (
+                    <Text fontSize="2xs" color="red.600" mt={0.5}>
+                      URL must start with https://
+                    </Text>
+                  )}
+                </Box>
+              </VStack>
+              <Button size="xs" variant="ghost" colorPalette="red" onClick={() => remove(idx)} aria-label="Remove">
+                <Trash2 size={12} />
+              </Button>
+            </HStack>
+          </VStack>
+        </Box>
+      ))}
+      <Button size="sm" variant="outline" onClick={add}>
+        <Plus size={12} /> Add social link
+      </Button>
+      <HStack gap={2}>
+        <Button size="sm" onClick={onSave} loading={saving} disabled={value === originalValue || !allValid}>Save</Button>
+        <Button size="sm" variant="ghost" onClick={onCancel} disabled={saving}>Cancel</Button>
+      </HStack>
+    </VStack>
+  );
+}
+
 function PaymentFromOptionsEditor({ value, onChange, onSave, onCancel, saving }: {
   value: string;
   onChange: (v: string) => void;
@@ -1448,6 +1675,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
         "DOCUMENT_TYPES",
         "DOCUMENT_MAX_SIZE_MB",
         "TIMELINE_CATEGORIES",
+        "SOCIAL_LINKS",
         "WEATHER_API_KEY",
       ];
       const general = (Array.isArray(allSettings) ? allSettings : []).filter((s) => !s.key.startsWith("pricing_"));
@@ -1844,6 +2072,12 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                         if (s.key === "PAYROLL_TAX_ESTIMATES") {
                           return <PayrollTaxEstimatesEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} originalValue={s.value} />;
                         }
+                        // Dedicated editor for SOCIAL_LINKS — repeatable
+                        // rows of label + URL + uploaded brand icon for
+                        // the social-row tiles on the public pay page.
+                        if (s.key === "SOCIAL_LINKS") {
+                          return <SocialLinksEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} originalValue={s.value} />;
+                        }
                         // Dedicated editor for OUTGOING_COMMS_CC — two
                         // independent email/phone lists.
                         if (s.key === "OUTGOING_COMMS_CC") {
@@ -1895,6 +2129,48 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                                   <Badge key={`p:${p}`} size="sm" variant="solid" colorPalette="orange" px="2" borderRadius="full" fontSize="xs">
                                     ☎ {p}
                                   </Badge>
+                                ))}
+                              </Box>
+                            );
+                          } catch {}
+                        }
+                        // SOCIAL_LINKS — render the configured links as a
+                        // row of icon + label chips so the operator sees
+                        // what's on the public pay page at a glance
+                        // without opening the editor.
+                        if (s.key === "SOCIAL_LINKS") {
+                          try {
+                            const parsed = JSON.parse(s.value || '{"links":[]}');
+                            const links: any[] = Array.isArray(parsed)
+                              ? parsed
+                              : Array.isArray(parsed?.links)
+                                ? parsed.links
+                                : [];
+                            if (links.length === 0) {
+                              return <Text fontSize="xs" color="fg.muted" fontStyle="italic">No social links configured</Text>;
+                            }
+                            return (
+                              <Box display="flex" gap="6px" flexWrap="wrap" alignItems="center">
+                                {links.map((l: any, i: number) => (
+                                  <HStack
+                                    key={`${l.label}:${i}`}
+                                    gap={1.5}
+                                    px="2"
+                                    py="0.5"
+                                    bg="gray.100"
+                                    borderRadius="full"
+                                    fontSize="xs"
+                                  >
+                                    {l.iconDataUrl ? (
+                                      // eslint-disable-next-line @next/next/no-img-element
+                                      <img
+                                        src={l.iconDataUrl}
+                                        alt=""
+                                        style={{ width: "14px", height: "14px", objectFit: "contain", display: "block" }}
+                                      />
+                                    ) : null}
+                                    <Text fontSize="xs">{l.label || "(no label)"}</Text>
+                                  </HStack>
                                 ))}
                               </Box>
                             );
