@@ -3408,6 +3408,18 @@ Respond ONLY with valid JSON in this exact format:
         throw app.httpErrors.badRequest(err?.message || "Invalid PAYMENT_FROM_OPTIONS JSON.");
       }
     }
+    if (key === "PAYROLL_TAX_ESTIMATES") {
+      const { validatePayrollTaxEstimatesJson } = await import(
+        "../services/payrollTaxEstimates"
+      );
+      try {
+        validatePayrollTaxEstimatesJson(value);
+      } catch (err: any) {
+        throw app.httpErrors.badRequest(
+          err?.message || "Invalid PAYROLL_TAX_ESTIMATES JSON.",
+        );
+      }
+    }
     if (key === "PAYMENT_METHODS") {
       const { validatePaymentMethodsJson } = await import("../services/paymentMethods");
       try {

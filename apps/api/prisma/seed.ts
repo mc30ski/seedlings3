@@ -155,6 +155,7 @@ const SETTING_SECTIONS: Record<string, string> = {
   FIXED_ASSET_MIN_COST: "payments",
   QB_INCLUDE_CONTRACT_LABOR: "payments",
   EQUIPMENT_BILLING_ENABLED: "payments",
+  PAYROLL_TAX_ESTIMATES: "payments",
   // Client Payment Requests
   BUSINESS_NAME: "client_requests",
   DEFAULT_PAYMENT_COMMUNICATIONS_MODE: "client_requests",
@@ -2143,6 +2144,38 @@ async function seedDatabase() {
       update: { description: s.description, updatedById: MICHAEL_ID },
     });
   }
+
+  // ── Payroll tax estimates ────────────────────────────────────────────────
+  // Operator-tunable employer-side payroll-tax rates used to estimate
+  // company burden on the Reconcile P&L's synthetic "Employer payroll
+  // taxes (est.)" line. Defaults are reasonable NC small-employer
+  // values; operator should replace SUTA with their NCDES Tax Rate
+  // Notice rate when they have it.
+  //
+  // Workers' Comp is intentionally NOT here — it's an insurance
+  // premium tracked as a BusinessExpense (Insurance category) when the
+  // bill arrives. Adding it would double-count.
+  const payrollTaxEstimatesValue = JSON.stringify({
+    socialSecurityEmployerPct: 6.2,
+    medicareEmployerPct: 1.45,
+    futaEmployerPct: 0.6,
+    sutaEmployerPct: 1.5,
+  });
+  await prisma.setting.upsert({
+    where: { key: "PAYROLL_TAX_ESTIMATES" },
+    create: {
+      key: "PAYROLL_TAX_ESTIMATES",
+      value: payrollTaxEstimatesValue,
+      description:
+        "Operator-tunable employer-side payroll tax rates (Social Security, Medicare, FUTA, SUTA) used on the Reconcile P&L's 'Employer payroll taxes (est.)' line. Defaults are NC small-employer estimates; replace SUTA with your NCDES rate notice value.",
+      updatedById: MICHAEL_ID,
+    },
+    update: {
+      description:
+        "Operator-tunable employer-side payroll tax rates (Social Security, Medicare, FUTA, SUTA) used on the Reconcile P&L's 'Employer payroll taxes (est.)' line. Defaults are NC small-employer estimates; replace SUTA with your NCDES rate notice value.",
+      updatedById: MICHAEL_ID,
+    },
+  });
 
   // ── Company documents (metadata only — for Timeline tab demo) ─────────────
   // These docs have no uploaded version, which means they won't be openable
