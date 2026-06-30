@@ -54,7 +54,30 @@ const ACCOUNT_EMPLOYER_PAYROLL_TAXES = "Payroll:Employer payroll taxes (est.)";
 // a "Total for {parent}" subtotal row to match QB's P&L rendering.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type PnLRow = { qbAccount: string; total: number };
+export type PnLRow = {
+  qbAccount: string;
+  total: number;
+  /** Present only when at least some of the dollars under this account
+   *  are not fully tax-deductible (i.e. a contributing EXPENSE_CATEGORIES
+   *  row had `taxDeductiblePercent < 100`). The UI uses this to render
+   *  the row as a parent with two children — "(X% deductible)" and
+   *  "(non-deductible)" — plus a footnote, while still preserving
+   *  `total` (cash truth) and QB-line reconciliation. */
+  taxBreakdown?: {
+    /** Effective deductible % across this row's contributing dollars.
+     *  When all dollars came from a single category, this is the
+     *  category's own taxDeductiblePercent. When the row aggregates
+     *  multiple categories (rare — same qbAccount, different
+     *  deductibility), it's the weighted average rounded to one
+     *  decimal so the label reads cleanly. */
+    deductiblePct: number;
+    /** Dollar amount that reduces taxable income. */
+    deductibleAmount: number;
+    /** Dollar amount that does NOT reduce taxable income (added back
+     *  when computing Estimated Taxable Operating Income). */
+    nonDeductibleAmount: number;
+  };
+};
 
 export type PnLExpenseGroup = {
   /** Parent account name (everything before the first ":"). */
@@ -99,6 +122,17 @@ export type PnLReport = {
   grossProfit: number;
   expenses: PnLBucket;
   netOperatingIncome: number;
+  /** Sum of non-deductible dollars across every COGS + Expense row.
+   *  Mostly comes from Meals at 50% on the default taxonomy. */
+  totalNonDeductibleExpenses: number;
+  /** Tax-effective operating profit:
+   *    estimatedTaxableOperatingIncome = NOI + totalNonDeductibleExpenses
+   *  Adds back the portion of expenses the IRS won't let you deduct
+   *  so the number reads as "what taxable operating income would be"
+   *  if the period ended right now. NOT a substitute for an actual
+   *  tax return — wage-base caps on payroll taxes, depreciation, and
+   *  every other timing thing live elsewhere. */
+  estimatedTaxableOperatingIncome: number;
   /** Categories explicitly opted out of the P&L (`plSection: EXCLUDE_FROM_PNL`).
    *  Visibility-only — the dollars here do NOT roll into expenses or
    *  netOperatingIncome. Surfaced so silent exclusion can't bite the
@@ -227,12 +261,15 @@ export async function buildPnLReport(
     loadFixedAssetMinCost(),
   ]);
 
-  // Build the category → (qbAccount, plSection) lookup once.
-  const catMeta = new Map<string, { qbAccount: string; plSection: PlSection }>();
+  // Build the category → (qbAccount, plSection, taxDeductiblePercent)
+  // lookup once. Synthetic categories (Wages, Contract Labor, etc.)
+  // are 100% deductible and bypass this map — they post directly.
+  const catMeta = new Map<string, { qbAccount: string; plSection: PlSection; taxDeductiblePercent: number }>();
   for (const c of categories) {
     catMeta.set(c.label, {
       qbAccount: c.qbAccount ?? "Unmapped",
       plSection: c.plSection,
+      taxDeductiblePercent: c.taxDeductiblePercent,
     });
   }
 
@@ -267,14 +304,31 @@ export async function buildPnLReport(
   // Bucket every expense row by qbAccount, tagged with its plSection.
   // Same qbAccount + same plSection → totals roll up; multiple categories
   // mapped to the same qbAccount sum together (rare but possible).
-  const byAccount = new Map<string, { total: number; section: PlSection }>();
-  const addToAccount = (qbAccount: string, section: PlSection, amount: number) => {
+  // We also track per-account deductibility so a partially-deductible
+  // category (e.g. Meals at 50%) emits the inline taxBreakdown on its
+  // PnLRow downstream.
+  const byAccount = new Map<string, {
+    total: number;
+    deductible: number;
+    nonDeductible: number;
+    section: PlSection;
+  }>();
+  const addToAccount = (
+    qbAccount: string,
+    section: PlSection,
+    amount: number,
+    deductiblePct: number = 100,
+  ) => {
     if (amount === 0) return;
+    const deductible = amount * (deductiblePct / 100);
+    const nonDeductible = amount - deductible;
     const existing = byAccount.get(qbAccount);
     if (existing) {
       existing.total += amount;
+      existing.deductible += deductible;
+      existing.nonDeductible += nonDeductible;
     } else {
-      byAccount.set(qbAccount, { total: amount, section });
+      byAccount.set(qbAccount, { total: amount, deductible, nonDeductible, section });
     }
   };
 
@@ -314,7 +368,7 @@ export async function buildPnLReport(
     // bucket is the operator's prompt to reclassify.
     const section: PlSection = meta?.plSection ?? "OPERATING_EXPENSE";
     const qbAccount = meta?.qbAccount ?? "Unmapped";
-    addToAccount(qbAccount, section, r.cost);
+    addToAccount(qbAccount, section, r.cost, meta?.taxDeductiblePercent ?? 100);
   }
 
   // Processor fees used to land here as an operating expense — they're
@@ -392,8 +446,19 @@ export async function buildPnLReport(
   // fees") render with proper parent → child indentation and subtotals.
   const cogsRaw: PnLRow[] = [];
   const expenseRaw: PnLRow[] = [];
-  for (const [qbAccount, { total, section }] of byAccount) {
-    const row = { qbAccount, total: round2(total) };
+  // Attach `taxBreakdown` to rows where any contributing category
+  // wasn't 100% deductible. The threshold of >0.005 avoids attaching a
+  // breakdown to rows where only sub-cent rounding produced a tiny
+  // non-deductible amount.
+  for (const [qbAccount, { total, deductible, nonDeductible, section }] of byAccount) {
+    const row: PnLRow = { qbAccount, total: round2(total) };
+    if (nonDeductible > 0.005 && total > 0) {
+      row.taxBreakdown = {
+        deductiblePct: Math.round((deductible / total) * 1000) / 10,
+        deductibleAmount: round2(deductible),
+        nonDeductibleAmount: round2(nonDeductible),
+      };
+    }
     if (section === "COGS") cogsRaw.push(row);
     else expenseRaw.push(row);
   }
@@ -414,6 +479,23 @@ export async function buildPnLReport(
   const grossProfit = round2(incomeTotal - cogs.total);
   const netOperatingIncome = round2(grossProfit - expenses.total);
 
+  // Sum the non-deductible portion across COGS + Expense rows (Income
+  // is always fully taxable — non-deductibility is an expense concept).
+  // Iterating cogsRaw / expenseRaw catches both flat and parent:child
+  // rows without re-walking the grouped bucket structure.
+  const totalNonDeductibleExpenses = round2(
+    cogsRaw.reduce((s, r) => s + (r.taxBreakdown?.nonDeductibleAmount ?? 0), 0) +
+      expenseRaw.reduce((s, r) => s + (r.taxBreakdown?.nonDeductibleAmount ?? 0), 0),
+  );
+  // Adding back the non-deductible portion that NOI already subtracted
+  // yields tax-effective operating profit. If a category is 50%
+  // deductible, half the dollars went out the door but only the other
+  // half offset taxable income — so taxable income is higher than NOI
+  // by that non-deductible half.
+  const estimatedTaxableOperatingIncome = round2(
+    netOperatingIncome + totalNonDeductibleExpenses,
+  );
+
   return {
     range: { from: options.fromStr, to: options.toStr },
     income: { rows: incomeRows, total: incomeTotal },
@@ -422,6 +504,8 @@ export async function buildPnLReport(
     expenses,
     excluded,
     netOperatingIncome,
+    totalNonDeductibleExpenses,
+    estimatedTaxableOperatingIncome,
     employerPayrollTaxes,
   };
 }
@@ -443,28 +527,64 @@ export async function buildPnLReport(
  * a "Total for X" subtotal when X has a single line.
  */
 function groupByParent(rows: PnLRow[]): PnLBucket {
-  type AccBucket = { directTotal: number; children: PnLRow[] };
+  type AccBucket = {
+    directTotal: number;
+    // Accumulated deductibility for the parent's own (no-colon) rows.
+    // Children carry their own taxBreakdown on the row object, so we
+    // only need to track this for the parent's direct portion.
+    directDeductible: number;
+    directNonDeductible: number;
+    children: PnLRow[];
+  };
   const buckets = new Map<string, AccBucket>();
   for (const row of rows) {
     const colon = row.qbAccount.indexOf(":");
     if (colon < 0) {
-      const bucket = buckets.get(row.qbAccount) ?? { directTotal: 0, children: [] };
+      const bucket = buckets.get(row.qbAccount) ?? {
+        directTotal: 0,
+        directDeductible: 0,
+        directNonDeductible: 0,
+        children: [],
+      };
       bucket.directTotal += row.total;
+      bucket.directDeductible += row.taxBreakdown?.deductibleAmount ?? row.total;
+      bucket.directNonDeductible += row.taxBreakdown?.nonDeductibleAmount ?? 0;
       buckets.set(row.qbAccount, bucket);
     } else {
       const parent = row.qbAccount.slice(0, colon).trim();
-      const bucket = buckets.get(parent) ?? { directTotal: 0, children: [] };
+      const bucket = buckets.get(parent) ?? {
+        directTotal: 0,
+        directDeductible: 0,
+        directNonDeductible: 0,
+        children: [],
+      };
       bucket.children.push(row);
       buckets.set(parent, bucket);
     }
   }
+
+  // Build a PnLRow with taxBreakdown attached when applicable. Shared
+  // between the flat-row emit and the children-pass-through path so a
+  // partially-deductible row renders the same way regardless of
+  // whether it sits under a parent.
+  const buildRow = (qbAccount: string, total: number, deductible: number, nonDeductible: number): PnLRow => {
+    const row: PnLRow = { qbAccount, total: round2(total) };
+    if (nonDeductible > 0.005 && total > 0) {
+      row.taxBreakdown = {
+        deductiblePct: Math.round((deductible / total) * 1000) / 10,
+        deductibleAmount: round2(deductible),
+        nonDeductibleAmount: round2(nonDeductible),
+      };
+    }
+    return row;
+  };
 
   const groups: PnLExpenseGroup[] = [];
   const flat: PnLRow[] = [];
   for (const [parent, bucket] of buckets) {
     bucket.children.sort((a, b) => a.qbAccount.localeCompare(b.qbAccount));
     if (bucket.children.length === 0) {
-      flat.push({ qbAccount: parent, total: round2(bucket.directTotal) });
+      flat.push(buildRow(parent, bucket.directTotal, bucket.directDeductible, bucket.directNonDeductible));
     } else {
       const childrenTotal = sum(bucket.children.map((c) => c.total));
       groups.push({

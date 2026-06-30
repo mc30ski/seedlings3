@@ -1514,6 +1514,12 @@ async function seedDatabase() {
     // Today / this week
     { ago: 0, cost: 64.27, desc: "Diesel for trailer truck", category: "Fuel", vendor: "Shell" },
     { ago: 3, cost: 142.50, desc: "Trimmer line bulk pack", category: "Supplies", vendor: "Stihl Pro Dealer" },
+    // Meals — exercises the 50%-deductible split rendering on the
+    // P&L (parent + deductible/non-deductible children + footnote)
+    // and the "Estimated taxable operating income" line below NOI.
+    { ago: 1, cost: 28.45, desc: "Client meeting lunch (Springfield Diner)", category: "Meals", vendor: "Springfield Diner" },
+    { ago: 5, cost: 18.62, desc: "Crew lunch — out-of-town job", category: "Meals", vendor: "Wendy's" },
+    { ago: 12, cost: 42.10, desc: "Vendor meeting — coffee + lunch", category: "Meals", vendor: "Panera" },
     // This month, prior weeks
     { ago: 14, cost: 89.43, desc: "Truck oil change & inspection", category: "Vehicle Maintenance", vendor: "Jiffy Lube", notes: "Receipt in glovebox" },
     { ago: 18, cost: 47.21, desc: "Office supplies (paper, pens, toner)", category: "Office expense", vendor: "Staples" },
@@ -2030,7 +2036,13 @@ async function seedDatabase() {
         // so default to EXCLUDE. Operator flips to OPERATING_EXPENSE the
         // first time they use them.
         { label: "Travel", scheduleCLine: "24a", qbAccount: null, selectable: true, plSection: "EXCLUDE_FROM_PNL" },
-        { label: "Meals", scheduleCLine: "24b", qbAccount: null, selectable: true, plSection: "EXCLUDE_FROM_PNL" },
+        // IRS limits ordinary business meal deductions to 50% — the
+        // P&L renders the deductible/non-deductible split inline AND
+        // derives "Estimated taxable operating income" from the
+        // non-deductible portion. Cash NOI still deducts 100% (cash
+        // truth). Operator can configure other partial cases (e.g.
+        // 0% for Entertainment) by adding the category here.
+        { label: "Meals", scheduleCLine: "24b", qbAccount: "Meals", selectable: true, plSection: "OPERATING_EXPENSE", taxDeductiblePercent: 50 },
         { label: "Utilities", scheduleCLine: "25", qbAccount: null, selectable: true, plSection: "EXCLUDE_FROM_PNL" },
         // Synthetic, export-only — sourced from Payment rows, never hand-logged.
         { label: "Payment Processing Fees", scheduleCLine: "10", qbAccount: "Payment Processing Fees", selectable: false, plSection: "OPERATING_EXPENSE" },

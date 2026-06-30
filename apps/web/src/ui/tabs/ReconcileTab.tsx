@@ -30,7 +30,18 @@ import {
  * software's bank-fed entries.
  */
 
-type PnLRow = { qbAccount: string; total: number };
+type PnLRow = {
+  qbAccount: string;
+  total: number;
+  /** Present when contributing categories had taxDeductiblePercent < 100.
+   *  Drives the inline parent + (deductible) + (non-deductible) split
+   *  rendering plus the Estimated Taxable Operating Income totals. */
+  taxBreakdown?: {
+    deductiblePct: number;
+    deductibleAmount: number;
+    nonDeductibleAmount: number;
+  };
+};
 type PnLExpenseGroup = {
   parent: string;
   directTotal: number;
@@ -52,6 +63,11 @@ type PnLReport = {
   grossProfit: number;
   expenses: PnLBucket;
   netOperatingIncome: number;
+  /** Sum of non-deductible dollars across COGS + Expense rows. */
+  totalNonDeductibleExpenses: number;
+  /** NOI + totalNonDeductibleExpenses — the tax-effective version of
+   *  Net Operating Income. */
+  estimatedTaxableOperatingIncome: number;
   /** Categories explicitly opted out of the P&L. Visibility-only —
    *  the dollars here do NOT roll into expenses or netOperatingIncome.
    *  Surfaced in a dedicated section at the bottom so the operator can
@@ -942,6 +958,40 @@ export default function ReconcileTab() {
                   {fmtUSD(report.netOperatingIncome)}
                 </Text>
               </HStack>
+              {/* Estimated taxable operating income — adds back the
+                  non-deductible portion of expenses (Meals 50%, etc.)
+                  that NOI already subtracted. Only surfaced when there
+                  IS a non-deductible portion to add back; otherwise
+                  it'd just duplicate the NOI row. Italic + muted to
+                  signal "derived informational metric," not a primary
+                  P&L line. */}
+              {report.totalNonDeductibleExpenses > 0.005 && (
+                <HStack
+                  justify="space-between"
+                  px={3}
+                  py={1.5}
+                  bg="blue.50"
+                  borderTopWidth="1px"
+                  borderColor="gray.200"
+                >
+                  <VStack align="start" gap={0}>
+                    <Text fontSize="sm" fontWeight="semibold" color="blue.900">
+                      Estimated taxable operating income
+                    </Text>
+                    <Text fontSize="2xs" color="blue.800" fontStyle="italic">
+                      NOI + {fmtUSD(report.totalNonDeductibleExpenses)} non-deductible expense
+                      {report.totalNonDeductibleExpenses === 1 ? "" : "s"}
+                    </Text>
+                  </VStack>
+                  <Text
+                    fontSize="sm"
+                    fontWeight="semibold"
+                    color={report.estimatedTaxableOperatingIncome < 0 ? "red.700" : "blue.900"}
+                  >
+                    {fmtUSD(report.estimatedTaxableOperatingIncome)}
+                  </Text>
+                </HStack>
+              )}
               {/* Accrual-divergence footnote — only shown when synthetic
                   Wages or Employer Payroll Taxes are actually deducted in
                   the period. Tells the operator upfront why this number
@@ -1324,6 +1374,7 @@ function BucketRows({
             expanded={expanded.has(entry.row.qbAccount)}
             onToggle={() => onToggle(entry.row.qbAccount)}
             detailState={details[entry.row.qbAccount]}
+            taxBreakdown={entry.row.taxBreakdown}
           />
         ) : (
           <Box key={`group:${entry.group.parent}`}>
@@ -1356,6 +1407,7 @@ function BucketRows({
                 expanded={expanded.has(c.qbAccount)}
                 onToggle={() => onToggle(c.qbAccount)}
                 detailState={details[c.qbAccount]}
+                taxBreakdown={c.taxBreakdown}
               />
             ))}
             <HStack
@@ -1388,6 +1440,7 @@ function ExpandableRow({
   expanded,
   onToggle,
   detailState,
+  taxBreakdown,
 }: {
   label: string;
   amount: number;
@@ -1396,6 +1449,12 @@ function ExpandableRow({
   expanded: boolean;
   onToggle: () => void;
   detailState: DetailState | undefined;
+  /** When present, render two indented sub-rows below the main row
+   *  showing the deductible / non-deductible split, plus a footnote.
+   *  Surfaces partial deductibility (e.g. Meals 50%) at-a-glance
+   *  without changing the underlying row total (cash-truth + QB
+   *  reconciliation preserved). */
+  taxBreakdown?: PnLRow["taxBreakdown"];
 }) {
   const pl = indent === 1 ? 6 : 10;
   return (
@@ -1424,6 +1483,30 @@ function ExpandableRow({
           {fmtUSD(amount)}
         </Text>
       </HStack>
+      {taxBreakdown && (
+        <Box pl={pl + 4} pr={3} pb={1.5} pt={0.5}>
+          <HStack justify="space-between" py={0.5}>
+            <Text fontSize="xs" color="fg.muted">
+              {label} ({taxBreakdown.deductiblePct}% deductible)
+            </Text>
+            <Text fontSize="xs" color="fg.muted">
+              {fmtUSD(taxBreakdown.deductibleAmount)}
+            </Text>
+          </HStack>
+          <HStack justify="space-between" py={0.5}>
+            <Text fontSize="xs" color="fg.muted">
+              {label} (non-deductible)
+            </Text>
+            <Text fontSize="xs" color="fg.muted">
+              {fmtUSD(taxBreakdown.nonDeductibleAmount)}
+            </Text>
+          </HStack>
+          <Text fontSize="2xs" color="fg.muted" fontStyle="italic" mt={0.5}>
+            {taxBreakdown.deductiblePct}% deductible —{" "}
+            {fmtUSD(taxBreakdown.deductibleAmount)} reduces taxable income.
+          </Text>
+        </Box>
+      )}
       {expanded && (
         <Box pl={pl + 2} pr={3} pb={2} pt={1}>
           <DetailRows state={detailState} />

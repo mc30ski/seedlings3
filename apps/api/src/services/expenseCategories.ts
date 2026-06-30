@@ -43,9 +43,26 @@ export type ExpenseCategoryConfig = {
    *  (and any other COGS line you configure) ends up under Cost of Goods
    *  Sold on the P&L. */
   plSection: PlSection;
+  /** Percent of this category's expense that is deductible against
+   *  taxable income. Default 100 (fully deductible). The most common
+   *  partial case is Meals at 50% — the IRS limits ordinary business
+   *  meal deductions, so only half the dollars reduce taxable income.
+   *  Post-TCJA Entertainment is 0%. The P&L report uses this to render
+   *  a deductible / non-deductible breakdown on the row AND to derive
+   *  the "Estimated taxable operating income" line below NOI. Cash NOI
+   *  itself still deducts the full cost (cash basis) — this field only
+   *  affects the tax-effective view. */
+  taxDeductiblePercent: number;
 };
 
-const ALLOWED_KEYS = new Set(["label", "scheduleCLine", "qbAccount", "selectable", "plSection"]);
+const ALLOWED_KEYS = new Set([
+  "label",
+  "scheduleCLine",
+  "qbAccount",
+  "selectable",
+  "plSection",
+  "taxDeductiblePercent",
+]);
 
 /**
  * Parse the raw JSON value of the EXPENSE_CATEGORIES setting into a typed
@@ -110,12 +127,26 @@ export function parseExpenseCategoriesSetting(raw: string | null | undefined): E
       }
       plSection = row.plSection as PlSection;
     }
+    // Tax deductibility — default 100 (fully deductible) when missing
+    // so categories that pre-date this field stay correctly treated
+    // as 100% deductible without a re-save.
+    let taxDeductiblePercent = 100;
+    if (row.taxDeductiblePercent != null) {
+      const n = Number(row.taxDeductiblePercent);
+      if (!Number.isFinite(n) || n < 0 || n > 100) {
+        throw new Error(
+          `EXPENSE_CATEGORIES[${idx}].taxDeductiblePercent must be a number between 0 and 100.`,
+        );
+      }
+      taxDeductiblePercent = n;
+    }
     return {
       label: row.label,
       scheduleCLine: row.scheduleCLine,
       qbAccount,
       selectable: row.selectable !== false, // default true if omitted
       plSection,
+      taxDeductiblePercent,
     };
   });
 }
@@ -191,6 +222,17 @@ export async function loadPlSectionMap(
   const cats = await loadExpenseCategories(client);
   const map: Record<string, PlSection> = {};
   for (const c of cats) map[c.label] = c.plSection;
+  return map;
+}
+
+/** Map of category label → tax-deductible percent (0–100). Missing
+ *  defaults to 100 via the loader. */
+export async function loadTaxDeductibleMap(
+  client: typeof prisma | any = prisma,
+): Promise<Record<string, number>> {
+  const cats = await loadExpenseCategories(client);
+  const map: Record<string, number> = {};
+  for (const c of cats) map[c.label] = c.taxDeductiblePercent;
   return map;
 }
 

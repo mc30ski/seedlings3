@@ -1199,6 +1199,13 @@ type ExpenseCategoryRow = {
    *                        proactively classify a category before it
    *                        appears on the P&L. */
   plSection: PlSection;
+  /** Percent of this category's expense that reduces taxable income.
+   *  Default 100 (fully deductible). Most common partial case: Meals
+   *  at 50% (IRS limit on ordinary business meals). The P&L renders
+   *  the deductible / non-deductible split inline AND derives
+   *  "Estimated taxable operating income" from the non-deductible
+   *  portion. Cash NOI itself still deducts 100% (cash truth). */
+  taxDeductiblePercent: number;
 };
 
 // Empty input → null. Whitespace also collapses to null so a stray space
@@ -1249,12 +1256,20 @@ function ExpenseCategoriesEditor({ value, onChange, onSave, onCancel, saving }: 
           : r.plSection === "OPERATING_EXPENSE"
             ? "OPERATING_EXPENSE"
             : "EXCLUDE_FROM_PNL";
+      // Default to 100 (fully deductible) when missing — matches the
+      // backend loader's default so the editor and the server agree.
+      const rawDeductible = r.taxDeductiblePercent;
+      const taxDeductiblePercent =
+        rawDeductible == null || rawDeductible === ""
+          ? 100
+          : Math.max(0, Math.min(100, Number(rawDeductible) || 0));
       return {
         label: String(r.label ?? ""),
         scheduleCLine: String(r.scheduleCLine ?? ""),
         qbAccount,
         selectable: r.selectable !== false,
         plSection,
+        taxDeductiblePercent,
       };
     });
   } catch (e: any) {
@@ -1274,7 +1289,7 @@ function ExpenseCategoriesEditor({ value, onChange, onSave, onCancel, saving }: 
     // to COGS or Operating Expense for the category to show up on the
     // P&L Report tab. Safer than silently lumping a new category into a
     // P&L section the operator hasn't reviewed.
-    onChange(JSON.stringify([...items, { label: "", scheduleCLine: "", qbAccount: null, selectable: true, plSection: "EXCLUDE_FROM_PNL" }]));
+    onChange(JSON.stringify([...items, { label: "", scheduleCLine: "", qbAccount: null, selectable: true, plSection: "EXCLUDE_FROM_PNL", taxDeductiblePercent: 100 }]));
   }
 
   if (parseError) {
@@ -1298,15 +1313,21 @@ function ExpenseCategoriesEditor({ value, onChange, onSave, onCancel, saving }: 
         <Text as="span" fontWeight="semibold"> QB Account</Text> must match the account name in
         QuickBooks exactly (capitalization + spacing) — leave it blank to land
         rows in this category as "Unmapped" in the QB Expenses CSV (the operator re-categorizes
-        them inside QB after import). Uncheck "Selectable" for export-only synthetic categories
-        (e.g. Payment Processing Fees) — they stay in the export but are hidden from the
-        expense-logging pickers.
+        them inside QB after import). <Text as="span" fontWeight="semibold">Deductible %</Text>{" "}
+        defaults to 100; set lower for partial-deduction categories (Meals 50%,
+        Entertainment 0%). Cash NOI still deducts the full cost; the P&L
+        shows the split inline and derives "Estimated taxable operating
+        income" from the non-deductible portion. Uncheck "Selectable" for
+        export-only synthetic categories (e.g. Payment Processing Fees) —
+        they stay in the export but are hidden from the expense-logging
+        pickers.
       </Text>
       <HStack gap={2} fontSize="2xs" color="fg.muted" fontWeight="medium" px={1}>
         <Text flex="1">Category label</Text>
         <Text w="70px" textAlign="center">Sch. C line</Text>
         <Text flex="1">QB Account</Text>
         <Text w="170px">P&L Category</Text>
+        <Text w="70px" textAlign="center">Deductible %</Text>
         <Text w="70px" textAlign="center">Selectable</Text>
         <Box w="32px" />
       </HStack>
@@ -1356,6 +1377,22 @@ function ExpenseCategoriesEditor({ value, onChange, onSave, onCancel, saving }: 
               </Select.Positioner>
             </Select.Root>
           </Box>
+          <Input
+            size="sm"
+            w="70px"
+            textAlign="center"
+            type="number"
+            min={0}
+            max={100}
+            step={1}
+            value={String(row.taxDeductiblePercent)}
+            onChange={(e) => {
+              const n = Number(e.target.value);
+              update(idx, {
+                taxDeductiblePercent: Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : 100,
+              });
+            }}
+          />
           <Box w="70px" textAlign="center">
             <input type="checkbox" checked={row.selectable} onChange={(e) => update(idx, { selectable: e.target.checked })} />
           </Box>
@@ -2262,6 +2299,9 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                                       fontSize="xs"
                                     >
                                       {c.label} · line {c.scheduleCLine}
+                                      {c.taxDeductiblePercent != null && c.taxDeductiblePercent < 100
+                                        ? ` · ${c.taxDeductiblePercent}% ded.`
+                                        : ""}
                                       {c.selectable === false ? " · export-only" : ""}
                                     </Badge>
                                   ))}
