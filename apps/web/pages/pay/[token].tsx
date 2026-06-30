@@ -56,6 +56,15 @@ type ResolvedPaymentMethod = {
   payToTargetQrUrl: string | null;
 };
 
+// One social media link surfaced for the social row under the photo
+// grid. All three fields are mandatory server-side; the icon is a data
+// URL uploaded via the SettingsTab editor.
+type SocialLink = {
+  label: string;
+  url: string;
+  iconDataUrl: string;
+};
+
 type ResolveResponse = {
   occurrenceId: string;
   amountDue: number;
@@ -75,6 +84,7 @@ type ResolveResponse = {
   preferredMethod: string | null;
   paymentOptions: { venmoHandle: string | null; zelleAddress: string | null };
   paymentMethods?: ResolvedPaymentMethod[];
+  socialLinks?: SocialLink[];
   expiresAt: string | null;
 };
 
@@ -443,6 +453,8 @@ function PaymentPageInner() {
           </Box>
         )}
 
+        <SocialLinksRow links={data.socialLinks ?? []} />
+
         {isWorkerSession ? (
           <Box
             p={3}
@@ -570,6 +582,56 @@ function PaymentPageInner() {
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────
+
+/** Slim row of clickable social-media tiles shown under the property photo
+ *  grid. Each tile is the uploaded brand icon — operator supplies the
+ *  icon from each platform's published brand assets via the SettingsTab
+ *  editor. Tiles are slightly smaller than the photo squares so the row
+ *  reads as secondary content. Renders nothing when no links are
+ *  configured. */
+function SocialLinksRow({ links }: { links: SocialLink[] }) {
+  if (links.length === 0) return null;
+  return (
+    <Box>
+      <Text fontSize="xs" color="fg.muted" mb={1.5}>Follow us:</Text>
+      <HStack gap={2} flexWrap="wrap">
+        {links.map((l, i) => (
+          <a
+            key={`${l.label}:${i}`}
+            href={l.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={l.label}
+            title={l.label}
+            style={{ display: "block", lineHeight: 0 }}
+          >
+            <Box
+              w="56px"
+              h="56px"
+              borderRadius="md"
+              overflow="hidden"
+              borderWidth="1px"
+              borderColor="gray.200"
+              bg="white"
+              display="flex"
+              alignItems="center"
+              justifyContent="center"
+              p={1.5}
+              _hover={{ borderColor: "teal.400" }}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={l.iconDataUrl}
+                alt=""
+                style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", display: "block" }}
+              />
+            </Box>
+          </a>
+        ))}
+      </HStack>
+    </Box>
+  );
+}
 
 /** Fullscreen photo viewer for the public payment page. Matches the
  *  OccurrencePhotos PhotoViewer behavior — keyboard arrows, swipe gestures,
