@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Box, Button, HStack, Text } from "@chakra-ui/react";
-import { Eye, Paperclip, Trash2, Upload } from "lucide-react";
+import { Camera, Eye, Paperclip, Trash2, Upload } from "lucide-react";
 import { apiDelete, apiGet, apiPost } from "@/src/lib/api";
 import { compressOnly } from "@/src/lib/imageRedact";
 import {
@@ -149,10 +149,19 @@ export default function ReceiptUpload({
     }
   }
 
-  // Hidden file input + visible action buttons. We don't preview thumbnails
+  // Hidden file inputs + visible action buttons. We don't preview thumbnails
   // here — receipts are usually long, and a presigned GET is cheap so users
   // can pop them open in a new tab when they need to verify.
+  //
+  // Two inputs:
+  //   1. fileInputId — generic "pick from disk / photo library" picker
+  //      (accept includes PDFs)
+  //   2. cameraInputId — `capture="environment"` directs mobile browsers
+  //      to open the rear camera straight to a viewfinder. On desktop
+  //      browsers the capture attribute is silently ignored and it
+  //      behaves like the regular picker.
   const fileInputId = `receipt-file-${businessExpenseId ?? "pending"}`;
+  const cameraInputId = `receipt-camera-${businessExpenseId ?? "pending"}`;
 
   if (compact) {
     return (
@@ -190,6 +199,28 @@ export default function ReceiptUpload({
                 e.target.value = ""; // allow re-picking the same file
               }}
             />
+            <input
+              id={cameraInputId}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void handleUpload(f);
+                e.target.value = "";
+              }}
+            />
+            <Button
+              size="xs"
+              variant="outline"
+              onClick={() => document.getElementById(cameraInputId)?.click()}
+              loading={busy}
+              disabled={!businessExpenseId}
+              title={!businessExpenseId ? "Save the expense first" : "Take a photo of the receipt"}
+            >
+              <Camera size={12} /> Take photo
+            </Button>
             <Button
               size="xs"
               variant="outline"
@@ -253,15 +284,38 @@ export default function ReceiptUpload({
               e.target.value = "";
             }}
           />
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => document.getElementById(fileInputId)?.click()}
-            loading={busy}
-            disabled={!businessExpenseId}
-          >
-            <Upload size={14} /> {businessExpenseId ? "Upload receipt" : "Save first to attach"}
-          </Button>
+          <input
+            id={cameraInputId}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void handleUpload(f);
+              e.target.value = "";
+            }}
+          />
+          <HStack gap={2} wrap="wrap">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => document.getElementById(cameraInputId)?.click()}
+              loading={busy}
+              disabled={!businessExpenseId}
+            >
+              <Camera size={14} /> Take photo
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => document.getElementById(fileInputId)?.click()}
+              loading={busy}
+              disabled={!businessExpenseId}
+            >
+              <Upload size={14} /> {businessExpenseId ? "Upload receipt" : "Save first to attach"}
+            </Button>
+          </HStack>
         </>
       )}
     </Box>
