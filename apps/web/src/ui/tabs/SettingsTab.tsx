@@ -861,6 +861,55 @@ type SocialLinkRow = {
   iconDataUrl: string | null;
 };
 
+/** Read a File into a data URL. Thin Promise wrapper around FileReader
+ *  so the caller can await it. */
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result === "string") resolve(result);
+      else reject(new Error("FileReader returned a non-string result."));
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("FileReader error."));
+    reader.readAsDataURL(file);
+  });
+}
+
+/** Downscale an uploaded image to fit within `maxEdge` × `maxEdge` while
+ *  preserving aspect ratio, re-export as PNG. SVG passes through
+ *  unchanged (vector — looks crisp at any size and rasterizing would
+ *  defeat the purpose). The caller doesn't need to worry about input
+ *  file size; this keeps the stored data URL small enough for the
+ *  Setting row + public pay payload without rejecting any upload. */
+async function normalizeIconForUpload(file: File, maxEdge: number): Promise<string> {
+  // SVG: no rasterization. Just round-trip through a data URL.
+  if (file.type === "image/svg+xml") {
+    return fileToDataUrl(file);
+  }
+  const rawDataUrl = await fileToDataUrl(file);
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const el = new Image();
+    el.onload = () => resolve(el);
+    el.onerror = () => reject(new Error("Could not decode the image file."));
+    el.src = rawDataUrl;
+  });
+  const longest = Math.max(img.naturalWidth, img.naturalHeight);
+  // Already small enough — skip the canvas round-trip to preserve the
+  // original PNG/WebP/JPG compression rather than re-encoding to PNG.
+  if (longest <= maxEdge) return rawDataUrl;
+  const scale = maxEdge / longest;
+  const w = Math.round(img.naturalWidth * scale);
+  const h = Math.round(img.naturalHeight * scale);
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Browser doesn't support 2D canvas.");
+  ctx.drawImage(img, 0, 0, w, h);
+  return canvas.toDataURL("image/png");
+}
+
 function SocialLinksEditor({ value, onChange, onSave, onCancel, saving, originalValue }: {
   value: string;
   onChange: (v: string) => void;
@@ -927,9 +976,8 @@ function SocialLinksEditor({ value, onChange, onSave, onCancel, saving, original
     <VStack align="stretch" gap={2} w="full">
       <Text fontSize="2xs" color="fg.muted">
         Add one row per social link. URLs must start with{" "}
-        <Text as="span" fontFamily="mono">https://</Text>. Icons should come from
-        each platform&apos;s official brand assets — keep them under 50 KB so
-        the invoice page payload stays small.
+        <Text as="span" fontFamily="mono">https://</Text>. Icons should come
+        from each platform&apos;s official brand assets.
       </Text>
       {items.map((row, idx) => (
         <Box key={idx} borderWidth="1px" borderColor="gray.200" borderRadius="md" p={2}>
@@ -998,33 +1046,22 @@ function SocialLinksEditor({ value, onChange, onSave, onCancel, saving, original
                       style={{ display: "none" }}
                       onChange={(e) => {
                         const file = e.target.files?.[0];
+                        const input = e.target;
                         if (!file) return;
-                        // 50 KB cap mirrors the server-side check in
-                        // validateSocialLinksJson. Settings rows ship
-                        // on every public pay-page load — keep it
-                        // small.
-                        if (file.size > 50 * 1024) {
-                          publishInlineMessage({
-                            type: "ERROR",
-                            text: "Icon is over 50 KB — pick a smaller file (try SVG or a low-res PNG).",
-                          });
-                          e.target.value = "";
-                          return;
-                        }
-                        const reader = new FileReader();
-                        reader.onload = () => {
-                          const result = reader.result;
-                          if (typeof result === "string") {
-                            update(idx, { iconDataUrl: result });
-                          }
-                        };
-                        reader.onerror = () => {
-                          publishInlineMessage({
-                            type: "ERROR",
-                            text: "Could not read the icon file.",
-                          });
-                        };
-                        reader.readAsDataURL(file);
+                        // Downscale raster files to 512×512 max edge
+                        // (preserve aspect) and re-export as PNG.
+                        // SVG passes through unchanged. Result is
+                        // always small enough that no size cap is
+                        // needed.
+                        normalizeIconForUpload(file, 512)
+                          .then((dataUrl) => update(idx, { iconDataUrl: dataUrl }))
+                          .catch((err) => {
+                            publishInlineMessage({
+                              type: "ERROR",
+                              text: err?.message || "Could not process the icon file.",
+                            });
+                          })
+                          .finally(() => { input.value = ""; });
                       }}
                     />
                   </label>

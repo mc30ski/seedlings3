@@ -2185,7 +2185,7 @@ async function seedDatabase() {
   // via the SettingsTab editor (label + URL + uploaded icon). Each icon
   // is a data URL — no asset upload pipeline needed.
   const socialLinksDescription =
-    "List of social media links shown as a row of clickable brand-icon tiles under the property photos on the public invoice/pay page. Each entry stores a display label, the destination URL, and a brand icon uploaded as a data URL (50 KB max).";
+    "List of social media links shown as a row of clickable brand-icon tiles under the property photos on the public invoice/pay page. Each entry stores a display label, the destination URL, and a brand icon uploaded as a data URL.";
   await prisma.setting.upsert({
     where: { key: "SOCIAL_LINKS" },
     create: {

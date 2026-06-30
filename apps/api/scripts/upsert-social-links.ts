@@ -11,7 +11,7 @@ import { prisma } from "../src/db/prisma";
 async function main() {
   const value = JSON.stringify({ links: [] });
   const description =
-    "List of social media links shown as a row of clickable brand-icon tiles under the property photos on the public invoice/pay page. Each entry stores a display label, the destination URL, and a brand icon uploaded as a data URL (50 KB max).";
+    "List of social media links shown as a row of clickable brand-icon tiles under the property photos on the public invoice/pay page. Each entry stores a display label, the destination URL, and a brand icon uploaded as a data URL.";
 
   const existing = await prisma.setting.findUnique({
     where: { key: "SOCIAL_LINKS" },
