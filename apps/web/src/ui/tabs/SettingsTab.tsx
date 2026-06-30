@@ -680,6 +680,175 @@ type JsonArrayItem = {
  *  custom value in the dialog. */
 type PaymentFromOptionRow = { label: string };
 
+// ── PAYROLL_TAX_ESTIMATES editor ─────────────────────────────────────────
+// Four labeled percent inputs (Social Security / Medicare / FUTA / SUTA)
+// + a live "Total employer burden" readout at the bottom. Drives the
+// synthetic "Employer payroll taxes (est.)" line on the Reconcile P&L;
+// the route layer also validates the JSON shape on save via
+// validatePayrollTaxEstimatesJson in services/payrollTaxEstimates.ts.
+//
+// IMPORTANT — what this DOESN'T cover, by design:
+//   • Workers' Compensation. That's insurance, not a tax; recorded as a
+//     BusinessExpense (Insurance category) when the premium bill lands.
+//     Adding a WC row here would double-count it once the operator
+//     enters the monthly premium.
+//   • Wage-base caps. Real SS / FUTA / SUTA cap at annual wage bases;
+//     this is a flat-percent estimate.
+type PayrollTaxEstimateRow = {
+  socialSecurityEmployerPct: number;
+  medicareEmployerPct: number;
+  futaEmployerPct: number;
+  sutaEmployerPct: number;
+};
+
+const PAYROLL_TAX_DEFAULTS: PayrollTaxEstimateRow = {
+  socialSecurityEmployerPct: 6.2,
+  medicareEmployerPct: 1.45,
+  futaEmployerPct: 0.6,
+  sutaEmployerPct: 1.5,
+};
+
+function PayrollTaxEstimatesEditor({ value, onChange, onSave, onCancel, saving, originalValue }: {
+  value: string;
+  onChange: (v: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  saving: boolean;
+  originalValue: string;
+}) {
+  let parsed: PayrollTaxEstimateRow = { ...PAYROLL_TAX_DEFAULTS };
+  let parseError: string | null = null;
+  try {
+    const p = JSON.parse(value || "{}");
+    if (p && typeof p === "object" && !Array.isArray(p)) {
+      const num = (key: keyof PayrollTaxEstimateRow): number => {
+        const v = (p as any)[key];
+        if (v == null) return PAYROLL_TAX_DEFAULTS[key];
+        const n = Number(v);
+        return Number.isFinite(n) ? n : PAYROLL_TAX_DEFAULTS[key];
+      };
+      parsed = {
+        socialSecurityEmployerPct: num("socialSecurityEmployerPct"),
+        medicareEmployerPct: num("medicareEmployerPct"),
+        futaEmployerPct: num("futaEmployerPct"),
+        sutaEmployerPct: num("sutaEmployerPct"),
+      };
+    } else {
+      parseError = "Must be a JSON object.";
+    }
+  } catch (e: any) {
+    parseError = e?.message ?? "Invalid JSON.";
+  }
+
+  function update(patch: Partial<PayrollTaxEstimateRow>) {
+    onChange(JSON.stringify({ ...parsed, ...patch }));
+  }
+
+  const totalPct = Math.round(
+    (parsed.socialSecurityEmployerPct +
+      parsed.medicareEmployerPct +
+      parsed.futaEmployerPct +
+      parsed.sutaEmployerPct) *
+      100,
+  ) / 100;
+
+  // Rule-of-thumb band for small NC employers: ~9–18% (federal +
+  // typical SUTA, no WC). Outside that range we badge a soft warning
+  // so a typo (e.g. 62 instead of 6.2) jumps out.
+  const sanity =
+    totalPct < 7
+      ? { color: "yellow.700", msg: "Low — Federal alone is ~8.25%. Did you miss a rate?" }
+      : totalPct > 18
+        ? { color: "yellow.700", msg: "High — Most small employers land between 9% and 18%. Double-check for a typo." }
+        : { color: "fg.muted", msg: "Within typical small-employer range." };
+
+  // Inputs are unitless numbers in the editor — the percent suffix is
+  // a label, not part of the value. Keeps the JSON clean and avoids
+  // every-keystroke string parsing.
+  function row(
+    label: string,
+    description: string,
+    field: keyof PayrollTaxEstimateRow,
+  ) {
+    return (
+      <Box>
+        <Text fontSize="xs" fontWeight="semibold" mb={0.5}>{label}</Text>
+        <HStack gap={2} align="center">
+          <Input
+            size="sm"
+            type="number"
+            step="0.01"
+            min="0"
+            max="100"
+            value={String(parsed[field])}
+            onChange={(e) => update({ [field]: Number(e.target.value) } as Partial<PayrollTaxEstimateRow>)}
+            w="100px"
+            fontFamily="mono"
+          />
+          <Text fontSize="sm" color="fg.muted">%</Text>
+        </HStack>
+        <Text fontSize="2xs" color="fg.muted" mt={0.5}>{description}</Text>
+      </Box>
+    );
+  }
+
+  if (parseError) {
+    return (
+      <VStack align="stretch" gap={2} w="full">
+        <Text fontSize="xs" color="red.600">PAYROLL_TAX_ESTIMATES JSON is malformed: {parseError}</Text>
+        <Button size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>
+      </VStack>
+    );
+  }
+
+  return (
+    <VStack align="stretch" gap={3} w="full">
+      <Box p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" rounded="md">
+        <Text fontSize="2xs" color="blue.900">
+          Operator-tunable estimates for the company-side payroll tax burden. Applied to W-2 wages on the Reconcile P&L &quot;Employer payroll taxes (est.)&quot; line so Net Operating Income reflects what actually leaves the business — not what reaches QB once Gusto cuts the check. Workers&apos; Comp is intentionally NOT here; record it as a BusinessExpense (Insurance) when the premium bill arrives.
+        </Text>
+      </Box>
+      {row(
+        "Social Security (employer)",
+        "Federal — fixed at 6.20% of wages. Rarely changes.",
+        "socialSecurityEmployerPct",
+      )}
+      {row(
+        "Medicare (employer)",
+        "Federal — fixed at 1.45% of wages. Rarely changes.",
+        "medicareEmployerPct",
+      )}
+      {row(
+        "FUTA (employer)",
+        "Federal Unemployment — 0.60% effective after the 5.4% state credit. Rarely changes. Wage-base cap ignored.",
+        "futaEmployerPct",
+      )}
+      {row(
+        "SUTA (employer)",
+        "State Unemployment — varies by employer. NC&apos;s range is 0.06%–5.76%; your exact rate is on the NCDES Tax Rate Notice. Default 1.5% is a mid-range estimate.",
+        "sutaEmployerPct",
+      )}
+      <Box
+        p={2}
+        bg="gray.50"
+        borderWidth="1px"
+        borderColor="gray.200"
+        rounded="md"
+      >
+        <HStack justify="space-between">
+          <Text fontSize="xs" fontWeight="semibold">Total employer burden:</Text>
+          <Text fontSize="xs" fontWeight="bold">{totalPct.toFixed(2)}% of wages</Text>
+        </HStack>
+        <Text fontSize="2xs" color={sanity.color} mt={0.5}>{sanity.msg}</Text>
+      </Box>
+      <HStack gap={2}>
+        <Button size="sm" onClick={onSave} loading={saving} disabled={value === originalValue}>Save</Button>
+        <Button size="sm" variant="ghost" onClick={onCancel} disabled={saving}>Cancel</Button>
+      </HStack>
+    </VStack>
+  );
+}
+
 function PaymentFromOptionsEditor({ value, onChange, onSave, onCancel, saving }: {
   value: string;
   onChange: (v: string) => void;
@@ -1666,6 +1835,14 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                         // list of preset labels for the Add Expense dialog.
                         if (s.key === "PAYMENT_FROM_OPTIONS") {
                           return <PaymentFromOptionsEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} />;
+                        }
+                        // Dedicated editor for PAYROLL_TAX_ESTIMATES — four
+                        // labeled percent inputs + a live "Total employer
+                        // burden" sanity-check. Drives the synthetic
+                        // "Employer payroll taxes (est.)" line on the
+                        // Reconcile P&L.
+                        if (s.key === "PAYROLL_TAX_ESTIMATES") {
+                          return <PayrollTaxEstimatesEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} originalValue={s.value} />;
                         }
                         // Dedicated editor for OUTGOING_COMMS_CC — two
                         // independent email/phone lists.

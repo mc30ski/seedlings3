@@ -38,6 +38,13 @@ type PnLExpenseGroup = {
   subtotal: number;
 };
 type PnLBucket = { groups: PnLExpenseGroup[]; flat: PnLRow[]; total: number };
+type EmployerPayrollTaxComponent = {
+  key: string;
+  label: string;
+  ratePct: number;
+  amount: number;
+};
+
 type PnLReport = {
   range: { from: string; to: string };
   income: { rows: PnLRow[]; total: number };
@@ -50,6 +57,15 @@ type PnLReport = {
    *  Surfaced in a dedicated section at the bottom so the operator can
    *  confirm every Ledger entry is accounted for somewhere. */
   excluded: PnLBucket;
+  /** Per-component breakdown for the synthetic "Employer payroll taxes
+   *  (est.)" line — drives the expandable detail without another
+   *  roundtrip. Undefined when there are no W-2 wages in the period. */
+  employerPayrollTaxes?: {
+    wages: number;
+    components: EmployerPayrollTaxComponent[];
+    total: number;
+    totalRatePct: number;
+  };
 };
 
 type PnLDetailRow = {
@@ -342,6 +358,25 @@ export default function ReconcileTab() {
         return next;
       }
       next.add(qbAccount);
+      // Employer Payroll Taxes detail is already on the report payload
+      // (per-component breakdown computed server-side at build time).
+      // Synthesize the same shape the details endpoint returns instead
+      // of a roundtrip — the data is fully derivable from what the UI
+      // already has.
+      if (qbAccount === "Employer payroll taxes (est.)" && report?.employerPayrollTaxes) {
+        const synth: PnLDetail = {
+          qbAccount,
+          rows: report.employerPayrollTaxes.components.map((c) => ({
+            date: "",
+            primary: `${c.label} (${c.ratePct.toFixed(2)}%)`,
+            secondary: `Applied to $${report!.employerPayrollTaxes!.wages.toFixed(2)} wages`,
+            amount: c.amount,
+          })),
+          total: report.employerPayrollTaxes.total,
+        };
+        setDetails((d) => ({ ...d, [qbAccount]: synth }));
+        return next;
+      }
       const cached = details[qbAccount];
       if (!cached || (typeof cached === "object" && "error" in cached)) {
         setDetails((d) => ({ ...d, [qbAccount]: "loading" }));
@@ -894,6 +929,18 @@ export default function ReconcileTab() {
                   {fmtUSD(report.netOperatingIncome)}
                 </Text>
               </HStack>
+              {/* Accrual-divergence footnote — only shown when synthetic
+                  Wages or Employer Payroll Taxes are actually deducted in
+                  the period. Tells the operator upfront why this number
+                  won't tie to QB exactly (Gusto timing), so they can
+                  trust it for decisions without trying to reconcile. */}
+              {report.employerPayrollTaxes && (
+                <Box px={3} py={2} mt={1}>
+                  <Text fontSize="2xs" color="fg.muted" lineHeight="1.4">
+                    Wages and Employer Payroll Taxes are accrued — counted in the period the payment was confirmed, not when Gusto cuts the check. This makes Net Operating Income show whether the work billed this period was profitable. QuickBooks reports them in the period Gusto actually disburses, so this NOI typically leads QB&apos;s by a few days. Employer tax rates are configurable in Super → Settings → PAYROLL_TAX_ESTIMATES (default {report.employerPayrollTaxes.totalRatePct.toFixed(2)}% of wages).
+                  </Text>
+                </Box>
+              )}
 
               {/* Excluded from P&L — categories the operator explicitly
                   opted out of via `plSection: EXCLUDE_FROM_PNL`.
