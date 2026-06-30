@@ -363,7 +363,7 @@ export default function ReconcileTab() {
       // Synthesize the same shape the details endpoint returns instead
       // of a roundtrip — the data is fully derivable from what the UI
       // already has.
-      if (qbAccount === "Employer payroll taxes (est.)" && report?.employerPayrollTaxes) {
+      if (qbAccount === "Payroll:Employer payroll taxes (est.)" && report?.employerPayrollTaxes) {
         const synth: PnLDetail = {
           qbAccount,
           rows: report.employerPayrollTaxes.components.map((c) => ({
