@@ -44,6 +44,14 @@ export type EquipmentCheckoutSummary = {
   checkedOutAt: string;
 };
 
+export type OpenMileageSummary = {
+  id: string;
+  vehicleId: string;
+  vehicleName: string;
+  startedAt: string;
+  startOdometer: number;
+};
+
 export type WorkdayTodayPayload = {
   today: WorkdayState;
   activeJobs: JobBlockingSummary[];
@@ -55,6 +63,10 @@ export type WorkdayTodayPayload = {
    *  IN_PROGRESS card should pulse ("you finished everything, time to
    *  clock out"). */
   todayJobs: { scheduled: number; remaining: number };
+  /** Currently-open mileage sessions on any assigned vehicle. Used by
+   *  the End Workday dialog to prompt the worker to record ending
+   *  odometer + close each session before the workday actually ends. */
+  openMileageEntries: OpenMileageSummary[];
 };
 
 /** When `viewAsUserId` is set, the call operates on that worker's workday

@@ -765,102 +765,6 @@ export default function ReconcileTab() {
         </Button>
       </HStack>
 
-      {/* CSV downloads — flat files for accounting-software cross-checks.
-          Positioned first below the dates so the operator can grab the
-          CSVs without scrolling past the rendered P&L. */}
-      <Card.Root>
-        <CardSectionHeader
-          title="Download CSV"
-          subtitle="Files for cross-checking against accounting software to reconcile accounts."
-          collapsed={isSectionCollapsed("download")}
-          onToggle={() => toggleSection("download")}
-        />
-        {!isSectionCollapsed("download") && (
-        <Card.Body>
-          <VStack align="stretch" gap={3}>
-            {/* Type picker + single Download button. Replaced the
-                five-button row so the section is compact regardless of
-                how many file types we add later. */}
-            <HStack gap={2} wrap="wrap" align="center">
-              <Select.Root
-                collection={downloadKindCollection}
-                value={[downloadKind]}
-                onValueChange={(e) => {
-                  const v = e.value[0] as typeof downloadKind | undefined;
-                  if (v) setDownloadKind(v);
-                }}
-                size="sm"
-                positioning={{ strategy: "fixed", hideWhenDetached: true }}
-                css={{ width: "auto", flex: "0 0 auto" }}
-              >
-                <Select.Control>
-                  <Select.Trigger w="auto" minW="160px" px="2" title="Select download type">
-                    <Select.ValueText />
-                  </Select.Trigger>
-                </Select.Control>
-                <Select.Positioner>
-                  <Select.Content>
-                    {downloadKindCollection.items.map((it) => (
-                      <Select.Item key={it.value} item={it.value}>
-                        <Select.ItemText>{it.label}</Select.ItemText>
-                      </Select.Item>
-                    ))}
-                  </Select.Content>
-                </Select.Positioner>
-              </Select.Root>
-              <Button
-                size="sm"
-                colorPalette="blue"
-                onClick={() => void downloadCsv(downloadKind)}
-                disabled={downloading !== null || loading}
-              >
-                {downloading === downloadKind ? <Spinner size="xs" /> : <FiDownload />}
-                <Text ml={2}>Download</Text>
-              </Button>
-              {/* "Download All" — sequentially fetches every CSV type
-                  for the selected date range. Disabled while either
-                  the single Download or another All-batch is running.
-                  Label flips to a progress count while in-flight so
-                  the operator knows the batch is grinding through. */}
-              <Button
-                size="sm"
-                colorPalette="blue"
-                variant="outline"
-                onClick={() => void downloadAllCsvs()}
-                disabled={downloading !== null || loading}
-                title="Download every CSV type for the selected date range, one after another."
-              >
-                {downloading === "all" ? <Spinner size="xs" /> : <FiDownload />}
-                <Text ml={2}>
-                  {downloading === "all" && downloadAllProgress
-                    ? `Downloading ${downloadAllProgress.done}/${downloadAllProgress.total}…`
-                    : "Download All"}
-                </Text>
-              </Button>
-            </HStack>
-            {/* Description box — swaps based on the selected type so
-                operator sees only the relevant explanation. Styled as
-                a light gray info panel to read as informational, not
-                actionable. */}
-            <Box
-              p={3}
-              bg="gray.50"
-              borderLeftWidth="3px"
-              borderColor="gray.300"
-              borderRadius="md"
-            >
-              <Text fontSize="sm" fontWeight="semibold" mb={1}>
-                {selectedDescription.title}
-              </Text>
-              <Text fontSize="xs" color="fg.muted">
-                {selectedDescription.body}
-              </Text>
-            </Box>
-          </VStack>
-        </Card.Body>
-        )}
-      </Card.Root>
-
       {/* P&L Report rendering with expand/collapse. */}
       <Card.Root>
         <CardSectionHeader
@@ -1231,6 +1135,103 @@ export default function ReconcileTab() {
           </Card.Root>
         </>
       )}
+
+      {/* CSV downloads — last section so the rendered Reconcile data
+          (P&L + Payroll + Workers) reads first. Always rendered
+          regardless of period-load state so the operator can pull
+          CSVs even before the period payload finishes. */}
+      <Card.Root>
+        <CardSectionHeader
+          title="Download CSV"
+          subtitle="Files for cross-checking against accounting software to reconcile accounts."
+          collapsed={isSectionCollapsed("download")}
+          onToggle={() => toggleSection("download")}
+        />
+        {!isSectionCollapsed("download") && (
+        <Card.Body>
+          <VStack align="stretch" gap={3}>
+            {/* Type picker + single Download button. Replaced the
+                five-button row so the section is compact regardless of
+                how many file types we add later. */}
+            <HStack gap={2} wrap="wrap" align="center">
+              <Select.Root
+                collection={downloadKindCollection}
+                value={[downloadKind]}
+                onValueChange={(e) => {
+                  const v = e.value[0] as typeof downloadKind | undefined;
+                  if (v) setDownloadKind(v);
+                }}
+                size="sm"
+                positioning={{ strategy: "fixed", hideWhenDetached: true }}
+                css={{ width: "auto", flex: "0 0 auto" }}
+              >
+                <Select.Control>
+                  <Select.Trigger w="auto" minW="160px" px="2" title="Select download type">
+                    <Select.ValueText />
+                  </Select.Trigger>
+                </Select.Control>
+                <Select.Positioner>
+                  <Select.Content>
+                    {downloadKindCollection.items.map((it) => (
+                      <Select.Item key={it.value} item={it.value}>
+                        <Select.ItemText>{it.label}</Select.ItemText>
+                      </Select.Item>
+                    ))}
+                  </Select.Content>
+                </Select.Positioner>
+              </Select.Root>
+              <Button
+                size="sm"
+                colorPalette="blue"
+                onClick={() => void downloadCsv(downloadKind)}
+                disabled={downloading !== null || loading}
+              >
+                {downloading === downloadKind ? <Spinner size="xs" /> : <FiDownload />}
+                <Text ml={2}>Download</Text>
+              </Button>
+              {/* "Download All" — sequentially fetches every CSV type
+                  for the selected date range. Disabled while either
+                  the single Download or another All-batch is running.
+                  Label flips to a progress count while in-flight so
+                  the operator knows the batch is grinding through. */}
+              <Button
+                size="sm"
+                colorPalette="blue"
+                variant="outline"
+                onClick={() => void downloadAllCsvs()}
+                disabled={downloading !== null || loading}
+                title="Download every CSV type for the selected date range, one after another."
+              >
+                {downloading === "all" ? <Spinner size="xs" /> : <FiDownload />}
+                <Text ml={2}>
+                  {downloading === "all" && downloadAllProgress
+                    ? `Downloading ${downloadAllProgress.done}/${downloadAllProgress.total}…`
+                    : "Download All"}
+                </Text>
+              </Button>
+            </HStack>
+            {/* Description box — swaps based on the selected type so
+                operator sees only the relevant explanation. Styled as
+                a light gray info panel to read as informational, not
+                actionable. */}
+            <Box
+              p={3}
+              bg="gray.50"
+              borderLeftWidth="3px"
+              borderColor="gray.300"
+              borderRadius="md"
+            >
+              <Text fontSize="sm" fontWeight="semibold" mb={1}>
+                {selectedDescription.title}
+              </Text>
+              <Text fontSize="xs" color="fg.muted">
+                {selectedDescription.body}
+              </Text>
+            </Box>
+          </VStack>
+        </Card.Body>
+        )}
+      </Card.Root>
 
     </VStack>
   );

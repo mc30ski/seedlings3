@@ -14,10 +14,12 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { ChevronLeft, ChevronRight, AlertTriangle, CheckCircle2, Edit3, RotateCcw } from "lucide-react";
+import { Car, ChevronLeft, ChevronRight, AlertTriangle, Edit3, RotateCcw } from "lucide-react";
+import StatusChip from "@/src/ui/components/StatusChip";
 import { apiGet, apiPost, apiPatch } from "@/src/lib/api";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
+import MileageReviewDialog, { type MileageReviewEntry } from "@/src/ui/dialogs/MileageReviewDialog";
 import {
   bizToday,
   bizAddDays,
@@ -84,6 +86,23 @@ type WorkdaysByDateResponse = {
   didntWork: DidntWorkUser[];
 };
 
+// One mileage session as returned by /super/mileage/by-date. Response
+// is a map keyed by driverUserId → entries[]. Sessions are surfaced
+// inline on each WorkdayRow with an Approve-mileage button that fires
+// independently of the workday-hours approval.
+type WorkdaysTabMileageEntry = {
+  id: string;
+  vehicleId: string;
+  vehicleName: string;
+  startedAt: string;
+  endedAt: string | null;
+  startOdometer: number;
+  endOdometer: number | null;
+  miles: number | null;
+  notes: string | null;
+  approvedAt: string | null;
+};
+
 function workerLabel(u: { displayName: string | null; email: string | null }): string {
   return u.displayName ?? u.email ?? "(unnamed)";
 }
@@ -144,6 +163,34 @@ export default function WorkdaysTab({
   // Backfill dialog state — Super clicks "Add workday" in the Didn't
   // Work section to create a row for a worker who forgot to clock in.
   const [createForUser, setCreateForUser] = useState<DidntWorkUser | null>(null);
+  // Mileage entries for the selected date, keyed by driverUserId. Each
+  // WorkdayRow drills into this map to render its mileage sub-row +
+  // Approve-mileage button. Fetched in parallel with the workdays
+  // payload in load() below.
+  const [mileageByUser, setMileageByUser] = useState<Record<string, WorkdaysTabMileageEntry[]>>({});
+  const [busyMileageId, setBusyMileageId] = useState<string | null>(null);
+  // Per-worker × date mileage review dialog. Opens from the mileage
+  // sub-row's Review button; the caller passes the driver label + all
+  // that day's entries. Same lifecycle as WorkdaysTab.ReviewDialog for
+  // workday hours: edit fields → Save changes → Approve / Unapprove.
+  const [reviewMileageFor, setReviewMileageFor] = useState<{
+    driverUserId: string;
+    driverLabel: string;
+    entryDate: string;
+    entries: MileageReviewEntry[];
+  } | null>(null);
+
+  // Whenever the mileage map refreshes (post-save reload), re-sync the
+  // open dialog's entries so its badges + inputs reflect fresh state.
+  useEffect(() => {
+    if (!reviewMileageFor) return;
+    const fresh = mileageByUser[reviewMileageFor.driverUserId] ?? [];
+    // Snap to the same identity check to avoid the setState-loops
+    // React runs when the array reference doesn't change.
+    if (fresh === reviewMileageFor.entries) return;
+    setReviewMileageFor((prev) => (prev ? { ...prev, entries: fresh } : prev));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mileageByUser]);
 
   // External jump from the alert badge. Re-runs each time the parent
   // bumps the nonce, so repeat clicks always re-route even if the user
@@ -157,8 +204,17 @@ export default function WorkdaysTab({
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await apiGet<WorkdaysByDateResponse>(`/api/super/workdays/by-date?date=${selectedDate}`);
+      // Two parallel fetches — workdays and per-user mileage entries
+      // for the same date. Mileage endpoint returns {} when nobody
+      // drove that day.
+      const [r, mileage] = await Promise.all([
+        apiGet<WorkdaysByDateResponse>(`/api/super/workdays/by-date?date=${selectedDate}`),
+        apiGet<Record<string, WorkdaysTabMileageEntry[]>>(
+          `/api/super/mileage/by-date?date=${selectedDate}`,
+        ).catch(() => ({} as Record<string, WorkdaysTabMileageEntry[]>)),
+      ]);
       setData(r);
+      setMileageByUser(mileage ?? {});
       // Clear selection on day change — selected ids only make sense within one day.
       setBulkSelected(new Set());
     } catch (err) {
@@ -167,6 +223,26 @@ export default function WorkdaysTab({
       setLoading(false);
     }
   }, [selectedDate]);
+
+  async function approveMileageForRow(row: SuperWorkdayRow) {
+    setBusyMileageId(row.id);
+    try {
+      await apiPost(`/api/super/mileage/approve-day`, {
+        userId: row.userId,
+        entryDate: row.workdayDate,
+      });
+      publishInlineMessage({ type: "SUCCESS", text: "Mileage approved." });
+      await load();
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Approve failed.", err),
+      });
+    } finally {
+      setBusyMileageId(null);
+    }
+  }
+
 
   useEffect(() => {
     void load();
@@ -205,6 +281,18 @@ export default function WorkdaysTab({
     setSelectedDate(bizAddDays(selectedDate, delta));
   }
 
+  // Bulk-select uses prefixed keys so hours and mileage share one Set
+  // without special-casing at every callsite:
+  //   • `w:<workdayId>`               → the workday's hours row
+  //   • `m:<userId>:<entryDate>`      → all pending mileage entries
+  //                                     for that worker × ET date
+  // The Select-all master and Approve-N-selected button count them
+  // together; runBulkApprove splits them back into their respective
+  // endpoints.
+  const workdayBulkKey = (workdayId: string) => `w:${workdayId}`;
+  const mileageBulkKey = (userId: string, entryDate: string) =>
+    `m:${userId}:${entryDate}`;
+
   function toggleBulk(id: string) {
     setBulkSelected((prev) => {
       const next = new Set(prev);
@@ -214,37 +302,101 @@ export default function WorkdaysTab({
     });
   }
 
+  // Full set of bulk-selectable keys in the pending section — every
+  // pending workday plus every worker × date that has ≥1 pending
+  // mileage session in that row.
+  const bulkEligibleKeys = useMemo(() => {
+    const keys: string[] = [];
+    for (const r of grouped.pending) {
+      keys.push(workdayBulkKey(r.id));
+      const sessions = mileageByUser[r.userId] ?? [];
+      const hasPending = sessions.some(
+        (e) => e.endedAt != null && e.approvedAt == null,
+      );
+      if (hasPending) keys.push(mileageBulkKey(r.userId, r.workdayDate));
+    }
+    return keys;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [grouped.pending, mileageByUser]);
+
   function toggleBulkAll() {
-    if (bulkSelected.size === grouped.pending.length) {
+    if (bulkSelected.size === bulkEligibleKeys.length) {
       setBulkSelected(new Set());
     } else {
-      setBulkSelected(new Set(grouped.pending.map((r) => r.id)));
+      setBulkSelected(new Set(bulkEligibleKeys));
     }
   }
 
   async function runBulkApprove() {
     setBulkConfirmOpen(false);
+    // Split the unified selection into its two categories. Only what
+    // the operator explicitly ticked gets approved — no implicit
+    // cascade from workday → mileage (that would defeat the whole
+    // two-button model).
+    const workdayIds: string[] = [];
+    const mileageTargets: Array<{ userId: string; entryDate: string }> = [];
+    for (const key of bulkSelected) {
+      if (key.startsWith("w:")) {
+        workdayIds.push(key.slice(2));
+      } else if (key.startsWith("m:")) {
+        const rest = key.slice(2);
+        const idx = rest.lastIndexOf(":");
+        if (idx > 0) {
+          mileageTargets.push({
+            userId: rest.slice(0, idx),
+            entryDate: rest.slice(idx + 1),
+          });
+        }
+      }
+    }
     try {
-      // `allowSameDay` mirrors the per-row Review dialog: when the
-      // operator is bulk-approving before the cutoff, send the opt-in
-      // bypass so the server doesn't fail every row with
-      // "Approval window is not open yet." BulkApproveConfirm has
-      // already required the typed double-confirm in that mode.
-      const r = await apiPost<{ approved: string[]; alreadyApproved: string[]; failed: { id: string; reason: string }[] }>(
-        "/api/super/workdays/bulk-approve",
-        {
-          workdayIds: Array.from(bulkSelected),
-          allowSameDay: !!data && !data.adminWindowOpen,
-        },
-      );
-      const msg = `Approved ${r.approved.length}${r.alreadyApproved.length ? `, ${r.alreadyApproved.length} already approved` : ""}${r.failed.length ? `, ${r.failed.length} failed` : ""}.`;
+      // Fire both endpoint sets in parallel.
+      const [wdRes, mlRes] = await Promise.all([
+        workdayIds.length > 0
+          ? apiPost<{
+              approved: string[];
+              alreadyApproved: string[];
+              failed: { id: string; reason: string }[];
+            }>("/api/super/workdays/bulk-approve", {
+              workdayIds,
+              allowSameDay: !!data && !data.adminWindowOpen,
+            })
+          : Promise.resolve({ approved: [], alreadyApproved: [], failed: [] }),
+        Promise.allSettled(
+          mileageTargets.map((t) =>
+            apiPost(`/api/super/mileage/approve-day`, {
+              userId: t.userId,
+              entryDate: t.entryDate,
+            }),
+          ),
+        ),
+      ]);
+      const wdApproved = wdRes.approved.length;
+      const wdAlready = wdRes.alreadyApproved.length;
+      const wdFailed = wdRes.failed.length;
+      const mlApproved = mlRes.filter((r) => r.status === "fulfilled").length;
+      const mlFailed = mlRes.filter((r) => r.status === "rejected").length;
+
+      const parts: string[] = [];
+      if (workdayIds.length > 0) {
+        parts.push(
+          `${wdApproved} workday${wdApproved === 1 ? "" : "s"} approved` +
+            (wdAlready ? `, ${wdAlready} already approved` : "") +
+            (wdFailed ? `, ${wdFailed} failed` : ""),
+        );
+      }
+      if (mileageTargets.length > 0) {
+        parts.push(
+          `${mlApproved} mileage bundle${mlApproved === 1 ? "" : "s"} approved` +
+            (mlFailed ? `, ${mlFailed} failed` : ""),
+        );
+      }
       publishInlineMessage({
-        type: r.failed.length === 0 ? "SUCCESS" : "WARNING",
-        text: msg,
+        type: wdFailed + mlFailed === 0 ? "SUCCESS" : "WARNING",
+        text: parts.join(" · "),
       });
-      if (r.failed.length > 0) {
-        // Surface per-row failure reasons so the operator can decide what to do.
-        for (const f of r.failed) {
+      if (wdFailed > 0) {
+        for (const f of wdRes.failed) {
           publishInlineMessage({ type: "ERROR", text: `Workday ${f.id}: ${f.reason}` });
         }
       }
@@ -256,23 +408,32 @@ export default function WorkdaysTab({
     }
   }
 
-  // Sanity stats for the bulk-confirm dialog — count, total active hours,
-  // count of "outliers" outside 4–10 hours.
+  // Sanity stats for the bulk-confirm dialog — workday count, total
+  // active hours, count of "outliers" outside 4–10 hours, and mileage
+  // bundle count (surfaced so the confirm dialog can say "3 workdays
+  // + 2 mileage bundles" instead of a bare "5 items").
   const bulkStats = useMemo(() => {
-    const rows = grouped.pending.filter((r) => bulkSelected.has(r.id));
+    const wdRows = grouped.pending.filter((r) =>
+      bulkSelected.has(workdayBulkKey(r.id)),
+    );
     let totalMs = 0;
     let outliers = 0;
-    for (const r of rows) {
+    for (const r of wdRows) {
       const ms = activeMs(r);
       totalMs += ms;
       const hours = ms / 3600000;
       if (hours < 4 || hours > 10) outliers += 1;
     }
+    const mileageCount = Array.from(bulkSelected).filter((k) =>
+      k.startsWith("m:"),
+    ).length;
     return {
-      count: rows.length,
+      count: wdRows.length,
       totalHours: totalMs / 3600000,
       outliers,
+      mileageCount,
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [grouped.pending, bulkSelected]);
 
   return (
@@ -384,7 +545,23 @@ export default function WorkdaysTab({
           {grouped.needsEnding.length > 0 && (
             <SectionCard title="Needs ending" color="orange" count={grouped.needsEnding.length}>
               {grouped.needsEnding.map((r) => (
-                <WorkdayRow key={r.id} row={r} onReview={() => setReviewRow(r)} />
+                <WorkdayRow
+                  key={r.id}
+                  row={r}
+                  onReview={() => setReviewRow(r)}
+                  mileageEntries={mileageByUser[r.userId]}
+                  onApproveMileage={() => void approveMileageForRow(r)}
+                  onReviewMileage={() => {
+                    const entries = mileageByUser[r.userId] ?? [];
+                    setReviewMileageFor({
+                      driverUserId: r.userId,
+                      driverLabel: workerLabel(r.user),
+                      entryDate: r.workdayDate,
+                      entries,
+                    });
+                  }}
+                  mileageBusy={busyMileageId === r.id}
+                />
               ))}
             </SectionCard>
           )}
@@ -394,7 +571,10 @@ export default function WorkdaysTab({
             <SectionCard title="Pending approval" color="blue" count={grouped.pending.length}>
               <HStack mb={2} gap={2}>
                 <Checkbox.Root
-                  checked={bulkSelected.size > 0 && bulkSelected.size === grouped.pending.length}
+                  checked={
+                    bulkEligibleKeys.length > 0 &&
+                    bulkSelected.size === bulkEligibleKeys.length
+                  }
                   onCheckedChange={() => toggleBulkAll()}
                 >
                   <Checkbox.HiddenInput />
@@ -416,9 +596,23 @@ export default function WorkdaysTab({
                   key={r.id}
                   row={r}
                   onReview={() => setReviewRow(r)}
+                  mileageEntries={mileageByUser[r.userId]}
+                  onApproveMileage={() => void approveMileageForRow(r)}
+                  onReviewMileage={() => {
+                    const entries = mileageByUser[r.userId] ?? [];
+                    setReviewMileageFor({
+                      driverUserId: r.userId,
+                      driverLabel: workerLabel(r.user),
+                      entryDate: r.workdayDate,
+                      entries,
+                    });
+                  }}
+                  mileageBusy={busyMileageId === r.id}
                   checkbox
-                  checked={bulkSelected.has(r.id)}
-                  onToggle={() => toggleBulk(r.id)}
+                  checked={bulkSelected.has(workdayBulkKey(r.id))}
+                  onToggle={() => toggleBulk(workdayBulkKey(r.id))}
+                  mileageChecked={bulkSelected.has(mileageBulkKey(r.userId, r.workdayDate))}
+                  onToggleMileage={() => toggleBulk(mileageBulkKey(r.userId, r.workdayDate))}
                 />
               ))}
             </SectionCard>
@@ -428,7 +622,23 @@ export default function WorkdaysTab({
           {grouped.liveToday.length > 0 && (
             <SectionCard title="Currently working" color="green" count={grouped.liveToday.length}>
               {grouped.liveToday.map((r) => (
-                <WorkdayRow key={r.id} row={r} onReview={() => setReviewRow(r)} />
+                <WorkdayRow
+                  key={r.id}
+                  row={r}
+                  onReview={() => setReviewRow(r)}
+                  mileageEntries={mileageByUser[r.userId]}
+                  onApproveMileage={() => void approveMileageForRow(r)}
+                  onReviewMileage={() => {
+                    const entries = mileageByUser[r.userId] ?? [];
+                    setReviewMileageFor({
+                      driverUserId: r.userId,
+                      driverLabel: workerLabel(r.user),
+                      entryDate: r.workdayDate,
+                      entries,
+                    });
+                  }}
+                  mileageBusy={busyMileageId === r.id}
+                />
               ))}
             </SectionCard>
           )}
@@ -437,7 +647,23 @@ export default function WorkdaysTab({
           {grouped.approved.length > 0 && (
             <SectionCard title="Approved" color="gray" count={grouped.approved.length}>
               {grouped.approved.map((r) => (
-                <WorkdayRow key={r.id} row={r} onReview={() => setReviewRow(r)} />
+                <WorkdayRow
+                  key={r.id}
+                  row={r}
+                  onReview={() => setReviewRow(r)}
+                  mileageEntries={mileageByUser[r.userId]}
+                  onApproveMileage={() => void approveMileageForRow(r)}
+                  onReviewMileage={() => {
+                    const entries = mileageByUser[r.userId] ?? [];
+                    setReviewMileageFor({
+                      driverUserId: r.userId,
+                      driverLabel: workerLabel(r.user),
+                      entryDate: r.workdayDate,
+                      entries,
+                    });
+                  }}
+                  mileageBusy={busyMileageId === r.id}
+                />
               ))}
             </SectionCard>
           )}
@@ -487,6 +713,24 @@ export default function WorkdaysTab({
         />
       )}
 
+      {/* Mileage review dialog — mirrors the ReviewDialog lifecycle
+          for the worker × date's mileage sessions. Stays open across
+          per-entry mutations; the reload cascades entries back in. */}
+      {reviewMileageFor && (
+        <MileageReviewDialog
+          driverLabel={reviewMileageFor.driverLabel}
+          entryDate={reviewMileageFor.entryDate}
+          entries={reviewMileageFor.entries}
+          onClose={() => setReviewMileageFor(null)}
+          onChanged={() => {
+            void load();
+            // Rehydrate the dialog's entries from the freshly-loaded
+            // map on the next render — we hold the last-known copy in
+            // state and refresh it when reload finishes.
+          }}
+        />
+      )}
+
       {/* Backfill dialog — Super creates a workday for someone in the
           "Didn't work" section who forgot to clock in. */}
       {createForUser && (
@@ -508,6 +752,7 @@ export default function WorkdaysTab({
         count={bulkStats.count}
         totalHours={bulkStats.totalHours}
         outliers={bulkStats.outliers}
+        mileageCount={bulkStats.mileageCount}
         sameDay={!!data && !data.adminWindowOpen}
         onCancel={() => setBulkConfirmOpen(false)}
         onConfirm={() => void runBulkApprove()}
@@ -552,69 +797,157 @@ function WorkdayRow({
   checkbox,
   checked,
   onToggle,
+  mileageEntries,
+  onApproveMileage,
+  onReviewMileage,
+  mileageBusy,
+  mileageChecked,
+  onToggleMileage,
 }: {
   row: SuperWorkdayRow;
   onReview: () => void;
   checkbox?: boolean;
   checked?: boolean;
   onToggle?: () => void;
+  /** Mileage sessions for this worker on this date. Omitted → sub-row
+   *  hidden. Empty array → also hidden (no sessions to surface). */
+  mileageEntries?: WorkdaysTabMileageEntry[];
+  onApproveMileage?: () => void;
+  /** Opens the per-worker × date mileage review dialog. Mirrors the
+   *  workday-row Review button lifecycle. */
+  onReviewMileage?: () => void;
+  mileageBusy?: boolean;
+  /** Bulk-select checkbox for the mileage sub-row. Only rendered when
+   *  the workday row is also in checkbox mode (`checkbox={true}`) AND
+   *  the mileage row has ≥1 pending session. */
+  mileageChecked?: boolean;
+  onToggleMileage?: () => void;
 }) {
   const active = activeMs(row);
+  const sessions = mileageEntries ?? [];
+  const pendingMileage = sessions.filter(
+    (e) => e.endedAt != null && e.approvedAt == null,
+  );
+  const totalMiles = sessions.reduce((s, e) => s + (e.miles ?? 0), 0);
   return (
-    <HStack
+    <VStack
+      align="stretch"
       p={2}
       borderWidth="1px"
       borderColor="gray.200"
       borderRadius="md"
       gap={2}
-      align="center"
-      wrap="wrap"
     >
-      {checkbox && (
-        <Checkbox.Root checked={!!checked} onCheckedChange={() => onToggle?.()}>
-          <Checkbox.HiddenInput />
-          <Checkbox.Control />
-        </Checkbox.Root>
-      )}
-      <VStack align="start" gap={0} flex="1" minW="200px">
-        <HStack gap={2}>
-          <Text fontSize="sm" fontWeight="medium">{workerLabel(row.user)}</Text>
-          {row.user.workerType && <Badge size="xs" variant="outline">{row.user.workerType}</Badge>}
-          {row.isOpen && (
-            <Badge size="xs" colorPalette="orange" variant="solid">⚠ open</Badge>
+      <HStack gap={2} align="center" wrap="wrap">
+        {checkbox && (
+          <Checkbox.Root checked={!!checked} onCheckedChange={() => onToggle?.()}>
+            <Checkbox.HiddenInput />
+            <Checkbox.Control />
+          </Checkbox.Root>
+        )}
+        <VStack align="start" gap={0} flex="1" minW="200px">
+          <HStack gap={2}>
+            <Text fontSize="sm" fontWeight="medium">{workerLabel(row.user)}</Text>
+            {row.user.workerType && <Badge size="xs" variant="outline">{row.user.workerType}</Badge>}
+            <StatusChip
+              open={row.isOpen}
+              approved={row.uiState === "APPROVED"}
+            />
+          </HStack>
+          <Text fontSize="xs" color="fg.muted">
+            {fmtTimeOpts(row.startedAt, { hour: "numeric", minute: "2-digit" })}
+            {" – "}
+            {row.endedAt ? fmtTimeOpts(row.endedAt, { hour: "numeric", minute: "2-digit" }) : "(open)"}
+            {" · "}
+            {fmtDuration(active)} active
+            {row.totalPausedMs > 0 && ` · ${fmtDuration(row.totalPausedMs)} paused`}
+          </Text>
+          {row.approvedBy && (
+            <Text fontSize="2xs" color="fg.muted">
+              Approved by {workerLabel(row.approvedBy)} on{" "}
+              {fmtDateOpts(row.approvedAt!, { month: "short", day: "numeric" })}{" "}
+              {fmtTimeOpts(row.approvedAt!, { hour: "numeric", minute: "2-digit" })}
+            </Text>
           )}
-          {row.uiState === "APPROVED" && (
-            <Badge size="xs" colorPalette="green" variant="subtle">
-              <CheckCircle2 size={10} style={{ marginRight: 3 }} />
-              approved
-            </Badge>
+        </VStack>
+        <Button
+          size="sm"
+          variant={row.uiState === "APPROVED" ? "outline" : "solid"}
+          colorPalette={row.uiState === "APPROVED" ? "gray" : "blue"}
+          onClick={onReview}
+        >
+          Review
+        </Button>
+      </HStack>
+      {/* Mileage sub-row — same treatment as PendingWorkdaysSection.
+          Independent Approve button; edits/unapprove go through the
+          Vehicles tab. Hidden when the driver logged no mileage on
+          this date. */}
+      {sessions.length > 0 && (
+        <HStack
+          justify="space-between"
+          align="start"
+          gap={2}
+          wrap="wrap"
+          pt={2}
+          borderTopWidth="1px"
+          borderColor="gray.100"
+        >
+          <HStack gap={2} align="start" flex={1} minW={0}>
+            {/* Mileage sub-row bulk checkbox — only when the workday
+                row is also in bulk mode AND this row has pending
+                mileage to approve. Independent from the workday
+                checkbox above. */}
+            {checkbox && pendingMileage.length > 0 && onToggleMileage && (
+              <Checkbox.Root
+                checked={!!mileageChecked}
+                onCheckedChange={() => onToggleMileage()}
+              >
+                <Checkbox.HiddenInput />
+                <Checkbox.Control />
+              </Checkbox.Root>
+            )}
+            <Box color="fg.muted" mt={0.5}>
+              <Car size={12} />
+            </Box>
+            <VStack align="start" gap={0} flex={1} minW={0}>
+              <HStack gap={2}>
+                <Text fontSize="xs">
+                  {sessions.length} session{sessions.length === 1 ? "" : "s"}
+                  {" · "}
+                  {totalMiles.toLocaleString()} mi
+                  {pendingMileage.length > 0 && (
+                    <Text as="span" color="orange.700" fontWeight="medium">
+                      {" · "}{pendingMileage.length} pending
+                    </Text>
+                  )}
+                </Text>
+                <StatusChip
+                  open={sessions.some((s) => s.endedAt == null)}
+                  approved={
+                    sessions.length > 0 &&
+                    sessions.every((s) => s.endedAt != null && s.approvedAt != null)
+                  }
+                />
+              </HStack>
+              <Text fontSize="2xs" color="fg.muted" lineClamp={1}>
+                {sessions.map((e) => e.vehicleName).join(", ")}
+              </Text>
+            </VStack>
+          </HStack>
+          {onReviewMileage && (
+            <Button
+              size="xs"
+              variant="outline"
+              colorPalette="blue"
+              onClick={onReviewMileage}
+            >
+              Review
+            </Button>
           )}
         </HStack>
-        <Text fontSize="xs" color="fg.muted">
-          {fmtTimeOpts(row.startedAt, { hour: "numeric", minute: "2-digit" })}
-          {" – "}
-          {row.endedAt ? fmtTimeOpts(row.endedAt, { hour: "numeric", minute: "2-digit" }) : "(open)"}
-          {" · "}
-          {fmtDuration(active)} active
-          {row.totalPausedMs > 0 && ` · ${fmtDuration(row.totalPausedMs)} paused`}
-        </Text>
-        {row.approvedBy && (
-          <Text fontSize="2xs" color="fg.muted">
-            Approved by {workerLabel(row.approvedBy)} on{" "}
-            {fmtDateOpts(row.approvedAt!, { month: "short", day: "numeric" })}{" "}
-            {fmtTimeOpts(row.approvedAt!, { hour: "numeric", minute: "2-digit" })}
-          </Text>
-        )}
-      </VStack>
-      <Button
-        size="sm"
-        variant={row.uiState === "APPROVED" ? "outline" : "solid"}
-        colorPalette={row.uiState === "APPROVED" ? "gray" : "blue"}
-        onClick={onReview}
-      >
-        Review
-      </Button>
-    </HStack>
+      )}
+    </VStack>
   );
 }
 
@@ -816,40 +1149,44 @@ function ReviewDialog({
                   <Text fontSize="sm" fontWeight="semibold">Active total</Text>
                   <Text fontSize="sm" fontWeight="semibold">{fmtDuration(liveActive)}</Text>
                 </HStack>
-                {isApproved && (
-                  <Box pt={1}>
-                    <Button
-                      size="xs"
-                      variant="ghost"
-                      colorPalette="red"
-                      onClick={() => void unapprove()}
-                      disabled={saving}
-                    >
-                      <RotateCcw size={12} /> <Text ml={1}>Unapprove</Text>
-                    </Button>
-                  </Box>
-                )}
               </VStack>
             </Dialog.Body>
             <Dialog.Footer>
-              <HStack justify="flex-end" w="full" gap={2}>
-                <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
-                {dirty && (
-                  <Button variant="outline" onClick={() => void saveOnly()} disabled={saving}>
-                    <Edit3 size={12} /> <Text ml={1}>Save edits</Text>
+              <HStack justify="space-between" w="full" gap={2}>
+                {/* Left cluster — Unapprove is a "reverse" action, so
+                    left-aligned away from the primary Cancel / Save /
+                    Approve buttons. Only shown when the row is already
+                    approved. */}
+                {isApproved ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    colorPalette="red"
+                    onClick={() => void unapprove()}
+                    disabled={saving}
+                  >
+                    <RotateCcw size={12} /> <Text ml={1}>Unapprove</Text>
                   </Button>
-                )}
-                <Button
-                  colorPalette={sameDay ? "orange" : "green"}
-                  onClick={onApproveClick}
-                  disabled={saving || !endedAt}
-                >
-                  {saving
-                    ? <Spinner size="xs" />
-                    : sameDay
-                      ? (isApproved ? "Re-approve (same day)" : "Approve (same day)")
-                      : (isApproved ? "Re-approve" : "Approve")}
-                </Button>
+                ) : <Box />}
+                <HStack gap={2}>
+                  <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
+                  {dirty && (
+                    <Button variant="outline" onClick={() => void saveOnly()} disabled={saving}>
+                      <Edit3 size={12} /> <Text ml={1}>Save edits</Text>
+                    </Button>
+                  )}
+                  <Button
+                    colorPalette={sameDay ? "orange" : "green"}
+                    onClick={onApproveClick}
+                    disabled={saving || !endedAt}
+                  >
+                    {saving
+                      ? <Spinner size="xs" />
+                      : sameDay
+                        ? (isApproved ? "Re-approve (same day)" : "Approve (same day)")
+                        : (isApproved ? "Re-approve" : "Approve")}
+                  </Button>
+                </HStack>
               </HStack>
             </Dialog.Footer>
           </Dialog.Content>
@@ -883,6 +1220,7 @@ function BulkApproveConfirm({
   count,
   totalHours,
   outliers,
+  mileageCount,
   sameDay,
   onCancel,
   onConfirm,
@@ -891,6 +1229,11 @@ function BulkApproveConfirm({
   count: number;
   totalHours: number;
   outliers: number;
+  /** Number of mileage bundles (worker × date) also selected — surfaced
+   *  in the dialog subhead so the operator sees the mix before
+   *  confirming. Sub-row bulk-approve orchestration lives client-side;
+   *  backend endpoints stay independent. */
+  mileageCount: number;
   // True when the operator is bulk-approving BEFORE the approval cutoff.
   // Surfaces the risk callout and gates the Approve button behind a
   // typed "APPROVE" confirmation. Server stamps `sameDayBypass: true` in
@@ -914,13 +1257,17 @@ function BulkApproveConfirm({
           <Dialog.Content mx="4" maxW="sm" w="full" rounded="2xl" p="4" shadow="lg">
             <Dialog.Header>
               <Dialog.Title>
-                {sameDay ? "Approve same-day workdays?" : `Approve ${count} workday${count === 1 ? "" : "s"}?`}
+                {sameDay
+                  ? "Approve selected same-day items?"
+                  : `Approve ${count + mileageCount} item${count + mileageCount === 1 ? "" : "s"}?`}
               </Dialog.Title>
             </Dialog.Header>
             <Dialog.Body>
               <VStack align="stretch" gap={2}>
                 <Text fontSize="sm">
-                  {count} workday{count === 1 ? "" : "s"} · {totalHours.toFixed(1)} active hours total
+                  {count > 0 && `${count} workday${count === 1 ? "" : "s"} · ${totalHours.toFixed(1)} active hours total`}
+                  {count > 0 && mileageCount > 0 && " · "}
+                  {mileageCount > 0 && `${mileageCount} mileage bundle${mileageCount === 1 ? "" : "s"}`}
                 </Text>
                 {sameDay && (
                   <Box p={2} bg="orange.50" borderWidth="1px" borderColor="orange.400" borderRadius="md">

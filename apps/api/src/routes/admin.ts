@@ -6691,4 +6691,154 @@ Respond ONLY with valid JSON in this exact format:
     await ledgerFollowups.deleteFollowup({ id: req.params.id, actorId });
     return { ok: true };
   });
+
+  // ── Vehicles + business-mileage tracking (Super) ────────────────────────
+  //
+  // Super-only fleet management. Workers see their assigned vehicles
+  // + their own mileage entries through the worker routes; everything
+  // Super touches (create/assign/edit-any/approve) lives here.
+
+  app.get("/super/vehicles", superGuard, async (req: any) => {
+    const { listVehicles } = await import("../services/vehicles");
+    const includeArchived = req.query?.includeArchived === "true";
+    return listVehicles({ includeArchived });
+  });
+
+  app.post("/super/vehicles", superGuard, async (req: any) => {
+    const { createVehicle } = await import("../services/vehicles");
+    return createVehicle(req.body ?? {});
+  });
+
+  app.patch("/super/vehicles/:id", superGuard, async (req: any) => {
+    const { updateVehicle } = await import("../services/vehicles");
+    return updateVehicle(req.params.id, req.body ?? {});
+  });
+
+  app.post("/super/vehicles/:id/archive", superGuard, async (req: any) => {
+    const { archiveVehicle } = await import("../services/vehicles");
+    return archiveVehicle(req.params.id);
+  });
+
+  app.post("/super/vehicles/:id/unarchive", superGuard, async (req: any) => {
+    const { unarchiveVehicle } = await import("../services/vehicles");
+    return unarchiveVehicle(req.params.id);
+  });
+
+  // Assign / unassign — the body carries the userId; the URL carries
+  // the vehicleId.
+  app.post("/super/vehicles/:id/assign", superGuard, async (req: any) => {
+    const { assignUserToVehicle } = await import("../services/vehicles");
+    const userId = String(req.body?.userId ?? "");
+    if (!userId) throw app.httpErrors.badRequest("userId is required");
+    return assignUserToVehicle(req.params.id, userId);
+  });
+
+  app.post("/super/vehicles/:id/unassign", superGuard, async (req: any) => {
+    const { unassignUserFromVehicle } = await import("../services/vehicles");
+    const userId = String(req.body?.userId ?? "");
+    if (!userId) throw app.httpErrors.badRequest("userId is required");
+    return unassignUserFromVehicle(req.params.id, userId);
+  });
+
+  // Backfill a mileage entry — Super override for the case where a
+  // worker forgot to log a session in the moment. Body:
+  //   { driverUserId, startedAt, endedAt, startOdometer, endOdometer, notes? }
+  // Row is created closed (not open) with approvedAt: null so it
+  // flows through the standard daily-approval queue.
+  app.post("/super/vehicles/:id/mileage", superGuard, async (req: any) => {
+    const { superCreateMileageEntry } = await import("../services/mileage");
+    const b = req.body ?? {};
+    if (!b.driverUserId) throw app.httpErrors.badRequest("driverUserId is required");
+    if (!b.startedAt) throw app.httpErrors.badRequest("startedAt is required");
+    if (!b.endedAt) throw app.httpErrors.badRequest("endedAt is required");
+    if (b.startOdometer == null) throw app.httpErrors.badRequest("startOdometer is required");
+    if (b.endOdometer == null) throw app.httpErrors.badRequest("endOdometer is required");
+    try {
+      return await superCreateMileageEntry({
+        vehicleId: req.params.id,
+        driverUserId: String(b.driverUserId),
+        startedAt: new Date(b.startedAt),
+        endedAt: new Date(b.endedAt),
+        startOdometer: Number(b.startOdometer),
+        endOdometer: Number(b.endOdometer),
+        notes: b.notes ?? null,
+      });
+    } catch (err: any) {
+      throw app.httpErrors.badRequest(err?.message || "Invalid mileage entry.");
+    }
+  });
+
+  // Per-vehicle mileage log + totals for a date range.
+  app.get("/super/vehicles/:id/mileage", superGuard, async (req: any) => {
+    const { listEntriesForVehicle, vehicleTotalsForRange } = await import("../services/mileage");
+    const fromDate = req.query?.from ? String(req.query.from) : undefined;
+    const toDate = req.query?.to ? String(req.query.to) : undefined;
+    const [entries, totals] = await Promise.all([
+      listEntriesForVehicle(req.params.id, { fromDate, toDate }),
+      fromDate && toDate
+        ? vehicleTotalsForRange(req.params.id, fromDate, toDate)
+        : Promise.resolve(null),
+    ]);
+    return { entries, totals };
+  });
+
+  // Mileage-entry admin edit + approval endpoints.
+  app.patch("/super/mileage/:id", superGuard, async (req: any) => {
+    const { adminEditEntry } = await import("../services/mileage");
+    const b = req.body ?? {};
+    return adminEditEntry(req.params.id, {
+      startOdometer: b.startOdometer != null ? Number(b.startOdometer) : undefined,
+      endOdometer: b.endOdometer != null ? Number(b.endOdometer) : undefined,
+      notes: b.notes,
+      startedAt: b.startedAt ? new Date(b.startedAt) : undefined,
+      endedAt: b.endedAt === null ? null : b.endedAt ? new Date(b.endedAt) : undefined,
+    });
+  });
+
+  app.post("/super/mileage/:id/approve", superGuard, async (req: any) => {
+    const { approveEntry } = await import("../services/mileage");
+    const approverId = await currentUserId(req);
+    return approveEntry(req.params.id, approverId);
+  });
+
+  app.post("/super/mileage/:id/unapprove", superGuard, async (req: any) => {
+    const { unapproveEntry } = await import("../services/mileage");
+    return unapproveEntry(req.params.id);
+  });
+
+  // Pending-mileage summary — parallel to /super/workdays/pending-summary.
+  // Consumed by the title-bar combined count and by the "expand this
+  // date" fan-out on the Tasks page.
+  app.get("/super/mileage/pending-summary", superGuard, async () => {
+    const { superPendingMileageSummary } = await import("../services/mileage");
+    return superPendingMileageSummary();
+  });
+
+  // Per-user mileage entries for one ET calendar date. Renders inline
+  // on each worker × day row in WorkdaysTab / PendingWorkdaysSection
+  // so the operator sees hours + mileage side-by-side.
+  app.get("/super/mileage/by-date", superGuard, async (req: any) => {
+    const date = String(req.query?.date ?? "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      throw app.httpErrors.badRequest("date query param required (YYYY-MM-DD).");
+    }
+    const { superListMileageForDate } = await import("../services/mileage");
+    return superListMileageForDate(date);
+  });
+
+  // Unified daily approval — approves every closed unapproved entry
+  // for one worker on one ET date. Called by the daily-approval UX
+  // alongside the workday-hours approval.
+  app.post("/super/mileage/approve-day", superGuard, async (req: any) => {
+    const { approveWorkerDay } = await import("../services/mileage");
+    const approverId = await currentUserId(req);
+    const b = req.body ?? {};
+    const userId = String(b.userId ?? "");
+    const entryDate = String(b.entryDate ?? "");
+    if (!userId) throw app.httpErrors.badRequest("userId is required");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(entryDate)) {
+      throw app.httpErrors.badRequest("entryDate must be YYYY-MM-DD");
+    }
+    return approveWorkerDay(userId, entryDate, approverId);
+  });
 }

@@ -125,6 +125,13 @@ async function clearDatabase() {
   console.log("  Clearing workday rows...");
   await prisma.workerWorkday.deleteMany();
 
+  console.log("  Clearing vehicles + mileage...");
+  // Mileage FKs restrict on Vehicle + User deletes, so wipe entries
+  // before assignments before vehicles.
+  await prisma.mileageEntry.deleteMany();
+  await prisma.vehicleAssignment.deleteMany();
+  await prisma.vehicle.deleteMany();
+
   console.log("  Clearing audit log...");
   await prisma.auditEvent.deleteMany();
 
@@ -3116,9 +3123,129 @@ async function seedDatabase() {
 
   await seedWorkdayFixtures();
 
+  await seedVehicleFixtures();
+
   await applySettingSections();
 
   console.log("  Seed complete!");
+}
+
+/**
+ * Dual-use vehicle fixtures — one active truck + owner + one worker
+ * assignment so the Vehicles admin tab and the worker MileageStrip
+ * both render with real data on first load. Also generates a handful
+ * of past MileageEntry rows so the log has content to view/approve.
+ */
+async function seedVehicleFixtures() {
+  console.log("  Vehicles + mileage fixtures...");
+  // Main-reset section wipes Vehicle / VehicleAssignment / MileageEntry
+  // rows before this runs, so we always start from a clean slate.
+
+  const truck = await prisma.vehicle.create({
+    data: {
+      displayName: "Mike's Ram 2500",
+      make: "Ram",
+      vehicleModel: "2500",
+      year: 2020,
+      plate: "NC-LWN-42",
+      inServiceDate: "2024-03-01",
+      currentOdometer: 48231,
+    },
+  });
+
+  // Assign both the owner and one employee so both the Super and a
+  // worker session render a MileageStrip on next dev login.
+  await prisma.vehicleAssignment.createMany({
+    data: [
+      { vehicleId: truck.id, userId: MICHAEL_ID },
+      { vehicleId: truck.id, userId: EMPLOYEE_ID },
+    ],
+    skipDuplicates: true,
+  });
+
+  // Backfill three past mileage sessions — one already approved, one
+  // pending approval, one open (still driving). Exercises every row
+  // state in the admin log at a glance.
+  const now = new Date();
+  const dayKey = (d: Date) => etFormatDate(d);
+
+  const twoDaysAgo = new Date(now);
+  twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+  twoDaysAgo.setHours(8, 15, 0, 0);
+  const twoDaysAgoEnd = new Date(twoDaysAgo);
+  twoDaysAgoEnd.setHours(16, 40, 0, 0);
+
+  await prisma.mileageEntry.create({
+    data: {
+      vehicleId: truck.id,
+      driverUserId: MICHAEL_ID,
+      entryDate: dayKey(twoDaysAgo),
+      startedAt: twoDaysAgo,
+      endedAt: twoDaysAgoEnd,
+      startOdometer: 48150,
+      endOdometer: 48198,
+      miles: 48,
+      notes: "Chapel Hill route — 5 properties",
+      approvedAt: new Date(twoDaysAgoEnd.getTime() + 20 * 60 * 60 * 1000),
+      approvedById: MICHAEL_ID,
+    },
+  });
+
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  yesterday.setHours(7, 50, 0, 0);
+  const yesterdayEnd = new Date(yesterday);
+  yesterdayEnd.setHours(15, 10, 0, 0);
+
+  await prisma.mileageEntry.create({
+    data: {
+      vehicleId: truck.id,
+      driverUserId: EMPLOYEE_ID,
+      entryDate: dayKey(yesterday),
+      startedAt: yesterday,
+      endedAt: yesterdayEnd,
+      startOdometer: 48198,
+      endOdometer: 48231,
+      miles: 33,
+      notes: "Using vehicle to service lawns",
+      // approvedAt intentionally null — surfaces in pending-approval queue.
+    },
+  });
+
+  // Companion PENDING-APPROVAL workday for Employee yesterday. Exists
+  // so the workday → mileage cascade is testable end-to-end: Super
+  // approves this workday in the Workdays tab and the pending mileage
+  // entry above auto-approves alongside via the cascade wired in
+  // apps/api/src/routes/admin.ts. The workday-fixture function
+  // deliberately left EMPLOYEE_ID at NOT_STARTED today; this adds a
+  // separate row for yesterday, so today's Home-strip fixture is
+  // undisturbed.
+  await prisma.workerWorkday.upsert({
+    where: { userId_workdayDate: { userId: EMPLOYEE_ID, workdayDate: dayKey(yesterday) } },
+    create: {
+      userId: EMPLOYEE_ID,
+      workdayDate: dayKey(yesterday),
+      startedAt: yesterday,
+      endedAt: yesterdayEnd,
+      totalPausedMs: 30 * 60 * 1000, // 30-min lunch
+    },
+    update: {},
+  });
+
+  const today = new Date(now);
+  today.setHours(now.getHours() - 1, 0, 0, 0);
+  await prisma.mileageEntry.create({
+    data: {
+      vehicleId: truck.id,
+      driverUserId: MICHAEL_ID,
+      entryDate: dayKey(today),
+      startedAt: today,
+      // endedAt intentionally null — open session, still driving.
+      startOdometer: 48231,
+    },
+  });
+
+  console.log("    Seeded 1 vehicle, 2 assignments, 3 mileage entries.");
 }
 
 /**

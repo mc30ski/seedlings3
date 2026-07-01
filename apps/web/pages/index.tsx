@@ -30,6 +30,7 @@ import TimelineTab from "@/src/ui/tabs/TimelineTab";
 import WeatherBar, { WeatherIcon, type WeatherBarMode } from "@/src/ui/components/WeatherBar";
 import WorkdayStrip from "@/src/ui/components/WorkdayStrip";
 import EquipmentTab from "@/src/ui/tabs/EquipmentTab";
+import VehiclesTab from "@/src/ui/tabs/VehiclesTab";
 import JobsTab from "@/src/ui/tabs/JobsTab";
 import ClientsTab from "@/src/ui/tabs/ClientsTab";
 import PropertiesTab from "@/src/ui/tabs/PropertiesTab";
@@ -99,6 +100,7 @@ import {
   FiClock,
   FiTag,
   FiRefreshCw,
+  FiTruck,
 } from "react-icons/fi";
 import { GrUserAdmin } from "react-icons/gr";
 import { AiOutlineTeam } from "react-icons/ai";
@@ -156,6 +158,13 @@ export default function HomePage() {
   const [pendingWorkdays, setPendingWorkdays] = useState<number>(0);
   const [pendingWorkdaysByDate, setPendingWorkdaysByDate] = useState<
     { workdayDate: string; count: number }[]
+  >([]);
+  // Pending closed-unapproved mileage entries. Same alert dot as
+  // workdays (combined display per the "unified daily approval"
+  // model) — see the alerts-dropdown push at line ~3124.
+  const [pendingMileage, setPendingMileage] = useState<number>(0);
+  const [pendingMileageByDate, setPendingMileageByDate] = useState<
+    { entryDate: string; count: number }[]
   >([]);
   const [workdaysJumpDate, setWorkdaysJumpDate] = useState<string | null>(null);
   const [workdaysJumpNonce, setWorkdaysJumpNonce] = useState(0);
@@ -1126,6 +1135,20 @@ export default function HomePage() {
           categoryIcon: FiTool,
         },
         {
+          // ── Equipment → Vehicles ──
+          // Dual-use vehicle fleet: manage vehicles, assignments (which
+          // workers can log mileage against which vehicle), and the
+          // per-vehicle mileage log. See services/vehicles.ts and
+          // services/mileage.ts for the backend contracts and the
+          // MileageStrip on the worker HomeTab for the driver-side flow.
+          value: "vehicles",
+          label: "Vehicles",
+          icon: FiTruck,
+          content: wrapWithInlineMessage(<VehiclesTab />),
+          category: "Equipment",
+          categoryIcon: FiTool,
+        },
+        {
           // ── Directory ──
           // Super-only writable Users view. The same component admins
           // see read-only on their Directory tab, but with full mutation
@@ -1283,13 +1306,12 @@ export default function HomePage() {
   setupSearchEvent("jobsTabToClientsTabSearch", "clients");
   setupSearchEvent("paymentsTabToPropertiesTabSearch", "properties");
   setupSearchEvent("paymentsTabToClientsTabSearch", "clients");
-  // paymentsTabToServicesTabSearch (legacy name — actually routes to the
-  // proper JOBS tab now, not Services). Admin lands on AdminJobsTab, worker
-  // on JobsTab. The destination filters by jobId via the dedicated
-  // `jobsTab:filterJob` event below so the result is exact (vs. a loose
-  // property-name search which can land on the wrong job when multiple
-  // jobs share a property).
-  setupSearchEvent("jobsTabToServicesTabSearch", "jobs");
+  // jobsTabToServicesTabSearch — "Manage in Services" button on the
+  // JobsTab occurrence card. The `:run` handler lives in ServicesTab
+  // (see ServicesTab.tsx), so we must route to the "services" tab so
+  // that handler is actually mounted when the event fires. A previous
+  // change routed this to "jobs" which silently broke the button.
+  setupSearchEvent("jobsTabToServicesTabSearch", "services" as any);
 
   // Payments "Job" link → Jobs tab, highlighted to the exact occurrence the
   // payment was recorded against. We send the OCCURRENCE id (plus its
@@ -1613,19 +1635,35 @@ export default function HomePage() {
     if (!isSuper) {
       setPendingWorkdays(0);
       setPendingWorkdaysByDate([]);
+      setPendingMileage(0);
+      setPendingMileageByDate([]);
       markAlertLoaded("pendingWorkdays");
       return;
     }
+    // Fetch both pending-summary endpoints in parallel — the alert
+    // dot on the title bar shows a combined count so the operator
+    // sees "approvals to review" as a single urgency signal, while
+    // the drill-in surfaces preserve the workday vs mileage split.
     try {
-      const r = await apiGet<{
-        totalPending: number;
-        byDate: { workdayDate: string; count: number }[];
-      }>("/api/super/workdays/pending-summary");
-      setPendingWorkdays(r?.totalPending ?? 0);
-      setPendingWorkdaysByDate(Array.isArray(r?.byDate) ? r.byDate : []);
+      const [wd, ml] = await Promise.all([
+        apiGet<{
+          totalPending: number;
+          byDate: { workdayDate: string; count: number }[];
+        }>("/api/super/workdays/pending-summary").catch(() => null),
+        apiGet<{
+          totalPending: number;
+          byDate: { entryDate: string; count: number }[];
+        }>("/api/super/mileage/pending-summary").catch(() => null),
+      ]);
+      setPendingWorkdays(wd?.totalPending ?? 0);
+      setPendingWorkdaysByDate(Array.isArray(wd?.byDate) ? wd.byDate : []);
+      setPendingMileage(ml?.totalPending ?? 0);
+      setPendingMileageByDate(Array.isArray(ml?.byDate) ? ml.byDate : []);
     } catch {
       setPendingWorkdays(0);
       setPendingWorkdaysByDate([]);
+      setPendingMileage(0);
+      setPendingMileageByDate([]);
     }
     markAlertLoaded("pendingWorkdays");
   }, [isSuper]);
@@ -3106,7 +3144,20 @@ export default function HomePage() {
                   });
                 }
               }
-              if (isSuper && pendingWorkdays > 0) alerts.push({ label: "Workdays to approve", count: pendingWorkdays, bg: "#E0E7FF", color: "#3730A3", dotColor: "#6366F1", onClick: goToWorkdayApprovals });
+              // Combined "workdays to review" — count is hours + mileage
+              // but the label stays workday-centric because the click
+              // drops onto the WorkdaysTab where each row shows both
+              // categories side-by-side.
+              if (isSuper && pendingWorkdays + pendingMileage > 0) {
+                alerts.push({
+                  label: "Workdays to review",
+                  count: pendingWorkdays + pendingMileage,
+                  bg: "#E0E7FF",
+                  color: "#3730A3",
+                  dotColor: "#6366F1",
+                  onClick: goToWorkdayApprovals,
+                });
+              }
               if (isSuper && ledgerFollowupCount > 0) alerts.push({ label: "Ledger followups", count: ledgerFollowupCount, bg: "#FEF3C7", color: "#92400E", dotColor: "#F59E0B", onClick: goToLedgerFollowups });
               if (isAdmin && changeRequestCount > 0) alerts.push({ label: "Client requests", count: changeRequestCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToClientRequests });
               if (isAdmin && estimateFollowupCount > 0) alerts.push({ label: "Estimate follow-ups", count: estimateFollowupCount, bg: "#FCE7F3", color: "#9D174D", dotColor: "#EC4899", onClick: goToEstimateFollowups });

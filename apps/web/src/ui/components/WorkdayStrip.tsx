@@ -14,6 +14,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { Clock, Pause, Play, Check, X, AlertTriangle, Edit3, CheckCircle2, ChevronDown, ChevronUp } from "lucide-react";
+import { apiPost } from "@/src/lib/api";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
   type WorkdayState,
@@ -21,6 +22,7 @@ import {
   type WorkdaySummary,
   type JobBlockingSummary,
   type EquipmentCheckoutSummary,
+  type OpenMileageSummary,
   fetchWorkdayToday,
   startWorkday,
   pauseWorkday,
@@ -73,7 +75,7 @@ type DialogMode =
   | { kind: "pause"; workday: WorkdaySummary }
   | { kind: "resume"; workday: WorkdaySummary }
   | { kind: "reopen"; workday: WorkdaySummary }
-  | { kind: "end"; workday: WorkdaySummary; activeJobs: JobBlockingSummary[]; activeCheckouts: EquipmentCheckoutSummary[] }
+  | { kind: "end"; workday: WorkdaySummary; activeJobs: JobBlockingSummary[]; activeCheckouts: EquipmentCheckoutSummary[]; openMileageEntries: OpenMileageSummary[] }
   | { kind: "edit"; workday: WorkdaySummary }
   | { kind: "forgotPrior"; workday: WorkdaySummary }
   | { kind: "cancel"; workday: WorkdaySummary }
@@ -604,6 +606,7 @@ export default function WorkdayStrip({
             workday: w,
             activeJobs: payload.activeJobs,
             activeCheckouts: payload.activeCheckouts,
+            openMileageEntries: payload.openMileageEntries ?? [],
           })
         }
         onEdit={(w) => setDialog({ kind: "edit", workday: w })}
@@ -667,6 +670,8 @@ export default function WorkdayStrip({
       )}
       {dialog?.kind === "end" && (
         <EndWorkdayDialog
+          openMileageEntries={dialog.openMileageEntries}
+          isViewingAs={isViewingAs}
           workday={dialog.workday}
           activeJobs={dialog.activeJobs}
           activeCheckouts={dialog.activeCheckouts}
@@ -1301,10 +1306,14 @@ function StartWorkdayDialog({
   );
 }
 
+const MILEAGE_DEFAULT_NOTE = "Using vehicle to service lawns";
+
 function EndWorkdayDialog({
   workday,
   activeJobs,
   activeCheckouts,
+  openMileageEntries,
+  isViewingAs,
   onClose,
   onConfirm,
   viewAsName,
@@ -1312,6 +1321,12 @@ function EndWorkdayDialog({
   workday: WorkdaySummary;
   activeJobs: JobBlockingSummary[];
   activeCheckouts: EquipmentCheckoutSummary[];
+  openMileageEntries: OpenMileageSummary[];
+  /** True when Admin/Super is viewing-as another worker. Mileage stop
+   *  is worker-side (`/me/mileage/...`), so we can't close the
+   *  worker's sessions on their behalf from here — we show a warning
+   *  instead. */
+  isViewingAs: boolean;
   onClose: () => void;
   viewAsName?: string | null;
   onConfirm: (input: {
@@ -1330,6 +1345,28 @@ function EndWorkdayDialog({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Per-open-session inputs. Keys are the mileage entry id.
+  // Only used in the self-service path — for view-as we display a
+  // warning without inputs.
+  const [mileageInputs, setMileageInputs] = useState<Record<string, { endOdometer: string; notes: string }>>(
+    () => {
+      const seed: Record<string, { endOdometer: string; notes: string }> = {};
+      for (const e of openMileageEntries) {
+        seed[e.id] = { endOdometer: "", notes: MILEAGE_DEFAULT_NOTE };
+      }
+      return seed;
+    },
+  );
+
+  const canCloseMileage = !isViewingAs && openMileageEntries.length > 0;
+  const mileageValid = !canCloseMileage
+    ? true
+    : openMileageEntries.every((e) => {
+        const raw = mileageInputs[e.id]?.endOdometer ?? "";
+        if (!/^\d+$/.test(raw.trim())) return false;
+        return Number(raw) >= e.startOdometer;
+      });
+
   const liveActive = useMemo(() => {
     const startMs = Date.parse(localToIso(startedAt) ?? workday.startedAt);
     const endMs = Date.parse(localToIso(endedAt) ?? new Date().toISOString());
@@ -1341,6 +1378,24 @@ function EndWorkdayDialog({
     setError(null);
     setSaving(true);
     try {
+      // Close every open mileage session first. If any fail, bail out
+      // before ending the workday so the worker can retry.
+      if (canCloseMileage) {
+        const stopCalls = await Promise.allSettled(
+          openMileageEntries.map((e) =>
+            apiPost(`/api/me/mileage/${e.id}/stop`, {
+              endOdometer: Number(mileageInputs[e.id]?.endOdometer),
+              notes: mileageInputs[e.id]?.notes || null,
+            }),
+          ),
+        );
+        const stopFailed = stopCalls.filter((s) => s.status === "rejected");
+        if (stopFailed.length > 0) {
+          throw new Error(
+            `${stopFailed.length} mileage session${stopFailed.length === 1 ? "" : "s"} couldn't be closed. Check the odometer values and try again.`,
+          );
+        }
+      }
       await onConfirm({
         startedAt: localToIso(startedAt),
         endedAt: localToIso(endedAt),
@@ -1364,8 +1419,21 @@ function EndWorkdayDialog({
       footer={
         <HStack justify="flex-end" w="full" gap={2}>
           <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
-          <Button colorPalette="green" onClick={() => void submit()} disabled={saving}>
-            {saving ? <Spinner size="xs" /> : "End anyway"}
+          <Button
+            colorPalette="green"
+            onClick={() => void submit()}
+            disabled={saving || !mileageValid}
+            title={
+              !mileageValid
+                ? "Enter valid ending odometer for every open mileage session"
+                : undefined
+            }
+          >
+            {saving
+              ? <Spinner size="xs" />
+              : canCloseMileage
+                ? "Stop mileage & end workday"
+                : "End anyway"}
           </Button>
         </HStack>
       }
@@ -1407,6 +1475,121 @@ function EndWorkdayDialog({
             <Text fontSize="xs" color="blue.800" mt={1} fontStyle="italic">
               That's fine if you're keeping it across days. Otherwise return it before ending.
             </Text>
+          </Box>
+        )}
+
+        {/* Open mileage sessions — worker enters end odometer per
+            vehicle before the workday can end. Each row corresponds
+            to a MileageEntry; submit closes them in parallel via the
+            existing per-entry stop endpoint. When the actor is
+            viewing-as another worker (admin/super), we can only warn
+            — the stop endpoint is worker-side (`/me/mileage/...`)
+            and doesn't accept impersonation. */}
+        {openMileageEntries.length > 0 && isViewingAs && (
+          <Box p={2} bg="orange.50" borderWidth="1px" borderColor="orange.300" borderRadius="md">
+            <Text fontSize="xs" color="orange.900" mb={1} fontWeight="semibold">
+              {viewAsName ?? "They"} still {openMileageEntries.length === 1 ? "has" : "have"} {openMileageEntries.length} open mileage session{openMileageEntries.length === 1 ? "" : "s"}:
+            </Text>
+            <VStack align="stretch" gap={0.5}>
+              {openMileageEntries.map((e) => (
+                <Text key={e.id} fontSize="xs" color="orange.900">
+                  • {e.vehicleName} (started at {e.startOdometer.toLocaleString()} mi)
+                </Text>
+              ))}
+            </VStack>
+            <Text fontSize="xs" color="orange.800" mt={1} fontStyle="italic">
+              Have {viewAsName ?? "the worker"} close these on their MileageStrip, or edit them on the Vehicles tab.
+            </Text>
+          </Box>
+        )}
+        {openMileageEntries.length > 0 && !isViewingAs && (
+          <Box p={2} bg="teal.50" borderWidth="1px" borderColor="teal.300" borderRadius="md">
+            <Text fontSize="xs" color="teal.900" mb={2} fontWeight="semibold">
+              Record ending odometer{openMileageEntries.length === 1 ? "" : "s"}:
+            </Text>
+            <VStack align="stretch" gap={2}>
+              {openMileageEntries.map((e) => {
+                const state = mileageInputs[e.id] ?? { endOdometer: "", notes: MILEAGE_DEFAULT_NOTE };
+                const num = Number(state.endOdometer);
+                const isValid =
+                  /^\d+$/.test(state.endOdometer.trim()) && num >= e.startOdometer;
+                const showErr = state.endOdometer.trim().length > 0 && !isValid;
+                return (
+                  <Box
+                    key={e.id}
+                    p={2}
+                    bg="white"
+                    borderWidth="1px"
+                    borderColor="teal.200"
+                    borderRadius="md"
+                  >
+                    <Text fontSize="xs" fontWeight="semibold" color="teal.900" mb={1}>
+                      {e.vehicleName}
+                    </Text>
+                    <Text fontSize="2xs" color="fg.muted" mb={1}>
+                      Started at {e.startOdometer.toLocaleString()} mi
+                    </Text>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      placeholder={`≥ ${e.startOdometer.toLocaleString()}`}
+                      value={state.endOdometer}
+                      onChange={(ev) =>
+                        setMileageInputs((prev) => ({
+                          ...prev,
+                          [e.id]: {
+                            ...state,
+                            endOdometer: ev.target.value.replace(/[^\d]/g, ""),
+                          },
+                        }))
+                      }
+                      style={{
+                        width: "100%",
+                        padding: "6px 8px",
+                        fontSize: "14px",
+                        border: showErr
+                          ? "1px solid var(--chakra-colors-red-400)"
+                          : "1px solid var(--chakra-colors-gray-200)",
+                        borderRadius: "6px",
+                        marginBottom: 4,
+                      }}
+                    />
+                    {showErr && (
+                      <Text fontSize="2xs" color="red.600" mb={1}>
+                        Must be a whole number, at least {e.startOdometer.toLocaleString()}.
+                      </Text>
+                    )}
+                    <input
+                      type="text"
+                      placeholder={MILEAGE_DEFAULT_NOTE}
+                      value={state.notes}
+                      onChange={(ev) =>
+                        setMileageInputs((prev) => ({
+                          ...prev,
+                          [e.id]: {
+                            ...state,
+                            notes: ev.target.value,
+                          },
+                        }))
+                      }
+                      style={{
+                        width: "100%",
+                        padding: "6px 8px",
+                        fontSize: "13px",
+                        border: "1px solid var(--chakra-colors-gray-200)",
+                        borderRadius: "6px",
+                      }}
+                    />
+                    {isValid && (
+                      <Text fontSize="2xs" color="teal.800" mt={1}>
+                        {(num - e.startOdometer).toLocaleString()} mi this session
+                      </Text>
+                    )}
+                  </Box>
+                );
+              })}
+            </VStack>
           </Box>
         )}
 
