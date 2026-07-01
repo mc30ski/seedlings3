@@ -14,11 +14,11 @@ import { equipmentStatusColor, prettyStatus, prettyDate } from "@/src/lib/lib";
 import { openEventSearch } from "@/src/lib/bus";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
-import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 
 //TODO:
 export type TabRolePropType = { role: "worker" | "admin" };
@@ -72,7 +72,7 @@ function DetailsBlock({ details }: { details?: Record<string, any> | null }) {
                   openEventSearch(
                     "activityTavToEquipmentTabQRCodeSearch",
                     details.qrSlug,
-                    true
+                    true,
                   )
                 }
                 color="blue.600"
@@ -122,7 +122,7 @@ export default function ActivityTab({ role = "worker" }: TabRolePropType) {
 
   const totalEvents = useMemo(
     () => rows.reduce((acc, r) => acc + (r.events?.length || 0), 0),
-    [rows]
+    [rows],
   );
 
   const sortedRows = useMemo(() => {
