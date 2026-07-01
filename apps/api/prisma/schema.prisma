@@ -253,6 +253,14 @@ model User {
   // / Checkout via the polymorphic (entityType, entityId) pair on the row.
   ledgerFollowupsCreated  LedgerFollowup[] @relation("LedgerFollowupCreator")
   ledgerFollowupsResolved LedgerFollowup[] @relation("LedgerFollowupResolver")
+
+  // Dual-use vehicle assignments — this worker can log mileage against
+  // these vehicles. Super manages the assignment list. Same worker can
+  // be assigned to multiple vehicles (one per row).
+  vehicleAssignments      VehicleAssignment[] @relation("VehicleAssignmentUser")
+  // Mileage entries this user drove, and (separately) approved.
+  mileageEntriesAsDriver  MileageEntry[]      @relation("MileageEntryDriver")
+  mileageEntriesApproved  MileageEntry[]      @relation("MileageEntryApprover")
 }
 
 model NotificationTemplate {
@@ -2150,4 +2158,101 @@ model LedgerFollowup {
   @@index([resolvedAt])
   // Drives "is this row flagged?" lookups on the Ledger render path.
   @@index([entityType, entityId, resolvedAt])
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dual-use vehicles + business mileage tracking.
+//
+// Vehicles are personal-owned but used partly for business (e.g. the
+// owner's truck). Workers record start/stop odometer for each business
+// use session. Aggregated business miles × IRS standard-mileage rate
+// gives the deductible portion at year-end.
+//
+// Only workers with an active VehicleAssignment can log mileage
+// against a vehicle. Super manages the assignment list.
+//
+// Approval mirrors the Workday model: after the daily cutoff
+// (WORKDAY_APPROVAL_CUTOFF_HOUR_ET setting), the previous day's
+// entries surface in the Super approval queue. Approving locks the
+// row; unapproved rows stay editable by the driver.
+// ─────────────────────────────────────────────────────────────────────────────
+model Vehicle {
+  id            String    @id @default(cuid())
+  displayName   String    // "Mike's Ram 2500"
+  make          String?
+  vehicleModel  String?   // "model" is a Prisma reserved-ish word; use vehicleModel
+  year          Int?
+  plate         String?
+
+  // ET calendar date business use began — used for depreciation and
+  // as an anchor for the yearly business-miles rollup.
+  inServiceDate String?   // YYYY-MM-DD
+
+  // Cached last-known odometer reading (from the most recent
+  // MileageEntry.endOdometer). Used to prefill the next start-trip
+  // odometer input; not authoritative.
+  currentOdometer Int?
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  archivedAt DateTime?
+
+  assignments    VehicleAssignment[]
+  mileageEntries MileageEntry[]
+
+  @@index([archivedAt])
+}
+
+model VehicleAssignment {
+  id        String  @id @default(cuid())
+  vehicleId String
+  userId    String
+
+  vehicle Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  user    User    @relation("VehicleAssignmentUser", fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  createdAt  DateTime  @default(now())
+  // Soft-remove so historical mileage entries retain their FK context.
+  archivedAt DateTime?
+
+  @@unique([vehicleId, userId])
+  @@index([userId, archivedAt])
+}
+
+// One row per business-mileage session. Multiple sessions per day
+// per vehicle are allowed (driver stops for lunch, restarts, etc.).
+// `entryDate` is the ET calendar date of `startedAt` — the anchor
+// used by the daily approval flow.
+model MileageEntry {
+  id           String    @id @default(cuid())
+  vehicleId    String
+  driverUserId String
+
+  // ET calendar date of `startedAt`. Anchors the approval-queue grouping.
+  entryDate String // YYYY-MM-DD
+
+  startedAt     DateTime
+  endedAt       DateTime?
+  startOdometer Int
+  endOdometer   Int?
+  // Cached endOdometer − startOdometer for fast per-vehicle rollups.
+  // NULL while a session is open (endedAt is null).
+  miles         Float?
+
+  notes String?
+
+  approvedAt   DateTime?
+  approvedById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  vehicle  Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  driver   User    @relation("MileageEntryDriver", fields: [driverUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  approver User?   @relation("MileageEntryApprover", fields: [approvedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([driverUserId, entryDate])
+  @@index([vehicleId, entryDate])
+  @@index([entryDate, approvedAt])
 }

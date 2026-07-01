@@ -13,6 +13,7 @@ import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/Inlin
 import TomorrowWeatherWarning from "@/src/ui/components/TomorrowWeatherWarning";
 import HomeBanners from "@/src/ui/components/HomeBanners";
 import WorkdayStrip from "@/src/ui/components/WorkdayStrip";
+import MileageStrip from "@/src/ui/components/MileageStrip";
 import type { Me } from "@/src/lib/types";
 
 type Props = {
@@ -534,6 +535,10 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
             noBottomMargin
           />
         )}
+        {/* Mileage strip — self-hides when the worker has no vehicle
+            assignments AND no open sessions. Only shown for the
+            personal view; view-as flows don't touch mileage yet. */}
+        {!isAggregate && !isViewingOther && <MileageStrip />}
 
         {!isViewingOther && !showJustEnabledHelp && !pushBannerDismissed && (push.status === "default" || push.status === "needs-pwa-install" || (push.status === "granted-no-sub" && push.explicitlyDisabled)) && (
           <Card.Root

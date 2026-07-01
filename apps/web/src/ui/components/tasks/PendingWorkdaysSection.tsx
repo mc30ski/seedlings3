@@ -12,13 +12,14 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Badge, Box, Button, HStack, Spinner, Text, VStack } from "@chakra-ui/react";
-import { CheckCircle2 } from "lucide-react";
+import { Car, CheckCircle2 } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
 import { fmtDateOpts, fmtTimeOpts } from "@/src/lib/lib";
 import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import StatusChip from "@/src/ui/components/StatusChip";
 
 type SuperWorkdayRow = {
   id: string;
@@ -46,6 +47,23 @@ type ByDateResponse = {
   rows: SuperWorkdayRow[];
 };
 
+// Mileage entry as returned by /super/mileage/by-date. Same shape the
+// WorkdaysTab consumes so the two surfaces render mileage identically.
+type MileageEntry = {
+  id: string;
+  vehicleId: string;
+  vehicleName: string;
+  startedAt: string;
+  endedAt: string | null;
+  startOdometer: number;
+  endOdometer: number | null;
+  miles: number | null;
+  notes: string | null;
+  approvedAt: string | null;
+};
+
+type MileageByDateResponse = Record<string, MileageEntry[]>;
+
 function workerLabel(u: SuperWorkdayRow["user"]): string {
   return u.displayName || u.email || u.id.slice(-8);
 }
@@ -63,13 +81,21 @@ function fmtHours(ms: number): string {
 
 export default function PendingWorkdaysSection() {
   const [rows, setRows] = useState<SuperWorkdayRow[]>([]);
+  // Mileage entries keyed by `${userId}:${entryDate}` — inline sub-row
+  // on each workday for the two-button approval model. Only entries
+  // for dates that also have a pending workday show up; mileage-only
+  // days live on the Vehicles tab (a known trade-off — see the design
+  // discussion in project docs).
+  const [mileageByRow, setMileageByRow] = useState<Record<string, MileageEntry[]>>({});
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   // Loads pending rows across every date that has any pending workdays
   // — uses the existing pending-summary endpoint to learn which dates
   // to fetch, then fetches each in parallel. Typical pending-summary
-  // returns 1-3 dates so the parallel fan-out stays cheap.
+  // returns 1-3 dates so the parallel fan-out stays cheap. Mileage is
+  // fetched alongside so each row can render its per-worker sessions
+  // inline.
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -80,13 +106,21 @@ export default function PendingWorkdaysSection() {
       const dates = Array.isArray(summary?.byDate) ? summary.byDate : [];
       if (dates.length === 0) {
         setRows([]);
+        setMileageByRow({});
         return;
       }
-      const pages = await Promise.all(
-        dates.map((d) =>
-          apiGet<ByDateResponse>(`/api/super/workdays/by-date?date=${d.workdayDate}`).catch(() => null),
+      const [pages, mileagePages] = await Promise.all([
+        Promise.all(
+          dates.map((d) =>
+            apiGet<ByDateResponse>(`/api/super/workdays/by-date?date=${d.workdayDate}`).catch(() => null),
+          ),
         ),
-      );
+        Promise.all(
+          dates.map((d) =>
+            apiGet<MileageByDateResponse>(`/api/super/mileage/by-date?date=${d.workdayDate}`).catch(() => null),
+          ),
+        ),
+      ]);
       const pendingAcrossDates: SuperWorkdayRow[] = [];
       for (const page of pages) {
         if (!page) continue;
@@ -101,6 +135,16 @@ export default function PendingWorkdaysSection() {
       // the oldest date — same ordering convention WorkdaysTab uses.
       pendingAcrossDates.sort((a, b) => a.workdayDate.localeCompare(b.workdayDate));
       setRows(pendingAcrossDates);
+      // Fold mileage pages into the `${userId}:${entryDate}` map.
+      const mileage: Record<string, MileageEntry[]> = {};
+      dates.forEach((d, i) => {
+        const page = mileagePages[i];
+        if (!page) return;
+        for (const [userId, entries] of Object.entries(page)) {
+          mileage[`${userId}:${d.workdayDate}`] = entries;
+        }
+      });
+      setMileageByRow(mileage);
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
@@ -134,6 +178,30 @@ export default function PendingWorkdaysSection() {
     }
   }
 
+  async function approveMileage(row: SuperWorkdayRow) {
+    // Approves every closed unapproved entry the driver logged that
+    // day. Anything already approved stays untouched. Open sessions
+    // are excluded server-side.
+    const key = `mileage:${row.id}`;
+    setBusyId(key);
+    try {
+      await apiPost(`/api/super/mileage/approve-day`, {
+        userId: row.userId,
+        entryDate: row.workdayDate,
+      });
+      publishInlineMessage({ type: "SUCCESS", text: "Mileage approved." });
+      await load();
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Approve failed.", err),
+      });
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+
   if (loading && rows.length === 0) {
     return (
       <HStack py={3} justify="center" color="fg.muted">
@@ -148,6 +216,11 @@ export default function PendingWorkdaysSection() {
     <VStack align="stretch" gap={2}>
       {rows.map((r) => {
         const active = activeMs(r);
+        const mileageEntries = mileageByRow[`${r.userId}:${r.workdayDate}`] ?? [];
+        const pendingMileage = mileageEntries.filter(
+          (e) => e.endedAt != null && e.approvedAt == null,
+        );
+        const totalMiles = mileageEntries.reduce((s, e) => s + (e.miles ?? 0), 0);
         return (
           <Box
             key={r.id}
@@ -163,6 +236,10 @@ export default function PendingWorkdaysSection() {
                   {r.user.workerType && (
                     <Badge size="xs" variant="outline">{r.user.workerType}</Badge>
                   )}
+                  <StatusChip
+                    open={r.uiState === "IN_PROGRESS" || r.uiState === "PAUSED"}
+                    approved={r.uiState === "APPROVED"}
+                  />
                 </HStack>
                 <Text fontSize="2xs" color="fg.muted">
                   {fmtDateOpts(`${r.workdayDate}T12:00:00Z`, { month: "short", day: "numeric", year: "numeric" })}
@@ -180,9 +257,66 @@ export default function PendingWorkdaysSection() {
                 disabled={busyId !== null}
                 onClick={() => void approveRow(r)}
               >
-                <CheckCircle2 size={12} /> Approve
+                <CheckCircle2 size={12} /> Approve hours
               </Button>
             </HStack>
+            {/* Mileage sub-row — visible only when this driver has any
+                mileage entries for the same date. Two-button approval:
+                hours (above) and mileage (below) fire independently
+                against their own endpoints. Editing an entry is done
+                on the Vehicles tab. */}
+            {mileageEntries.length > 0 && (
+              <HStack
+                justify="space-between"
+                align="start"
+                gap={2}
+                wrap="wrap"
+                mt={2}
+                pt={2}
+                borderTopWidth="1px"
+                borderColor="gray.100"
+              >
+                <HStack gap={2} align="start" flex={1} minW={0}>
+                  <Box color="fg.muted" mt={0.5}>
+                    <Car size={12} />
+                  </Box>
+                  <VStack align="start" gap={0} flex={1} minW={0}>
+                    <Text fontSize="xs">
+                      {mileageEntries.length} session{mileageEntries.length === 1 ? "" : "s"}
+                      {" · "}
+                      {totalMiles.toLocaleString()} mi
+                      {pendingMileage.length > 0 && (
+                        <Text as="span" color="orange.700" fontWeight="medium">
+                          {" · "}{pendingMileage.length} pending
+                        </Text>
+                      )}
+                    </Text>
+                    <HStack gap={2}>
+                      <Text fontSize="2xs" color="fg.muted" lineClamp={1}>
+                        {mileageEntries.map((e) => e.vehicleName).join(", ")}
+                      </Text>
+                      <StatusChip
+                        open={mileageEntries.some((e) => e.endedAt == null)}
+                        approved={
+                          mileageEntries.length > 0 &&
+                          mileageEntries.every((e) => e.endedAt != null && e.approvedAt != null)
+                        }
+                      />
+                    </HStack>
+                  </VStack>
+                </HStack>
+                {pendingMileage.length > 0 && (
+                  <Button
+                    size="xs"
+                    colorPalette="green"
+                    disabled={busyId !== null}
+                    onClick={() => void approveMileage(r)}
+                  >
+                    <CheckCircle2 size={12} /> Approve mileage
+                  </Button>
+                )}
+              </HStack>
+            )}
           </Box>
         );
       })}

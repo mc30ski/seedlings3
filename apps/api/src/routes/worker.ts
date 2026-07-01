@@ -4157,14 +4157,33 @@ export default async function workerRoutes(app: FastifyInstance) {
   // pays one round-trip.
   app.get("/me/workday/today", workerGuard, async (req: any) => {
     const { targetUserId } = await resolveWorkdayTarget(req, { allowImpersonationFor: "read" });
-    const [state, activeJobs, activeCheckouts, openPrior, todayJobs] = await Promise.all([
+    const { listOpenEntriesForUser } = await import("../services/mileage");
+    const [state, activeJobs, activeCheckouts, openPrior, todayJobs, openMileage] = await Promise.all([
       workdays.getTodayWorkday(targetUserId),
       workdays.checkBlockingActiveJobs(targetUserId),
       workdays.checkActiveEquipmentCheckouts(targetUserId),
       workdays.listMyOpenWorkdays(targetUserId),
       workdays.getTodayJobCounts(targetUserId),
+      listOpenEntriesForUser(targetUserId),
     ]);
-    return { today: state, activeJobs, activeCheckouts, openPrior, todayJobs };
+    // Shape open mileage entries into a compact summary — enough for
+    // the End Workday dialog's inline "record ending odometer for
+    // each vehicle you're still driving" section.
+    const openMileageEntries = openMileage.map((e) => ({
+      id: e.id,
+      vehicleId: e.vehicleId,
+      vehicleName: e.vehicle.displayName,
+      startedAt: e.startedAt.toISOString(),
+      startOdometer: e.startOdometer,
+    }));
+    return {
+      today: state,
+      activeJobs,
+      activeCheckouts,
+      openPrior,
+      todayJobs,
+      openMileageEntries,
+    };
   });
 
   // Standalone open-prior list — used when the UI just needs to know
@@ -4257,5 +4276,94 @@ export default async function workerRoutes(app: FastifyInstance) {
       },
       workdayAuditContext(req, isImpersonating ? targetUserId : null),
     );
+  });
+
+  // ── Vehicles + business-mileage tracking (worker) ─────────────────────
+  //
+  // Worker sees only the vehicles they've been assigned to and only
+  // their own mileage entries. Every mutation goes through
+  // userCanLogAgainstVehicle so an unassigned worker can't slip a
+  // mileage entry in.
+
+  app.get("/me/vehicles", workerGuard, async (req: any) => {
+    const { listAssignedVehiclesForUser } = await import("../services/vehicles");
+    const uid = await services.currentUser.me(req.auth?.clerkUserId).then((u) => u.id);
+    return listAssignedVehiclesForUser(uid);
+  });
+
+  app.get("/me/mileage/open", workerGuard, async (req: any) => {
+    const { listOpenEntriesForUser } = await import("../services/mileage");
+    const uid = await services.currentUser.me(req.auth?.clerkUserId).then((u) => u.id);
+    return listOpenEntriesForUser(uid);
+  });
+
+  app.get("/me/mileage", workerGuard, async (req: any) => {
+    const { listEntriesForUser } = await import("../services/mileage");
+    const uid = await services.currentUser.me(req.auth?.clerkUserId).then((u) => u.id);
+    const fromDate = req.query?.from ? String(req.query.from) : undefined;
+    const toDate = req.query?.to ? String(req.query.to) : undefined;
+    return listEntriesForUser(uid, { fromDate, toDate });
+  });
+
+  app.post("/me/mileage/start", workerGuard, async (req: any) => {
+    const { startEntry } = await import("../services/mileage");
+    const { userCanLogAgainstVehicle } = await import("../services/vehicles");
+    const uid = await services.currentUser.me(req.auth?.clerkUserId).then((u) => u.id);
+    const b = req.body ?? {};
+    const vehicleId = String(b.vehicleId ?? "");
+    if (!vehicleId) throw app.httpErrors.badRequest("vehicleId is required");
+    const allowed = await userCanLogAgainstVehicle(uid, vehicleId);
+    if (!allowed) throw app.httpErrors.forbidden("You're not assigned to this vehicle.");
+    return startEntry({
+      vehicleId,
+      driverUserId: uid,
+      startOdometer: Number(b.startOdometer),
+      startedAt: b.startedAt ? new Date(b.startedAt) : undefined,
+    });
+  });
+
+  app.post("/me/mileage/:id/stop", workerGuard, async (req: any) => {
+    const { finalizeEntry } = await import("../services/mileage");
+    const uid = await services.currentUser.me(req.auth?.clerkUserId).then((u) => u.id);
+    const entry = await prisma.mileageEntry.findUnique({
+      where: { id: req.params.id },
+      select: { driverUserId: true },
+    });
+    if (!entry) throw app.httpErrors.notFound("Mileage entry not found.");
+    if (entry.driverUserId !== uid) {
+      throw app.httpErrors.forbidden("Not your mileage entry.");
+    }
+    const b = req.body ?? {};
+    return finalizeEntry({
+      entryId: req.params.id,
+      endOdometer: Number(b.endOdometer),
+      endedAt: b.endedAt ? new Date(b.endedAt) : undefined,
+      notes: b.notes ?? null,
+    });
+  });
+
+  app.post("/me/mileage/:id/cancel", workerGuard, async (req: any) => {
+    const { cancelEntry } = await import("../services/mileage");
+    const uid = await services.currentUser.me(req.auth?.clerkUserId).then((u) => u.id);
+    const entry = await prisma.mileageEntry.findUnique({
+      where: { id: req.params.id },
+      select: { driverUserId: true },
+    });
+    if (!entry) throw app.httpErrors.notFound("Mileage entry not found.");
+    if (entry.driverUserId !== uid) {
+      throw app.httpErrors.forbidden("Not your mileage entry.");
+    }
+    return cancelEntry(req.params.id);
+  });
+
+  app.patch("/me/mileage/:id", workerGuard, async (req: any) => {
+    const { editEntryByDriver } = await import("../services/mileage");
+    const uid = await services.currentUser.me(req.auth?.clerkUserId).then((u) => u.id);
+    const b = req.body ?? {};
+    return editEntryByDriver(req.params.id, uid, {
+      startOdometer: b.startOdometer != null ? Number(b.startOdometer) : undefined,
+      endOdometer: b.endOdometer != null ? Number(b.endOdometer) : undefined,
+      notes: b.notes,
+    });
   });
 }
