@@ -134,11 +134,11 @@ export default function MileageStrip({
       <>
         {/* Filled circular icon button — matches the visual weight of
             the workday state icon (the solid orange/green/yellow circle
-            on the left of the strip). Sits at similar size + prominence
-            so the two read as a matched pair. Color is orange for
-            "start driving" (invitation to act) and teal for the active
-            "you're on the clock" state — a state color like the
-            workday icon uses. */}
+            on the left of the strip). Solid orange stays consistent
+            with the rest of the mileage UI; a small white indicator
+            ring signals the active "you're currently driving" state
+            without introducing a second color that clashes with the
+            workday backgrounds. */}
         <Box
           as="button"
           onClick={(e: React.MouseEvent) => {
@@ -388,7 +388,7 @@ function StartDialog({
             <Dialog.Footer>
               <HStack gap={2} w="full" justify="flex-end">
                 <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
-                <Button colorPalette="teal" onClick={submit} loading={busy} disabled={!valid}>
+                <Button colorPalette="orange" onClick={submit} loading={busy} disabled={!valid}>
                   Start
                 </Button>
               </HStack>
@@ -495,7 +495,7 @@ function StopDialog({
             <Dialog.Footer>
               <HStack gap={2} w="full" justify="flex-end">
                 <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
-                <Button colorPalette="teal" onClick={submit} loading={busy} disabled={!valid}>
+                <Button colorPalette="orange" onClick={submit} loading={busy} disabled={!valid}>
                   Stop &amp; save
                 </Button>
               </HStack>
@@ -662,7 +662,7 @@ function CompactMileageDialog({
                       key={entry.id}
                       size="md"
                       variant="outline"
-                      colorPalette="teal"
+                      colorPalette="orange"
                       justifyContent="flex-start"
                       onClick={() => setStep({ kind: "stop", entry })}
                     >
@@ -675,7 +675,7 @@ function CompactMileageDialog({
                       key={v.id}
                       size="md"
                       variant="outline"
-                      colorPalette="teal"
+                      colorPalette="orange"
                       justifyContent="flex-start"
                       onClick={() => setStep({ kind: "start", vehicle: v })}
                     >
@@ -768,7 +768,7 @@ function CompactMileageDialog({
                     </Button>
                     {step.kind === "start" && (
                       <Button
-                        colorPalette="teal"
+                        colorPalette="orange"
                         onClick={submitStart}
                         loading={busy}
                         disabled={!startValid}
@@ -778,7 +778,7 @@ function CompactMileageDialog({
                     )}
                     {step.kind === "stop" && (
                       <Button
-                        colorPalette="teal"
+                        colorPalette="orange"
                         onClick={submitStop}
                         loading={busy}
                         disabled={!stopValid}
