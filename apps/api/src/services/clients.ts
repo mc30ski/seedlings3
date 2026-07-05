@@ -26,13 +26,13 @@ function normalizePhone(raw?: string | null): string | null {
 }
 
 /**
- * Primary-contact invariant guard. Blocks pause/archive/delete when the target
+ * Primary-contact invariant guard. Blocks archive/delete when the target
  * is the client's only ACTIVE primary contact — invoice routing depends on a
  * primary existing, so the admin must promote another contact first.
  */
 async function assertNotSoleActivePrimary(
   contactId: string,
-  verb: "pause" | "archive" | "delete",
+  verb: "archive" | "delete",
 ): Promise<void> {
   const target = await prisma.clientContact.findUnique({
     where: { id: contactId },
@@ -258,25 +258,15 @@ export const clients: ServicesClients = {
     });
   },
 
-  async pause(currentUserId: string, id: string) {
-    return action<ClientStatus>(
-      currentUserId,
-      id,
-      "client",
-      ClientStatus.PAUSED,
-      AUDIT.CLIENT.PAUSED
-    );
-  },
-
-  async unpause(currentUserId: string, id: string) {
-    return action<ClientStatus>(
-      currentUserId,
-      id,
-      "client",
-      ClientStatus.ACTIVE,
-      AUDIT.CLIENT.UNPAUSED
-    );
-  },
+  // NOTE: Client.pause/unpause writers removed in Step 3 of the pause-
+  // simplification migration. The Client-level "pause" state was
+  // cosmetic (no downstream code consulted it) and the operator's
+  // actual workflow — "stop this client's services" — is now served by
+  // bulkPauseServices / bulkResumeServices (which live above these
+  // comments). Existing Client.status = PAUSED rows continue to render
+  // their badge; Step 4 migrates them by cascading their Jobs to
+  // PAUSED and flipping the Client back to ACTIVE. Step 5 drops the
+  // PAUSED enum value from ClientStatus.
 
   // Archive the Client AND cascade to every non-archived Property + every
   // non-archived Job under those Properties. Populates the previously-
@@ -750,26 +740,12 @@ export const clients: ServicesClients = {
 
   //TODO: DO CREATE, UPDATE, DELETE TOO?
 
-  async pauseContact(currentUserId: string, id: string) {
-    await assertNotSoleActivePrimary(id, "pause");
-    return action<ContactStatus>(
-      currentUserId,
-      id,
-      "clientContact",
-      ContactStatus.PAUSED,
-      AUDIT.CLIENT.CONTACT_PAUSED
-    );
-  },
-
-  async unpauseContact(currentUserId: string, id: string) {
-    return action<ContactStatus>(
-      currentUserId,
-      id,
-      "clientContact",
-      ContactStatus.ACTIVE,
-      AUDIT.CLIENT.CONTACT_UNPAUSED
-    );
-  },
+  // NOTE: ClientContact.pause/unpause writers removed in Step 3.
+  // Contact-level PAUSED was silently dropping the contact from
+  // payment-request delivery with no visible signal — a footgun.
+  // Existing PAUSED contacts continue to render; Step 4 migrates them
+  // to ARCHIVED (which preserves the delivery-blocking behavior in a
+  // more honest state) and Step 5 drops the PAUSED enum value.
 
   async archiveContact(currentUserId: string, id: string) {
     await assertNotSoleActivePrimary(id, "archive");

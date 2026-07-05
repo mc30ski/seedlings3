@@ -771,19 +771,9 @@ export default async function adminRoutes(app: FastifyInstance) {
     );
   });
 
-  app.post("/admin/clients/:id/pause", adminGuard, async (req: any) => {
-    return services.clients.pause(
-      await currentUserId(req),
-      String(req.params.id)
-    );
-  });
-
-  app.post("/admin/clients/:id/unpause", adminGuard, async (req: any) => {
-    return services.clients.unpause(
-      await currentUserId(req),
-      String(req.params.id)
-    );
-  });
+  // /admin/clients/:id/pause and /unpause routes removed in Step 3.
+  // The operator workflow "stop a client's services" now routes through
+  // /admin/clients/:id/pause-services (defined below).
 
   app.post("/admin/clients/:id/archive", adminGuard, async (req: any) => {
     return services.clients.archive(
@@ -926,19 +916,10 @@ export default async function adminRoutes(app: FastifyInstance) {
     }
   );
 
-  app.post("/admin/contacts/:id/pause", adminGuard, async (req: any) => {
-    return services.clients.pauseContact(
-      await currentUserId(req),
-      String(req.params.id)
-    );
-  });
-
-  app.post("/admin/contacts/:id/unpause", adminGuard, async (req: any) => {
-    return services.clients.unpauseContact(
-      await currentUserId(req),
-      String(req.params.id)
-    );
-  });
+  // /admin/contacts/:id/pause and /unpause removed in Step 3.
+  // Contact-level pause was silently dropping payment-request delivery;
+  // the concept is retired. Operators archive contacts they no longer
+  // want to hear from.
 
   app.post("/admin/contacts/:id/archive", adminGuard, async (req: any) => {
     return services.clients.archiveContact(

@@ -331,8 +331,7 @@ export type ServicesClients = {
     id: string,
     payload: ClientUpsert
   ): Promise<Client | null>;
-  pause(currentUserId: string, id: string): Promise<Client | null>;
-  unpause(currentUserId: string, id: string): Promise<Client | null>;
+  // pause/unpause removed in Step 3 — see services/clients.ts comment.
   archive(currentUserId: string, id: string): Promise<{
     archived: boolean;
     propertiesArchived: number;
@@ -377,14 +376,7 @@ export type ServicesClients = {
     contactId: string,
     payload: ContactUpsert
   ): Promise<ClientContact | null>;
-  pauseContact(
-    currentUserId: string,
-    id: string
-  ): Promise<ClientContact | null>;
-  unpauseContact(
-    currentUserId: string,
-    id: string
-  ): Promise<ClientContact | null>;
+  // pauseContact/unpauseContact removed in Step 3 — see services/clients.ts.
   archiveContact(
     currentUserId: string,
     id: string
