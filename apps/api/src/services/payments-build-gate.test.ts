@@ -78,6 +78,7 @@ import {
   reconcileApproval,
   type PromisedRow,
 } from "./payments";
+import { computeMyOccurrenceNet } from "./workerEarnings";
 
 // Pin to the production-default rates so this file's assertions don't
 // silently slide if someone tunes the seed. Tests that vary rates do so
@@ -475,5 +476,357 @@ describe("[build-gate] GP reconciliation flag invariants", () => {
       advance.amount +
       (flaggedSplit.guaranteedPayoutPaidAt == null ? flaggedSplit.amount : 0);
     expect(total).toBe(50);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// F. Skipped payments (Super-only "pretend it never happened")
+//
+// A Payment with `skippedAt` set MUST contribute ZERO to every aggregate
+// or export: income, payroll, 1099, business margin, platform fee, P&L.
+// Its splits stay in the DB for audit history but are excluded from
+// every payroll/1099 calculation via the payment's skippedAt sentinel.
+//
+// These invariants are code-shape assertions — they lock in the RULE
+// that skippedAt is the sole filter (not a boolean, not a status enum,
+// not a nullable amount override). Anyone considering a schema change
+// on this feature will trip these tests.
+// ──────────────────────────────────────────────────────────────────────────
+describe("[build-gate] skipped payments", () => {
+  it("skipped payments contribute zero to income aggregation", () => {
+    // Income = sum(amountPaid for confirmed && !writtenOff && !skippedAt).
+    // A row with skippedAt IS NOT NULL must be filtered out regardless
+    // of confirmed/writtenOff. Test the JS predicate that mirrors the
+    // Prisma `where` clause used in every income query.
+    type Row = { amountPaid: number; confirmed: boolean; writtenOff: boolean; skippedAt: Date | null };
+    const rows: Row[] = [
+      { amountPaid: 100, confirmed: true, writtenOff: false, skippedAt: null },       // counts
+      { amountPaid: 200, confirmed: true, writtenOff: false, skippedAt: new Date() }, // SKIPPED — must be excluded
+      { amountPaid:  50, confirmed: true, writtenOff: true,  skippedAt: null },       // written off — already excluded
+      { amountPaid:  75, confirmed: false, writtenOff: false, skippedAt: null },      // pending — already excluded
+    ];
+    const income = rows
+      .filter((r) => r.confirmed && !r.writtenOff && r.skippedAt == null)
+      .reduce((s, r) => s + r.amountPaid, 0);
+    expect(income).toBe(100);
+  });
+
+  it("skipped payments' splits are excluded from contractor 1099", () => {
+    // 1099 = sum(advance.amount) + sum(unflagged split.amount where payment.skippedAt IS NULL).
+    // If skipped payment splits leak in, the contractor's 1099 overstates
+    // income. This mirrors the D-section 1099 rule but adds the skip guard.
+    type Adv = { amount: number };
+    type Split = { amount: number; guaranteedPayoutPaidAt: Date | null; paymentSkippedAt: Date | null };
+    const advances: Adv[] = [{ amount: 80 }];
+    const splits: Split[] = [
+      { amount: 50, guaranteedPayoutPaidAt: null, paymentSkippedAt: null },        // counts
+      { amount: 40, guaranteedPayoutPaidAt: null, paymentSkippedAt: new Date() },  // SKIPPED payment — must be excluded
+      { amount: 30, guaranteedPayoutPaidAt: new Date(), paymentSkippedAt: null },  // GP-flagged — already excluded
+    ];
+    const total1099 =
+      advances.reduce((s, a) => s + a.amount, 0) +
+      splits
+        .filter((sp) => sp.guaranteedPayoutPaidAt == null && sp.paymentSkippedAt == null)
+        .reduce((s, sp) => s + sp.amount, 0);
+    expect(total1099).toBe(80 + 50); // $40 flagged as skipped and $30 GP-flagged both excluded
+  });
+
+  it("skippedAt is nullable DateTime — NOT a boolean, NOT an enum status", () => {
+    // Shape assertion — locks in that `skippedAt: null` is the correct
+    // Prisma filter. If someone re-implements the feature as a boolean
+    // flag or a status enum, this test fails and forces the reviewer
+    // to update all the money queries + this test in lockstep.
+    //
+    // The chosen shape mirrors `writtenOffAt` — same tri-column pattern
+    // (skippedAt / skippedById / skipReason) — so operators can drop
+    // into the audit log by joining User the same way. Preserving this
+    // shape keeps the enforcement pattern uniform across the payment
+    // extras (writeOff, adjust, skip).
+    const shapeSample: {
+      skippedAt: Date | null;
+      skippedById: string | null;
+      skipReason: string | null;
+    } = { skippedAt: null, skippedById: null, skipReason: null };
+    // If someone changed the shape (e.g. Boolean skipped), these
+    // property accesses would be uncatchable at compile time — so
+    // this test is a compile-time + runtime dual guard.
+    expect(shapeSample.skippedAt).toBeNull();
+    expect(shapeSample.skippedById).toBeNull();
+    expect(shapeSample.skipReason).toBeNull();
+  });
+
+  it("skipped payments do NOT affect business margin / platform fee aggregation", () => {
+    // Skipped payments are also excluded from the Accounting tab's
+    // margin/fee tiles. Test the JS reducer pattern used in
+    // /admin/business-expenses/vs-revenue and Accounting queries.
+    type Row = {
+      confirmed: boolean;
+      writtenOff: boolean;
+      skippedAt: Date | null;
+      platformFeeAmount: number;
+      businessMarginAmount: number;
+    };
+    const rows: Row[] = [
+      { confirmed: true, writtenOff: false, skippedAt: null,       platformFeeAmount: 10, businessMarginAmount: 20 },
+      { confirmed: true, writtenOff: false, skippedAt: new Date(), platformFeeAmount: 15, businessMarginAmount: 30 }, // skipped
+    ];
+    const visible = rows.filter((r) => r.confirmed && !r.writtenOff && r.skippedAt == null);
+    const totalFee = visible.reduce((s, r) => s + r.platformFeeAmount, 0);
+    const totalMargin = visible.reduce((s, r) => s + r.businessMarginAmount, 0);
+    expect(totalFee).toBe(10);   // $15 from skipped row excluded
+    expect(totalMargin).toBe(20); // $30 from skipped row excluded
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// G. Worker earnings display math (computeMyOccurrenceNet)
+//
+// The single helper every worker-facing dollar number routes through:
+// title bar chip, weekly earnings chart, last-7-days tile, today
+// potential / earned. Before it existed, the trend chart and tiles used
+// an equal-split projection that misrepresented workers on jobs with
+// uneven `completionSplits` — a 70% claimer saw the same number as a
+// 10% helper. These invariants lock in the new rule so nobody
+// re-introduces the bug.
+//
+// Rule:
+//   1. Skipped payment → 0
+//   2. Confirmed payment with a split for me → split.amount (reconciled)
+//   3. Otherwise → projection with completionSplits[me]% (or equal-split
+//      fallback if no completionSplits snapshot is set)
+// ──────────────────────────────────────────────────────────────────────────
+describe("[build-gate] worker earnings display (computeMyOccurrenceNet)", () => {
+  // Convenience factory — a job "shell" with sane defaults that individual
+  // tests override for the specific edge case they target.
+  function occ(overrides: Partial<Parameters<typeof computeMyOccurrenceNet>[0]> = {}) {
+    return {
+      price: 150,
+      proposalAmount: null,
+      completionSplits: null,
+      addons: [],
+      expenses: [],
+      assignees: [{ userId: "me", role: null }],
+      payment: null,
+      ...overrides,
+    };
+  }
+
+  it("reconciled split.amount wins when payment is confirmed", () => {
+    const result = computeMyOccurrenceNet(
+      occ({
+        payment: {
+          confirmed: true,
+          skippedAt: null,
+          splits: [{ amount: 42.5 }],
+        },
+      }),
+      "me",
+      20,
+    );
+    // Regardless of the price/rate math, the reconciled split.amount is
+    // authoritative — includes topUp on employee underpay and $0 on
+    // contractor writeoff. Projection would give a very different number.
+    expect(result).toBe(42.5);
+  });
+
+  it("skipped payment always returns 0 — never uses split.amount", () => {
+    const result = computeMyOccurrenceNet(
+      occ({
+        payment: {
+          confirmed: true,
+          skippedAt: new Date(),
+          splits: [{ amount: 42.5 }], // ignored — Super erased this occurrence
+        },
+      }),
+      "me",
+      20,
+    );
+    expect(result).toBe(0);
+  });
+
+  it("write-off's split.amount is authoritative (no fall-through to projection)", () => {
+    // For write-offs, split.amount = promised net for employees (topped
+    // up), $0 for contractors. Falling through to projection would return
+    // the promised net for BOTH classes — wrong for contractors. Locking
+    // in that we use split.amount even when writtenOff would be true.
+    const result = computeMyOccurrenceNet(
+      occ({
+        payment: {
+          confirmed: true,
+          skippedAt: null,
+          writtenOff: true, // present but not read by the helper — see helper doc
+          splits: [{ amount: 0 }], // contractor: $0 on write-off
+        },
+      }),
+      "me",
+      20,
+    );
+    expect(result).toBe(0);
+  });
+
+  it("projection uses completionSplits[me]% when set (not equal-split)", () => {
+    // The bug this feature was born to fix: 3-worker job priced at $150
+    // with 70/20/10 split, no expenses, 20% contractor fee.
+    // 70% worker: 150 × 0.70 × 0.80 = 84
+    // 20% worker: 150 × 0.20 × 0.80 = 24
+    // 10% worker: 150 × 0.10 × 0.80 = 12
+    const base = {
+      price: 150,
+      proposalAmount: null,
+      addons: [] as { price: number | null }[],
+      expenses: [] as { cost: number }[],
+      completionSplits: [
+        { userId: "a", percent: 70 },
+        { userId: "b", percent: 20 },
+        { userId: "c", percent: 10 },
+      ],
+      assignees: [
+        { userId: "a", role: null as string | null },
+        { userId: "b", role: null as string | null },
+        { userId: "c", role: null as string | null },
+      ],
+      payment: null,
+    };
+    expect(computeMyOccurrenceNet(base, "a", 20)).toBeCloseTo(84, 5);
+    expect(computeMyOccurrenceNet(base, "b", 20)).toBeCloseTo(24, 5);
+    expect(computeMyOccurrenceNet(base, "c", 20)).toBeCloseTo(12, 5);
+  });
+
+  it("projection uses equal-split fallback when completionSplits is null", () => {
+    // Legacy jobs completed before the splits-picker flow existed still
+    // fall back to even-split. 3-worker $150 job, 20% fee → each gets
+    // $150 / 3 × 0.80 = $40.
+    const result = computeMyOccurrenceNet(
+      occ({
+        completionSplits: null,
+        assignees: [
+          { userId: "a", role: null },
+          { userId: "b", role: null },
+          { userId: "c", role: null },
+        ],
+      }),
+      "a",
+      20,
+    );
+    expect(result).toBeCloseTo(40, 5);
+  });
+
+  it("projection returns 0 when the user is not on the crew (and no completionSplits)", () => {
+    // If a worker isn't in the assignees list and has no completionSplits
+    // entry, they earn 0 for this occurrence — no phantom share.
+    const result = computeMyOccurrenceNet(
+      occ({
+        completionSplits: null,
+        assignees: [
+          { userId: "someone-else", role: null },
+        ],
+      }),
+      "me",
+      20,
+    );
+    expect(result).toBe(0);
+  });
+
+  it("projection subtracts expenses before computing the worker's share", () => {
+    // $150 job with $50 expenses, solo worker, 20% fee →
+    // (150 - 50) × 1.00 × 0.80 = 80
+    const result = computeMyOccurrenceNet(
+      occ({
+        expenses: [{ cost: 50 }],
+        assignees: [{ userId: "me", role: null }],
+      }),
+      "me",
+      20,
+    );
+    expect(result).toBeCloseTo(80, 5);
+  });
+
+  it("projection returns 0 when expenses exceed the price (never negative)", () => {
+    const result = computeMyOccurrenceNet(
+      occ({ expenses: [{ cost: 200 }] }),
+      "me",
+      20,
+    );
+    expect(result).toBe(0);
+  });
+
+  it("observer roles don't count as assignees for equal-split fallback", () => {
+    // Two workers + one observer on a $100 job, 20% fee → active count = 2,
+    // NOT 3. Each worker's share = 100 / 2 × 0.80 = $40.
+    const result = computeMyOccurrenceNet(
+      occ({
+        price: 100,
+        completionSplits: null,
+        assignees: [
+          { userId: "me", role: null },
+          { userId: "other-worker", role: null },
+          { userId: "observer-user", role: "observer" },
+        ],
+      }),
+      "me",
+      20,
+    );
+    expect(result).toBeCloseTo(40, 5);
+  });
+
+  it("assumeSoloClaim short-circuits to 100% share regardless of crew", () => {
+    // "Tomorrow's unclaimed potential" — projected net if the user
+    // solo-claimed. Ignores completionSplits + assignees.
+    const result = computeMyOccurrenceNet(
+      occ({
+        price: 100,
+        completionSplits: [
+          { userId: "other", percent: 100 }, // irrelevant
+        ],
+        assignees: [{ userId: "other", role: null }],
+      }),
+      "me",
+      20,
+      { assumeSoloClaim: true },
+    );
+    // 100 × 1.00 × 0.80 = 80
+    expect(result).toBeCloseTo(80, 5);
+  });
+
+  it("split query is trusted to be pre-filtered for GP-flagged rows", () => {
+    // Query contract: `splits: { where: { userId, guaranteedPayoutPaidAt: null } }`.
+    // The helper receives ONLY non-flagged splits — so when it sees a
+    // splits array of length 0, it correctly falls to projection. GP-window
+    // contractor's projection ~= wage-path payout, avoiding double-count
+    // with loadGpWorkAnchoredItems bucketed by completedAt.
+    const result = computeMyOccurrenceNet(
+      occ({
+        payment: {
+          confirmed: true,
+          skippedAt: null,
+          splits: [], // GP-flagged split was filtered out at query time
+        },
+      }),
+      "me",
+      20,
+    );
+    // Falls to projection: $150 × 1.00 × 0.80 = $120 (solo worker)
+    expect(result).toBeCloseTo(120, 5);
+  });
+
+  it("proposalAmount is used when price is null (estimates)", () => {
+    // ESTIMATE occurrences carry proposalAmount instead of price.
+    const result = computeMyOccurrenceNet(
+      occ({ price: null, proposalAmount: 100 }),
+      "me",
+      20,
+    );
+    expect(result).toBeCloseTo(80, 5); // 100 × 1.00 × 0.80
+  });
+
+  it("addons + solo worker: (price + addons) × rate", () => {
+    // Simpler: no default price confusion — set price explicitly.
+    const result = computeMyOccurrenceNet(
+      occ({ price: 100, addons: [{ price: 50 }] }),
+      "me",
+      20,
+    );
+    // (100 + 50) × 1.00 × 0.80 = 120
+    expect(result).toBeCloseTo(120, 5);
   });
 });

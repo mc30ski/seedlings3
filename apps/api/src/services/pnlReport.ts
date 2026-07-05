@@ -189,6 +189,7 @@ export async function buildPnLReport(
         confirmed: true,
         confirmedAt: { gte: start, lte: end },
         writtenOff: false,
+        skippedAt: null,
       },
       select: { amountPaid: true },
     }),
@@ -223,6 +224,7 @@ export async function buildPnLReport(
         confirmed: true,
         confirmedAt: { gte: start, lte: end },
         writtenOff: false,
+        skippedAt: null,
         processorFeeAmount: { gt: 0 },
       },
       select: { processorFeeAmount: true },
@@ -237,6 +239,7 @@ export async function buildPnLReport(
         confirmed: true,
         confirmedAt: { gte: start, lte: end },
         writtenOff: false,
+        skippedAt: null,
       },
       select: {
         splits: {
@@ -666,6 +669,7 @@ export async function pnlReportDetails(
         confirmed: true,
         confirmedAt: { gte: start, lte: end },
         writtenOff: false,
+        skippedAt: null,
       },
       select: {
         amountPaid: true,
@@ -727,6 +731,7 @@ export async function pnlReportDetails(
         confirmed: true,
         confirmedAt: { gte: start, lte: end },
         writtenOff: false,
+        skippedAt: null,
         processorFeeAmount: { gt: 0 },
       },
       select: {
@@ -765,6 +770,7 @@ export async function pnlReportDetails(
           confirmed: true,
           confirmedAt: { gte: start, lte: end },
           writtenOff: false,
+          skippedAt: null,
         },
         select: {
           confirmedAt: true,
@@ -833,6 +839,7 @@ export async function pnlReportDetails(
         confirmed: true,
         confirmedAt: { gte: start, lte: end },
         writtenOff: false,
+        skippedAt: null,
       },
       select: {
         confirmedAt: true,
@@ -893,6 +900,7 @@ export async function pnlReportDetails(
         confirmed: true,
         confirmedAt: { gte: start, lte: end },
         writtenOff: false,
+        skippedAt: null,
       },
       select: {
         splits: {

@@ -8,6 +8,7 @@ import { ServiceError } from "../lib/errors";
 import { normalizePhone } from "../lib/phone";
 import { persistCompletionSplits, wasUserInGuaranteedPayoutAt } from "../services/payments";
 import { evaluateHoursApproval, loadHoursApprovalVarianceThreshold } from "../services/jobs";
+import { computeMyOccurrenceNet } from "../services/workerEarnings";
 import { loadGpWorkAnchoredItems } from "../services/exports";
 import {
   resolveCutoff,
@@ -243,9 +244,21 @@ export default async function workerRoutes(app: FastifyInstance) {
         select: {
           price: true,
           proposalAmount: true,
+          completionSplits: true,
           addons: { select: { price: true } },
           expenses: { select: { cost: true } },
-          assignees: { select: { role: true } },
+          assignees: { select: { userId: true, role: true } },
+          payment: {
+            select: {
+              confirmed: true,
+              writtenOff: true,
+              skippedAt: true,
+              splits: {
+                where: { userId: uid, guaranteedPayoutPaidAt: null },
+                select: { amount: true },
+              },
+            },
+          },
         },
       }),
       prisma.checkout.count({ where: { userId: uid, releasedAt: null, checkedOutAt: { not: null } } }),
@@ -297,9 +310,21 @@ export default async function workerRoutes(app: FastifyInstance) {
           totalPausedMs: true,
           price: true,
           proposalAmount: true,
+          completionSplits: true,
           addons: { select: { price: true } },
           expenses: { select: { cost: true } },
-          assignees: { select: { role: true } },
+          assignees: { select: { userId: true, role: true } },
+          payment: {
+            select: {
+              confirmed: true,
+              writtenOff: true,
+              skippedAt: true,
+              splits: {
+                where: { userId: uid, guaranteedPayoutPaidAt: null },
+                select: { amount: true },
+              },
+            },
+          },
         },
       }),
       // Placeholder — Earnings is now derived from the completed-jobs query above.
@@ -339,9 +364,21 @@ export default async function workerRoutes(app: FastifyInstance) {
         select: {
           price: true,
           proposalAmount: true,
+          completionSplits: true,
           addons: { select: { price: true } },
           expenses: { select: { cost: true } },
-          assignees: { select: { role: true } },
+          assignees: { select: { userId: true, role: true } },
+          payment: {
+            select: {
+              confirmed: true,
+              writtenOff: true,
+              skippedAt: true,
+              splits: {
+                where: { userId: uid, guaranteedPayoutPaidAt: null },
+                select: { amount: true },
+              },
+            },
+          },
         },
       }),
       // Tomorrow's unclaimed jobs — open shifts the worker could pick up. Visible to all workers,
@@ -378,9 +415,21 @@ export default async function workerRoutes(app: FastifyInstance) {
           completedAt: true,
           price: true,
           proposalAmount: true,
+          completionSplits: true,
           addons: { select: { price: true } },
           expenses: { select: { cost: true } },
-          assignees: { select: { role: true } },
+          assignees: { select: { userId: true, role: true } },
+          payment: {
+            select: {
+              confirmed: true,
+              writtenOff: true,
+              skippedAt: true,
+              splits: {
+                where: { userId: uid, guaranteedPayoutPaidAt: null },
+                select: { amount: true },
+              },
+            },
+          },
         },
       }),
       // Tomorrow's unconfirmed jobs — fetch clientId so we can count UNIQUE clients
@@ -398,27 +447,19 @@ export default async function workerRoutes(app: FastifyInstance) {
       }),
     ]);
 
-    // Today's potential = worker's projected NET share (after expenses, fees/margin, and team split).
-    // Same formula as the earnings-summary endpoint so the two displays agree.
+    // Worker earnings math — the SINGLE helper (computeMyOccurrenceNet in
+    // services/workerEarnings.ts) handles every "what will this worker
+    // actually be paid for this occurrence" number. It prefers the
+    // reconciled PaymentSplit.amount when the payment is confirmed +
+    // healthy, and falls back to a completionSplits-aware projection
+    // otherwise. See the helper's file-header comment for the full rule.
     const meUser = await prisma.user.findUnique({ where: { id: uid }, select: { workerType: true } });
     const isEmp = meUser?.workerType === "EMPLOYEE" || meUser?.workerType === "TRAINEE";
     const settingKeyForPct = isEmp ? "EMPLOYEE_BUSINESS_MARGIN_PERCENT" : "CONTRACTOR_PLATFORM_FEE_PERCENT";
     const setting = await prisma.setting.findUnique({ where: { key: settingKeyForPct } });
     const pct = Number(setting?.value ?? 0);
-    function payoutShareForOcc(occ: { price: number | null; proposalAmount: number | null; addons: { price: number | null }[]; expenses: { cost: number }[]; assignees: { role: string | null }[] }): number {
-      const base = occ.price ?? occ.proposalAmount ?? 0;
-      const addons = (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
-      const displayPrice = base + addons;
-      if (displayPrice <= 0) return 0;
-      const expTotal = (occ.expenses ?? []).reduce((s, e) => s + (e.cost ?? 0), 0);
-      const net = Math.max(0, displayPrice - expTotal);
-      const deduction = Math.round(net * pct) / 100;
-      const payout = Math.max(0, net - deduction);
-      const activeCount = Math.max(1, (occ.assignees ?? []).filter((a) => a.role !== "observer").length);
-      return payout / activeCount;
-    }
-    const todayPotentialAmount = todayJobs.reduce((sum, occ) => sum + payoutShareForOcc(occ), 0);
-    const todayEarnedAmount = todayCompletedJobs.reduce((sum: number, occ: any) => sum + payoutShareForOcc(occ), 0);
+    const todayPotentialAmount = todayJobs.reduce((sum, occ) => sum + computeMyOccurrenceNet(occ, uid, pct), 0);
+    const todayEarnedAmount = todayCompletedJobs.reduce((sum, occ) => sum + computeMyOccurrenceNet(occ, uid, pct), 0);
 
     // Tomorrow's unconfirmed clients — unique client count for tomorrow's SCHEDULED jobs
     // that haven't been client-confirmed yet. Drives the "confirm Y clients" hint in the
@@ -429,12 +470,20 @@ export default async function workerRoutes(app: FastifyInstance) {
         .filter((id): id is string => !!id)
     ).size;
 
-    // Tomorrow's unclaimed potential — uses the same payout formula but assumes a single-worker
-    // claim (since no one is on it yet). The user's net share if they claimed it solo.
+    // Tomorrow's unclaimed potential — the current worker's net share IF
+    // they solo-claimed each unclaimed job. `assumeSoloClaim` skips the
+    // completionSplits + assignees lookup entirely and uses 100% share.
     const tomorrowUnclaimedCount = tomorrowUnclaimedJobs.length;
     const tomorrowUnclaimedPotential = tomorrowUnclaimedJobs.reduce((sum: number, occ: any) => {
-      // Reuse payoutShareForOcc but treat as 0 assignees (it'll clamp to 1 internally for solo claim).
-      return sum + payoutShareForOcc({ ...occ, assignees: [] });
+      // The tomorrowUnclaimedJobs select doesn't include completionSplits
+      // or assignees.userId — that's fine, assumeSoloClaim short-circuits
+      // both. Empty arrays satisfy the input shape.
+      return sum + computeMyOccurrenceNet(
+        { ...occ, completionSplits: null, assignees: [], payment: null },
+        uid,
+        pct,
+        { assumeSoloClaim: true },
+      );
     }, 0);
 
     const planning = overdue + todayCount + tomorrowCount + pendingPayment + estimatesReady + reminders;
@@ -462,22 +511,17 @@ export default async function workerRoutes(app: FastifyInstance) {
     for (let i = 0; i < 9; i++) {
       weeklyMap[etAddDays(trendStartKey, i * 7)] = { count: 0, earnings: 0 };
     }
-    // Same payout formula as todayPotentialAmount / earnings-summary.
-    for (const occ of trendJobs as Array<{ completedAt: Date | null; price: number | null; proposalAmount: number | null; addons: { price: number | null }[]; expenses: { cost: number }[]; assignees: { role: string | null }[] }>) {
+    // Same paycheck-truthful math as todayPotentialAmount / earnings-summary /
+    // title-bar-earnings — see services/workerEarnings.ts. Reconciled split
+    // wins when the payment is confirmed + healthy; otherwise projection
+    // uses completionSplits[me]% rather than an equal split so the bars
+    // reflect what THIS worker is actually paid on uneven-split crews.
+    for (const occ of trendJobs) {
       if (!occ.completedAt) continue;
       const k = weekKey(new Date(occ.completedAt));
       if (!(k in weeklyMap)) continue;
       weeklyMap[k].count++;
-      const base = occ.price ?? occ.proposalAmount ?? 0;
-      const addons = (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
-      const displayPrice = base + addons;
-      if (displayPrice <= 0) continue;
-      const expTotal = (occ.expenses ?? []).reduce((s, e) => s + (e.cost ?? 0), 0);
-      const net = Math.max(0, displayPrice - expTotal);
-      const deduction = Math.round(net * pct) / 100;
-      const payout = Math.max(0, net - deduction);
-      const activeCount = Math.max(1, (occ.assignees ?? []).filter((a) => a.role !== "observer").length);
-      weeklyMap[k].earnings += payout / activeCount;
+      weeklyMap[k].earnings += computeMyOccurrenceNet(occ, uid, pct);
     }
     const weeklyCompleted = Object.entries(weeklyMap)
       .sort((a, b) => a[0].localeCompare(b[0]))
@@ -518,12 +562,24 @@ export default async function workerRoutes(app: FastifyInstance) {
         select: {
           price: true,
           proposalAmount: true,
+          completionSplits: true,
           addons: { select: { price: true } },
           expenses: { select: { cost: true } },
-          assignees: { select: { role: true } },
+          assignees: { select: { userId: true, role: true } },
+          payment: {
+            select: {
+              confirmed: true,
+              writtenOff: true,
+              skippedAt: true,
+              splits: {
+                where: { userId: uid, guaranteedPayoutPaidAt: null },
+                select: { amount: true },
+              },
+            },
+          },
         },
       });
-      actualWeekEarnings = empJobs.reduce((sum, occ) => sum + payoutShareForOcc(occ), 0);
+      actualWeekEarnings = empJobs.reduce((sum, occ) => sum + computeMyOccurrenceNet(occ, uid, pct), 0);
       weekJobCount = empJobs.length;
     } else {
       // Contractor weekly earnings = post-GP splits + GP-period
@@ -537,7 +593,7 @@ export default async function workerRoutes(app: FastifyInstance) {
         where: {
           userId: uid,
           guaranteedPayoutPaidAt: null,
-          payment: { createdAt: { gte: winLo, lt: todayMidnight } },
+          payment: { createdAt: { gte: winLo, lt: todayMidnight }, skippedAt: null },
         },
         select: { amount: true },
       });
@@ -2099,46 +2155,11 @@ export default async function workerRoutes(app: FastifyInstance) {
     const setting = await prisma.setting.findUnique({ where: { key: settingKey } });
     const myRate = Number(setting?.value ?? 0);
 
-    // Per-worker promised net using the canonical math (mirrors
-    // services/payments.ts → computeBreakdown). Prefers saved
-    // completionSplits; falls back to even-split across active assignees.
-    function computeMyPromisedNet(
-      occ: {
-        price: number | null;
-        proposalAmount: number | null;
-        completionSplits: any;
-        addons: { price: number | null }[];
-        expenses: { cost: number }[];
-        assignees: { userId: string; role: string | null }[];
-      },
-      userId: string,
-      rate: number,
-    ): number {
-      const basePrice = occ.price ?? occ.proposalAmount ?? 0;
-      const addonsTotal = (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
-      const displayPrice = basePrice + addonsTotal;
-      if (displayPrice <= 0) return 0;
-      const expTotal = (occ.expenses ?? []).reduce((s, e) => s + (e.cost ?? 0), 0);
-      const N = Math.max(0, displayPrice - expTotal);
-      if (N <= 0) return 0;
-
-      let myPercent = 0;
-      const cs = occ.completionSplits as Array<{ userId: string; percent: number }> | null;
-      if (Array.isArray(cs) && cs.length > 0) {
-        const mine = cs.find((s) => s.userId === userId);
-        myPercent = Number(mine?.percent ?? 0);
-      } else {
-        const active = (occ.assignees ?? []).filter((a) => a.role !== "observer");
-        if (active.some((a) => a.userId === userId) && active.length > 0) {
-          myPercent = 100 / active.length;
-        }
-      }
-      if (myPercent <= 0) return 0;
-
-      const myGross = N * (myPercent / 100);
-      const myFee = myGross * (rate / 100);
-      return Math.max(0, myGross - myFee);
-    }
+    // Per-worker earnings math lives in the shared helper —
+    // services/workerEarnings.ts → computeMyOccurrenceNet. The rule:
+    // reconciled PaymentSplit.amount when the payment is confirmed +
+    // healthy, else project via completionSplits[me]% (or equal-split
+    // fallback). See helper header comment.
 
     let today = 0;
     let thisWeek = 0;   // = today + past 6 actual days
@@ -2191,6 +2212,7 @@ export default async function workerRoutes(app: FastifyInstance) {
             select: {
               method: true,
               confirmed: true,
+              skippedAt: true,
               splits: { where: { userId: uid }, select: { amount: true } },
             },
           },
@@ -2201,18 +2223,20 @@ export default async function workerRoutes(app: FastifyInstance) {
         const when = occ.completedAt ?? occ.startAt;
         if (!when) continue;
 
-        // Prefer the actual split amount when the payment is approved
-        // (already reflects promised + topUp via reconciliation).
-        // Otherwise compute the promised net for me using new per-worker math.
-        let value = 0;
-        const paidAmount = occ.payment?.confirmed ? occ.payment.splits[0]?.amount : null;
-        if (paidAmount != null) {
-          value = paidAmount;
-          if (occ.payment?.method) {
-            byMethod[occ.payment.method] = (byMethod[occ.payment.method] ?? 0) + value;
-          }
-        } else {
-          value = computeMyPromisedNet(occ, uid, myRate);
+        // Reconciled paycheck value when the payment landed, projection
+        // otherwise. Skipped payments contribute $0 (helper enforces).
+        const value = computeMyOccurrenceNet(occ, uid, myRate);
+        // Attribute to a payment method ONLY when a reconciled split
+        // actually drove the amount — projection has no method attached.
+        if (
+          value > 0 &&
+          occ.payment &&
+          !occ.payment.skippedAt &&
+          occ.payment.confirmed &&
+          occ.payment.method &&
+          (occ.payment.splits?.length ?? 0) > 0
+        ) {
+          byMethod[occ.payment.method] = (byMethod[occ.payment.method] ?? 0) + value;
         }
 
         addToBuckets(value, when);
@@ -2236,7 +2260,7 @@ export default async function workerRoutes(app: FastifyInstance) {
         where: {
           userId: uid,
           guaranteedPayoutPaidAt: null,
-          payment: { confirmed: true, ...(cutoff ? { createdAt: { gte: cutoff } } : {}) },
+          payment: { confirmed: true, skippedAt: null, ...(cutoff ? { createdAt: { gte: cutoff } } : {}) },
         },
         include: {
           payment: {
@@ -2309,7 +2333,14 @@ export default async function workerRoutes(app: FastifyInstance) {
         if (!when) continue;
         // Today-only projection — past unpaid pipeline doesn't count.
         if (when < startOfToday || when >= startOfTomorrow) continue;
-        const myShare = computeMyPromisedNet(occ, uid, myRate);
+        // Payment is guaranteed null/unconfirmed by the query filter, so
+        // helper takes the projection path. Passing `payment: null`
+        // explicitly for type conformance.
+        const myShare = computeMyOccurrenceNet(
+          { ...occ, payment: null },
+          uid,
+          myRate,
+        );
         if (myShare <= 0) continue;
         addToBuckets(myShare, when);
         jobCount++;
@@ -2374,41 +2405,9 @@ export default async function workerRoutes(app: FastifyInstance) {
     const setting = await prisma.setting.findUnique({ where: { key: settingKey } });
     const myRate = Number(setting?.value ?? 0);
 
-    function computeMyPromisedNet(
-      occ: {
-        price: number | null;
-        proposalAmount: number | null;
-        completionSplits: any;
-        addons: { price: number | null }[];
-        expenses: { cost: number }[];
-        assignees: { userId: string; role: string | null }[];
-      },
-      userId: string,
-      rate: number,
-    ): number {
-      const basePrice = occ.price ?? occ.proposalAmount ?? 0;
-      const addonsTotal = (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
-      const displayPrice = basePrice + addonsTotal;
-      if (displayPrice <= 0) return 0;
-      const expTotal = (occ.expenses ?? []).reduce((s, e) => s + (e.cost ?? 0), 0);
-      const N = Math.max(0, displayPrice - expTotal);
-      if (N <= 0) return 0;
-      let myPercent = 0;
-      const cs = occ.completionSplits as Array<{ userId: string; percent: number }> | null;
-      if (Array.isArray(cs) && cs.length > 0) {
-        const mine = cs.find((s) => s.userId === userId);
-        myPercent = Number(mine?.percent ?? 0);
-      } else {
-        const active = (occ.assignees ?? []).filter((a) => a.role !== "observer");
-        if (active.some((a) => a.userId === userId) && active.length > 0) {
-          myPercent = 100 / active.length;
-        }
-      }
-      if (myPercent <= 0) return 0;
-      const myGross = N * (myPercent / 100);
-      const myFee = myGross * (rate / 100);
-      return Math.max(0, myGross - myFee);
-    }
+    // Per-worker earnings math lives in services/workerEarnings.ts →
+    // computeMyOccurrenceNet. Same rule used everywhere the worker sees
+    // a dollar figure. See helper header comment.
 
     let today = 0;
     let thisWeek = 0;
@@ -2454,6 +2453,7 @@ export default async function workerRoutes(app: FastifyInstance) {
             select: {
               method: true,
               confirmed: true,
+              skippedAt: true,
               splits: { where: { userId: uid }, select: { amount: true } },
             },
           },
@@ -2469,15 +2469,18 @@ export default async function workerRoutes(app: FastifyInstance) {
         //   - Scheduled (not started) → use startAt (planned date).
         const when = occ.completedAt ?? occ.startedAt ?? occ.startAt;
         if (!when) continue;
-        let value = 0;
-        const paidAmount = occ.payment?.confirmed ? occ.payment.splits[0]?.amount : null;
-        if (paidAmount != null) {
-          value = paidAmount;
-          if (occ.payment?.method) {
-            byMethod[occ.payment.method] = (byMethod[occ.payment.method] ?? 0) + value;
-          }
-        } else {
-          value = computeMyPromisedNet(occ, uid, myRate);
+        // Reconciled paycheck value when the payment landed, projection
+        // otherwise. Skipped payments contribute $0 (helper enforces).
+        const value = computeMyOccurrenceNet(occ, uid, myRate);
+        if (
+          value > 0 &&
+          occ.payment &&
+          !occ.payment.skippedAt &&
+          occ.payment.confirmed &&
+          occ.payment.method &&
+          (occ.payment.splits?.length ?? 0) > 0
+        ) {
+          byMethod[occ.payment.method] = (byMethod[occ.payment.method] ?? 0) + value;
         }
         addToBuckets(value, when);
         if (value > 0) jobCount++;
@@ -2491,7 +2494,7 @@ export default async function workerRoutes(app: FastifyInstance) {
         where: {
           userId: uid,
           guaranteedPayoutPaidAt: null,
-          payment: { confirmed: true, ...(cutoff ? { createdAt: { gte: cutoff } } : {}) },
+          payment: { confirmed: true, skippedAt: null, ...(cutoff ? { createdAt: { gte: cutoff } } : {}) },
         },
         include: { payment: { select: { createdAt: true, method: true } } },
       });
@@ -2559,7 +2562,13 @@ export default async function workerRoutes(app: FastifyInstance) {
         const when = occ.completedAt ?? occ.startedAt ?? occ.startAt;
         if (!when) continue;
         if (when < startOfToday || when >= startOfTomorrow) continue;
-        const myShare = computeMyPromisedNet(occ, uid, myRate);
+        // Payment is null/unconfirmed by query filter → helper takes
+        // projection path. `payment: null` for type conformance.
+        const myShare = computeMyOccurrenceNet(
+          { ...occ, payment: null },
+          uid,
+          myRate,
+        );
         if (myShare <= 0) continue;
         addToBuckets(myShare, when);
         jobCount++;
@@ -3525,7 +3534,7 @@ export default async function workerRoutes(app: FastifyInstance) {
         assignees: { select: { userId: true, user: { select: { id: true, displayName: true, email: true, workerType: true } } } },
         payment: {
           where: cutoff ? { createdAt: { gte: cutoff } } : undefined,
-          select: { amountPaid: true, method: true, platformFeeAmount: true, businessMarginAmount: true, splits: { select: { userId: true, amount: true } } },
+          select: { amountPaid: true, method: true, skippedAt: true, platformFeeAmount: true, businessMarginAmount: true, splits: { select: { userId: true, amount: true } } },
         },
         expenses: {
           where: cutoff
@@ -3582,7 +3591,11 @@ export default async function workerRoutes(app: FastifyInstance) {
       const actualMinutes = occ.startedAt && occ.completedAt
         ? Math.round((new Date(occ.completedAt).getTime() - new Date(occ.startedAt).getTime()) / 60000) : null;
       const expenseTotal = occ.expenses.reduce((s, e) => s + e.cost, 0);
-      const split = occ.payment?.splits.find((s) => s.userId === uid);
+      // Skipped payments: pretend it never happened — earnings for
+      // this occurrence contribute $0 to worker statistics.
+      const split = occ.payment?.skippedAt
+        ? undefined
+        : occ.payment?.splits.find((s) => s.userId === uid);
       const gpAdvance = advanceByOccId.get(occ.id);
       const earnings = gpAdvance ?? split?.amount ?? 0;
       if (earnings > 0) {

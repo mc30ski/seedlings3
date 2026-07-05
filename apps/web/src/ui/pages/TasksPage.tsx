@@ -64,6 +64,7 @@ type ShortcutCounts = {
   pendingWorkdays: number;
   unapprovedHoursCount: number;
   ledgerFollowupCount: number;
+  dueToRecordCount: number;
   guaranteedPayoutExpiringCount: number;
   pendingUsersCount: number;
   // Admin (also visible to super)
@@ -82,6 +83,7 @@ type ShortcutHandlers = {
   goToWorkdayApprovals: () => void;
   goToUnapprovedHours: () => void;
   goToLedgerFollowups: () => void;
+  goToDueToRecord: () => void;
   goToGuaranteedPayoutExpiring: () => void;
   goToApprovals: () => void;
   goToEstimateFollowups: () => void;
@@ -330,6 +332,14 @@ export default function TasksPage({
             >
               <LedgerFollowupsSection />
             </CollapsibleSectionCard>
+          )}
+          {isSuper && counts.dueToRecordCount > 0 && (
+            <ShortcutCard
+              label="Due to record"
+              count={counts.dueToRecordCount}
+              dotColor="#F97316"
+              onReview={wrap(handlers.goToDueToRecord)}
+            />
           )}
           {isAdmin && (
             <CollapsibleSectionCard

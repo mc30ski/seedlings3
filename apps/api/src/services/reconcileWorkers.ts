@@ -279,6 +279,7 @@ export async function buildReconcileWorkers(
           select: {
             confirmed: true,
             writtenOff: true,
+            skippedAt: true,
             confirmedAt: true,
             amountPaid: true,
             processorFeeAmount: true,
@@ -304,6 +305,7 @@ export async function buildReconcileWorkers(
         confirmed: true,
         confirmedAt: { gte: start, lte: end },
         writtenOff: false,
+        skippedAt: null,
       },
       select: { amountPaid: true, processorFeeAmount: true },
     }),
@@ -445,7 +447,11 @@ export async function buildReconcileWorkers(
     const clientName = occ.job?.property?.client?.displayName ?? null;
     const propertyName = occ.job?.property?.displayName ?? null;
     const titleLabel = occ.title || propertyName || "(untitled)";
-    const paymentConfirmed = !!(occ.payment?.confirmed && !occ.payment.writtenOff);
+    // Skipped payments are treated as "not confirmed" for reconciliation
+    // purposes — the tab must not show earnings/margin for a payment
+    // Super has erased.
+    const paymentSkipped = !!occ.payment?.skippedAt;
+    const paymentConfirmed = !!(occ.payment?.confirmed && !occ.payment.writtenOff && !paymentSkipped);
     const paymentWrittenOff = !!occ.payment?.writtenOff;
 
     // Build a per-user breakdown for this occurrence. Snapshot first,
@@ -570,7 +576,8 @@ export async function buildReconcileWorkers(
     // Owner-earnings (the LLC owner's cut on this occurrence) gets a
     // separate accumulator on whichever user is flagged as the owner
     // recipient. Doesn't roll into grossEarnings (not personal wage).
-    if (occ.payment) {
+    // Skipped payments contribute zero owner-earnings too.
+    if (occ.payment && !paymentSkipped) {
       for (const sp of occ.payment.splits) {
         if (!sp.ownerEarnings) continue;
         // Find or build accum for this user. They may not be an

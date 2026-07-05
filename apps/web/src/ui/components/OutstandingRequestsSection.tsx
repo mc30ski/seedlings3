@@ -23,12 +23,13 @@ import {
   Textarea,
   VStack,
 } from "@chakra-ui/react";
-import { Check, ExternalLink, RefreshCw } from "lucide-react";
+import { Check, ExternalLink, RefreshCw, SkipForward } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
 import { bumpAdminPayments } from "@/src/lib/bus";
 import { formatNextOccurrenceOutcome, type PaymentActionResult } from "@/src/lib/paymentMessages";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import PaymentCommsButtons from "@/src/ui/components/PaymentCommsButtons";
+import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
 type PaymentMethodConfig = {
   key: string;
@@ -78,6 +79,11 @@ export default function OutstandingRequestsSection() {
   const [markPaidFee, setMarkPaidFee] = useState("");
   const [markPaidBusy, setMarkPaidBusy] = useState(false);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodConfig[]>([]);
+
+  // Skip dialog state — Super-only "pretend this service never happened."
+  // Gated by type-APPROVE via ConfirmDialog.requiredInputValue.
+  const [skipRow, setSkipRow] = useState<OutstandingRow | null>(null);
+  const [skipBusy, setSkipBusy] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -221,6 +227,35 @@ export default function OutstandingRequestsSection() {
     }
   }
 
+  // Skip an outstanding request — Super-only "pretend the service
+  // never happened." Backend clears every money aggregate/export for
+  // the row, closes the occurrence, and generates the next occurrence
+  // for repeating jobs. See services/payments.ts skipOccurrence.
+  async function submitSkip() {
+    if (!skipRow) return;
+    setSkipBusy(true);
+    try {
+      const result: PaymentActionResult = await apiPost(
+        `/api/admin/occurrences/${skipRow.occurrenceId}/skip`,
+        {},
+      );
+      const nextLine = formatNextOccurrenceOutcome(result);
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: nextLine
+          ? `Service skipped — treated as if it never happened. ${nextLine}`
+          : "Service skipped — treated as if it never happened.",
+      });
+      bumpAdminPayments();
+      setSkipRow(null);
+      await load();
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Skip failed.", err) });
+    } finally {
+      setSkipBusy(false);
+    }
+  }
+
   function openJob(row: OutstandingRow) {
     window.dispatchEvent(
       new CustomEvent("open:jobsTabToServicesTabSearch", {
@@ -338,6 +373,21 @@ export default function OutstandingRequestsSection() {
                   title="Client paid offline — record the payment and close out the invoice"
                 >
                   <Check size={12} /> Reconcile Paid
+                </Button>
+                {/* Super-only nuclear option — this section is already
+                    Super-gated by the parent (PaymentsTab renders it
+                    only when isSuper), so the button always shows here.
+                    The confirmation dialog requires typing APPROVE to
+                    prevent accidental use. See services/payments.ts
+                    skipOccurrence for the full behavior. */}
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  colorPalette="red"
+                  onClick={() => setSkipRow(r)}
+                  title="Super only — pretend this service never happened. Erases income, payroll, and 1099 aggregation for this occurrence."
+                >
+                  <SkipForward size={12} /> Skip service
                 </Button>
               </HStack>
             </Box>
@@ -496,6 +546,78 @@ export default function OutstandingRequestsSection() {
           </Dialog.Positioner>
         </Portal>
       </Dialog.Root>
+
+      {/* Skip dialog — Super-only, "pretend this service never happened."
+          Requires typing APPROVE (case-insensitive) in the input to enable
+          the Skip button. Everything the operator needs to understand
+          before pulling the trigger is spelled out in the messageNode. */}
+      {skipRow && (
+        <ConfirmDialog
+          open
+          title="Skip this service"
+          message=""
+          messageNode={
+            <VStack align="stretch" gap={3}>
+              <Text fontSize="sm" color="fg.default">
+                <b>
+                  {skipRow.property ?? "This service"}
+                  {skipRow.client ? ` — ${skipRow.client}` : ""}
+                </b>{" "}
+                will be treated as if it never happened. This is not a
+                write-off (which still counts on operator dashboards).
+                It is a full erasure from every financial view.
+              </Text>
+              <Box
+                borderWidth="1px"
+                borderColor="red.300"
+                bg="red.50"
+                borderRadius="md"
+                p={3}
+              >
+                <VStack align="start" gap={1.5}>
+                  <Text fontSize="xs" fontWeight="semibold" color="red.900">
+                    What this does — read before typing APPROVE:
+                  </Text>
+                  <Text fontSize="xs" color="red.900">
+                    • No income will be recorded for this visit.
+                  </Text>
+                  <Text fontSize="xs" color="red.900">
+                    • Workers who worked this job will not be paid for it —
+                    including hourly employees. Confirm they've been paid
+                    separately if hours were logged.
+                  </Text>
+                  <Text fontSize="xs" color="red.900">
+                    • The visit will not appear in Income, Payroll, Processing
+                    Fees, 1099, P&amp;L, or Accounting exports.
+                  </Text>
+                  <Text fontSize="xs" color="red.900">
+                    • Any pending payment request link becomes moot.
+                  </Text>
+                  <Text fontSize="xs" color="red.900">
+                    • Rows already exported to QuickBooks are unaffected —
+                    remove them there manually if needed.
+                  </Text>
+                  <Text fontSize="xs" color="red.900">
+                    • The next occurrence for this job will still be created
+                    (schedule continuity preserved).
+                  </Text>
+                  <Text fontSize="xs" color="red.900">
+                    • Undoing this is possible via the Payments tab (same
+                    Super + APPROVE gate).
+                  </Text>
+                </VStack>
+              </Box>
+            </VStack>
+          }
+          confirmLabel="Skip service"
+          confirmColorPalette="red"
+          inputLabel="Type APPROVE to confirm"
+          inputPlaceholder="APPROVE"
+          requiredInputValue="APPROVE"
+          onConfirm={() => void submitSkip()}
+          onCancel={() => { if (!skipBusy) setSkipRow(null); }}
+        />
+      )}
     </Card.Root>
   );
 }

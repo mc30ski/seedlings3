@@ -2228,14 +2228,24 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                       {client?.displayName && <> — {clientLabel(client.displayName)}</>}
                     </Text>
                     <HStack gap={2} flexShrink={0}>
-                      {p.confirmed === false && !(p as any).writtenOff && (
+                      {p.confirmed === false && !(p as any).writtenOff && !(p as any).skippedAt && (
                         <Badge size="sm" colorPalette="orange" variant="subtle">Pending</Badge>
                       )}
-                      {(p as any).writtenOff && (
+                      {(p as any).writtenOff && !(p as any).skippedAt && (
                         <Badge size="sm" colorPalette="red" variant="solid">Written off</Badge>
                       )}
+                      {(p as any).skippedAt && (
+                        <Badge size="sm" colorPalette="gray" variant="solid" title="Super-erased — treated as if the service never happened. Excluded from every income/payroll/1099 aggregate.">
+                          Skipped
+                        </Badge>
+                      )}
                       <Badge size="sm" colorPalette="gray">{methodLabel(p.method)}</Badge>
-                      <Text fontWeight="bold" color={(p as any).writtenOff ? "red.700" : "green.700"} fontSize="lg">
+                      <Text
+                        fontWeight="bold"
+                        color={(p as any).skippedAt ? "gray.500" : (p as any).writtenOff ? "red.700" : "green.700"}
+                        textDecoration={(p as any).skippedAt ? "line-through" : undefined}
+                        fontSize="lg"
+                      >
                         ${p.amountPaid.toFixed(2)}
                       </Text>
                     </HStack>
@@ -2492,7 +2502,8 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                     // When a worker filter is active we sum only the
                     // selected workers; unfiltered = full-team total.
                     const writtenOff = !!(p as any).writtenOff;
-                    const isPending = p.confirmed === false && !writtenOff;
+                    const skipped = !!(p as any).skippedAt;
+                    const isPending = p.confirmed === false && !writtenOff && !skipped;
                     const promisedRows = (p.occurrence?.promisedPayouts ?? null) as Array<{
                       userId: string; workerType: string | null; net: number;
                     }> | null;
@@ -2555,7 +2566,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                         {/* Status badges stack ABOVE the WORKER PAYOUT
                             headline so the headline number remains the
                             tallest, most prominent element in the row. */}
-                        {(isPending || writtenOff || (adjustedFrom != null && adjustedFrom !== p.amountPaid)) && (
+                        {(isPending || writtenOff || skipped || (adjustedFrom != null && adjustedFrom !== p.amountPaid)) && (
                           <HStack gap={1} align="center" wrap="wrap" justify={{ base: "flex-start", sm: "flex-end" }} mb={1}>
                             {isPending && (
                               <Badge size="sm" colorPalette="orange" variant="subtle" title="Awaiting admin approval in the Pending Approvals queue.">
@@ -2564,6 +2575,11 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                             )}
                             {writtenOff && (
                               <Badge size="sm" colorPalette="red" variant="solid">Written off</Badge>
+                            )}
+                            {skipped && (
+                              <Badge size="sm" colorPalette="gray" variant="solid" title="Super-erased — treated as if the service never happened. Excluded from every income/payroll/1099 aggregate.">
+                                Skipped
+                              </Badge>
                             )}
                             {adjustedFrom != null && adjustedFrom !== p.amountPaid && (
                               <Badge size="sm" colorPalette="orange" variant="subtle" title={`Originally reported as $${adjustedFrom.toFixed(2)}`}>
@@ -2582,7 +2598,13 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                                 contractor share is still pending. */}
                             {isPending && hasContingent ? " (guaranteed)" : ""}
                           </Text>
-                          <Text fontWeight="bold" color={writtenOff ? "red.700" : "green.700"} fontSize="xl" lineHeight="1">
+                          <Text
+                            fontWeight="bold"
+                            color={skipped ? "gray.500" : writtenOff ? "red.700" : "green.700"}
+                            textDecoration={skipped ? "line-through" : undefined}
+                            fontSize="xl"
+                            lineHeight="1"
+                          >
                             ${splitTotal.toFixed(2)}
                           </Text>
                         </VStack>

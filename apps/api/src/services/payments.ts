@@ -937,6 +937,9 @@ export const payments: ServicesPayments = {
         ? { ...where.payment, createdAt: { ...(where.payment.createdAt ?? {}), gte: maxDate(where.payment.createdAt?.gte, cutoff) } }
         : { createdAt: { gte: cutoff } };
     }
+    // Skipped payments' splits are invisible everywhere — worker's own
+    // Payments tab should not surface earnings that were erased.
+    where.payment = { ...(where.payment ?? {}), skippedAt: null };
 
     const splits = await prisma.paymentSplit.findMany({
       where,
@@ -1100,6 +1103,11 @@ export const payments: ServicesPayments = {
     let totalOverage = 0;
     let totalShortfall = 0;
     for (const p of payments) {
+      // Skipped payments — "pretend it didn't happen" — contribute nothing
+      // to any aggregate/summary tile. Still appear in the list (with a
+      // Skipped chip); their per-person totals + fee/margin/overage all
+      // stay at zero. Payment.skippedAt is the sole sentinel.
+      if ((p as any).skippedAt) continue;
       // Money-flow Total Revenue: what the business actually kept on this
       // payment. Independent of how fee/margin/overage decompose.
       const expensesSum = (p.occurrence?.expenses ?? []).reduce((s: number, e: any) => s + (e.cost ?? 0), 0);
@@ -1971,6 +1979,155 @@ export const payments: ServicesPayments = {
     });
 
     return result;
+  },
+
+  // Super-only "pretend this service never happened" path. Runs the
+  // standard approval path with collected=0 (identical to writeOff so
+  // occurrence closes + next-occurrence generation + carryforward
+  // fires consistently), then stamps `skippedAt`. Every downstream
+  // money query filters `skippedAt: null`, so the payment + its splits
+  // disappear from income, payroll, 1099s, P&L, and every export
+  // while remaining visible on the operator payment list with a
+  // "Skipped" chip (audit trail preserved).
+  //
+  // Guarded by superGuard at the route layer; gated by type-APPROVE
+  // in the confirm dialog on the UI. This service function itself
+  // does not know about roles — enforce upstream.
+  async skipPayment(currentUserId, paymentId, reason) {
+    const existing = await prisma.payment.findUnique({ where: { id: paymentId } });
+    if (!existing) throw new ServiceError("NOT_FOUND", "Payment not found.", 404);
+    if (existing.confirmed) {
+      throw new ServiceError("ALREADY_APPROVED", "Cannot skip — payment is already confirmed.", 409);
+    }
+    if (existing.writtenOff) {
+      throw new ServiceError("ALREADY_WRITTEN_OFF", "Payment is already written off. Cannot skip a written-off payment.", 409);
+    }
+    if (existing.skippedAt) {
+      throw new ServiceError("ALREADY_SKIPPED", "Payment is already skipped.", 409);
+    }
+
+    // Run the standard approval path with collected=0 so all downstream
+    // logic (close occurrence, next-occurrence creation) fires. Then
+    // stamp `skippedAt` — the sole sentinel every money query filters on.
+    const result = await payments.approvePayment(currentUserId, paymentId, { amountPaid: 0 });
+
+    await prisma.$transaction(async (tx) => {
+      await tx.payment.update({
+        where: { id: paymentId },
+        data: {
+          skippedAt: new Date(),
+          skippedById: currentUserId,
+          skipReason: reason?.trim() || null,
+        },
+      });
+      await writeAudit(tx, AUDIT.PAYMENT.SKIPPED, currentUserId, {
+        paymentId,
+        occurrenceId: existing.occurrenceId,
+        reason: reason?.trim() || null,
+      });
+    });
+
+    return result;
+  },
+
+  // Occurrence-level Skip — for the Outstanding Requests surface
+  // where a payment request was sent but no Payment row exists yet.
+  // Materializes a $0/CASH Payment first (so all downstream flows
+  // have a Payment to work with) then delegates to skipPayment,
+  // which runs approvePayment(0) → next-occurrence generation +
+  // occurrence CLOSED, and stamps skippedAt.
+  //
+  // If a Payment row already exists (self-reported by client or
+  // worker on-site), the caller should use skipPayment directly.
+  // This function refuses when there's an existing Payment because
+  // its $0/CASH materialization would clobber the reported amount.
+  async skipOccurrence(currentUserId, occurrenceId, reason) {
+    const occ = await prisma.jobOccurrence.findUnique({
+      where: { id: occurrenceId },
+      select: {
+        id: true,
+        status: true,
+        assignees: { select: { userId: true, role: true } },
+      },
+    });
+    if (!occ) throw new ServiceError("NOT_FOUND", "Occurrence not found.", 404);
+    if (occ.status !== JobOccurrenceStatus.PENDING_PAYMENT) {
+      throw new ServiceError(
+        "INVALID_STATUS",
+        `Cannot skip — occurrence status is "${occ.status}", expected "PENDING_PAYMENT".`,
+        409,
+      );
+    }
+    const existingPayment = await prisma.payment.findUnique({
+      where: { occurrenceId },
+    });
+    if (existingPayment) {
+      // Delegate — the operator is skipping an already-reported
+      // payment. Guards on skipPayment (confirmed / writtenOff /
+      // already skipped) fire consistently.
+      return payments.skipPayment(currentUserId, existingPayment.id, reason);
+    }
+    const activeAssignees = (occ.assignees ?? []).filter((a) => a.role !== "observer");
+    if (activeAssignees.length === 0) {
+      throw new ServiceError(
+        "NO_CLAIMER",
+        "Cannot skip — the occurrence has no active worker assigned.",
+        409,
+      );
+    }
+    // Even split — matches adminMarkInvoicePaid so both paths produce
+    // identical Payment shapes on the way in. All amounts land at $0
+    // downstream so who's on the split list doesn't affect any
+    // aggregate (splits are filtered by skippedAt).
+    const basePercent = Math.floor(100 / activeAssignees.length);
+    const remainder = 100 - basePercent * activeAssignees.length;
+    const completionSplits = activeAssignees.map((a, i) => ({
+      userId: a.userId,
+      percent: basePercent + (i === 0 ? remainder : 0),
+    }));
+    const payment = await payments.createPayment(currentUserId, {
+      occurrenceId,
+      amountPaid: 0,
+      // CASH is always present in PAYMENT_METHODS with zero fees —
+      // safe default. The method is irrelevant because every read
+      // that ever touches this row filters `skippedAt: null`.
+      method: "CASH",
+      note: null,
+      completionSplits,
+      context: "ADMIN" as any,
+    } as any);
+    return payments.skipPayment(currentUserId, payment.id, reason);
+  },
+
+  // Reverse a Skip. Clears `skippedAt`/`skippedById`/`skipReason` so
+  // the payment reappears in every aggregate/export at its original
+  // approved-$0 shape (identical to a write-off in cash terms, but
+  // without the writtenOff flag). If the operator needs to also
+  // reverse the approval itself, they use the existing revert flow.
+  //
+  // Same superGuard + type-APPROVE gate as skip.
+  async unskipPayment(currentUserId, paymentId) {
+    const existing = await prisma.payment.findUnique({ where: { id: paymentId } });
+    if (!existing) throw new ServiceError("NOT_FOUND", "Payment not found.", 404);
+    if (!existing.skippedAt) {
+      throw new ServiceError("NOT_SKIPPED", "Payment is not skipped.", 409);
+    }
+
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.payment.update({
+        where: { id: paymentId },
+        data: {
+          skippedAt: null,
+          skippedById: null,
+          skipReason: null,
+        },
+      });
+      await writeAudit(tx, AUDIT.PAYMENT.UNSKIPPED, currentUserId, {
+        paymentId,
+        occurrenceId: existing.occurrenceId,
+      });
+      return updated;
+    });
   },
 
   async listPendingApprovals(cutoff?: Date | null) {
