@@ -292,7 +292,7 @@ export default function ReconcileTab() {
   // intentionally always visible since picking the date range is the
   // entry point for everything below.
   const SECTION_KEYS = useMemo(
-    () => ["download", "pnl", "payroll", "workers"] as const,
+    () => ["download", "pnl", "workers"] as const,
     [],
   );
   const [sectionCollapsed, setSectionCollapsed] = useState<Record<string, boolean>>(
@@ -954,144 +954,27 @@ export default function ReconcileTab() {
         <HStack justify="center" py={6}><Spinner /></HStack>
       ) : !period ? null : (
         <>
-          {/* Payroll — Gusto-shaped per-worker row set. Click any
-              numeric cell to copy. Hours + Additional Earnings are the
-              two values the operator types into Gusto per worker;
-              Regular Wages is what Gusto auto-computes from the on-file
-              hourly rate. Equivalent Hourly Rate is the sanity-check
-              column. */}
-          <Card.Root>
-            <CardSectionHeader
-              title="Payroll"
-              subtitle={
-                <>
-                  For each worker: type <b>Hours</b> and <b>Additional Earnings</b> into Gusto. Tap any number to copy.
-                </>
-              }
-              collapsed={isSectionCollapsed("payroll")}
-              onToggle={() => toggleSection("payroll")}
-            />
-            {!isSectionCollapsed("payroll") && (
-            <Card.Body>
-              {period.payroll.length === 0 ? (
-                <Text fontSize="sm" color="fg.muted" textAlign="center">
-                  No active workers in this window.
-                </Text>
-              ) : (
-                <Box overflowX="auto">
-                  <Table.Root size="sm" variant="line">
-                    <Table.Header>
-                      <Table.Row>
-                        <Table.ColumnHeader fontSize="2xs">Worker</Table.ColumnHeader>
-                        <Table.ColumnHeader fontSize="2xs">Type</Table.ColumnHeader>
-                        <Table.ColumnHeader fontSize="2xs" textAlign="right">Hours</Table.ColumnHeader>
-                        <Table.ColumnHeader fontSize="2xs" textAlign="right">Hourly Wage</Table.ColumnHeader>
-                        <Table.ColumnHeader fontSize="2xs" textAlign="right">Regular Wages</Table.ColumnHeader>
-                        <Table.ColumnHeader fontSize="2xs" textAlign="right">Additional Earnings</Table.ColumnHeader>
-                        <Table.ColumnHeader fontSize="2xs" textAlign="right">Total Gross</Table.ColumnHeader>
-                        <Table.ColumnHeader fontSize="2xs" textAlign="right">Equivalent Hourly Rate</Table.ColumnHeader>
-                      </Table.Row>
-                    </Table.Header>
-                    <Table.Body>
-                      {period.payroll.map((p) => {
-                        const belowMin =
-                          p.equivalentHourlyRate != null &&
-                          p.equivalentHourlyRate > 0 &&
-                          p.equivalentHourlyRate < (period.minWagePerHour ?? 7.25);
-                        return (
-                          <Table.Row key={p.userId}>
-                            <Table.Cell fontSize="xs" fontWeight="semibold">
-                              {p.displayName ?? p.email ?? "(unnamed)"}
-                            </Table.Cell>
-                            <Table.Cell fontSize="xs">
-                              <Badge size="xs" colorPalette={workerTypePalette(p.workerType, p.isOwner)} variant="subtle">
-                                {workerTypeLabel(p.workerType, p.isOwner)}
-                              </Badge>
-                            </Table.Cell>
-                            <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono">
-                              <Button
-                                size="xs"
-                                variant="ghost"
-                                onClick={() => void copyToClipboard(p.hours.toFixed(2))}
-                                title="Click to copy"
-                              >
-                                {p.hours.toFixed(2)}
-                              </Button>
-                            </Table.Cell>
-                            <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono">
-                              <Button
-                                size="xs"
-                                variant="ghost"
-                                onClick={() => void copyToClipboard(p.hourlyWage.toFixed(2))}
-                                title="Click to copy"
-                              >
-                                {fmtUSD(p.hourlyWage)}
-                              </Button>
-                            </Table.Cell>
-                            <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono">
-                              <Button
-                                size="xs"
-                                variant="ghost"
-                                onClick={() => void copyToClipboard(p.regularWages.toFixed(2))}
-                                title="Click to copy"
-                              >
-                                {fmtUSD(p.regularWages)}
-                              </Button>
-                            </Table.Cell>
-                            <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono">
-                              <Button
-                                size="xs"
-                                variant="ghost"
-                                onClick={() => void copyToClipboard(p.additionalEarnings.toFixed(2))}
-                                title="Click to copy"
-                              >
-                                {fmtUSD(p.additionalEarnings)}
-                              </Button>
-                            </Table.Cell>
-                            <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono" fontWeight="bold">
-                              <Button
-                                size="xs"
-                                variant="ghost"
-                                onClick={() => void copyToClipboard(p.totalGross.toFixed(2))}
-                                title="Click to copy"
-                              >
-                                {fmtUSD(p.totalGross)}
-                              </Button>
-                            </Table.Cell>
-                            <Table.Cell
-                              fontSize="xs"
-                              textAlign="right"
-                              fontFamily="mono"
-                              color={belowMin ? "red.600" : "fg.default"}
-                              fontWeight={belowMin ? "semibold" : undefined}
-                            >
-                              {p.equivalentHourlyRate == null ? "—" : `${fmtUSD(p.equivalentHourlyRate)}/hr`}
-                            </Table.Cell>
-                          </Table.Row>
-                        );
-                      })}
-                    </Table.Body>
-                  </Table.Root>
-                </Box>
-              )}
-            </Card.Body>
-            )}
-          </Card.Root>
-
-          {/* Per-worker rows */}
+          {/* Combined Workers & Payroll — one row per worker.
+              Collapsed: name, badges, hours, net paid, effective rate.
+              Expanded: the Gusto-copy payroll fields (Hours / Hourly
+              Wage / Regular Wages / Additional Earnings / Total Gross /
+              Equivalent Hourly Rate — tap to copy) sit on top of the
+              earnings breakdown, then the day-by-day and per-job
+              drill-down. Everything the operator needs to run payroll
+              AND reconcile it lives in one place. */}
           <Card.Root>
             <CardSectionHeader
               title={
                 <>
-                  Workers ({period.workers.length})
+                  Worker Payroll ({period.workers.length})
                   {period.totals.anomalies > 0 && (
                     <Badge ml={2} size="xs" colorPalette="yellow" variant="subtle">
-                      {period.totals.anomalies} anomaly{period.totals.anomalies === 1 ? "" : "ies"}
+                      {period.totals.anomalies} {period.totals.anomalies === 1 ? "warning" : "warnings"}
                     </Badge>
                   )}
                 </>
               }
-              subtitle="Rows sorted by anomaly count (most first), then net paid. Tap a worker to see the day-by-day breakdown; tap a day to see each job's contribution."
+              subtitle="Every worker shows their Gusto-copy payroll fields inline — tap any number to copy. Expand a worker to see the day-by-day breakdown and each job's contribution."
               collapsed={isSectionCollapsed("workers")}
               onToggle={() => toggleSection("workers")}
             />
@@ -1103,31 +986,35 @@ export default function ReconcileTab() {
                 </Text>
               ) : (
                 <VStack align="stretch" gap={1}>
-                  {period.workers.map((w) => (
-                    <WorkerCard
-                      key={w.userId}
-                      worker={w}
-                      minWage={period.minWagePerHour}
-                      expanded={expandedWorkers.has(w.userId)}
-                      onToggle={() =>
-                        setExpandedWorkers((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(w.userId)) next.delete(w.userId);
-                          else next.add(w.userId);
-                          return next;
-                        })
-                      }
-                      expandedDays={expandedWorkerDays}
-                      onToggleDay={(dayKey) =>
-                        setExpandedWorkerDays((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(dayKey)) next.delete(dayKey);
-                          else next.add(dayKey);
-                          return next;
-                        })
-                      }
-                    />
-                  ))}
+                  {period.workers.map((w) => {
+                    const payroll = period.payroll.find((p) => p.userId === w.userId) ?? null;
+                    return (
+                      <WorkerCard
+                        key={w.userId}
+                        worker={w}
+                        payroll={payroll}
+                        minWage={period.minWagePerHour}
+                        expanded={expandedWorkers.has(w.userId)}
+                        onToggle={() =>
+                          setExpandedWorkers((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(w.userId)) next.delete(w.userId);
+                            else next.add(w.userId);
+                            return next;
+                          })
+                        }
+                        expandedDays={expandedWorkerDays}
+                        onToggleDay={(dayKey) =>
+                          setExpandedWorkerDays((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(dayKey)) next.delete(dayKey);
+                            else next.add(dayKey);
+                            return next;
+                          })
+                        }
+                      />
+                    );
+                  })}
                 </VStack>
               )}
             </Card.Body>
@@ -1636,6 +1523,7 @@ function ExpenseCategoryChips({ report }: { report: PnLReport }) {
 
 function WorkerCard({
   worker,
+  payroll,
   minWage,
   expanded,
   onToggle,
@@ -1643,13 +1531,17 @@ function WorkerCard({
   onToggleDay,
 }: {
   worker: WorkerRow;
+  payroll: PayrollRow | null;
   minWage: number;
   expanded: boolean;
   onToggle: () => void;
   expandedDays: Set<string>;
   onToggleDay: (dayKey: string) => void;
 }) {
-  void minWage;
+  const payrollBelowMin =
+    payroll?.equivalentHourlyRate != null &&
+    payroll.equivalentHourlyRate > 0 &&
+    payroll.equivalentHourlyRate < minWage;
   return (
     <Box
       borderWidth="1px"
@@ -1657,70 +1549,124 @@ function WorkerCard({
       borderRadius="md"
       bg={worker.anomalies.length > 0 ? "yellow.50" : undefined}
     >
-      <HStack
-        as="button"
+      {/* Header + payroll strip — one visual block. Whole row is a
+          click target that toggles expansion, but the individual
+          PayrollStat buttons stop propagation so a copy-tap doesn't
+          also toggle expand. Uses role="button" (not `as="button"`)
+          so nested copy buttons stay valid HTML. */}
+      <Box
+        as="div"
+        role="button"
+        tabIndex={0}
         onClick={onToggle}
-        gap={2}
-        p={2.5}
+        onKeyDown={(e: KeyboardEvent<HTMLDivElement>) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
+        px={2.5}
+        py={2}
         w="full"
         textAlign="left"
-        align="center"
         _hover={{ bg: "blackAlpha.50" }}
         cursor="pointer"
-        wrap="wrap"
       >
-        <Box flexShrink={0} color="fg.muted">
-          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        </Box>
-        <VStack align="start" gap={0} flex="1" minW="180px">
-          <HStack gap={2} wrap="wrap">
-            <Text fontSize="sm" fontWeight="semibold">
-              {worker.displayName ?? worker.email ?? "(unnamed)"}
+        <HStack gap={2} align="center" wrap="wrap">
+          <Box flexShrink={0} color="fg.muted">
+            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          </Box>
+          <VStack align="start" gap={0} flex="1" minW="180px">
+            <HStack gap={2} wrap="wrap">
+              <Text fontSize="sm" fontWeight="semibold">
+                {worker.displayName ?? worker.email ?? "(unnamed)"}
+              </Text>
+              <Badge size="xs" colorPalette={workerTypePalette(worker.workerType, worker.isOwner)} variant="subtle">
+                {workerTypeLabel(worker.workerType, worker.isOwner)}
+              </Badge>
+              {worker.hasInProgressWorkday && (
+                <Badge size="xs" colorPalette="green" variant="solid">
+                  On the clock
+                </Badge>
+              )}
+              {worker.belowMinWage && (
+                <Badge size="xs" colorPalette="red" variant="solid">
+                  Below min wage
+                </Badge>
+              )}
+              {worker.anomalies.length > 0 && !worker.belowMinWage && (
+                <Badge size="xs" colorPalette="yellow" variant="solid">
+                  ⚠ {worker.anomalies.length}
+                </Badge>
+              )}
+            </HStack>
+            <Text fontSize="xs" color="fg.muted">
+              {worker.daysWorked} day{worker.daysWorked === 1 ? "" : "s"}
+              · {worker.jobsCompleted} job{worker.jobsCompleted === 1 ? "" : "s"}
+              {worker.hasInProgressWorkday && " · live"}
+              {worker.ownerEarnings > 0 && ` · owner cut ${fmtUSD(worker.ownerEarnings)}`}
             </Text>
-            <Badge size="xs" colorPalette={workerTypePalette(worker.workerType, worker.isOwner)} variant="subtle">
-              {workerTypeLabel(worker.workerType, worker.isOwner)}
-            </Badge>
-            {worker.hasInProgressWorkday && (
-              <Badge size="xs" colorPalette="green" variant="solid">
-                On the clock
-              </Badge>
-            )}
-            {worker.belowMinWage && (
-              <Badge size="xs" colorPalette="red" variant="solid">
-                Below min wage
-              </Badge>
-            )}
-            {worker.anomalies.length > 0 && !worker.belowMinWage && (
-              <Badge size="xs" colorPalette="yellow" variant="solid">
-                ⚠ {worker.anomalies.length}
-              </Badge>
-            )}
+          </VStack>
+          <VStack align="end" gap={0} flexShrink={0}>
+            <Text fontSize="sm" fontWeight="bold">{fmtUSD(worker.netPaid)}</Text>
+            <Text fontSize="2xs" color="fg.muted">net paid</Text>
+          </VStack>
+        </HStack>
+
+        {/* Payroll — the Gusto-copy fields, inlined right below the
+            summary so scanning down the list shows every worker's
+            payroll at a glance. Hours + Additional Earnings are the
+            two values typed into Gusto; Regular Wages is what Gusto
+            auto-computes from the on-file hourly rate. Equivalent
+            Hourly Rate is the sanity-check. Every value is a copy
+            button; taps stop propagation so they don't toggle expand. */}
+        {payroll && (
+          <HStack
+            gap={3}
+            mt={1.5}
+            pl={5}
+            wrap="wrap"
+            onClick={(e: React.MouseEvent) => e.stopPropagation()}
+          >
+            <PayrollStat
+              label="Hours"
+              display={payroll.hours.toFixed(2)}
+              copyValue={payroll.hours.toFixed(2)}
+            />
+            <PayrollStat
+              label="Hourly Wage"
+              display={fmtUSD(payroll.hourlyWage)}
+              copyValue={payroll.hourlyWage.toFixed(2)}
+            />
+            <PayrollStat
+              label="Regular Wages"
+              display={fmtUSD(payroll.regularWages)}
+              copyValue={payroll.regularWages.toFixed(2)}
+            />
+            <PayrollStat
+              label="Additional Earnings"
+              display={fmtUSD(payroll.additionalEarnings)}
+              copyValue={payroll.additionalEarnings.toFixed(2)}
+            />
+            <PayrollStat
+              label="Total Gross"
+              display={fmtUSD(payroll.totalGross)}
+              copyValue={payroll.totalGross.toFixed(2)}
+              bold
+            />
+            <PayrollStat
+              label="Equivalent Hourly Rate"
+              display={payroll.equivalentHourlyRate == null ? "—" : `${fmtUSD(payroll.equivalentHourlyRate)}/hr`}
+              copyValue={payroll.equivalentHourlyRate == null ? "" : payroll.equivalentHourlyRate.toFixed(2)}
+              bold={payrollBelowMin}
+              color={payrollBelowMin ? "red.600" : undefined}
+            />
           </HStack>
-          <Text fontSize="xs" color="fg.muted">
-            {worker.hoursActive.toFixed(2)}h{worker.hasInProgressWorkday && " (live)"} · {worker.daysWorked} day{worker.daysWorked === 1 ? "" : "s"}
-            · {worker.jobsCompleted} job{worker.jobsCompleted === 1 ? "" : "s"}
-            {worker.ownerEarnings > 0 && ` · owner cut ${fmtUSD(worker.ownerEarnings)}`}
-          </Text>
-        </VStack>
-        <VStack align="end" gap={0} flexShrink={0}>
-          <Text fontSize="sm" fontWeight="bold">{fmtUSD(worker.netPaid)}</Text>
-          {worker.effectiveHourly != null && (
-            <Text
-              fontSize="xs"
-              color={worker.belowMinWage ? "red.600" : "fg.muted"}
-              fontWeight={worker.belowMinWage ? "semibold" : undefined}
-            >
-              {fmtUSD(worker.effectiveHourly)}/hr
-              {worker.preTopUpHourly != null &&
-                worker.preTopUpHourly !== worker.effectiveHourly &&
-                ` · pre-top-up ${fmtUSD(worker.preTopUpHourly)}/hr`}
-            </Text>
-          )}
-        </VStack>
-      </HStack>
+        )}
+      </Box>
 
       {expanded && (
-        <Box px={3} pb={3} pt={1} borderTopWidth="1px" borderColor="gray.200">
+        <Box px={3} pb={3} pt={2} borderTopWidth="1px" borderColor="gray.200">
           {worker.anomalies.length > 0 && (
             <Box mb={2} p={2} bg="yellow.100" borderRadius="md">
               <HStack gap={2} align="flex-start">
@@ -1856,6 +1802,43 @@ function BreakdownStat({ label, value, bold }: { label: string; value: string; b
     <Box>
       <Text fontSize="2xs" color="fg.muted">{label}</Text>
       <Text fontSize="sm" fontWeight={bold ? "bold" : undefined} fontFamily="mono">{value}</Text>
+    </Box>
+  );
+}
+
+// Same shape as BreakdownStat but the value is a copy-to-clipboard
+// button — the Gusto payroll workflow is "read one number here, type
+// it there," so the button target is the point of the panel. `color`
+// is the value's text color (used e.g. red for below-min-wage rates);
+// omit to inherit the default.
+function PayrollStat({
+  label,
+  display,
+  copyValue,
+  bold,
+  color,
+}: {
+  label: string;
+  display: string;
+  copyValue: string;
+  bold?: boolean;
+  color?: string;
+}) {
+  return (
+    <Box>
+      <Text fontSize="2xs" color="fg.muted">{label}</Text>
+      <Button
+        size="xs"
+        variant="ghost"
+        onClick={() => void copyToClipboard(copyValue)}
+        title="Click to copy"
+        fontFamily="mono"
+        fontWeight={bold ? "bold" : undefined}
+        color={color}
+        px={1}
+      >
+        {display}
+      </Button>
     </Box>
   );
 }
