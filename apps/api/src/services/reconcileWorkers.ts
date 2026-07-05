@@ -443,15 +443,20 @@ export async function buildReconcileWorkers(
   // ── Apply occurrences → jobs + per-worker earnings ─────────────────────
   for (const occ of occurrences) {
     if (!occ.completedAt) continue;
+    // Super-Skipped payments mean the service financially never
+    // happened — stronger than write-off. Per the Payment.skippedAt
+    // schema note, every money query (income, exports, payroll,
+    // 1099s, P&L, vs-revenue) filters skippedAt IS NULL. This loop
+    // is one of them — otherwise the reconcile surface shows a
+    // skipped job with earnings, top-ups, and a bogus "1 job
+    // completed but client payment not confirmed" warning that the
+    // operator can't clear because the job was erased.
+    if (occ.payment?.skippedAt) continue;
     const day = etFormatDate(occ.completedAt);
     const clientName = occ.job?.property?.client?.displayName ?? null;
     const propertyName = occ.job?.property?.displayName ?? null;
     const titleLabel = occ.title || propertyName || "(untitled)";
-    // Skipped payments are treated as "not confirmed" for reconciliation
-    // purposes — the tab must not show earnings/margin for a payment
-    // Super has erased.
-    const paymentSkipped = !!occ.payment?.skippedAt;
-    const paymentConfirmed = !!(occ.payment?.confirmed && !occ.payment.writtenOff && !paymentSkipped);
+    const paymentConfirmed = !!(occ.payment?.confirmed && !occ.payment.writtenOff);
     const paymentWrittenOff = !!occ.payment?.writtenOff;
 
     // Build a per-user breakdown for this occurrence. Snapshot first,
@@ -576,8 +581,9 @@ export async function buildReconcileWorkers(
     // Owner-earnings (the LLC owner's cut on this occurrence) gets a
     // separate accumulator on whichever user is flagged as the owner
     // recipient. Doesn't roll into grossEarnings (not personal wage).
-    // Skipped payments contribute zero owner-earnings too.
-    if (occ.payment && !paymentSkipped) {
+    // Skipped payments already `continue`d out at the top of the loop,
+    // so occ.payment here is guaranteed to be non-skipped.
+    if (occ.payment) {
       for (const sp of occ.payment.splits) {
         if (!sp.ownerEarnings) continue;
         // Find or build accum for this user. They may not be an
