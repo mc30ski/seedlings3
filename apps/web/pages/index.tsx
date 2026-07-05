@@ -29,6 +29,7 @@ import DocumentsTab from "@/src/ui/tabs/DocumentsTab";
 import TimelineTab from "@/src/ui/tabs/TimelineTab";
 import WeatherBar, { WeatherIcon, type WeatherBarMode } from "@/src/ui/components/WeatherBar";
 import WorkdayStrip from "@/src/ui/components/WorkdayStrip";
+import MileageStrip from "@/src/ui/components/MileageStrip";
 import EquipmentTab from "@/src/ui/tabs/EquipmentTab";
 import VehiclesTab from "@/src/ui/tabs/VehiclesTab";
 import JobsTab from "@/src/ui/tabs/JobsTab";
@@ -628,7 +629,7 @@ export default function HomePage() {
       value: "reminders",
       label: "Planning",
       icon: FiBell,
-      content: wrapWithInlineMessage(<><WorkdayStrip /><RemindersTab myId={me?.id} me={me} /></>),
+      content: wrapWithInlineMessage(<><WorkdayStrip mileageSlot={<MileageStrip embedded />} /><RemindersTab myId={me?.id} me={me} /></>),
     },
     {
       value: "jobs",
@@ -641,7 +642,7 @@ export default function HomePage() {
       label: "Routes",
       icon: FiNavigation,
       visible: () => !!me?.workerType,
-      content: wrapWithInlineMessage(<><WorkdayStrip /><PreviewRoutesTab /></>),
+      content: wrapWithInlineMessage(<><WorkdayStrip mileageSlot={<MileageStrip embedded />} /><PreviewRoutesTab /></>),
     },
     {
       value: "tasks",

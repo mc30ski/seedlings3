@@ -930,8 +930,19 @@ function WorkdayCard({
                 worker has no assigned vehicles + no open sessions.
                 Suppressed while an admin is viewing another worker
                 (viewAsName set) since the /me/vehicles endpoint returns
-                the current viewer's vehicles, not the viewed worker's. */}
-            {!viewAsName && <MileageStrip compact />}
+                the current viewer's vehicles, not the viewed worker's.
+
+                stopPropagation wrapper: the compact picker Dialog uses
+                a Portal, but React events STILL bubble through the
+                React tree (not the DOM). Without this Box, clicking
+                Cancel or a picker row inside the modal bubbles up to
+                Card.Body's collapse-toggle onClick, silently expanding
+                the workday section. */}
+            {!viewAsName && (
+              <Box onClick={(e) => e.stopPropagation()}>
+                <MileageStrip compact />
+              </Box>
+            )}
             {toggleButton}
           </HStack>
           {/* Keep the mileage strip mounted even when collapsed — hidden
