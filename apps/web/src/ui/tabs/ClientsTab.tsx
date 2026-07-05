@@ -1214,23 +1214,59 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
           onCancel={() => setUnarchiveClientConfirm(null)}
         />
       )}
-      {/* Bulk-pause services confirmation. Message calls out
-          "already paused" separately so the operator understands
-          the total picture without being surprised by no-op Jobs. */}
+      {/* Bulk-pause services confirmation. The message emphasizes that
+          it's the JOBS that get paused (the Client itself stays ACTIVE)
+          because operators sometimes expect a "paused client" concept.
+          "already paused" callout so the operator understands the total
+          picture without being surprised by no-op Jobs. */}
       {bulkPauseConfirm && (
         <ConfirmDialog
           open
-          title="Pause all services for this client?"
-          message={
+          title="Pause services for this client?"
+          message=""
+          messageNode={
             (() => {
               const { client, jobsToPause, alreadyPaused } = bulkPauseConfirm;
               if (jobsToPause === 0 && alreadyPaused === 0) {
-                return `${client.displayName} has no active jobs. Nothing to pause.`;
+                return (
+                  <Text fontSize="sm" color="fg.default">
+                    <b>{client.displayName}</b> has no active jobs. Nothing to pause.
+                  </Text>
+                );
               }
-              const already = alreadyPaused > 0
-                ? ` (${alreadyPaused} already paused won't be touched.)`
-                : "";
-              return `This will pause ${jobsToPause} active job${jobsToPause === 1 ? "" : "s"} for ${client.displayName}. Future scheduled visits will be removed. Historical work stays intact.${already}`;
+              return (
+                <VStack align="stretch" gap={3}>
+                  <Text fontSize="sm" color="fg.default">
+                    This pauses <b>the jobs</b> for {client.displayName}, not the client themselves.
+                    The client's status stays <b>Active</b>. Their services stop until you hit
+                    "Resume services".
+                  </Text>
+                  <Box
+                    borderWidth="1px"
+                    borderColor="orange.300"
+                    bg="orange.50"
+                    borderRadius="md"
+                    p={3}
+                  >
+                    <VStack align="start" gap={1.5}>
+                      <Text fontSize="xs" color="orange.900">
+                        • <b>{jobsToPause}</b> active job{jobsToPause === 1 ? "" : "s"} will be paused. Future scheduled visits will be removed from worker schedules.
+                      </Text>
+                      {alreadyPaused > 0 && (
+                        <Text fontSize="xs" color="orange.900">
+                          • {alreadyPaused} job{alreadyPaused === 1 ? " that's" : "s that are"} already paused won't be touched.
+                        </Text>
+                      )}
+                      <Text fontSize="xs" color="orange.900">
+                        • Historical work, invoices, and payments stay intact and accessible.
+                      </Text>
+                      <Text fontSize="xs" color="orange.900">
+                        • Any outstanding invoices remain payable via the client's pay link.
+                      </Text>
+                    </VStack>
+                  </Box>
+                </VStack>
+              );
             })()
           }
           confirmLabel="Pause services"
@@ -1246,19 +1282,49 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
       {bulkResumeConfirm && (
         <ConfirmDialog
           open
-          title="Resume paused services for this client?"
-          message={
+          title="Resume services for this client?"
+          message=""
+          messageNode={
             (() => {
               const { client, jobsToResume, individuallyPaused } = bulkResumeConfirm;
               if (jobsToResume === 0) {
-                return individuallyPaused > 0
-                  ? `${client.displayName} has ${individuallyPaused} job${individuallyPaused === 1 ? "" : "s"} paused individually, but nothing paused via the "Pause services" action. Individual pauses must be resumed one at a time (Services tab).`
-                  : `${client.displayName} has no paused services to resume.`;
+                return (
+                  <Text fontSize="sm" color="fg.default">
+                    {individuallyPaused > 0
+                      ? `${client.displayName} has ${individuallyPaused} job${individuallyPaused === 1 ? "" : "s"} paused individually, but nothing paused via "Pause services". Individual pauses have to be resumed one at a time on the Services tab.`
+                      : `${client.displayName} has no paused services to resume.`}
+                  </Text>
+                );
               }
-              const staying = individuallyPaused > 0
-                ? ` (${individuallyPaused} independently-paused job${individuallyPaused === 1 ? "" : "s"} stays paused.)`
-                : "";
-              return `This will resume ${jobsToResume} bulk-paused job${jobsToResume === 1 ? "" : "s"} for ${client.displayName} and rebuild the next scheduled visit for each.${staying}`;
+              return (
+                <VStack align="stretch" gap={3}>
+                  <Text fontSize="sm" color="fg.default">
+                    This resumes <b>the jobs</b> that were paused via "Pause services" for {client.displayName}.
+                    Each resumed job gets one fresh next occurrence scheduled at its natural cadence date.
+                  </Text>
+                  <Box
+                    borderWidth="1px"
+                    borderColor="green.300"
+                    bg="green.50"
+                    borderRadius="md"
+                    p={3}
+                  >
+                    <VStack align="start" gap={1.5}>
+                      <Text fontSize="xs" color="green.900">
+                        • <b>{jobsToResume}</b> job{jobsToResume === 1 ? "" : "s"} will return to Active with a fresh scheduled next visit.
+                      </Text>
+                      {individuallyPaused > 0 && (
+                        <Text fontSize="xs" color="green.900">
+                          • {individuallyPaused} job{individuallyPaused === 1 ? " that was" : "s that were"} paused individually will stay paused (respects your prior intent).
+                        </Text>
+                      )}
+                      <Text fontSize="xs" color="green.900">
+                        • Missed cycles during the pause are not backfilled — service resumes at the next natural cadence date.
+                      </Text>
+                    </VStack>
+                  </Box>
+                </VStack>
+              );
             })()
           }
           confirmLabel="Resume services"
