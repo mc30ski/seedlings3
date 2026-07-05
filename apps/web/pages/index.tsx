@@ -173,6 +173,11 @@ export default function HomePage() {
   // waiting on the operator). Drives the "Ledger followups" entry in the
   // alerts dropdown and pre-applies the "Followups only" filter on click.
   const [ledgerFollowupCount, setLedgerFollowupCount] = useState<number>(0);
+  // Super-only: count of recurring business expenses whose next expected
+  // instance is due within a week (or overdue). Drives the "Due to record"
+  // alert in the dropdown + Tasks page shortcut. Source of truth is the
+  // Money → Ledger tab's Due-to-Record panel.
+  const [dueToRecordCount, setDueToRecordCount] = useState<number>(0);
 
   // Handle /e/[slug] QR redirect — navigate to equipment tab
   useEffect(() => {
@@ -1683,6 +1688,21 @@ export default function HomePage() {
     markAlertLoaded("ledgerFollowups");
   }, [isSuper]);
 
+  const loadDueToRecordCount = useCallback(async () => {
+    if (!isSuper) {
+      setDueToRecordCount(0);
+      markAlertLoaded("dueToRecord");
+      return;
+    }
+    try {
+      const r = await apiGet<{ count: number }>("/api/admin/business-expenses/due-soon/count");
+      setDueToRecordCount(r?.count ?? 0);
+    } catch {
+      setDueToRecordCount(0);
+    }
+    markAlertLoaded("dueToRecord");
+  }, [isSuper]);
+
   // Keep the ref in sync so the tab's onApprovalsChanged callback,
   // which was bound up at the top of the component body, can call
   // through to the latest version.
@@ -1703,6 +1723,15 @@ export default function HomePage() {
     window.addEventListener("seedlings:ledger-followups-changed", onChanged);
     return () => window.removeEventListener("seedlings:ledger-followups-changed", onChanged);
   }, [loadLedgerFollowupCount]);
+
+  // Same pattern for the Due-to-Record alert — fires when the Super
+  // skips / records / marks-already-recorded a row on the Ledger panel.
+  useEffect(() => {
+    void loadDueToRecordCount();
+    const onChanged = () => void loadDueToRecordCount();
+    window.addEventListener("seedlings:due-to-record-changed", onChanged);
+    return () => window.removeEventListener("seedlings:due-to-record-changed", onChanged);
+  }, [loadDueToRecordCount]);
 
   // ---- Awaiting-client-payment badge (super only) ----
   // Counts every outstanding payment request — sent to a client, not paid
@@ -1955,7 +1984,7 @@ export default function HomePage() {
     return () => { clearTimeout(timer); document.removeEventListener("click", close); };
   }, [alertDropdownOpen]);
   const [alertsLoaded, setAlertsLoaded] = useState<Record<string, boolean>>({});
-  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.planning && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests && alertsLoaded.estimateFollowups && alertsLoaded.unapprovedHours && alertsLoaded.guaranteedPayout && alertsLoaded.pendingWorkdays && alertsLoaded.ledgerFollowups);
+  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.planning && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests && alertsLoaded.estimateFollowups && alertsLoaded.unapprovedHours && alertsLoaded.guaranteedPayout && alertsLoaded.pendingWorkdays && alertsLoaded.ledgerFollowups && alertsLoaded.dueToRecord);
   const markAlertLoaded = useCallback((key: string) => setAlertsLoaded((prev) => prev[key] ? prev : { ...prev, [key]: true }), []);
   const loadAnnouncementCount = useCallback(async () => {
     if (!me?.isApproved) { setAnnouncementCount(0); if (me) markAlertLoaded("announcements"); return; }
@@ -2148,6 +2177,7 @@ export default function HomePage() {
         loadDashboardSummary(),
         loadTimelineCount(),
         loadLedgerFollowupCount(),
+        loadDueToRecordCount(),
       ]);
     } finally {
       setAlertsRefreshing(false);
@@ -2157,7 +2187,19 @@ export default function HomePage() {
     loadOverdue, loadChangeRequestCount, loadEstimateFollowupCount,
     loadUnapprovedHoursCount, loadUnclaimed, loadAnnouncementCount,
     loadDashboardSummary, loadTimelineCount, loadLedgerFollowupCount,
+    loadDueToRecordCount,
   ]);
+
+  // Opening the Tasks page fires the same full refresh as tapping
+  // the refresh button on the alerts dropdown. Keeps counts + inline
+  // section contents from going stale between the moment the user
+  // last saw the dropdown and when they land on the page. Also
+  // keeps the two surfaces in lockstep: any action taken on Tasks
+  // will re-fetch on close via the existing event-bus paths, and
+  // the same recount happens on the next open.
+  useEffect(() => {
+    if (tasksOpen) void refreshAllAlerts();
+  }, [tasksOpen, refreshAllAlerts]);
 
   const goToTimeline = useCallback(() => {
     try { sessionStorage.setItem("pendingTimelineUrgencyFilter", "urgent"); } catch {}
@@ -2880,6 +2922,15 @@ export default function HomePage() {
     }, 150);
   }, []);
 
+  // Land on Super → Money → Ledger — the Due-to-Record panel is pinned
+  // at the top of that tab, so just landing there surfaces it. No deep-
+  // link event needed (the panel isn't behind a filter chip).
+  const goToDueToRecord = useCallback(() => {
+    setTopTab("super");
+    setSuperCategory("Money");
+    setSuperInnerTab("ledger" as any);
+  }, []);
+
   const isDev = process.env.NEXT_PUBLIC_VERCEL_ENV !== "production" && process.env.NODE_ENV !== "production";
 
   return (
@@ -3159,6 +3210,7 @@ export default function HomePage() {
                 });
               }
               if (isSuper && ledgerFollowupCount > 0) alerts.push({ label: "Ledger followups", count: ledgerFollowupCount, bg: "#FEF3C7", color: "#92400E", dotColor: "#F59E0B", onClick: goToLedgerFollowups });
+              if (isSuper && dueToRecordCount > 0) alerts.push({ label: "Due to record", count: dueToRecordCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToDueToRecord });
               if (isAdmin && changeRequestCount > 0) alerts.push({ label: "Client requests", count: changeRequestCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToClientRequests });
               if (isAdmin && estimateFollowupCount > 0) alerts.push({ label: "Estimate follow-ups", count: estimateFollowupCount, bg: "#FCE7F3", color: "#9D174D", dotColor: "#EC4899", onClick: goToEstimateFollowups });
               if (isAdmin && unapprovedHoursCount > 0) alerts.push({ label: "Job hours awaiting review", count: unapprovedHoursCount, bg: "#FEF3C7", color: "#92400E", dotColor: "#F59E0B", onClick: goToUnapprovedHours });
@@ -3423,6 +3475,7 @@ export default function HomePage() {
             pendingWorkdays,
             unapprovedHoursCount,
             ledgerFollowupCount,
+            dueToRecordCount,
             guaranteedPayoutExpiringCount,
             pendingUsersCount: pending,
             estimateFollowupCount,
@@ -3436,6 +3489,7 @@ export default function HomePage() {
             goToWorkdayApprovals,
             goToUnapprovedHours,
             goToLedgerFollowups,
+            goToDueToRecord,
             goToGuaranteedPayoutExpiring,
             goToApprovals,
             goToEstimateFollowups,

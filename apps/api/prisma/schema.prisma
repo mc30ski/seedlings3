@@ -76,6 +76,8 @@ enum AuditVerb {
   REQUEST_SENT
   TOKEN_ACCESSED
   WRITTEN_OFF
+  SKIPPED
+  UNSKIPPED
   ADJUSTED
   OWNER_EARNINGS_RECORDED
   FEE_APPLIED
@@ -204,6 +206,7 @@ model User {
   paymentsConfirmed       Payment[]       @relation("PaymentConfirmer")
   paymentsAdjusted        Payment[]       @relation("PaymentAdjuster")
   paymentsWrittenOff      Payment[]       @relation("PaymentWriteOff")
+  paymentsSkipped         Payment[]       @relation("PaymentSkip")
   paymentSplits           PaymentSplit[]
   guaranteedPayoutAdvances   GuaranteedPayoutAdvance[]
   guaranteedPayoutAdvancesExported GuaranteedPayoutAdvance[] @relation("AdvanceExporter")
@@ -1106,6 +1109,19 @@ model Payment {
   writtenOffBy    User?     @relation("PaymentWriteOff", fields: [writtenOffById], references: [id], onDelete: SetNull, onUpdate: Cascade)
   writeOffReason  String?
 
+  // Skip path: Super pretends the service financially never happened —
+  // stronger than writeOff. `writeOff` = bad debt (still counts on
+  // operator dashboards, still a real transaction). `skippedAt` =
+  // erase from every aggregate. Every money query (income, exports,
+  // payroll, 1099s, P&L, vs-revenue, accounting) filters
+  // `skippedAt IS NULL`. Payment splits stay on the row for audit
+  // history but are excluded from all payroll/1099 aggregations.
+  // Gated to Super-only + type-APPROVE at the mutation layer.
+  skippedAt      DateTime?
+  skippedById    String?
+  skippedBy      User?     @relation("PaymentSkip", fields: [skippedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  skipReason     String?
+
   splits PaymentSplit[]
 
   createdAt DateTime @default(now())
@@ -1114,6 +1130,7 @@ model Payment {
   @@index([method, createdAt])
   @@index([confirmed, createdAt])
   @@index([writtenOff, createdAt])
+  @@index([skippedAt, createdAt])
   @@index([processorFeeAmount, createdAt])
 }
 

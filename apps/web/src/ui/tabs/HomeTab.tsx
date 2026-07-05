@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Box, Button, Card, HStack, SimpleGrid, Spinner, Text, VStack } from "@chakra-ui/react";
-import { FiBell, FiClipboard, FiClock, FiInfo, FiMoon, FiNavigation, FiPlay, FiSun, FiTool, FiX } from "react-icons/fi";
+import { FiBell, FiClipboard, FiClock, FiInfo, FiMoon, FiNavigation, FiPlay, FiRefreshCw, FiSun, FiTool, FiX } from "react-icons/fi";
 import { TfiMoney } from "react-icons/tfi";
 import { ComposedChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, LabelList } from "recharts";
 import { computeDatesFromPreset, type DatePreset } from "@/src/lib/datePresets";
@@ -444,6 +444,126 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
           ? `Nothing left today — ${s.tomorrow} tomorrow.`
           : "You're caught up. Nothing on your plate.";
 
+  // Today's money strip — the big 3-column indicator that answers
+  //   "how much can I make today · how much have I made · how much is left"
+  // in one glance. Rendered inside the resume + begin/finish heroes.
+  //
+  //   Can make   = todayEarnedAmount + todayPotentialAmount
+  //                (completed jobs use ACTUAL splits via the paycheck
+  //                 helper; uncompleted jobs get equal-split projection
+  //                 because completionSplits isn't set until completion)
+  //   Made       = todayEarnedAmount   (actuals only)
+  //   Remaining  = todayPotentialAmount (equal-split projection)
+  //
+  // Numbers already take out expenses + fees/margin — see
+  // services/workerEarnings.ts computeMyOccurrenceNet. Returns null when
+  // nothing is priced today so the strip doesn't render an empty $0 row.
+  // Values captured outside the function so TS keeps the non-null
+  // narrowing on `s` (function scope re-widens the closure otherwise).
+  const heroEarned = s.todayEarnedAmount ?? 0;
+  const heroRemaining = s.todayPotentialAmount ?? 0;
+  const heroCanMake = heroEarned + heroRemaining;
+  function todaysMoneyStrip(theme: "orange" | "green"): React.ReactNode {
+    if (heroCanMake <= 0) return null;
+    const c = theme === "orange"
+      ? { bg: "whiteAlpha.200", border: "whiteAlpha.400", label: "orange.50", value: "white" }
+      : { bg: "white",           border: "green.200",     label: "green.700", value: "green.800" };
+    // Tooltip on the two projected columns — hints that the equal-split
+    // assumption is used for jobs that haven't been completed yet, so
+    // the worker isn't surprised when actuals land differently on jobs
+    // with an uneven completionSplits.
+    const projectionHint =
+      "Assumes equal split for jobs not yet completed. Actual splits kick in on completion.";
+    return (
+      <SimpleGrid
+        columns={3}
+        gap={0}
+        bg={c.bg}
+        borderRadius="md"
+        borderWidth="1px"
+        borderColor={c.border}
+        overflow="hidden"
+      >
+        <VStack align="center" gap={0} py={3} px={2}>
+          <Text
+            fontSize="2xs"
+            color={c.label}
+            textTransform="uppercase"
+            letterSpacing="wider"
+            fontWeight="medium"
+            title={projectionHint}
+          >
+            Can make
+          </Text>
+          <Text fontSize="xl" fontWeight="bold" color={c.value} lineHeight="1.1">
+            {fmtMoney(heroCanMake)}
+          </Text>
+        </VStack>
+        <VStack
+          align="center"
+          gap={0}
+          py={3}
+          px={2}
+          borderLeftWidth="1px"
+          borderRightWidth="1px"
+          borderColor={c.border}
+        >
+          <Text
+            fontSize="2xs"
+            color={c.label}
+            textTransform="uppercase"
+            letterSpacing="wider"
+            fontWeight="medium"
+            title="Actual paycheck value from completed jobs today — respects real completionSplits and payment reconciliation."
+          >
+            Made
+          </Text>
+          <Text fontSize="xl" fontWeight="bold" color={c.value} lineHeight="1.1">
+            {fmtMoney(heroEarned)}
+          </Text>
+        </VStack>
+        <VStack align="center" gap={0} py={3} px={2}>
+          <Text
+            fontSize="2xs"
+            color={c.label}
+            textTransform="uppercase"
+            letterSpacing="wider"
+            fontWeight="medium"
+            title={projectionHint}
+          >
+            Remaining
+          </Text>
+          <Text fontSize="xl" fontWeight="bold" color={c.value} lineHeight="1.1">
+            {fmtMoney(heroRemaining)}
+          </Text>
+        </VStack>
+      </SimpleGrid>
+    );
+  }
+
+  // Corner refresh button — anchored top-right of whichever hero card
+  // is currently rendered. Mirrors the small icon-button pattern used
+  // on ServicesTab / DocumentsTab / UsersTab (etc). Each hero Card.Root
+  // gets `position="relative"` so this absolutely-positioned element
+  // lands inside its border. stopPropagation because several hero
+  // cards are themselves click-navigable.
+  const heroCornerRefresh = (
+    <Box position="absolute" top={2} right={2} zIndex={1}>
+      <Button
+        size="sm"
+        variant="ghost"
+        onClick={(e) => { e.stopPropagation(); void load(); }}
+        loading={loading}
+        px="2"
+        flexShrink={0}
+        aria-label="Refresh"
+        title="Refresh"
+      >
+        <FiRefreshCw size={14} />
+      </Button>
+    </Box>
+  );
+
   return (
     <Box w="full" position="relative">
       {loading && summary && (
@@ -594,7 +714,8 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
 
         {/* Aggregate mode: a single team-summary banner replaces the per-worker hero. */}
         {isAggregate && (
-          <Card.Root variant="outline" bg="gray.50" borderColor="gray.300">
+          <Card.Root variant="outline" bg="gray.50" borderColor="gray.300" position="relative">
+            {heroCornerRefresh}
             <Card.Body p={5}>
               <VStack align="start" gap={1}>
                 <Text fontSize="lg" fontWeight="bold" color="gray.800">
@@ -818,7 +939,9 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
             _hover={{ shadow: "lg" }}
             bg="orange.500"
             color="white"
+            position="relative"
           >
+            {heroCornerRefresh}
             <Card.Body p={5}>
               <VStack align="stretch" gap={3}>
                 <HStack gap={3} align="center">
@@ -830,6 +953,7 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
                     <Text fontSize="sm" opacity={0.9}>{greetingSubtitle}</Text>
                   </Box>
                 </HStack>
+                {todaysMoneyStrip("orange")}
                 <HStack gap={3}>
                   <VStack align="start" gap={0} flex={1} minW={0}>
                     <Text fontSize="md" fontWeight="bold">Resume active work</Text>
@@ -853,7 +977,9 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
             _hover={isViewingOther ? undefined : { shadow: "md", borderColor: "green.400" }}
             bg="green.50"
             borderColor="green.300"
+            position="relative"
           >
+            {heroCornerRefresh}
             <Card.Body p={5}>
               <VStack align="stretch" gap={3}>
                 <HStack gap={3} align="center">
@@ -865,22 +991,16 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
                     <Text fontSize="sm" color="green.700">{greetingSubtitle}</Text>
                   </Box>
                 </HStack>
+                {/* Money strip replaces the old "$X earned · $Y remaining
+                    potential" one-line subline — same numbers, bigger and
+                    split into three columns so the intent is legible at
+                    a glance. */}
+                {todaysMoneyStrip("green")}
                 <HStack gap={3}>
                   <VStack align="start" gap={0} flex={1} minW={0}>
                     <Text fontSize="md" fontWeight="bold" color="green.800">
                       {heroMode === "begin" ? "Begin work day" : "Finish remaining jobs"}
                     </Text>
-                    {/* Subline only carries the dollar breakdown — the
-                        "X jobs left today" count is already in the greeting
-                        subtitle directly above this card, so repeating it
-                        here was redundant. When there's no earned/potential
-                        money to show (e.g. unpriced jobs only), the subline
-                        is omitted entirely. */}
-                    {(s.todayEarnedAmount ?? 0) + (s.todayPotentialAmount ?? 0) > 0 && (
-                      <Text fontSize="sm" color="green.700">
-                        {fmtMoney(s.todayEarnedAmount ?? 0)} earned · {fmtMoney(s.todayPotentialAmount ?? 0)} remaining potential
-                      </Text>
-                    )}
                   </VStack>
                   {!isViewingOther && <Text fontSize="2xl" color="green.600">→</Text>}
                 </HStack>
@@ -898,7 +1018,9 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
             _hover={isViewingOther ? undefined : { shadow: "md", borderColor: "blue.400" }}
             bg="blue.50"
             borderColor="blue.300"
+            position="relative"
           >
+            {heroCornerRefresh}
             <Card.Body p={5}>
               <VStack align="stretch" gap={3}>
                 <HStack gap={3} align="center">
@@ -946,7 +1068,8 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
 
         {/* Hero: Wrap up — quiet end-of-day state. Combines greeting + status into one card. */}
         {!isAggregate && heroMode === "wrap" && (
-          <Card.Root variant="outline" bg="gray.50" borderColor="gray.200">
+          <Card.Root variant="outline" bg="gray.50" borderColor="gray.200" position="relative">
+            {heroCornerRefresh}
             <Card.Body p={5}>
               <HStack gap={4}>
                 <Box bg="gray.200" color="gray.700" p={3} borderRadius="full">
@@ -1244,12 +1367,6 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
           })()}
         </SimpleGrid>
 
-        {/* Manual reload */}
-        <HStack justify="center" pt={2}>
-          <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading}>
-            Refresh
-          </Button>
-        </HStack>
       </VStack>
     </Box>
   );

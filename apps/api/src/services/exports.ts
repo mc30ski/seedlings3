@@ -95,6 +95,9 @@ async function loadConfirmedPayments(start: Date, end: Date) {
       confirmed: true,
       confirmedAt: { gte: start, lte: end },
       writtenOff: false,
+      // Skipped payments are treated as if the service never happened —
+      // excluded from every export, aggregate, and dashboard.
+      skippedAt: null,
     },
     include: {
       occurrence: {
@@ -1126,6 +1129,7 @@ export async function workdaysCsv(start: Date, end: Date): Promise<CsvResult> {
           select: {
             confirmed: true,
             writtenOff: true,
+            skippedAt: true,
             splits: {
               where: {
                 ownerEarnings: false,
@@ -1267,7 +1271,7 @@ export async function workdaysCsv(start: Date, end: Date): Promise<CsvResult> {
           const k = `${day}|${userId}`;
           moneyMap.set(k, (moneyMap.get(k) ?? 0) + net);
         }
-      } else if (occ.payment?.confirmed && !occ.payment.writtenOff) {
+      } else if (occ.payment?.confirmed && !occ.payment.writtenOff && !occ.payment.skippedAt) {
         for (const sp of occ.payment.splits) {
           const k = `${day}|${sp.userId}`;
           const preTopUp = (sp.amount ?? 0) - (sp.topUpAmount ?? 0);

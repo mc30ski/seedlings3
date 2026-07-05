@@ -650,6 +650,8 @@ export default function BusinessExpensesTab() {
         `/api/admin/business-expenses/${s.latestId}/skip-recurrence`,
         { skipDate: s.nextExpectedDate },
       );
+      // Bump the alert count in the title bar + Tasks page shortcut.
+      window.dispatchEvent(new CustomEvent("seedlings:due-to-record-changed"));
       publishInlineMessage({
         type: "SUCCESS",
         text: `Skipped ${s.prefill.description} for this period.`,
@@ -678,6 +680,7 @@ export default function BusinessExpensesTab() {
         `/api/admin/business-expenses/${s.latestId}/skip-recurrence`,
         { skipDate: s.nextExpectedDate },
       );
+      window.dispatchEvent(new CustomEvent("seedlings:due-to-record-changed"));
       publishInlineMessage({
         type: "SUCCESS",
         text: `Dismissed ${s.prefill.description} — the next reminder will appear when due.`,
@@ -760,6 +763,10 @@ export default function BusinessExpensesTab() {
         }
       }
       setDialogOpen(false);
+      // Creating / editing a BE can add-to or remove-from a recurring
+      // series' "latest" row, which affects the due-to-record count.
+      // Fire the event so the alert badge and Tasks shortcut recount.
+      window.dispatchEvent(new CustomEvent("seedlings:due-to-record-changed"));
       void load();
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage(editing ? "Update failed." : "Add failed.", err) });
@@ -772,6 +779,9 @@ export default function BusinessExpensesTab() {
     try {
       await apiDelete(`/api/admin/business-expenses/${id}`);
       publishInlineMessage({ type: "SUCCESS", text: "Expense deleted." });
+      // Deleting a "latest" row makes an older row the group's latest
+      // → could re-open a series as due-to-record. Recount.
+      window.dispatchEvent(new CustomEvent("seedlings:due-to-record-changed"));
       void load();
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Delete failed.", err) });

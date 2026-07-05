@@ -2394,7 +2394,11 @@ Respond ONLY with valid JSON in this exact format:
       where: {
         userId,
         guaranteedPayoutPaidAt: null,
-        ...paymentSplitCutoffWhere(cutoff),
+        // Skipped payments' splits are excluded from every earnings tile.
+        payment: {
+          skippedAt: null,
+          ...(cutoff ? { createdAt: { gte: cutoff } } : {}),
+        },
       },
       include: { payment: { select: { createdAt: true, method: true } } },
     });
@@ -2519,7 +2523,11 @@ Respond ONLY with valid JSON in this exact format:
           // Pattern B filter ensures pre-cutoff payments (e.g. on a
           // job that was completed post-cutoff but whose Payment row was
           // created before — rare but possible) don't sneak into stats.
-          where: cutoff ? { createdAt: { gte: cutoff } } : undefined,
+          // Skipped payments (skippedAt IS NOT NULL) are also excluded —
+          // "pretend it didn't happen" applies to statistics too.
+          where: cutoff
+            ? { createdAt: { gte: cutoff }, skippedAt: null }
+            : { skippedAt: null },
           select: {
             amountPaid: true,
             method: true,
@@ -4939,7 +4947,7 @@ Respond ONLY with valid JSON in this exact format:
       // written-off ones, which inflates platform fees / margin / processor
       // fees beyond what actually got reported to QB.
       prisma.payment.findMany({
-        where: { confirmed: true, writtenOff: false, ...cutoffWhere("Payment", cutoff) },
+        where: { confirmed: true, writtenOff: false, skippedAt: null, ...cutoffWhere("Payment", cutoff) },
         select: { confirmedAt: true, platformFeeAmount: true, businessMarginAmount: true, processorFeeAmount: true },
       }),
       // One query covers all three EntryType buckets; split by `type`
@@ -5240,6 +5248,56 @@ Respond ONLY with valid JSON in this exact format:
       }));
 
     return suggestions;
+  });
+
+  // Cheap count for the alerts dropdown + Tasks page badge — same
+  // filter/grouping as `/due-soon` above but skips the pre-fill payload
+  // construction. Small bounded set (5–30 recurring series in practice),
+  // safe to recompute per call. Super-only.
+  app.get("/admin/business-expenses/due-soon/count", superGuard, async (_req: any) => {
+    function nextDate(d: Date, cadence: string): Date {
+      const out = new Date(d);
+      if (cadence === "WEEKLY") { out.setDate(out.getDate() + 7); return out; }
+      const day = out.getDate();
+      out.setDate(1);
+      if (cadence === "MONTHLY") out.setMonth(out.getMonth() + 1);
+      else if (cadence === "QUARTERLY") out.setMonth(out.getMonth() + 3);
+      else if (cadence === "ANNUALLY") out.setFullYear(out.getFullYear() + 1);
+      const lastDay = new Date(out.getFullYear(), out.getMonth() + 1, 0).getDate();
+      out.setDate(Math.min(day, lastDay));
+      return out;
+    }
+    const LEAD_DAYS = 7;
+    const now = new Date();
+    const horizon = new Date(now); horizon.setDate(horizon.getDate() + LEAD_DAYS);
+    const rows = await prisma.businessExpense.findMany({
+      where: {
+        recurrence: { not: null },
+        occurrenceId: null,
+        supplyPurchase: { is: null },
+      },
+      orderBy: { date: "desc" },
+      select: {
+        type: true, date: true, description: true, vendor: true,
+        recurrence: true, recurrenceSkippedUntil: true,
+      },
+    });
+    const seen = new Map<string, typeof rows[number]>();
+    for (const r of rows) {
+      const key = `${r.type}::${(r.description || "").trim().toLowerCase()}::${(r.vendor || "").trim().toLowerCase()}`;
+      if (!seen.has(key)) seen.set(key, r);
+    }
+    let count = 0;
+    for (const latest of seen.values()) {
+      const cadence = String(latest.recurrence);
+      const baseNext = nextDate(latest.date, cadence);
+      const expected =
+        latest.recurrenceSkippedUntil && latest.recurrenceSkippedUntil >= baseNext
+          ? nextDate(latest.recurrenceSkippedUntil, cadence)
+          : baseNext;
+      if (expected <= horizon) count++;
+    }
+    return { count };
   });
 
   // Skip the current expected instance of a recurring BE — the next reminder
@@ -6349,6 +6407,34 @@ Respond ONLY with valid JSON in this exact format:
     const uid = await currentUserId(req);
     const reason = req.body?.reason ? String(req.body.reason) : null;
     return services.payments.writeOffPayment(uid, String(req.params.id), reason);
+  });
+
+  // Skip path — Super only. "Pretend this service never happened." Every
+  // money query and export filters `skippedAt: null`, so income + payroll
+  // + margin + 1099 totals all treat the row as if it doesn't exist while
+  // it remains visible on the payment list with a Skipped chip (audit
+  // trail preserved). Gated by superGuard here + type-APPROVE at the UI.
+  app.post("/admin/payments/:id/skip", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const reason = req.body?.reason ? String(req.body.reason) : null;
+    return services.payments.skipPayment(uid, String(req.params.id), reason);
+  });
+
+  // Occurrence-level skip — used from Outstanding Requests where no
+  // Payment row exists yet (a request was sent, customer hasn't paid).
+  // Materializes a $0/CASH Payment then skips it. Same Super + type-
+  // APPROVE gate.
+  app.post("/admin/occurrences/:occurrenceId/skip", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const reason = req.body?.reason ? String(req.body.reason) : null;
+    return services.payments.skipOccurrence(uid, String(req.params.occurrenceId), reason);
+  });
+
+  // Reverse a skip. Payment returns to its approved-$0 state and reappears
+  // in every aggregate. Same Super + type-APPROVE gate as skip.
+  app.post("/admin/payments/:id/unskip", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    return services.payments.unskipPayment(uid, String(req.params.id));
   });
 
   // Revert an already-approved payment: deletes the payment record and takes

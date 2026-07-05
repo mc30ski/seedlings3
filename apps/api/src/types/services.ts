@@ -804,6 +804,34 @@ export type ServicesPayments = {
     reason?: string | null,
   ): Promise<any>;
 
+  /**
+   * Super-only "pretend this service never happened" — every money query,
+   * export, dashboard aggregate, and 1099 total filters `skippedAt: null`
+   * to exclude the payment. Under the hood runs the standard approval
+   * path with collected=0 (so occurrence closes + next-occurrence
+   * generation fires) then stamps `skippedAt`. See services/payments.ts
+   * for the full rationale; gated by superGuard + type-APPROVE at the UI.
+   */
+  skipPayment(
+    currentUserId: string,
+    paymentId: string,
+    reason?: string | null,
+  ): Promise<any>;
+
+  /** Occurrence-level Skip for surfaces without a Payment row yet
+   *  (Outstanding Requests). Materializes a $0/CASH Payment first, then
+   *  delegates to skipPayment. If a Payment already exists, delegates
+   *  directly without materialization. */
+  skipOccurrence(
+    currentUserId: string,
+    occurrenceId: string,
+    reason?: string | null,
+  ): Promise<any>;
+
+  /** Reverse a skip. Clears skippedAt so the payment reappears in
+   *  every aggregate. Same Super + type-APPROVE gate as skip. */
+  unskipPayment(currentUserId: string, paymentId: string): Promise<any>;
+
   listPendingApprovals(cutoff?: Date | null): Promise<any[]>;
 };
 

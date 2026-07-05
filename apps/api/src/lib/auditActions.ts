@@ -155,6 +155,12 @@ export const AUDIT = {
     REQUEST_SENT: [AuditScope.PAYMENT, AuditVerb.REQUEST_SENT] as const,
     TOKEN_ACCESSED: [AuditScope.PAYMENT, AuditVerb.TOKEN_ACCESSED] as const,
     WRITTEN_OFF: [AuditScope.PAYMENT, AuditVerb.WRITTEN_OFF] as const,
+    // Super-only "pretend this service never happened" — stronger than
+    // WRITTEN_OFF. The payment stays in the DB (with all its history)
+    // but is erased from every financial aggregate/export. Gated by
+    // type-APPROVE at the UI layer + `superGuard` at the route layer.
+    SKIPPED: [AuditScope.PAYMENT, AuditVerb.SKIPPED] as const,
+    UNSKIPPED: [AuditScope.PAYMENT, AuditVerb.UNSKIPPED] as const,
     ADJUSTED: [AuditScope.PAYMENT, AuditVerb.ADJUSTED] as const,
     OWNER_EARNINGS_RECORDED: [AuditScope.PAYMENT, AuditVerb.OWNER_EARNINGS_RECORDED] as const,
     FEE_APPLIED: [AuditScope.PAYMENT, AuditVerb.FEE_APPLIED] as const,
