@@ -447,7 +447,6 @@ enum ClientType {
 
 enum ClientStatus {
   ACTIVE
-  PAUSED
   ARCHIVED
 }
 
@@ -472,7 +471,6 @@ enum ContactRole {
 
 enum ContactStatus {
   ACTIVE
-  PAUSED
   ARCHIVED
 }
 

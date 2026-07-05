@@ -522,7 +522,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   app.get("/admin/clients", adminGuard, async (req: any) => {
     const { q, status, limit } = (req.query || {}) as {
       q?: string;
-      status?: "ACTIVE" | "PAUSED" | "ARCHIVED" | "ALL";
+      status?: "ACTIVE" | "ARCHIVED" | "ALL";
       limit?: string;
     };
     return services.clients.list({
@@ -963,7 +963,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     const { q, clientId, status, kind, limit } = (req.query || {}) as {
       q?: string;
       clientId?: string;
-      status?: "ACTIVE" | "PAUSED" | "ARCHIVED" | "ALL";
+      status?: "ACTIVE" | "ARCHIVED" | "ALL";
       kind?: string | "ALL";
       limit?: string;
     };

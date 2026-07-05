@@ -254,7 +254,7 @@ export const CLIENT_KIND = [
 ] as const;
 export type ClientKind = (typeof CLIENT_KIND)[number];
 
-export const CLIENT_STATUS = ["ACTIVE", "PAUSED", "ARCHIVED"] as const;
+export const CLIENT_STATUS = ["ACTIVE", "ARCHIVED"] as const;
 export type ClientStatus = (typeof CLIENT_STATUS)[number];
 
 export type Contact = {
@@ -289,7 +289,7 @@ export const CONTACT_KIND = [
 ] as const;
 export type ContactKind = (typeof CONTACT_KIND)[number];
 
-export const CONTACT_STATUS = ["ACTIVE", "PAUSED", "ARCHIVED"] as const;
+export const CONTACT_STATUS = ["ACTIVE", "ARCHIVED"] as const;
 export type ContactStatus = (typeof CONTACT_STATUS)[number];
 
 // ---- Jobs ----
