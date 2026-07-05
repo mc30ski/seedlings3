@@ -151,6 +151,12 @@ type Props = {
    *  parent already provides spacing (e.g. a VStack with `gap`), to
    *  avoid doubling up the visual gap. */
   noBottomMargin?: boolean;
+  /** Optional slot rendered INSIDE the workday card body when the card
+   *  is expanded. Used by HomeTab to inject the MileageStrip content
+   *  so workday + mileage feel like one integrated card — one border,
+   *  one collapse gesture, one visual container. Hidden along with the
+   *  rest of the body when the worker collapses the card. */
+  mileageSlot?: React.ReactNode;
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -254,6 +260,7 @@ export default function WorkdayStrip({
   viewAsDisplayName = null,
   canImpersonate = false,
   noBottomMargin = false,
+  mileageSlot = null,
 }: Props = {}) {
   // Stable opts object passed to every API call. `undefined` when not
   // viewing as someone else — the lib falls through to the self-service
@@ -578,6 +585,7 @@ export default function WorkdayStrip({
         viewAsName={viewAsDisplayName}
         canAct={canAct}
         noBottomMargin={noBottomMargin}
+        mileageSlot={mileageSlot}
         // Defensive default — a pre-deploy cached `/api/me/workday/today`
         // response (served by the service worker when offline or stale)
         // will lack `todayJobs` since the field was added recently. Without
@@ -631,7 +639,7 @@ export default function WorkdayStrip({
           warning="Workdays still need admin approval — this is just a quick check so you don't accidentally clock in on a day off."
           confirmLabel="Start workday"
           confirmColorPalette="orange"
-          cancelLabel="Never mind"
+          cancelLabel="Cancel"
           onConfirm={() => setDialog({ kind: "start" })}
           onCancel={() => setDialog(null)}
           viewAsName={viewAsDisplayName}
@@ -723,6 +731,7 @@ function WorkdayCard({
   canAct,
   noBottomMargin = false,
   todayJobs,
+  mileageSlot = null,
 }: {
   today: WorkdayState;
   onStart: () => void;
@@ -736,6 +745,10 @@ function WorkdayCard({
   canAct: boolean;
   noBottomMargin?: boolean;
   todayJobs: { scheduled: number; remaining: number };
+  /** Rendered inside the card body of every expanded state so mileage
+   *  lives inside the same border/background as the workday. Hidden on
+   *  the collapsed row. */
+  mileageSlot?: React.ReactNode;
 }) {
   const cardMb = noBottomMargin ? 0 : 3;
   // Conditional pulse:
@@ -912,6 +925,12 @@ function WorkdayCard({
             {primary}
             {toggleButton}
           </HStack>
+          {/* Keep the mileage strip mounted even when collapsed — hidden
+              via display:none rather than unmounted — so its fetched
+              vehicles + open sessions survive the collapse/expand cycle.
+              Matched-key Box wrappers in the expanded returns keep this
+              same MileageStrip instance across state transitions. */}
+          <Box key="mileage-slot" display="none">{mileageSlot}</Box>
         </Card.Body>
       </Card.Root>
     );
@@ -959,6 +978,7 @@ function WorkdayCard({
               </HStack>
             )}
           </VStack>
+          <Box key="mileage-slot" onClick={(e) => e.stopPropagation()}>{mileageSlot}</Box>
         </Card.Body>
         {cornerToggle}
       </Card.Root>
@@ -1015,6 +1035,7 @@ function WorkdayCard({
               </HStack>
             )}
           </VStack>
+          <Box key="mileage-slot" onClick={(e) => e.stopPropagation()}>{mileageSlot}</Box>
         </Card.Body>
         {cornerToggle}
       </Card.Root>
@@ -1067,6 +1088,7 @@ function WorkdayCard({
               </HStack>
             )}
           </VStack>
+          <Box key="mileage-slot" onClick={(e) => e.stopPropagation()}>{mileageSlot}</Box>
         </Card.Body>
         {cornerToggle}
       </Card.Root>
@@ -1112,6 +1134,7 @@ function WorkdayCard({
             </HStack>
           )}
         </VStack>
+        <Box key="mileage-slot">{mileageSlot}</Box>
       </Card.Body>
       {cornerToggle}
     </Card.Root>

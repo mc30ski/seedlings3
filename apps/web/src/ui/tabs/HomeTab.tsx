@@ -520,26 +520,6 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
           </Card.Root>
         )}
 
-        {/* Workday strip — per-worker clock-in/out for the day. Renders
-            for the personal view only (not the team overview / aggregate).
-            When admin/super "view-as" another worker, the strip targets
-            that worker's record via the viewAsUserId prop; the server
-            gates mutations to Super-only and the UI hides action buttons
-            for non-Super admins (read-only view).
-            See ui/components/WorkdayStrip.tsx for the lifecycle UI. */}
-        {!isAggregate && (
-          <WorkdayStrip
-            viewAsUserId={viewAsUserId ?? null}
-            viewAsDisplayName={isViewingOther ? (viewAsDisplayName ?? null) : null}
-            canImpersonate={!!me?.realRoles?.includes("SUPER")}
-            noBottomMargin
-          />
-        )}
-        {/* Mileage strip — self-hides when the worker has no vehicle
-            assignments AND no open sessions. Only shown for the
-            personal view; view-as flows don't touch mileage yet. */}
-        {!isAggregate && !isViewingOther && <MileageStrip />}
-
         {!isViewingOther && !showJustEnabledHelp && !pushBannerDismissed && (push.status === "default" || push.status === "needs-pwa-install" || (push.status === "granted-no-sub" && push.explicitlyDisabled)) && (
           <Card.Root
             variant="outline"
@@ -597,6 +577,19 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
               </HStack>
             </Card.Body>
           </Card.Root>
+        )}
+
+        {/* Workday — mileage is injected INSIDE the workday card via the
+            mileageSlot prop so they share ONE border, ONE background, ONE
+            collapse gesture. Not two adjacent cards. Not a wrapper around
+            two cards. Structurally one card with two zones inside. */}
+        {!isAggregate && (
+          <WorkdayStrip
+            viewAsUserId={viewAsUserId ?? null}
+            viewAsDisplayName={isViewingOther ? (viewAsDisplayName ?? null) : null}
+            canImpersonate={!!me?.realRoles?.includes("SUPER")}
+            mileageSlot={!isViewingOther ? <MileageStrip embedded /> : null}
+          />
         )}
 
         {/* Aggregate mode: a single team-summary banner replaces the per-worker hero. */}
