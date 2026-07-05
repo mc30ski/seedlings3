@@ -26,6 +26,7 @@ import {
 } from "@/src/ui/dialogs/WorkdayRequiredDialog";
 import ImpersonationWarning from "@/src/ui/components/ImpersonationWarning";
 import WorkdayStrip from "@/src/ui/components/WorkdayStrip";
+import MileageStrip from "@/src/ui/components/MileageStrip";
 import RepeatingPauseInfoLine from "@/src/ui/components/RepeatingPauseInfoLine";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { projectViewerPayout, projectTeamPayoutsForOcc, perWorkerShare, rateForViewer } from "@/src/lib/paymentMath";
@@ -390,6 +391,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   );
   const [showCanceled, setShowCanceled] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  // Filter: show only occurrences currently paused as a repeating
+  // service (status = STREAM_PAUSED). When on, everything else hides.
+  // Respects the date range so paused rows outside the window aren't
+  // pulled in — matches the tab's other filter semantics.
+  const [pausedRepeatingOnly, setPausedRepeatingOnly] = useState(false);
   const [items, setItems] = useState<WorkerOccurrence[]>([]);
   const [loading, setLoading] = useState(false);
   // Admin-only foreign rows — Timeline activities + doc expirations — that
@@ -2301,6 +2307,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       if (!showCanceled) rows = rows.filter((occ) => occ.status !== "CANCELED");
       if (!showArchived) rows = rows.filter((occ) => occ.status !== "ARCHIVED");
     }
+    if (pausedRepeatingOnly) {
+      // When on, narrow to only repeating-paused occurrences. The tab's
+      // date range still applies (upstream), so this shows paused rows
+      // within the selected window rather than the app-wide set.
+      rows = rows.filter((occ) => (occ.status as string) === "STREAM_PAUSED");
+    }
     if (overdueActive) {
       const overdueExclude = new Set(["COMPLETED", "CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
       const todayKey = bizDateKey(new Date());
@@ -2424,7 +2436,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     }
 
     return rows;
-  }, [items, q, kind, statusFilter, typeFilter, overdueActive, unapprovedHoursActive, vipOnly, likedOnly, likedIds, isTrainee, highlightOccId, filterJobId, pinnedIds, isWorkerView, dateFrom, dateTo, showCanceled, showArchived, forAdmin, foreignRows]);
+  }, [items, q, kind, statusFilter, typeFilter, overdueActive, unapprovedHoursActive, vipOnly, likedOnly, likedIds, isTrainee, highlightOccId, filterJobId, pinnedIds, isWorkerView, dateFrom, dateTo, showCanceled, showArchived, pausedRepeatingOnly, forAdmin, foreignRows]);
 
   const dayGroups = useMemo(() => {
     const groups: { key: string; label: string; items: WorkerOccurrence[] }[] = [];
@@ -2603,9 +2615,18 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           clock in / out without bouncing back to Home before opening
           their job list. Worker-only: not rendered on Admin Jobs (where
           purpose is "ADMIN"/"SUPER" and there's no personal workday to
-          act on). The component itself is shared with HomeTab — see
-          ui/components/WorkdayStrip.tsx. */}
-      {isWorkerView && <WorkdayStrip />}
+          act on). Mileage strip embedded so the same "one card, two
+          zones" experience carries across tabs — see HomeTab for the
+          canonical rendering + the mileageSlot contract. Hidden while
+          admin views another worker (viewAsUserIds) since the mileage
+          belongs to the current viewer, not the viewed worker. */}
+      {isWorkerView && (
+        <WorkdayStrip
+          mileageSlot={
+            (viewAsUserIds?.length ?? 0) > 0 ? null : <MileageStrip embedded />
+          }
+        />
+      )}
       <HStack mb={2} gap={2} wrap="nowrap">
         <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)", border: "1px solid var(--chakra-colors-gray-300)", borderRadius: "6px" }}>
           <RefreshCw size={14} />
@@ -2871,10 +2892,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           {likedOnly && <Badge size="sm" colorPalette="red" variant="subtle">Liked</Badge>}
           {showCanceled && <Badge size="sm" colorPalette="red" variant="subtle">+ Canceled</Badge>}
           {showArchived && <Badge size="sm" colorPalette="gray" variant="solid">+ Archived</Badge>}
+          {pausedRepeatingOnly && <Badge size="sm" colorPalette="purple" variant="solid">Paused repeating only</Badge>}
           {highlightOccId && <Badge size="sm" colorPalette="teal" variant="subtle">Filtered to 1 occurrence</Badge>}
           {!highlightOccId && filterJobId && <Badge size="sm" colorPalette="teal" variant="subtle">Filtered to job</Badge>}
           {q && <Badge size="sm" colorPalette="gray" variant="subtle">"{q}"</Badge>}
-          {!(kind[0] === "ALL" && statusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !likedOnly && !showCanceled && !showArchived && !highlightOccId && !filterJobId && !q && !viewAsUserIds?.length && datePreset) && (
+          {!(kind[0] === "ALL" && statusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !likedOnly && !showCanceled && !showArchived && !pausedRepeatingOnly && !highlightOccId && !filterJobId && !q && !viewAsUserIds?.length && datePreset) && (
             <Badge
               size="sm"
               colorPalette="red"
@@ -3088,6 +3110,24 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             <Archive size={14} />
           </Button>
         )}
+        {forAdmin && (
+          <Button
+            size="sm"
+            variant={pausedRepeatingOnly ? "solid" : "outline"}
+            px="2"
+            onClick={() => setPausedRepeatingOnly(!pausedRepeatingOnly)}
+            css={pausedRepeatingOnly ? {
+              background: "var(--chakra-colors-purple-100)",
+              color: "var(--chakra-colors-purple-800)",
+              border: "1px solid var(--chakra-colors-purple-400)",
+              "&:hover": { background: "var(--chakra-colors-purple-200)" },
+            } : undefined}
+            title={pausedRepeatingOnly ? "Show all occurrences" : "Show only paused repeating"}
+          >
+            <Repeat size={14} />
+            <Text as="span" fontSize="xs" ml={1}>Paused</Text>
+          </Button>
+        )}
         <Box flex="1" />
         {isWorkerView && (
           <Button
@@ -3295,7 +3335,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               Filtered to job
             </Badge>
           )}
-          {!(kind[0] === "ALL" && statusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !likedOnly && !showCanceled && !showArchived && !highlightOccId && !filterJobId && !q && !viewAsUserIds?.length && datePreset) && (
+          {!(kind[0] === "ALL" && statusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !likedOnly && !showCanceled && !showArchived && !pausedRepeatingOnly && !highlightOccId && !filterJobId && !q && !viewAsUserIds?.length && datePreset) && (
             <Badge
               size="sm"
               colorPalette="red"

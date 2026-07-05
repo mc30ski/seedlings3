@@ -1,16 +1,16 @@
 "use client";
 
-// Compact one-liner that surfaces the pause context (when it started,
-// when to check back, why) for a repeating-service pause.
+// Purple callout that surfaces the pause context (when it started,
+// when to check back, why) for a repeating-service pause. Rendered
+// as a distinct panel below the occurrence's chip row so the paused
+// state can't be missed at a glance — the small chip alone isn't
+// enough visual weight for "this isn't going to happen."
 //
-// Renders nothing when the occurrence isn't repeating-paused OR when
-// none of the fields are populated — so callers can drop it in
-// unconditionally without a null check.
-//
-// Layout:  Paused {date} · resume by {date} · "{reason}"
-// Each segment is optional and hides gracefully when its data is null.
+// Renders nothing when the occurrence isn't repeating-paused, so
+// callers can drop it in unconditionally without a null check.
 
-import { Text } from "@chakra-ui/react";
+import { Box, HStack, Text, VStack } from "@chakra-ui/react";
+import { PauseCircle } from "lucide-react";
 import { fmtDate } from "@/src/lib/lib";
 
 type Occ = {
@@ -26,23 +26,48 @@ export default function RepeatingPauseInfoLine({ occ }: { occ: Occ }) {
     !!occ.streamPausedAt;
   if (!isPaused) return null;
 
-  const parts: string[] = [];
-  if (occ.streamPausedAt) parts.push(`Paused ${fmtDate(occ.streamPausedAt)}`);
-  if (occ.streamResumeReminderAt) {
-    parts.push(`resume by ${fmtDate(occ.streamResumeReminderAt)}`);
-  }
-  if (occ.streamPauseReason) parts.push(`"${occ.streamPauseReason}"`);
-
-  if (parts.length === 0) return null;
-
   return (
-    <Text
-      fontSize="xs"
-      color="purple.700"
-      mt={1}
-      lineHeight="1.3"
+    <Box
+      bg="purple.50"
+      borderWidth="1px"
+      borderColor="purple.300"
+      borderLeftWidth="4px"
+      borderLeftColor="purple.500"
+      borderRadius="md"
+      p={3}
+      mt={2}
     >
-      {parts.join(" · ")}
-    </Text>
+      <HStack align="start" gap={2}>
+        <Box color="purple.600" flexShrink={0} mt={0.5}>
+          <PauseCircle size={18} />
+        </Box>
+        <VStack align="start" gap={1} flex={1} minW={0}>
+          <Text fontSize="sm" fontWeight="semibold" color="purple.900" lineHeight="1.2">
+            Repeating service paused
+          </Text>
+          {(occ.streamPausedAt || occ.streamResumeReminderAt) && (
+            <Text fontSize="xs" color="purple.800" lineHeight="1.3">
+              {occ.streamPausedAt && (
+                <>Paused <b>{fmtDate(occ.streamPausedAt)}</b></>
+              )}
+              {occ.streamPausedAt && occ.streamResumeReminderAt && " · "}
+              {occ.streamResumeReminderAt && (
+                <>Reminder to resume by <b>{fmtDate(occ.streamResumeReminderAt)}</b></>
+              )}
+            </Text>
+          )}
+          {occ.streamPauseReason && (
+            <Text
+              fontSize="xs"
+              color="purple.900"
+              fontStyle="italic"
+              lineHeight="1.4"
+            >
+              "{occ.streamPauseReason}"
+            </Text>
+          )}
+        </VStack>
+      </HStack>
+    </Box>
   );
 }

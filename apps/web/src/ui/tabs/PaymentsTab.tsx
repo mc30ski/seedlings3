@@ -2613,11 +2613,21 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                             Contractor pay is contingent on the collected amount and reconciles at admin approval.
                           </Text>
                         )}
-                        <Text fontSize="xs" color="fg.muted" mt={1}>
-                          from ${p.amountPaid.toFixed(2)} paid
-                          {expTotal > 0 ? `, after $${expTotal.toFixed(2)} expenses` : ""}
-                        </Text>
-                        {(fee > 0 || margin > 0) && (
+                        {/* All derived breakdown lines (paid-from, commission
+                            kept, shortfall absorbed, overage kept) are
+                            SUPPRESSED for skipped payments. A skipped row is
+                            "pretend it never happened" — the underlying
+                            fields still carry their pre-skip values, but
+                            surfacing them contradicts every aggregate query
+                            (which filters `skippedAt: null`). Only the
+                            "Skipped" chip + $0 headline render. */}
+                        {!skipped && (
+                          <Text fontSize="xs" color="fg.muted" mt={1}>
+                            from ${p.amountPaid.toFixed(2)} paid
+                            {expTotal > 0 ? `, after $${expTotal.toFixed(2)} expenses` : ""}
+                          </Text>
+                        )}
+                        {!skipped && (fee > 0 || margin > 0) && (
                           <Text fontSize="xs" color="fg.muted">
                             Business kept ${(fee + margin).toFixed(2)}
                             {fee > 0 && margin > 0
@@ -2627,12 +2637,12 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                                 : ` margin (${(p as any).businessMarginPercent}%)`}
                           </Text>
                         )}
-                        {shortfall > 0 && (
+                        {!skipped && shortfall > 0 && (
                           <Text fontSize="xs" color="red.600" mt={1}>
                             Business absorbed ${shortfall.toFixed(2)} shortfall
                           </Text>
                         )}
-                        {overage > 0 && (
+                        {!skipped && overage > 0 && (
                           <Text fontSize="xs" color="green.600" mt={1}>
                             Business kept ${overage.toFixed(2)} overage
                           </Text>
