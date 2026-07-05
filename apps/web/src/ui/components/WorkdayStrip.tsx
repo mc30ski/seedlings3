@@ -47,6 +47,7 @@ import { bizInstantFromEtParts, bizToday } from "@/src/lib/lib";
 import { useOffline } from "@/src/lib/offline";
 import { enqueueAction, type QueuedActionType } from "@/src/lib/offlineQueue";
 import ImpersonationWarning from "@/src/ui/components/ImpersonationWarning";
+import MileageStrip from "@/src/ui/components/MileageStrip";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -923,6 +924,14 @@ function WorkdayCard({
               {summary}
             </Text>
             {primary}
+            {/* Compact vehicle-quick-action button — a small car icon
+                that opens a start/stop picker so a worker can toggle
+                mileage tracking without expanding. Self-hides when the
+                worker has no assigned vehicles + no open sessions.
+                Suppressed while an admin is viewing another worker
+                (viewAsName set) since the /me/vehicles endpoint returns
+                the current viewer's vehicles, not the viewed worker's. */}
+            {!viewAsName && <MileageStrip compact />}
             {toggleButton}
           </HStack>
           {/* Keep the mileage strip mounted even when collapsed — hidden

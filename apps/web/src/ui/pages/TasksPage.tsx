@@ -53,6 +53,7 @@ import OutstandingRequestsSection from "@/src/ui/components/OutstandingRequestsS
 import UnlinkedClientAccountsSection from "@/src/ui/components/UnlinkedClientAccountsSection";
 import ChangeRequestsPanel from "@/src/ui/components/ChangeRequestsPanel";
 import WorkdayStrip from "@/src/ui/components/WorkdayStrip";
+import MileageStrip from "@/src/ui/components/MileageStrip";
 import PendingUserSignupsSection from "@/src/ui/components/tasks/PendingUserSignupsSection";
 import PendingWorkdaysSection from "@/src/ui/components/tasks/PendingWorkdaysSection";
 import LedgerFollowupsSection from "@/src/ui/components/tasks/LedgerFollowupsSection";
@@ -231,7 +232,12 @@ export default function TasksPage({
         <InlineMessage />
         <BackHeader visibleCount={visibleCount} onClose={onClose} />
         <Box mt={3}>
-          <WorkdayStrip />
+          {/* Mileage embedded for consistency with HomeTab / JobsTab —
+              same "one card, two zones" experience across every Worker
+              surface that shows the strip. This render is worker-only
+              (guarded by the !isAdmin && !isSuper check above), so no
+              impersonation-hide is needed. */}
+          <WorkdayStrip mileageSlot={<MileageStrip embedded />} />
         </Box>
         <EmptyState
           mt={3}

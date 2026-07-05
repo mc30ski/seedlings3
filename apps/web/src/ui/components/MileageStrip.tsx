@@ -58,6 +58,7 @@ type OpenEntry = {
 
 export default function MileageStrip({
   embedded = false,
+  compact = false,
 }: {
   /** When true, MileageStrip renders without its own outer border/bg
    *  and instead attaches to whatever card contains it — used on
@@ -69,6 +70,13 @@ export default function MileageStrip({
    *  collapsed row (so this component stays mounted across the
    *  collapse/expand cycle and its fetched vehicle list survives). */
   embedded?: boolean;
+  /** Compact mode — renders only a small vehicle icon button that
+   *  opens a quick-pick modal listing all start/stop actions. Used
+   *  on the COLLAPSED WorkdayStrip row so a worker can start or stop
+   *  driving without expanding. Bypasses the `embedded` styling
+   *  (no container padding); returns null when the worker has no
+   *  vehicles + no open sessions. */
+  compact?: boolean;
 } = {}) {
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [openEntries, setOpenEntries] = useState<OpenEntry[]>([]);
@@ -77,6 +85,10 @@ export default function MileageStrip({
   const [startDialog, setStartDialog] = useState<Vehicle | null>(null);
   // Which open entry is the "stop" dialog for. null = dialog closed.
   const [stopDialog, setStopDialog] = useState<OpenEntry | null>(null);
+  // Compact-mode picker (small modal with the Start/Stop buttons).
+  // Only used when `compact` is true — full-mode renders those buttons
+  // inline instead.
+  const [compactPickerOpen, setCompactPickerOpen] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -111,6 +123,123 @@ export default function MileageStrip({
   const vehiclesWithoutOpenSession = vehicles.filter(
     (v) => !openEntries.some((o) => o.vehicleId === v.id),
   );
+
+  // Compact render — small icon button + picker modal. Used by the
+  // collapsed WorkdayStrip so a worker can start/stop driving without
+  // expanding the section. The picker just lists the same Start/Stop
+  // buttons the full strip shows, in a modal container.
+  if (compact) {
+    const hasOpen = openEntries.length > 0;
+    return (
+      <>
+        <Button
+          size="xs"
+          variant="ghost"
+          onClick={(e) => { e.stopPropagation(); setCompactPickerOpen(true); }}
+          title={hasOpen ? "Stop driving" : "Start driving"}
+          aria-label={hasOpen ? "Stop driving" : "Start driving"}
+          px="1.5"
+          position="relative"
+        >
+          <Car size={16} />
+          {hasOpen && (
+            // Green dot indicates an active session so the worker sees
+            // "I'm currently on the clock for mileage" at a glance
+            // without needing to expand.
+            <Box
+              position="absolute"
+              top="1px"
+              right="1px"
+              w="8px"
+              h="8px"
+              bg="teal.500"
+              borderRadius="full"
+              border="1.5px solid white"
+            />
+          )}
+        </Button>
+        <Dialog.Root
+          open={compactPickerOpen}
+          onOpenChange={(e) => { if (!e.open) setCompactPickerOpen(false); }}
+        >
+          <Portal>
+            <Dialog.Backdrop />
+            <Dialog.Positioner>
+              <Dialog.Content mx="4" maxW="sm" w="full">
+                <Dialog.Header>
+                  <Dialog.Title>Mileage</Dialog.Title>
+                </Dialog.Header>
+                <Dialog.Body>
+                  <VStack align="stretch" gap={2}>
+                    {openEntries.map((entry) => (
+                      <Button
+                        key={entry.id}
+                        size="md"
+                        variant="outline"
+                        colorPalette="teal"
+                        justifyContent="flex-start"
+                        onClick={() => {
+                          setCompactPickerOpen(false);
+                          setStopDialog(entry);
+                        }}
+                      >
+                        <StopCircle size={16} />
+                        <Text ml={2}>Stop {entry.vehicle.displayName}</Text>
+                      </Button>
+                    ))}
+                    {vehiclesWithoutOpenSession.map((v) => (
+                      <Button
+                        key={v.id}
+                        size="md"
+                        variant="outline"
+                        colorPalette="teal"
+                        justifyContent="flex-start"
+                        onClick={() => {
+                          setCompactPickerOpen(false);
+                          setStartDialog(v);
+                        }}
+                      >
+                        <Play size={16} />
+                        <Text ml={2}>Start {v.displayName}</Text>
+                      </Button>
+                    ))}
+                  </VStack>
+                </Dialog.Body>
+                <Dialog.Footer>
+                  <Button
+                    variant="ghost"
+                    onClick={() => setCompactPickerOpen(false)}
+                  >
+                    Cancel
+                  </Button>
+                </Dialog.Footer>
+              </Dialog.Content>
+            </Dialog.Positioner>
+          </Portal>
+        </Dialog.Root>
+        {startDialog && (
+          <StartDialog
+            vehicle={startDialog}
+            onClose={() => setStartDialog(null)}
+            onStarted={() => {
+              setStartDialog(null);
+              void load();
+            }}
+          />
+        )}
+        {stopDialog && (
+          <StopDialog
+            entry={stopDialog}
+            onClose={() => setStopDialog(null)}
+            onStopped={() => {
+              setStopDialog(null);
+              void load();
+            }}
+          />
+        )}
+      </>
+    );
+  }
 
   return (
     <Box

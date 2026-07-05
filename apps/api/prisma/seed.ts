@@ -342,11 +342,15 @@ async function seedDatabase() {
   const riverBend = await prisma.client.create({
     data: { type: "ORGANIZATION", displayName: "River Bend Office Park", notesInternal: "Property manager Tom Walters onsite M-F 7am-4pm. After-hours access via loading dock keypad (code changes monthly, get from Tom). They have a strict no-noise policy before 8am near Building A due to a medical office. Invoice goes to their corporate office in Dallas, not Tom directly. Net-30 payment terms. They also want a proposal for seasonal flower bed rotations in spring and fall." },
   });
+  // Note: former Client.status = "PAUSED" was removed in the
+  // pause-simplification migration. These fixtures now stay ACTIVE;
+  // the "pause services" workflow lives at the Job level (Job.PAUSED
+  // via bulkPauseServices). Free-text note retained for context.
   const kimResidence = await prisma.client.create({
-    data: { type: "PERSON", displayName: "Kim Residence", status: "PAUSED", notesInternal: "Traveling abroad, resume in June" },
+    data: { type: "PERSON", displayName: "Kim Residence", notesInternal: "Traveling abroad, resume in June" },
   });
   const garciaFamily = await prisma.client.create({
-    data: { type: "PERSON", displayName: "Garcia Family", status: "PAUSED", notesInternal: "Paused for winter, resume March" },
+    data: { type: "PERSON", displayName: "Garcia Family", notesInternal: "Paused for winter, resume March" },
   });
   const oldClient = await prisma.client.create({
     data: { type: "PERSON", displayName: "Dawson Residence", status: "ARCHIVED", notesInternal: "Moved out of area, no longer servicing", archivedAt: daysAgo(60) },
