@@ -79,8 +79,18 @@ async function getContactsForOccurrence(occurrenceId: string) {
               client: {
                 select: {
                   contacts: {
-                    where: { status: "ACTIVE", isPrimary: true },
-                    select: { id: true, firstName: true, email: true, phone: true, normalizedPhone: true },
+                    // Pull ALL primary contacts regardless of status so
+                    // the caller can distinguish "no primary set" from
+                    // "primary is PAUSED / ARCHIVED" and produce a
+                    // truthful error message. Previously we filtered
+                    // ACTIVE at the query, which silently dropped
+                    // paused primaries and made the downstream error
+                    // ("no primary contact set") lie to the operator.
+                    where: { isPrimary: true },
+                    select: {
+                      id: true, firstName: true, email: true,
+                      phone: true, normalizedPhone: true, status: true,
+                    },
                   },
                 },
               },
@@ -90,13 +100,18 @@ async function getContactsForOccurrence(occurrenceId: string) {
       },
     },
   });
-  const contacts = occ?.job?.property?.client?.contacts ?? [];
+  const primaryContacts = occ?.job?.property?.client?.contacts ?? [];
+  // Split ACTIVE (usable) from non-ACTIVE (paused/archived) so callers
+  // can pick the right error message. `contacts` retains the ACTIVE-only
+  // shape prior callers expect — no behavior change on the happy path.
+  const contacts = primaryContacts.filter((c) => c.status === "ACTIVE");
+  const inactivePrimary = primaryContacts.find((c) => c.status !== "ACTIVE") ?? null;
   const property = occ?.job?.property ?? null;
   // Service date for the payment-request message body. Prefer completedAt
   // (when the work was finished) over startAt (when it was scheduled). Both
   // can be null on partial occurrences — caller decides the fallback.
   const serviceDate = occ?.completedAt ?? occ?.startAt ?? null;
-  return { contacts, property, serviceDate };
+  return { contacts, inactivePrimary, property, serviceDate };
 }
 
 // Property label for client-facing payment messages — prefers the full
@@ -283,16 +298,21 @@ export const paymentRequests = {
     // but didn't surface it on the return shape — pull it here so each
     // contact's SMS/email carries the same dateStr the claimer-handoff path
     // returned in `prepared.smsBody`.
-    const { serviceDate } = await getContactsForOccurrence(occurrenceId);
+    const { serviceDate, inactivePrimary } = await getContactsForOccurrence(occurrenceId);
     const dateStr = formatServiceDate(serviceDate);
 
     if (contacts.length === 0) {
+      // Distinguish "no primary at all" from "primary exists but is
+      // paused/archived" so the operator knows exactly what to fix.
+      // The previous shared error message misled — the operator would
+      // set a NEW primary when the real fix was to unpause the existing
+      // one. Both branches surface as 409 to keep API contract stable.
       const err: any = new Error(
-        "This client has no primary contact set. Open the client's contacts and mark one as Primary before sending an invoice.",
+        inactivePrimary
+          ? `Can't send — the primary contact (${inactivePrimary.firstName ?? "unnamed"}) is ${inactivePrimary.status.toLowerCase()}. Unpause them or promote a different contact to primary first.`
+          : "This client has no primary contact set. Open the client's contacts and mark one as Primary before sending an invoice.",
       );
-      err.code = "NO_PRIMARY_CONTACT";
-      // Surface via the error mapper (it routes by statusCode) so the admin
-      // re-send button returns a 409 instead of a 500.
+      err.code = inactivePrimary ? "PRIMARY_CONTACT_INACTIVE" : "NO_PRIMARY_CONTACT";
       err.statusCode = 409;
       throw err;
     }

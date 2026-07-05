@@ -16,6 +16,7 @@ import {
 } from "@chakra-ui/react";
 import { Filter, LayoutList, Plus, RefreshCw, X } from "lucide-react";
 import { apiGet, apiDelete, apiPost } from "@/src/lib/api";
+import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import {
   determineRoles,
   propertyStatusColor,
@@ -254,6 +255,46 @@ export default function PropertiesTab({
           `Property '${p.displayName}' unarchive failed.`,
           err,
         ),
+      });
+    }
+  }
+
+  // Archive/unarchive cascade confirmation — matches ClientsTab shape.
+  // Property.archive cascades to its Jobs; unarchive symmetrically
+  // brings them back to ACCEPTED. Preview counts come from the server.
+  const [archivePropertyConfirm, setArchivePropertyConfirm] = useState<
+    | { property: Property; jobsToArchive: number }
+    | null
+  >(null);
+  const [unarchivePropertyConfirm, setUnarchivePropertyConfirm] = useState<
+    | { property: Property; jobsToUnarchive: number }
+    | null
+  >(null);
+
+  async function openArchivePropertyConfirm(p: Property) {
+    try {
+      const preview = await apiGet<{ jobsToArchive: number }>(
+        `/api/admin/properties/${p.id}/archive-preview`,
+      );
+      setArchivePropertyConfirm({ property: p, ...preview });
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Could not load archive preview.", err),
+      });
+    }
+  }
+
+  async function openUnarchivePropertyConfirm(p: Property) {
+    try {
+      const preview = await apiGet<{ jobsToUnarchive: number }>(
+        `/api/admin/properties/${p.id}/unarchive-preview`,
+      );
+      setUnarchivePropertyConfirm({ property: p, ...preview });
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Could not load unarchive preview.", err),
       });
     }
   }
@@ -514,7 +555,7 @@ export default function PropertiesTab({
                         itemId={p.id}
                         label={"Archive"}
                         onClick={async () => {
-                          await archive(p);
+                          await openArchivePropertyConfirm(p);
                         }}
                         variant={"outline"}
                         disabled={loading}
@@ -527,7 +568,7 @@ export default function PropertiesTab({
                         itemId={p.id}
                         label={"Unarchive"}
                         onClick={async () => {
-                          await unarchive(p);
+                          await openUnarchivePropertyConfirm(p);
                         }}
                         variant={"outline"}
                         disabled={loading}
@@ -604,6 +645,52 @@ export default function PropertiesTab({
             await hardDelete(toDelete.id, toDelete.extra ?? "");
             setToDelete(null);
           }}
+        />
+      )}
+      {archivePropertyConfirm && (
+        <ConfirmDialog
+          open
+          title="Archive this property?"
+          message={
+            (() => {
+              const { property, jobsToArchive } = archivePropertyConfirm;
+              const cascade = jobsToArchive > 0
+                ? ` This will also archive ${jobsToArchive} job${jobsToArchive === 1 ? "" : "s"}.`
+                : "";
+              return `Archive ${property.displayName}?${cascade} Historical data stays accessible.`;
+            })()
+          }
+          confirmLabel="Archive"
+          confirmColorPalette="red"
+          onConfirm={async () => {
+            const p = archivePropertyConfirm.property;
+            setArchivePropertyConfirm(null);
+            await archive(p);
+          }}
+          onCancel={() => setArchivePropertyConfirm(null)}
+        />
+      )}
+      {unarchivePropertyConfirm && (
+        <ConfirmDialog
+          open
+          title="Unarchive this property?"
+          message={
+            (() => {
+              const { property, jobsToUnarchive } = unarchivePropertyConfirm;
+              const cascade = jobsToUnarchive > 0
+                ? ` This will also unarchive ${jobsToUnarchive} job${jobsToUnarchive === 1 ? "" : "s"} (returned to Accepted).`
+                : "";
+              return `Restore ${property.displayName} to active?${cascade}`;
+            })()
+          }
+          confirmLabel="Unarchive"
+          confirmColorPalette="green"
+          onConfirm={async () => {
+            const p = unarchivePropertyConfirm.property;
+            setUnarchivePropertyConfirm(null);
+            await unarchive(p);
+          }}
+          onCancel={() => setUnarchivePropertyConfirm(null)}
         />
       )}
     </Box>

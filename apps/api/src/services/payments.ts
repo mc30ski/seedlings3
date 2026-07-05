@@ -1737,6 +1737,12 @@ export const payments: ServicesPayments = {
         nextOccurrenceSkipReason = "no_frequency_set";
       } else if (fullOcc.job.status === "PAUSED") {
         nextOccurrenceSkipReason = "job_paused";
+      } else if (fullOcc.job.status === "ARCHIVED") {
+        // Archived Jobs must not spawn phantom next occurrences on a
+        // closed relationship. Prior to this guard, approving a lingering
+        // unpaid payment on an archived Job would silently regenerate
+        // the recurring cycle on a Client/Property that was archived.
+        nextOccurrenceSkipReason = "job_archived";
       } else if (fullOcc.isOneOff || fullOcc.workflow === "ONE_OFF") {
         nextOccurrenceSkipReason = "one_off";
       }
@@ -1746,6 +1752,7 @@ export const payments: ServicesPayments = {
         fullOcc.job &&
         effectiveFreq &&
         fullOcc.job.status !== "PAUSED" &&
+        fullOcc.job.status !== "ARCHIVED" &&
         !fullOcc.isOneOff &&
         fullOcc.workflow !== "ONE_OFF"
       ) {

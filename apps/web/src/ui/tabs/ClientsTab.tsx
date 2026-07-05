@@ -28,6 +28,7 @@ import {
 } from "@/src/lib/types";
 import { doAction, doDelete } from "@/src/lib/services";
 import { openEventSearch, onEventSearchRun } from "@/src/lib/bus";
+import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -251,6 +252,49 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
       "displayName",
       async () => await load(false)
     );
+  }
+
+  // Archive/unarchive cascade confirmation — separate from the pause
+  // path because the operator needs to see how many Properties + Jobs
+  // will be affected before pulling the trigger. Preview counts come
+  // from the server so the number matches what the cascade will
+  // actually touch (idempotent per row, so it's a truthful "will
+  // change" count).
+  const [archiveClientConfirm, setArchiveClientConfirm] = useState<
+    | { client: Client; propertiesToArchive: number; jobsToArchive: number }
+    | null
+  >(null);
+  const [unarchiveClientConfirm, setUnarchiveClientConfirm] = useState<
+    | { client: Client; propertiesToUnarchive: number; jobsToUnarchive: number }
+    | null
+  >(null);
+
+  async function openArchiveClientConfirm(c: Client) {
+    try {
+      const preview = await apiGet<{ propertiesToArchive: number; jobsToArchive: number }>(
+        `/api/admin/clients/${c.id}/archive-preview`,
+      );
+      setArchiveClientConfirm({ client: c, ...preview });
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Could not load archive preview.", err),
+      });
+    }
+  }
+
+  async function openUnarchiveClientConfirm(c: Client) {
+    try {
+      const preview = await apiGet<{ propertiesToUnarchive: number; jobsToUnarchive: number }>(
+        `/api/admin/clients/${c.id}/unarchive-preview`,
+      );
+      setUnarchiveClientConfirm({ client: c, ...preview });
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Could not load unarchive preview.", err),
+      });
+    }
   }
 
   async function takeActionContact(c: Contact, action: string) {
@@ -578,7 +622,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                         id={"client-archive"}
                         itemId={c.id}
                         label={"Archive"}
-                        onClick={async () => await takeAction(c, "archive")}
+                        onClick={async () => await openArchiveClientConfirm(c)}
                         variant={"subtle"}
                         disabled={loading}
                         busyId={statusButtonBusyId}
@@ -591,7 +635,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                           id={"client-unarchive"}
                           itemId={c.id}
                           label={"Unarchive"}
-                          onClick={async () => await takeAction(c, "unarchive")}
+                          onClick={async () => await openUnarchiveClientConfirm(c)}
                           variant={"outline"}
                           disabled={loading}
                           busyId={statusButtonBusyId}
@@ -1037,6 +1081,68 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
             );
             setToDeleteContact(null);
           }}
+        />
+      )}
+      {/* Archive-cascade confirmation. Counts come from the server so
+          they match what the cascade will actually touch. Idempotent
+          per-row cascade means "already archived" children aren't
+          double-counted. */}
+      {archiveClientConfirm && (
+        <ConfirmDialog
+          open
+          title="Archive this client?"
+          message={
+            (() => {
+              const { client, propertiesToArchive, jobsToArchive } = archiveClientConfirm;
+              const parts: string[] = [];
+              if (propertiesToArchive > 0) {
+                parts.push(`${propertiesToArchive} propert${propertiesToArchive === 1 ? "y" : "ies"}`);
+              }
+              if (jobsToArchive > 0) {
+                parts.push(`${jobsToArchive} job${jobsToArchive === 1 ? "" : "s"}`);
+              }
+              const cascade = parts.length > 0 ? ` This will also archive ${parts.join(" and ")}.` : "";
+              return `Archive ${client.displayName}?${cascade} Historical data (payments, invoices, exports) stays accessible.`;
+            })()
+          }
+          confirmLabel="Archive"
+          confirmColorPalette="red"
+          onConfirm={async () => {
+            const c = archiveClientConfirm.client;
+            setArchiveClientConfirm(null);
+            await takeAction(c, "archive");
+          }}
+          onCancel={() => setArchiveClientConfirm(null)}
+        />
+      )}
+      {unarchiveClientConfirm && (
+        <ConfirmDialog
+          open
+          title="Unarchive this client?"
+          message={
+            (() => {
+              const { client, propertiesToUnarchive, jobsToUnarchive } = unarchiveClientConfirm;
+              const parts: string[] = [];
+              if (propertiesToUnarchive > 0) {
+                parts.push(`${propertiesToUnarchive} propert${propertiesToUnarchive === 1 ? "y" : "ies"}`);
+              }
+              if (jobsToUnarchive > 0) {
+                parts.push(`${jobsToUnarchive} job${jobsToUnarchive === 1 ? "" : "s"}`);
+              }
+              const cascade = parts.length > 0
+                ? ` This will also unarchive ${parts.join(" and ")}. Jobs return to Accepted status.`
+                : "";
+              return `Restore ${client.displayName} to active?${cascade}`;
+            })()
+          }
+          confirmLabel="Unarchive"
+          confirmColorPalette="green"
+          onConfirm={async () => {
+            const c = unarchiveClientConfirm.client;
+            setUnarchiveClientConfirm(null);
+            await takeAction(c, "unarchive");
+          }}
+          onCancel={() => setUnarchiveClientConfirm(null)}
         />
       )}
     </Box>

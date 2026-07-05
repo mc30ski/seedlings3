@@ -333,8 +333,18 @@ export type ServicesClients = {
   ): Promise<Client | null>;
   pause(currentUserId: string, id: string): Promise<Client | null>;
   unpause(currentUserId: string, id: string): Promise<Client | null>;
-  archive(currentUserId: string, id: string): Promise<Client | null>;
-  unarchive(currentUserId: string, id: string): Promise<Client | null>;
+  archive(currentUserId: string, id: string): Promise<{
+    archived: boolean;
+    propertiesArchived: number;
+    jobsArchived: number;
+    cascadeGroupId: string;
+  }>;
+  unarchive(currentUserId: string, id: string): Promise<{
+    unarchived: boolean;
+    propertiesUnarchived: number;
+    jobsUnarchived: number;
+    cascadeGroupId: string;
+  }>;
   delete(currentUserId: string, id: string): Promise<{ deleted: true }>;
 
   //////////
@@ -415,8 +425,16 @@ export type ServicesProperties = {
     id: string,
     payload: PropertyUpsert
   ): Promise<Property>;
-  archive(currentUserId: string, id: string): Promise<{ archived: true }>;
-  unarchive(currentUserId: string, id: string): Promise<{ unarchived: true }>;
+  archive(
+    currentUserId: string,
+    id: string,
+    opts?: { cascadeGroupId?: string; tx?: any },
+  ): Promise<{ archived: true; jobsArchived: number; cascadeGroupId: string }>;
+  unarchive(
+    currentUserId: string,
+    id: string,
+    opts?: { cascadeGroupId?: string; tx?: any },
+  ): Promise<{ unarchived: true; jobsUnarchived: number; cascadeGroupId: string }>;
   hardDelete(currentUserId: string, id: string): Promise<{ deleted: true }>;
 
   setPrimaryContact(
@@ -602,7 +620,16 @@ export type ServicesJobs = {
     occurrenceId: string
   ): Promise<{ unclaimed: true }>;
 
-  archiveJob(currentUserId: string, jobId: string): Promise<Job>;
+  archiveJob(
+    currentUserId: string,
+    jobId: string,
+    opts?: { cascadeGroupId?: string; tx?: any },
+  ): Promise<Job>;
+  unarchiveJob(
+    currentUserId: string,
+    jobId: string,
+    opts?: { cascadeGroupId?: string; tx?: any },
+  ): Promise<Job>;
   archiveOccurrence(currentUserId: string, occurrenceId: string): Promise<JobOccurrence>;
   listArchivedJobs(params?: { page?: number; pageSize?: number }): Promise<{
     items: JobListItem[];

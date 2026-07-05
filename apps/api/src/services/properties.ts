@@ -1,8 +1,9 @@
-import { Prisma, PropertyStatus, PropertyKind } from "@prisma/client";
+import { Prisma, PropertyStatus, PropertyKind, JobStatus } from "@prisma/client";
 import { prisma } from "../db/prisma";
 import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
 import { ServiceError } from "../lib/errors";
+import { randomBytes } from "crypto";
 import type {
   ServicesProperties,
   PropertyUpsert,
@@ -135,30 +136,104 @@ export const properties: ServicesProperties = {
     });
   },
 
-  async archive(currentUserId: string, id: string) {
-    await prisma.$transaction(async (tx) => {
+  async archive(
+    currentUserId: string,
+    id: string,
+    // Optional external cascadeGroupId — set when Client.archive fans
+    // out to Properties so every row it touches shares a correlation
+    // id. When called directly (Property archive button), we mint a
+    // fresh one so the Jobs it cascades to are linked back to this
+    // Property archive.
+    opts?: { cascadeGroupId?: string; tx?: Prisma.TransactionClient },
+  ) {
+    const cascadeGroupId = opts?.cascadeGroupId ?? `cg_${randomBytes(9).toString("hex")}`;
+    const run = async (tx: Prisma.TransactionClient) => {
+      const property = await tx.property.findUnique({ where: { id } });
+      if (!property) throw new ServiceError("NOT_FOUND", "Property not found.", 404);
+      if (property.status === PropertyStatus.ARCHIVED) {
+        // Idempotent — cascades pass over already-archived Properties.
+        return { archived: true as const, jobsArchived: 0, cascadeGroupId };
+      }
       await tx.property.update({
         where: { id },
         data: { status: PropertyStatus.ARCHIVED, archivedAt: new Date() },
       });
+      // Cascade — archive every non-archived Job on this Property in
+      // the same transaction. Idempotent per Job (skips already-
+      // archived rows). Each row gets its own audit event tagged with
+      // the shared cascadeGroupId.
+      const jobs = await tx.job.findMany({
+        where: { propertyId: id, status: { not: JobStatus.ARCHIVED } },
+        select: { id: true },
+      });
+      let jobsArchived = 0;
+      for (const j of jobs) {
+        await tx.job.update({
+          where: { id: j.id },
+          data: { status: JobStatus.ARCHIVED },
+        });
+        await writeAudit(tx, AUDIT.JOB.ARCHIVED, currentUserId, {
+          jobId: j.id,
+          cascadeGroupId,
+          triggeredBy: "property_archive",
+          propertyId: id,
+        });
+        jobsArchived++;
+      }
       await writeAudit(tx, AUDIT.PROPERTY.ARCHIVED, currentUserId, {
         propertyId: id,
+        cascadeGroupId,
+        jobsArchived,
       });
-    });
-    return { archived: true as const };
+      return { archived: true as const, jobsArchived, cascadeGroupId };
+    };
+    return opts?.tx ? run(opts.tx) : prisma.$transaction(run);
   },
 
-  async unarchive(currentUserId: string, id: string) {
-    await prisma.$transaction(async (tx) => {
+  async unarchive(
+    currentUserId: string,
+    id: string,
+    opts?: { cascadeGroupId?: string; tx?: Prisma.TransactionClient },
+  ) {
+    const cascadeGroupId = opts?.cascadeGroupId ?? `cg_${randomBytes(9).toString("hex")}`;
+    const run = async (tx: Prisma.TransactionClient) => {
+      const property = await tx.property.findUnique({ where: { id } });
+      if (!property) throw new ServiceError("NOT_FOUND", "Property not found.", 404);
+      if (property.status !== PropertyStatus.ARCHIVED) {
+        return { unarchived: true as const, jobsUnarchived: 0, cascadeGroupId };
+      }
       await tx.property.update({
         where: { id },
         data: { status: PropertyStatus.ACTIVE, archivedAt: null },
       });
+      // Symmetric cascade — return any Jobs that were archived in this
+      // cascade (or independently) back to ACCEPTED. Idempotent per Job.
+      const jobs = await tx.job.findMany({
+        where: { propertyId: id, status: JobStatus.ARCHIVED },
+        select: { id: true },
+      });
+      let jobsUnarchived = 0;
+      for (const j of jobs) {
+        await tx.job.update({
+          where: { id: j.id },
+          data: { status: JobStatus.ACCEPTED },
+        });
+        await writeAudit(tx, AUDIT.JOB.UNARCHIVED, currentUserId, {
+          jobId: j.id,
+          cascadeGroupId,
+          triggeredBy: "property_unarchive",
+          propertyId: id,
+        });
+        jobsUnarchived++;
+      }
       await writeAudit(tx, AUDIT.PROPERTY.UNARCHIVED, currentUserId, {
         propertyId: id,
+        cascadeGroupId,
+        jobsUnarchived,
       });
-    });
-    return { unarchived: true as const };
+      return { unarchived: true as const, jobsUnarchived, cascadeGroupId };
+    };
+    return opts?.tx ? run(opts.tx) : prisma.$transaction(run);
   },
 
   async hardDelete(currentUserId: string, id: string) {
