@@ -5451,10 +5451,14 @@ Respond ONLY with valid JSON in this exact format:
     return suggestions;
   });
 
-  // Cheap count for the alerts dropdown + Tasks page badge — same
-  // filter/grouping as `/due-soon` above but skips the pre-fill payload
-  // construction. Small bounded set (5–30 recurring series in practice),
-  // safe to recompute per call. Super-only.
+  // Cheap count for the alerts dropdown + Tasks page badge. Unlike
+  // `/due-soon` above (which surfaces items 0–7 days ahead for the
+  // Ledger panel), this counts ONLY items whose expected date is
+  // strictly before today (ET) — i.e., actually overdue. Items due
+  // today or upcoming don't fire an alert; the operator sees them
+  // in the Ledger's Due-to-Record panel. Small bounded set (5–30
+  // recurring series in practice), safe to recompute per call.
+  // Super-only.
   app.get("/admin/business-expenses/due-soon/count", superGuard, async (_req: any) => {
     function nextDate(d: Date, cadence: string): Date {
       const out = new Date(d);
@@ -5468,9 +5472,8 @@ Respond ONLY with valid JSON in this exact format:
       out.setDate(Math.min(day, lastDay));
       return out;
     }
-    const LEAD_DAYS = 7;
     const now = new Date();
-    const horizon = new Date(now); horizon.setDate(horizon.getDate() + LEAD_DAYS);
+    const todayKey = etFormatDate(now);
     const rows = await prisma.businessExpense.findMany({
       where: {
         recurrence: { not: null },
@@ -5496,7 +5499,10 @@ Respond ONLY with valid JSON in this exact format:
         latest.recurrenceSkippedUntil && latest.recurrenceSkippedUntil >= baseNext
           ? nextDate(latest.recurrenceSkippedUntil, cadence)
           : baseNext;
-      if (expected <= horizon) count++;
+      // Overdue = expected ET-calendar-day is strictly before today.
+      // etDaysBetween(from, to) returns positive when `to` is after
+      // `from`, so > 0 means today is past the expected date.
+      if (etDaysBetween(etFormatDate(expected), todayKey) > 0) count++;
     }
     return { count };
   });
