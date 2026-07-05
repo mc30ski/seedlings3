@@ -723,6 +723,16 @@ model Job {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Bulk-pause bookkeeping — set when this Job was paused as part of a
+  // Client-level bulk-pause action ("pause services"). Non-null means
+  // "this Job was paused for a bulk reason and should be brought back
+  // when the operator hits Resume services on the Client." Null on a
+  // paused Job means "individually paused" — bulk-resume leaves it
+  // alone, respecting the operator's independent intent. Cleared on
+  // bulk-resume or on any manual status flip.
+  clientBulkPausedAt   DateTime?
+  clientBulkPausedById String?
+
   // Default crew. EITHER set `defaultGroupId` (and the JobAssigneeDefault
   // list stays empty) OR populate JobAssigneeDefault rows — not both. The
   // mode is enforced in app code (services/jobs.ts). When defaultGroupId
@@ -741,6 +751,7 @@ model Job {
   recommendedCollections JobRecommendedCollection[]
 
   @@index([defaultGroupId])
+  @@index([clientBulkPausedAt])
 }
 
 model JobContact {

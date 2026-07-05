@@ -13,6 +13,10 @@ import { writeAudit } from "../lib/auditLogger";
 import { action } from "../lib/services";
 import { ServiceError } from "../lib/errors";
 import { randomBytes } from "crypto";
+import {
+  applyJobPauseSideEffectsInTx,
+  applyJobResumeSideEffectsInTx,
+} from "./jobs";
 
 function normalizePhone(raw?: string | null): string | null {
   const s = (raw ?? "").replace(/[^\d+]/g, "");
@@ -448,6 +452,126 @@ export const clients: ServicesClients = {
       });
     });
     return { deleted: true as const };
+  },
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Bulk pause / resume services for a Client.
+  //
+  // The operator's mental model: "Client X is going on vacation for 3
+  // months — stop all their services." Instead of walking each Job on
+  // each Property manually, this fans out one gesture across every
+  // ACCEPTED Job on the Client.
+  //
+  // Bookkeeping via Job.clientBulkPausedAt/ById so bulk-resume can
+  // find its own targets without touching Jobs that were independently
+  // paused before the bulk op. Same cascadeGroupId pattern as Step 1's
+  // archive cascade — every audited row carries the shared correlation
+  // id so "show me every Job affected by this bulk pause" is one query.
+  //
+  // Idempotent per-Job:
+  //   - Already-paused (independent or bulk) → skipped, not double-counted
+  //   - PROPOSED / ARCHIVED Jobs → not touched (paused-services concept
+  //     only applies to ACCEPTED recurring services)
+  //
+  // Side effects (per Job) come from the shared helpers in jobs.ts, so
+  // the observable behavior matches a manual per-Job pause exactly.
+  // ─────────────────────────────────────────────────────────────────────
+  async bulkPauseServices(currentUserId: string, clientId: string) {
+    const cascadeGroupId = `cg_${randomBytes(9).toString("hex")}`;
+    return prisma.$transaction(async (tx) => {
+      const client = await tx.client.findUnique({ where: { id: clientId } });
+      if (!client) throw new ServiceError("NOT_FOUND", "Client not found.", 404);
+      const jobs = await tx.job.findMany({
+        where: {
+          property: { clientId },
+          status: JobStatus.ACCEPTED,
+        },
+        select: { id: true },
+      });
+      const now = new Date();
+      let jobsPaused = 0;
+      for (const j of jobs) {
+        await tx.job.update({
+          where: { id: j.id },
+          data: {
+            status: JobStatus.PAUSED,
+            clientBulkPausedAt: now,
+            clientBulkPausedById: currentUserId,
+          },
+        });
+        await applyJobPauseSideEffectsInTx(tx, currentUserId, j.id, {
+          cascadeGroupId,
+          triggeredBy: "client_bulk_pause",
+          clientId,
+        });
+        await writeAudit(tx, AUDIT.JOB.UPDATED, currentUserId, {
+          jobId: j.id,
+          action: "CLIENT_BULK_PAUSED",
+          cascadeGroupId,
+          clientId,
+        });
+        jobsPaused++;
+      }
+      // Top-level trigger event — carries the roll-up count so operators
+      // can find "the pause I did last Tuesday" in one row.
+      await writeAudit(tx, AUDIT.CLIENT.UPDATED, currentUserId, {
+        clientId,
+        action: "BULK_PAUSED_SERVICES",
+        cascadeGroupId,
+        jobsPaused,
+      });
+      return { jobsPaused, cascadeGroupId };
+    });
+  },
+
+  async bulkResumeServices(currentUserId: string, clientId: string) {
+    const cascadeGroupId = `cg_${randomBytes(9).toString("hex")}`;
+    return prisma.$transaction(async (tx) => {
+      const client = await tx.client.findUnique({ where: { id: clientId } });
+      if (!client) throw new ServiceError("NOT_FOUND", "Client not found.", 404);
+      // Only touch Jobs that were paused as part of a bulk pause. Any
+      // Job the operator individually paused (clientBulkPausedAt IS NULL
+      // but status = PAUSED) stays paused — resume must not overwrite
+      // that intent.
+      const jobs = await tx.job.findMany({
+        where: {
+          property: { clientId },
+          status: JobStatus.PAUSED,
+          clientBulkPausedAt: { not: null },
+        },
+        select: { id: true },
+      });
+      let jobsResumed = 0;
+      for (const j of jobs) {
+        await tx.job.update({
+          where: { id: j.id },
+          data: {
+            status: JobStatus.ACCEPTED,
+            clientBulkPausedAt: null,
+            clientBulkPausedById: null,
+          },
+        });
+        await applyJobResumeSideEffectsInTx(tx, currentUserId, j.id, {
+          cascadeGroupId,
+          triggeredBy: "client_bulk_resume",
+          clientId,
+        });
+        await writeAudit(tx, AUDIT.JOB.UPDATED, currentUserId, {
+          jobId: j.id,
+          action: "CLIENT_BULK_RESUMED",
+          cascadeGroupId,
+          clientId,
+        });
+        jobsResumed++;
+      }
+      await writeAudit(tx, AUDIT.CLIENT.UPDATED, currentUserId, {
+        clientId,
+        action: "BULK_RESUMED_SERVICES",
+        cascadeGroupId,
+        jobsResumed,
+      });
+      return { jobsResumed, cascadeGroupId };
+    });
   },
 
   async addContact(currentUserId: string, clientId: string, payload: any) {
