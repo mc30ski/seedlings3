@@ -1632,33 +1632,39 @@ function WorkerCard({
               label="Hours"
               display={payroll.hours.toFixed(2)}
               copyValue={payroll.hours.toFixed(2)}
+              width="70px"
             />
             <PayrollStat
               label="Hourly Wage"
               display={fmtUSD(payroll.hourlyWage)}
               copyValue={payroll.hourlyWage.toFixed(2)}
+              width="90px"
             />
             <PayrollStat
               label="Regular Wages"
               display={fmtUSD(payroll.regularWages)}
               copyValue={payroll.regularWages.toFixed(2)}
+              width="110px"
             />
             <PayrollStat
               label="Additional Earnings"
               display={fmtUSD(payroll.additionalEarnings)}
               copyValue={payroll.additionalEarnings.toFixed(2)}
+              width="130px"
             />
             <PayrollStat
               label="Total Gross"
               display={fmtUSD(payroll.totalGross)}
               copyValue={payroll.totalGross.toFixed(2)}
               bold
+              width="100px"
             />
             <PayrollStat
               label="Equivalent Hourly Rate"
               display={payroll.equivalentHourlyRate == null ? "—" : `${fmtUSD(payroll.equivalentHourlyRate)}/hr`}
               copyValue={payroll.equivalentHourlyRate == null ? "" : payroll.equivalentHourlyRate.toFixed(2)}
               bold={payrollBelowMin}
+              width="120px"
               color={payrollBelowMin ? "red.600" : undefined}
             />
           </HStack>
@@ -1666,9 +1672,22 @@ function WorkerCard({
       </Box>
 
       {expanded && (
-        <Box px={3} pb={3} pt={2} borderTopWidth="1px" borderColor="gray.200">
+        // Expanded body — subtly tinted background so the operator can
+        // see at a glance which nested content belongs to which worker.
+        // Anomaly cards keep the yellow family (yellow.50 outer →
+        // yellow.100 inner); clean cards go plain gray. Day rows inside
+        // set their own bg="white" so they still "float" above this.
+        <Box
+          px={3}
+          pb={3}
+          pt={2}
+          borderTopWidth="1px"
+          borderColor={worker.anomalies.length > 0 ? "yellow.400" : "gray.300"}
+          bg={worker.anomalies.length > 0 ? "yellow.200" : "gray.100"}
+          borderBottomRadius="md"
+        >
           {worker.anomalies.length > 0 && (
-            <Box mb={2} p={2} bg="yellow.100" borderRadius="md">
+            <Box mb={2} p={2} bg="yellow.300" borderRadius="md">
               <HStack gap={2} align="flex-start">
                 <Box pt={0.5}><AlertTriangle size={14} color="var(--chakra-colors-yellow-800)" /></Box>
                 <VStack align="start" gap={0}>
@@ -1817,15 +1836,19 @@ function PayrollStat({
   copyValue,
   bold,
   color,
+  width,
 }: {
   label: string;
   display: string;
   copyValue: string;
   bold?: boolean;
   color?: string;
+  /** Column width — same value across a whole column of rows so cells
+   *  line up vertically for at-a-glance scanning. */
+  width?: string;
 }) {
   return (
-    <Box>
+    <Box w={width} minW={width}>
       <Text fontSize="2xs" color="fg.muted">{label}</Text>
       <Button
         size="xs"
@@ -1836,6 +1859,8 @@ function PayrollStat({
         fontWeight={bold ? "bold" : undefined}
         color={color}
         px={1}
+        justifyContent="flex-start"
+        w="full"
       >
         {display}
       </Button>
