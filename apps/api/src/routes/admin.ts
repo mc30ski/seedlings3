@@ -792,6 +792,65 @@ export default async function adminRoutes(app: FastifyInstance) {
     );
   });
 
+  // Bulk-pause every ACCEPTED Job on the Client. "Pause services" —
+  // the operator gesture behind long-vacation / short-hold workflows.
+  // See services/clients.ts bulkPauseServices for semantics.
+  app.post("/admin/clients/:id/pause-services", adminGuard, async (req: any) => {
+    return services.clients.bulkPauseServices(
+      await currentUserId(req),
+      String(req.params.id)
+    );
+  });
+
+  // Reverse of pause-services. Only resumes Jobs paused via the bulk
+  // action; individually-paused Jobs stay paused (respects operator intent).
+  app.post("/admin/clients/:id/resume-services", adminGuard, async (req: any) => {
+    return services.clients.bulkResumeServices(
+      await currentUserId(req),
+      String(req.params.id)
+    );
+  });
+
+  // Preview counts for the pause-services confirmation dialog. Shows
+  // how many Jobs will be paused, and how many are already paused (so
+  // the operator understands "5 will change, 2 are already off").
+  app.get("/admin/clients/:id/pause-services-preview", adminGuard, async (req: any) => {
+    const clientId = String(req.params.id);
+    const [jobsToPause, alreadyPaused] = await Promise.all([
+      prisma.job.count({
+        where: { property: { clientId }, status: "ACCEPTED" as any },
+      }),
+      prisma.job.count({
+        where: { property: { clientId }, status: "PAUSED" as any },
+      }),
+    ]);
+    return { jobsToPause, alreadyPaused };
+  });
+
+  // Preview counts for the resume-services confirmation dialog. Shows
+  // how many bulk-paused Jobs will be resumed, and how many are paused
+  // independently (won't be touched).
+  app.get("/admin/clients/:id/resume-services-preview", adminGuard, async (req: any) => {
+    const clientId = String(req.params.id);
+    const [jobsToResume, individuallyPaused] = await Promise.all([
+      prisma.job.count({
+        where: {
+          property: { clientId },
+          status: "PAUSED" as any,
+          clientBulkPausedAt: { not: null },
+        },
+      }),
+      prisma.job.count({
+        where: {
+          property: { clientId },
+          status: "PAUSED" as any,
+          clientBulkPausedAt: null,
+        },
+      }),
+    ]);
+    return { jobsToResume, individuallyPaused };
+  });
+
   app.post("/admin/clients/:id/unarchive", adminGuard, async (req: any) => {
     return services.clients.unarchive(
       await currentUserId(req),

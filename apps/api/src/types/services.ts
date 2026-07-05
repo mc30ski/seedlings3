@@ -347,6 +347,23 @@ export type ServicesClients = {
   }>;
   delete(currentUserId: string, id: string): Promise<{ deleted: true }>;
 
+  /** Bulk-pause every ACCEPTED Job on this Client — the "pause services"
+   *  operator gesture. Idempotent per Job (skips already-paused). Tags
+   *  each affected Job with `clientBulkPausedAt` so bulk-resume can find
+   *  them without touching individually-paused Jobs. */
+  bulkPauseServices(currentUserId: string, clientId: string): Promise<{
+    jobsPaused: number;
+    cascadeGroupId: string;
+  }>;
+
+  /** Reverse `bulkPauseServices`. Only touches Jobs whose
+   *  `clientBulkPausedAt` is set — leaves independently-paused Jobs
+   *  paused. */
+  bulkResumeServices(currentUserId: string, clientId: string): Promise<{
+    jobsResumed: number;
+    cascadeGroupId: string;
+  }>;
+
   //////////
 
   addContact(

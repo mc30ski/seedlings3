@@ -46,7 +46,7 @@ import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import { StatusBadge } from "@/src/ui/components/StatusBadge";
 import StatusButton from "@/src/ui/components/StatusButton";
 import TruncatedText from "@/src/ui/components/TruncatedText";
-import { apiGet, apiDelete } from "@/src/lib/api";
+import { apiGet, apiDelete, apiPost } from "@/src/lib/api";
 import { parseAdminTags, adminTagLabel, adminTagColor, ADMIN_TAGS } from "@/src/ui/components/AdminTagPicker";
 import { MailLink, CallLink, MapLink } from "@/src/ui/helpers/Link";
 import { FiStar, FiMapPin, FiUsers } from "react-icons/fi";
@@ -293,6 +293,84 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
       publishInlineMessage({
         type: "ERROR",
         text: getErrorMessage("Could not load unarchive preview.", err),
+      });
+    }
+  }
+
+  // Bulk-pause services confirmation. Preview shows both what WILL be
+  // paused (ACCEPTED Jobs) and what's already paused (for context so
+  // the operator understands the total picture).
+  const [bulkPauseConfirm, setBulkPauseConfirm] = useState<
+    | { client: Client; jobsToPause: number; alreadyPaused: number }
+    | null
+  >(null);
+  const [bulkResumeConfirm, setBulkResumeConfirm] = useState<
+    | { client: Client; jobsToResume: number; individuallyPaused: number }
+    | null
+  >(null);
+
+  async function openBulkPauseConfirm(c: Client) {
+    try {
+      const preview = await apiGet<{ jobsToPause: number; alreadyPaused: number }>(
+        `/api/admin/clients/${c.id}/pause-services-preview`,
+      );
+      setBulkPauseConfirm({ client: c, ...preview });
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Could not load pause preview.", err),
+      });
+    }
+  }
+
+  async function openBulkResumeConfirm(c: Client) {
+    try {
+      const preview = await apiGet<{ jobsToResume: number; individuallyPaused: number }>(
+        `/api/admin/clients/${c.id}/resume-services-preview`,
+      );
+      setBulkResumeConfirm({ client: c, ...preview });
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Could not load resume preview.", err),
+      });
+    }
+  }
+
+  async function doBulkPause(c: Client) {
+    try {
+      const result = await apiPost<{ jobsPaused: number }>(
+        `/api/admin/clients/${c.id}/pause-services`,
+        {},
+      );
+      await load(false);
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: `Paused ${result.jobsPaused} job${result.jobsPaused === 1 ? "" : "s"} for '${c.displayName}'.`,
+      });
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage(`Pause services failed for '${c.displayName}'.`, err),
+      });
+    }
+  }
+
+  async function doBulkResume(c: Client) {
+    try {
+      const result = await apiPost<{ jobsResumed: number }>(
+        `/api/admin/clients/${c.id}/resume-services`,
+        {},
+      );
+      await load(false);
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: `Resumed ${result.jobsResumed} job${result.jobsResumed === 1 ? "" : "s"} for '${c.displayName}'.`,
+      });
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage(`Resume services failed for '${c.displayName}'.`, err),
       });
     }
   }
@@ -604,6 +682,36 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                         busyId={statusButtonBusyId}
                         setBusyId={setStatusButtonBusyId}
                       />
+                    )}
+                    {/* Bulk pause / resume services — Step 2 additive
+                        actions. Both shown for ACTIVE Clients so the
+                        operator can pause all Jobs at once ("client is
+                        on vacation") without walking each Property.
+                        Confirm dialog shows the exact counts before
+                        proceeding. */}
+                    {c.status === "ACTIVE" && (
+                      <>
+                        <StatusButton
+                          id={"client-pause-services"}
+                          itemId={c.id}
+                          label={"Pause services"}
+                          onClick={async () => await openBulkPauseConfirm(c)}
+                          variant={"outline"}
+                          disabled={loading}
+                          busyId={statusButtonBusyId}
+                          setBusyId={setStatusButtonBusyId}
+                        />
+                        <StatusButton
+                          id={"client-resume-services"}
+                          itemId={c.id}
+                          label={"Resume services"}
+                          onClick={async () => await openBulkResumeConfirm(c)}
+                          variant={"outline"}
+                          disabled={loading}
+                          busyId={statusButtonBusyId}
+                          setBusyId={setStatusButtonBusyId}
+                        />
+                      </>
                     )}
                     {c.status === "PAUSED" && (
                       <StatusButton
@@ -1143,6 +1251,63 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
             await takeAction(c, "unarchive");
           }}
           onCancel={() => setUnarchiveClientConfirm(null)}
+        />
+      )}
+      {/* Bulk-pause services confirmation. Message calls out
+          "already paused" separately so the operator understands
+          the total picture without being surprised by no-op Jobs. */}
+      {bulkPauseConfirm && (
+        <ConfirmDialog
+          open
+          title="Pause all services for this client?"
+          message={
+            (() => {
+              const { client, jobsToPause, alreadyPaused } = bulkPauseConfirm;
+              if (jobsToPause === 0 && alreadyPaused === 0) {
+                return `${client.displayName} has no active jobs. Nothing to pause.`;
+              }
+              const already = alreadyPaused > 0
+                ? ` (${alreadyPaused} already paused won't be touched.)`
+                : "";
+              return `This will pause ${jobsToPause} active job${jobsToPause === 1 ? "" : "s"} for ${client.displayName}. Future scheduled visits will be removed. Historical work stays intact.${already}`;
+            })()
+          }
+          confirmLabel="Pause services"
+          confirmColorPalette="orange"
+          onConfirm={async () => {
+            const c = bulkPauseConfirm.client;
+            setBulkPauseConfirm(null);
+            await doBulkPause(c);
+          }}
+          onCancel={() => setBulkPauseConfirm(null)}
+        />
+      )}
+      {bulkResumeConfirm && (
+        <ConfirmDialog
+          open
+          title="Resume paused services for this client?"
+          message={
+            (() => {
+              const { client, jobsToResume, individuallyPaused } = bulkResumeConfirm;
+              if (jobsToResume === 0) {
+                return individuallyPaused > 0
+                  ? `${client.displayName} has ${individuallyPaused} job${individuallyPaused === 1 ? "" : "s"} paused individually, but nothing paused via the "Pause services" action. Individual pauses must be resumed one at a time (Services tab).`
+                  : `${client.displayName} has no paused services to resume.`;
+              }
+              const staying = individuallyPaused > 0
+                ? ` (${individuallyPaused} independently-paused job${individuallyPaused === 1 ? "" : "s"} stays paused.)`
+                : "";
+              return `This will resume ${jobsToResume} bulk-paused job${jobsToResume === 1 ? "" : "s"} for ${client.displayName} and rebuild the next scheduled visit for each.${staying}`;
+            })()
+          }
+          confirmLabel="Resume services"
+          confirmColorPalette="green"
+          onConfirm={async () => {
+            const c = bulkResumeConfirm.client;
+            setBulkResumeConfirm(null);
+            await doBulkResume(c);
+          }}
+          onCancel={() => setBulkResumeConfirm(null)}
         />
       )}
     </Box>
