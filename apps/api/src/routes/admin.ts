@@ -2033,6 +2033,100 @@ export default async function adminRoutes(app: FastifyInstance) {
     }
   );
 
+  // Stream pause on a single recurring occurrence — pauses just the
+  // stream (e.g. hedging) while other streams under the same Job (mow)
+  // keep running. See services/occurrenceStreamPause.ts for semantics.
+  app.post(
+    "/admin/occurrences/:occurrenceId/stream-pause",
+    adminGuard,
+    async (req: any) => {
+      const body = req.body || {};
+      const reason = typeof body.reason === "string" ? body.reason : null;
+      const reminderAt = body.reminderAt ? new Date(body.reminderAt) : null;
+      const { pauseStream } = await import("../services/occurrenceStreamPause");
+      return pauseStream(
+        await currentUserId(req),
+        String(req.params.occurrenceId),
+        { reason, reminderAt },
+      );
+    },
+  );
+
+  // Update the reason and/or reminder date on an already-paused
+  // stream — the "extend the pause" workflow when a reminder arrives
+  // and the operator wants to push it out further with a fresh note.
+  app.patch(
+    "/admin/occurrences/:occurrenceId/stream-pause",
+    adminGuard,
+    async (req: any) => {
+      const body = req.body || {};
+      // Distinguish "field absent" (leave alone) from "field null"
+      // (clear). Match the service function's signature.
+      const opts: { reason?: string | null; reminderAt?: Date | null } = {};
+      if ("reason" in body) {
+        opts.reason = typeof body.reason === "string" ? body.reason : null;
+      }
+      if ("reminderAt" in body) {
+        opts.reminderAt = body.reminderAt ? new Date(body.reminderAt) : null;
+      }
+      const { updateStreamPause } = await import("../services/occurrenceStreamPause");
+      return updateStreamPause(
+        await currentUserId(req),
+        String(req.params.occurrenceId),
+        opts,
+      );
+    },
+  );
+
+  // Resume a paused stream — required newStartAt (defaults picked at
+  // the UI layer to keep the service function unopinionated).
+  app.post(
+    "/admin/occurrences/:occurrenceId/stream-resume",
+    adminGuard,
+    async (req: any) => {
+      const body = req.body || {};
+      if (!body.newStartAt) {
+        throw app.httpErrors.badRequest("newStartAt is required.");
+      }
+      const newStartAt = new Date(body.newStartAt);
+      if (Number.isNaN(newStartAt.getTime())) {
+        throw app.httpErrors.badRequest("newStartAt is not a valid date.");
+      }
+      const { resumeStream } = await import("../services/occurrenceStreamPause");
+      return resumeStream(
+        await currentUserId(req),
+        String(req.params.occurrenceId),
+        newStartAt,
+      );
+    },
+  );
+
+  // Count of stream pauses whose reminder date has arrived — feeds
+  // the alerts dropdown + Tasks page shortcut card.
+  app.get(
+    "/admin/stream-pauses/reminders/count",
+    adminGuard,
+    async (_req: any) => {
+      const { countDueStreamPauseReminders } = await import(
+        "../services/occurrenceStreamPause"
+      );
+      return { count: await countDueStreamPauseReminders() };
+    },
+  );
+
+  // List of stream pauses whose reminder date has arrived — feeds
+  // the Tasks page card body.
+  app.get(
+    "/admin/stream-pauses/reminders",
+    adminGuard,
+    async (_req: any) => {
+      const { listDueStreamPauseReminders } = await import(
+        "../services/occurrenceStreamPause"
+      );
+      return listDueStreamPauseReminders();
+    },
+  );
+
   // Delete a canceled occurrence permanently
   app.delete(
     "/admin/occurrences/:occurrenceId",

@@ -58,6 +58,7 @@ import PendingWorkdaysSection from "@/src/ui/components/tasks/PendingWorkdaysSec
 import LedgerFollowupsSection from "@/src/ui/components/tasks/LedgerFollowupsSection";
 import TimelineUrgentSection from "@/src/ui/components/tasks/TimelineUrgentSection";
 import UnapprovedHoursSection from "@/src/ui/components/tasks/UnapprovedHoursSection";
+import RepeatingPausesDueSection from "@/src/ui/components/tasks/RepeatingPausesDueSection";
 
 type ShortcutCounts = {
   // Super-only
@@ -65,6 +66,7 @@ type ShortcutCounts = {
   unapprovedHoursCount: number;
   ledgerFollowupCount: number;
   dueToRecordCount: number;
+  streamPauseRemindersCount: number;
   guaranteedPayoutExpiringCount: number;
   pendingUsersCount: number;
   // Admin (also visible to super)
@@ -84,6 +86,7 @@ type ShortcutHandlers = {
   goToUnapprovedHours: () => void;
   goToLedgerFollowups: () => void;
   goToDueToRecord: () => void;
+  goToStreamPauseReminders: () => void;
   goToGuaranteedPayoutExpiring: () => void;
   goToApprovals: () => void;
   goToEstimateFollowups: () => void;
@@ -340,6 +343,19 @@ export default function TasksPage({
               dotColor="#F97316"
               onReview={wrap(handlers.goToDueToRecord)}
             />
+          )}
+          {(isAdmin || isSuper) && (
+            <CollapsibleSectionCard
+              label="Paused repeating to review"
+              dotColor="#A855F7"
+              loadCount={countRepeatingPausesDue}
+              refreshEvents={["seedlings:stream-pauses-changed"]}
+              onGoto={wrap(handlers.goToStreamPauseReminders)}
+            >
+              <RepeatingPausesDueSection
+                onReview={() => wrap(handlers.goToStreamPauseReminders)()}
+              />
+            </CollapsibleSectionCard>
           )}
           {isAdmin && (
             <CollapsibleSectionCard
@@ -600,6 +616,10 @@ async function countPendingWorkdays(): Promise<number> {
 }
 async function countLedgerFollowups(): Promise<number> {
   const r = await apiGet<{ count: number }>("/api/super/ledger-followups/count");
+  return r?.count ?? 0;
+}
+async function countRepeatingPausesDue(): Promise<number> {
+  const r = await apiGet<{ count: number }>("/api/admin/stream-pauses/reminders/count");
   return r?.count ?? 0;
 }
 async function countTimelineUrgent(isSuper: boolean): Promise<number> {

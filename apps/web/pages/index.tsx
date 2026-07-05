@@ -179,6 +179,12 @@ export default function HomePage() {
   // Money → Ledger tab's Due-to-Record panel.
   const [dueToRecordCount, setDueToRecordCount] = useState<number>(0);
 
+  // Admin: count of stream-paused occurrences whose reminder date has
+  // arrived or passed. Drives the "Paused streams to review" alert +
+  // Tasks page shortcut. Source of truth is the Services tab where
+  // stream-pauses live.
+  const [streamPauseRemindersCount, setStreamPauseRemindersCount] = useState<number>(0);
+
   // Handle /e/[slug] QR redirect — navigate to equipment tab
   useEffect(() => {
     if (sessionStorage.getItem("equipmentQrSlug")) {
@@ -1688,6 +1694,21 @@ export default function HomePage() {
     markAlertLoaded("ledgerFollowups");
   }, [isSuper]);
 
+  const loadStreamPauseRemindersCount = useCallback(async () => {
+    if (!(isAdmin || isSuper)) {
+      setStreamPauseRemindersCount(0);
+      markAlertLoaded("streamPauseReminders");
+      return;
+    }
+    try {
+      const r = await apiGet<{ count: number }>("/api/admin/stream-pauses/reminders/count");
+      setStreamPauseRemindersCount(r?.count ?? 0);
+    } catch {
+      setStreamPauseRemindersCount(0);
+    }
+    markAlertLoaded("streamPauseReminders");
+  }, [isAdmin, isSuper]);
+
   const loadDueToRecordCount = useCallback(async () => {
     if (!isSuper) {
       setDueToRecordCount(0);
@@ -1732,6 +1753,15 @@ export default function HomePage() {
     window.addEventListener("seedlings:due-to-record-changed", onChanged);
     return () => window.removeEventListener("seedlings:due-to-record-changed", onChanged);
   }, [loadDueToRecordCount]);
+
+  // Stream-pause reminders — fires when an admin pauses/updates/resumes
+  // a stream in ServicesTab. Keeps the alert badge in lockstep.
+  useEffect(() => {
+    void loadStreamPauseRemindersCount();
+    const onChanged = () => void loadStreamPauseRemindersCount();
+    window.addEventListener("seedlings:stream-pauses-changed", onChanged);
+    return () => window.removeEventListener("seedlings:stream-pauses-changed", onChanged);
+  }, [loadStreamPauseRemindersCount]);
 
   // ---- Awaiting-client-payment badge (super only) ----
   // Counts every outstanding payment request — sent to a client, not paid
@@ -1984,7 +2014,7 @@ export default function HomePage() {
     return () => { clearTimeout(timer); document.removeEventListener("click", close); };
   }, [alertDropdownOpen]);
   const [alertsLoaded, setAlertsLoaded] = useState<Record<string, boolean>>({});
-  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.planning && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests && alertsLoaded.estimateFollowups && alertsLoaded.unapprovedHours && alertsLoaded.guaranteedPayout && alertsLoaded.pendingWorkdays && alertsLoaded.ledgerFollowups && alertsLoaded.dueToRecord);
+  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.planning && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests && alertsLoaded.estimateFollowups && alertsLoaded.unapprovedHours && alertsLoaded.guaranteedPayout && alertsLoaded.pendingWorkdays && alertsLoaded.ledgerFollowups && alertsLoaded.dueToRecord && alertsLoaded.streamPauseReminders);
   const markAlertLoaded = useCallback((key: string) => setAlertsLoaded((prev) => prev[key] ? prev : { ...prev, [key]: true }), []);
   const loadAnnouncementCount = useCallback(async () => {
     if (!me?.isApproved) { setAnnouncementCount(0); if (me) markAlertLoaded("announcements"); return; }
@@ -2178,6 +2208,7 @@ export default function HomePage() {
         loadTimelineCount(),
         loadLedgerFollowupCount(),
         loadDueToRecordCount(),
+        loadStreamPauseRemindersCount(),
       ]);
     } finally {
       setAlertsRefreshing(false);
@@ -2187,7 +2218,7 @@ export default function HomePage() {
     loadOverdue, loadChangeRequestCount, loadEstimateFollowupCount,
     loadUnapprovedHoursCount, loadUnclaimed, loadAnnouncementCount,
     loadDashboardSummary, loadTimelineCount, loadLedgerFollowupCount,
-    loadDueToRecordCount,
+    loadDueToRecordCount, loadStreamPauseRemindersCount,
   ]);
 
   // Opening the Tasks page fires the same full refresh as tapping
@@ -2931,6 +2962,19 @@ export default function HomePage() {
     setSuperInnerTab("ledger" as any);
   }, []);
 
+  // Stream-pause reminders — land on the Services tab where the paused
+  // stream cards live. Admin can scroll to find the ones with due
+  // reminder dates (paused chip is visible).
+  const goToStreamPauseReminders = useCallback(() => {
+    setTopTab(isSuper ? "super" : "admin");
+    if (isSuper) {
+      setSuperCategory("Work");
+      setSuperInnerTab("services" as any);
+    } else {
+      setAdminInnerTab("services" as any);
+    }
+  }, [isSuper]);
+
   const isDev = process.env.NEXT_PUBLIC_VERCEL_ENV !== "production" && process.env.NODE_ENV !== "production";
 
   return (
@@ -3211,6 +3255,7 @@ export default function HomePage() {
               }
               if (isSuper && ledgerFollowupCount > 0) alerts.push({ label: "Ledger followups", count: ledgerFollowupCount, bg: "#FEF3C7", color: "#92400E", dotColor: "#F59E0B", onClick: goToLedgerFollowups });
               if (isSuper && dueToRecordCount > 0) alerts.push({ label: "Due to record", count: dueToRecordCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToDueToRecord });
+              if ((isAdmin || isSuper) && streamPauseRemindersCount > 0) alerts.push({ label: "Paused repeating to review", count: streamPauseRemindersCount, bg: "#F3E8FF", color: "#6B21A8", dotColor: "#A855F7", onClick: goToStreamPauseReminders });
               if (isAdmin && changeRequestCount > 0) alerts.push({ label: "Client requests", count: changeRequestCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToClientRequests });
               if (isAdmin && estimateFollowupCount > 0) alerts.push({ label: "Estimate follow-ups", count: estimateFollowupCount, bg: "#FCE7F3", color: "#9D174D", dotColor: "#EC4899", onClick: goToEstimateFollowups });
               if (isAdmin && unapprovedHoursCount > 0) alerts.push({ label: "Job hours awaiting review", count: unapprovedHoursCount, bg: "#FEF3C7", color: "#92400E", dotColor: "#F59E0B", onClick: goToUnapprovedHours });
@@ -3476,6 +3521,7 @@ export default function HomePage() {
             unapprovedHoursCount,
             ledgerFollowupCount,
             dueToRecordCount,
+            streamPauseRemindersCount,
             guaranteedPayoutExpiringCount,
             pendingUsersCount: pending,
             estimateFollowupCount,
@@ -3490,6 +3536,7 @@ export default function HomePage() {
             goToUnapprovedHours,
             goToLedgerFollowups,
             goToDueToRecord,
+            goToStreamPauseReminders,
             goToGuaranteedPayoutExpiring,
             goToApprovals,
             goToEstimateFollowups,
