@@ -1638,8 +1638,16 @@ export default async function workerRoutes(app: FastifyInstance) {
                 client: {
                   select: {
                     contacts: {
-                      where: { status: "ACTIVE", isPrimary: true },
-                      select: { phone: true, normalizedPhone: true, email: true },
+                      // Pull all primaries regardless of status so we
+                      // can differentiate "no primary" vs "primary is
+                      // paused/archived" in the error message. Filtering
+                      // ACTIVE at the query silently masks paused
+                      // primaries and misleads the operator.
+                      where: { isPrimary: true },
+                      select: {
+                        firstName: true, status: true,
+                        phone: true, normalizedPhone: true, email: true,
+                      },
                     },
                   },
                 },
@@ -1654,13 +1662,20 @@ export default async function workerRoutes(app: FastifyInstance) {
       || occForGate.workflow === "ONE_OFF"
       || occForGate.workflow === "ESTIMATE";
     if (isJobWorkflow) {
-      const primaryContacts = occForGate?.job?.property?.client?.contacts ?? [];
-      if (primaryContacts.length === 0) {
+      const primaries = occForGate?.job?.property?.client?.contacts ?? [];
+      const activePrimaries = primaries.filter((c) => c.status === "ACTIVE");
+      if (activePrimaries.length === 0) {
+        const inactive = primaries[0]; // any primary in a non-ACTIVE state
+        if (inactive) {
+          throw app.httpErrors.badRequest(
+            `Can't complete — the primary contact (${inactive.firstName ?? "unnamed"}) is ${inactive.status.toLowerCase()}. Unpause them or promote a different contact to primary first.`,
+          );
+        }
         throw app.httpErrors.badRequest(
           "Can't complete — this client has no primary contact set. Open the client's contacts and mark one as Primary first.",
         );
       }
-      const reachable = primaryContacts.some((c) => c.phone || c.normalizedPhone || c.email);
+      const reachable = activePrimaries.some((c) => c.phone || c.normalizedPhone || c.email);
       if (!reachable) {
         throw app.httpErrors.badRequest(
           "Can't complete — the primary contact has no phone or email on file. Update their contact info first.",

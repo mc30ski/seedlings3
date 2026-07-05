@@ -3099,16 +3099,27 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async archiveJob(currentUserId: string, jobId: string) {
-    return prisma.$transaction(async (tx) => {
+  async archiveJob(
+    currentUserId: string,
+    jobId: string,
+    // Optional correlation id — set by the Client/Property archive
+    // cascade so every row it touches carries the same tag in its
+    // audit metadata. Query "all rows archived as part of this
+    // cascade" later by scanning AuditEvent.metadata.cascadeGroupId.
+    opts?: { cascadeGroupId?: string; tx?: Prisma.TransactionClient },
+  ) {
+    const run = async (tx: Prisma.TransactionClient) => {
       const job = await tx.job.findUnique({ where: { id: jobId } });
       if (!job) throw new ServiceError("NOT_FOUND", "Job not found.", 404);
       if (job.status === JobStatus.ARCHIVED) {
-        throw new ServiceError("INVALID_STATUS", "Job is already archived.", 409);
+        // Idempotent — cascades pass over already-archived rows without
+        // erroring. Return the current record so callers can still count.
+        return job;
       }
-      if (job.status !== JobStatus.ACCEPTED) {
-        throw new ServiceError("INVALID_STATUS", "Only accepted jobs can be archived.", 409);
-      }
+      // Relaxed precondition: any non-archived Job may be archived so
+      // Client/Property cascade doesn't blow up on PROPOSED or PAUSED
+      // Jobs. Historical constraint of "only ACCEPTED" wasn't load-
+      // bearing anywhere downstream (verified via archive semantics audit).
 
       const record = await tx.job.update({
         where: { id: jobId },
@@ -3118,10 +3129,49 @@ export const jobs: ServicesJobs = {
       await writeAudit(tx, AUDIT.JOB.ARCHIVED, currentUserId, {
         jobId,
         record,
+        ...(opts?.cascadeGroupId ? { cascadeGroupId: opts.cascadeGroupId } : {}),
       });
 
       return record;
-    });
+    };
+    return opts?.tx ? run(opts.tx) : prisma.$transaction(run);
+  },
+
+  // Symmetric unarchive — mirror of archiveJob. Idempotent on already-
+  // active rows so cascades can pass over independently-active Jobs
+  // without erroring.
+  async unarchiveJob(
+    currentUserId: string,
+    jobId: string,
+    opts?: { cascadeGroupId?: string; tx?: Prisma.TransactionClient },
+  ) {
+    const run = async (tx: Prisma.TransactionClient) => {
+      const job = await tx.job.findUnique({ where: { id: jobId } });
+      if (!job) throw new ServiceError("NOT_FOUND", "Job not found.", 404);
+      if (job.status !== JobStatus.ARCHIVED) {
+        // Idempotent — the cascade may hit a Job that was already
+        // returned to active by a prior manual action.
+        return job;
+      }
+
+      // On unarchive we return the Job to ACCEPTED — the safest
+      // "resumed service" state. PROPOSED Jobs were already accepted
+      // at some point to be archived-through-cascade, so ACCEPTED is
+      // a truthful landing state for the whole population.
+      const record = await tx.job.update({
+        where: { id: jobId },
+        data: { status: JobStatus.ACCEPTED },
+      });
+
+      await writeAudit(tx, AUDIT.JOB.UNARCHIVED, currentUserId, {
+        jobId,
+        record,
+        ...(opts?.cascadeGroupId ? { cascadeGroupId: opts.cascadeGroupId } : {}),
+      });
+
+      return record;
+    };
+    return opts?.tx ? run(opts.tx) : prisma.$transaction(run);
   },
 
   async listArchivedJobs(params?: { page?: number; pageSize?: number }) {

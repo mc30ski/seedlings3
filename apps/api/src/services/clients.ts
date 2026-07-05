@@ -4,12 +4,15 @@ import {
   ClientStatus,
   ContactRole,
   ContactStatus,
+  PropertyStatus,
+  JobStatus,
 } from "@prisma/client";
 import type { ServicesClients } from "../types/services";
 import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
 import { action } from "../lib/services";
 import { ServiceError } from "../lib/errors";
+import { randomBytes } from "crypto";
 
 function normalizePhone(raw?: string | null): string | null {
   const s = (raw ?? "").replace(/[^\d+]/g, "");
@@ -271,24 +274,145 @@ export const clients: ServicesClients = {
     );
   },
 
+  // Archive the Client AND cascade to every non-archived Property + every
+  // non-archived Job under those Properties. Populates the previously-
+  // unused `Client.archivedAt` timestamp so downstream queries (e.g. the
+  // duplicate-clients audit at admin.ts) stop treating archived rows as
+  // active. Cascade is transactional — either the whole tree archives
+  // or nothing does. Every audited row shares a `cascadeGroupId` so
+  // "show me every row affected by this cascade" is a single query.
+  //
+  // Historical work is preserved: PENDING_PAYMENT occurrences remain
+  // payable, exports still surface the data, /pay/[token] still resolves.
+  // Nothing downstream filters on `Client.status = ARCHIVED` — the
+  // cascade is purely a "hide from active view" state.
   async archive(currentUserId: string, id: string) {
-    return action<ClientStatus>(
-      currentUserId,
-      id,
-      "client",
-      ClientStatus.ARCHIVED,
-      AUDIT.CLIENT.ARCHIVED
-    );
+    const cascadeGroupId = `cg_${randomBytes(9).toString("hex")}`;
+    return prisma.$transaction(async (tx) => {
+      const client = await tx.client.findUnique({ where: { id } });
+      if (!client) throw new ServiceError("NOT_FOUND", "Client not found.", 404);
+      if (client.status === ClientStatus.ARCHIVED && client.archivedAt) {
+        // Fully idempotent — status archived AND archivedAt populated.
+        return { archived: true, propertiesArchived: 0, jobsArchived: 0, cascadeGroupId };
+      }
+      // Update Client. Sets status AND archivedAt — the historical bug
+      // was populating only `status` while leaving `archivedAt` null.
+      await tx.client.update({
+        where: { id },
+        data: { status: ClientStatus.ARCHIVED, archivedAt: new Date() },
+      });
+      // Cascade to Properties (each of which cascades further to Jobs).
+      const properties = await tx.property.findMany({
+        where: { clientId: id, status: { not: PropertyStatus.ARCHIVED } },
+        select: { id: true },
+      });
+      let propertiesArchived = 0;
+      let jobsArchived = 0;
+      for (const p of properties) {
+        await tx.property.update({
+          where: { id: p.id },
+          data: { status: PropertyStatus.ARCHIVED, archivedAt: new Date() },
+        });
+        const jobs = await tx.job.findMany({
+          where: { propertyId: p.id, status: { not: JobStatus.ARCHIVED } },
+          select: { id: true },
+        });
+        for (const j of jobs) {
+          await tx.job.update({
+            where: { id: j.id },
+            data: { status: JobStatus.ARCHIVED },
+          });
+          await writeAudit(tx, AUDIT.JOB.ARCHIVED, currentUserId, {
+            jobId: j.id,
+            cascadeGroupId,
+            triggeredBy: "client_archive",
+            clientId: id,
+            propertyId: p.id,
+          });
+          jobsArchived++;
+        }
+        await writeAudit(tx, AUDIT.PROPERTY.ARCHIVED, currentUserId, {
+          propertyId: p.id,
+          cascadeGroupId,
+          triggeredBy: "client_archive",
+          clientId: id,
+          jobsArchived: jobs.length,
+        });
+        propertiesArchived++;
+      }
+      // Top-level trigger event carries the roll-up counts.
+      await writeAudit(tx, AUDIT.CLIENT.ARCHIVED, currentUserId, {
+        clientId: id,
+        cascadeGroupId,
+        propertiesArchived,
+        jobsArchived,
+      });
+      return { archived: true, propertiesArchived, jobsArchived, cascadeGroupId };
+    });
   },
 
+  // Symmetric unarchive — mirrors archive shape. Idempotent per row so
+  // the cascade doesn't blow up on Properties/Jobs already returned to
+  // active. Historical PROPOSED / PAUSED Jobs come back as ACCEPTED
+  // (the safest "resumed service" state).
   async unarchive(currentUserId: string, id: string) {
-    return action<ClientStatus>(
-      currentUserId,
-      id,
-      "client",
-      ClientStatus.ACTIVE,
-      AUDIT.CLIENT.UNARCHIVED
-    );
+    const cascadeGroupId = `cg_${randomBytes(9).toString("hex")}`;
+    return prisma.$transaction(async (tx) => {
+      const client = await tx.client.findUnique({ where: { id } });
+      if (!client) throw new ServiceError("NOT_FOUND", "Client not found.", 404);
+      if (client.status !== ClientStatus.ARCHIVED && !client.archivedAt) {
+        return { unarchived: true, propertiesUnarchived: 0, jobsUnarchived: 0, cascadeGroupId };
+      }
+      await tx.client.update({
+        where: { id },
+        data: { status: ClientStatus.ACTIVE, archivedAt: null },
+      });
+      const properties = await tx.property.findMany({
+        where: { clientId: id, status: PropertyStatus.ARCHIVED },
+        select: { id: true },
+      });
+      let propertiesUnarchived = 0;
+      let jobsUnarchived = 0;
+      for (const p of properties) {
+        await tx.property.update({
+          where: { id: p.id },
+          data: { status: PropertyStatus.ACTIVE, archivedAt: null },
+        });
+        const jobs = await tx.job.findMany({
+          where: { propertyId: p.id, status: JobStatus.ARCHIVED },
+          select: { id: true },
+        });
+        for (const j of jobs) {
+          await tx.job.update({
+            where: { id: j.id },
+            data: { status: JobStatus.ACCEPTED },
+          });
+          await writeAudit(tx, AUDIT.JOB.UNARCHIVED, currentUserId, {
+            jobId: j.id,
+            cascadeGroupId,
+            triggeredBy: "client_unarchive",
+            clientId: id,
+            propertyId: p.id,
+          });
+          jobsUnarchived++;
+        }
+        await writeAudit(tx, AUDIT.PROPERTY.UNARCHIVED, currentUserId, {
+          propertyId: p.id,
+          cascadeGroupId,
+          triggeredBy: "client_unarchive",
+          clientId: id,
+          jobsUnarchived: jobs.length,
+        });
+        propertiesUnarchived++;
+      }
+      await writeAudit(tx, AUDIT.CLIENT.UNARCHIVED, currentUserId, {
+        clientId: id,
+        cascadeGroupId,
+        propertiesUnarchived,
+        jobsUnarchived,
+      });
+      return { unarchived: true, propertiesUnarchived, jobsUnarchived, cascadeGroupId };
+    });
   },
 
   async delete(currentUserId: string, id: string) {

@@ -799,6 +799,46 @@ export default async function adminRoutes(app: FastifyInstance) {
     );
   });
 
+  // Preview counts — how many child rows will an archive cascade touch?
+  // Used by the confirm dialog on the archive button so the operator sees
+  // "This will also archive N Properties and M Jobs" before proceeding.
+  // Cheap; two count queries + a group-by. Not gated by cutoff — this is
+  // an operational preview, not a financial one.
+  app.get("/admin/clients/:id/archive-preview", adminGuard, async (req: any) => {
+    const clientId = String(req.params.id);
+    const [propertiesToArchive, jobsToArchive] = await Promise.all([
+      prisma.property.count({
+        where: { clientId, status: { not: "ARCHIVED" as any } },
+      }),
+      prisma.job.count({
+        where: {
+          property: { clientId },
+          status: { not: "ARCHIVED" as any },
+        },
+      }),
+    ]);
+    return { propertiesToArchive, jobsToArchive };
+  });
+
+  // Symmetric preview for unarchive — counts rows that WOULD be brought
+  // back to active. Uses status=ARCHIVED so the number matches what the
+  // cascade will actually touch.
+  app.get("/admin/clients/:id/unarchive-preview", adminGuard, async (req: any) => {
+    const clientId = String(req.params.id);
+    const [propertiesToUnarchive, jobsToUnarchive] = await Promise.all([
+      prisma.property.count({
+        where: { clientId, status: "ARCHIVED" as any },
+      }),
+      prisma.job.count({
+        where: {
+          property: { clientId },
+          status: "ARCHIVED" as any,
+        },
+      }),
+    ]);
+    return { propertiesToUnarchive, jobsToUnarchive };
+  });
+
   app.delete("/admin/clients/:id", adminGuard, async (req: any) => {
     return services.clients.delete(
       await currentUserId(req),
@@ -958,6 +998,23 @@ export default async function adminRoutes(app: FastifyInstance) {
       await currentUserId(req),
       String(req.params.id)
     );
+  });
+
+  // Preview for Property archive cascade — same shape as the Client one.
+  app.get("/admin/properties/:id/archive-preview", adminGuard, async (req: any) => {
+    const propertyId = String(req.params.id);
+    const jobsToArchive = await prisma.job.count({
+      where: { propertyId, status: { not: "ARCHIVED" as any } },
+    });
+    return { jobsToArchive };
+  });
+
+  app.get("/admin/properties/:id/unarchive-preview", adminGuard, async (req: any) => {
+    const propertyId = String(req.params.id);
+    const jobsToUnarchive = await prisma.job.count({
+      where: { propertyId, status: "ARCHIVED" as any },
+    });
+    return { jobsToUnarchive };
   });
 
   app.delete("/admin/properties/:id", adminGuard, async (req: any) => {
@@ -1901,9 +1958,19 @@ export default async function adminRoutes(app: FastifyInstance) {
     });
   });
 
-  // Archive an accepted job
+  // Archive a Job. Precondition relaxed to "any non-archived Job" so
+  // Client/Property cascade doesn't blow up on PROPOSED or PAUSED rows.
   app.post("/admin/jobs/:id/archive", adminGuard, async (req: any) => {
     return services.jobs.archiveJob(
+      await currentUserId(req),
+      String(req.params.id)
+    );
+  });
+
+  // Symmetric unarchive — brings an archived Job back to ACCEPTED so
+  // it's ready for the recurring generator + payment flows again.
+  app.post("/admin/jobs/:id/unarchive", adminGuard, async (req: any) => {
+    return services.jobs.unarchiveJob(
       await currentUserId(req),
       String(req.params.id)
     );
