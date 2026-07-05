@@ -534,12 +534,10 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
       <HStack mb={2} gap={2} px={1} wrap="wrap">
         {(() => {
           const active = items.filter((c) => c.status === "ACTIVE").length;
-          const paused = items.filter((c) => c.status === "PAUSED").length;
           const archived = items.filter((c) => c.status === "ARCHIVED").length;
           return (
             <>
               <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">{active} Active</Badge>
-              <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="2" borderRadius="full">{paused} Paused</Badge>
               <Badge colorPalette="red" variant="subtle" fontSize="xs" px="2" borderRadius="full">{archived} Archived</Badge>
             </>
           );
@@ -706,12 +704,11 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                         />
                       </>
                     )}
-                    {/* Client-level "Unpause" button removed in Step 3.
-                        Existing PAUSED clients still show their badge;
-                        the Step 4 migration will resolve them by
-                        cascade-pausing their Jobs and flipping the
-                        Client back to ACTIVE. */}
-                    {c.status === "PAUSED" && (
+                    {/* Archive now applies directly from ACTIVE (previous
+                        two-step ACTIVE → PAUSED → ARCHIVED flow retired
+                        with the PAUSED status). Friction is preserved by
+                        the cascade-counts confirm dialog from Step 1. */}
+                    {c.status === "ACTIVE" && (
                       <StatusButton
                         id={"client-archive"}
                         itemId={c.id}
@@ -955,23 +952,9 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                                           setBusyId={setStatusButtonBusyId}
                                         />
                                       )}
-                                      {ct.status === "PAUSED" && (
-                                        <StatusButton
-                                          id={"contact-archive"}
-                                          itemId={ct.id}
-                                          label={"Archive"}
-                                          onClick={async () =>
-                                            await takeActionContact(
-                                              ct,
-                                              "archive"
-                                            )
-                                          }
-                                          variant={"subtle"}
-                                          disabled={loading}
-                                          busyId={statusButtonBusyId}
-                                          setBusyId={setStatusButtonBusyId}
-                                        />
-                                      )}
+                                      {/* PAUSED-only Archive branch removed in Step 5 —
+                                          Contact.PAUSED no longer exists and Archive is
+                                          now offered directly from the ACTIVE branch. */}
                                       {ct.status === "ARCHIVED" && (
                                         <>
                                           <StatusButton

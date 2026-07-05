@@ -43,16 +43,16 @@ export const AUDIT = {
   CLIENT: {
     CREATED: [AuditScope.CLIENT, AuditVerb.CREATED] as const,
     UPDATED: [AuditScope.CLIENT, AuditVerb.UPDATED] as const,
-    PAUSED: [AuditScope.CLIENT, AuditVerb.UPDATED] as const,
-    UNPAUSED: [AuditScope.CLIENT, AuditVerb.UPDATED] as const,
+    // PAUSED / UNPAUSED audit constants removed in Step 5 with the
+    // ClientStatus.PAUSED enum value. Historical AuditEvent rows tagged
+    // as "CLIENT_UPDATED" still exist and are queryable by scope+verb.
     ARCHIVED: [AuditScope.CLIENT, AuditVerb.RETIRED] as const,
     UNARCHIVED: [AuditScope.CLIENT, AuditVerb.UNRETIRED] as const,
     DELETED: [AuditScope.CLIENT, AuditVerb.DELETED] as const,
 
     CONTACT_CREATED: [AuditScope.CLIENT, AuditVerb.CREATED] as const,
     CONTACT_UPDATED: [AuditScope.CLIENT, AuditVerb.UPDATED] as const,
-    CONTACT_PAUSED: [AuditScope.CLIENT, AuditVerb.UPDATED] as const,
-    CONTACT_UNPAUSED: [AuditScope.CLIENT, AuditVerb.UPDATED] as const,
+    // CONTACT_PAUSED / CONTACT_UNPAUSED removed with ContactStatus.PAUSED.
     CONTACT_ARCHIVED: [AuditScope.CLIENT, AuditVerb.RETIRED] as const, // using RETIRED to mean archived
     CONTACT_UNARCHIVED: [AuditScope.CLIENT, AuditVerb.UNRETIRED] as const,
     CONTACT_DELETED: [AuditScope.CLIENT, AuditVerb.DELETED] as const,

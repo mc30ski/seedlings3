@@ -503,7 +503,6 @@ export function equipmentStatusColor(value: string): string {
 export function clientStatusColor(value: string): string {
   const t = (value || "").toUpperCase();
   if (t.includes("ACTIVE")) return "green";
-  if (t.includes("PAUSED")) return "orange";
   if (t.includes("ARCHIVED")) return "red";
   return "gray";
 }
