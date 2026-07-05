@@ -316,6 +316,16 @@ export const clients: ServicesClients = {
             where: { id: j.id },
             data: { status: JobStatus.ARCHIVED },
           });
+          // Archive side effects — delete future SCHEDULED STANDARD
+          // occurrences on this Job (parity with pause). Prevents worker
+          // dispatch to an archived client's property.
+          await applyJobPauseSideEffectsInTx(
+            tx,
+            currentUserId,
+            j.id,
+            { cascadeGroupId, triggeredBy: "client_archive", clientId: id, propertyId: p.id },
+            "ARCHIVED_REMOVED_FUTURE_OCCURRENCES",
+          );
           await writeAudit(tx, AUDIT.JOB.ARCHIVED, currentUserId, {
             jobId: j.id,
             cascadeGroupId,
@@ -381,6 +391,17 @@ export const clients: ServicesClients = {
             where: { id: j.id },
             data: { status: JobStatus.ACCEPTED },
           });
+          // Unarchive side effects — rebuild the recurring chain
+          // (one fresh SCHEDULED occurrence) so the operator doesn't
+          // have to manually click "Generate Next" per Job. Parity
+          // with unpause.
+          await applyJobResumeSideEffectsInTx(
+            tx,
+            currentUserId,
+            j.id,
+            { cascadeGroupId, triggeredBy: "client_unarchive", clientId: id, propertyId: p.id },
+            "UNARCHIVED_REGENERATED_NEXT_OCCURRENCE",
+          );
           await writeAudit(tx, AUDIT.JOB.UNARCHIVED, currentUserId, {
             jobId: j.id,
             cascadeGroupId,

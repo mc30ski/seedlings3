@@ -50,19 +50,23 @@ import {
 // ─────────────────────────────────────────────────────────────────────────
 
 /**
- * Pause-time side effects for a single Job:
+ * "Job stopped" side effects — used by both pause and archive:
  *   1. Delete every future SCHEDULED STANDARD JobOccurrence.
  *   2. Audit the count removed.
  *
  * Does NOT flip Job.status — that's the caller's responsibility. This
- * lets a bulk action write status + `clientBulkPausedAt` + audit itself
- * in one place, and just call this for the side effects.
+ * lets a bulk action write status + tag columns + audit itself in one
+ * place, and just call this for the side effects.
+ *
+ * `sideEffectAction` distinguishes pause from archive in the audit
+ * trail — defaults to the pause label so existing callers stay stable.
  */
 export async function applyJobPauseSideEffectsInTx(
   tx: Prisma.TransactionClient,
   currentUserId: string,
   jobId: string,
   extraAuditMeta?: Record<string, unknown>,
+  sideEffectAction: string = "PAUSED_REMOVED_FUTURE_OCCURRENCES",
 ): Promise<void> {
   const deleted = await tx.jobOccurrence.deleteMany({
     where: {
@@ -75,7 +79,7 @@ export async function applyJobPauseSideEffectsInTx(
   if (deleted.count > 0) {
     await writeAudit(tx, AUDIT.JOB.UPDATED, currentUserId, {
       id: jobId,
-      action: "PAUSED_REMOVED_FUTURE_OCCURRENCES",
+      action: sideEffectAction,
       removedCount: deleted.count,
       ...(extraAuditMeta ?? {}),
     });
@@ -83,7 +87,7 @@ export async function applyJobPauseSideEffectsInTx(
 }
 
 /**
- * Resume-time side effects for a single Job (PAUSED → ACCEPTED):
+ * "Job restarted" side effects — used by both unpause and unarchive:
  *   1. Skip if `frequencyDays` is missing or ≤ 0 (nothing to regenerate).
  *   2. Skip if a future SCHEDULED STANDARD occurrence already exists
  *      (dedupe against manual "Force Create Next" clicks).
@@ -94,13 +98,17 @@ export async function applyJobPauseSideEffectsInTx(
  *      unassigned, matching approvePayment's rule).
  *   5. Audit the regeneration.
  *
- * Does NOT flip Job.status — same contract as the pause helper.
+ * Does NOT flip Job.status — same contract as the stop helper.
+ *
+ * `sideEffectAction` distinguishes unpause from unarchive in the audit
+ * trail — defaults to the unpause label so existing callers stay stable.
  */
 export async function applyJobResumeSideEffectsInTx(
   tx: Prisma.TransactionClient,
   currentUserId: string,
   jobId: string,
   extraAuditMeta?: Record<string, unknown>,
+  sideEffectAction: string = "UNPAUSED_REGENERATED_NEXT_OCCURRENCE",
 ): Promise<void> {
   const job = await tx.job.findUnique({
     where: { id: jobId },
@@ -215,7 +223,7 @@ export async function applyJobResumeSideEffectsInTx(
   }
   await writeAudit(tx, AUDIT.JOB.UPDATED, currentUserId, {
     id: jobId,
-    action: "UNPAUSED_REGENERATED_NEXT_OCCURRENCE",
+    action: sideEffectAction,
     occurrenceId: nextOcc.id,
     startAt: nextStart.toISOString(),
     ...(extraAuditMeta ?? {}),
@@ -3175,6 +3183,20 @@ export const jobs: ServicesJobs = {
         data: { status: JobStatus.ARCHIVED },
       });
 
+      // Archive parity with pause: delete future SCHEDULED STANDARD
+      // occurrences from worker calendars. An archived Job represents
+      // a closed relationship (or a manually closed service) — no
+      // worker should be dispatched to it. Same helper as pause with
+      // a distinct audit label so the two side effects are
+      // distinguishable in the trail.
+      await applyJobPauseSideEffectsInTx(
+        tx,
+        currentUserId,
+        jobId,
+        opts?.cascadeGroupId ? { cascadeGroupId: opts.cascadeGroupId } : undefined,
+        "ARCHIVED_REMOVED_FUTURE_OCCURRENCES",
+      );
+
       await writeAudit(tx, AUDIT.JOB.ARCHIVED, currentUserId, {
         jobId,
         record,
@@ -3211,6 +3233,18 @@ export const jobs: ServicesJobs = {
         where: { id: jobId },
         data: { status: JobStatus.ACCEPTED },
       });
+
+      // Unarchive parity with unpause: rebuild the recurring chain
+      // so the operator doesn't have to manually click "Generate Next"
+      // on a formerly-archived Job. Same helper as unpause with a
+      // distinct audit label.
+      await applyJobResumeSideEffectsInTx(
+        tx,
+        currentUserId,
+        jobId,
+        opts?.cascadeGroupId ? { cascadeGroupId: opts.cascadeGroupId } : undefined,
+        "UNARCHIVED_REGENERATED_NEXT_OCCURRENCE",
+      );
 
       await writeAudit(tx, AUDIT.JOB.UNARCHIVED, currentUserId, {
         jobId,
