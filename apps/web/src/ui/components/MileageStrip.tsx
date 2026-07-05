@@ -56,7 +56,20 @@ type OpenEntry = {
   vehicle: Vehicle;
 };
 
-export default function MileageStrip() {
+export default function MileageStrip({
+  embedded = false,
+}: {
+  /** When true, MileageStrip renders without its own outer border/bg
+   *  and instead attaches to whatever card contains it — used on
+   *  HomeTab to combine visually with WorkdayStrip so the two sections
+   *  read as one grouped area. Only a top divider separates them.
+   *
+   *  Collapse behavior in embedded mode is handled by the CONTAINING
+   *  WorkdayCard: it wraps mileageSlot in a display:none Box on the
+   *  collapsed row (so this component stays mounted across the
+   *  collapse/expand cycle and its fetched vehicle list survives). */
+  embedded?: boolean;
+} = {}) {
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [openEntries, setOpenEntries] = useState<OpenEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -101,12 +114,16 @@ export default function MileageStrip() {
 
   return (
     <Box
-      borderWidth="1px"
-      borderColor="gray.200"
-      borderRadius="lg"
-      p={3}
-      mb={3}
-      bg="white"
+      borderWidth={embedded ? undefined : "1px"}
+      borderColor={embedded ? "blackAlpha.200" : "gray.200"}
+      borderRadius={embedded ? undefined : "lg"}
+      borderTopWidth={embedded ? "1px" : undefined}
+      borderTopStyle={embedded ? "dashed" : undefined}
+      p={embedded ? 0 : 3}
+      pt={embedded ? 3 : 3}
+      mb={embedded ? 0 : 3}
+      mt={embedded ? 3 : 0}
+      bg={embedded ? undefined : "white"}
     >
       <HStack gap={2} mb={2} align="center">
         <Car size={16} />
