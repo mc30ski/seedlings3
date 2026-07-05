@@ -673,6 +673,7 @@ enum JobOccurrenceStatus {
   SCHEDULED
   IN_PROGRESS
   PAUSED
+  STREAM_PAUSED
   COMPLETED
   PENDING_PAYMENT
   CLOSED
@@ -896,6 +897,28 @@ model JobOccurrence {
   lastPaymentRevertReason String?
   lastPaymentRevertedAt   DateTime?
 
+  // "Stream pause" — temporary hold on THIS recurring service under the
+  // Job, without stopping the Job's other streams (e.g. pause hedging
+  // but keep mowing on a Job that services both). Since the recurring
+  // chain regenerates from a completed+paid occurrence, freezing the
+  // currently-scheduled occurrence for the stream freezes the whole
+  // stream. Resume prompts for a fresh startAt so we don't restart at
+  // a stale date.
+  //
+  // Fields are always set together via services.jobs.pauseStream() /
+  // updateStreamPause() / resumeStream(). When status = STREAM_PAUSED:
+  //   • Worker feeds hide the row (no dispatch)
+  //   • Payment approval refuses to fire (nothing to approve)
+  //   • Alerts dropdown + Tasks page surface the reminder when the
+  //     `streamResumeReminderAt` date arrives
+  //
+  // Distinct from `status = PAUSED` which is the WORKER TIMER paused
+  // state during an in-progress job — completely different concept.
+  streamPausedAt          DateTime?
+  streamPausedById        String?
+  streamPauseReason       String?
+  streamResumeReminderAt  DateTime?
+
   startedAt     DateTime?
   completedAt   DateTime?
   pausedAt      DateTime?
@@ -961,6 +984,7 @@ model JobOccurrence {
   @@index([startAt])
   @@index([kind])
   @@index([hoursApprovedAt])
+  @@index([streamResumeReminderAt])
 }
 
 model JobOccurrencePhoto {

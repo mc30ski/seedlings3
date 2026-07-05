@@ -31,6 +31,8 @@ import {
   fmtDateTime,
   bizDateKey,
   bizYesterday,
+  bizToday,
+  bizAddDays,
   jobTypeLabel,
 } from "@/src/lib/lib";
 import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
@@ -48,6 +50,8 @@ import {
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
+import StreamPauseDialog from "@/src/ui/dialogs/StreamPauseDialog";
+import RepeatingPauseInfoLine from "@/src/ui/components/RepeatingPauseInfoLine";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import { StatusBadge } from "@/src/ui/components/StatusBadge";
@@ -118,6 +122,10 @@ export default function ServicesTab({
   const [typeFilter, setTypeFilter] = usePersistedState<string[]>("services_type", ["ALL"]);
 
   const [showCanceled, setShowCanceled] = useState(false);
+  // Filter: show only occurrences currently paused as a repeating
+  // service (status = STREAM_PAUSED). When on, everything else hides.
+  // Useful for reviewing what's on hold across the whole feed.
+  const [pausedRepeatingOnly, setPausedRepeatingOnly] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [skippedNextOnly, setSkippedNextOnly] = useState(false);
   const [overdueActive, setOverdueActive] = usePersistedState("services_overdue", false);
@@ -308,6 +316,87 @@ export default function ServicesTab({
   const [assigneeHasPayment, setAssigneeHasPayment] = useState(false);
 
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
+
+  // Stream-pause dialog state — one piece of state powers all three
+  // operations (pause / update / resume). Parent decides which mode
+  // to open based on the current occurrence status. Setting to null
+  // closes the dialog.
+  type StreamDialogState =
+    | { mode: "pause"; occ: JobOccurrenceFull }
+    | { mode: "update"; occ: JobOccurrenceFull }
+    | { mode: "resume"; occ: JobOccurrenceFull };
+  const [streamDialog, setStreamDialog] = useState<StreamDialogState | null>(null);
+  const [streamBusy, setStreamBusy] = useState(false);
+
+  // Compute a default new-start-date for the resume dialog. Uses the
+  // occurrence's own `frequencyDays` (or the Job's default) to shift
+  // today forward one cadence, so the operator's "restart it soon" pick
+  // matches natural cadence math.
+  function defaultResumeStartAt(occ: JobOccurrenceFull, jobFreq: number | null | undefined): string {
+    const freq = (occ.frequencyDays as number | null | undefined) ?? jobFreq ?? 14;
+    // ET-anchored day math via the canonical helper — .setDate() would
+    // drift on DST edges. Result is YYYY-MM-DD in ET.
+    return bizAddDays(bizToday(), freq);
+  }
+
+  async function submitStreamPause(reason: string | null, reminderAt: string | null) {
+    if (!streamDialog) return;
+    setStreamBusy(true);
+    try {
+      await apiPost(`/api/admin/occurrences/${streamDialog.occ.id}/stream-pause`, {
+        reason,
+        reminderAt,
+      });
+      publishInlineMessage({ type: "SUCCESS", text: "Repeating service paused." });
+      setStreamDialog(null);
+      // Bump the alerts badge — see pages/index.tsx listener.
+      window.dispatchEvent(new CustomEvent("seedlings:stream-pauses-changed"));
+      await load(false);
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to pause repeating.", err) });
+    } finally {
+      setStreamBusy(false);
+    }
+  }
+
+  async function submitStreamPauseUpdate(reason: string | null, reminderAt: string | null) {
+    if (!streamDialog) return;
+    setStreamBusy(true);
+    try {
+      await apiPatch(`/api/admin/occurrences/${streamDialog.occ.id}/stream-pause`, {
+        reason,
+        reminderAt,
+      });
+      publishInlineMessage({ type: "SUCCESS", text: "Repeating pause updated." });
+      setStreamDialog(null);
+      // Bump the alerts badge — see pages/index.tsx listener.
+      window.dispatchEvent(new CustomEvent("seedlings:stream-pauses-changed"));
+      await load(false);
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to update repeating pause.", err) });
+    } finally {
+      setStreamBusy(false);
+    }
+  }
+
+  async function submitStreamResume(newStartAt: string) {
+    if (!streamDialog) return;
+    setStreamBusy(true);
+    try {
+      await apiPost(`/api/admin/occurrences/${streamDialog.occ.id}/stream-resume`, {
+        newStartAt,
+      });
+      publishInlineMessage({ type: "SUCCESS", text: "Repeating service resumed." });
+      setStreamDialog(null);
+      // Bump the alerts badge — see pages/index.tsx listener.
+      window.dispatchEvent(new CustomEvent("seedlings:stream-pauses-changed"));
+      await load(false);
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to resume repeating.", err) });
+    } finally {
+      setStreamBusy(false);
+    }
+  }
   const [commissionPercent, setCommissionPercent] = useState(0);
   const [marginPercent, setMarginPercent] = useState(0);
   const [serviceTypes, setServiceTypes] = useState<ServiceTypeConfig[]>(DEFAULT_SERVICE_TYPES);
@@ -893,6 +982,22 @@ export default function ServicesTab({
         </Button>
         <Button
           size="sm"
+          variant={pausedRepeatingOnly ? "solid" : "outline"}
+          px="2"
+          onClick={() => setPausedRepeatingOnly(!pausedRepeatingOnly)}
+          title={pausedRepeatingOnly ? "Show all occurrences" : "Show only paused repeating"}
+          css={pausedRepeatingOnly ? {
+            background: "var(--chakra-colors-purple-100)",
+            color: "var(--chakra-colors-purple-800)",
+            border: "1px solid var(--chakra-colors-purple-400)",
+            "&:hover": { background: "var(--chakra-colors-purple-200)" },
+          } : undefined}
+        >
+          <Repeat size={14} />
+          <Text as="span" fontSize="xs" ml={1}>Paused</Text>
+        </Button>
+        <Button
+          size="sm"
           variant={overdueActive ? "solid" : "outline"}
           px="2"
           onClick={() => {
@@ -1161,6 +1266,10 @@ export default function ServicesTab({
             ? detail.occurrences.filter((o: JobOccurrenceFull) => {
                 // Always show the highlighted occurrence
                 if (highlightOccId && o.id === highlightOccId) return true;
+                // Paused-repeating filter — when on, hide everything
+                // that isn't STREAM_PAUSED so the operator can scan the
+                // full set of on-hold streams across the feed.
+                if (pausedRepeatingOnly && (o.status as string) !== "STREAM_PAUSED") return false;
                 if (!showArchived && o.status === "ARCHIVED") return false;
                 if (!showCanceled && o.status === "CANCELED") return false;
                 if (!showAllOccs.has(job.id) && o.startAt) {
@@ -2117,6 +2226,11 @@ export default function ServicesTab({
                               </Badge>
                             )}
                           </HStack>
+                          {/* Info line surfaces WHEN paused + WHY + until
+                              when to check back. Renders nothing when
+                              the occurrence isn't repeating-paused, so
+                              it's safe to drop in unconditionally. */}
+                          <RepeatingPauseInfoLine occ={occ as any} />
                         </VStack>
 
 
@@ -2407,6 +2521,53 @@ export default function ServicesTab({
                                 busyId={statusButtonBusyId}
                                 setBusyId={setStatusButtonBusyId}
                               />
+                            )}
+                            {/* Stream pause on a SCHEDULED occurrence —
+                                temporarily hold this recurring stream
+                                (e.g. hedging) without affecting the
+                                Job's other streams (e.g. mowing). See
+                                services/occurrenceStreamPause.ts */}
+                            {occ.status === "SCHEDULED" && (
+                              <StatusButton
+                                id="occ-stream-pause"
+                                itemId={occ.id}
+                                label="Pause repeating"
+                                onClick={async () => {
+                                  setStreamDialog({ mode: "pause", occ });
+                                }}
+                                variant="outline"
+                                colorPalette="purple"
+                                busyId={statusButtonBusyId}
+                                setBusyId={setStatusButtonBusyId}
+                              />
+                            )}
+                            {(occ.status as string) === "STREAM_PAUSED" && (
+                              <>
+                                <StatusButton
+                                  id="occ-stream-resume"
+                                  itemId={occ.id}
+                                  label="Resume repeating"
+                                  onClick={async () => {
+                                    setStreamDialog({ mode: "resume", occ });
+                                  }}
+                                  variant="outline"
+                                  colorPalette="green"
+                                  busyId={statusButtonBusyId}
+                                  setBusyId={setStatusButtonBusyId}
+                                />
+                                <StatusButton
+                                  id="occ-stream-edit-pause"
+                                  itemId={occ.id}
+                                  label="Edit pause"
+                                  onClick={async () => {
+                                    setStreamDialog({ mode: "update", occ });
+                                  }}
+                                  variant="outline"
+                                  colorPalette="purple"
+                                  busyId={statusButtonBusyId}
+                                  setBusyId={setStatusButtonBusyId}
+                                />
+                              </>
                             )}
                             {occ.status === "IN_PROGRESS" && (
                               <StatusButton
@@ -2920,6 +3081,62 @@ export default function ServicesTab({
         lockedJobId={estimateLockedJobId}
         jobTagsConfig={serviceTypes}
       />
+
+      {/* Stream-pause / update / resume dialogs — one component handles
+          all three modes; the parent decides which via the state. */}
+      {streamDialog?.mode === "pause" && (
+        <StreamPauseDialog
+          open
+          mode="pause"
+          occurrenceLabel={
+            ((streamDialog.occ as any).jobType as string | null) ||
+            (streamDialog.occ.title as string | null) ||
+            "recurring service"
+          }
+          busy={streamBusy}
+          onCancel={() => { if (!streamBusy) setStreamDialog(null); }}
+          onConfirm={async ({ reason, reminderAt }) => submitStreamPause(reason, reminderAt)}
+        />
+      )}
+      {streamDialog?.mode === "update" && (
+        <StreamPauseDialog
+          open
+          mode="update"
+          occurrenceLabel={
+            ((streamDialog.occ as any).jobType as string | null) ||
+            (streamDialog.occ.title as string | null) ||
+            "recurring service"
+          }
+          currentReason={(streamDialog.occ as any).streamPauseReason ?? null}
+          currentReminderAt={
+            (streamDialog.occ as any).streamResumeReminderAt
+              ? bizDateKey((streamDialog.occ as any).streamResumeReminderAt)
+              : null
+          }
+          busy={streamBusy}
+          onCancel={() => { if (!streamBusy) setStreamDialog(null); }}
+          onConfirm={async ({ reason, reminderAt }) => submitStreamPauseUpdate(reason, reminderAt)}
+        />
+      )}
+      {streamDialog?.mode === "resume" && (
+        <StreamPauseDialog
+          open
+          mode="resume"
+          occurrenceLabel={
+            ((streamDialog.occ as any).jobType as string | null) ||
+            (streamDialog.occ.title as string | null) ||
+            "recurring service"
+          }
+          defaultNewStartAt={defaultResumeStartAt(
+            streamDialog.occ,
+            // Look up job frequency from the joined job field.
+            (streamDialog.occ as any).job?.frequencyDays ?? null,
+          )}
+          busy={streamBusy}
+          onCancel={() => { if (!streamBusy) setStreamDialog(null); }}
+          onConfirm={async ({ newStartAt }) => submitStreamResume(newStartAt)}
+        />
+      )}
 
     </Box>
   );

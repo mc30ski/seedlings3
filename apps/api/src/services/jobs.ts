@@ -117,10 +117,20 @@ export async function applyJobResumeSideEffectsInTx(
   const freq = job?.frequencyDays;
   if (!freq || freq <= 0) return;
 
+  // Dedupe against any future occurrence already on the stream — SCHEDULED
+  // (normal) OR STREAM_PAUSED (temporarily held). Skipping STREAM_PAUSED
+  // in this check would create a duplicate occurrence on the stream after
+  // a Job-level pause/resume cycle if a stream-pause was in flight when
+  // the Job pause happened.
   const existingFuture = await tx.jobOccurrence.findFirst({
     where: {
       jobId,
-      status: JobOccurrenceStatus.SCHEDULED,
+      status: {
+        in: [
+          JobOccurrenceStatus.SCHEDULED,
+          JobOccurrenceStatus.STREAM_PAUSED,
+        ],
+      },
       workflow: OccurrenceWorkflow.STANDARD,
       startAt: { gt: new Date() },
     },

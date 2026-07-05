@@ -26,6 +26,7 @@ import {
 } from "@/src/ui/dialogs/WorkdayRequiredDialog";
 import ImpersonationWarning from "@/src/ui/components/ImpersonationWarning";
 import WorkdayStrip from "@/src/ui/components/WorkdayStrip";
+import RepeatingPauseInfoLine from "@/src/ui/components/RepeatingPauseInfoLine";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { projectViewerPayout, projectTeamPayoutsForOcc, perWorkerShare, rateForViewer } from "@/src/lib/paymentMath";
 import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
@@ -4942,6 +4943,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             </Badge>
                           )}
                         </Box>
+                        {/* Info line for repeating-paused occurrences.
+                            Hidden when the occurrence isn't paused. */}
+                        <RepeatingPauseInfoLine occ={occ as any} />
                       </HStack>
                     </Box>
                     ) : (
@@ -5283,6 +5287,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             </Badge>
                           )}
                         </HStack>
+                        {/* Info line for repeating-paused occurrences.
+                            Hidden when the occurrence isn't paused. */}
+                        <RepeatingPauseInfoLine occ={occ as any} />
                       </Box>
                     )}
                 </Card.Header>
