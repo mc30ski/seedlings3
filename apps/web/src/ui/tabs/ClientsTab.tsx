@@ -671,18 +671,11 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                       busyId={statusButtonBusyId}
                       setBusyId={setStatusButtonBusyId}
                     />
-                    {c.status === "ACTIVE" && (
-                      <StatusButton
-                        id={"client-paused"}
-                        itemId={c.id}
-                        label={"Pause"}
-                        onClick={async () => await takeAction(c, "pause")}
-                        variant={"outline"}
-                        disabled={loading}
-                        busyId={statusButtonBusyId}
-                        setBusyId={setStatusButtonBusyId}
-                      />
-                    )}
+                    {/* Client-level "Pause" / "Unpause" buttons removed
+                        in Step 3. The client-level PAUSED state was
+                        cosmetic and confusing. The real workflow —
+                        "pause this client's services" — lives on the
+                        Pause services / Resume services buttons below. */}
                     {/* Bulk pause / resume services — Step 2 additive
                         actions. Both shown for ACTIVE Clients so the
                         operator can pause all Jobs at once ("client is
@@ -713,18 +706,11 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                         />
                       </>
                     )}
-                    {c.status === "PAUSED" && (
-                      <StatusButton
-                        id={"client-unpaused"}
-                        itemId={c.id}
-                        label={"Unpause"}
-                        onClick={async () => await takeAction(c, "unpause")}
-                        variant={"outline"}
-                        disabled={loading}
-                        busyId={statusButtonBusyId}
-                        setBusyId={setStatusButtonBusyId}
-                      />
-                    )}
+                    {/* Client-level "Unpause" button removed in Step 3.
+                        Existing PAUSED clients still show their badge;
+                        the Step 4 migration will resolve them by
+                        cascade-pausing their Jobs and flipping the
+                        Client back to ACTIVE. */}
                     {c.status === "PAUSED" && (
                       <StatusButton
                         id={"client-archive"}
@@ -946,32 +932,24 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                                         busyId={statusButtonBusyId}
                                         setBusyId={setStatusButtonBusyId}
                                       />
+                                      {/* Contact "Pause" / "Unpause" removed in Step 3.
+                                          Contact-level PAUSED silently blocked
+                                          payment-request delivery — a footgun.
+                                          To stop hearing from a contact,
+                                          archive them; to remove a stale one,
+                                          delete them. */}
                                       {ct.status === "ACTIVE" && (
                                         <StatusButton
-                                          id={"contact-paused"}
+                                          id={"contact-archive-from-active"}
                                           itemId={ct.id}
-                                          label={"Pause"}
-                                          onClick={async () =>
-                                            await takeActionContact(ct, "pause")
-                                          }
-                                          variant={"outline"}
-                                          disabled={loading}
-                                          busyId={statusButtonBusyId}
-                                          setBusyId={setStatusButtonBusyId}
-                                        />
-                                      )}
-                                      {ct.status === "PAUSED" && (
-                                        <StatusButton
-                                          id={"contact-unpaused"}
-                                          itemId={ct.id}
-                                          label={"Unpause"}
+                                          label={"Archive"}
                                           onClick={async () =>
                                             await takeActionContact(
                                               ct,
-                                              "unpause"
+                                              "archive"
                                             )
                                           }
-                                          variant={"outline"}
+                                          variant={"subtle"}
                                           disabled={loading}
                                           busyId={statusButtonBusyId}
                                           setBusyId={setStatusButtonBusyId}
