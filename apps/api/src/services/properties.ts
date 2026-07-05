@@ -4,6 +4,10 @@ import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
 import { ServiceError } from "../lib/errors";
 import { randomBytes } from "crypto";
+import {
+  applyJobPauseSideEffectsInTx,
+  applyJobResumeSideEffectsInTx,
+} from "./jobs";
 import type {
   ServicesProperties,
   PropertyUpsert,
@@ -172,6 +176,16 @@ export const properties: ServicesProperties = {
           where: { id: j.id },
           data: { status: JobStatus.ARCHIVED },
         });
+        // Archive side effects — delete future SCHEDULED STANDARD
+        // occurrences (parity with pause) so no worker gets dispatched
+        // to an archived property.
+        await applyJobPauseSideEffectsInTx(
+          tx,
+          currentUserId,
+          j.id,
+          { cascadeGroupId, triggeredBy: "property_archive", propertyId: id },
+          "ARCHIVED_REMOVED_FUTURE_OCCURRENCES",
+        );
         await writeAudit(tx, AUDIT.JOB.ARCHIVED, currentUserId, {
           jobId: j.id,
           cascadeGroupId,
@@ -218,6 +232,16 @@ export const properties: ServicesProperties = {
           where: { id: j.id },
           data: { status: JobStatus.ACCEPTED },
         });
+        // Unarchive side effects — rebuild recurring chain (one fresh
+        // SCHEDULED occurrence) so the operator doesn't have to force
+        // it manually. Parity with unpause.
+        await applyJobResumeSideEffectsInTx(
+          tx,
+          currentUserId,
+          j.id,
+          { cascadeGroupId, triggeredBy: "property_unarchive", propertyId: id },
+          "UNARCHIVED_REGENERATED_NEXT_OCCURRENCE",
+        );
         await writeAudit(tx, AUDIT.JOB.UNARCHIVED, currentUserId, {
           jobId: j.id,
           cascadeGroupId,
