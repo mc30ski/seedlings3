@@ -4237,11 +4237,23 @@ Respond ONLY with valid JSON in this exact format:
         select: { jobId: true },
       });
       const hasPending = new Set(pendingPayment.map((o) => o.jobId));
+      // Stream-paused jobs — a STREAM_PAUSED occurrence means the
+      // recurring stream is intentionally paused, so no next
+      // SCHEDULED is expected until the stream resumes. Distinct
+      // from Job.status = "PAUSED" (paused-job level) which the
+      // check below already handles. See schema.prisma comment on
+      // JobOccurrenceStatus.STREAM_PAUSED.
+      const streamPaused = await prisma.jobOccurrence.findMany({
+        where: { jobId: { in: jobIds }, status: "STREAM_PAUSED" },
+        select: { jobId: true },
+      });
+      const hasStreamPaused = new Set(streamPaused.map((o) => o.jobId));
       const issues: AuditIssue[] = [];
       const seen = new Set<string>();
       for (const o of closed) {
         if (!o.jobId || hasScheduled.has(o.jobId) || seen.has(o.jobId)) continue;
         if (o.job?.status === "ARCHIVED" || o.job?.status === "PAUSED") continue;
+        if (hasStreamPaused.has(o.jobId)) continue;
         if (!o.job?.frequencyDays || o.job.frequencyDays <= 0) continue;
         seen.add(o.jobId);
         const clientName = (o.job?.property as any)?.client?.displayName ?? "";
@@ -4285,6 +4297,7 @@ Respond ONLY with valid JSON in this exact format:
           startedAt: true,
           completedAt: true,
           totalPausedMs: true,
+          hoursApprovedAt: true,
           assignees: { select: { role: true } },
         },
         orderBy: { completedAt: "desc" },
@@ -4292,7 +4305,9 @@ Respond ONLY with valid JSON in this exact format:
       // Group person-minutes (wall-clock × team size) by jobId, last 8 each.
       // Stored as person-minutes so the median is comparable across runs with
       // different team sizes; consumers divide by current team size for display.
-      const byJob: Record<string, number[]> = {};
+      // Tracks whether each recent occurrence has unapproved hours so the
+      // check can skip jobs whose entire rolling window is already blessed.
+      const byJob: Record<string, { minutes: number; unapproved: boolean }[]> = {};
       for (const o of completedOccs) {
         if (!o.jobId) continue;
         if (!byJob[o.jobId]) byJob[o.jobId] = [];
@@ -4301,7 +4316,10 @@ Respond ONLY with valid JSON in this exact format:
         const wallclockMin = (new Date(o.completedAt).getTime() - new Date(o.startedAt).getTime() - (o.totalPausedMs ?? 0)) / 60000;
         if (wallclockMin <= 0) continue;
         const teamSize = Math.max(1, ((o as any).assignees ?? []).filter((a: any) => a.role !== "observer").length);
-        byJob[o.jobId].push(wallclockMin * teamSize);
+        byJob[o.jobId].push({
+          minutes: wallclockMin * teamSize,
+          unapproved: !o.hoursApprovedAt,
+        });
       }
       const fmtDur = (m: number) => {
         const h = Math.floor(m / 60); const mm = Math.round(m % 60);
@@ -4309,9 +4327,16 @@ Respond ONLY with valid JSON in this exact format:
       };
       const issues: AuditIssue[] = [];
       for (const job of jobs) {
-        const durations = byJob[job.id] ?? [];
-        // Need ≥3 completed occurrences to call it an "average"
-        if (durations.length < 3) continue;
+        const rows = byJob[job.id] ?? [];
+        // Need ≥3 completed occurrences to call it an "average".
+        if (rows.length < 3) continue;
+        // Only actionable when at least one recent occurrence still
+        // has unapproved hours — approved rows have already been
+        // blessed as-is by the operator, so surfacing them again
+        // is noise. Approved-only jobs get filtered here.
+        const unapprovedCount = rows.filter((r) => r.unapproved).length;
+        if (unapprovedCount === 0) continue;
+        const durations = rows.map((r) => r.minutes);
         const sorted = [...durations].sort((a, b) => a - b);
         const mid = Math.floor(sorted.length / 2);
         const median = sorted.length % 2 === 0
@@ -4325,7 +4350,7 @@ Respond ONLY with valid JSON in this exact format:
         const clientName = (job.property as any)?.client?.displayName ?? "";
         issues.push({
           jobId: job.id,
-          description: `${propertyName}${clientName ? ` (${clientName})` : ""}: ${Math.round(discrepancy * 100)}% ${isOver ? "over" : "under"} estimate — avg actual ${fmtDur(median)} vs ${fmtDur(est)} est. (${durations.length} occurrences)`,
+          description: `${propertyName}${clientName ? ` (${clientName})` : ""}: ${Math.round(discrepancy * 100)}% ${isOver ? "over" : "under"} estimate — avg actual ${fmtDur(median)} vs ${fmtDur(est)} est. (${unapprovedCount} of ${rows.length} recent occurrences awaiting hours approval)`,
         });
       }
       results.push({ check: "time_estimate_mismatch", label: "Time Estimate Mismatch", issues });
