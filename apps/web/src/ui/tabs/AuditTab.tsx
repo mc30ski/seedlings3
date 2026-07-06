@@ -57,8 +57,14 @@ const AUDIT_CHECKS: ReadonlyArray<{ id: string; label: string; description: stri
   {
     id: "time_estimate_mismatch",
     label: "Time Estimate Mismatch",
-    description: "Finds repeating jobs whose average actual time differs from the estimate by more than 25%. Requires at least 3 completed occurrences for a meaningful average.",
+    description: "Repeating jobs whose median actual time is >25% off the estimate AND still have at least one recent occurrence with unapproved hours. Review the pending hours or update the estimate before approving.",
     severity: "warning",
+  },
+  {
+    id: "stale_estimate",
+    label: "Stale Estimate",
+    description: "Repeating jobs where recent hours are ALL approved but the median run is still >25% off the estimate. The operator has blessed the actuals — consider updating the estimate to match reality.",
+    severity: "info",
   },
   {
     id: "unclaimed_no_guidance",

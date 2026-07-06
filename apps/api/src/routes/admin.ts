@@ -4270,8 +4270,15 @@ Respond ONLY with valid JSON in this exact format:
       results.push({ check: "missing_next_occurrence", label: "Missing Next Repeating Occurrence", issues });
     }
 
-    // 6. Time estimate mismatch on repeating jobs (avg actual differs from estimate by >25%)
-    if (checks.includes("time_estimate_mismatch")) {
+    // 6. Time estimate mismatch on repeating jobs (median actual differs from
+    //    estimate by >25%). Split into two audit checks that share the same
+    //    data pipeline: `time_estimate_mismatch` (warning severity) fires when
+    //    at least one recent occurrence has unapproved hours, so the operator
+    //    can still act by reviewing/adjusting before approving. `stale_estimate`
+    //    (info severity) fires when everything's already approved — the
+    //    actuals are blessed and the estimate itself is stale, so the
+    //    actionable is to update the estimate to match reality.
+    if (checks.includes("time_estimate_mismatch") || checks.includes("stale_estimate")) {
       const jobs = await prisma.job.findMany({
         where: {
           status: "ACCEPTED",
@@ -4325,17 +4332,12 @@ Respond ONLY with valid JSON in this exact format:
         const h = Math.floor(m / 60); const mm = Math.round(m % 60);
         return h > 0 ? `${h}h ${mm}m` : `${mm}m`;
       };
-      const issues: AuditIssue[] = [];
+      const mismatchIssues: AuditIssue[] = [];
+      const staleIssues: AuditIssue[] = [];
       for (const job of jobs) {
         const rows = byJob[job.id] ?? [];
         // Need ≥3 completed occurrences to call it an "average".
         if (rows.length < 3) continue;
-        // Only actionable when at least one recent occurrence still
-        // has unapproved hours — approved rows have already been
-        // blessed as-is by the operator, so surfacing them again
-        // is noise. Approved-only jobs get filtered here.
-        const unapprovedCount = rows.filter((r) => r.unapproved).length;
-        if (unapprovedCount === 0) continue;
         const durations = rows.map((r) => r.minutes);
         const sorted = [...durations].sort((a, b) => a - b);
         const mid = Math.floor(sorted.length / 2);
@@ -4348,12 +4350,25 @@ Respond ONLY with valid JSON in this exact format:
         const isOver = median > est;
         const propertyName = (job.property as any)?.displayName ?? "Unknown";
         const clientName = (job.property as any)?.client?.displayName ?? "";
-        issues.push({
-          jobId: job.id,
-          description: `${propertyName}${clientName ? ` (${clientName})` : ""}: ${Math.round(discrepancy * 100)}% ${isOver ? "over" : "under"} estimate — avg actual ${fmtDur(median)} vs ${fmtDur(est)} est. (${unapprovedCount} of ${rows.length} recent occurrences awaiting hours approval)`,
-        });
+        const unapprovedCount = rows.filter((r) => r.unapproved).length;
+        if (unapprovedCount > 0) {
+          mismatchIssues.push({
+            jobId: job.id,
+            description: `${propertyName}${clientName ? ` (${clientName})` : ""}: ${Math.round(discrepancy * 100)}% ${isOver ? "over" : "under"} estimate — avg actual ${fmtDur(median)} vs ${fmtDur(est)} est. (${unapprovedCount} of ${rows.length} recent occurrences awaiting hours approval)`,
+          });
+        } else {
+          staleIssues.push({
+            jobId: job.id,
+            description: `${propertyName}${clientName ? ` (${clientName})` : ""}: median ${fmtDur(median)} vs ${fmtDur(est)} est. — ${Math.round(discrepancy * 100)}% ${isOver ? "over" : "under"}. All ${rows.length} recent occurrences have hours approved; consider updating the estimate.`,
+          });
+        }
       }
-      results.push({ check: "time_estimate_mismatch", label: "Time Estimate Mismatch", issues });
+      if (checks.includes("time_estimate_mismatch")) {
+        results.push({ check: "time_estimate_mismatch", label: "Time Estimate Mismatch", issues: mismatchIssues });
+      }
+      if (checks.includes("stale_estimate")) {
+        results.push({ check: "stale_estimate", label: "Stale Estimate", issues: staleIssues });
+      }
     }
 
     if (checks.includes("unclaimed_no_guidance")) {
