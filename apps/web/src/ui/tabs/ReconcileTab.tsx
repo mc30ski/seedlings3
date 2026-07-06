@@ -1971,17 +1971,22 @@ function WorkerCard({
                       // Chakra Table's tr/td/th transparent so the
                       // day box's bg shows through — without it the
                       // cells default to white and the progressively-
-                      // darker scheme silently breaks.
+                      // darker scheme silently breaks. `overflowX="auto"`
+                      // lets the 7-column table scroll horizontally on
+                      // narrow viewports instead of blowing out the
+                      // worker card's width.
                       <Box
                         px={2}
                         pt={1}
                         pb={1}
                         borderTopWidth="1px"
                         borderColor="blackAlpha.200"
+                        overflowX="auto"
                       >
                         <Table.Root
                           size="sm"
                           variant="line"
+                          minW="max-content"
                           css={{ "& tr, & td, & th": { backgroundColor: "transparent" } }}
                         >
                           <Table.Header>
@@ -2127,9 +2132,11 @@ function JobAssigneesBreakdown({ job }: { job: WorkerJobRow }) {
           </Box>
         )}
       </HStack>
+      <Box overflowX="auto">
       <Table.Root
         size="sm"
         variant="line"
+        minW="max-content"
         css={{ "& tr, & td, & th": { backgroundColor: "transparent" } }}
       >
         <Table.Header>
@@ -2195,6 +2202,7 @@ function JobAssigneesBreakdown({ job }: { job: WorkerJobRow }) {
           </Table.Row>
         </Table.Body>
       </Table.Root>
+      </Box>
     </Box>
   );
 }
