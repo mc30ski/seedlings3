@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Badge, Box, Button, Card, HStack, Select, Spinner, Table, Text, VStack, createListCollection } from "@chakra-ui/react";
 import { FiDownload, FiInfo } from "react-icons/fi";
 import { ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
@@ -102,19 +102,43 @@ type DetailState = PnLDetail | "loading" | { error: string };
 // Previously rendered in a standalone "Workers Reconcile" tab; folded
 // into this surface so the P&L and the per-worker drill-downs share
 // a single date range and a single page.
+type WorkerJobAssigneeBreakdown = {
+  userId: string;
+  displayName: string | null;
+  workerType: string | null;
+  isOwner: boolean;
+  splitPercent: number;
+  gross: number;
+  feeOrMargin: number;
+  topUp: number;
+  netPaid: number;
+  /** True for the synthetic owner-earnings row — the LLC owner's cut
+   *  off the top, not a worker split. */
+  isOwnerEarnings: boolean;
+};
+
 type WorkerJobRow = {
   occurrenceId: string;
   title: string;
   client: string | null;
   property: string | null;
   completedAt: string | null;
+  /** The full job's promised payout — anchors the per-assignee math
+   *  in the drill-down. */
+  jobPrice: number;
   grossShare: number;
   feeOrMargin: number;
   topUp: number;
   netPaid: number;
+  /** What % of the job payment this worker was credited for.
+   *  0 for owner-earnings pseudo-rows (owner takes off the top, not
+   *  via a split). */
+  splitPercent: number;
   paymentConfirmed: boolean;
   paymentWrittenOff: boolean;
   source: "snapshot" | "computed";
+  /** Full per-assignee breakdown for the drill-down. */
+  assignees: WorkerJobAssigneeBreakdown[];
 };
 
 type WorkerDayRow = {
@@ -148,6 +172,10 @@ type WorkerRow = {
   effectiveHourly: number | null;
   preTopUpHourly: number | null;
   belowMinWage: boolean;
+  /** True when this worker is a contractor in an active guaranteed
+   *  payout period. Splits the wage-compliance banner between
+   *  "reclassification risk" and "guaranteed payout" contractors. */
+  guaranteedPayoutActive: boolean;
   /** True when the worker has at least one in-progress workday in
    *  the window. Headline hours include live elapsed time. */
   hasInProgressWorkday: boolean;
@@ -209,9 +237,50 @@ function fmtUSD(n: number): string {
   return n < 0 ? `($${formatted})` : `$${formatted}`;
 }
 
+// Render a split percentage compactly: whole numbers drop the ".00"
+// (so "50%" not "50.00%"), non-whole show up to 2 decimals ("33.33%").
+function fmtPercent(n: number): string {
+  const rounded = Math.round(n * 100) / 100;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
+}
+
 function leafName(qbAccount: string): string {
   const colon = qbAccount.indexOf(":");
   return colon < 0 ? qbAccount : qbAccount.slice(colon + 1).trim();
+}
+
+// Short badge label for a specific anomaly string. Backend produces
+// full-sentence anomalies (e.g. "3 jobs completed but client payment
+// not confirmed"); the row header needs terse chips instead. Falls
+// back to "Warning" for anything the pattern list doesn't recognize
+// so a new backend anomaly type never renders as a blank badge.
+function shortAnomalyLabel(anomaly: string): string {
+  if (anomaly.includes("Logged hours but no completed jobs")) return "No jobs";
+  if (anomaly.includes("Completed jobs but no workday hours")) return "No hours";
+  if (anomaly.includes("below minimum wage")) return "Below min wage";
+  if (anomaly.includes("client payment not confirmed")) {
+    // Preserve the count when present ("3 jobs completed but client
+    // payment not confirmed" → "3 unpaid").
+    const m = anomaly.match(/^(\d+)\s+jobs?/);
+    return m ? `${m[1]} unpaid` : "Unpaid";
+  }
+  return "Warning";
+}
+
+// Wage-floor violation. Client-side derivation so W-2, trainees, AND
+// contractors are all captured — backend's `belowMinWage` flag is
+// gated to W-2/trainee (per the anomaly rule that fires the yellow
+// warning). This helper is the single source of truth for the red
+// "violation" badges + banners across the header count, per-row row,
+// and per-row expanded body.
+function hasWageViolation(w: WorkerRow, minWage: number): boolean {
+  if (w.isOwner) return false;
+  if (w.preTopUpHourly == null || w.preTopUpHourly >= minWage) return false;
+  return (
+    w.workerType === "EMPLOYEE" ||
+    w.workerType === "TRAINEE" ||
+    w.workerType === "CONTRACTOR"
+  );
 }
 
 function workerTypeLabel(t: string | null | undefined, isOwner: boolean): string {
@@ -258,9 +327,12 @@ export default function ReconcileTab() {
   // of the page (folded in from the old Workers Reconcile tab).
   const [period, setPeriod] = useState<Period | null>(null);
   const [periodLoading, setPeriodLoading] = useState(false);
-  // Per-worker expand state for the worker drill-downs.
+  // Per-worker expand state for the worker drill-downs. Three levels:
+  // worker → day → job. Job-level opens a per-assignee breakdown of a
+  // single occurrence ("who made what on this job").
   const [expandedWorkers, setExpandedWorkers] = useState<Set<string>>(new Set());
   const [expandedWorkerDays, setExpandedWorkerDays] = useState<Set<string>>(new Set());
+  const [expandedWorkerJobs, setExpandedWorkerJobs] = useState<Set<string>>(new Set());
   // Per-qbAccount expand state + cached details. Cleared whenever the
   // date range changes (the rows would no longer match the report).
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -301,12 +373,6 @@ export default function ReconcileTab() {
   const toggleSection = (key: string) =>
     setSectionCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
   const isSectionCollapsed = (key: string) => !!sectionCollapsed[key];
-  const expandAllSections = () =>
-    setSectionCollapsed(Object.fromEntries(SECTION_KEYS.map((k) => [k, false])));
-  const collapseAllSections = () =>
-    setSectionCollapsed(Object.fromEntries(SECTION_KEYS.map((k) => [k, true])));
-  const allExpanded = SECTION_KEYS.every((k) => !sectionCollapsed[k]);
-  const allCollapsed = SECTION_KEYS.every((k) => !!sectionCollapsed[k]);
 
   // Monotonic request token. Each load() bumps this; the resolved
   // fetches check that their token still matches the latest before
@@ -364,6 +430,7 @@ export default function ReconcileTab() {
     setDetails({});
     setExpandedWorkers(new Set());
     setExpandedWorkerDays(new Set());
+    setExpandedWorkerJobs(new Set());
   }, [start, end]);
 
   async function toggleAccount(qbAccount: string) {
@@ -629,20 +696,15 @@ export default function ReconcileTab() {
         )}
       </Box>
 
-      {/* Date range picker + presets. Intentionally non-collapsible
-          — picking the date range is the entry point for every other
-          section, so it's always visible. */}
-      <Card.Root>
-        <CardSectionHeader
-          title="Select Timeframe"
-          subtitle="Pick a date range or use a preset. Every section below scopes its numbers to this window."
-          collapsible={false}
-        />
-        <Card.Body>
-          <VStack align="stretch" gap={3}>
-            {/* Timeframe row — DateInput + dash + DateInput + green preset
-                chip on a single line, matching the PaymentsTab layout. */}
-            <HStack gap={2} wrap="wrap" align="center">
+      {/* Date range picker + presets. Always visible — picking the
+          date range is the entry point for every other section. No
+          Card / SectionHeader wrapper so it doesn't visually mimic
+          the collapsible P&L / Payroll cards below. */}
+      <Box>
+        <VStack align="stretch" gap={3}>
+          {/* Timeframe row — DateInput + dash + DateInput + green preset
+              chip on a single line, matching the PaymentsTab layout. */}
+          <HStack gap={2} wrap="wrap" align="center">
               <DateInput
                 value={start}
                 onChange={(val) => {
@@ -737,38 +799,33 @@ export default function ReconcileTab() {
             </HStack>
             {/* By-category chip strip — same look as the Ledger tab. Sits
                 directly under the timeframe so the operator sees the spend
-                breakdown at a glance before scrolling into the P&L table. */}
-            {report && <ExpenseCategoryChips report={report} />}
-          </VStack>
-        </Card.Body>
-      </Card.Root>
-
-      {/* Expand/Collapse all — sits between the timeframe (always
-          visible) and the first collapsible section so the operator
-          can open everything at once after picking a date range. */}
-      <HStack justify="flex-end" gap={2}>
-        <Button
-          size="xs"
-          variant="ghost"
-          onClick={expandAllSections}
-          disabled={allExpanded}
-        >
-          Expand all
-        </Button>
-        <Button
-          size="xs"
-          variant="ghost"
-          onClick={collapseAllSections}
-          disabled={allCollapsed}
-        >
-          Collapse all
-        </Button>
-      </HStack>
+              breakdown at a glance before scrolling into the P&L table. */}
+          {report && <ExpenseCategoryChips report={report} />}
+        </VStack>
+      </Box>
 
       {/* P&L Report rendering with expand/collapse. */}
       <Card.Root>
         <CardSectionHeader
-          title="Profit and Loss"
+          title={
+            <>
+              Profit and Loss
+              {/* Profit/loss chip — mirrors the Net Operating Income
+                  color at the bottom of the P&L so the operator can
+                  tell the range's outcome at a glance even when the
+                  section is collapsed. */}
+              {report && (
+                <Badge
+                  ml={2}
+                  size="xs"
+                  colorPalette={report.netOperatingIncome >= 0 ? "green" : "red"}
+                  variant="solid"
+                >
+                  {report.netOperatingIncome >= 0 ? "Profitable" : "Loss"}
+                </Badge>
+              )}
+            </>
+          }
           subtitle="Cash-basis P&L for the selected window. Tap any line to drill into the underlying rows."
           collapsed={isSectionCollapsed("pnl")}
           onToggle={() => toggleSection("pnl")}
@@ -962,13 +1019,29 @@ export default function ReconcileTab() {
               earnings breakdown, then the day-by-day and per-job
               drill-down. Everything the operator needs to run payroll
               AND reconcile it lives in one place. */}
+
           <Card.Root>
             <CardSectionHeader
               title={
                 <>
                   Worker Payroll ({period.workers.length})
+                  {/* Badge order matches the per-row header: highest
+                      severity first (red violation), then warning
+                      (orange). Reads consistently at both levels so
+                      the operator's eye lands on the strongest signal
+                      in the same spot regardless of scope. */}
+                  {(() => {
+                    const count = period.workers.filter((w) =>
+                      hasWageViolation(w, period.minWagePerHour),
+                    ).length;
+                    return count > 0 ? (
+                      <Badge ml={2} size="xs" colorPalette="red" variant="solid">
+                        {count} {count === 1 ? "violation" : "violations"}
+                      </Badge>
+                    ) : null;
+                  })()}
                   {period.totals.anomalies > 0 && (
-                    <Badge ml={2} size="xs" colorPalette="yellow" variant="subtle">
+                    <Badge ml={2} size="xs" colorPalette="orange" variant="solid">
                       {period.totals.anomalies} {period.totals.anomalies === 1 ? "warning" : "warnings"}
                     </Badge>
                   )}
@@ -980,6 +1053,20 @@ export default function ReconcileTab() {
             />
             {!isSectionCollapsed("workers") && (
             <Card.Body>
+              {/* Wage-compliance banner — surfaces workers whose
+                  effective rate in the window sits below the configured
+                  floor. W-2 below-floor is a legal compliance issue;
+                  contractors below-floor split into "reclassification
+                  risk" (persistent signal the DOL/IRS cite when
+                  reclassifying 1099s) and "guaranteed payout" (Company
+                  is voluntarily underwriting timing risk during
+                  onboarding — real signal, but expected). Renders
+                  inside the payroll card so the flagged rows sit
+                  directly under it. */}
+              <WageComplianceBanner
+                workers={period.workers}
+                minWagePerHour={period.minWagePerHour}
+              />
               {period.workers.length === 0 ? (
                 <Text fontSize="sm" color="fg.muted" textAlign="center" py={4}>
                   No workers logged in this window.
@@ -1012,6 +1099,15 @@ export default function ReconcileTab() {
                             return next;
                           })
                         }
+                        expandedJobs={expandedWorkerJobs}
+                        onToggleJob={(jobKey) =>
+                          setExpandedWorkerJobs((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(jobKey)) next.delete(jobKey);
+                            else next.add(jobKey);
+                            return next;
+                          })
+                        }
                       />
                     );
                   })}
@@ -1029,7 +1125,7 @@ export default function ReconcileTab() {
           CSVs even before the period payload finishes. */}
       <Card.Root>
         <CardSectionHeader
-          title="Download CSV"
+          title="Export Data"
           subtitle="Files for cross-checking against accounting software to reconcile accounts."
           collapsed={isSectionCollapsed("download")}
           onToggle={() => toggleSection("download")}
@@ -1506,7 +1602,7 @@ function ExpenseCategoryChips({ report }: { report: PnLReport }) {
   if (items.length === 0) return null;
   items.sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
   return (
-    <Box>
+    <Box pl={3}>
       <Text fontSize="xs" color="fg.muted" mb={1.5}>By Category</Text>
       <HStack gap={2} wrap="wrap">
         {items.map((it) => (
@@ -1529,6 +1625,8 @@ function WorkerCard({
   onToggle,
   expandedDays,
   onToggleDay,
+  expandedJobs,
+  onToggleJob,
 }: {
   worker: WorkerRow;
   payroll: PayrollRow | null;
@@ -1537,17 +1635,26 @@ function WorkerCard({
   onToggle: () => void;
   expandedDays: Set<string>;
   onToggleDay: (dayKey: string) => void;
+  expandedJobs: Set<string>;
+  onToggleJob: (jobKey: string) => void;
 }) {
   const payrollBelowMin =
     payroll?.equivalentHourlyRate != null &&
     payroll.equivalentHourlyRate > 0 &&
     payroll.equivalentHourlyRate < minWage;
+  // Severity-driven outer border: red for a wage-floor violation
+  // (legal / reclassification), orange for a warning (has anomalies
+  // but no violation), plain gray for clean rows. Bg stays neutral —
+  // the drilldown color scheme below is a plain grey progression.
+  const hasViolation = hasWageViolation(worker, minWage);
+  const hasWarning = !hasViolation && worker.anomalies.length > 0;
   return (
     <Box
-      borderWidth="1px"
-      borderColor={worker.anomalies.length > 0 ? "yellow.300" : "gray.200"}
+      borderWidth={hasViolation || hasWarning ? "2px" : "1px"}
+      borderColor={
+        hasViolation ? "red.400" : hasWarning ? "orange.400" : "gray.200"
+      }
       borderRadius="md"
-      bg={worker.anomalies.length > 0 ? "yellow.50" : undefined}
     >
       {/* Header + payroll strip — one visual block. Whole row is a
           click target that toggles expansion, but the individual
@@ -1589,16 +1696,35 @@ function WorkerCard({
                   On the clock
                 </Badge>
               )}
-              {worker.belowMinWage && (
+              {hasWageViolation(worker, minWage) && (
                 <Badge size="xs" colorPalette="red" variant="solid">
                   Below min wage
                 </Badge>
               )}
-              {worker.anomalies.length > 0 && !worker.belowMinWage && (
-                <Badge size="xs" colorPalette="yellow" variant="solid">
-                  ⚠ {worker.anomalies.length}
-                </Badge>
-              )}
+              {(() => {
+                // One badge per specific anomaly, so each reason reads
+                // like the red "Below min wage" chip — same pattern
+                // for the same class of signal. Below-floor anomaly is
+                // filtered out when the row already carries the red
+                // violation badge so the same reason doesn't render
+                // twice. Long full-sentence anomaly text is trimmed
+                // to a short label via shortAnomalyLabel; tooltip
+                // preserves the full reason for reference.
+                const visibleAnomalies = hasWageViolation(worker, minWage)
+                  ? worker.anomalies.filter((a) => !a.includes("below minimum wage"))
+                  : worker.anomalies;
+                return visibleAnomalies.map((a, i) => (
+                  <Badge
+                    key={i}
+                    size="xs"
+                    colorPalette="orange"
+                    variant="solid"
+                    title={a}
+                  >
+                    {shortAnomalyLabel(a)}
+                  </Badge>
+                ));
+              })()}
             </HStack>
             <Text fontSize="xs" color="fg.muted">
               {worker.daysWorked} day{worker.daysWorked === 1 ? "" : "s"}
@@ -1682,24 +1808,78 @@ function WorkerCard({
           pb={3}
           pt={2}
           borderTopWidth="1px"
-          borderColor={worker.anomalies.length > 0 ? "yellow.400" : "gray.300"}
-          bg={worker.anomalies.length > 0 ? "yellow.200" : "gray.100"}
+          borderColor="gray.300"
+          // Neutral grey progression for every drilldown level
+          // regardless of severity. Issue signal lives on the outer
+          // card's border color; the drilldown itself stays calm so
+          // the numbers read easily. L1 body is gray.100.
+          bg="gray.100"
           borderBottomRadius="md"
         >
-          {worker.anomalies.length > 0 && (
-            <Box mb={2} p={2} bg="yellow.300" borderRadius="md">
+          {hasWageViolation(worker, minWage) && (
+            // Violation banner — red so it clearly reads as "this row
+            // is a legal/compliance issue" separate from the softer
+            // orange warnings. W-2 below-floor is a legal violation;
+            // contractor below-floor is a reclassification-risk signal
+            // (or "guaranteed payout" during onboarding). Sits above
+            // the warnings banner so the highest-severity item is
+            // visible first.
+            <Box
+              mb={2}
+              p={2}
+              bg="red.100"
+              borderWidth="1px"
+              borderColor="red.400"
+              borderRadius="md"
+            >
               <HStack gap={2} align="flex-start">
-                <Box pt={0.5}><AlertTriangle size={14} color="var(--chakra-colors-yellow-800)" /></Box>
+                <Box pt={0.5}><AlertTriangle size={14} color="var(--chakra-colors-red-700)" /></Box>
                 <VStack align="start" gap={0}>
-                  {worker.anomalies.map((a, i) => (
-                    <Text key={i} fontSize="xs" color="yellow.900">
-                      • {a}
-                    </Text>
-                  ))}
+                  <Text fontSize="xs" color="red.900" fontWeight="semibold">
+                    Effective rate {worker.preTopUpHourly != null ? `$${worker.preTopUpHourly.toFixed(2)}` : "—"}/hr below the ${minWage.toFixed(2)}/hr floor
+                    {worker.workerType === "CONTRACTOR" && (
+                      worker.guaranteedPayoutActive
+                        ? " (guaranteed payout — Company voluntarily underwriting timing risk)"
+                        : " (reclassification risk)"
+                    )}
+                  </Text>
                 </VStack>
               </HStack>
             </Box>
           )}
+          {(() => {
+            // Drop the backend's "Pre-top-up hourly below minimum wage"
+            // anomaly from the yellow banner when the red violation
+            // banner already surfaces it. Prevents duplicate messaging
+            // for the same row.
+            const displayAnomalies = hasWageViolation(worker, minWage)
+              ? worker.anomalies.filter((a) => !a.includes("below minimum wage"))
+              : worker.anomalies;
+            return displayAnomalies.length > 0 ? (
+              // Warning banner — distinct orange so it stands out clearly
+              // against the yellow anomaly-family card. Same palette as
+              // the section-header "X warnings" badge for consistency.
+              <Box
+                mb={2}
+                p={2}
+                bg="orange.100"
+                borderWidth="1px"
+                borderColor="orange.400"
+                borderRadius="md"
+              >
+                <HStack gap={2} align="flex-start">
+                  <Box pt={0.5}><AlertTriangle size={14} color="var(--chakra-colors-orange-700)" /></Box>
+                  <VStack align="start" gap={0}>
+                    {displayAnomalies.map((a, i) => (
+                      <Text key={i} fontSize="xs" color="orange.900" fontWeight="medium">
+                        • {a}
+                      </Text>
+                    ))}
+                  </VStack>
+                </HStack>
+              </Box>
+            ) : null;
+          })()}
 
           {/* Earnings breakdown summary */}
           <HStack gap={4} mb={3} wrap="wrap">
@@ -1724,9 +1904,14 @@ function WorkerCard({
                   <Box
                     key={d.date}
                     borderWidth="1px"
-                    borderColor="gray.200"
+                    borderColor="blackAlpha.200"
                     borderRadius="md"
-                    bg="white"
+                    // Grey progression only — issue signal lives on the
+                    // outer worker-card border. L1 body is gray.100;
+                    // collapsed day is a small step darker, expanded
+                    // day another step. Hex values are ~5-7% brightness
+                    // deltas so the level differences read subtly.
+                    bg={dayExpanded ? "#e0e0e2" : "#ececed"}
                   >
                     <HStack
                       as="button"
@@ -1754,11 +1939,31 @@ function WorkerCard({
                       <Text fontSize="xs" fontWeight="semibold">{fmtUSD(d.netPaid)}</Text>
                     </HStack>
                     {dayExpanded && d.jobs.length > 0 && (
-                      <Box px={2.5} pb={2} pt={0.5} borderTopWidth="1px" borderColor="gray.100">
-                        <Table.Root size="sm" variant="line">
+                      // Level-2 content — table sits directly on the
+                      // day box (which is now the L2 color when
+                      // expanded). Only a top border separates header
+                      // from list; the darker bg IS the day box's
+                      // expanded bg. The `css` override forces the
+                      // Chakra Table's tr/td/th transparent so the
+                      // day box's bg shows through — without it the
+                      // cells default to white and the progressively-
+                      // darker scheme silently breaks.
+                      <Box
+                        px={2}
+                        pt={1}
+                        pb={1}
+                        borderTopWidth="1px"
+                        borderColor="blackAlpha.200"
+                      >
+                        <Table.Root
+                          size="sm"
+                          variant="line"
+                          css={{ "& tr, & td, & th": { backgroundColor: "transparent" } }}
+                        >
                           <Table.Header>
                             <Table.Row>
                               <Table.ColumnHeader fontSize="2xs">Job</Table.ColumnHeader>
+                              <Table.ColumnHeader fontSize="2xs" textAlign="right">Share</Table.ColumnHeader>
                               <Table.ColumnHeader fontSize="2xs" textAlign="right">Gross</Table.ColumnHeader>
                               <Table.ColumnHeader fontSize="2xs" textAlign="right">Fee/margin</Table.ColumnHeader>
                               <Table.ColumnHeader fontSize="2xs" textAlign="right">Top-up</Table.ColumnHeader>
@@ -1767,40 +1972,82 @@ function WorkerCard({
                             </Table.Row>
                           </Table.Header>
                           <Table.Body>
-                            {d.jobs.map((j) => (
-                              <Table.Row key={j.occurrenceId}>
-                                <Table.Cell fontSize="xs">
-                                  <Text>{j.title}</Text>
-                                  {j.client && (
-                                    <Text fontSize="2xs" color="fg.muted">{j.client}</Text>
+                            {d.jobs.map((j) => {
+                              const jobKey = `${worker.userId}|${d.date}|${j.occurrenceId}`;
+                              const jobExpanded = expandedJobs.has(jobKey);
+                              return (
+                                <Fragment key={jobKey}>
+                                  <Table.Row
+                                    onClick={() => onToggleJob(jobKey)}
+                                    _hover={{ bg: "blackAlpha.50" }}
+                                    cursor="pointer"
+                                  >
+                                    <Table.Cell fontSize="xs">
+                                      <HStack gap={1} align="start">
+                                        <Box pt={0.5} color="fg.muted" flexShrink={0}>
+                                          {jobExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                                        </Box>
+                                        <Box>
+                                          <Text>{j.title}</Text>
+                                          {j.client && (
+                                            <Text fontSize="2xs" color="fg.muted">{j.client}</Text>
+                                          )}
+                                        </Box>
+                                      </HStack>
+                                    </Table.Cell>
+                                    <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono">
+                                      {j.splitPercent > 0 ? `${fmtPercent(j.splitPercent)}%` : "—"}
+                                    </Table.Cell>
+                                    <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono">
+                                      {fmtUSD(j.grossShare)}
+                                    </Table.Cell>
+                                    <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono">
+                                      {fmtUSD(-j.feeOrMargin)}
+                                    </Table.Cell>
+                                    <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono">
+                                      {j.topUp > 0 ? fmtUSD(j.topUp) : "—"}
+                                    </Table.Cell>
+                                    <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono" fontWeight="semibold">
+                                      {fmtUSD(j.netPaid)}
+                                    </Table.Cell>
+                                    <Table.Cell fontSize="2xs">
+                                      {j.paymentWrittenOff ? (
+                                        <Badge size="xs" colorPalette="gray" variant="subtle">written off</Badge>
+                                      ) : j.paymentConfirmed ? (
+                                        <Badge size="xs" colorPalette="green" variant="subtle">paid</Badge>
+                                      ) : (
+                                        <Badge size="xs" colorPalette="yellow" variant="subtle">unpaid</Badge>
+                                      )}
+                                      {j.source === "computed" && (
+                                        <Badge ml={1} size="xs" colorPalette="orange" variant="outline">computed</Badge>
+                                      )}
+                                    </Table.Cell>
+                                  </Table.Row>
+                                  {jobExpanded && (
+                                    // Level-3 drilldown — inset from the
+                                    // day-list wrapper with a still-darker
+                                    // border + bg. Consistent color family
+                                    // as its parents (gray or yellow), one
+                                    // shade deeper per level so nesting
+                                    // reads at a glance.
+                                    <Table.Row>
+                                      <Table.Cell colSpan={7} p={0} borderBottomWidth="0px">
+                                        <Box
+                                          mx={2}
+                                          mb={2}
+                                          borderWidth="1px"
+                                          borderColor="blackAlpha.300"
+                                          borderRadius="md"
+                                          bg="#d4d4d8"
+                                        >
+                                          <JobAssigneesBreakdown job={j} />
+                                        </Box>
+                                      </Table.Cell>
+                                    </Table.Row>
                                   )}
-                                </Table.Cell>
-                                <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono">
-                                  {fmtUSD(j.grossShare)}
-                                </Table.Cell>
-                                <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono">
-                                  {fmtUSD(-j.feeOrMargin)}
-                                </Table.Cell>
-                                <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono">
-                                  {j.topUp > 0 ? fmtUSD(j.topUp) : "—"}
-                                </Table.Cell>
-                                <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono" fontWeight="semibold">
-                                  {fmtUSD(j.netPaid)}
-                                </Table.Cell>
-                                <Table.Cell fontSize="2xs">
-                                  {j.paymentWrittenOff ? (
-                                    <Badge size="xs" colorPalette="gray" variant="subtle">written off</Badge>
-                                  ) : j.paymentConfirmed ? (
-                                    <Badge size="xs" colorPalette="green" variant="subtle">paid</Badge>
-                                  ) : (
-                                    <Badge size="xs" colorPalette="yellow" variant="subtle">unpaid</Badge>
-                                  )}
-                                  {j.source === "computed" && (
-                                    <Badge ml={1} size="xs" colorPalette="orange" variant="outline">computed</Badge>
-                                  )}
-                                </Table.Cell>
-                              </Table.Row>
-                            ))}
+                                </Fragment>
+                              );
+                            })}
                           </Table.Body>
                         </Table.Root>
                       </Box>
@@ -1812,6 +2059,178 @@ function WorkerCard({
           )}
         </Box>
       )}
+    </Box>
+  );
+}
+
+// Full per-assignee drill-down for a single occurrence. Shows every
+// active worker + any owner-earnings recipient with their split
+// percent, gross, fee/margin, top-up, and net. Anchored with the job's
+// total price at the top so the operator can trace "how did this
+// $100 job turn into these numbers?" line by line. Totals row at
+// the bottom confirms the pieces sum to the payment shape.
+function JobAssigneesBreakdown({ job }: { job: WorkerJobRow }) {
+  const totals = job.assignees.reduce(
+    (acc, a) => ({
+      gross: acc.gross + a.gross,
+      feeOrMargin: acc.feeOrMargin + a.feeOrMargin,
+      topUp: acc.topUp + a.topUp,
+      netPaid: acc.netPaid + a.netPaid,
+      splitPercent: acc.splitPercent + (a.isOwnerEarnings ? 0 : a.splitPercent),
+    }),
+    { gross: 0, feeOrMargin: 0, topUp: 0, netPaid: 0, splitPercent: 0 },
+  );
+  return (
+    // No bg here — the wrapper Box in the parent sets the L3 color.
+    <Box px={3} py={2}>
+      <HStack gap={4} mb={2} wrap="wrap">
+        <Box>
+          <Text fontSize="2xs" color="fg.muted">Job price</Text>
+          <Text fontSize="sm" fontFamily="mono" fontWeight="semibold">{fmtUSD(job.jobPrice)}</Text>
+        </Box>
+        <Box>
+          <Text fontSize="2xs" color="fg.muted">Workers on job</Text>
+          <Text fontSize="sm" fontFamily="mono">
+            {job.assignees.filter((a) => !a.isOwnerEarnings).length}
+          </Text>
+        </Box>
+        {job.assignees.some((a) => a.isOwnerEarnings) && (
+          <Box>
+            <Text fontSize="2xs" color="fg.muted">Owner cut</Text>
+            <Text fontSize="sm" fontFamily="mono">
+              {fmtUSD(job.assignees.filter((a) => a.isOwnerEarnings).reduce((s, a) => s + a.netPaid, 0))}
+            </Text>
+          </Box>
+        )}
+      </HStack>
+      <Table.Root
+        size="sm"
+        variant="line"
+        css={{ "& tr, & td, & th": { backgroundColor: "transparent" } }}
+      >
+        <Table.Header>
+          <Table.Row>
+            <Table.ColumnHeader fontSize="2xs">Worker</Table.ColumnHeader>
+            <Table.ColumnHeader fontSize="2xs" textAlign="right">Share</Table.ColumnHeader>
+            <Table.ColumnHeader fontSize="2xs" textAlign="right">Gross</Table.ColumnHeader>
+            <Table.ColumnHeader fontSize="2xs" textAlign="right">Fee/margin</Table.ColumnHeader>
+            <Table.ColumnHeader fontSize="2xs" textAlign="right">Top-up</Table.ColumnHeader>
+            <Table.ColumnHeader fontSize="2xs" textAlign="right">Net</Table.ColumnHeader>
+          </Table.Row>
+        </Table.Header>
+        <Table.Body>
+          {job.assignees.map((a, i) => (
+            <Table.Row key={`${a.userId}-${a.isOwnerEarnings ? "owner" : "wage"}-${i}`}>
+              <Table.Cell fontSize="xs">
+                <HStack gap={1} wrap="wrap">
+                  <Text fontWeight="semibold">
+                    {a.displayName ?? "(unnamed)"}
+                  </Text>
+                  <Badge size="xs" colorPalette={workerTypePalette(a.workerType, a.isOwner)} variant="subtle">
+                    {workerTypeLabel(a.workerType, a.isOwner)}
+                  </Badge>
+                  {a.isOwnerEarnings && (
+                    <Badge size="xs" colorPalette="orange" variant="subtle">owner cut</Badge>
+                  )}
+                </HStack>
+              </Table.Cell>
+              <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono">
+                {a.isOwnerEarnings ? "—" : `${fmtPercent(a.splitPercent)}%`}
+              </Table.Cell>
+              <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono">
+                {fmtUSD(a.gross)}
+              </Table.Cell>
+              <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono">
+                {a.feeOrMargin === 0 ? "—" : fmtUSD(-a.feeOrMargin)}
+              </Table.Cell>
+              <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono">
+                {a.topUp > 0 ? fmtUSD(a.topUp) : "—"}
+              </Table.Cell>
+              <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono" fontWeight="semibold">
+                {fmtUSD(a.netPaid)}
+              </Table.Cell>
+            </Table.Row>
+          ))}
+          <Table.Row bg="blackAlpha.50">
+            <Table.Cell fontSize="xs" fontWeight="bold">Total</Table.Cell>
+            <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono" fontWeight="bold">
+              {fmtPercent(totals.splitPercent)}%
+            </Table.Cell>
+            <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono" fontWeight="bold">
+              {fmtUSD(totals.gross)}
+            </Table.Cell>
+            <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono" fontWeight="bold">
+              {totals.feeOrMargin === 0 ? "—" : fmtUSD(-totals.feeOrMargin)}
+            </Table.Cell>
+            <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono" fontWeight="bold">
+              {totals.topUp > 0 ? fmtUSD(totals.topUp) : "—"}
+            </Table.Cell>
+            <Table.Cell fontSize="xs" textAlign="right" fontFamily="mono" fontWeight="bold">
+              {fmtUSD(totals.netPaid)}
+            </Table.Cell>
+          </Table.Row>
+        </Table.Body>
+      </Table.Root>
+    </Box>
+  );
+}
+
+// Wage-compliance banner. Splits below-floor workers into three
+// buckets: W-2 (legal compliance issue), standard contractor
+// (reclassification risk signal — not a legal violation but the kind
+// of pattern the DOL/IRS cite), and guaranteed-payout contractor
+// (Company is voluntarily underwriting timing risk during onboarding).
+// Uses preTopUpHourly as the effective rate — matches what the Payroll
+// card's per-row "Below min wage" badge uses.
+function WageComplianceBanner({
+  workers,
+  minWagePerHour,
+}: {
+  workers: WorkerRow[];
+  minWagePerHour: number;
+}) {
+  const floor = minWagePerHour;
+  const belowEmp = workers.filter(
+    (w) =>
+      !w.isOwner &&
+      w.preTopUpHourly != null &&
+      w.preTopUpHourly < floor &&
+      (w.workerType === "EMPLOYEE" || w.workerType === "TRAINEE"),
+  );
+  const belowCon = workers.filter(
+    (w) =>
+      w.preTopUpHourly != null &&
+      w.preTopUpHourly < floor &&
+      w.workerType === "CONTRACTOR",
+  );
+  const belowConGuaranteed = belowCon.filter((w) => w.guaranteedPayoutActive);
+  const belowConStandard = belowCon.filter((w) => !w.guaranteedPayoutActive);
+  if (belowEmp.length === 0 && belowCon.length === 0) return null;
+  // Build count phrases flat, join with "; " — avoids double-space
+  // JSX whitespace quirks from inline fragment concatenation.
+  const parts: string[] = [];
+  if (belowEmp.length > 0) {
+    parts.push(`${belowEmp.length} W-2 worker${belowEmp.length === 1 ? "" : "s"}`);
+  }
+  if (belowConStandard.length > 0) {
+    parts.push(`${belowConStandard.length} contractor${belowConStandard.length === 1 ? "" : "s"} (reclassification risk)`);
+  }
+  if (belowConGuaranteed.length > 0) {
+    parts.push(`${belowConGuaranteed.length} contractor${belowConGuaranteed.length === 1 ? "" : "s"} (guaranteed payout)`);
+  }
+  return (
+    <Box mb={3} p={2} bg="red.50" borderWidth="1px" borderColor="red.300" rounded="md">
+      <Text fontSize="xs" color="red.900" fontWeight="semibold">
+        Below ${floor.toFixed(2)}/hr floor in window: {parts.join("; ")}
+      </Text>
+      <Text fontSize="2xs" color="red.800" mt={0.5}>
+        W-2 below the floor is a legal compliance issue. Contractors below the floor aren&apos;t a legal violation
+        if they&apos;re truly independent — but a persistently low effective rate is the kind of signal the DOL/IRS
+        cite when reclassifying contractors as employees.
+        {belowConGuaranteed.length > 0 && (
+          <> Contractors marked &quot;guaranteed payout&quot; are currently in an active onboarding period — the Company is voluntarily underwriting their timing risk, but the rate signal is still worth watching for when the period ends.</>
+        )}
+      </Text>
     </Box>
   );
 }

@@ -125,8 +125,8 @@ export function projectViewerPayout(
 
 /**
  * Estimate the SUM of all active workers' payouts on an unpaid job —
- * used by team-aggregate views (AdminHome, OperationsTab) that want to
- * show what the business is on the hook for if this job gets paid.
+ * used by team-aggregate views (AdminHome) that want to show what the
+ * business is on the hook for if this job gets paid.
  *
  * Iterates each non-observer assignee and applies THEIR rate to their
  * share. If individual workerTypes aren't available on the occurrence
