@@ -16,10 +16,13 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { Mail, MessageSquare, Search, X } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
+import { Mail, MessageSquare, Search, X } from "lucide-react";
 import { fmtDateOpts } from "@/src/lib/lib";
-import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
+import {
+  publishInlineMessage,
+  getErrorMessage,
+} from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
 type RecipientUser = {
@@ -50,7 +53,12 @@ type SendSummary = {
 type HistoryEntry = {
   id: string;
   createdAt: string;
-  actor?: { id: string; displayName?: string | null; firstName?: string | null; lastName?: string | null } | null;
+  actor?: {
+    id: string;
+    displayName?: string | null;
+    firstName?: string | null;
+    lastName?: string | null;
+  } | null;
   metadata: any;
 };
 
@@ -91,7 +99,9 @@ export default function AdminNotifyTab() {
   // ── Loaders ────────────────────────────────────────────────────
   async function loadUsers() {
     try {
-      const list = await apiGet<RecipientUser[]>("/api/admin/users?approved=true");
+      const list = await apiGet<RecipientUser[]>(
+        "/api/admin/users?approved=true",
+      );
       setUsers(Array.isArray(list) ? list : []);
     } catch {
       setUsers([]);
@@ -100,7 +110,9 @@ export default function AdminNotifyTab() {
   }
   async function loadTemplates() {
     try {
-      const list = await apiGet<Template[]>("/api/admin/notification-templates");
+      const list = await apiGet<Template[]>(
+        "/api/admin/notification-templates",
+      );
       setTemplates(Array.isArray(list) ? list : []);
     } catch {
       setTemplates([]);
@@ -109,7 +121,9 @@ export default function AdminNotifyTab() {
   async function loadHistory() {
     setLoadingHistory(true);
     try {
-      const r = await apiGet<{ items: HistoryEntry[]; total: number }>(`/api/admin/notify/history?page=1&pageSize=${HISTORY_INITIAL}`);
+      const r = await apiGet<{ items: HistoryEntry[]; total: number }>(
+        `/api/admin/notify/history?page=1&pageSize=${HISTORY_INITIAL}`,
+      );
       setHistory(Array.isArray(r?.items) ? r.items : []);
       setHistoryTotal(typeof r?.total === "number" ? r.total : 0);
     } catch {
@@ -127,7 +141,9 @@ export default function AdminNotifyTab() {
       // requesting larger pages and slicing locally — simplest is to refetch
       // a single combined page sized to (current + HISTORY_PAGE).
       const want = history.length + HISTORY_PAGE;
-      const r = await apiGet<{ items: HistoryEntry[]; total: number }>(`/api/admin/notify/history?page=1&pageSize=${want}`);
+      const r = await apiGet<{ items: HistoryEntry[]; total: number }>(
+        `/api/admin/notify/history?page=1&pageSize=${want}`,
+      );
       setHistory(Array.isArray(r?.items) ? r.items : []);
       setHistoryTotal(typeof r?.total === "number" ? r.total : 0);
     } catch {
@@ -136,7 +152,11 @@ export default function AdminNotifyTab() {
     setLoadingMore(false);
   }
 
-  useEffect(() => { void loadUsers(); void loadTemplates(); void loadHistory(); }, []);
+  useEffect(() => {
+    void loadUsers();
+    void loadTemplates();
+    void loadHistory();
+  }, []);
 
   // ── Derived ───────────────────────────────────────────────────
   const filteredUsers = useMemo(() => {
@@ -161,11 +181,18 @@ export default function AdminNotifyTab() {
   const channelProjection = useMemo(() => {
     const targets = users.filter((u) => selectedIds.includes(u.id));
     if (pushOnly) {
-      return { recipients: targets.length, sms: 0, email: 0, push: targets.length };
+      return {
+        recipients: targets.length,
+        sms: 0,
+        email: 0,
+        push: targets.length,
+      };
     }
-    let sms = 0, email = 0;
+    let sms = 0,
+      email = 0;
     for (const u of targets) {
-      if (u.phone) sms++; else if (u.email) email++;
+      if (u.phone) sms++;
+      else if (u.email) email++;
     }
     return { recipients: targets.length, sms, email, push: targets.length };
   }, [users, selectedIds, pushOnly]);
@@ -192,15 +219,22 @@ export default function AdminNotifyTab() {
         body: body.trim(),
         channels: pushOnly ? ["push"] : undefined,
       };
-      const r = await apiPost<{ ok: boolean; summary: SendSummary }>("/api/admin/notify", payload);
+      const r = await apiPost<{ ok: boolean; summary: SendSummary }>(
+        "/api/admin/notify",
+        payload,
+      );
       const s = r.summary;
       const parts = [
         `${s.totalRecipients} recipient${s.totalRecipients === 1 ? "" : "s"}`,
         s.smsSent > 0 ? `${s.smsSent} SMS` : null,
-        s.emailSent > 0 ? `${s.emailSent} email${s.emailSent === 1 ? "" : "s"}` : null,
+        s.emailSent > 0
+          ? `${s.emailSent} email${s.emailSent === 1 ? "" : "s"}`
+          : null,
         s.pushDelivered > 0 ? `${s.pushDelivered} push` : null,
         s.failed > 0 ? `${s.failed} failed` : null,
-      ].filter(Boolean).join(", ");
+      ]
+        .filter(Boolean)
+        .join(", ");
 
       // If the admin opted in to a home banner alongside the message, post
       // it as a second action. Failure here is reported separately so the
@@ -224,13 +258,19 @@ export default function AdminNotifyTab() {
         }
       }
 
-      publishInlineMessage({ type: "SUCCESS", text: `Sent — ${parts}${bannerNote}.` });
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: `Sent — ${parts}${bannerNote}.`,
+      });
       setPreviewMode(false);
       setBody("");
       setTitle("");
       void loadHistory();
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Send failed.", err) });
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Send failed.", err),
+      });
     } finally {
       setSending(false);
     }
@@ -243,7 +283,9 @@ export default function AdminNotifyTab() {
         {/* Compose / Preview Card */}
         <Card.Root variant="outline">
           <Card.Header py="2" px="3" pb="0">
-            <Text fontWeight="semibold">{previewMode ? "Preview & send" : "Compose notification"}</Text>
+            <Text fontWeight="semibold">
+              {previewMode ? "Preview & send" : "Compose notification"}
+            </Text>
           </Card.Header>
           <Card.Body py="3" px="3">
             {previewMode ? (
@@ -286,17 +328,38 @@ export default function AdminNotifyTab() {
         <Card.Root variant="outline">
           <Card.Header py="2" px="3" pb="0">
             <HStack justify="space-between">
-              <Text fontWeight="semibold">Recent sends {historyTotal > 0 ? `(${history.length} of ${historyTotal})` : ""}</Text>
-              <Button size="xs" variant="ghost" onClick={() => void loadHistory()}>Refresh</Button>
+              <Text fontWeight="semibold">
+                Recent sends{" "}
+                {historyTotal > 0
+                  ? `(${history.length} of ${historyTotal})`
+                  : ""}
+              </Text>
+              <Button
+                size="xs"
+                variant="ghost"
+                onClick={() => void loadHistory()}
+              >
+                Refresh
+              </Button>
             </HStack>
           </Card.Header>
           <Card.Body py="2" px="3">
             <VStack align="stretch" gap={2}>
-              <HistoryView entries={history} loading={loadingHistory} userMap={users} />
+              <HistoryView
+                entries={history}
+                loading={loadingHistory}
+                userMap={users}
+              />
               {!loadingHistory && history.length < historyTotal && (
                 <HStack justify="center">
-                  <Button size="xs" variant="outline" loading={loadingMore} onClick={() => void loadMoreHistory()}>
-                    Load {Math.min(HISTORY_PAGE, historyTotal - history.length)} more
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    loading={loadingMore}
+                    onClick={() => void loadMoreHistory()}
+                  >
+                    Load {Math.min(HISTORY_PAGE, historyTotal - history.length)}{" "}
+                    more
                   </Button>
                 </HStack>
               )}
@@ -338,11 +401,32 @@ function ComposeView(props: {
   setPostBanner: (b: boolean) => void;
   onPreview: () => void;
 }) {
-  const { users, loadingUsers, filteredUsers, recipients, setRecipients, search, setSearch,
-    templates, onApplyTemplate, onManageTemplates, title, setTitle, body, setBody, pushOnly, setPushOnly, postBanner, setPostBanner, onPreview } = props;
+  const {
+    users,
+    loadingUsers,
+    filteredUsers,
+    recipients,
+    setRecipients,
+    search,
+    setSearch,
+    templates,
+    onApplyTemplate,
+    onManageTemplates,
+    title,
+    setTitle,
+    body,
+    setBody,
+    pushOnly,
+    setPushOnly,
+    postBanner,
+    setPostBanner,
+    onPreview,
+  } = props;
 
   const isAll = recipients === "all";
-  const selectedSet = isAll ? new Set(users.map((u) => u.id)) : new Set(recipients);
+  const selectedSet = isAll
+    ? new Set(users.map((u) => u.id))
+    : new Set(recipients);
   const totalSelected = isAll ? users.length : (recipients as string[]).length;
 
   const toggleUser = (id: string) => {
@@ -353,7 +437,8 @@ function ComposeView(props: {
     } else {
       const next = (recipients as string[]).slice();
       const idx = next.indexOf(id);
-      if (idx >= 0) next.splice(idx, 1); else next.push(id);
+      if (idx >= 0) next.splice(idx, 1);
+      else next.push(id);
       setRecipients(next);
     }
   };
@@ -362,7 +447,9 @@ function ComposeView(props: {
     <VStack align="stretch" gap={3}>
       {/* Recipients */}
       <Box>
-        <Text fontSize="xs" color="fg.muted" mb={1}>Recipients</Text>
+        <Text fontSize="xs" color="fg.muted" mb={1}>
+          Recipients
+        </Text>
         <HStack gap={2} mb={2}>
           <Button
             size="xs"
@@ -390,7 +477,15 @@ function ComposeView(props: {
         {!isAll && (
           <Box borderWidth="1px" borderRadius="md" p={2} bg="bg.subtle">
             <HStack gap={2} mb={2}>
-              <Box flex={1} display="flex" alignItems="center" borderWidth="1px" borderRadius="md" px={2} bg="white">
+              <Box
+                flex={1}
+                display="flex"
+                alignItems="center"
+                borderWidth="1px"
+                borderRadius="md"
+                px={2}
+                bg="white"
+              >
                 <Search size={14} />
                 <Input
                   variant="outline"
@@ -402,8 +497,20 @@ function ComposeView(props: {
                   onChange={(e) => setSearch(e.target.value)}
                 />
               </Box>
-              <Button size="xs" variant="ghost" onClick={() => setRecipients(users.map((u) => u.id))}>Select all</Button>
-              <Button size="xs" variant="ghost" onClick={() => setRecipients([])}>Clear</Button>
+              <Button
+                size="xs"
+                variant="ghost"
+                onClick={() => setRecipients(users.map((u) => u.id))}
+              >
+                Select all
+              </Button>
+              <Button
+                size="xs"
+                variant="ghost"
+                onClick={() => setRecipients([])}
+              >
+                Clear
+              </Button>
             </HStack>
             {loadingUsers ? (
               <Spinner size="sm" />
@@ -411,11 +518,14 @@ function ComposeView(props: {
               <VStack align="stretch" gap={1} maxH="220px" overflowY="auto">
                 {filteredUsers.map((u) => {
                   const checked = selectedSet.has(u.id);
-                  const isAdmin = (u.roles ?? []).some((r) => r.role === "ADMIN" || r.role === "SUPER");
+                  const isAdmin = (u.roles ?? []).some(
+                    (r) => r.role === "ADMIN" || r.role === "SUPER",
+                  );
                   return (
                     <HStack
                       key={u.id}
-                      px={2} py={1.5}
+                      px={2}
+                      py={1.5}
                       borderRadius="md"
                       cursor="pointer"
                       bg={checked ? "blue.50" : undefined}
@@ -423,38 +533,74 @@ function ComposeView(props: {
                       onClick={() => toggleUser(u.id)}
                     >
                       <input type="checkbox" readOnly checked={checked} />
-                      <Text fontSize="sm" flex={1}>{u.displayName || u.email || u.id}</Text>
-                      {isAdmin && <Badge size="sm" colorPalette="purple">Admin</Badge>}
-                      <Box color="fg.muted" display="flex" alignItems="center" title={u.phone ? "SMS-capable" : u.email ? "Email only" : "No contact method"}>
-                        {u.phone ? <MessageSquare size={12} /> : u.email ? <Mail size={12} /> : null}
+                      <Text fontSize="sm" flex={1}>
+                        {u.displayName || u.email || u.id}
+                      </Text>
+                      {isAdmin && (
+                        <Badge size="sm" colorPalette="purple">
+                          Admin
+                        </Badge>
+                      )}
+                      <Box
+                        color="fg.muted"
+                        display="flex"
+                        alignItems="center"
+                        title={
+                          u.phone
+                            ? "SMS-capable"
+                            : u.email
+                              ? "Email only"
+                              : "No contact method"
+                        }
+                      >
+                        {u.phone ? (
+                          <MessageSquare size={12} />
+                        ) : u.email ? (
+                          <Mail size={12} />
+                        ) : null}
                       </Box>
                     </HStack>
                   );
                 })}
                 {filteredUsers.length === 0 && (
-                  <Text fontSize="xs" color="fg.muted" textAlign="center" py={2}>No matches.</Text>
+                  <Text
+                    fontSize="xs"
+                    color="fg.muted"
+                    textAlign="center"
+                    py={2}
+                  >
+                    No matches.
+                  </Text>
                 )}
               </VStack>
             )}
           </Box>
         )}
         <Text fontSize="xs" color="fg.muted" mt={1}>
-          {totalSelected === 0 ? "No recipients selected" : `${totalSelected} recipient${totalSelected === 1 ? "" : "s"}`}
+          {totalSelected === 0
+            ? "No recipients selected"
+            : `${totalSelected} recipient${totalSelected === 1 ? "" : "s"}`}
         </Text>
       </Box>
 
       {/* Template picker */}
       <Box>
         <HStack justify="space-between" mb={1}>
-          <Text fontSize="xs" color="fg.muted">Template (optional)</Text>
-          <Button size="xs" variant="ghost" onClick={onManageTemplates}>Manage templates</Button>
+          <Text fontSize="xs" color="fg.muted">
+            Template (optional)
+          </Text>
+          <Button size="xs" variant="ghost" onClick={onManageTemplates}>
+            Manage templates
+          </Button>
         </HStack>
         <TemplateSelect templates={templates} onApply={onApplyTemplate} />
       </Box>
 
       {/* Title */}
       <Box>
-        <Text fontSize="xs" color="fg.muted" mb={1}>Title (optional)</Text>
+        <Text fontSize="xs" color="fg.muted" mb={1}>
+          Title (optional)
+        </Text>
         <Input
           size="sm"
           placeholder="Seedlings — message from admin"
@@ -466,8 +612,15 @@ function ComposeView(props: {
       {/* Body */}
       <Box>
         <HStack justify="space-between" mb={1}>
-          <Text fontSize="xs" color="fg.muted">Message *</Text>
-          <Text fontSize="xs" color={body.length > 160 ? "yellow.700" : "fg.muted"}>{body.length} chars</Text>
+          <Text fontSize="xs" color="fg.muted">
+            Message *
+          </Text>
+          <Text
+            fontSize="xs"
+            color={body.length > 160 ? "yellow.700" : "fg.muted"}
+          >
+            {body.length} chars
+          </Text>
         </HStack>
         <Textarea
           size="sm"
@@ -478,7 +631,8 @@ function ComposeView(props: {
         />
         {body.length > 160 && (
           <Text fontSize="xs" color="yellow.700" mt={1}>
-            Over 160 characters — Twilio will split into multiple SMS segments (each costs separately).
+            Over 160 characters — Twilio will split into multiple SMS segments
+            (each costs separately).
           </Text>
         )}
       </Box>
@@ -486,10 +640,19 @@ function ComposeView(props: {
       {/* Push-only toggle */}
       <HStack justify="space-between" align="center">
         <Box>
-          <Text fontSize="sm" fontWeight="semibold">Push-only</Text>
-          <Text fontSize="xs" color="fg.muted">Skip SMS + email. Free, but only reaches users with notifications enabled.</Text>
+          <Text fontSize="sm" fontWeight="semibold">
+            Push-only
+          </Text>
+          <Text fontSize="xs" color="fg.muted">
+            Skip SMS + email. Free, but only reaches users with notifications
+            enabled.
+          </Text>
         </Box>
-        <Switch.Root checked={pushOnly} onCheckedChange={(d: any) => setPushOnly(!!d.checked)} colorPalette="blue">
+        <Switch.Root
+          checked={pushOnly}
+          onCheckedChange={(d: any) => setPushOnly(!!d.checked)}
+          colorPalette="blue"
+        >
           <Switch.HiddenInput />
           <Switch.Control />
         </Switch.Root>
@@ -499,10 +662,19 @@ function ComposeView(props: {
           for each recipient. They individually dismiss it. */}
       <HStack justify="space-between" align="center">
         <Box>
-          <Text fontSize="sm" fontWeight="semibold">Also post home banner</Text>
-          <Text fontSize="xs" color="fg.muted">Sticky message at the top of each recipient&apos;s Worker Home tab until they dismiss it.</Text>
+          <Text fontSize="sm" fontWeight="semibold">
+            Also post home banner
+          </Text>
+          <Text fontSize="xs" color="fg.muted">
+            Sticky message at the top of each recipient&apos;s Worker Home tab
+            until they dismiss it.
+          </Text>
         </Box>
-        <Switch.Root checked={postBanner} onCheckedChange={(d: any) => setPostBanner(!!d.checked)} colorPalette="blue">
+        <Switch.Root
+          checked={postBanner}
+          onCheckedChange={(d: any) => setPostBanner(!!d.checked)}
+          colorPalette="blue"
+        >
           <Switch.HiddenInput />
           <Switch.Control />
         </Switch.Root>
@@ -524,7 +696,13 @@ function ComposeView(props: {
 }
 
 // ── Template select (Chakra v3 Select.Root) ──────────────────────
-function TemplateSelect({ templates, onApply }: { templates: Template[]; onApply: (id: string) => void }) {
+function TemplateSelect({
+  templates,
+  onApply,
+}: {
+  templates: Template[];
+  onApply: (id: string) => void;
+}) {
   const items = useMemo(
     () => templates.map((t) => ({ label: t.name, value: t.id })),
     [templates],
@@ -543,7 +721,13 @@ function TemplateSelect({ templates, onApply }: { templates: Template[]; onApply
     >
       <Select.Control>
         <Select.Trigger w="full">
-          <Select.ValueText placeholder={items.length === 0 ? "No templates yet" : "Select to fill from a template"} />
+          <Select.ValueText
+            placeholder={
+              items.length === 0
+                ? "No templates yet"
+                : "Select to fill from a template"
+            }
+          />
         </Select.Trigger>
       </Select.Control>
       <Select.Positioner>
@@ -572,67 +756,155 @@ function PreviewView(props: {
   const { projection, title, body, pushOnly, onBack, onSend, sending } = props;
   return (
     <VStack align="stretch" gap={3}>
-      <Box p={3} borderWidth="1px" borderRadius="md" bg="blue.50" borderColor="blue.200">
-        <Text fontSize="sm" fontWeight="semibold">Sending to {projection.recipients} recipient{projection.recipients === 1 ? "" : "s"}</Text>
+      <Box
+        p={3}
+        borderWidth="1px"
+        borderRadius="md"
+        bg="blue.50"
+        borderColor="blue.200"
+      >
+        <Text fontSize="sm" fontWeight="semibold">
+          Sending to {projection.recipients} recipient
+          {projection.recipients === 1 ? "" : "s"}
+        </Text>
         <VStack align="start" gap={0.5} mt={1} fontSize="xs" color="blue.900">
-          {!pushOnly && projection.sms > 0 && <Text>• {projection.sms} SMS</Text>}
-          {!pushOnly && projection.email > 0 && <Text>• {projection.email} email{projection.email === 1 ? "" : "s"}</Text>}
+          {!pushOnly && projection.sms > 0 && (
+            <Text>• {projection.sms} SMS</Text>
+          )}
+          {!pushOnly && projection.email > 0 && (
+            <Text>
+              • {projection.email} email{projection.email === 1 ? "" : "s"}
+            </Text>
+          )}
           {projection.push > 0 && <Text>• up to {projection.push} push</Text>}
-          {pushOnly && <Text fontStyle="italic">Push-only — SMS and email skipped.</Text>}
+          {pushOnly && (
+            <Text fontStyle="italic">Push-only — SMS and email skipped.</Text>
+          )}
         </VStack>
       </Box>
 
       <Box p={3} borderWidth="1px" borderRadius="md">
-        <Text fontSize="xs" color="fg.muted" mb={1}>Title</Text>
-        <Text fontSize="sm" fontWeight="semibold" mb={2}>{title || "Seedlings — message from admin"}</Text>
-        <Text fontSize="xs" color="fg.muted" mb={1}>Message</Text>
-        <Text fontSize="sm" whiteSpace="pre-wrap">{body}</Text>
+        <Text fontSize="xs" color="fg.muted" mb={1}>
+          Title
+        </Text>
+        <Text fontSize="sm" fontWeight="semibold" mb={2}>
+          {title || "Seedlings — message from admin"}
+        </Text>
+        <Text fontSize="xs" color="fg.muted" mb={1}>
+          Message
+        </Text>
+        <Text fontSize="sm" whiteSpace="pre-wrap">
+          {body}
+        </Text>
         <Text fontSize="xs" color="fg.muted" mt={2}>
           A "— [your name]" footer will be appended automatically.
         </Text>
       </Box>
 
       <HStack justify="space-between">
-        <Button size="sm" variant="ghost" onClick={onBack} disabled={sending}>← Back</Button>
-        <Button size="sm" colorPalette="green" loading={sending} onClick={onSend}>Send</Button>
+        <Button size="sm" variant="ghost" onClick={onBack} disabled={sending}>
+          ← Back
+        </Button>
+        <Button
+          size="sm"
+          colorPalette="green"
+          loading={sending}
+          onClick={onSend}
+        >
+          Send
+        </Button>
       </HStack>
     </VStack>
   );
 }
 
 // ── History subview ───────────────────────────────────────────────
-function HistoryView(props: { entries: HistoryEntry[]; loading: boolean; userMap: RecipientUser[] }) {
+function HistoryView(props: {
+  entries: HistoryEntry[];
+  loading: boolean;
+  userMap: RecipientUser[];
+}) {
   const { entries, loading, userMap } = props;
   if (loading) return <Spinner size="sm" />;
-  if (entries.length === 0) return <Text fontSize="xs" color="fg.muted">No notifications sent yet.</Text>;
-  const nameById = (id: string) => userMap.find((u) => u.id === id)?.displayName || id.slice(-6);
+  if (entries.length === 0)
+    return (
+      <Text fontSize="xs" color="fg.muted">
+        No notifications sent yet.
+      </Text>
+    );
+  const nameById = (id: string) =>
+    userMap.find((u) => u.id === id)?.displayName || id.slice(-6);
   return (
     <VStack align="stretch" gap={2}>
       {entries.map((e) => {
         const m = e.metadata || {};
         const recipientIds = (m.recipientUserIds || []) as string[];
         const summary = m.summary || {};
-        const senderName = e.actor?.displayName
-          || [e.actor?.firstName, e.actor?.lastName].filter(Boolean).join(" ").trim()
-          || "Admin";
+        const senderName =
+          e.actor?.displayName ||
+          [e.actor?.firstName, e.actor?.lastName]
+            .filter(Boolean)
+            .join(" ")
+            .trim() ||
+          "Admin";
         return (
-          <Box key={e.id} p={2} borderWidth="1px" borderRadius="md" fontSize="xs">
+          <Box
+            key={e.id}
+            p={2}
+            borderWidth="1px"
+            borderRadius="md"
+            fontSize="xs"
+          >
             <HStack justify="space-between" mb={1} flexWrap="wrap">
               <Text fontWeight="semibold">{m.title || "Untitled"}</Text>
-              <Text color="fg.muted">{fmtDateOpts(e.createdAt, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</Text>
+              <Text color="fg.muted">
+                {fmtDateOpts(e.createdAt, {
+                  month: "short",
+                  day: "numeric",
+                  hour: "numeric",
+                  minute: "2-digit",
+                })}
+              </Text>
             </HStack>
-            <Text whiteSpace="pre-wrap" mb={1}>{m.body || ""}</Text>
+            <Text whiteSpace="pre-wrap" mb={1}>
+              {m.body || ""}
+            </Text>
             <HStack flexWrap="wrap" gap={1.5} color="fg.muted">
               <Text>Sent by {senderName}</Text>
               <Text>·</Text>
-              <Text>{recipientIds.length} recipient{recipientIds.length === 1 ? "" : "s"}</Text>
-              {summary.smsSent > 0 && <><Text>·</Text><Text>{summary.smsSent} SMS</Text></>}
-              {summary.emailSent > 0 && <><Text>·</Text><Text>{summary.emailSent} email</Text></>}
-              {summary.pushDelivered > 0 && <><Text>·</Text><Text>{summary.pushDelivered} push</Text></>}
-              {summary.failed > 0 && <><Text>·</Text><Text color="red.600">{summary.failed} failed</Text></>}
+              <Text>
+                {recipientIds.length} recipient
+                {recipientIds.length === 1 ? "" : "s"}
+              </Text>
+              {summary.smsSent > 0 && (
+                <>
+                  <Text>·</Text>
+                  <Text>{summary.smsSent} SMS</Text>
+                </>
+              )}
+              {summary.emailSent > 0 && (
+                <>
+                  <Text>·</Text>
+                  <Text>{summary.emailSent} email</Text>
+                </>
+              )}
+              {summary.pushDelivered > 0 && (
+                <>
+                  <Text>·</Text>
+                  <Text>{summary.pushDelivered} push</Text>
+                </>
+              )}
+              {summary.failed > 0 && (
+                <>
+                  <Text>·</Text>
+                  <Text color="red.600">{summary.failed} failed</Text>
+                </>
+              )}
             </HStack>
             {recipientIds.length > 0 && recipientIds.length <= 6 && (
-              <Text mt={1} color="fg.muted">→ {recipientIds.map(nameById).join(", ")}</Text>
+              <Text mt={1} color="fg.muted">
+                → {recipientIds.map(nameById).join(", ")}
+              </Text>
             )}
           </Box>
         );
@@ -642,7 +914,11 @@ function HistoryView(props: { entries: HistoryEntry[]; loading: boolean; userMap
 }
 
 // ── Template manager modal ────────────────────────────────────────
-function TemplateManager(props: { templates: Template[]; onClose: () => void; onChanged: () => Promise<void> | void }) {
+function TemplateManager(props: {
+  templates: Template[];
+  onClose: () => void;
+  onChanged: () => Promise<void> | void;
+}) {
   const { templates, onClose, onChanged } = props;
   const [editing, setEditing] = useState<Template | null>(null);
   const [name, setName] = useState("");
@@ -671,15 +947,26 @@ function TemplateManager(props: { templates: Template[]; onClose: () => void; on
     setSaving(true);
     try {
       if (editing.id) {
-        await apiPatch(`/api/admin/notification-templates/${editing.id}`, { name: name.trim(), title: title.trim() || null, body: body.trim() });
+        await apiPatch(`/api/admin/notification-templates/${editing.id}`, {
+          name: name.trim(),
+          title: title.trim() || null,
+          body: body.trim(),
+        });
       } else {
-        await apiPost("/api/admin/notification-templates", { name: name.trim(), title: title.trim() || null, body: body.trim() });
+        await apiPost("/api/admin/notification-templates", {
+          name: name.trim(),
+          title: title.trim() || null,
+          body: body.trim(),
+        });
       }
       await onChanged();
       setEditing(null);
       publishInlineMessage({ type: "SUCCESS", text: "Template saved." });
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Save failed.", err) });
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Save failed.", err),
+      });
     } finally {
       setSaving(false);
     }
@@ -691,79 +978,168 @@ function TemplateManager(props: { templates: Template[]; onClose: () => void; on
       await onChanged();
       publishInlineMessage({ type: "SUCCESS", text: "Template deleted." });
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Delete failed.", err) });
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Delete failed.", err),
+      });
     }
   }
 
   return (
     <>
-    <Box position="fixed" inset={0} bg="rgba(0,0,0,0.4)" zIndex={1000} display="flex" alignItems="center" justifyContent="center" p={4}>
-      <Box bg="white" borderRadius="md" p={4} maxW="600px" w="full" maxH="90vh" overflowY="auto" boxShadow="lg">
-        <HStack justify="space-between" mb={3}>
-          <Text fontWeight="semibold">Manage templates</Text>
-          <Button size="xs" variant="ghost" onClick={onClose}><X size={14} /></Button>
-        </HStack>
-        {editing ? (
-          <VStack align="stretch" gap={2}>
-            <Text fontSize="xs" color="fg.muted">{editing.id ? "Edit template" : "New template"}</Text>
-            <Box>
-              <Text fontSize="xs" color="fg.muted" mb={1}>Name *</Text>
-              <Input size="sm" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Cancelled — weather" />
-            </Box>
-            <Box>
-              <Text fontSize="xs" color="fg.muted" mb={1}>Title (optional)</Text>
-              <Input size="sm" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Push notification title" />
-            </Box>
-            <Box>
-              <Text fontSize="xs" color="fg.muted" mb={1}>Body *</Text>
-              <Textarea size="sm" value={body} onChange={(e) => setBody(e.target.value)} rows={4} />
-            </Box>
-            <HStack justify="flex-end" gap={2}>
-              <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Cancel</Button>
-              <Button size="sm" colorPalette="blue" loading={saving} disabled={!name.trim() || !body.trim()} onClick={save}>Save</Button>
-            </HStack>
-          </VStack>
-        ) : (
-          <VStack align="stretch" gap={2}>
-            <HStack justify="flex-end">
-              <Button size="xs" colorPalette="blue" onClick={startNew}>+ New template</Button>
-            </HStack>
-            {templates.length === 0 ? (
-              <Text fontSize="xs" color="fg.muted" textAlign="center" py={3}>No templates yet.</Text>
-            ) : (
-              templates.map((t) => (
-                <Box key={t.id} p={2} borderWidth="1px" borderRadius="md">
-                  <HStack justify="space-between" align="start">
-                    <VStack align="start" gap={0.5} flex={1} minW={0}>
-                      <Text fontSize="sm" fontWeight="semibold">{t.name}</Text>
-                      {t.title && <Text fontSize="xs" color="fg.muted">Title: {t.title}</Text>}
-                      <Text fontSize="xs" whiteSpace="pre-wrap">{t.body}</Text>
-                    </VStack>
-                    <VStack gap={1}>
-                      <Button size="xs" variant="ghost" onClick={() => startEdit(t)}>Edit</Button>
-                      <Button size="xs" variant="ghost" colorPalette="red" onClick={() => setConfirmDelete(t)}>Delete</Button>
-                    </VStack>
-                  </HStack>
-                </Box>
-              ))
-            )}
-          </VStack>
-        )}
+      <Box
+        position="fixed"
+        inset={0}
+        bg="rgba(0,0,0,0.4)"
+        zIndex={1000}
+        display="flex"
+        alignItems="center"
+        justifyContent="center"
+        p={4}
+      >
+        <Box
+          bg="white"
+          borderRadius="md"
+          p={4}
+          maxW="600px"
+          w="full"
+          maxH="90vh"
+          overflowY="auto"
+          boxShadow="lg"
+        >
+          <HStack justify="space-between" mb={3}>
+            <Text fontWeight="semibold">Manage templates</Text>
+            <Button size="xs" variant="ghost" onClick={onClose}>
+              <X size={14} />
+            </Button>
+          </HStack>
+          {editing ? (
+            <VStack align="stretch" gap={2}>
+              <Text fontSize="xs" color="fg.muted">
+                {editing.id ? "Edit template" : "New template"}
+              </Text>
+              <Box>
+                <Text fontSize="xs" color="fg.muted" mb={1}>
+                  Name *
+                </Text>
+                <Input
+                  size="sm"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. Cancelled — weather"
+                />
+              </Box>
+              <Box>
+                <Text fontSize="xs" color="fg.muted" mb={1}>
+                  Title (optional)
+                </Text>
+                <Input
+                  size="sm"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="Push notification title"
+                />
+              </Box>
+              <Box>
+                <Text fontSize="xs" color="fg.muted" mb={1}>
+                  Body *
+                </Text>
+                <Textarea
+                  size="sm"
+                  value={body}
+                  onChange={(e) => setBody(e.target.value)}
+                  rows={4}
+                />
+              </Box>
+              <HStack justify="flex-end" gap={2}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setEditing(null)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  colorPalette="blue"
+                  loading={saving}
+                  disabled={!name.trim() || !body.trim()}
+                  onClick={save}
+                >
+                  Save
+                </Button>
+              </HStack>
+            </VStack>
+          ) : (
+            <VStack align="stretch" gap={2}>
+              <HStack justify="flex-end">
+                <Button size="xs" colorPalette="blue" onClick={startNew}>
+                  + New template
+                </Button>
+              </HStack>
+              {templates.length === 0 ? (
+                <Text fontSize="xs" color="fg.muted" textAlign="center" py={3}>
+                  No templates yet.
+                </Text>
+              ) : (
+                templates.map((t) => (
+                  <Box key={t.id} p={2} borderWidth="1px" borderRadius="md">
+                    <HStack justify="space-between" align="start">
+                      <VStack align="start" gap={0.5} flex={1} minW={0}>
+                        <Text fontSize="sm" fontWeight="semibold">
+                          {t.name}
+                        </Text>
+                        {t.title && (
+                          <Text fontSize="xs" color="fg.muted">
+                            Title: {t.title}
+                          </Text>
+                        )}
+                        <Text fontSize="xs" whiteSpace="pre-wrap">
+                          {t.body}
+                        </Text>
+                      </VStack>
+                      <VStack gap={1}>
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          onClick={() => startEdit(t)}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          colorPalette="red"
+                          onClick={() => setConfirmDelete(t)}
+                        >
+                          Delete
+                        </Button>
+                      </VStack>
+                    </HStack>
+                  </Box>
+                ))
+              )}
+            </VStack>
+          )}
+        </Box>
       </Box>
-    </Box>
-    <ConfirmDialog
-      open={!!confirmDelete}
-      title="Delete template?"
-      message={confirmDelete ? `Delete "${confirmDelete.name}"? This cannot be undone.` : ""}
-      confirmLabel="Delete"
-      confirmColorPalette="red"
-      onConfirm={async () => {
-        const t = confirmDelete;
-        setConfirmDelete(null);
-        if (t) await remove(t.id);
-      }}
-      onCancel={() => setConfirmDelete(null)}
-    />
+      <ConfirmDialog
+        open={!!confirmDelete}
+        title="Delete template?"
+        message={
+          confirmDelete
+            ? `Delete "${confirmDelete.name}"? This cannot be undone.`
+            : ""
+        }
+        confirmLabel="Delete"
+        confirmColorPalette="red"
+        onConfirm={async () => {
+          const t = confirmDelete;
+          setConfirmDelete(null);
+          if (t) await remove(t.id);
+        }}
+        onCancel={() => setConfirmDelete(null)}
+      />
     </>
   );
 }
