@@ -10,6 +10,7 @@ import {
   Checkbox,
   Dialog,
   HStack,
+  Input,
   Portal,
   SimpleGrid,
   Text,
@@ -19,9 +20,12 @@ import {
   createListCollection,
   useDisclosure,
 } from "@chakra-ui/react";
-import { AlertCircle, AlertTriangle, ChevronDown, ChevronUp, Copy, Filter, Hand, Heart, LayoutList, List, Maximize2, MoreHorizontal, Pin, Plus, RefreshCw, RotateCcw, ScanLine, Share2, User, Users, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, BarChart3, ChevronDown, ChevronRight, ChevronUp, Copy, Filter, Hand, Heart, LayoutGrid, LayoutList, List, Maximize2, MoreHorizontal, Pin, Plus, RefreshCw, RotateCcw, ScanLine, Share2, User, Users, X } from "lucide-react";
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import {
+  bizToday,
+  bizAddDays,
   determineRoles,
   prettyStatus,
   notifyEquipmentUpdated,
@@ -1677,6 +1681,13 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
         </Box>
       )}
 
+      {/* Admin-only Insights section — window-scoped equipment
+          leaderboard and idle list. Sits above the equipment browser
+          so a super can see "what's earning its keep in this period"
+          without leaving the tab. Independent date range from the
+          rest of the tab (which isn't window-scoped). */}
+      {forAdmin && <EquipmentInsightsSection />}
+
       <Box position="relative">
         {loading && items.length > 0 && (<>
           <Box position="absolute" inset="0" bg="bg/80" zIndex="1" />
@@ -2699,5 +2710,361 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
         </Portal>
       </Dialog.Root>
     </Box>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Equipment Insights section — window-scoped leaderboard + idle list.
+// Sourced from /api/admin/operations (same endpoint the header
+// unclaimed-jobs badge uses). Local date range independent from the
+// rest of the tab, which is not window-scoped.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type InsightsEquipment = {
+  total: number;
+  available: number;
+  checkedOut: number;
+  reserved: number;
+  inMaintenance: number;
+  windowDays: number;
+  windowCheckouts: number;
+  windowIncome: number;
+  windowDistinctUsed: number;
+  leaderboard: {
+    id: string;
+    shortDesc: string | null;
+    brand: string | null;
+    model: string | null;
+    type: string | null;
+    checkouts: number;
+    daysOut: number;
+    income: number;
+    utilizationPct: number;
+    jobsBilled: number | null;
+  }[];
+  idle: {
+    id: string;
+    shortDesc: string | null;
+    brand: string | null;
+    model: string | null;
+    type: string | null;
+    status: string;
+  }[];
+};
+
+type InsightsResponse = {
+  equipment: InsightsEquipment;
+};
+
+function fmtMoney(n: number): string {
+  return `$${n.toFixed(2)}`;
+}
+
+function EquipmentInsightsSection() {
+  const [insightsOpen, setInsightsOpen] = usePersistedState<boolean>("equip_insightsOpen", true);
+  const [dateFrom, setDateFrom] = usePersistedState<string>("equip_insights_from", bizAddDays(bizToday(), -30));
+  const [dateTo, setDateTo] = usePersistedState<string>("equip_insights_to", bizToday());
+  const [view, setView] = usePersistedState<"table" | "chart">("equip_insightsView", "table");
+  const [chartMetric, setChartMetric] = usePersistedState<
+    "daysOut" | "jobsBilled" | "checkouts" | "income" | "utilizationPct"
+  >("equip_insightsChartMetric", "daysOut");
+  const [idleOpen, setIdleOpen] = useState(false);
+  const [data, setData] = useState<InsightsEquipment | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!insightsOpen) return;
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      try {
+        const qs = new URLSearchParams();
+        qs.set("from", dateFrom);
+        qs.set("to", dateTo);
+        const res = await apiGet<InsightsResponse>(`/api/admin/operations?${qs}`);
+        if (!cancelled) setData(res.equipment);
+      } catch {
+        if (!cancelled) setData(null);
+      }
+      if (!cancelled) setLoading(false);
+    }
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [insightsOpen, dateFrom, dateTo]);
+
+  return (
+    <Box mb={4}>
+      <HStack
+        gap={2}
+        align="center"
+        mb={2}
+        cursor="pointer"
+        onClick={() => setInsightsOpen(!insightsOpen)}
+        _hover={{ opacity: 0.7 }}
+      >
+        <Text fontSize="sm" fontWeight="bold" color="gray.600" textTransform="uppercase" letterSpacing="wide">
+          Insights
+        </Text>
+        <Text fontSize="xs" color="gray.400">{insightsOpen ? "▼" : "▶"}</Text>
+      </HStack>
+
+      {insightsOpen && (
+        <VStack align="stretch" gap={2}>
+          {/* Date range strip */}
+          <HStack gap={2} wrap="wrap" align="flex-end">
+            <Box>
+              <Text fontSize="2xs" color="fg.muted" mb={1}>From</Text>
+              <Input type="date" size="sm" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+            </Box>
+            <Box>
+              <Text fontSize="2xs" color="fg.muted" mb={1}>To</Text>
+              <Input type="date" size="sm" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+            </Box>
+            <HStack gap={1}>
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() => {
+                  setDateFrom(bizAddDays(bizToday(), -30));
+                  setDateTo(bizToday());
+                }}
+              >
+                Last 30d
+              </Button>
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() => {
+                  setDateFrom(bizAddDays(bizToday(), -7));
+                  setDateTo(bizToday());
+                }}
+              >
+                Last 7d
+              </Button>
+            </HStack>
+          </HStack>
+
+          {loading && <Box py={4} textAlign="center"><Spinner size="sm" /></Box>}
+
+          {!loading && data && (
+            <>
+              {/* "Today" snapshot — current fleet state, NOT window-scoped. */}
+              <Text fontSize="2xs" color="fg.muted" textTransform="uppercase" letterSpacing="wide" px={1}>Today</Text>
+              <HStack gap={2} wrap="wrap">
+                <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">Available: {data.available}</Badge>
+                <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="2" borderRadius="full">Checked Out: {data.checkedOut}</Badge>
+                <Badge colorPalette="yellow" variant="subtle" fontSize="xs" px="2" borderRadius="full">Reserved: {data.reserved}</Badge>
+                <Badge colorPalette="red" variant="subtle" fontSize="xs" px="2" borderRadius="full">Maintenance: {data.inMaintenance}</Badge>
+                <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">Total: {data.total}</Badge>
+              </HStack>
+
+              {/* "In this window" — checkout-anchored usage stats. */}
+              <Text fontSize="2xs" color="fg.muted" textTransform="uppercase" letterSpacing="wide" mt={2} px={1}>
+                In This Window ({data.windowDays} {data.windowDays === 1 ? "day" : "days"})
+              </Text>
+              <Box display="grid" gridTemplateColumns="repeat(3, 1fr)" gap={2}>
+                <InsightsMetric label="Checkouts" value={String(data.windowCheckouts)} color="blue.600" />
+                <InsightsMetric label="Rental Income" value={fmtMoney(data.windowIncome)} color="green.600" />
+                <InsightsMetric label="Pieces Used" value={`${data.windowDistinctUsed} / ${data.total}`} color="gray.700" />
+              </Box>
+
+              {data.leaderboard.length > 0 && (
+                <EquipmentLeaderboard
+                  leaderboard={data.leaderboard}
+                  view={view}
+                  setView={setView}
+                  chartMetric={chartMetric}
+                  setChartMetric={setChartMetric}
+                />
+              )}
+
+              {data.leaderboard.length === 0 && data.idle.length > 0 && (
+                <Text fontSize="xs" color="fg.muted" mt={1} px={1}>
+                  No equipment was checked out in this window.
+                </Text>
+              )}
+
+              {data.idle.length > 0 && (
+                <Box>
+                  <HStack
+                    gap={1.5}
+                    cursor="pointer"
+                    onClick={() => setIdleOpen((v) => !v)}
+                    _hover={{ color: "fg" }}
+                    color="fg.muted"
+                    userSelect="none"
+                    py={1}
+                    px={1}
+                  >
+                    {idleOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                    <Text fontSize="xs" fontWeight="medium">
+                      Idle ({data.idle.length}) — no checkouts in this window
+                    </Text>
+                  </HStack>
+                  {idleOpen && (
+                    <HStack gap={1} wrap="wrap" mt={1} px={1}>
+                      {data.idle.map((e) => (
+                        <Badge key={e.id} size="sm" colorPalette="gray" variant="subtle" fontSize="2xs" px="2" borderRadius="full">
+                          {e.shortDesc ?? "—"}
+                          {(e.brand || e.model) && (
+                            <Text as="span" color="fg.muted" ml={1}>
+                              ({[e.brand, e.model].filter(Boolean).join(" ")})
+                            </Text>
+                          )}
+                        </Badge>
+                      ))}
+                    </HStack>
+                  )}
+                </Box>
+              )}
+            </>
+          )}
+        </VStack>
+      )}
+    </Box>
+  );
+}
+
+function InsightsMetric({ label, value, color }: { label: string; value: string; color: string }) {
+  return (
+    <Card.Root variant="outline">
+      <Card.Body py="2" px="3">
+        <Text fontSize="xl" fontWeight="bold" color={color} lineHeight="1">{value}</Text>
+        <Text fontSize="xs" color="fg.muted" mt={1}>{label}</Text>
+      </Card.Body>
+    </Card.Root>
+  );
+}
+
+function EquipmentLeaderboard({
+  leaderboard,
+  view,
+  setView,
+  chartMetric,
+  setChartMetric,
+}: {
+  leaderboard: InsightsEquipment["leaderboard"];
+  view: "table" | "chart";
+  setView: (v: "table" | "chart") => void;
+  chartMetric: "daysOut" | "jobsBilled" | "checkouts" | "income" | "utilizationPct";
+  setChartMetric: (m: "daysOut" | "jobsBilled" | "checkouts" | "income" | "utilizationPct") => void;
+}) {
+  const METRICS = [
+    { key: "daysOut" as const, label: "Days Out", color: "#3182CE", getter: (e: InsightsEquipment["leaderboard"][number]) => e.daysOut, tip: (v: number) => `${v}d` },
+    { key: "jobsBilled" as const, label: "Jobs Billed", color: "#319795", getter: (e: InsightsEquipment["leaderboard"][number]) => e.jobsBilled ?? 0, tip: (v: number) => `${v}` },
+    { key: "checkouts" as const, label: "Checkouts", color: "#805AD5", getter: (e: InsightsEquipment["leaderboard"][number]) => e.checkouts, tip: (v: number) => `${v}` },
+    { key: "income" as const, label: "Income", color: "#38A169", getter: (e: InsightsEquipment["leaderboard"][number]) => Math.round(e.income * 100) / 100, tip: (v: number) => `$${v.toFixed(2)}` },
+    { key: "utilizationPct" as const, label: "Utilization", color: "#D69E2E", getter: (e: InsightsEquipment["leaderboard"][number]) => e.utilizationPct, tip: (v: number) => `${v}%` },
+  ];
+  const activeMetric = METRICS.find((m) => m.key === chartMetric) ?? METRICS[0];
+  const chartData = leaderboard
+    .map((e) => ({ name: e.shortDesc ?? e.id, value: activeMetric.getter(e) }))
+    .sort((a, b) => b.value - a.value);
+  const truncName = (n: string) => (n.length > 22 ? n.slice(0, 21) + "…" : n);
+  return (
+    <>
+      <HStack gap={2} mt={2} mb={2} wrap="wrap" align="center">
+        {view === "chart" ? (
+          <HStack gap={1} wrap="wrap" flex="1" minW={0}>
+            {METRICS.map((m) => (
+              <Badge
+                key={m.key}
+                size="sm"
+                variant={chartMetric === m.key ? "solid" : "outline"}
+                colorPalette="gray"
+                cursor="pointer"
+                onClick={() => setChartMetric(m.key)}
+              >
+                {m.label}
+              </Badge>
+            ))}
+          </HStack>
+        ) : (
+          <Box flex="1" minW={0} />
+        )}
+        <HStack gap={0} borderWidth="1px" borderColor="gray.300" borderRadius="md" overflow="hidden" flexShrink={0}>
+          <Button
+            size="xs"
+            variant={view === "table" ? "solid" : "ghost"}
+            colorPalette={view === "table" ? "blue" : undefined}
+            borderRadius="0"
+            onClick={() => setView("table")}
+            title="Table view"
+          >
+            <LayoutGrid size={12} />
+          </Button>
+          <Button
+            size="xs"
+            variant={view === "chart" ? "solid" : "ghost"}
+            colorPalette={view === "chart" ? "blue" : undefined}
+            borderRadius="0"
+            onClick={() => setView("chart")}
+            title="Chart view"
+          >
+            <BarChart3 size={12} />
+          </Button>
+        </HStack>
+      </HStack>
+
+      {view === "table" && (
+        <Card.Root variant="outline">
+          <Card.Body py="2" px="0">
+            <HStack px={3} py={1} borderBottomWidth="1px" borderColor="gray.200" fontSize="xs" fontWeight="semibold" color="fg.muted" gap={2}>
+              <Text flex="1" minW={0}>Equipment</Text>
+              <Text w="55px" textAlign="right">Days</Text>
+              <Text w="50px" textAlign="right" display={{ base: "none", sm: "block" }} title="Number of billed jobs across the window (per-job billing)">Jobs</Text>
+              <Text w="55px" textAlign="right">Rentals</Text>
+              <Text w="70px" textAlign="right" display={{ base: "none", md: "block" }}>Income</Text>
+              <Text w="55px" textAlign="right">Util %</Text>
+            </HStack>
+            {leaderboard.map((e) => (
+              <HStack key={e.id} px={3} py={1.5} borderBottomWidth="1px" borderColor="gray.50" fontSize="xs" gap={2}
+                _hover={{ bg: "gray.50" }}
+              >
+                <VStack align="start" gap={0} flex="1" minW={0}>
+                  <Text fontWeight="medium" truncate>{e.shortDesc ?? "—"}</Text>
+                  {(e.brand || e.model) && (
+                    <Text color="fg.muted" fontSize="2xs" truncate>
+                      {[e.brand, e.model].filter(Boolean).join(" ")}
+                    </Text>
+                  )}
+                </VStack>
+                <Text w="55px" textAlign="right" color="blue.600" fontWeight="medium">{e.daysOut}</Text>
+                <Text w="50px" textAlign="right" color="teal.600" display={{ base: "none", sm: "block" }}>
+                  {e.jobsBilled != null ? e.jobsBilled : "—"}
+                </Text>
+                <Text w="55px" textAlign="right" color="fg.muted">{e.checkouts}</Text>
+                <Text w="70px" textAlign="right" color="green.600" display={{ base: "none", md: "block" }}>{fmtMoney(e.income)}</Text>
+                <Text w="55px" textAlign="right" color={e.utilizationPct >= 50 ? "green.600" : e.utilizationPct > 0 ? "orange.600" : "fg.muted"}>{e.utilizationPct}%</Text>
+              </HStack>
+            ))}
+          </Card.Body>
+        </Card.Root>
+      )}
+
+      {view === "chart" && (
+        <Card.Root variant="outline">
+          <Card.Body py="3" px="2">
+            <ResponsiveContainer width="100%" height={Math.max(180, chartData.length * 28)}>
+              <BarChart data={chartData} layout="vertical" margin={{ left: 10, right: 20, top: 5, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                <XAxis type="number" fontSize={11} tickFormatter={(v: number) => activeMetric.tip(v)} />
+                <YAxis
+                  type="category"
+                  dataKey="name"
+                  width={150}
+                  tick={{ fontSize: 10, style: { fontSize: "10px" } }}
+                  tickFormatter={truncName}
+                />
+                <Tooltip formatter={(v: any) => [activeMetric.tip(Number(v)), activeMetric.label]} />
+                <Bar dataKey="value" fill={activeMetric.color} radius={[0, 4, 4, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </Card.Body>
+        </Card.Root>
+      )}
+    </>
   );
 }

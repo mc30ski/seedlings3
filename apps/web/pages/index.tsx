@@ -19,7 +19,6 @@ import ActivityTab from "@/src/ui/tabs/ActivityTab";
 import HistoryTab from "@/src/ui/tabs/HistoryTab";
 import SettingsTab from "@/src/ui/tabs/SettingsTab";
 import SuperUnclaimedTab from "@/src/ui/tabs/SuperUnclaimedTab";
-import OperationsTab from "@/src/ui/tabs/OperationsTab";
 import WorkdaysTab from "@/src/ui/tabs/WorkdaysTab";
 import AuditTab from "@/src/ui/tabs/AuditTab";
 import BusinessExpensesTab from "@/src/ui/tabs/BusinessExpensesTab";
@@ -148,7 +147,14 @@ export default function HomePage() {
   const [workerCategory, setWorkerCategory] = usePersistedState<string>("workerCategory", "Work");
   const [adminCategory, setAdminCategory] = usePersistedState<string>("adminCategory", "Work");
   const [superCategory, setSuperCategory] = usePersistedState<string>("superCategory", "Records");
-  const [superInnerTab, setSuperInnerTab] = usePersistedState<SuperTabs>("superTab", "operations");
+  const [superInnerTab, setSuperInnerTab] = usePersistedState<SuperTabs>("superTab", "unclaimed");
+  // Migration: existing users have "operations" persisted under superTab
+  // from when the Operations tab existed. Redirect them to a real tab
+  // once, silently — otherwise the Super shell tries to render a
+  // non-existent inner tab and shows nothing.
+  useEffect(() => {
+    if ((superInnerTab as string) === "operations") setSuperInnerTab("unclaimed");
+  }, []);
 
   // Workday-approval badge state — declared up here (before the tab
   // tree) because the WorkdaysTab JSX prop list reads these values
@@ -1056,16 +1062,22 @@ export default function HomePage() {
       visible: () => !!isSignedIn && isSuper,
       innerTabs: [
         {
-          // ── Records ──
-          // Moved to the top of the Super shell per operator preference —
-          // the day-to-day "what's happening" tabs (Operations + Audit +
-          // Timeline + Documents) are now the first thing a Super sees on
-          // the inner tab rail. Category order otherwise matches the
-          // intended display order, see comment above the workerTabs map.
-          value: "operations",
-          label: "Operations",
+          // Reconcile — accounting-software validation surface. Replaces
+          // the old Exports + P&L Report tabs. Renders a QB-style P&L
+          // for the selected window with click-to-drill-down on every
+          // row, and offers flat CSVs (Capital, Income, Expenses,
+          // Workdays) for visual cross-checking against the operator's
+          // accounting software (which is now the source of truth, wired
+          // directly to the bank). See ReconcileTab.tsx + services/
+          // pnlReport.ts + services/exports.ts.
+          //
+          // Lives under Records (not Money) because it's primarily a
+          // review / audit surface for reconciling against an external
+          // system, alongside Workdays / Audit / Timeline.
+          value: "reconcile",
+          label: "Reconcile",
           icon: FiBarChart2,
-          content: <OperationsTab />,
+          content: wrapWithInlineMessage(<ReconcileTab />),
           category: "Records",
           categoryIcon: FiBarChart2,
         },
@@ -1089,34 +1101,6 @@ export default function HomePage() {
           categoryIcon: FiBarChart2,
         },
         {
-          // Reconcile — accounting-software validation surface. Replaces
-          // the old Exports + P&L Report tabs. Renders a QB-style P&L
-          // for the selected window with click-to-drill-down on every
-          // row, and offers flat CSVs (Capital, Income, Expenses,
-          // Workdays) for visual cross-checking against the operator's
-          // accounting software (which is now the source of truth, wired
-          // directly to the bank). See ReconcileTab.tsx + services/
-          // pnlReport.ts + services/exports.ts.
-          //
-          // Lives under Records (not Money) because it's primarily a
-          // review / audit surface for reconciling against an external
-          // system, alongside Workdays / Audit / Timeline.
-          value: "reconcile",
-          label: "Reconcile",
-          icon: FiBarChart2,
-          content: wrapWithInlineMessage(<ReconcileTab />),
-          category: "Records",
-          categoryIcon: FiBarChart2,
-        },
-        {
-          value: "audit",
-          label: "Audit",
-          icon: FiSearch,
-          content: <AuditTab />,
-          category: "Records",
-          categoryIcon: FiBarChart2,
-        },
-        {
           value: "timeline",
           label: "Timeline",
           icon: FiCalendar,
@@ -1129,6 +1113,14 @@ export default function HomePage() {
           label: "Documents",
           icon: FiFolder,
           content: wrapWithInlineMessage(<DocumentsTab isSuper />),
+          category: "Records",
+          categoryIcon: FiBarChart2,
+        },
+        {
+          value: "audit",
+          label: "Audit",
+          icon: FiSearch,
+          content: <AuditTab />,
           category: "Records",
           categoryIcon: FiBarChart2,
         },
@@ -2405,7 +2397,7 @@ export default function HomePage() {
       setTopTab("super");
       setSuperInnerTab(tab as any);
       if (tab === "supplies" || tab === "ledger" || tab === "payments" || tab === "pricing" || tab === "reconcile") setSuperCategory("Money");
-      else if (tab === "operations" || tab === "audit" || tab === "documents" || tab === "timeline") setSuperCategory("Records");
+      else if (tab === "audit" || tab === "documents" || tab === "timeline") setSuperCategory("Records");
       else if (tab === "settings" || tab === "profile") setSuperCategory("System");
       setTimeout(() => { programmaticNavRef.current = false; }, 50);
     };

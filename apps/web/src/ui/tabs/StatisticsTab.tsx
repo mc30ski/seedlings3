@@ -90,6 +90,13 @@ export default function StatisticsTab({ myId }: Props = {}) {
   const [dateFrom, setDateFrom] = usePersistedState("stats_from", bizAddDays(bizToday(), -30));
   const [dateTo, setDateTo] = usePersistedState("stats_to", bizToday());
 
+  // Team Comparison chart — metric to plot across the displayed
+  // worker set. Persisted so the operator's last pick sticks across
+  // date-range changes.
+  const [comparisonMetric, setComparisonMetric] = usePersistedState<
+    "jobsCompleted" | "netEarnings" | "totalActualMinutes" | "efficiencyPercent"
+  >("stats_comparisonMetric", "jobsCompleted");
+
   // Worker selection
   const [selectedWorkers, setSelectedWorkers] = usePersistedState<string[]>("stats_workers", []);
   const [searchText, setSearchText] = useState("");
@@ -278,6 +285,19 @@ export default function StatisticsTab({ myId }: Props = {}) {
             )}
           </HStack>
 
+          {/* Team Comparison — bar chart across the displayed worker
+              set, one row per worker. Sits above the mode switch so
+              it's visible whether the operator is on cards or charts.
+              Metric selector chips let them pivot without leaving the
+              tab. */}
+          {displayed.filter((w) => w.jobsCompleted > 0).length > 0 && (
+            <TeamComparisonChart
+              workers={displayed}
+              metric={comparisonMetric}
+              onMetricChange={setComparisonMetric}
+            />
+          )}
+
           {viewMode === "cards" ? (
             /* Worker cards */
             <VStack align="stretch" gap={3}>
@@ -338,6 +358,97 @@ export default function StatisticsTab({ myId }: Props = {}) {
         </>
       )}
     </Box>
+  );
+}
+
+// Team Comparison — horizontal bar chart across the displayed worker
+// set, sorted DESC by the active metric (longest bar at the top —
+// scan convention for "who's leading?"). Metric pills let the
+// operator pivot without leaving the tab. Truncates long names on
+// the Y axis for readability on narrow screens.
+function TeamComparisonChart({
+  workers,
+  metric,
+  onMetricChange,
+}: {
+  workers: WorkerStat[];
+  metric: "jobsCompleted" | "netEarnings" | "totalActualMinutes" | "efficiencyPercent";
+  onMetricChange: (m: "jobsCompleted" | "netEarnings" | "totalActualMinutes" | "efficiencyPercent") => void;
+}) {
+  const METRICS = [
+    {
+      key: "jobsCompleted" as const,
+      label: "Jobs",
+      color: CHART_COLORS[1],
+      get: (w: WorkerStat) => w.jobsCompleted,
+      tip: (v: number) => `${v}`,
+    },
+    {
+      key: "netEarnings" as const,
+      label: "Net Earnings",
+      color: CHART_COLORS[5],
+      get: (w: WorkerStat) => Math.round(w.netEarnings * 100) / 100,
+      tip: (v: number) => `$${v.toFixed(2)}`,
+    },
+    {
+      key: "totalActualMinutes" as const,
+      label: "Hours",
+      color: CHART_COLORS[6],
+      get: (w: WorkerStat) => Math.round((w.totalActualMinutes / 60) * 10) / 10,
+      tip: (v: number) => `${v}h`,
+    },
+    {
+      key: "efficiencyPercent" as const,
+      label: "Efficiency",
+      color: CHART_COLORS[3],
+      get: (w: WorkerStat) => w.efficiencyPercent ?? 0,
+      tip: (v: number) => `${v}%`,
+    },
+  ];
+  const active = METRICS.find((m) => m.key === metric) ?? METRICS[0];
+  const chartData = workers
+    .map((w) => ({ name: w.displayName, value: active.get(w) }))
+    .sort((a, b) => b.value - a.value);
+  const truncName = (n: string) => (n.length > 18 ? n.slice(0, 17) + "…" : n);
+  return (
+    <Card.Root variant="outline" mb={3}>
+      <Card.Body py="3" px="3">
+        <HStack gap={2} mb={2} wrap="wrap">
+          <Text fontSize="xs" fontWeight="semibold" color="fg.muted" textTransform="uppercase" letterSpacing="wide">
+            Team Comparison
+          </Text>
+          <HStack gap={1} wrap="wrap">
+            {METRICS.map((m) => (
+              <Badge
+                key={m.key}
+                size="sm"
+                variant={metric === m.key ? "solid" : "outline"}
+                colorPalette="gray"
+                cursor="pointer"
+                onClick={() => onMetricChange(m.key)}
+              >
+                {m.label}
+              </Badge>
+            ))}
+          </HStack>
+        </HStack>
+        <ResponsiveContainer width="100%" height={Math.max(180, chartData.length * 28)}>
+          <BarChart data={chartData} layout="vertical" margin={{ left: 10, right: 20, top: 5, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+            <XAxis type="number" fontSize={11} tickFormatter={(v: number) => active.tip(v)} />
+            <YAxis
+              type="category"
+              dataKey="name"
+              width={120}
+              tick={{ fontSize: 10, style: { fontSize: "10px" } }}
+              tickFormatter={truncName}
+            />
+            <Tooltip formatter={(v: any) => [active.tip(Number(v)), active.label]} />
+            <Bar dataKey="value" fill={active.color} radius={[0, 4, 4, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </Card.Body>
+    </Card.Root>
   );
 }
 

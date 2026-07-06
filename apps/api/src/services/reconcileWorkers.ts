@@ -33,19 +33,52 @@ import { isEmployeeClass } from "./exports";
 // doesn't pollute personal-wage totals.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Per-worker breakdown of a single occurrence — one row per active
+ *  assignee, plus a separate row for the owner-earnings recipient when
+ *  the payment carried an owner cut. Attached to every ReconcileJobRow
+ *  so the operator can drill down "who made what on this job." */
+export type ReconcileJobAssigneeBreakdown = {
+  userId: string;
+  displayName: string | null;
+  workerType: string | null;
+  isOwner: boolean;
+  splitPercent: number;
+  gross: number;
+  feeOrMargin: number;
+  topUp: number;
+  netPaid: number;
+  /** True for the synthetic owner-earnings row — this dollar flow is
+   *  the LLC owner's cut off the top, not a worker split. Displayed
+   *  separately (e.g. italicized or badged) client-side. */
+  isOwnerEarnings: boolean;
+};
+
 export type ReconcileJobRow = {
   occurrenceId: string;
   title: string;
   client: string | null;
   property: string | null;
   completedAt: string | null; // ISO
+  /** The full job's promised payout (sum of price + addons) — the
+   *  denominator against which each assignee's split is applied.
+   *  Frontend uses this on the drill-down to anchor per-assignee
+   *  math ("$100 job × 33.33% share → $33.33 gross"). */
+  jobPrice: number;
   grossShare: number;          // pre-fee/margin
   feeOrMargin: number;         // contractor fee or business margin
   topUp: number;               // employee/trainee make-whole
   netPaid: number;             // grossShare - feeOrMargin + topUp
+  /** What % of the job payment this worker was credited for.
+   *  Source priority: completionSplits (the operator-edited split),
+   *  fallback = even split across active assignees (100 / N). */
+  splitPercent: number;
   paymentConfirmed: boolean;
   paymentWrittenOff: boolean;
   source: "snapshot" | "computed";
+  /** Full per-assignee breakdown for this occurrence — same across
+   *  every worker's copy of the row (denormalized for one-fetch
+   *  drilldown). Includes owner-earnings pseudo-assignees. */
+  assignees: ReconcileJobAssigneeBreakdown[];
 };
 
 export type ReconcileDayRow = {
@@ -90,6 +123,12 @@ export type ReconcileWorkerRow = {
 
   // Flags
   belowMinWage: boolean;
+  /** True when this worker is a contractor in an active guaranteed
+   *  payout period. Used to split the wage-compliance banner into
+   *  "reclassification risk" vs "guaranteed payout" buckets — the
+   *  latter means the Company is voluntarily underwriting the timing
+   *  risk during onboarding, not a persistent under-earning signal. */
+  guaranteedPayoutActive: boolean;
   /** True when the worker has at least one workday in the window
    *  that hasn't ended yet. Headline hours / days include the live
    *  elapsed time so the dashboard reflects in-progress activity. */
@@ -492,24 +531,83 @@ export async function buildReconcileWorkers(
     // silently fall through to $0 even when the payment confirmed
     // their share. Snapshot still wins where it has a per-userId
     // entry; computeBreakdown fills the gaps.
+    // Split percent per assignee — completionSplits when the operator
+    // set an explicit split, else even fallback. Used both for the
+    // computeBreakdown fallback below AND for the per-job row's
+    // `splitPercent` column so the operator can see at a glance what
+    // fraction of the job each worker was credited for.
+    const cs = (occ as any).completionSplits as Array<{ userId: string; percent: number }> | null;
+    const splitPctById = new Map<string, number>(
+      Array.isArray(cs) ? cs.map((s) => [s.userId, Number(s.percent) || 0]) : [],
+    );
+    const fallbackPct = occ.assignees.length > 0 ? 100 / occ.assignees.length : 0;
+
+    const jobPriceTotal =
+      (occ.price ?? 0) +
+      (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
     const computed: Map<string, { gross: number; fee: number; net: number }> = (() => {
-      const priceTotal =
-        (occ.price ?? 0) +
-        (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
       const expTotal = (occ.expenses ?? []).reduce((s, e) => s + (e.cost ?? 0), 0);
-      const cs = (occ as any).completionSplits as Array<{ userId: string; percent: number }> | null;
-      const splitPctById = new Map<string, number>(
-        Array.isArray(cs) ? cs.map((s) => [s.userId, Number(s.percent) || 0]) : [],
-      );
-      const fallbackPct = occ.assignees.length > 0 ? 100 / occ.assignees.length : 0;
       const workers: WorkerInput[] = occ.assignees.map((aa: any) => ({
         userId: aa.userId,
         workerType: aa.user?.workerType ?? null,
         splitPercent: splitPctById.get(aa.userId) ?? fallbackPct,
       }));
-      const br = computeBreakdown(priceTotal, expTotal, workers, rates);
+      const br = computeBreakdown(jobPriceTotal, expTotal, workers, rates);
       return new Map(br.map((r) => [r.userId, { gross: r.gross, fee: r.fee, net: r.net }]));
     })();
+
+    // Per-assignee breakdown snapshot for the drill-down UI. Built
+    // once per occurrence, then referenced by every ReconcileJobRow
+    // pushed for this occurrence so the frontend can render "who
+    // made what" without a follow-up fetch. Snapshot/computed/split
+    // priority mirrors the assignee-accumulator loop below so numbers
+    // agree. Owner-earnings pseudo-assignees get appended by the
+    // owner-earnings block further down.
+    const assigneesBreakdown: ReconcileJobAssigneeBreakdown[] = [];
+    for (const assignee of occ.assignees) {
+      const u = assignee.user;
+      if (!u) continue;
+      const split = splitsByUser.get(assignee.userId);
+      if (split?.isOwnerEarnings) continue; // handled separately
+      const snap = snapshot?.get(assignee.userId);
+      const comp = computed.get(assignee.userId);
+      const gross = snap?.gross ?? comp?.gross ?? split?.gross ?? 0;
+      const fee = snap?.fee ?? comp?.fee ?? split?.fee ?? 0;
+      const topUp = split?.topUp ?? 0;
+      assigneesBreakdown.push({
+        userId: assignee.userId,
+        displayName: u.displayName,
+        workerType: (u as any).workerType ?? null,
+        isOwner: !!(u as any).isOwner,
+        splitPercent: round2(splitPctById.get(assignee.userId) ?? fallbackPct),
+        gross: round2(gross),
+        feeOrMargin: round2(fee),
+        topUp: round2(topUp),
+        netPaid: round2(gross - fee + topUp),
+        isOwnerEarnings: false,
+      });
+    }
+    // Owner-earnings pseudo-rows (business cut off the top) — one per
+    // owner-earnings PaymentSplit. Not tied to a worker split, so
+    // splitPercent is 0.
+    if (occ.payment) {
+      for (const sp of occ.payment.splits) {
+        if (!sp.ownerEarnings) continue;
+        const u = occ.assignees.find((a) => a.userId === sp.userId)?.user;
+        assigneesBreakdown.push({
+          userId: sp.userId,
+          displayName: u?.displayName ?? null,
+          workerType: (u as any)?.workerType ?? null,
+          isOwner: !!(u as any)?.isOwner,
+          splitPercent: 0,
+          gross: 0,
+          feeOrMargin: 0,
+          topUp: 0,
+          netPaid: round2(sp.amount ?? 0),
+          isOwnerEarnings: true,
+        });
+      }
+    }
 
     // Per-assignee row. Owner-earnings tracked separately so personal
     // wage totals stay clean.
@@ -568,13 +666,16 @@ export async function buildReconcileWorkers(
         client: clientName,
         property: propertyName,
         completedAt: occ.completedAt.toISOString(),
+        jobPrice: round2(jobPriceTotal),
         grossShare: round2(gross),
         feeOrMargin: round2(fee),
         topUp: round2(topUp),
         netPaid,
+        splitPercent: round2(splitPctById.get(assignee.userId) ?? fallbackPct),
         paymentConfirmed,
         paymentWrittenOff,
         source,
+        assignees: assigneesBreakdown,
       });
     }
 
@@ -609,6 +710,7 @@ export async function buildReconcileWorkers(
             client: clientName,
             property: propertyName,
             completedAt: occ.completedAt!.toISOString(),
+            jobPrice: round2(jobPriceTotal),
             // Personal-wage fields stay zero — this is an owner draw,
             // not wage. netPaid carries the full owner cut so the
             // day-row math reads correctly.
@@ -616,9 +718,15 @@ export async function buildReconcileWorkers(
             feeOrMargin: 0,
             topUp: 0,
             netPaid: round2(amount),
+            // Owner-earnings aren't tied to an assignee split — the
+            // owner takes the business's cut off the top, so a per-job
+            // "share of the payment" doesn't apply here. Rendered as
+            // "—" client-side when 0.
+            splitPercent: 0,
             paymentConfirmed,
             paymentWrittenOff,
             source: "snapshot",
+            assignees: assigneesBreakdown,
           });
         }
         if (u) {
@@ -649,6 +757,28 @@ export async function buildReconcileWorkers(
   }
 
   // ── Build per-worker rows + anomalies ──────────────────────────────────
+  // Lookup for guaranteedPayoutUntil so we can flag contractors currently
+  // in an active GP period. Used by the wage-compliance banner to
+  // distinguish "reclassification risk" (persistent under-earning
+  // contractor) from "guaranteed payout" (Company is voluntarily
+  // underwriting timing risk during onboarding). Single query for all
+  // accumulated users so we don't repeat lookups per row.
+  const userIds = Array.from(acc.values()).map((a) => a.user.id);
+  const gpRows =
+    userIds.length > 0
+      ? await prisma.user.findMany({
+          where: { id: { in: userIds } },
+          select: { id: true, guaranteedPayoutUntil: true },
+        })
+      : [];
+  const nowMs = Date.now();
+  const gpActiveById = new Map<string, boolean>(
+    gpRows.map((u) => [
+      u.id,
+      !!(u.guaranteedPayoutUntil && u.guaranteedPayoutUntil.getTime() > nowMs),
+    ]),
+  );
+
   const workers: ReconcileWorkerRow[] = [];
   const payroll: PayrollRow[] = [];
   let totalAnomalies = 0;
@@ -754,6 +884,7 @@ export async function buildReconcileWorkers(
       effectiveHourly,
       preTopUpHourly,
       belowMinWage,
+      guaranteedPayoutActive: gpActiveById.get(a.user.id) ?? false,
       hasInProgressWorkday,
       anomalies,
       days,
