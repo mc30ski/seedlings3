@@ -257,6 +257,7 @@ function leafName(qbAccount: string): string {
 function shortAnomalyLabel(anomaly: string): string {
   if (anomaly.includes("Logged hours but no completed jobs")) return "No jobs";
   if (anomaly.includes("Completed jobs but no workday hours")) return "No hours";
+  if (anomaly.includes("reclassification risk")) return "Low rate";
   if (anomaly.includes("below minimum wage")) return "Below min wage";
   if (anomaly.includes("client payment not confirmed")) {
     // Preserve the count when present ("3 jobs completed but client
@@ -267,20 +268,49 @@ function shortAnomalyLabel(anomaly: string): string {
   return "Warning";
 }
 
-// Wage-floor violation. Client-side derivation so W-2, trainees, AND
-// contractors are all captured — backend's `belowMinWage` flag is
-// gated to W-2/trainee (per the anomaly rule that fires the yellow
-// warning). This helper is the single source of truth for the red
-// "violation" badges + banners across the header count, per-row row,
-// and per-row expanded body.
+// Wage-floor violation — ONLY W-2 employees / trainees below floor
+// with actual completed work. Minimum-wage law doesn't apply to
+// independent contractors, so their low rates are a soft warning
+// (see getRowWarnings below), not a red violation. The jobsCompleted
+// > 0 gate suppresses the spurious "$0/hr because 0 jobs closed"
+// case where the flag would fire on a worker who's just clocked in
+// but hasn't finished anything yet.
 function hasWageViolation(w: WorkerRow, minWage: number): boolean {
   if (w.isOwner) return false;
   if (w.preTopUpHourly == null || w.preTopUpHourly >= minWage) return false;
-  return (
-    w.workerType === "EMPLOYEE" ||
-    w.workerType === "TRAINEE" ||
-    w.workerType === "CONTRACTOR"
-  );
+  if (w.jobsCompleted === 0) return false;
+  return w.workerType === "EMPLOYEE" || w.workerType === "TRAINEE";
+}
+
+// Row-level warnings — the single source of truth for the orange
+// "Warning" badges and the yellow banner in the expanded body.
+// Combines backend anomalies (with the below-floor one dropped when
+// it's already surfaced as a red violation) with client-synthesized
+// warnings that the backend doesn't produce — currently just the
+// contractor-low-rate reclassification signal.
+function getRowWarnings(w: WorkerRow, minWage: number): string[] {
+  const out: string[] = [];
+  const violation = hasWageViolation(w, minWage);
+  for (const a of w.anomalies) {
+    if (violation && a.includes("below minimum wage")) continue;
+    out.push(a);
+  }
+  // Contractor-below-floor is a reclassification-risk signal (the
+  // DOL/IRS cite persistently low effective rates when reclassifying
+  // 1099s to W-2). Same jobsCompleted > 0 gate so a contractor who
+  // just clocked in doesn't spuriously flag at $0/hr.
+  if (
+    !w.isOwner &&
+    w.workerType === "CONTRACTOR" &&
+    w.jobsCompleted > 0 &&
+    w.preTopUpHourly != null &&
+    w.preTopUpHourly < minWage
+  ) {
+    out.push(
+      `Effective rate $${w.preTopUpHourly.toFixed(2)}/hr below $${minWage.toFixed(2)}/hr — reclassification risk${w.guaranteedPayoutActive ? " (guaranteed payout)" : ""}`,
+    );
+  }
+  return out;
 }
 
 function workerTypeLabel(t: string | null | undefined, isOwner: boolean): string {
@@ -1040,11 +1070,21 @@ export default function ReconcileTab() {
                       </Badge>
                     ) : null;
                   })()}
-                  {period.totals.anomalies > 0 && (
-                    <Badge ml={2} size="xs" colorPalette="orange" variant="solid">
-                      {period.totals.anomalies} {period.totals.anomalies === 1 ? "warning" : "warnings"}
-                    </Badge>
-                  )}
+                  {(() => {
+                    // Sum derived warnings across all workers so the
+                    // header count matches the sum of per-row badges
+                    // (including client-synthesized contractor low
+                    // rates).
+                    const count = period.workers.reduce(
+                      (s, w) => s + getRowWarnings(w, period.minWagePerHour).length,
+                      0,
+                    );
+                    return count > 0 ? (
+                      <Badge ml={2} size="xs" colorPalette="orange" variant="solid">
+                        {count} {count === 1 ? "warning" : "warnings"}
+                      </Badge>
+                    ) : null;
+                  })()}
                 </>
               }
               subtitle="Every worker shows their Gusto-copy payroll fields inline — tap any number to copy. Expand a worker to see the day-by-day breakdown and each job's contribution."
@@ -1642,18 +1682,13 @@ function WorkerCard({
     payroll?.equivalentHourlyRate != null &&
     payroll.equivalentHourlyRate > 0 &&
     payroll.equivalentHourlyRate < minWage;
-  // Severity-driven outer border: red for a wage-floor violation
-  // (legal / reclassification), orange for a warning (has anomalies
-  // but no violation), plain gray for clean rows. Bg stays neutral —
-  // the drilldown color scheme below is a plain grey progression.
-  const hasViolation = hasWageViolation(worker, minWage);
-  const hasWarning = !hasViolation && worker.anomalies.length > 0;
+  // Neutral outer border — severity is conveyed entirely by the
+  // Below-min-wage / Warning badges in the row header, not the card
+  // frame. Keeps the layout calm and consistent regardless of state.
   return (
     <Box
-      borderWidth={hasViolation || hasWarning ? "2px" : "1px"}
-      borderColor={
-        hasViolation ? "red.400" : hasWarning ? "orange.400" : "gray.200"
-      }
+      borderWidth="1px"
+      borderColor="gray.200"
       borderRadius="md"
     >
       {/* Header + payroll strip — one visual block. Whole row is a
@@ -1701,30 +1736,21 @@ function WorkerCard({
                   Below min wage
                 </Badge>
               )}
-              {(() => {
-                // One badge per specific anomaly, so each reason reads
-                // like the red "Below min wage" chip — same pattern
-                // for the same class of signal. Below-floor anomaly is
-                // filtered out when the row already carries the red
-                // violation badge so the same reason doesn't render
-                // twice. Long full-sentence anomaly text is trimmed
-                // to a short label via shortAnomalyLabel; tooltip
-                // preserves the full reason for reference.
-                const visibleAnomalies = hasWageViolation(worker, minWage)
-                  ? worker.anomalies.filter((a) => !a.includes("below minimum wage"))
-                  : worker.anomalies;
-                return visibleAnomalies.map((a, i) => (
-                  <Badge
-                    key={i}
-                    size="xs"
-                    colorPalette="orange"
-                    variant="solid"
-                    title={a}
-                  >
-                    {shortAnomalyLabel(a)}
-                  </Badge>
-                ));
-              })()}
+              {getRowWarnings(worker, minWage).map((a, i) => (
+                // One badge per specific warning, so each reason
+                // reads like the red "Below min wage" chip. Same
+                // shortAnomalyLabel mapping trims full-sentence text;
+                // tooltip preserves the full reason.
+                <Badge
+                  key={i}
+                  size="xs"
+                  colorPalette="orange"
+                  variant="solid"
+                  title={a}
+                >
+                  {shortAnomalyLabel(a)}
+                </Badge>
+              ))}
             </HStack>
             <Text fontSize="xs" color="fg.muted">
               {worker.daysWorked} day{worker.daysWorked === 1 ? "" : "s"}
@@ -1848,13 +1874,11 @@ function WorkerCard({
             </Box>
           )}
           {(() => {
-            // Drop the backend's "Pre-top-up hourly below minimum wage"
-            // anomaly from the yellow banner when the red violation
-            // banner already surfaces it. Prevents duplicate messaging
-            // for the same row.
-            const displayAnomalies = hasWageViolation(worker, minWage)
-              ? worker.anomalies.filter((a) => !a.includes("below minimum wage"))
-              : worker.anomalies;
+            // Same source as the row header — backend anomalies plus
+            // client-synthesized ones (contractor low rate), with the
+            // below-floor entry dropped when a red violation banner
+            // already covers it.
+            const displayAnomalies = getRowWarnings(worker, minWage);
             return displayAnomalies.length > 0 ? (
               // Warning banner — distinct orange so it stands out clearly
               // against the yellow anomaly-family card. Same palette as
@@ -2176,12 +2200,14 @@ function JobAssigneesBreakdown({ job }: { job: WorkerJobRow }) {
 }
 
 // Wage-compliance banner. Splits below-floor workers into three
-// buckets: W-2 (legal compliance issue), standard contractor
-// (reclassification risk signal — not a legal violation but the kind
-// of pattern the DOL/IRS cite), and guaranteed-payout contractor
-// (Company is voluntarily underwriting timing risk during onboarding).
-// Uses preTopUpHourly as the effective rate — matches what the Payroll
-// card's per-row "Below min wage" badge uses.
+// Only true legal-compliance violations — W-2 employees and trainees
+// whose effective rate falls below the floor. Contractor low rates
+// are surfaced as per-row orange "Low rate" warnings (via
+// getRowWarnings) with a reclassification-risk tooltip; they're not
+// legal violations so they don't warrant a top-of-body red banner.
+// Uses hasWageViolation as the single source of truth so the banner
+// count matches the section-header "N violations" chip and the
+// per-row "Below min wage" badges.
 function WageComplianceBanner({
   workers,
   minWagePerHour,
@@ -2189,47 +2215,15 @@ function WageComplianceBanner({
   workers: WorkerRow[];
   minWagePerHour: number;
 }) {
-  const floor = minWagePerHour;
-  const belowEmp = workers.filter(
-    (w) =>
-      !w.isOwner &&
-      w.preTopUpHourly != null &&
-      w.preTopUpHourly < floor &&
-      (w.workerType === "EMPLOYEE" || w.workerType === "TRAINEE"),
-  );
-  const belowCon = workers.filter(
-    (w) =>
-      w.preTopUpHourly != null &&
-      w.preTopUpHourly < floor &&
-      w.workerType === "CONTRACTOR",
-  );
-  const belowConGuaranteed = belowCon.filter((w) => w.guaranteedPayoutActive);
-  const belowConStandard = belowCon.filter((w) => !w.guaranteedPayoutActive);
-  if (belowEmp.length === 0 && belowCon.length === 0) return null;
-  // Build count phrases flat, join with "; " — avoids double-space
-  // JSX whitespace quirks from inline fragment concatenation.
-  const parts: string[] = [];
-  if (belowEmp.length > 0) {
-    parts.push(`${belowEmp.length} W-2 worker${belowEmp.length === 1 ? "" : "s"}`);
-  }
-  if (belowConStandard.length > 0) {
-    parts.push(`${belowConStandard.length} contractor${belowConStandard.length === 1 ? "" : "s"} (reclassification risk)`);
-  }
-  if (belowConGuaranteed.length > 0) {
-    parts.push(`${belowConGuaranteed.length} contractor${belowConGuaranteed.length === 1 ? "" : "s"} (guaranteed payout)`);
-  }
+  const flagged = workers.filter((w) => hasWageViolation(w, minWagePerHour));
+  if (flagged.length === 0) return null;
   return (
     <Box mb={3} p={2} bg="red.50" borderWidth="1px" borderColor="red.300" rounded="md">
       <Text fontSize="xs" color="red.900" fontWeight="semibold">
-        Below ${floor.toFixed(2)}/hr floor in window: {parts.join("; ")}
+        Below ${minWagePerHour.toFixed(2)}/hr floor in window: {flagged.length} W-2 worker{flagged.length === 1 ? "" : "s"}
       </Text>
       <Text fontSize="2xs" color="red.800" mt={0.5}>
-        W-2 below the floor is a legal compliance issue. Contractors below the floor aren&apos;t a legal violation
-        if they&apos;re truly independent — but a persistently low effective rate is the kind of signal the DOL/IRS
-        cite when reclassifying contractors as employees.
-        {belowConGuaranteed.length > 0 && (
-          <> Contractors marked &quot;guaranteed payout&quot; are currently in an active onboarding period — the Company is voluntarily underwriting their timing risk, but the rate signal is still worth watching for when the period ends.</>
-        )}
+        Minimum-wage law applies to W-2 employees and trainees. Review the flagged rows before running payroll.
       </Text>
     </Box>
   );
