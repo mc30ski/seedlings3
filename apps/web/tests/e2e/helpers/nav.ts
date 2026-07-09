@@ -23,3 +23,22 @@ export async function gotoWorkerHome(page: Page, opts: { path?: string } = {}) {
   await page.goto(path);
   await page.waitForLoadState("networkidle");
 }
+
+/**
+ * Navigate a Super user to Super → Directory → Compliance. Same
+ * pattern as gotoWorkerHome — stamp the localStorage keys so the tab
+ * router lands exactly where we want. Requires the storage state to
+ * belong to a user with the SUPER role (or ADMIN, since AdminCompliance
+ * is also mounted under the admin tab list).
+ */
+export async function gotoSuperCompliance(page: Page, opts: { path?: string } = {}) {
+  const path = opts.path ?? "/";
+  await page.goto(path);
+  await page.evaluate(() => {
+    localStorage.setItem("seedlings_topTab", JSON.stringify("super"));
+    localStorage.setItem("seedlings_superTab", JSON.stringify("compliance"));
+    localStorage.setItem("seedlings_superCategory", JSON.stringify("Directory"));
+  });
+  await page.goto(path);
+  await page.waitForLoadState("networkidle");
+}

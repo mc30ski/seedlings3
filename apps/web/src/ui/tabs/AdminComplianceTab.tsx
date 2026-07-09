@@ -2715,13 +2715,13 @@ function SignMatrixView() {
                         {u.displayName ?? u.email ?? u.id}
                       </Text>
                       {u.workerType === "EMPLOYEE" ? (
-                        <Badge size="xs" colorPalette="blue">Employee</Badge>
+                        <Badge data-testid="sign-matrix-worker-type" size="xs" colorPalette="blue">Employee</Badge>
                       ) : u.workerType === "CONTRACTOR" ? (
-                        <Badge size="xs" colorPalette="orange">Contractor</Badge>
+                        <Badge data-testid="sign-matrix-worker-type" size="xs" colorPalette="orange">Contractor</Badge>
                       ) : u.workerType === "TRAINEE" ? (
-                        <Badge size="xs" colorPalette="cyan">Trainee</Badge>
+                        <Badge data-testid="sign-matrix-worker-type" size="xs" colorPalette="cyan">Trainee</Badge>
                       ) : (
-                        <Badge size="xs" colorPalette="gray" variant="outline">Unclassified</Badge>
+                        <Badge data-testid="sign-matrix-worker-type" size="xs" colorPalette="gray" variant="outline">Unclassified</Badge>
                       )}
                     </VStack>
                     <NudgeUserButton

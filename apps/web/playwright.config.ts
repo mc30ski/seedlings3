@@ -42,7 +42,10 @@ export default defineConfig({
     {
       name: "employee",
       dependencies: ["auth-setup"],
-      testMatch: /specs\/.*\.spec\.ts$/,
+      // Admin-facing specs (prefixed compliance-admin-*, admin-*, etc.)
+      // run under the `super` project — exclude them here so employee
+      // doesn't try to load pages it can't access.
+      testMatch: /specs\/(?!.*-admin-|mobile-).*\.spec\.ts$/,
       use: {
         ...devices["Desktop Chrome"],
         storageState: "./playwright/.auth/employee.json",
@@ -56,6 +59,18 @@ export default defineConfig({
       use: {
         ...devices["iPhone 13"],
         storageState: "./playwright/.auth/employee.json",
+      },
+    },
+    {
+      name: "super",
+      dependencies: ["auth-setup"],
+      // Super user (Michael) has SUPER + ADMIN + WORKER roles so this
+      // project runs any spec that touches admin/super UI.
+      testMatch: /specs\/.*-admin-.*\.spec\.ts$/,
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: "./playwright/.auth/super.json",
+        viewport: { width: 1280, height: 900 },
       },
     },
   ],
