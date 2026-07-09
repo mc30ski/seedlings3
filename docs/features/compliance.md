@@ -148,8 +148,27 @@ in-sync across independent components. All are `window`-level.
 |-------|------------|------------|---------------|
 | `policies:required` | ComplianceBanner "Sign now", gated actions | PolicyGateInterceptor | Open the sign wizard for pending policies |
 | `policies:signed` | PolicySignWizard after each successful sign | ComplianceBanner, index.tsx counts | Refresh — a signature was just written |
+| `policies:wizard-closed` | PolicyGateInterceptor on any wizard close (Cancel or after completion), with `detail: { completed: boolean }` | `lib/api.ts` POLICIES_REQUIRED branch | Signal for api.ts auto-retry: if `completed=true`, retry the original request that triggered the wizard; if `completed=false`, throw. |
 | `policies:changed` | Admin operations (grant exception, publish v2, etc.) | ComplianceBanner, index.tsx counts | Refresh — server-side state changed |
-| `navigate:profile` | ComplianceBanner "View profile" | index.tsx | Switch top tab → worker/Profile |
+| `navigate:profile` | ComplianceBanner "View profile" | index.tsx | Switch top tab → worker/Profile. Pushes onto nav history so the back button returns to Home. |
+
+## Auto-retry on gated requests
+
+Every request through `lib/api.ts` that comes back with
+`code === "POLICIES_REQUIRED"`:
+
+1. Dispatches `policies:required` (opens the sign wizard).
+2. Awaits `policies:wizard-closed`.
+3. On `{ completed: true }` — transparently retries the original
+   request. If it fails again with POLICIES_REQUIRED (second policy
+   still gating), the wizard reopens; recursive retry handles this.
+4. On `{ completed: false }` — throws the original POLICIES_REQUIRED
+   error to the caller.
+
+This means every gated action in the app (workday start, job claim,
+equipment reserve) gets one unified "sign then continue" flow with no
+per-caller integration required. Upstream callers just see either a
+resolved promise or the original error.
 
 ## Exception mechanism
 
@@ -210,11 +229,21 @@ exception semantics, worker-type targeting, digest-pinning invariants.
 tested against a broad matrix of (state, exception, version, digest)
 combinations.
 
-**Frontend e2e** — [`apps/web/tests/e2e/specs/compliance-banner-*.spec.ts`](../../apps/web/tests/e2e/specs/)
-30 Playwright tests across three files (mainline, edge, deep). Run with:
+**Frontend e2e** — [`apps/web/tests/e2e/specs/compliance-*.spec.ts`](../../apps/web/tests/e2e/specs/)
+48 Playwright tests across eight files:
+- `compliance-banner-mainline.spec.ts` — banner rendering, colors, position
+- `compliance-banner-edge.spec.ts` — exceptions, targeting, revoke, impersonation
+- `compliance-banner-deep.spec.ts` — forcesResign, multi-sign, digest drift, long titles
+- `compliance-wizard.spec.ts` — Cancel button + `policies:wizard-closed` event dispatch (both `completed: true` and `completed: false` paths)
+- `compliance-autoretry.spec.ts` — end-to-end auto-retry: tap Start workday → gate fires → sign wizard → sign → workday actually starts. Load-bearing test for the `api.ts` retry mechanism.
+- `compliance-nav.spec.ts` — View Profile navigation + back-button return
+- `compliance-admin-matrix.spec.ts` — Sign Matrix worker-type chips + unclassified-workers warning (runs under the `super` Playwright project)
+- `compliance-admin-actions.spec.ts` — archive dialog closes drawer, unclassified warning surfaces with scratch user, upload file-type picker saves correct MIME string. Runs under the `super` Playwright project.
+
+Run with:
 
 ```bash
-cd apps/web && npx playwright test --project=employee
+cd apps/web && npm run test:e2e
 ```
 
 Auth uses Clerk sign-in tokens (backend SDK → ticket → browser redeem)

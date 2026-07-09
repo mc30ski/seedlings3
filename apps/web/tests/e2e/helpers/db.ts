@@ -31,6 +31,66 @@ export const USERS = {
   super:      "cmexiwrfs003kvdysrjteo2hy",
 } as const;
 
+/** Reset a worker's workday state for today so tests can exercise the
+ *  "NOT_STARTED → Start workday" gate flow. Also nukes any dangling prior
+ *  workdays so `assertWorkdayActiveOrPrompt` gives us a clean slate.
+ *
+ *  Uses the ET-anchored date key so it lines up with the app's own
+ *  `workdayDate` field. */
+/** Create a scratch approved WORKER-role user with NO workerType set —
+ *  exactly the shape the unclassified-worker warning is meant to surface.
+ *  Returns the created user's ID. Caller is responsible for cleanup via
+ *  `deleteScratchUser`. Uses a random Clerk ID and a random email to
+ *  avoid collisions across parallel test runs (should be @unique). */
+export async function createScratchUnclassifiedWorker(
+  prisma: PrismaClient,
+  opts: { displayName?: string } = {},
+): Promise<string> {
+  const uid = randomUUID();
+  const user = await prisma.user.create({
+    data: {
+      clerkUserId: `user_test_unclassified_${uid.replace(/-/g, "").slice(0, 20)}`,
+      email: `test-unclassified-${uid.slice(0, 8)}@example.test`,
+      displayName: opts.displayName ?? `Test Unclassified ${uid.slice(0, 6)}`,
+      isApproved: true,
+      // workerType intentionally omitted (null).
+      roles: {
+        create: [{ role: "WORKER" }],
+      },
+    },
+  });
+  return user.id;
+}
+
+/** Cleanup counterpart to `createScratchUnclassifiedWorker`. Deletes the
+ *  user + their UserRole rows. Safe to call even if the user's already
+ *  been deleted. */
+export async function deleteScratchUser(prisma: PrismaClient, userId: string) {
+  // UserRole and other relations cascade via schema onDelete: Cascade
+  // where applicable, so a straight delete works.
+  await prisma.user.deleteMany({ where: { id: userId } });
+}
+
+export async function resetWorkdayState(prisma: PrismaClient, userId: string) {
+  // Compute today's ET date the same way the server does — via Intl in
+  // America/New_York — so the workdayDate string we delete matches what
+  // the app writes.
+  const etDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  await prisma.workerWorkday.deleteMany({
+    where: {
+      userId,
+      // Delete today AND anything still open — the "openPrior" list
+      // returned by the server would otherwise block the gate check.
+      OR: [{ workdayDate: etDate }, { endedAt: null }],
+    },
+  });
+}
+
 /**
  * Wipe all PolicySignatures + PolicyExceptions for a user so we start
  * from a clean "worker has never touched anything" state. Idempotent.
