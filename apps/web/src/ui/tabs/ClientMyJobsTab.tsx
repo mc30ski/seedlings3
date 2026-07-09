@@ -17,6 +17,7 @@ import {
 } from "@chakra-ui/react";
 import { Calendar, CheckCircle2, Download, Eye, SkipForward, X } from "lucide-react";
 import { apiDelete, apiGet, apiPost } from "@/src/lib/api";
+import { getClientImpersonation } from "@/src/lib/impersonation";
 import { fmtDate, fmtDateWeekday, bizToday, bizAddDays } from "@/src/lib/lib";
 import { MapLink } from "@/src/ui/helpers/Link";
 import { type ReceiptData, downloadReceipt, getReceiptBlob } from "@/src/lib/receipt";
@@ -215,14 +216,25 @@ export default function ClientMyJobsTab() {
   const [confirmingCandidate, setConfirmingCandidate] = useState(false);
 
   async function load() {
-    try {
-      const res = await apiPost<LinkResponse>("/api/client/link");
-      if (!res.linked && res.reason === "candidate") {
-        setLinkCandidate(res.candidate);
-      } else {
-        setLinkCandidate(null);
-      }
-    } catch {}
+    // Skip the auto-link bootstrap when a Super is viewing this as a
+    // client. Two reasons:
+    //   1. The impersonated contact is BY DEFINITION already linked (we
+    //      couldn't have reached this view otherwise), so the POST would
+    //      be a no-op at the business-logic level anyway.
+    //   2. All non-GET requests are refused with 403 IMPERSONATION_READONLY
+    //      by the plugins/clientImpersonation.ts write-block. Skipping
+    //      avoids a spurious network error toast for the operator.
+    const isClientImpersonating = !!getClientImpersonation();
+    if (!isClientImpersonating) {
+      try {
+        const res = await apiPost<LinkResponse>("/api/client/link");
+        if (!res.linked && res.reason === "candidate") {
+          setLinkCandidate(res.candidate);
+        } else {
+          setLinkCandidate(null);
+        }
+      } catch {}
+    }
     try {
       const me = await apiGet<ClientProfile>("/api/client/me");
       setProfile(me);

@@ -291,7 +291,29 @@ export const users: ServicesUsers = {
   // Implements a GET /me endpoint that authenticates with Clerk (via header or cookie),
   // ensures there’s a matching user in your Prisma DB, optionally bootstraps ADMIN/WORKER roles based on an env list,
   // then returns a normalized “me” object.
-  async me(token: string, impersonateHeader?: string | string[] | null) {
+  //
+  // The optional `clientImpersonationContactId` swaps the returned identity
+  // to look like a signed-in client when a Super has an active client
+  // "View as" session. See plugins/clientImpersonation.ts — that plugin
+  // validates the header + SUPER gate + read-only enforcement BEFORE this
+  // service is called, so by the time we get here we only need to overlay
+  // the me shape.  When applied:
+  //   - roles becomes empty (`[]`) so every UI visibility guard that
+  //     hides tabs from workers/admins/supers passes as it would for a
+  //     signed-in client
+  //   - workerType becomes null
+  //   - isApproved becomes true (clients don't go through worker approval)
+  //   - identity fields (email, first/last, phone, displayName) reflect
+  //     the ClientContact, not the Super
+  //   - realRoles / realWorkerType / isImpersonating are preserved so the
+  //     ImpersonationBanner keeps rendering with its Exit affordance
+  //   - `me.id` stays as the Super's real User.id — audit / attribution
+  //     downstream never confuses the actor
+  async me(
+    token: string,
+    impersonateHeader?: string | string[] | null,
+    clientImpersonationContactId?: string | null,
+  ) {
     // Verify token with Clerk
     let clerkUserId: string;
     try {
@@ -434,6 +456,10 @@ export const users: ServicesUsers = {
     const realRolesArr = (user!.roles ?? []).map((r) => r.role) as Role[];
     const realWorkerType = user!.workerType ?? null;
     const realIsOwner = !!user!.isOwner;
+    // Gate for the client "View as" overlay applied at the end of this
+    // function. Matches the same SUPER-only gate the role impersonation
+    // uses — we never mutate the me shape for a non-Super caller.
+    const isReallySuper = realRolesArr.includes("SUPER" as Role);
 
     // Apply impersonation only when the underlying user really is SUPER and
     // the header parsed cleanly. Non-Super requests with this header silently
@@ -504,7 +530,58 @@ export const users: ServicesUsers = {
       realRoles: realRolesArr,
       realWorkerType,
       isImpersonating: !!impersonation,
+      // False by default; overlaid to true below when the Super's client
+      // "View as" session is active. Independent of the role-impersonation
+      // flag above.
+      isClientImpersonating: false,
     };
+
+    // Client "View as" overlay. Only applies when the underlying caller
+    // is a real SUPER AND an impersonation-target contact ID was passed
+    // (both true only if plugins/clientImpersonation.ts already validated
+    // the session — the plugin refuses the request with 400 or silently
+    // no-ops long before we reach this code path otherwise).
+    if (isReallySuper && clientImpersonationContactId) {
+      const contact = await prisma.clientContact.findUnique({
+        where: { id: clientImpersonationContactId },
+        select: {
+          clerkUserId: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          phone: true,
+        },
+      });
+      if (contact && contact.clerkUserId) {
+        const displayName =
+          [contact.firstName, contact.lastName].filter(Boolean).join(" ") || null;
+        return {
+          ...me,
+          // Swap the identity + role shape to what a signed-in client
+          // would receive. Every downstream tab-visibility guard reads
+          // these fields and now behaves as if the caller were a client.
+          isApproved: true,
+          roles: [] as Role[],
+          workerType: null,
+          isOwner: false,
+          email: contact.email ?? null,
+          phone: contact.phone ?? null,
+          firstName: contact.firstName ?? null,
+          lastName: contact.lastName ?? null,
+          displayName,
+          // Client-impersonation privileges are meaningless (no worker
+          // actions available); force to false so any code that checks
+          // renders correctly.
+          privileges: {
+            canPullInventory: false,
+            canChargeBusinessExpenses: false,
+          },
+          // real* stays as-is (the Super's actual roles) so the exit
+          // affordance in ImpersonationBanner keeps rendering.
+          isClientImpersonating: true,
+        };
+      }
+    }
 
     return me;
   },

@@ -109,6 +109,13 @@ export type Me = {
   realRoles?: Role[];
   realWorkerType?: WorkerType | null;
   isImpersonating?: boolean;
+  // True when Super has an active client "View as" session — /api/me
+  // overlays the response with client-shaped identity so every visibility
+  // guard renders the client tabs. Frontend rarely reads this directly;
+  // most code just consumes the flipped roles/workerType/isApproved. The
+  // ImpersonationBanner reads it via getClientImpersonation() from
+  // localStorage, not from here.
+  isClientImpersonating?: boolean;
 };
 
 export type TabPropsType = {
