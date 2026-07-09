@@ -15,7 +15,7 @@ import {
   Textarea,
   VStack,
 } from "@chakra-ui/react";
-import { AlertTriangle, Archive, CheckCircle2, ChevronRight, Download, Eye, FileText, Play, Plus, RotateCcw, Trash2, X, XCircle } from "lucide-react";
+import { AlertTriangle, Archive, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, Download, Eye, FileText, Info, Play, Plus, RotateCcw, Trash2, X, XCircle } from "lucide-react";
 import PolicyMarkdown from "@/src/ui/components/PolicyMarkdown";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
@@ -342,6 +342,13 @@ export default function AdminComplianceTab() {
           ))}
         </VStack>
       )}
+
+      {/* TEMPORARY: reminder / brainstorm of other policies worth building.
+          Remove this whole PolicySuggestionsPanel invocation (and the
+          component definition below) once the operator's happy with the
+          policy list and doesn't need the prompt anymore. Delete-safe —
+          no other code depends on it. */}
+      <PolicySuggestionsPanel />
 
         </>
       )}
@@ -2407,6 +2414,15 @@ type SignMatrixData = {
     email: string | null;
     workerType: string | null;
   }>;
+  // Approved WORKER-role users with no worker type set. Not in `users`
+  // because they'd render as an all-NOT_TARGETED row and can't be matched
+  // by any policy. Surfaced separately so we can render a warning banner:
+  // these workers currently bypass every compliance gate.
+  unclassifiedWorkers: Array<{
+    id: string;
+    displayName: string | null;
+    email: string | null;
+  }>;
   policies: Array<{
     id: string;
     key: string;
@@ -2586,6 +2602,46 @@ function SignMatrixView() {
         </Button>
       </HStack>
 
+      {/* Unclassified-worker warning. These are approved WORKER-role users
+          without a workerType set — they can't be matched by any policy's
+          targetWorkerTypes, so no BLOCK gate ever fires for them and they
+          bypass the compliance system entirely. Surfaced here because the
+          Sign Matrix is the natural place an admin discovers "who's covered
+          by what". */}
+      {data.unclassifiedWorkers.length > 0 && (
+        <Box
+          mb={3}
+          p={3}
+          borderWidth="1px"
+          borderColor="red.300"
+          bg="red.50"
+          borderRadius="md"
+        >
+          <HStack gap={2} align="start">
+            <Box color="red.600" flexShrink={0} mt={0.5}>
+              <AlertTriangle size={16} />
+            </Box>
+            <VStack align="start" gap={1} flex="1" minW={0}>
+              <Text fontSize="sm" fontWeight="semibold" color="red.900">
+                {data.unclassifiedWorkers.length === 1
+                  ? "1 worker has no worker type set"
+                  : `${data.unclassifiedWorkers.length} workers have no worker type set`}
+                {" "}— no compliance coverage
+              </Text>
+              <Text fontSize="xs" color="red.800">
+                These workers bypass every compliance gate. Assign a worker
+                type on the Users tab so they can be targeted by policies.
+              </Text>
+              <Text fontSize="xs" color="red.900" fontWeight="medium">
+                {data.unclassifiedWorkers
+                  .map((u) => u.displayName ?? u.email ?? u.id)
+                  .join(", ")}
+              </Text>
+            </VStack>
+          </HStack>
+        </Box>
+      )}
+
       <Box overflowX="auto" borderWidth="1px" borderRadius="md">
         <Box as="table" w="full" style={{ borderCollapse: "collapse" }}>
           <Box as="thead" bg="gray.50">
@@ -2654,13 +2710,19 @@ function SignMatrixView() {
                   zIndex={1}
                 >
                   <HStack gap={2} align="center">
-                    <VStack align="start" gap={0} flex="1" minW={0}>
+                    <VStack align="start" gap={0.5} flex="1" minW={0}>
                       <Text fontSize="xs" fontWeight="medium" lineClamp={1}>
                         {u.displayName ?? u.email ?? u.id}
                       </Text>
-                      <Text fontSize="2xs" color="fg.muted">
-                        {u.workerType ?? "—"}
-                      </Text>
+                      {u.workerType === "EMPLOYEE" ? (
+                        <Badge size="xs" colorPalette="blue">Employee</Badge>
+                      ) : u.workerType === "CONTRACTOR" ? (
+                        <Badge size="xs" colorPalette="orange">Contractor</Badge>
+                      ) : u.workerType === "TRAINEE" ? (
+                        <Badge size="xs" colorPalette="cyan">Trainee</Badge>
+                      ) : (
+                        <Badge size="xs" colorPalette="gray" variant="outline">Unclassified</Badge>
+                      )}
                     </VStack>
                     <NudgeUserButton
                       userId={u.id}
@@ -2867,4 +2929,479 @@ export function NudgeUserButton({
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// TEMPORARY — PolicySuggestionsPanel
+//
+// Collapsible reminder panel listed below the Policies view. Prompts the
+// operator with a curated list of policies that would be worth building for
+// a NC-based lawn-care business, grouped by tier: Essential, Important,
+// Nice-to-have, Situational. Not meant to live in the app forever — delete
+// the whole component and the single JSX usage above once the operator has
+// used it as a brainstorm source and doesn't need it anymore.
+//
+// Nothing here talks to the API. Pure static content.
+// ─────────────────────────────────────────────────────────────────────────────
 
+type PolicySuggestion = {
+  title: string;
+  targets: string;         // "All workers" | "Contractor" | "Employee" | ...
+  enforcement: "BLOCK" | "WARN" | "INFO";
+  reSign: string;          // "Annual" | "Once" | "On expiry" | ...
+  upload: "None" | "Worker uploads" | "Admin uploads on behalf";
+  description: string;
+};
+
+type SuggestionTier = {
+  key: string;
+  title: string;
+  subtitle: string;
+  items: PolicySuggestion[];
+};
+
+const POLICY_SUGGESTIONS: SuggestionTier[] = [
+  {
+    key: "essential",
+    title: "Essential",
+    subtitle: "Legal shield / regulatory required. Build these first.",
+    items: [
+      {
+        title: "Employee Handbook",
+        targets: "Employee, Trainee",
+        enforcement: "BLOCK",
+        reSign: "Annual (or on republish)",
+        upload: "None",
+        description:
+          "Wraps up code of conduct, drug/alcohol, harassment, PTO, at-will, and timekeeping into one binder-style document. The legal-shield document — signature proves receipt.",
+      },
+      {
+        title: "Anti-Harassment / EEO Acknowledgment",
+        targets: "All workers",
+        enforcement: "BLOCK",
+        reSign: "Annual",
+        upload: "None",
+        description:
+          "Federal EEOC recommends annual distribution + acknowledgment. Cheap insurance against harassment lawsuits.",
+      },
+      {
+        title: "Vehicle Use Agreement",
+        targets: "Anyone who drives for work",
+        enforcement: "BLOCK",
+        reSign: "Annual",
+        upload: "None",
+        description:
+          "MVR consent, seat-belt attestation, no phone use, distracted-driving rules. Protects you when a worker crashes a truck.",
+      },
+      {
+        title: "Contractor Agreement (real version)",
+        targets: "Contractor",
+        enforcement: "BLOCK",
+        reSign: "Annual",
+        upload: "None",
+        description:
+          "Replaces the deleted placeholder with real terms: scope, payment, IP, non-solicit, insurance requirements.",
+      },
+      {
+        title: "Independent Contractor Status",
+        targets: "Contractor",
+        enforcement: "BLOCK",
+        reSign: "Annual",
+        upload: "None",
+        description:
+          "Contractor attests they understand they're not an employee. Misclassification-claim shield.",
+      },
+      {
+        title: "W-9 / Tax ID",
+        targets: "Contractor",
+        enforcement: "BLOCK",
+        reSign: "Once (or on TIN change)",
+        upload: "Admin uploads on behalf",
+        description:
+          "Required for 1099 filing. Replaces the deleted W-9 placeholder.",
+      },
+      {
+        title: "I-9 Employment Eligibility",
+        targets: "Employee",
+        enforcement: "BLOCK",
+        reSign: "Once",
+        upload: "Admin uploads on behalf",
+        description:
+          "Federally required within 3 days of hire. Admin verifies documents in-person and uploads the completed form.",
+      },
+      {
+        title: "W-4 Tax Withholding",
+        targets: "Employee",
+        enforcement: "BLOCK",
+        reSign: "Once (or on life event)",
+        upload: "Admin uploads on behalf",
+        description:
+          "Federally required to run payroll. Worker fills out on paper, admin uploads.",
+      },
+      {
+        title: "Direct Deposit Authorization",
+        targets: "Employee",
+        enforcement: "BLOCK",
+        reSign: "Once (or on account change)",
+        upload: "Admin uploads on behalf",
+        description:
+          "Bank routing and account number, signed authorization for ACH deposits.",
+      },
+    ],
+  },
+  {
+    key: "important",
+    title: "Important",
+    subtitle: "Mitigate real, quantifiable risk. Build once the essentials are settled.",
+    items: [
+      {
+        title: "NC Pesticide Applicator License",
+        targets: "Anyone applying chemicals",
+        enforcement: "BLOCK",
+        reSign: "On license expiry",
+        upload: "Worker uploads",
+        description:
+          "NC state law requires a licensed applicator for commercial pesticide use. Regulatory shield — build even before you offer chemical services so the workflow is ready.",
+      },
+      {
+        title: "Chainsaw / Pole Saw Operator Attestation",
+        targets: "Anyone using a saw",
+        enforcement: "BLOCK",
+        reSign: "Once",
+        upload: "None",
+        description:
+          "Worker attests they've been trained and are competent to run the saw. Gated per-piece via Equipment.requiredPolicyIds.",
+      },
+      {
+        title: "Riding Mower / Zero-Turn Operator",
+        targets: "Anyone using a rider",
+        enforcement: "BLOCK",
+        reSign: "Once",
+        upload: "None",
+        description:
+          "Same shape as chainsaw — attestation only, no upload. Gated per-piece on the rider equipment.",
+      },
+      {
+        title: "Trailer Towing Attestation",
+        targets: "Drivers who tow",
+        enforcement: "BLOCK",
+        reSign: "Annual",
+        upload: "None",
+        description:
+          "Attests to trailer safety practices. NC has weight-based license thresholds — attestation covers the operator side.",
+      },
+      {
+        title: "Timekeeping & Wage Attestation",
+        targets: "Employee, Trainee",
+        enforcement: "WARN",
+        reSign: "Annual",
+        upload: "None",
+        description:
+          "Worker attests they'll log hours accurately, report unpaid time, and take state-required breaks. FLSA / wage-hour compliance shield.",
+      },
+      {
+        title: "First Aid / CPR Certification",
+        targets: "All workers",
+        enforcement: "WARN",
+        reSign: "On expiry (typically 2 years)",
+        upload: "Worker uploads",
+        description:
+          "Upload cert with expiry. Not required, but valuable if you ever pursue larger commercial contracts that require certified first-aid crews.",
+      },
+      {
+        title: "Confidential Client Information",
+        targets: "All workers",
+        enforcement: "WARN",
+        reSign: "Annual",
+        upload: "None",
+        description:
+          "Gate codes, alarm codes, and other security-sensitive info stay confidential. Especially important for HOA and commercial clients.",
+      },
+      {
+        title: "Fuel Card Usage Policy",
+        targets: "Fuel-card holders",
+        enforcement: "BLOCK",
+        reSign: "Annual",
+        upload: "None",
+        description:
+          "No personal fuel, keep receipts, report card loss immediately. Prevents fuel-theft claims and simplifies reconciliation.",
+      },
+      {
+        title: "Company Credit Card / Expense Policy",
+        targets: "Workers with charge privileges",
+        enforcement: "BLOCK",
+        reSign: "Annual",
+        upload: "None",
+        description:
+          "Approved categories, receipt requirements, timing of expense submission. Parallels the fuel card policy.",
+      },
+      {
+        title: "Equipment Care and Return",
+        targets: "All workers",
+        enforcement: "WARN",
+        reSign: "Annual",
+        upload: "None",
+        description:
+          "Attest they'll return equipment in the same condition, report damage immediately, and cover their share of loss caused by negligence.",
+      },
+    ],
+  },
+  {
+    key: "nice",
+    title: "Nice to have",
+    subtitle: "Operational quality and consistency, not strict legal cover.",
+    items: [
+      {
+        title: "Photo / Media Release",
+        targets: "All workers",
+        enforcement: "WARN",
+        reSign: "Once",
+        upload: "None",
+        description:
+          "Publicity waiver so before/after photos and marketing content can include worker images. One-time signature covers ongoing use.",
+      },
+      {
+        title: "Uniform / Appearance Policy",
+        targets: "All workers",
+        enforcement: "INFO",
+        reSign: "Annual",
+        upload: "None",
+        description:
+          "What to wear on-site, hygiene expectations, visible tattoo / piercing guidance. Reduces client complaints.",
+      },
+      {
+        title: "Client Interaction / Professionalism",
+        targets: "All workers",
+        enforcement: "INFO",
+        reSign: "Annual",
+        upload: "None",
+        description:
+          "How to handle client questions on-site, when to escalate, no arguments — reduces friction with VIP and high-maintenance clients.",
+      },
+      {
+        title: "Weather / Emergency Communication Protocol",
+        targets: "All workers",
+        enforcement: "INFO",
+        reSign: "Annual",
+        upload: "None",
+        description:
+          "How the crew learns of shutdowns (thunderstorm, freeze, personal emergency), who to call, no-show consequences.",
+      },
+      {
+        title: "Trainee Program Acknowledgment",
+        targets: "Trainee",
+        enforcement: "BLOCK",
+        reSign: "Once",
+        upload: "None",
+        description:
+          "Sets expectations for the trainee ramp period: mentor pairing, ride-along days, milestones, path to Employee.",
+      },
+      {
+        title: "Attendance & Punctuality",
+        targets: "Employee, Trainee",
+        enforcement: "INFO",
+        reSign: "Annual",
+        upload: "None",
+        description:
+          "How to call in sick, no-show consequences, tardiness policy. Sets clear expectations and gives you paper trail for HR actions.",
+      },
+      {
+        title: "Injury Reporting Protocol",
+        targets: "All workers",
+        enforcement: "BLOCK",
+        reSign: "Annual",
+        upload: "None",
+        description:
+          "Detailed workers' comp filing process, same-day reporting rule, first-aid vs. medical-attention decision tree. Complements the Safety Guide.",
+      },
+    ],
+  },
+  {
+    key: "situational",
+    title: "Situational",
+    subtitle: "Build when a specific business trigger fires, not before.",
+    items: [
+      {
+        title: "Background Check Consent",
+        targets: "Applicant / new hire",
+        enforcement: "BLOCK",
+        reSign: "Once",
+        upload: "None",
+        description:
+          "Only if you start doing MVR pulls, criminal record checks, or drug testing. Required by FCRA before running any consumer report.",
+      },
+      {
+        title: "GPS Tracking Consent",
+        targets: "All workers",
+        enforcement: "BLOCK",
+        reSign: "Once",
+        upload: "None",
+        description:
+          "Only if the app or company vehicles track worker location. Some states require explicit written consent.",
+      },
+      {
+        title: "Overtime / FLSA Policy",
+        targets: "Employee, Trainee",
+        enforcement: "WARN",
+        reSign: "Annual",
+        upload: "None",
+        description:
+          "When you scale past a couple of crews and overtime becomes a real budget line — sets rules on approval, comp time, and reporting.",
+      },
+      {
+        title: "Meal / Rest Break Attestation",
+        targets: "Employee, Trainee",
+        enforcement: "WARN",
+        reSign: "Annual",
+        upload: "None",
+        description:
+          "Only if you expand to states with break rules (CA, NY, OR, WA). NC has no such requirement.",
+      },
+      {
+        title: "Health Insurance / Benefits Election",
+        targets: "Employee",
+        enforcement: "INFO",
+        reSign: "Annual (open enrollment)",
+        upload: "Admin uploads on behalf",
+        description:
+          "Only if you offer benefits. Election form + waiver form. Admin uploads completed elections to the compliance record.",
+      },
+      {
+        title: "State Landscape Contractor License Verification",
+        targets: "Contractor",
+        enforcement: "BLOCK",
+        reSign: "On license expiry",
+        upload: "Worker uploads",
+        description:
+          "If you add services that require a state landscape contractor license (irrigation installation, tree removal above a size threshold). NC has specific licensing for these.",
+      },
+      {
+        title: "Non-Solicitation Agreement",
+        targets: "All workers",
+        enforcement: "BLOCK",
+        reSign: "Once",
+        upload: "None",
+        description:
+          "Build if you experience worker poaching (leaving to a competitor with client list) or client poaching. Enforce carefully — NC is business-friendly but courts scrutinize scope.",
+      },
+      {
+        title: "Pesticide Storage / Transport",
+        targets: "Anyone applying chemicals",
+        enforcement: "BLOCK",
+        reSign: "Annual",
+        upload: "None",
+        description:
+          "Separate from the applicator license — addresses safe storage, transport in the truck, and spill response.",
+      },
+      {
+        title: "Client Property Damage Protocol",
+        targets: "All workers",
+        enforcement: "INFO",
+        reSign: "Annual",
+        upload: "None",
+        description:
+          "How to document accidental damage (broken sprinkler head, fence scratch, driveway oil stain) — photo, immediate notify, don't hide.",
+      },
+    ],
+  },
+];
+
+function PolicySuggestionsPanel() {
+  const [expanded, setExpanded] = useState(false);
+
+  const totalSuggestions = POLICY_SUGGESTIONS.reduce((n, tier) => n + tier.items.length, 0);
+
+  return (
+    <Box
+      mt={4}
+      borderWidth="1px"
+      borderColor="blue.300"
+      bg="blue.50"
+      borderRadius="md"
+      overflow="hidden"
+    >
+      <HStack
+        as="button"
+        onClick={() => setExpanded((v) => !v)}
+        w="full"
+        p={3}
+        gap={2}
+        align="center"
+        cursor="pointer"
+        _hover={{ bg: "blue.100" }}
+        aria-expanded={expanded}
+      >
+        <Box color="blue.600" flexShrink={0}>
+          <Info size={16} />
+        </Box>
+        <VStack align="start" gap={0} flex="1" minW={0}>
+          <Text fontSize="sm" fontWeight="semibold" color="blue.900" textAlign="left">
+            Suggested policies — {totalSuggestions} ideas across {POLICY_SUGGESTIONS.length} tiers
+          </Text>
+          <Text fontSize="xs" color="blue.800" textAlign="left">
+            Reminder of policies worth building next. Grouped by priority. Click to {expanded ? "hide" : "expand"}.
+          </Text>
+        </VStack>
+        <Box color="blue.700" flexShrink={0}>
+          {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+        </Box>
+      </HStack>
+      {expanded && (
+        <Box borderTopWidth="1px" borderColor="blue.200" bg="white" p={3}>
+          <VStack align="stretch" gap={4}>
+            {POLICY_SUGGESTIONS.map((tier) => (
+              <Box key={tier.key}>
+                <Text fontSize="sm" fontWeight="semibold" color="blue.900" mb={0.5}>
+                  {tier.title}
+                </Text>
+                <Text fontSize="xs" color="fg.muted" mb={2}>
+                  {tier.subtitle}
+                </Text>
+                <VStack align="stretch" gap={2}>
+                  {tier.items.map((item) => (
+                    <Box
+                      key={item.title}
+                      p={2}
+                      borderWidth="1px"
+                      borderColor="gray.200"
+                      borderRadius="md"
+                      bg="gray.50"
+                    >
+                      <HStack gap={2} align="start" wrap="wrap" mb={1}>
+                        <Text fontSize="sm" fontWeight="medium" flex="1" minW="180px">
+                          {item.title}
+                        </Text>
+                        <Badge
+                          size="xs"
+                          colorPalette={item.enforcement === "BLOCK" ? "red" : item.enforcement === "WARN" ? "orange" : "blue"}
+                          variant="subtle"
+                        >
+                          {item.enforcement}
+                        </Badge>
+                        <Badge size="xs" colorPalette="gray" variant="outline">
+                          {item.targets}
+                        </Badge>
+                        <Badge size="xs" colorPalette="gray" variant="outline">
+                          Re-sign: {item.reSign}
+                        </Badge>
+                        {item.upload !== "None" && (
+                          <Badge size="xs" colorPalette="purple" variant="subtle">
+                            {item.upload}
+                          </Badge>
+                        )}
+                      </HStack>
+                      <Text fontSize="xs" color="fg.muted">
+                        {item.description}
+                      </Text>
+                    </Box>
+                  ))}
+                </VStack>
+              </Box>
+            ))}
+            <Text fontSize="2xs" color="fg.muted" fontStyle="italic" textAlign="center" pt={2}>
+              This panel is a temporary reminder. Ask Claude to remove it when you're done using it as a brainstorm source.
+            </Text>
+          </VStack>
+        </Box>
+      )}
+    </Box>
+  );
+}

@@ -2355,6 +2355,13 @@ export default function HomePage() {
   useEffect(() => {
     const onProfile = (e: Event) => {
       const { userId, forAdmin } = (e as CustomEvent).detail || {};
+      // Push the current tab onto the nav history stack BEFORE switching
+      // so the back button (in-app or browser/OS gesture) can return the
+      // user to where they were. Every other programmatic tab switch
+      // that participates in back-navigation uses pushNavHistory; this
+      // handler was previously missing it, so "View profile" jumps into
+      // Profile but the back button has no state to restore.
+      pushNavHistory(getCurrentNavState());
       if (forAdmin && isAdmin) {
         setTopTab("admin");
         setAdminInnerTab("profile");

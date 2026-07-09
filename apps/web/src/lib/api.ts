@@ -191,8 +191,17 @@ export async function request<T>(
     // gated action (workday start, job claim, vehicle reserve) without
     // signing every applicable BLOCK policy. Broadcast a global event so
     // the PolicyGateInterceptor mounted at the app root can open the sign
-    // wizard with the outstanding policies. Callers that want to retry
-    // after signing can listen for `policies:signed`.
+    // wizard with the outstanding policies.
+    //
+    // Then WAIT for the wizard to close and, if the worker signed
+    // everything, transparently retry the original request. This means
+    // upstream callers (WorkdayRequiredDialog, WorkdayStrip, JobsTab
+    // claim actions, equipment reserve, etc.) get a single well-behaved
+    // promise: it resolves with the real response if signing succeeded,
+    // or rejects with the original POLICIES_REQUIRED error if the worker
+    // cancelled the wizard. No more overlapping dialogs, no more manual
+    // retry, no more stale "Failed to start workday" toast surfaced
+    // behind the sign wizard.
     if (IS_BROWSER && code === "POLICIES_REQUIRED") {
       const evt = new CustomEvent("policies:required", {
         detail: {
@@ -202,6 +211,23 @@ export async function request<T>(
         },
       });
       window.dispatchEvent(evt);
+
+      const completed = await new Promise<boolean>((resolve) => {
+        const handler = (e: Event) => {
+          window.removeEventListener("policies:wizard-closed", handler);
+          const d = (e as CustomEvent).detail as { completed?: boolean } | undefined;
+          resolve(!!d?.completed);
+        };
+        window.addEventListener("policies:wizard-closed", handler);
+      });
+
+      if (completed) {
+        // Recursive retry — if a second policy also gates this request,
+        // the same POLICIES_REQUIRED branch reopens the wizard.
+        return request<T>(method, path, body);
+      }
+      // Worker cancelled — fall through and throw the original err so
+      // callers can distinguish user-cancel from server-500.
     }
 
     throw err;
