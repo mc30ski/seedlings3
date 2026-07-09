@@ -74,8 +74,8 @@ const NOTIFY_LABEL: Record<string, string> = {
 };
 
 const GATE_SERVICE_LABEL: Record<string, string> = {
-  WORKDAY_START: "Start a workday",
-  JOB_CLAIM: "Claim a job",
+  WORKDAY_START: "Start workday",
+  JOB_CLAIM: "Claim job",
   RESERVE_EQUIPMENT: "Claim equipment",
 };
 
@@ -1802,6 +1802,112 @@ function GrantExceptionDialog({
 
 const WORKER_TYPES = ["EMPLOYEE", "CONTRACTOR", "TRAINEE"] as const;
 
+// Friendly presets for the "Allowed file types" picker. The stored value on
+// the PolicyDocument row is still a comma-separated MIME string (the browser
+// file picker needs it that way for its `accept` attribute) — this component
+// just hides the MIME layer behind labels.
+const UPLOAD_TYPE_PRESETS = [
+  { key: "PDF", label: "PDF", mimes: ["application/pdf"] },
+  { key: "PHOTOS", label: "Photos", mimes: ["image/*"] },
+  {
+    key: "WORD",
+    label: "Word documents",
+    mimes: [
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ],
+  },
+] as const;
+type UploadPresetKey = (typeof UPLOAD_TYPE_PRESETS)[number]["key"];
+
+// Turn the stored MIME string into a Set of preset keys currently selected,
+// plus any leftover tokens that don't match a known preset (preserved
+// verbatim on save so we never lose data from a legacy row).
+function parseAcceptedTypes(raw: string): {
+  keys: Set<UploadPresetKey>;
+  extras: string[];
+} {
+  const tokens = raw
+    .split(",")
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
+  const keys = new Set<UploadPresetKey>();
+  const extras: string[] = [];
+  const claimed = new Set<string>();
+  for (const preset of UPLOAD_TYPE_PRESETS) {
+    if (preset.mimes.every((m) => tokens.includes(m))) {
+      keys.add(preset.key);
+      preset.mimes.forEach((m) => claimed.add(m));
+    }
+  }
+  for (const t of tokens) {
+    if (!claimed.has(t)) extras.push(t);
+  }
+  return { keys, extras };
+}
+
+function buildAcceptedTypes(keys: Set<UploadPresetKey>, extras: string[]): string {
+  const out: string[] = [];
+  for (const preset of UPLOAD_TYPE_PRESETS) {
+    if (keys.has(preset.key)) out.push(...preset.mimes);
+  }
+  out.push(...extras);
+  return out.join(",");
+}
+
+function UploadFileTypesPicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const { keys, extras } = parseAcceptedTypes(value);
+
+  function toggle(k: UploadPresetKey) {
+    const next = new Set(keys);
+    if (next.has(k)) next.delete(k);
+    else next.add(k);
+    onChange(buildAcceptedTypes(next, extras));
+  }
+
+  const hasAny = keys.size > 0 || extras.length > 0;
+
+  return (
+    <Box>
+      <Text fontSize="2xs" color="fg.muted" mb={1}>
+        Allowed file types
+      </Text>
+      <HStack gap={1} wrap="wrap">
+        {UPLOAD_TYPE_PRESETS.map((p) => {
+          const active = keys.has(p.key);
+          return (
+            <Button
+              key={p.key}
+              size="xs"
+              variant={active ? "solid" : "outline"}
+              colorPalette={active ? "blue" : "gray"}
+              onClick={() => toggle(p.key)}
+            >
+              {p.label}
+            </Button>
+          );
+        })}
+      </HStack>
+      {extras.length > 0 && (
+        <Text fontSize="2xs" color="fg.muted" mt={1}>
+          Also accepts: {extras.join(", ")}. (Advanced — leave as-is.)
+        </Text>
+      )}
+      {!hasAny && (
+        <Text fontSize="2xs" color="red.600" mt={1}>
+          Pick at least one file type. The upload button won't work otherwise.
+        </Text>
+      )}
+    </Box>
+  );
+}
+
 function EditPolicyMetadataDialog({
   policy,
   onClose,
@@ -2139,20 +2245,10 @@ function EditPolicyMetadataDialog({
                             placeholder="Insurance certificate"
                           />
                         </Box>
-                        <Box>
-                          <Text fontSize="2xs" color="fg.muted" mb={1}>
-                            Allowed file types
-                          </Text>
-                          <Input
-                            size="sm"
-                            value={workerUploadAcceptedTypes}
-                            onChange={(e) => setWorkerUploadAcceptedTypes(e.target.value)}
-                            placeholder="application/pdf,image/*"
-                          />
-                          <Text fontSize="2xs" color="fg.muted" mt={1}>
-                            Comma-separated MIME types. Use <code>application/pdf</code> for PDFs, <code>image/*</code> for photos.
-                          </Text>
-                        </Box>
+                        <UploadFileTypesPicker
+                          value={workerUploadAcceptedTypes}
+                          onChange={setWorkerUploadAcceptedTypes}
+                        />
                         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
                           <input
                             type="checkbox"
