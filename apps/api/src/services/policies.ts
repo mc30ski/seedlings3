@@ -1012,6 +1012,17 @@ export const policies = {
       email: string | null;
       workerType: string | null;
     }>;
+    // Approved WORKER-role users who don't have a workerType set. Not
+    // included in `users` because they can't be matched against any
+    // policy's targetWorkerTypes and would render as an all-NOT_TARGETED
+    // row. Surfaced separately so the frontend can render a warning row
+    // above the matrix: unclassified workers bypass every gate and are a
+    // real compliance risk.
+    unclassifiedWorkers: Array<{
+      id: string;
+      displayName: string | null;
+      email: string | null;
+    }>;
     policies: Array<{
       id: string;
       key: string;
@@ -1033,6 +1044,15 @@ export const policies = {
       select: { id: true, displayName: true, email: true, workerType: true },
       orderBy: { displayName: "asc" },
     });
+    const unclassifiedWorkers = await prisma.user.findMany({
+      where: {
+        workerType: null,
+        isApproved: true,
+        roles: { some: { role: "WORKER" } },
+      },
+      select: { id: true, displayName: true, email: true },
+      orderBy: { displayName: "asc" },
+    });
     const policies = await prisma.policyDocument.findMany({
       where: { archivedAt: null },
       orderBy: [{ sortOrder: "asc" }, { title: "asc" }],
@@ -1041,6 +1061,7 @@ export const policies = {
     if (users.length === 0 || policies.length === 0) {
       return {
         users: users.map((u) => ({ ...u })),
+        unclassifiedWorkers,
         policies: policies.map((p) => ({
           id: p.id,
           key: p.key,
@@ -1196,6 +1217,7 @@ export const policies = {
 
     return {
       users: users.map((u) => ({ ...u })),
+      unclassifiedWorkers,
       policies: policies.map((p) => ({
         id: p.id,
         key: p.key,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Badge,
   Box,
@@ -59,11 +59,34 @@ export default function PolicyGateInterceptor() {
   const [awaitingPanelRows, setAwaitingPanelRows] = useState<AwaitingReviewRow[]>([]);
   const [loading, setLoading] = useState(false);
 
+  // Tracks whether the wizard is closing because the worker just
+  // signed everything vs because they cancelled. handleClose reads this
+  // to decide the { completed: boolean } payload on the
+  // `policies:wizard-closed` event. api.ts uses that payload to decide
+  // whether to auto-retry the request that triggered the wizard.
+  const completedRef = useRef(false);
+
   const closeAll = useCallback(() => {
     setWizardOpen(false);
     setWizardPolicies([]);
     setAwaitingPanelRows([]);
   }, []);
+
+  const handleWizardCompleted = useCallback(() => {
+    completedRef.current = true;
+    window.dispatchEvent(new CustomEvent("policies:signed"));
+    // handleWizardClose runs on the trailing Dialog.Root close and
+    // dispatches `policies:wizard-closed` with completed: true.
+  }, []);
+
+  const handleWizardClose = useCallback(() => {
+    const completed = completedRef.current;
+    completedRef.current = false;
+    window.dispatchEvent(
+      new CustomEvent("policies:wizard-closed", { detail: { completed } }),
+    );
+    closeAll();
+  }, [closeAll]);
 
   const fetchAndRoute = useCallback(async (targetIds: string[] | null) => {
     if (loading) return;
@@ -128,11 +151,8 @@ export default function PolicyGateInterceptor() {
           open={wizardOpen}
           policies={wizardPolicies}
           displayName={displayName}
-          onClose={closeAll}
-          onCompleted={() => {
-            closeAll();
-            window.dispatchEvent(new CustomEvent("policies:signed"));
-          }}
+          onClose={handleWizardClose}
+          onCompleted={handleWizardCompleted}
         />
       )}
       <Dialog.Root

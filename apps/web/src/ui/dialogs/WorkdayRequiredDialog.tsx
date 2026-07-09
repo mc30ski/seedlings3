@@ -125,9 +125,24 @@ export function useWorkdayGate() {
       setGate({ open: false, state: null, openPrior: [], resolve: null, busy: false, error: null });
       resolve?.("ok");
     } catch (err) {
-      // Inline error — NOT a toast. On mobile the toast is hidden behind
-      // this centered dialog, so failure reasons (e.g. "approval window
-      // closed", "already approved") need to render in the dialog itself.
+      // Compliance sign wizard cancelled: api.ts's POLICIES_REQUIRED
+      // branch waits for the wizard to close and, if the worker cancels
+      // instead of signing, re-throws the original POLICIES_REQUIRED
+      // error. Treat that as a clean gate cancel — closing this dialog
+      // silently and resolving as "cancelled" — because the worker has
+      // already been shown what they need to do and chose to bail out.
+      // No inline error, no double-cancel.
+      const anyErr = err as { code?: string } | null;
+      if (anyErr?.code === "POLICIES_REQUIRED") {
+        const resolve = gate.resolve;
+        setGate({ open: false, state: null, openPrior: [], resolve: null, busy: false, error: null });
+        resolve?.("cancelled");
+        return;
+      }
+      // Real failure — inline error, NOT a toast. On mobile the toast
+      // is hidden behind this centered dialog, so failure reasons
+      // (e.g. "approval window closed", "already approved") need to
+      // render in the dialog itself.
       setGate((g) => ({
         ...g,
         busy: false,
