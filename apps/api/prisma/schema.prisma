@@ -38,6 +38,8 @@ enum AuditScope {
   EXPORT
   WORKDAY
   LEDGER_FOLLOWUP
+  POLICY_DOCUMENT
+  POLICY_SIGNATURE
   // add more scopes as you expand the schema
 }
 
@@ -61,9 +63,6 @@ enum AuditVerb {
   PRIMARY_CONTACT_SET
   SETTING_UPDATED
   WORKER_TYPE_SET
-  INSURANCE_UPLOADED
-  CONTRACTOR_AGREED
-  W9_COLLECTED
   SENT
   VERSION_ADDED
   VERSION_RESTORED
@@ -85,6 +84,23 @@ enum AuditVerb {
   GUARANTEED_PAYOUT_STARTED
   GUARANTEED_PAYOUT_ENDED
   SIGN_IN
+  // Compliance-policy verbs. See models Policy* below. Replaces the
+  // old-insurance-flow verbs INSURANCE_UPLOADED, CONTRACTOR_AGREED,
+  // and W9_COLLECTED (removed with the tear-out).
+  POLICY_VERSION_DRAFTED
+  POLICY_VERSION_SUBMITTED_FOR_APPROVAL
+  POLICY_VERSION_APPROVED
+  POLICY_VERSION_PUBLISHED
+  POLICY_VERSION_ROLLED_BACK
+  POLICY_SIGNED
+  POLICY_SIGNATURE_REVOKED
+  POLICY_UPLOAD_REVIEWED
+  POLICY_FORCE_RESIGN
+  POLICY_EXCEPTION_GRANTED
+  POLICY_EXCEPTION_REVOKED
+  POLICY_ARCHIVED
+  POLICY_UNARCHIVED
+  POLICY_ADMIN_UPLOADED_ON_BEHALF
   // add new verbs as needed
 }
 
@@ -92,6 +108,72 @@ enum WorkerType {
   EMPLOYEE
   CONTRACTOR
   TRAINEE
+}
+
+// ── Compliance policy system ─────────────────────────────────────────────────
+// Documents workers must sign / acknowledge / have on file. Replaces the old
+// insurance / W-9 / contractor-agreement User columns with a unified system
+// that supports versioning, approval workflow, per-worker exceptions,
+// admin-uploaded-on-behalf, and configurable gating across workday-start,
+// job-claim, and vehicle-reserve. See models Policy* below and
+// services/policies.ts. Full policy design memo lives with the PR.
+
+enum PolicyWorkerAction {
+  SIGN         // full typed-name + acknowledgment
+  ACKNOWLEDGE  // click-through "I've read this"
+  NONE         // admin-upload-on-behalf only (worker never touches it)
+}
+
+enum PolicyEnforcement {
+  BLOCK  // gate services listed in gatesServices
+  WARN   // banner-only, no gate
+  INFO   // visible in compliance tab, no other surface
+}
+
+enum PolicyResignTrigger {
+  ONE_TIME
+  DAYS_SINCE_SIGN
+  ANNIVERSARY       // 365 days from each worker's last sign (personal clock)
+  ANNUAL_ON_DATE    // everyone re-signs by a fixed calendar date (fleet clock)
+}
+
+enum PolicyGateService {
+  WORKDAY_START
+  JOB_CLAIM
+  // RESERVE_EQUIPMENT works differently from the other two: WORKDAY_START
+  // and JOB_CLAIM in a policy's gatesServices act as global gates (that
+  // action is blocked while the policy is pending). RESERVE_EQUIPMENT is an
+  // "eligibility flag" — presence means the policy CAN be attached to
+  // individual equipment via Equipment.requiredPolicyIds, but the block
+  // only fires when a specific piece of equipment lists this policy. This
+  // gives per-piece granularity — reserving a broom vs reserving the truck
+  // can require different documents.
+  RESERVE_EQUIPMENT
+}
+
+enum PolicyContentFormat {
+  MARKDOWN
+  PDF
+}
+
+enum PolicyNotifyChannel {
+  PUSH_ONLY
+  ALL_CHANNELS
+}
+
+enum PolicyVersionStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  PUBLISHED
+  ROLLED_BACK
+}
+
+enum PolicyUploadStatus {
+  NONE
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
 }
 
 model User {
@@ -129,13 +211,12 @@ model User {
   canPullInventory          Boolean?
   canChargeBusinessExpenses Boolean?
 
-  insuranceCertR2Key       String?
-  insuranceCertFileName    String?
-  insuranceCertContentType String?
-  insuranceExpiresAt       DateTime?
-  contractorAgreedAt       DateTime?
-  w9Collected              Boolean   @default(false)
-  w9CollectedAt            DateTime?
+  // Compliance-policy sign / upload / exception state lives entirely in
+  // the PolicyDocument / PolicyDocumentVersion / PolicySignature /
+  // PolicyException / PolicyReadingProgress model chain. There is no
+  // per-user column here — the "is this worker compliant?" question is
+  // answered by policyPredicate.computeComplianceState() against those
+  // relations. See services/policies.ts.
 
   // Contractor onboarding "guaranteed payout period." When
   // `guaranteedPayoutUntil` is in the future, contractor payroll for this
@@ -264,6 +345,25 @@ model User {
   // Mileage entries this user drove, and (separately) approved.
   mileageEntriesAsDriver  MileageEntry[]      @relation("MileageEntryDriver")
   mileageEntriesApproved  MileageEntry[]      @relation("MileageEntryApprover")
+
+  // Compliance-policy relations. See PolicyDocument / PolicyDocumentVersion /
+  // PolicySignature / PolicyException / PolicyReadingProgress models.
+  policiesCreated                PolicyDocument[]        @relation("PolicyCreator")
+  policiesArchived               PolicyDocument[]        @relation("PolicyArchiver")
+  policyVersionsCreated          PolicyDocumentVersion[] @relation("PolicyVersionCreator")
+  policyVersionsSubmitted        PolicyDocumentVersion[] @relation("PolicyVersionSubmitter")
+  policyVersionsApproved         PolicyDocumentVersion[] @relation("PolicyVersionApprover")
+  policyVersionsPublished        PolicyDocumentVersion[] @relation("PolicyVersionPublisher")
+  policyVersionsRolledBack       PolicyDocumentVersion[] @relation("PolicyVersionRollbacker")
+  policySignatures               PolicySignature[]       @relation("PolicySignatureUser")
+  policySignaturesSigned         PolicySignature[]       @relation("PolicySignatureActor")
+  policySignaturesOnBehalfOf     PolicySignature[]       @relation("PolicySignatureOnBehalfOf")
+  policySignaturesReviewed       PolicySignature[]       @relation("PolicySignatureReviewer")
+  policySignaturesRevoked        PolicySignature[]       @relation("PolicySignatureRevoker")
+  policyExceptionsAsSubject      PolicyException[]       @relation("PolicyExceptionUser")
+  policyExceptionsGranted        PolicyException[]       @relation("PolicyExceptionGranter")
+  policyExceptionsRevoked        PolicyException[]       @relation("PolicyExceptionRevoker")
+  policyReadingProgress          PolicyReadingProgress[]
 }
 
 model NotificationTemplate {
@@ -331,7 +431,14 @@ model Equipment {
   // memory/feature_per_job_equipment_billing.md.
   equivalentJobs    Int?
 
-  requiresInsurance Boolean @default(false)
+  // Per-equipment policy requirements — array of PolicyDocument.id values.
+  // At reserve/checkout time, the equipment service iterates this list plus
+  // any active BLOCK policies that gate VEHICLE_RESERVE globally, and calls
+  // policyPredicate.assertPoliciesSigned. Replaces the old
+  // `requiresInsurance` boolean with a fully flexible per-piece opt-in that
+  // works for insurance, vehicle policy, or any other policy the admin
+  // publishes. Empty array (default) = no equipment-level requirements.
+  requiredPolicyIds String[] @default([])
 
   checkouts        Checkout[]
   photos           EquipmentPhoto[]
@@ -2305,4 +2412,277 @@ model MileageEntry {
   @@index([driverUserId, entryDate])
   @@index([vehicleId, entryDate])
   @@index([entryDate, approvedAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Compliance policy system
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Signed / acknowledged / uploaded-on-behalf documents workers must have on
+// file. Replaces the old User.insuranceCert*, User.contractorAgreedAt, and
+// User.w9Collected columns with a unified, versioned, admin-authored system.
+//
+// The predicate "is this worker current on all applicable policies?" is
+// answered by lib/policyPredicate.computeComplianceState() — a pure function
+// with a build-gate test locking its semantics down.
+
+// A policy template. One row per compliance concept (Insurance, Safety SOP,
+// Vehicle Policy, Photo Release, etc.). Versioned via PolicyDocumentVersion —
+// `currentVersionId` points at whichever version is live right now.
+model PolicyDocument {
+  id                            String   @id @default(cuid())
+  // Stable identifier — never changes. Used for logs, tests, and seed
+  // idempotency. UI shows `title` instead.
+  key                           String   @unique
+  title                         String
+  description                   String?
+  // Which worker types must satisfy this policy. Empty array = no gate ever
+  // fires (but INFO-level docs may still show it universally).
+  targetWorkerTypes             WorkerType[]
+  enforcement                   PolicyEnforcement
+  // Determines what the worker experience looks like. NONE = admin-uploads-
+  // on-behalf is the only path; worker sees it as informational on their
+  // compliance tab. SIGN + ACKNOWLEDGE both open the sign wizard.
+  workerAction                  PolicyWorkerAction
+  // Admin can upload an artifact on behalf of a worker (bypassing worker
+  // sign). Required = true when workerAction = NONE. Optional otherwise;
+  // some SIGN docs (like safety) shouldn't allow admin bypass — set false.
+  adminCanUploadOnBehalf        Boolean  @default(false)
+  // Worker attaches a personal document alongside their signature — e.g.
+  // insurance certificate, W-9 PDF. When false, wizard is content-only.
+  requiresWorkerUpload          Boolean  @default(false)
+  // UI label for the file input ("Certificate of Insurance", "IRS Form W-9").
+  workerUploadLabel             String?
+  // Comma-separated MIME allowlist ("application/pdf,image/*"). Null = server
+  // default ("application/pdf,image/*").
+  workerUploadAcceptedTypes     String?
+  // Worker also declares an expiration date on their upload (insurance yes,
+  // W-9 no). When true, uploadExpiresAt on the signature is required and
+  // gates re-fire when it lapses.
+  workerUploadRequiresExpiry    Boolean  @default(false)
+  // Uploaded artifact needs admin verification before the signature counts as
+  // current. Closes the old-insurance-flow gap where worker upload was
+  // immediately trusted. Uploads sit in PolicyUploadStatus.PENDING_REVIEW
+  // until admin decides.
+  workerUploadRequiresApproval  Boolean  @default(false)
+  // When a signature stops being current on its own timing (independent of
+  // version changes). resignParamDays: days-since-sign for DAYS_SINCE_SIGN.
+  // resignParamMonthDay: MM-DD for ANNUAL_ON_DATE. ONE_TIME + ANNIVERSARY
+  // ignore both.
+  resignTrigger                 PolicyResignTrigger
+  resignParamDays               Int?
+  resignParamMonthDay           String?
+  // Which app actions this policy gates when enforcement = BLOCK. Iterated
+  // by workday/jobs/equipment services at gate time.
+  gatesServices                 PolicyGateService[]
+  // Additional job-price threshold — policy only gates JOB_CLAIM when the
+  // job's effective price is at or above this value. Preserves today's
+  // "insurance required on ≥$200 jobs" pattern; admin can create any
+  // policy with any threshold.
+  gatesJobsAbovePrice           Float?
+  // Order in which multi-doc sign wizard presents pending policies. Lower
+  // renders first.
+  sortOrder                     Int      @default(0)
+  // Whichever version is live right now. Null before first publish.
+  currentVersionId              String?  @unique
+  // Whether publish sends push-only or full-channel notifications. Per-doc
+  // so operators don't burn Twilio/Resend budget on low-priority publishes.
+  notifyOnPublish               PolicyNotifyChannel @default(PUSH_ONLY)
+  // Optional per-document override for the publish-time grace window in
+  // hours. Null → fall back to the global POLICY_DEFAULT_GRACE_HOURS
+  // setting (24). Zero → no grace, BLOCK gate fires the instant the version
+  // is published. Use zero for federally-mandated documents where any
+  // uncovered window is unacceptable. Positive → that many hours.
+  graceHoursOverride            Int?
+
+  // Soft-delete. Archived policies stop firing gates and disappear from
+  // worker "Required now" list, but historic signatures remain queryable.
+  archivedAt                    DateTime?
+  archivedById                  String?
+  archivedReason                String?
+
+  createdById                   String
+  createdAt                     DateTime @default(now())
+  updatedAt                     DateTime @updatedAt
+
+  currentVersion    PolicyDocumentVersion?  @relation("PolicyCurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  versions          PolicyDocumentVersion[] @relation("PolicyAllVersions")
+  exceptions        PolicyException[]
+  createdBy         User                    @relation("PolicyCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  archivedBy        User?                   @relation("PolicyArchiver", fields: [archivedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([archivedAt])
+  @@index([sortOrder])
+}
+
+// One row per published (or draft) version of a policy's content. Content is
+// immutable once PUBLISHED — changes require a new version. Two-eyes approval
+// workflow: DRAFT → PENDING_APPROVAL → APPROVED → PUBLISHED, with rollback to
+// ROLLED_BACK from PUBLISHED.
+model PolicyDocumentVersion {
+  id                      String   @id @default(cuid())
+  policyDocumentId        String
+  versionNumber           Int
+  contentFormat           PolicyContentFormat
+  // Present when contentFormat = MARKDOWN. Rendered client-side in the sign
+  // wizard.
+  contentMarkdown         String?
+  // Present when contentFormat = PDF. R2 object key + display metadata.
+  // pdfPageCount is populated at upload via pdf-lib on the server so the
+  // wizard can build the per-page dwell/ack flow without client-side
+  // parsing.
+  contentR2Key            String?
+  contentFileName         String?
+  contentContentType      String?
+  pdfPageCount            Int?
+  // SHA-256 hex of the exact content that will be shown to workers.
+  // Immutable once PUBLISHED. Copied to each PolicySignature at sign time
+  // so every signature can prove exactly what was on file.
+  contentDigest           String
+  // Admin's explanation of what changed vs prior version. Shown in the
+  // approval queue and the compliance history.
+  changeNote              String
+  // Admin's explicit publish-time choice. True = existing signatures against
+  // prior versions are treated as stale; workers must re-sign. False = typo
+  // fix or trivial update; prior signatures still count.
+  forcesResign            Boolean  @default(false)
+  // Grace deadline. Signatures against superseded versions remain current
+  // for THIS worker until graceUntil elapses. Default at publish is
+  // publishedAt + POLICY_DEFAULT_GRACE_HOURS. Zero-grace requires admin to
+  // type APPROVE.
+  graceUntil              DateTime?
+  status                  PolicyVersionStatus @default(DRAFT)
+
+  createdById             String
+  createdAt               DateTime @default(now())
+  submittedAt             DateTime?
+  submittedById           String?
+  approvedAt              DateTime?
+  approvedById            String?
+  publishedAt             DateTime?
+  publishedById           String?
+  rolledBackAt            DateTime?
+  rolledBackById          String?
+  rolledBackReason        String?
+
+  policyDocument   PolicyDocument         @relation("PolicyAllVersions", fields: [policyDocumentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  currentOnPolicy  PolicyDocument?        @relation("PolicyCurrentVersion")
+  signatures       PolicySignature[]
+  readingProgress  PolicyReadingProgress[]
+  createdBy        User                   @relation("PolicyVersionCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  submittedBy      User?                  @relation("PolicyVersionSubmitter", fields: [submittedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  approvedBy       User?                  @relation("PolicyVersionApprover", fields: [approvedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  publishedBy      User?                  @relation("PolicyVersionPublisher", fields: [publishedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  rolledBackBy     User?                  @relation("PolicyVersionRollbacker", fields: [rolledBackById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@unique([policyDocumentId, versionNumber])
+  @@index([status])
+  @@index([policyDocumentId, status])
+}
+
+// One row per signature (or per admin-upload-on-behalf). Immutable — never
+// updated in-place, only revoked-and-replaced. userId is the WORKER whose
+// compliance this row establishes; signedByUserId is the ACTOR (worker for
+// self-sign, admin for on-behalf). onBehalfOfUserId is set only when actor
+// differs from subject.
+model PolicySignature {
+  id                          String   @id @default(cuid())
+  userId                      String
+  policyDocumentVersionId     String
+  // What actually happened. NONE = admin-upload-on-behalf (no worker action).
+  workerActionAtSign          PolicyWorkerAction
+  signedByUserId              String
+  onBehalfOfUserId            String?
+  signedAt                    DateTime @default(now())
+
+  // Filled when workerActionAtSign = SIGN. Both stored: raw for audit,
+  // normalized for compare.
+  typedNameRaw                String?
+  typedNameNormalized         String?
+  // Server-captured at write time. Admin actor for on-behalf uploads.
+  signatureIp                 String?
+  signatureUserAgent          String?
+  // Copied from PolicyDocumentVersion at write time. Survives any future
+  // refactor of the version content — proves what was signed.
+  contentDigestAtSign         String
+
+  // Worker (or admin-on-behalf) uploaded artifact. Present when the policy
+  // has requiresWorkerUpload = true.
+  uploadR2Key                 String?
+  uploadFileName              String?
+  uploadContentType           String?
+  uploadDigest                String?  // SHA-256 of uploaded bytes
+  uploadExpiresAt             DateTime?
+  uploadStatus                PolicyUploadStatus @default(NONE)
+  uploadReviewedAt            DateTime?
+  uploadReviewedById          String?
+  uploadRejectionReason       String?
+
+  // Revoked signatures remain in DB for audit but never count as current.
+  // Set by admin action (POLICY_SIGNATURE_REVOKED, POLICY_FORCE_RESIGN).
+  revokedAt                   DateTime?
+  revokedById                 String?
+  revokedReason               String?
+
+  user                        User                  @relation("PolicySignatureUser", fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  version                     PolicyDocumentVersion @relation(fields: [policyDocumentVersionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  signedBy                    User                  @relation("PolicySignatureActor", fields: [signedByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  onBehalfOf                  User?                 @relation("PolicySignatureOnBehalfOf", fields: [onBehalfOfUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  reviewedBy                  User?                 @relation("PolicySignatureReviewer", fields: [uploadReviewedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  revokedBy                   User?                 @relation("PolicySignatureRevoker", fields: [revokedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([userId, signedAt])
+  @@index([policyDocumentVersionId])
+  @@index([userId, policyDocumentVersionId])
+  @@index([uploadStatus])
+  @@index([revokedAt])
+}
+
+// Time-bounded per-worker exception. While an active exception exists,
+// `isSignatureCurrent` treats the worker as satisfying the policy regardless
+// of signature state. Used sparingly — every grant / revoke is audited.
+model PolicyException {
+  id                          String   @id @default(cuid())
+  userId                      String
+  policyDocumentId            String
+  grantedById                 String
+  grantedAt                   DateTime @default(now())
+  expiresAt                   DateTime
+  reason                      String
+  revokedAt                   DateTime?
+  revokedById                 String?
+  revokedReason               String?
+
+  user            User            @relation("PolicyExceptionUser", fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  policyDocument  PolicyDocument  @relation(fields: [policyDocumentId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  grantedBy       User            @relation("PolicyExceptionGranter", fields: [grantedById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  revokedBy       User?           @relation("PolicyExceptionRevoker", fields: [revokedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([userId, policyDocumentId])
+  @@index([expiresAt])
+}
+
+// Per-page audit trail of what a worker viewed before signing. For PDF
+// content the sign wizard requires the worker to dwell on each page N
+// seconds before the sign button enables — each dwell fires a page-view
+// record here. Rows are linked to the resulting PolicySignature once created
+// so a compliance record includes a provable "worker viewed page X at time
+// T from IP Y" chain.
+model PolicyReadingProgress {
+  id                          String   @id @default(cuid())
+  userId                      String
+  policyDocumentVersionId     String
+  pageNumber                  Int
+  ipAddress                   String?
+  userAgent                   String?
+  createdAt                   DateTime @default(now())
+  // Set once the resulting signature is created. Rows without a linked
+  // signature after N days can be GC'd (Slice 6 nice-to-have).
+  policySignatureId           String?
+
+  user     User                  @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  version  PolicyDocumentVersion @relation(fields: [policyDocumentVersionId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([userId, policyDocumentVersionId])
+  @@index([policySignatureId])
 }

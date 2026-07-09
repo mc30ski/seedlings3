@@ -69,7 +69,6 @@ import { useOffline } from "@/src/lib/offline";
 import { enqueueAction } from "@/src/lib/offlineQueue";
 import TaskDialog from "@/src/ui/dialogs/TaskDialog";
 import ClaimAgreementDialog from "@/src/ui/dialogs/ClaimAgreementDialog";
-import InsuranceUploadDialog from "@/src/ui/dialogs/InsuranceUploadDialog";
 import CompleteJobDialog from "@/src/ui/dialogs/CompleteJobDialog";
 import OccurrenceDialog from "@/src/ui/dialogs/OccurrenceDialog";
 import EstimateDialog from "@/src/ui/dialogs/EstimateDialog";
@@ -1064,7 +1063,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   // that's interrupted by the contractor-agreement dialog resumes with the
   // group context, not as a solo claim.
   const [pendingClaimGroupId, setPendingClaimGroupId] = useState<string | null>(null);
-  const [insuranceDialogOpen, setInsuranceDialogOpen] = useState(false);
   const isTrainee = viewAsWorkerType !== undefined ? viewAsWorkerType === "TRAINEE" : me?.workerType === "TRAINEE";
   const [manageOccurrence, setManageOccurrence] = useState<WorkerOccurrence | null>(null);
   const [completeDialogOcc, setCompleteDialogOcc] = useState<WorkerOccurrence | null>(null);
@@ -1785,12 +1783,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         setPendingClaimOccId(occurrenceId);
         setPendingClaimGroupId(groupId ?? null);
         setAgreementDialogOpen(true);
-      } else if (code === "INSURANCE_REQUIRED") {
+      } else if (code === "POLICIES_REQUIRED") {
+        // The compliance-policy system throws this when one or more
+        // required policies (insurance, safety SOP, etc.) are unsigned
+        // or expired. Slice 3 wires the reactive sign wizard here.
         publishInlineMessage({
           type: "ERROR",
-          text: "This is a high-value job that requires valid insurance. Upload your insurance certificate to claim it.",
+          text: "Compliance policies are outstanding. Open the Compliance section to sign before claiming this job.",
         });
-        setInsuranceDialogOpen(true);
       } else if (code === "WORKER_TYPE_REQUIRED") {
         publishInlineMessage({
           type: "ERROR",
@@ -8236,14 +8236,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           }}
         />
       )}
-      <InsuranceUploadDialog
-        open={insuranceDialogOpen}
-        onOpenChange={setInsuranceDialogOpen}
-        onUploaded={() => {
-          // Refresh me data by reloading the page — simplest approach
-          window.location.reload();
-        }}
-      />
+      {/* InsuranceUploadDialog was removed with the compliance-policy
+          migration. The reactive sign wizard (Slice 3) mounts here. */}
       {/* Pricing guide popup — opened from the "View pricing guide" chip
           in the add-on dialog. Picks back into addonPrice when the user
           taps a row. Pre-filters by the selected service type (if any),

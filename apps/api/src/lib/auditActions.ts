@@ -7,9 +7,10 @@ export const AUDIT = {
     ROLE_REMOVED: [AuditScope.USER, AuditVerb.ROLE_REMOVED] as const,
     DELETED: [AuditScope.USER, AuditVerb.DELETED] as const,
     WORKER_TYPE_SET: [AuditScope.USER, AuditVerb.WORKER_TYPE_SET] as const,
-    INSURANCE_UPLOADED: [AuditScope.USER, AuditVerb.INSURANCE_UPLOADED] as const,
-    CONTRACTOR_AGREED: [AuditScope.USER, AuditVerb.CONTRACTOR_AGREED] as const,
-    W9_COLLECTED: [AuditScope.USER, AuditVerb.W9_COLLECTED] as const,
+    // INSURANCE_UPLOADED, CONTRACTOR_AGREED, and W9_COLLECTED verbs were
+    // removed as part of the compliance-policy migration. All three
+    // concepts now flow through the PolicySignature system and use the
+    // POLICY.* verbs below.
     GUARANTEED_PAYOUT_STARTED: [AuditScope.USER, AuditVerb.GUARANTEED_PAYOUT_STARTED] as const,
     GUARANTEED_PAYOUT_ENDED: [AuditScope.USER, AuditVerb.GUARANTEED_PAYOUT_ENDED] as const,
     SIGN_IN: [AuditScope.USER, AuditVerb.SIGN_IN] as const,
@@ -174,6 +175,44 @@ export const AUDIT = {
     // payload carries any resolution note.
     RESOLVED: [AuditScope.LEDGER_FOLLOWUP, AuditVerb.COMPLETED] as const,
     DELETED: [AuditScope.LEDGER_FOLLOWUP, AuditVerb.DELETED] as const,
+  },
+  POLICY_DOCUMENT: {
+    // Policy template + version lifecycle. See PolicyDocument /
+    // PolicyDocumentVersion models + services/policies.ts.
+    CREATED: [AuditScope.POLICY_DOCUMENT, AuditVerb.CREATED] as const,
+    UPDATED: [AuditScope.POLICY_DOCUMENT, AuditVerb.UPDATED] as const,
+    ARCHIVED: [AuditScope.POLICY_DOCUMENT, AuditVerb.POLICY_ARCHIVED] as const,
+    UNARCHIVED: [AuditScope.POLICY_DOCUMENT, AuditVerb.POLICY_UNARCHIVED] as const,
+    // Hard delete — only allowed on already-archived policies. Destroys the
+    // policy row plus every version, signature, exception, and reading-
+    // progress row. Metadata records what was destroyed so the audit
+    // trail preserves that even though the underlying rows are gone.
+    DELETED: [AuditScope.POLICY_DOCUMENT, AuditVerb.DELETED] as const,
+    VERSION_DRAFTED: [AuditScope.POLICY_DOCUMENT, AuditVerb.POLICY_VERSION_DRAFTED] as const,
+    VERSION_SUBMITTED_FOR_APPROVAL: [AuditScope.POLICY_DOCUMENT, AuditVerb.POLICY_VERSION_SUBMITTED_FOR_APPROVAL] as const,
+    VERSION_APPROVED: [AuditScope.POLICY_DOCUMENT, AuditVerb.POLICY_VERSION_APPROVED] as const,
+    VERSION_PUBLISHED: [AuditScope.POLICY_DOCUMENT, AuditVerb.POLICY_VERSION_PUBLISHED] as const,
+    VERSION_ROLLED_BACK: [AuditScope.POLICY_DOCUMENT, AuditVerb.POLICY_VERSION_ROLLED_BACK] as const,
+    // Bulk revoke — invalidates every current signature on a policy so
+    // workers have to re-sign. Requires "type APPROVE" at UI.
+    FORCE_RESIGN: [AuditScope.POLICY_DOCUMENT, AuditVerb.POLICY_FORCE_RESIGN] as const,
+    // Per-worker exception grants (max 90d, requires reason). See
+    // PolicyException model.
+    EXCEPTION_GRANTED: [AuditScope.POLICY_DOCUMENT, AuditVerb.POLICY_EXCEPTION_GRANTED] as const,
+    EXCEPTION_REVOKED: [AuditScope.POLICY_DOCUMENT, AuditVerb.POLICY_EXCEPTION_REVOKED] as const,
+  },
+  POLICY_SIGNATURE: {
+    // Signature events. actor = worker for self-sign; actor = admin for
+    // on-behalf uploads and admin actions.
+    SIGNED: [AuditScope.POLICY_SIGNATURE, AuditVerb.POLICY_SIGNED] as const,
+    REVOKED: [AuditScope.POLICY_SIGNATURE, AuditVerb.POLICY_SIGNATURE_REVOKED] as const,
+    // Admin verification of a worker-uploaded artifact (APPROVED or
+    // REJECTED). Metadata carries the decision and optional reason.
+    UPLOAD_REVIEWED: [AuditScope.POLICY_SIGNATURE, AuditVerb.POLICY_UPLOAD_REVIEWED] as const,
+    // Admin bypassed the worker sign flow entirely by uploading the
+    // artifact on behalf. Requires "type APPROVE" for SIGN-type docs;
+    // routine for NONE-type docs.
+    ADMIN_UPLOADED_ON_BEHALF: [AuditScope.POLICY_SIGNATURE, AuditVerb.POLICY_ADMIN_UPLOADED_ON_BEHALF] as const,
   },
 } as const;
 

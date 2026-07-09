@@ -3,6 +3,7 @@ import { PrismaNeon } from "@prisma/adapter-neon";
 import { neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
 import { etFormatDate } from "../src/lib/dates";
+import { createHash } from "crypto";
 
 // ── Safety guard ────────────────────────────────────────────────────────────
 const dbUrl = process.env.DATABASE_URL ?? "";
@@ -132,6 +133,16 @@ async function clearDatabase() {
   await prisma.vehicleAssignment.deleteMany();
   await prisma.vehicle.deleteMany();
 
+  console.log("  Clearing compliance policies...");
+  // PolicyDocument.currentVersionId → PolicyDocumentVersion (SetNull-ish via
+  // updateMany) so version deletes don't hit an FK constraint.
+  await prisma.policyDocument.updateMany({ data: { currentVersionId: null } });
+  await prisma.policyReadingProgress.deleteMany();
+  await prisma.policySignature.deleteMany();
+  await prisma.policyException.deleteMany();
+  await prisma.policyDocumentVersion.deleteMany();
+  await prisma.policyDocument.deleteMany();
+
   console.log("  Clearing audit log...");
   await prisma.auditEvent.deleteMany();
 
@@ -187,6 +198,9 @@ const SETTING_SECTIONS: Record<string, string> = {
   PHOTO_JPEG_QUALITY: "media",
   PHOTO_MAX_EDGE_PX: "media",
   DOCUMENT_MAX_SIZE_MB: "media",
+  // Compliance
+  POLICY_STRICT_TWO_EYES: "compliance",
+  POLICY_DEFAULT_GRACE_HOURS: "compliance",
   // Integrations
   WEATHER_API_KEY: "integrations",
 };
@@ -477,10 +491,10 @@ async function seedDatabase() {
 
   // Mowers
   const mower1 = await prisma.equipment.create({
-    data: { type: "MOWER", brand: "Scag", model: "V-Ride II 52\"", shortDesc: "Commercial stand-on mower", longDesc: "52\" deck, 25hp Kawasaki FX730V engine. Best for large open properties (HOAs, office parks). Velke platform for stand-on operation. Oil change every 100 hours. Blades in trailer toolbox.", status: "CHECKED_OUT", energy: "Gas", dailyRate: 8.0, requiresInsurance: true, qrSlug: "scag-vride-001" },
+    data: { type: "MOWER", brand: "Scag", model: "V-Ride II 52\"", shortDesc: "Commercial stand-on mower", longDesc: "52\" deck, 25hp Kawasaki FX730V engine. Best for large open properties (HOAs, office parks). Velke platform for stand-on operation. Oil change every 100 hours. Blades in trailer toolbox.", status: "CHECKED_OUT", energy: "Gas", dailyRate: 8.0, qrSlug: "scag-vride-001" },
   });
   const mower2 = await prisma.equipment.create({
-    data: { type: "MOWER", brand: "Scag", model: "V-Ride II 48\"", shortDesc: "Commercial stand-on mower (compact)", longDesc: "48\" deck, 22hp Kawasaki FX691V. Same as the 52\" but fits through standard 48\" gates. Use this one for fenced residential backyards. Spare belt in under-seat compartment.", status: "AVAILABLE", energy: "Gas", dailyRate: 8.0, requiresInsurance: true, qrSlug: "scag-vride-002" },
+    data: { type: "MOWER", brand: "Scag", model: "V-Ride II 48\"", shortDesc: "Commercial stand-on mower (compact)", longDesc: "48\" deck, 22hp Kawasaki FX691V. Same as the 52\" but fits through standard 48\" gates. Use this one for fenced residential backyards. Spare belt in under-seat compartment.", status: "AVAILABLE", energy: "Gas", dailyRate: 8.0, qrSlug: "scag-vride-002" },
   });
   const mower3 = await prisma.equipment.create({
     // Per-job billing example: $4/day cap, 4 equivalent jobs → $1/job. Lets
@@ -538,7 +552,7 @@ async function seedDatabase() {
   const chainsawEquip = await prisma.equipment.create({
     // Per-job billing example with a tighter equivalentJobs (heavy wear
     // per use): $5/day cap, 2 equivalent jobs → $2.50/job.
-    data: { type: "CUTTER", brand: "Stihl", model: "MS 271", shortDesc: "20\" farm & ranch chainsaw", longDesc: "50.2cc, 20\" bar. Use for limb removal, storm cleanup, and tree work up to 18\" diameter. Pre-separation air filter — clean weekly. Chain tension: finger-tight with slight pull. Chaps required when operating.", status: "AVAILABLE", energy: "Gas", dailyRate: 5.0, equivalentJobs: 2, requiresInsurance: true, qrSlug: "stihl-ms271-001" },
+    data: { type: "CUTTER", brand: "Stihl", model: "MS 271", shortDesc: "20\" farm & ranch chainsaw", longDesc: "50.2cc, 20\" bar. Use for limb removal, storm cleanup, and tree work up to 18\" diameter. Pre-separation air filter — clean weekly. Chain tension: finger-tight with slight pull. Chaps required when operating.", status: "AVAILABLE", energy: "Gas", dailyRate: 5.0, equivalentJobs: 2, qrSlug: "stihl-ms271-001" },
   });
   await prisma.equipment.create({
     data: { type: "CUTTER", brand: "Stihl", model: "HT 135", shortDesc: "Telescoping pole pruner", longDesc: "Reaches up to 16ft without a ladder. 24.1cc, 12\" bar. Use for trimming overhead branches that are too high for the chainsaw. Extend slowly — gets heavy at full reach. Two-person operation recommended for stability.", status: "AVAILABLE", energy: "Gas", dailyRate: 4.0, qrSlug: "stihl-ht135-001" },
@@ -2369,6 +2383,22 @@ async function seedDatabase() {
     update: { value: timelineCategoriesValue, description: "Timeline event categories. Array of {key, label, description}.", updatedById: MICHAEL_ID },
   });
 
+  // Compliance-system tunables. Description + section reinforced on every
+  // reseed so drift can't reintroduce the empty-fields state we shipped
+  // in the initial compliance migration. See docs/features/compliance.md.
+  const policyStrictTwoEyesDesc = "Enforce 2-eyes on policy version Approve + Publish. When false (default), a single super-admin can approve and publish their own drafts — appropriate for solo-owner orgs. When true, Approve and Publish each require a different actor than the previous step, and Draft → Submit still allows same-actor. Flip on once a second super-admin joins the team.";
+  await prisma.setting.upsert({
+    where: { key: "POLICY_STRICT_TWO_EYES" },
+    create: { key: "POLICY_STRICT_TWO_EYES", value: "false", description: policyStrictTwoEyesDesc, updatedById: MICHAEL_ID },
+    update: { description: policyStrictTwoEyesDesc, updatedById: MICHAEL_ID },
+  });
+  const policyDefaultGraceHoursDesc = "Default hours between a new policy version being published and its BLOCK-level enforcement kicking in for workers who signed a prior version. Gives workers time to sign before mid-workday disruption. Per-policy override lives on PolicyDocument.gracePeriodHours (null → this default). Zero-grace publish (immediate enforcement) requires the publisher to type APPROVE at publish time.";
+  await prisma.setting.upsert({
+    where: { key: "POLICY_DEFAULT_GRACE_HOURS" },
+    create: { key: "POLICY_DEFAULT_GRACE_HOURS", value: "24", description: policyDefaultGraceHoursDesc, updatedById: MICHAEL_ID },
+    update: { description: policyDefaultGraceHoursDesc, updatedById: MICHAEL_ID },
+  });
+
   // ── Timeline events ───────────────────────────────────────────────────────
   console.log("  Creating timeline events...");
   // Helper to anchor a recurring event on a date this calendar year (the
@@ -3129,9 +3159,644 @@ async function seedDatabase() {
 
   await seedVehicleFixtures();
 
+  await seedPolicyFixtures();
+
   await applySettingSections();
 
   console.log("  Seed complete!");
+}
+
+/**
+ * Dev-only example PolicyDocument rows. The three "prod" seed policies
+ * (Contractor Agreement, IRS W-9, Contractor Liability Insurance) are
+ * seeded via the migration file so every environment has them on Day 1.
+ * These three additional rows only exist in dev so QA / manual testing
+ * can exercise the full range of policy shapes without touching prod:
+ *
+ *   1. Safety SOP — markdown, universal (all worker types), BLOCK on
+ *      WORKDAY_START + JOB_CLAIM. Tests the multi-type SIGN flow.
+ *   2. Vehicle Policy — markdown, contractor + employee, BLOCK on
+ *      RESERVE_EQUIPMENT. Tests the per-service gate.
+ *   3. Photo Release — markdown, universal, INFO (no gate). Tests the
+ *      INFO/WARN surface in the worker Compliance tab.
+ */
+async function seedPolicyFixtures() {
+  // Find a seed admin — first SUPER, else first ADMIN, else first user.
+  const supers = await prisma.userRole.findMany({
+    where: { role: "SUPER" },
+    include: { user: true },
+    orderBy: { user: { createdAt: "asc" } },
+    take: 1,
+  });
+  let seedAdmin = supers[0]?.user;
+  if (!seedAdmin) {
+    const admins = await prisma.userRole.findMany({
+      where: { role: "ADMIN" },
+      include: { user: true },
+      orderBy: { user: { createdAt: "asc" } },
+      take: 1,
+    });
+    seedAdmin = admins[0]?.user;
+  }
+  if (!seedAdmin) {
+    seedAdmin = (await prisma.user.findFirst({ orderBy: { createdAt: "asc" } })) ?? undefined;
+  }
+  if (!seedAdmin) {
+    console.log("  ⚠  No users found — skipping policy fixtures.");
+    return;
+  }
+
+  async function seedPolicy(input: {
+    key: string;
+    title: string;
+    description: string;
+    targetWorkerTypes: ("EMPLOYEE" | "CONTRACTOR" | "TRAINEE")[];
+    enforcement: "BLOCK" | "WARN" | "INFO";
+    workerAction: "SIGN" | "ACKNOWLEDGE" | "NONE";
+    adminCanUploadOnBehalf?: boolean;
+    requiresWorkerUpload?: boolean;
+    workerUploadLabel?: string;
+    workerUploadRequiresExpiry?: boolean;
+    workerUploadRequiresApproval?: boolean;
+    resignTrigger: "ONE_TIME" | "DAYS_SINCE_SIGN" | "ANNIVERSARY" | "ANNUAL_ON_DATE";
+    resignParamDays?: number;
+    resignParamMonthDay?: string;
+    gatesServices?: ("WORKDAY_START" | "JOB_CLAIM" | "RESERVE_EQUIPMENT")[];
+    graceHoursOverride?: number;
+    sortOrder: number;
+    contentMarkdown: string;
+  }) {
+    // Idempotent: skip if the key exists.
+    const existing = await prisma.policyDocument.findUnique({ where: { key: input.key } });
+    if (existing) return;
+
+    const contentDigest = createHash("sha256").update(input.contentMarkdown).digest("hex");
+    const now = new Date();
+
+    // Two-step create because PolicyDocument.currentVersionId ↔
+    // PolicyDocumentVersion.policyDocumentId form a circular FK. Create the
+    // policy first (with currentVersionId = null), then the version, then
+    // UPDATE currentVersionId. Matches the pattern used in the migration.
+    const createdPolicy = await prisma.policyDocument.create({
+      data: {
+        key: input.key,
+        title: input.title,
+        description: input.description,
+        targetWorkerTypes: input.targetWorkerTypes,
+        enforcement: input.enforcement,
+        workerAction: input.workerAction,
+        adminCanUploadOnBehalf: input.adminCanUploadOnBehalf ?? false,
+        requiresWorkerUpload: input.requiresWorkerUpload ?? false,
+        workerUploadLabel: input.workerUploadLabel ?? null,
+        workerUploadRequiresExpiry: input.workerUploadRequiresExpiry ?? false,
+        workerUploadRequiresApproval: input.workerUploadRequiresApproval ?? false,
+        resignTrigger: input.resignTrigger,
+        resignParamDays: input.resignParamDays ?? null,
+        resignParamMonthDay: input.resignParamMonthDay ?? null,
+        gatesServices: input.gatesServices ?? [],
+        sortOrder: input.sortOrder,
+        notifyOnPublish: "PUSH_ONLY",
+        graceHoursOverride: input.graceHoursOverride ?? null,
+        createdById: seedAdmin!.id,
+      },
+    });
+    const version = await prisma.policyDocumentVersion.create({
+      data: {
+        policyDocumentId: createdPolicy.id,
+        versionNumber: 1,
+        contentFormat: "MARKDOWN",
+        contentMarkdown: input.contentMarkdown,
+        contentDigest,
+        changeNote: "Initial dev-seed version.",
+        forcesResign: false,
+        status: "PUBLISHED",
+        publishedAt: now,
+        publishedById: seedAdmin!.id,
+        createdById: seedAdmin!.id,
+      },
+    });
+    await prisma.policyDocument.update({
+      where: { id: createdPolicy.id },
+      data: { currentVersionId: version.id },
+    });
+  }
+
+  await seedPolicy({
+    key: "SAFETY_SOP",
+    title: "Safety Standard Operating Procedure",
+    description: "Standard safety procedures every worker must acknowledge before starting a workday or claiming a job.",
+    targetWorkerTypes: ["EMPLOYEE", "CONTRACTOR", "TRAINEE"],
+    enforcement: "BLOCK",
+    workerAction: "SIGN",
+    resignTrigger: "ANNUAL_ON_DATE",
+    resignParamMonthDay: "01-01",
+    gatesServices: ["WORKDAY_START", "JOB_CLAIM"],
+    sortOrder: 40,
+    contentMarkdown: [
+      "# Safety Standard Operating Procedure",
+      "",
+      "## PPE",
+      "",
+      "You must wear the following on every job:",
+      "",
+      "- Safety glasses",
+      "- Steel-toed footwear",
+      "- Hearing protection when operating powered equipment",
+      "",
+      "## Equipment operation",
+      "",
+      "1. Inspect equipment before use.",
+      "2. Report any damaged / unsafe equipment immediately.",
+      "3. Never operate under the influence of alcohol or drugs.",
+      "",
+      "## Emergencies",
+      "",
+      "Call 911 first, then notify the office at the number on file.",
+      "",
+      "By signing below I acknowledge I have read and agree to follow this SOP.",
+    ].join("\n"),
+  });
+
+  await seedPolicy({
+    key: "VEHICLE_POLICY",
+    title: "Vehicle & Driving Policy",
+    description: "Terms for operating company vehicles or driving personal vehicles on company business.",
+    targetWorkerTypes: ["EMPLOYEE", "CONTRACTOR"],
+    enforcement: "BLOCK",
+    workerAction: "SIGN",
+    resignTrigger: "DAYS_SINCE_SIGN",
+    resignParamDays: 365,
+    gatesServices: ["RESERVE_EQUIPMENT"],
+    sortOrder: 50,
+    contentMarkdown: [
+      "# Vehicle & Driving Policy",
+      "",
+      "By signing this policy I agree:",
+      "",
+      "1. I hold a valid, unrestricted driver's license.",
+      "2. I will maintain the company vehicle in a clean and operable condition.",
+      "3. I will report any incidents (damage, tickets, close calls) within 24 hours.",
+      "4. I will not use company vehicles for personal errands without prior approval.",
+      "",
+      "Renewal: re-sign annually.",
+    ].join("\n"),
+  });
+
+  await seedPolicy({
+    key: "PHOTO_RELEASE",
+    title: "Photo & Media Release",
+    description: "Grant company permission to use your image in marketing photos taken on job sites.",
+    targetWorkerTypes: ["EMPLOYEE", "CONTRACTOR", "TRAINEE"],
+    enforcement: "INFO",
+    workerAction: "ACKNOWLEDGE",
+    resignTrigger: "ONE_TIME",
+    gatesServices: [],
+    sortOrder: 90,
+    contentMarkdown: [
+      "# Photo & Media Release",
+      "",
+      "The company occasionally takes photos on job sites for marketing purposes",
+      "(website, social media, printed brochures). By acknowledging this policy",
+      "you consent to your image being used in that context.",
+      "",
+      "You may revoke this consent at any time by notifying the office.",
+    ].join("\n"),
+  });
+
+  // NEW: contractor-only insurance certificate policy. Exercises the
+  // requiresWorkerUpload + workerUploadRequiresExpiry + workerUploadRequiresApproval
+  // + adminCanUploadOnBehalf combination. Only CONTRACTOR is targeted.
+  await seedPolicy({
+    key: "INSURANCE_CERT",
+    title: "Contractor Liability Insurance",
+    description: "Upload a current certificate of insurance. Coverage must remain valid at all times.",
+    targetWorkerTypes: ["CONTRACTOR"],
+    enforcement: "BLOCK",
+    workerAction: "SIGN",
+    adminCanUploadOnBehalf: true,
+    requiresWorkerUpload: true,
+    workerUploadLabel: "Certificate of Insurance (PDF)",
+    workerUploadRequiresExpiry: true,
+    workerUploadRequiresApproval: true,
+    resignTrigger: "ANNUAL_ON_DATE",
+    resignParamMonthDay: "12-31",
+    gatesServices: ["JOB_CLAIM", "RESERVE_EQUIPMENT"],
+    graceHoursOverride: 0,
+    sortOrder: 20,
+    contentMarkdown: [
+      "# Contractor Liability Insurance",
+      "",
+      "As an independent contractor you must maintain your own general",
+      "liability insurance with limits of at least **$1,000,000 per occurrence**",
+      "and **$2,000,000 aggregate**.",
+      "",
+      "1. Upload a current certificate of insurance below.",
+      "2. Enter the expiration date shown on the certificate.",
+      "3. The office will review and approve within one business day.",
+      "",
+      "You will be prompted to upload a new certificate 30 days before this",
+      "one expires.",
+    ].join("\n"),
+  });
+
+  // NEW: employee/trainee-only handbook. WARN enforcement — not a hard
+  // block, but shows on the compliance tab as pending. Used for the
+  // auto-dormancy grace test (v2 published with grace already expired).
+  await seedPolicy({
+    key: "HANDBOOK",
+    title: "Employee Handbook",
+    description: "Review and sign the current employee handbook.",
+    targetWorkerTypes: ["EMPLOYEE", "TRAINEE"],
+    enforcement: "WARN",
+    workerAction: "SIGN",
+    resignTrigger: "ONE_TIME",
+    gatesServices: [],
+    sortOrder: 60,
+    contentMarkdown: [
+      "# Employee Handbook — v1",
+      "",
+      "Welcome to Seedlings. This handbook covers PTO policy, expense",
+      "reimbursement, and the code of conduct.",
+      "",
+      "## PTO",
+      "",
+      "Two weeks accrued per year, prorated by hours worked.",
+      "",
+      "## Expenses",
+      "",
+      "Submit receipts weekly.",
+      "",
+      "## Conduct",
+      "",
+      "Treat clients, coworkers, and property with respect.",
+    ].join("\n"),
+  });
+
+  // ─── Additional versions for testing preview / bulk publish / auto-grace ───
+  await seedTestScenarios();
+
+  console.log("  ✓ Policy fixtures + test scenarios wired");
+}
+
+/**
+ * Sets up the multi-worker × multi-policy scenarios exercised by the
+ * end-to-end walk-through. Assumes seedPolicy() has already created the
+ * five base policies (SAFETY_SOP, VEHICLE_POLICY, PHOTO_RELEASE,
+ * INSURANCE_CERT, HANDBOOK) at version 1 (PUBLISHED).
+ */
+async function seedTestScenarios() {
+  // Find the seed admin the same way seedPolicyFixtures does — first SUPER,
+  // then first ADMIN, then first user. Any of these can appear as the
+  // grantedById on synthetic exceptions and the publishedById on new versions.
+  const supers = await prisma.userRole.findMany({
+    where: { role: "SUPER" },
+    include: { user: true },
+    orderBy: { user: { createdAt: "asc" } },
+    take: 1,
+  });
+  let seedAdmin = supers[0]?.user;
+  if (!seedAdmin) {
+    const admins = await prisma.userRole.findMany({
+      where: { role: "ADMIN" },
+      include: { user: true },
+      orderBy: { user: { createdAt: "asc" } },
+      take: 1,
+    });
+    seedAdmin = admins[0]?.user;
+  }
+  if (!seedAdmin) {
+    console.log("  ⚠  No admin found — skipping test scenarios.");
+    return;
+  }
+  const adminId = seedAdmin.id;
+
+  const now = new Date();
+  const daysAgoDate = (n: number) => {
+    const d = new Date(now);
+    d.setUTCDate(d.getUTCDate() - n);
+    return d;
+  };
+  const daysFromNowDate = (n: number) => {
+    const d = new Date(now);
+    d.setUTCDate(d.getUTCDate() + n);
+    return d;
+  };
+
+  // ── Helper: add an additional version to an existing policy ──────────────
+  async function addVersion(input: {
+    policyKey: string;
+    versionNumber: number;
+    status: "DRAFT" | "PENDING_APPROVAL" | "APPROVED" | "PUBLISHED";
+    contentMarkdown: string;
+    changeNote: string;
+    publishedAt?: Date | null;
+    graceUntil?: Date | null;
+    forcesResign?: boolean;
+    setCurrent?: boolean;
+  }) {
+    const policy = await prisma.policyDocument.findUnique({
+      where: { key: input.policyKey },
+    });
+    if (!policy) throw new Error(`Policy ${input.policyKey} missing`);
+    const contentDigest = createHash("sha256").update(input.contentMarkdown).digest("hex");
+    const version = await prisma.policyDocumentVersion.create({
+      data: {
+        policyDocumentId: policy.id,
+        versionNumber: input.versionNumber,
+        contentFormat: "MARKDOWN",
+        contentMarkdown: input.contentMarkdown,
+        contentDigest,
+        changeNote: input.changeNote,
+        forcesResign: input.forcesResign ?? false,
+        status: input.status,
+        publishedAt: input.publishedAt ?? null,
+        publishedById: input.publishedAt ? adminId : null,
+        approvedAt: input.status === "APPROVED" || input.status === "PUBLISHED" ? now : null,
+        approvedById: input.status === "APPROVED" || input.status === "PUBLISHED" ? adminId : null,
+        submittedAt: input.status !== "DRAFT" ? now : null,
+        submittedById: input.status !== "DRAFT" ? adminId : null,
+        graceUntil: input.graceUntil ?? null,
+        createdById: adminId,
+      },
+    });
+    if (input.setCurrent) {
+      await prisma.policyDocument.update({
+        where: { id: policy.id },
+        data: { currentVersionId: version.id },
+      });
+    }
+    return version;
+  }
+
+  // ── Helper: worker signs a specific version ──────────────────────────────
+  async function signAs(input: {
+    userId: string;
+    policyKey: string;
+    versionNumber: number;
+    signedAt: Date;
+    workerActionAtSign: "SIGN" | "ACKNOWLEDGE" | "NONE";
+    typedName?: string;
+    upload?: {
+      r2Key: string;
+      fileName: string;
+      contentType: string;
+      digest: string;
+      expiresAt: Date;
+      status: "PENDING_REVIEW" | "APPROVED" | "REJECTED";
+    };
+  }) {
+    const policy = await prisma.policyDocument.findUnique({
+      where: { key: input.policyKey },
+    });
+    if (!policy) throw new Error(`Policy ${input.policyKey} missing`);
+    const version = await prisma.policyDocumentVersion.findFirst({
+      where: { policyDocumentId: policy.id, versionNumber: input.versionNumber },
+    });
+    if (!version) throw new Error(`Version ${input.policyKey} v${input.versionNumber} missing`);
+    await prisma.policySignature.create({
+      data: {
+        userId: input.userId,
+        policyDocumentVersionId: version.id,
+        workerActionAtSign: input.workerActionAtSign,
+        signedByUserId: input.userId,
+        signedAt: input.signedAt,
+        typedNameRaw: input.typedName ?? null,
+        typedNameNormalized: input.typedName?.trim().toLowerCase().replace(/\s+/g, " ") ?? null,
+        contentDigestAtSign: version.contentDigest,
+        signatureIp: "127.0.0.1",
+        signatureUserAgent: "seed-script",
+        uploadR2Key: input.upload?.r2Key ?? null,
+        uploadFileName: input.upload?.fileName ?? null,
+        uploadContentType: input.upload?.contentType ?? null,
+        uploadDigest: input.upload?.digest ?? null,
+        uploadExpiresAt: input.upload?.expiresAt ?? null,
+        uploadStatus: input.upload?.status ?? "NONE",
+      },
+    });
+  }
+
+  // ── Helper: super grants an exception ────────────────────────────────────
+  async function grantException(userId: string, policyKey: string, expiresInDays: number, reason: string) {
+    const policy = await prisma.policyDocument.findUnique({
+      where: { key: policyKey },
+    });
+    if (!policy) throw new Error(`Policy ${policyKey} missing`);
+    await prisma.policyException.create({
+      data: {
+        userId,
+        policyDocumentId: policy.id,
+        grantedById: adminId,
+        expiresAt: daysFromNowDate(expiresInDays),
+        reason,
+      },
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Additional versions
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // Safety SOP v2 — DRAFT. Exercises the "Preview" button on unpublished
+  // versions. Never becomes current.
+  await addVersion({
+    policyKey: "SAFETY_SOP",
+    versionNumber: 2,
+    status: "DRAFT",
+    changeNote: "Added tick prevention section (Q3 policy refresh).",
+    contentMarkdown: [
+      "# Safety Standard Operating Procedure — v2 DRAFT",
+      "",
+      "## PPE",
+      "",
+      "You must wear the following on every job:",
+      "",
+      "- Safety glasses",
+      "- Steel-toed footwear",
+      "- Hearing protection when operating powered equipment",
+      "- **NEW**: Long pants and permethrin-treated socks in tall grass",
+      "",
+      "## Tick prevention (NEW SECTION)",
+      "",
+      "Perform a full-body tick check at end of workday between May and October.",
+      "Report any embedded ticks within 24 hours.",
+      "",
+      "## Equipment operation",
+      "",
+      "1. Inspect equipment before use.",
+      "2. Report any damaged / unsafe equipment immediately.",
+      "3. Never operate under the influence of alcohol or drugs.",
+    ].join("\n"),
+  });
+
+  // Vehicle Policy v2 — APPROVED, not yet published. Exercises "Bulk publish".
+  await addVersion({
+    policyKey: "VEHICLE_POLICY",
+    versionNumber: 2,
+    status: "APPROVED",
+    changeNote: "Added dashcam recording clause.",
+    contentMarkdown: [
+      "# Vehicle & Driving Policy — v2",
+      "",
+      "By signing this policy I agree:",
+      "",
+      "1. I hold a valid, unrestricted driver's license.",
+      "2. I will maintain the company vehicle in a clean and operable condition.",
+      "3. I will report any incidents (damage, tickets, close calls) within 24 hours.",
+      "4. I will not use company vehicles for personal errands without prior approval.",
+      "5. **NEW**: I consent to dashcam recording during company drives.",
+      "",
+      "Renewal: re-sign annually.",
+    ].join("\n"),
+  });
+
+  // Handbook v2 — PUBLISHED with grace expired 3 days ago. Exercises the
+  // auto-dormancy grace extension: on a worker's next getWorkerPoliciesView
+  // call, a 24h catch-up exception is created automatically.
+  const handbookV2GraceUntil = daysAgoDate(3);
+  const handbookV2 = await addVersion({
+    policyKey: "HANDBOOK",
+    versionNumber: 2,
+    status: "PUBLISHED",
+    changeNote: "Added remote-work section.",
+    publishedAt: daysAgoDate(10),
+    graceUntil: handbookV2GraceUntil,
+    setCurrent: true,
+    contentMarkdown: [
+      "# Employee Handbook — v2",
+      "",
+      "## PTO",
+      "",
+      "Two weeks accrued per year, prorated by hours worked.",
+      "",
+      "## Expenses",
+      "",
+      "Submit receipts weekly.",
+      "",
+      "## Remote work (NEW SECTION)",
+      "",
+      "Admin-track staff may work remotely up to two days per week with prior approval.",
+      "",
+      "## Conduct",
+      "",
+      "Treat clients, coworkers, and property with respect.",
+    ].join("\n"),
+  });
+  void handbookV2;
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Signatures per worker
+  //
+  // Reserved user IDs (see file top):
+  //   ADMIN_WORKER  — has ADMIN role, workerType=EMPLOYEE
+  //   EMPLOYEE      — pure worker
+  //   CONTRACTOR    — pure worker, gets INSURANCE_CERT
+  //   TRAINEE       — pure worker, target of auto-grace demo
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const ADMIN_WORKER_UID = "cmnry8iih000k5acx7hf27aay";
+  const CONTRACTOR_UID   = "cmnrylyaz000s5abyeyg77m4x";
+  const EMPLOYEE_UID     = "cmnrz00fd002d5abyyr88byen";
+  const TRAINEE_UID      = "cmnrzapcl003g5abybrzttuxs";
+
+  // Confirm the users exist before signing — otherwise a fresh user reseed
+  // hasn't run yet and we should skip silently.
+  const users = await prisma.user.findMany({
+    where: { id: { in: [ADMIN_WORKER_UID, CONTRACTOR_UID, EMPLOYEE_UID, TRAINEE_UID] } },
+    select: { id: true },
+  });
+  const knownIds = new Set(users.map((u) => u.id));
+  if (knownIds.size < 4) {
+    console.log(`  ⚠  Some test-scenario users are missing (${knownIds.size}/4) — skipping signatures.`);
+    return;
+  }
+
+  // Timestamps for the various sig events.
+  const sig40dAgo = daysAgoDate(40);
+  const sig30dAgo = daysAgoDate(30);
+  const sig20dAgo = daysAgoDate(20);
+
+  // ADMIN_WORKER — compliant on everything, but has an active exception on
+  // Handbook (super granted for orientation) so we can see the yellow badge
+  // in the sign matrix.
+  await signAs({ userId: ADMIN_WORKER_UID, policyKey: "SAFETY_SOP", versionNumber: 1, signedAt: sig40dAgo, workerActionAtSign: "SIGN", typedName: "Ada Admin" });
+  await signAs({ userId: ADMIN_WORKER_UID, policyKey: "VEHICLE_POLICY", versionNumber: 1, signedAt: sig40dAgo, workerActionAtSign: "SIGN", typedName: "Ada Admin" });
+  await signAs({ userId: ADMIN_WORKER_UID, policyKey: "PHOTO_RELEASE", versionNumber: 1, signedAt: sig40dAgo, workerActionAtSign: "ACKNOWLEDGE" });
+  await grantException(ADMIN_WORKER_UID, "HANDBOOK", 14, "Orientation not yet complete — exception during ramp-up.");
+
+  // CONTRACTOR — signed everything, but INSURANCE_CERT upload is still
+  // PENDING_REVIEW. Exercises the "Uploads awaiting review" admin banner
+  // + Approve/Reject buttons.
+  await signAs({ userId: CONTRACTOR_UID, policyKey: "SAFETY_SOP", versionNumber: 1, signedAt: sig20dAgo, workerActionAtSign: "SIGN", typedName: "Carlos Contractor" });
+  await signAs({ userId: CONTRACTOR_UID, policyKey: "VEHICLE_POLICY", versionNumber: 1, signedAt: sig20dAgo, workerActionAtSign: "SIGN", typedName: "Carlos Contractor" });
+  await signAs({ userId: CONTRACTOR_UID, policyKey: "PHOTO_RELEASE", versionNumber: 1, signedAt: sig20dAgo, workerActionAtSign: "ACKNOWLEDGE" });
+  await signAs({
+    userId: CONTRACTOR_UID,
+    policyKey: "INSURANCE_CERT",
+    versionNumber: 1,
+    signedAt: sig20dAgo,
+    workerActionAtSign: "SIGN",
+    typedName: "Carlos Contractor",
+    upload: {
+      // Fake R2 key — the object doesn't actually exist. Preview / download
+      // will 404, but Approve / Reject only touch the DB record so those
+      // work fine for the walk-through.
+      r2Key: "docs/seed/contractor-insurance-cert-2026.pdf",
+      fileName: "cert-of-insurance-2026.pdf",
+      contentType: "application/pdf",
+      digest: "seed-fake-digest-0000000000000000000000000000000000000000000000000000",
+      expiresAt: daysFromNowDate(180),
+      status: "PENDING_REVIEW",
+    },
+  });
+
+  // TRAINEE — signed Safety+Handbook+Photo on the OLD v1 of Handbook. When
+  // TRAINEE next loads /me/policies, Handbook v2 (current) has grace that
+  // expired 3 days ago and no auto-grace exception exists yet → the auto-
+  // grace helper creates one for 24h. This is the star of the auto-dormancy
+  // demo.
+  await signAs({ userId: TRAINEE_UID, policyKey: "SAFETY_SOP", versionNumber: 1, signedAt: sig30dAgo, workerActionAtSign: "SIGN", typedName: "Tina Trainee" });
+  await signAs({ userId: TRAINEE_UID, policyKey: "PHOTO_RELEASE", versionNumber: 1, signedAt: sig30dAgo, workerActionAtSign: "ACKNOWLEDGE" });
+  await signAs({ userId: TRAINEE_UID, policyKey: "HANDBOOK", versionNumber: 1, signedAt: sig30dAgo, workerActionAtSign: "SIGN", typedName: "Tina Trainee" });
+
+  // EMPLOYEE — the "fresh sign-up" case. No signatures. Everything
+  // targeted (Safety, Vehicle, Photo, Handbook) is pending. Exercises the
+  // multi-policy sign wizard + BLOCK-gate interceptor when they try to
+  // start a workday, claim a job, or reserve a vehicle.
+  //
+  // (No sign calls here — leaving EMPLOYEE with zero signatures on purpose.)
+
+  // ── Attach the Insurance Cert policy to specific high-value equipment ──
+  //
+  // Demonstrates the per-piece Equipment.requiredPolicyIds pattern. Only
+  // these pieces trigger the insurance check on reservation; low-risk
+  // equipment (small trimmers, wheelbarrow, blowers) reserves without the
+  // insurance gate. Matches the pre-migration behavior where "requires
+  // insurance" was a per-piece flag.
+  const insurance = await prisma.policyDocument.findUnique({
+    where: { key: "INSURANCE_CERT" },
+    select: { id: true },
+  });
+  if (insurance) {
+    // qrSlug is the stable identifier for each piece — deterministic across
+    // reseeds. Attach the insurance policy to the trailer (large, road-
+    // hauling) and the chainsaw (high injury risk).
+    const attachToSlugs = ["bigtex-35sa-001", "stihl-ms271-001"];
+    const pieces = await prisma.equipment.findMany({
+      where: { qrSlug: { in: attachToSlugs } },
+      select: { id: true, qrSlug: true, requiredPolicyIds: true },
+    });
+    for (const p of pieces) {
+      // Idempotent — don't re-add if already present.
+      if (p.requiredPolicyIds.includes(insurance.id)) continue;
+      await prisma.equipment.update({
+        where: { id: p.id },
+        data: { requiredPolicyIds: [...p.requiredPolicyIds, insurance.id] },
+      });
+    }
+    console.log(`    Attached Insurance Cert to ${pieces.length} piece(s) of equipment.`);
+  }
+
+  console.log(`  ✓ Test scenarios: 5 policies, ${users.length} workers, mixed signature states`);
 }
 
 /**

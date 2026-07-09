@@ -12,6 +12,7 @@ import { usePushNotifications } from "@/src/lib/usePushNotifications";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import TomorrowWeatherWarning from "@/src/ui/components/TomorrowWeatherWarning";
 import HomeBanners from "@/src/ui/components/HomeBanners";
+import ComplianceBanner from "@/src/ui/components/ComplianceBanner";
 import WorkdayStrip from "@/src/ui/components/WorkdayStrip";
 import MileageStrip from "@/src/ui/components/MileageStrip";
 import type { Me } from "@/src/lib/types";
@@ -698,6 +699,15 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
             </Card.Body>
           </Card.Root>
         )}
+
+        {/* Compliance banner — surfaces pending policy work below the
+            admin-posted banners AND the push-alert enablement banner. Red
+            when BLOCK-level items are pending (can't start work), orange
+            when only WARN/INFO are left, silently absent when fully
+            cleared. Sign now button dispatches the same `policies:required`
+            event PolicyGateInterceptor listens for, reusing the wizard
+            flow. Hidden while an admin is impersonating another worker. */}
+        <ComplianceBanner disabled={isViewingOther} />
 
         {/* Workday — mileage is injected INSIDE the workday card via the
             mileageSlot prop so they share ONE border, ONE background, ONE

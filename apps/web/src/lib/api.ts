@@ -185,6 +185,25 @@ export async function request<T>(
     err.status = res.status;
     if (code) err.code = code;
     if (details !== undefined) err.details = details;
+
+    // Compliance-policy gate — the server throws POLICIES_REQUIRED with
+    // { pendingPolicyIds: string[] } in details when the worker tries any
+    // gated action (workday start, job claim, vehicle reserve) without
+    // signing every applicable BLOCK policy. Broadcast a global event so
+    // the PolicyGateInterceptor mounted at the app root can open the sign
+    // wizard with the outstanding policies. Callers that want to retry
+    // after signing can listen for `policies:signed`.
+    if (IS_BROWSER && code === "POLICIES_REQUIRED") {
+      const evt = new CustomEvent("policies:required", {
+        detail: {
+          pendingPolicyIds:
+            (details as { pendingPolicyIds?: string[] } | undefined)?.pendingPolicyIds ?? [],
+          message,
+        },
+      });
+      window.dispatchEvent(evt);
+    }
+
     throw err;
   }
 
@@ -197,7 +216,7 @@ export const apiPost = <T>(p: string, b?: unknown) => request<T>("POST", p, b);
 export const apiPut = <T>(p: string, b?: unknown) => request<T>("PUT", p, b);
 export const apiPatch = <T>(p: string, b?: unknown) =>
   request<T>("PATCH", p, b);
-export const apiDelete = <T>(p: string) => request<T>("DELETE", p);
+export const apiDelete = <T>(p: string, b?: unknown) => request<T>("DELETE", p, b);
 
 /**
  * Authenticated download helper for non-JSON responses (CSV, files).

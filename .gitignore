@@ -14,3 +14,18 @@ coverage
 pnpm-lock.yaml
 yarn.lock
 .turbo
+
+# TypeScript incremental build cache — regenerated on every build
+*.tsbuildinfo
+
+# Playwright — test artifacts + Clerk storage-state files. Regenerated per run;
+# never check in. The `.auth/` files contain real session cookies.
+test-results
+playwright-report
+tests/e2e/report
+tests/e2e/screenshots
+playwright/.auth
+apps/web/test-results
+apps/web/tests/e2e/report
+apps/web/tests/e2e/screenshots
+apps/web/playwright/.auth

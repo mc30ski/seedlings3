@@ -55,6 +55,21 @@ This runs ~150 tests in ~400 ms including the date-handling scan + helper
 unit tests + payment invariants + export integrity. If anything fails,
 fix it before reporting the task as done.
 
+## Feature specs
+
+The `docs/features/` directory holds canonical per-feature specs. Each
+one describes how the feature is supposed to work in plain English:
+state machine, edge cases, user-visible copy, testing paths. Bind these
+docs to the corresponding Playwright e2e suite at
+`apps/web/tests/e2e/specs/<feature>-*.spec.ts` — if code and doc
+disagree, one of them is wrong; fix both in the same PR.
+
+- **Compliance** → [`docs/features/compliance.md`](docs/features/compliance.md)
+  (policy documents, versions, signatures, exceptions, banner, wizard).
+  Enforced by [`apps/api/src/services/policies-build-gate.test.ts`](apps/api/src/services/policies-build-gate.test.ts)
+  + Playwright specs under [`apps/web/tests/e2e/specs/compliance-banner-*.spec.ts`](apps/web/tests/e2e/specs/).
+  Run with `cd apps/web && npx playwright test --project=employee compliance-banner`.
+
 ## Other load-bearing rules
 
 - **Prisma migrations are required** for schema changes — never use

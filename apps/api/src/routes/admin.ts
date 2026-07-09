@@ -2498,7 +2498,9 @@ Respond ONLY with valid JSON in this exact format:
       select: {
         id: true, email: true, phone: true, firstName: true, lastName: true, displayName: true, workerType: true, homeBaseAddress: true, availableDays: true, availableHoursPerDay: true,
         hourlyWage: true,
-        isApproved: true, insuranceExpiresAt: true, contractorAgreedAt: true, w9Collected: true,
+        isApproved: true,
+        // Compliance-policy status is served separately in Slice 4 admin
+        // Compliance tab — no longer inlined on the user profile.
         paymentCommsMode: true,
       },
     });
@@ -2534,13 +2536,10 @@ Respond ONLY with valid JSON in this exact format:
     return { ok: true };
   });
 
-  app.patch("/admin/users/:id/w9", adminGuard, async (req: any) => {
-    const uid = await currentUserId(req);
-    const userId = String(req.params.id);
-    const body = req.body || {};
-    await services.users.setW9Collected(uid, userId, !!body.collected);
-    return { ok: true };
-  });
+  // /admin/users/:id/w9 was removed with the compliance-policy migration.
+  // W-9 collection now flows through PolicyDocument.workerAction = NONE +
+  // adminCanUploadOnBehalf. Admin uploads via POST /admin/policies/upload-on-behalf
+  // (Slice 1 endpoint) with policyDocumentId = W-9 policy id.
 
   // Per-user privilege overrides. Body shape:
   //   { canPullInventory?: true|false|null, canChargeBusinessExpenses?: true|false|null }
@@ -7173,5 +7172,278 @@ Respond ONLY with valid JSON in this exact format:
       throw app.httpErrors.badRequest("entryDate must be YYYY-MM-DD");
     }
     return approveWorkerDay(userId, entryDate, approverId);
+  });
+
+  // ── Compliance policies (Slice 1) ──────────────────────────────────────
+  //
+  // Admin surfaces for the PolicyDocument / PolicyDocumentVersion /
+  // PolicySignature / PolicyException system. Worker-facing endpoints
+  // (sign / acknowledge / upload / page-view) land in Slice 2 under
+  // routes/worker.ts. Reactive gate integration lands in Slice 3.
+  //
+  // Guarded by superGuard — only Supers manage policies. The upload-on-
+  // behalf endpoint additionally requires client-side "type APPROVE" for
+  // SIGN-type policies (server double-checks).
+
+  app.get("/admin/policies", superGuard, async (req: any) => {
+    const q = (req.query || {}) as { includeArchived?: string };
+    return services.policies.listPolicies({
+      includeArchived: q.includeArchived === "true" || q.includeArchived === "1",
+    });
+  });
+
+  app.get("/admin/policies/pending-approvals", superGuard, async () => {
+    return services.policies.listPendingApprovals();
+  });
+
+  app.get("/admin/policies/pending-upload-reviews", superGuard, async () => {
+    return services.policies.listPendingUploadReviews();
+  });
+
+  // Lightweight count endpoints for the alerts dropdown badge. Cheap to
+  // load — bounded by the small number of pending admin actions in
+  // practice. Returned as { pendingUploadReviews, pendingApprovals } so
+  // the alerts dropdown can surface both without two round trips.
+  app.get("/admin/policies/counts", superGuard, async () => {
+    const [pendingUploadReviews, pendingApprovals] = await Promise.all([
+      prisma.policySignature.count({
+        where: {
+          uploadStatus: "PENDING_REVIEW",
+          revokedAt: null,
+          // Exclude archived policies — their pending uploads shouldn't
+          // demand admin attention (mirrors listPendingUploadReviews).
+          version: { policyDocument: { archivedAt: null } },
+        },
+      }),
+      prisma.policyDocumentVersion.count({
+        where: {
+          status: "PENDING_APPROVAL",
+          policyDocument: { archivedAt: null },
+        },
+      }),
+    ]);
+    return { pendingUploadReviews, pendingApprovals };
+  });
+
+  // Bulk per-user compliance summary. Powers the UsersTab chip so each
+  // worker card can show "Compliance: OK" / "N pending" at a glance.
+  app.get("/admin/policies/user-compliance", superGuard, async () => {
+    return services.policies.getAllUsersComplianceSummary();
+  });
+
+  app.get("/admin/policies/sign-matrix", superGuard, async () => {
+    return services.policies.getSignMatrix();
+  });
+
+  // Policies eligible to be attached to a piece of equipment — filtered to
+  // non-archived BLOCK policies whose gatesServices includes RESERVE_EQUIPMENT.
+  // Powers the EquipmentDialog's per-piece policy multi-select. Admin-only
+  // (matches other equipment admin flows).
+  app.get("/admin/policies/attachable-to-equipment", { preHandler: (req, reply) => app.requireRole(req, reply, RoleVal.ADMIN) }, async () => {
+    return services.policies.listEquipmentAttachablePolicies();
+  });
+
+  app.post("/admin/policies/nudge", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const b = req.body || {};
+    if (!b.userId) throw new Error("userId required");
+    return services.policies.nudgeWorker(uid, String(b.userId));
+  });
+
+  app.get("/admin/policies/versions/:id/content-url", superGuard, async (req: any) => {
+    const url = await services.policies.getVersionContentUrlForAdmin(String(req.params.id));
+    return { url };
+  });
+
+  app.get("/admin/policies/:id", superGuard, async (req: any) => {
+    return services.policies.getPolicyDetail(String(req.params.id));
+  });
+
+  app.post("/admin/policies", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    return services.policies.createPolicy(uid, req.body);
+  });
+
+  app.patch("/admin/policies/:id", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    return services.policies.updatePolicy(uid, String(req.params.id), req.body || {});
+  });
+
+  app.post("/admin/policies/:id/archive", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const b = req.body || {};
+    await services.policies.archivePolicy(uid, String(req.params.id), String(b.reason ?? ""));
+    return { ok: true };
+  });
+
+  app.post("/admin/policies/:id/unarchive", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    await services.policies.unarchivePolicy(uid, String(req.params.id));
+    return { ok: true };
+  });
+
+  // Permanent delete. Only valid on already-archived policies; the two-
+  // step motion is enforced server-side. Destroys the policy + every
+  // version, signature, exception, and reading-progress row. Audit log
+  // preserves the destruction counts.
+  app.delete("/admin/policies/:id/permanent", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    await services.policies.deletePolicyPermanently(uid, String(req.params.id));
+    return { ok: true };
+  });
+
+  // ── Version lifecycle ──
+
+  app.post("/admin/policies/:id/versions", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    return services.policies.createVersion(uid, String(req.params.id), req.body);
+  });
+
+  app.patch("/admin/policies/versions/:id", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    return services.policies.updateDraft(uid, String(req.params.id), req.body || {});
+  });
+
+  app.post("/admin/policies/versions/:id/pdf-upload-url", superGuard, async (req: any) => {
+    const b = req.body || {};
+    const fileName = String(b.fileName ?? "content.pdf");
+    const contentType = String(b.contentType ?? "application/pdf");
+    return services.policies.getPdfUploadUrl(String(req.params.id), fileName, contentType);
+  });
+
+  app.post("/admin/policies/versions/:id/confirm-pdf", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const b = req.body || {};
+    if (!b.r2Key) throw app.httpErrors.badRequest("r2Key is required");
+    if (!b.contentDigest) throw app.httpErrors.badRequest("contentDigest is required");
+    if (typeof b.pdfPageCount !== "number") throw app.httpErrors.badRequest("pdfPageCount is required");
+    await services.policies.confirmPdfUpload(uid, String(req.params.id), {
+      r2Key: String(b.r2Key),
+      fileName: String(b.fileName ?? "content.pdf"),
+      contentType: String(b.contentType ?? "application/pdf"),
+      contentDigest: String(b.contentDigest),
+      pdfPageCount: Number(b.pdfPageCount),
+    });
+    return { ok: true };
+  });
+
+  app.post("/admin/policies/versions/:id/submit", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    await services.policies.submitVersionForApproval(uid, String(req.params.id));
+    return { ok: true };
+  });
+
+  app.post("/admin/policies/versions/:id/approve", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    await services.policies.approveVersion(uid, String(req.params.id));
+    return { ok: true };
+  });
+
+  app.post("/admin/policies/versions/:id/publish", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const b = req.body || {};
+    await services.policies.publishVersion(uid, String(req.params.id), {
+      graceHours: typeof b.graceHours === "number" ? b.graceHours : undefined,
+      forcesResign: typeof b.forcesResign === "boolean" ? b.forcesResign : undefined,
+    });
+    return { ok: true };
+  });
+
+  app.post("/admin/policies/versions/:id/rollback", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const b = req.body || {};
+    await services.policies.rollbackVersion(uid, String(req.params.id), String(b.reason ?? ""));
+    return { ok: true };
+  });
+
+  // ── Bulk / per-worker ──
+
+  app.post("/admin/policies/:id/force-resign", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const b = req.body || {};
+    return services.policies.forceResignAll(uid, String(req.params.id), String(b.reason ?? ""));
+  });
+
+  app.post("/admin/policies/:id/exceptions", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const b = req.body || {};
+    if (!b.userId) throw app.httpErrors.badRequest("userId is required");
+    if (!b.expiresAt) throw app.httpErrors.badRequest("expiresAt is required");
+    if (!b.reason) throw app.httpErrors.badRequest("reason is required");
+    return services.policies.grantException(uid, {
+      userId: String(b.userId),
+      policyId: String(req.params.id),
+      expiresAt: new Date(String(b.expiresAt)),
+      reason: String(b.reason),
+    });
+  });
+
+  app.delete("/admin/policies/exceptions/:id", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const b = req.body || {};
+    await services.policies.revokeException(uid, String(req.params.id), String(b.reason ?? ""));
+    return { ok: true };
+  });
+
+  // ── Signature review / revoke / upload-on-behalf ──
+
+  app.post("/admin/policies/signatures/:id/review", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const b = req.body || {};
+    const decision = String(b.decision ?? "").toUpperCase();
+    if (decision !== "APPROVE" && decision !== "REJECT") {
+      throw app.httpErrors.badRequest("decision must be APPROVE or REJECT");
+    }
+    await services.policies.reviewUpload(
+      uid,
+      String(req.params.id),
+      decision as "APPROVE" | "REJECT",
+      b.reason ? String(b.reason) : undefined,
+    );
+    return { ok: true };
+  });
+
+  app.post("/admin/policies/signatures/:id/revoke", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const b = req.body || {};
+    await services.policies.revokeSignature(uid, String(req.params.id), String(b.reason ?? ""));
+    return { ok: true };
+  });
+
+  app.post("/admin/policies/upload-on-behalf", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const b = req.body || {};
+    if (!b.userId) throw app.httpErrors.badRequest("userId is required");
+    if (!b.policyId) throw app.httpErrors.badRequest("policyId is required");
+    if (!b.uploadR2Key) throw app.httpErrors.badRequest("uploadR2Key is required");
+    if (!b.uploadDigest) throw app.httpErrors.badRequest("uploadDigest is required");
+    const created = await services.policies.adminUploadOnBehalf(uid, {
+      userId: String(b.userId),
+      policyId: String(b.policyId),
+      uploadR2Key: String(b.uploadR2Key),
+      uploadFileName: String(b.uploadFileName ?? ""),
+      uploadContentType: String(b.uploadContentType ?? ""),
+      uploadDigest: String(b.uploadDigest),
+      uploadExpiresAt: b.uploadExpiresAt ? new Date(String(b.uploadExpiresAt)) : null,
+      typeAcknowledgment: b.typeAcknowledgment ? String(b.typeAcknowledgment) : undefined,
+      clientIp: (req.ip as string) ?? null,
+      userAgent: (req.headers["user-agent"] as string) ?? null,
+    });
+    return { signatureId: created.id };
+  });
+
+  // Presigned R2 upload URL for the admin's upload-on-behalf flow. Same
+  // "docs" bucket + 5-min TTL as other document uploads.
+  app.post("/admin/policies/upload-on-behalf/upload-url", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const b = req.body || {};
+    if (!b.userId) throw app.httpErrors.badRequest("userId is required");
+    if (!b.policyId) throw app.httpErrors.badRequest("policyId is required");
+    const fileName = String(b.fileName ?? "artifact.pdf");
+    const contentType = String(b.contentType ?? "application/pdf");
+    const key = `policies/signatures/${String(b.policyId)}/${String(b.userId)}/${Date.now()}-${fileName}`;
+    const uploadUrl = await getUploadUrl(key, contentType, 300, "docs");
+    void uid; // audit happens on adminUploadOnBehalf finalization
+    return { uploadUrl, key };
   });
 }

@@ -35,6 +35,7 @@ import {
 } from "@/src/lib/impersonation";
 import { useClerk } from "@clerk/clerk-react";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
+import WorkerComplianceSection from "@/src/ui/components/WorkerComplianceSection";
 
 type Worker = { id: string; displayName?: string | null; email?: string | null; workerType?: string | null };
 
@@ -388,6 +389,11 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
               are the first things you see when you land on the page
               from the title-bar avatar. */}
           {isSelf && <AccountSection />}
+          {/* Compliance — worker's outstanding sign requirements + history.
+              Rendered above Personal Information so a worker sees pending
+              policies before anything else. Self-hides when the worker has
+              no applicable policies. */}
+          {isSelf && <WorkerComplianceSection />}
           {/* Name & info card */}
           <Card.Root variant="outline">
             <Card.Header py="2" px="3" pb="0">

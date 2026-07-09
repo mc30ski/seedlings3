@@ -550,7 +550,9 @@ export const equipment: ServicesEquipment = {
       qrSlug?: string | null;
       dailyRate?: number | null;
       equivalentJobs?: number | null;
-      requiresInsurance?: boolean;
+      // Per-equipment policy requirements — see Equipment.requiredPolicyIds
+      // on the schema. Wired into the RESERVE_EQUIPMENT gate.
+      requiredPolicyIds?: string[];
     }
   ) {
     return prisma.$transaction(async (tx) => {
@@ -570,7 +572,7 @@ export const equipment: ServicesEquipment = {
         ...(input.age !== undefined ? { age: input.age } : {}),
         ...(input.dailyRate !== undefined ? { dailyRate: input.dailyRate } : {}),
         ...(input.equivalentJobs !== undefined ? { equivalentJobs: input.equivalentJobs } : {}),
-        ...(input.requiresInsurance !== undefined ? { requiresInsurance: input.requiresInsurance } : {}),
+        ...(input.requiredPolicyIds !== undefined ? { requiredPolicyIds: input.requiredPolicyIds } : {}),
       };
 
       const created = await tx.equipment.create({ data });
@@ -602,7 +604,7 @@ export const equipment: ServicesEquipment = {
         | "age"
         | "dailyRate"
         | "equivalentJobs"
-        | "requiresInsurance"
+        | "requiredPolicyIds"
       >
     >
   ) {
@@ -625,7 +627,7 @@ export const equipment: ServicesEquipment = {
       if (patch.age !== undefined) data.age = patch.age;
       if (patch.dailyRate !== undefined) data.dailyRate = patch.dailyRate;
       if (patch.equivalentJobs !== undefined) data.equivalentJobs = patch.equivalentJobs;
-      if (patch.requiresInsurance !== undefined) data.requiresInsurance = patch.requiresInsurance;
+      if (patch.requiredPolicyIds !== undefined) data.requiredPolicyIds = patch.requiredPolicyIds;
 
       const updated = await tx.equipment.update({ where: { id }, data });
 
@@ -873,23 +875,15 @@ export const equipment: ServicesEquipment = {
         groupId = group.id;
       }
 
-      // Insurance gate applies to CONTRACTORs only. Employees (including
-      // admins/supers, who are W-2) are covered under the company's general
-      // liability policy and don't need a personal certificate. Trainees are
-      // already blocked by the TRAINEE_NOT_ALLOWED check above. For group
-      // rentals the gate stays on the claimer (== userId here) — group
-      // members' insurance status doesn't enter the check.
-      if (eq.requiresInsurance && user.workerType === "CONTRACTOR") {
-        const now = new Date();
-        const insured = !!(user.insuranceCertR2Key && user.insuranceExpiresAt && user.insuranceExpiresAt > now);
-        if (!insured) {
-          throw new ServiceError(
-            "INSURANCE_REQUIRED",
-            "As a contractor, you need a valid insurance certificate on file to reserve this equipment.",
-            403,
-          );
-        }
-      }
+      // Compliance gate. Only per-equipment policies (Equipment.requiredPolicyIds)
+      // apply here — RESERVE_EQUIPMENT in a policy's gatesServices is now an
+      // eligibility flag (marks it as attachable), not a global gate. For
+      // group rentals the check stays on the claimer (== userId here) —
+      // group members' compliance doesn't enter the check.
+      const { policies } = await import("./policies");
+      await policies.assertPoliciesSigned(userId, "RESERVE_EQUIPMENT", {
+        equipmentRequiredPolicyIds: eq.requiredPolicyIds ?? [],
+      });
 
       const reserve = await tx.checkout.create({
         data: { equipmentId: id, userId, groupId, ledgerId: generateLedgerId() },

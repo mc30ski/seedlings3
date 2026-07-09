@@ -2612,28 +2612,23 @@ export const jobs: ServicesJobs = {
         }
       }
 
-      // Tier gating for high-value jobs
+      // Compliance gate. Every active BLOCK policy that lists JOB_CLAIM in
+      // its gatesServices must have a current signature. Policies with a
+      // `gatesJobsAbovePrice` threshold only fire when this job's
+      // effective price meets or exceeds that value — the seeded
+      // Insurance policy uses this to only gate high-value jobs.
       const thresholdSetting = await prisma.setting.findUnique({ where: { key: "HIGH_VALUE_JOB_THRESHOLD" } });
       const threshold = Number(thresholdSetting?.value ?? 200);
       const effectivePrice = occ.price ?? (occ.job as any).defaultPrice ?? 0;
+      const { policies } = await import("./policies");
+      await policies.assertPoliciesSigned(currentUserId, "JOB_CLAIM", { effectivePrice });
+      // Worker-type presence is still required independently for high-value
+      // jobs — a policy gate assumes the worker actually has a type.
       if (effectivePrice >= threshold) {
         const user = await tx.user.findUniqueOrThrow({ where: { id: currentUserId } });
-        if (user.workerType === "CONTRACTOR") {
-          const now = new Date();
-          const insured = !!(user.insuranceCertR2Key && user.insuranceExpiresAt && user.insuranceExpiresAt > now);
-          if (!insured) {
-            throw new ServiceError("INSURANCE_REQUIRED", "Contractors must have valid insurance to claim high-value jobs.", 403);
-          }
-        }
         if (!user.workerType) {
           throw new ServiceError("WORKER_TYPE_REQUIRED", "Your worker type must be assigned before claiming high-value jobs. Contact your admin.", 403);
         }
-      }
-
-      // Contractor agreement check
-      const user = await tx.user.findUniqueOrThrow({ where: { id: currentUserId } });
-      if (user.workerType === "CONTRACTOR" && !user.contractorAgreedAt) {
-        throw new ServiceError("CONTRACTOR_AGREEMENT_REQUIRED", "You must acknowledge the contractor agreement before claiming jobs.", 403);
       }
 
       if (opts?.groupId) {

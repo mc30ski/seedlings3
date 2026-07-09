@@ -7,7 +7,7 @@
     "build": "npm run test:build-gate && tsup --config tsup.config.ts && npm run prisma:generate",
     "start": "node --enable-source-maps dist/start.js",
     "test": "vitest run",
-    "test:build-gate": "vitest run src/services/payments-build-gate.test.ts src/services/payments.test.ts src/services/exports.test.ts src/services/date-handling-build-gate.test.ts src/services/observer-filter-build-gate.test.ts src/lib/dates.test.ts src/lib/web-date-helpers.test.ts",
+    "test:build-gate": "vitest run src/services/payments-build-gate.test.ts src/services/payments.test.ts src/services/exports.test.ts src/services/date-handling-build-gate.test.ts src/services/observer-filter-build-gate.test.ts src/services/policies-build-gate.test.ts src/lib/dates.test.ts src/lib/web-date-helpers.test.ts",
     "test:payments": "vitest run src/services/payments-build-gate.test.ts src/services/payments.test.ts",
     "prisma:generate": "prisma generate --schema prisma/schema.prisma",
     "prisma:migrate:dev": "prisma migrate dev",

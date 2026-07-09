@@ -427,9 +427,6 @@ export const users: ServicesUsers = {
     }
 
     // Respond
-    const now = new Date();
-    const isInsuranceValid = !!(user!.insuranceCertR2Key && user!.insuranceExpiresAt && user!.insuranceExpiresAt > now);
-
     // Real, unmodified identity values from the DB. The "effective" values
     // below may diverge from these when a Super has the View-as-another-role
     // mode active. The frontend uses realRoles/realWorkerType to keep the
@@ -481,11 +478,10 @@ export const users: ServicesUsers = {
       // here so workers can see what's on file for them in their
       // profile.
       hourlyWage: Number(user!.hourlyWage ?? 0),
-      hasInsuranceCert: !!user!.insuranceCertR2Key,
-      isInsuranceValid,
-      insuranceExpiresAt: user!.insuranceExpiresAt?.toISOString() ?? null,
-      contractorAgreedAt: user!.contractorAgreedAt?.toISOString() ?? null,
-      w9Collected: !!user!.w9Collected,
+      // Compliance-policy state (insurance, W-9, contractor agreement, safety
+      // SOP, etc.) is served separately in Slice 2 via GET /me/policies +
+      // getMe compliance-cache. Removed from this response payload with the
+      // migration; frontends should read the new endpoint instead.
       // Guaranteed payout period (contractors only). Surfaced so the
       // contractor can see their own period and remaining days on
       // ProfileTab. UI computes "active" from `guaranteedPayoutUntil > now`.
@@ -561,50 +557,10 @@ export const users: ServicesUsers = {
     });
   },
 
-  async updateInsuranceCert(userId: string, r2Key: string, fileName: string | null, contentType: string | null, expiresAt: string) {
-    return prisma.$transaction(async (tx) => {
-      const updated = await tx.user.update({
-        where: { id: userId },
-        data: {
-          insuranceCertR2Key: r2Key,
-          insuranceCertFileName: fileName,
-          insuranceCertContentType: contentType,
-          insuranceExpiresAt: new Date(expiresAt),
-        },
-      });
-      await writeAudit(tx, AUDIT.USER.INSURANCE_UPLOADED, userId, {
-        r2Key, expiresAt,
-      });
-      return updated;
-    });
-  },
-
-  async recordContractorAgreement(userId: string) {
-    return prisma.$transaction(async (tx) => {
-      const updated = await tx.user.update({
-        where: { id: userId },
-        data: { contractorAgreedAt: new Date() },
-      });
-      await writeAudit(tx, AUDIT.USER.CONTRACTOR_AGREED, userId, {});
-      return updated;
-    });
-  },
-
-  async setW9Collected(currentUserId: string, userId: string, collected: boolean) {
-    return prisma.$transaction(async (tx) => {
-      const updated = await tx.user.update({
-        where: { id: userId },
-        data: {
-          w9Collected: collected,
-          w9CollectedAt: collected ? new Date() : null,
-        },
-      });
-      await writeAudit(tx, AUDIT.USER.W9_COLLECTED, currentUserId, {
-        userId, collected,
-      });
-      return updated;
-    });
-  },
+  // updateInsuranceCert, recordContractorAgreement, and setW9Collected were
+  // removed with the compliance-policy migration. See services/policies.ts
+  // for the replacement flow — worker sign, admin upload on behalf, admin
+  // review of uploaded artifacts.
 
   async setPrivilegeOverrides(
     currentUserId: string,

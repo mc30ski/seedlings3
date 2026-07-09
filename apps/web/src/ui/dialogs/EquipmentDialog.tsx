@@ -16,7 +16,7 @@ import {
 } from "@chakra-ui/react";
 import { createListCollection } from "@chakra-ui/react/collection";
 import { AlertCircle } from "lucide-react";
-import { apiPost, apiPatch } from "@/src/lib/api";
+import { apiGet, apiPost, apiPatch } from "@/src/lib/api";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import {
   Role,
@@ -79,7 +79,22 @@ export default function EquipmentDialog({
   // (dailyRate / equivalentJobs) per formal-crew or solo job completed
   // while the equipment is checked out, capped at dailyRate per day.
   const [equivalentJobs, setEquivalentJobs] = useState("");
-  const [requiresInsurance, setRequiresInsurance] = useState(false);
+  // Per-piece policy-doc requirements — see Equipment.requiredPolicyIds
+  // in schema. `attachablePolicies` lists non-archived BLOCK policies whose
+  // gatesServices includes RESERVE_EQUIPMENT (the eligibility flag).
+  // Toggling a row here updates requiredPolicyIds; it saves with the rest
+  // of the form.
+  const [requiredPolicyIds, setRequiredPolicyIds] = useState<string[]>([]);
+  const [attachablePolicies, setAttachablePolicies] = useState<
+    Array<{
+      id: string;
+      title: string;
+      description: string | null;
+      workerAction: string;
+      targetWorkerTypes: string[];
+    }>
+  >([]);
+  const [attachablePoliciesLoaded, setAttachablePoliciesLoaded] = useState(false);
   const [instructions, setInstructions] = useState<EquipmentInstruction[]>([]);
   const [instructionsDialogOpen, setInstructionsDialogOpen] = useState(false);
   // After CREATE saves successfully, hold the new id so the dialog stays open
@@ -135,7 +150,7 @@ export default function EquipmentDialog({
       setAge(initial.age ?? "");
       setDailyRate(initial.dailyRate != null ? initial.dailyRate.toFixed(2) : "");
       setEquivalentJobs((initial as any).equivalentJobs != null ? String((initial as any).equivalentJobs) : "");
-      setRequiresInsurance(!!initial.requiresInsurance);
+      setRequiredPolicyIds(Array.isArray((initial as any).requiredPolicyIds) ? (initial as any).requiredPolicyIds : []);
       setInstructions(initial.instructions ?? []);
     } else {
       setType([EQUIPMENT_KIND[0]]);
@@ -151,11 +166,29 @@ export default function EquipmentDialog({
       setAge("");
       setDailyRate("");
       setEquivalentJobs("");
-      setRequiresInsurance(false);
+      setRequiredPolicyIds([]);
       setInstructions([]);
     }
     if (open) setCreatedId(null);
   }, [open, mode, initial]);
+
+  // Fetch the list of policies that can be attached to equipment. Fires
+  // once per dialog open — an admin who adds a new eligible policy mid-
+  // session will need to close and reopen this dialog to see it.
+  useEffect(() => {
+    if (!open) return;
+    setAttachablePoliciesLoaded(false);
+    apiGet<typeof attachablePolicies>("/api/admin/policies/attachable-to-equipment")
+      .then((rows) => setAttachablePolicies(rows))
+      .catch(() => setAttachablePolicies([]))
+      .finally(() => setAttachablePoliciesLoaded(true));
+  }, [open]);
+
+  function toggleRequiredPolicy(id: string) {
+    setRequiredPolicyIds((prev) =>
+      prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id],
+    );
+  }
 
   async function handleSave() {
     dlgErr.clear();
@@ -177,7 +210,7 @@ export default function EquipmentDialog({
       equivalentJobs: equivalentJobs && parseInt(equivalentJobs, 10) > 0
         ? parseInt(equivalentJobs, 10)
         : null,
-      requiresInsurance,
+      requiredPolicyIds,
     };
 
     setBusy(true);
@@ -329,16 +362,75 @@ export default function EquipmentDialog({
                         flat-daily billing for this piece.
                       </Text>
                     </div>
+                    {/* Per-piece policy requirements. Workers reserving this
+                        equipment must have a current signature on every
+                        checked policy. Only policies with enforcement =
+                        Block AND "Claim equipment" gate toggled show up
+                        here (they're the ones eligible for attachment). */}
                     <div>
-                      <Text mb="1">Requires Insurance</Text>
-                      <Checkbox.Root
-                        checked={requiresInsurance}
-                        onCheckedChange={(e) => setRequiresInsurance(!!e.checked)}
-                      >
-                        <Checkbox.HiddenInput />
-                        <Checkbox.Control />
-                        <Checkbox.Label fontSize="sm">Yes</Checkbox.Label>
-                      </Checkbox.Root>
+                      <Text mb="1">Required policies to claim this equipment</Text>
+                      {!attachablePoliciesLoaded ? (
+                        <Text fontSize="xs" color="fg.muted">Loading…</Text>
+                      ) : attachablePolicies.length === 0 ? (
+                        <Box
+                          p={2}
+                          borderWidth="1px"
+                          borderRadius="md"
+                          bg="gray.50"
+                        >
+                          <Text fontSize="xs" color="fg.muted">
+                            No policies are eligible to attach. To make one eligible,
+                            go to Directory → Compliance, open the policy, set
+                            enforcement to <b>Block</b>, and toggle{" "}
+                            <b>Claim equipment</b> under "What this blocks".
+                          </Text>
+                        </Box>
+                      ) : (
+                        <VStack align="stretch" gap={1} borderWidth="1px" borderRadius="md" p={2}>
+                          {attachablePolicies.map((p) => {
+                            const checked = requiredPolicyIds.includes(p.id);
+                            return (
+                              <HStack
+                                key={p.id}
+                                gap={2}
+                                p={2}
+                                borderRadius="md"
+                                cursor="pointer"
+                                bg={checked ? "red.50" : undefined}
+                                _hover={{ bg: checked ? "red.100" : "gray.50" }}
+                                onClick={() => toggleRequiredPolicy(p.id)}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => toggleRequiredPolicy(p.id)}
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                                <VStack align="start" gap={0} flex="1" minW={0}>
+                                  <HStack gap={2} wrap="wrap">
+                                    <Text fontSize="sm" fontWeight="medium">
+                                      {p.title}
+                                    </Text>
+                                    <Badge size="xs" colorPalette="red" variant="subtle">
+                                      Block
+                                    </Badge>
+                                    {p.targetWorkerTypes.length > 0 && (
+                                      <Text fontSize="2xs" color="fg.muted">
+                                        {p.targetWorkerTypes.join(", ")}
+                                      </Text>
+                                    )}
+                                  </HStack>
+                                  {p.description && (
+                                    <Text fontSize="xs" color="fg.muted" lineClamp={1}>
+                                      {p.description}
+                                    </Text>
+                                  )}
+                                </VStack>
+                              </HStack>
+                            );
+                          })}
+                        </VStack>
+                      )}
                     </div>
                   </>
                 )}
