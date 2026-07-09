@@ -891,9 +891,16 @@ function PolicyDetailDrawer({
         onCancel={() => setConfirm(null)}
         onConfirm={async (reason) => {
           setConfirm(null);
-          await withBusy("archive", () =>
-            apiPost(`/api/admin/policies/${policyId}/archive`, { reason }),
-          );
+          try {
+            setBusy("archive");
+            await apiPost(`/api/admin/policies/${policyId}/archive`, { reason });
+            onChanged();
+            onClose();
+          } catch (err) {
+            publishInlineMessage({ type: "ERROR", text: getErrorMessage("Archive failed.", err) });
+          } finally {
+            setBusy(null);
+          }
         }}
       />
       <ConfirmDialog
