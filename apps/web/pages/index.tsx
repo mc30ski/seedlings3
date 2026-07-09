@@ -5,6 +5,7 @@ import { Badge, Box, Button, Container, Dialog, HStack, Portal, Spinner, Text, V
 import { AlertTriangle, ArrowLeftCircle, Link2 } from "lucide-react";
 import { useOffline } from "@/src/lib/offline";
 import OfflineQueueDialog from "@/src/ui/dialogs/OfflineQueueDialog";
+import PolicyGateInterceptor from "@/src/ui/components/PolicyGateInterceptor";
 import { apiGet } from "@/src/lib/api";
 import { setCompressionDefaults } from "@/src/lib/imageRedact";
 import { bizDateKey, bizToday, bizTomorrow, bizYesterday, bizAddDays, bizHour } from "@/src/lib/lib";
@@ -15,6 +16,7 @@ import Link from "next/link";
 import { UserButton, useAuth, useUser } from "@clerk/clerk-react";
 
 import UsersTab from "@/src/ui/tabs/UsersTab";
+import AdminComplianceTab from "@/src/ui/tabs/AdminComplianceTab";
 import ActivityTab from "@/src/ui/tabs/ActivityTab";
 import HistoryTab from "@/src/ui/tabs/HistoryTab";
 import SettingsTab from "@/src/ui/tabs/SettingsTab";
@@ -191,6 +193,19 @@ export default function HomePage() {
   // Tasks page shortcut. Source of truth is the Services tab where
   // stream-pauses live.
   const [streamPauseRemindersCount, setStreamPauseRemindersCount] = useState<number>(0);
+
+  // Super-only: compliance-policy alerts. Two independent buckets:
+  //   pendingUploadReviews = worker uploads awaiting admin approve/reject
+  //   pendingApprovals     = policy versions awaiting a second-super approve
+  // Both surface as separate rows in the alerts dropdown so the operator
+  // can act on whichever is blocking work.
+  const [policyPendingUploadsCount, setPolicyPendingUploadsCount] = useState<number>(0);
+  const [policyPendingApprovalsCount, setPolicyPendingApprovalsCount] = useState<number>(0);
+  // Worker-side: count of policies the signed-in worker still needs to
+  // sign / acknowledge. Drives the personal "Documents to sign" alert
+  // and the Tasks shortcut. Interceptor may also open the sign wizard
+  // reactively when a gated action fails.
+  const [policyWorkerPendingCount, setPolicyWorkerPendingCount] = useState<number>(0);
 
   // Handle /e/[slug] QR redirect — navigate to equipment tab
   useEffect(() => {
@@ -923,17 +938,10 @@ export default function HomePage() {
               </HStack>
             </Box>
           )}
-          {me?.workerType === "CONTRACTOR" && !me.isInsuranceValid && (
-            <Box mb={2} p={3} bg="red.50" borderWidth="1px" borderColor="red.300" rounded="md">
-              <HStack gap={2} align="start">
-                <Box flexShrink={0} pt="0.5"><AlertTriangle size={14} color="var(--chakra-colors-red-500)" /></Box>
-                <Text fontSize="sm" color="red.700">
-                  {me.hasInsuranceCert ? "Your insurance certificate has expired." : "No insurance certificate on file."}
-                  {" "}Some jobs and equipment may be restricted until this is resolved.
-                </Text>
-              </HStack>
-            </Box>
-          )}
+          {/* Contractor-insurance banner removed with the compliance-policy
+              migration. Slice 2 adds a general "N compliance items pending"
+              banner sourced from GET /me/policies that covers insurance,
+              W-9, safety SOP, and every other configured policy. */}
           <PlanWorkdayWorkflow
             active={activeWorkflow === "plan-workday" || activeWorkflow === "plan-workday-trainee"}
             onDone={() => setActiveWorkflow(null)}
@@ -1162,6 +1170,18 @@ export default function HomePage() {
           label: "Users",
           icon: AiOutlineTeam,
           content: wrapWithInlineMessage(<UsersTab role="admin" />),
+          category: "Directory",
+          categoryIcon: AiOutlineTeam,
+        },
+        {
+          // Compliance — admin surface for the PolicyDocument system.
+          // Lives under Directory alongside Users because the operator
+          // usually flips between "who works here" and "what have they
+          // signed" while onboarding/offboarding.
+          value: "compliance",
+          label: "Compliance",
+          icon: AiOutlineTeam,
+          content: wrapWithInlineMessage(<AdminComplianceTab />),
           category: "Directory",
           categoryIcon: AiOutlineTeam,
         },
@@ -1717,6 +1737,44 @@ export default function HomePage() {
     markAlertLoaded("dueToRecord");
   }, [isSuper]);
 
+  const loadPolicyAdminCounts = useCallback(async () => {
+    if (!isSuper) {
+      setPolicyPendingUploadsCount(0);
+      setPolicyPendingApprovalsCount(0);
+      markAlertLoaded("policyAdmin");
+      return;
+    }
+    try {
+      const r = await apiGet<{ pendingUploadReviews: number; pendingApprovals: number }>(
+        "/api/admin/policies/counts",
+      );
+      setPolicyPendingUploadsCount(r?.pendingUploadReviews ?? 0);
+      setPolicyPendingApprovalsCount(r?.pendingApprovals ?? 0);
+    } catch {
+      setPolicyPendingUploadsCount(0);
+      setPolicyPendingApprovalsCount(0);
+    }
+    markAlertLoaded("policyAdmin");
+  }, [isSuper]);
+
+  const loadPolicyWorkerCount = useCallback(async () => {
+    // Every signed-in worker (including admins with a workerType) sees
+    // this. Admin-only supers with workerType=null get 0 back from the
+    // server and the alert simply doesn't render.
+    if (!isSignedIn) {
+      setPolicyWorkerPendingCount(0);
+      markAlertLoaded("policyWorker");
+      return;
+    }
+    try {
+      const r = await apiGet<{ pendingCount: number }>("/api/me/policies/count");
+      setPolicyWorkerPendingCount(r?.pendingCount ?? 0);
+    } catch {
+      setPolicyWorkerPendingCount(0);
+    }
+    markAlertLoaded("policyWorker");
+  }, [isSignedIn]);
+
   // Keep the ref in sync so the tab's onApprovalsChanged callback,
   // which was bound up at the top of the component body, can call
   // through to the latest version.
@@ -1755,6 +1813,25 @@ export default function HomePage() {
     window.addEventListener("seedlings:stream-pauses-changed", onChanged);
     return () => window.removeEventListener("seedlings:stream-pauses-changed", onChanged);
   }, [loadStreamPauseRemindersCount]);
+
+  // Compliance-policy alert refresh. Reloads on any policy signature or
+  // version state change so the admin-side "pending uploads" badge stays
+  // fresh, and the worker-side "documents to sign" badge clears the moment
+  // the interceptor fires policies:signed after a successful wizard flow.
+  useEffect(() => {
+    void loadPolicyAdminCounts();
+    void loadPolicyWorkerCount();
+    const onSigned = () => {
+      void loadPolicyAdminCounts();
+      void loadPolicyWorkerCount();
+    };
+    window.addEventListener("policies:signed", onSigned);
+    window.addEventListener("policies:changed", onSigned);
+    return () => {
+      window.removeEventListener("policies:signed", onSigned);
+      window.removeEventListener("policies:changed", onSigned);
+    };
+  }, [loadPolicyAdminCounts, loadPolicyWorkerCount]);
 
   // ---- Awaiting-client-payment badge (super only) ----
   // Counts every outstanding payment request — sent to a client, not paid
@@ -2007,7 +2084,7 @@ export default function HomePage() {
     return () => { clearTimeout(timer); document.removeEventListener("click", close); };
   }, [alertDropdownOpen]);
   const [alertsLoaded, setAlertsLoaded] = useState<Record<string, boolean>>({});
-  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.planning && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests && alertsLoaded.estimateFollowups && alertsLoaded.unapprovedHours && alertsLoaded.guaranteedPayout && alertsLoaded.pendingWorkdays && alertsLoaded.ledgerFollowups && alertsLoaded.dueToRecord && alertsLoaded.streamPauseReminders);
+  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.planning && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests && alertsLoaded.estimateFollowups && alertsLoaded.unapprovedHours && alertsLoaded.guaranteedPayout && alertsLoaded.pendingWorkdays && alertsLoaded.ledgerFollowups && alertsLoaded.dueToRecord && alertsLoaded.streamPauseReminders && alertsLoaded.policyAdmin && alertsLoaded.policyWorker);
   const markAlertLoaded = useCallback((key: string) => setAlertsLoaded((prev) => prev[key] ? prev : { ...prev, [key]: true }), []);
   const loadAnnouncementCount = useCallback(async () => {
     if (!me?.isApproved) { setAnnouncementCount(0); if (me) markAlertLoaded("announcements"); return; }
@@ -2955,6 +3032,24 @@ export default function HomePage() {
     setSuperInnerTab("ledger" as any);
   }, []);
 
+  // Super → Directory → Compliance. Both compliance alerts (pending
+  // upload reviews, pending version approvals) land here — the tab
+  // surfaces each in its own section so the operator sees both at once.
+  const goToCompliance = useCallback(() => {
+    setTopTab("super");
+    setSuperCategory("Directory");
+    setSuperInnerTab("compliance");
+  }, []);
+
+  // Worker → Profile. The worker Compliance section at the top of the
+  // profile page auto-opens the sign wizard when the "Sign now" button
+  // is pressed, so landing here is one click away from signing.
+  const goToWorkerCompliance = useCallback(() => {
+    setTopTab("worker");
+    setWorkerInnerTab("profile");
+    setWorkerCategory("Profile");
+  }, []);
+
   // Stream-pause reminders — land on the Services tab where the paused
   // stream cards live. Admin can scroll to find the ones with due
   // reminder dates (paused chip is visible).
@@ -3249,6 +3344,9 @@ export default function HomePage() {
               if (isSuper && ledgerFollowupCount > 0) alerts.push({ label: "Ledger followups", count: ledgerFollowupCount, bg: "#FEF3C7", color: "#92400E", dotColor: "#F59E0B", onClick: goToLedgerFollowups });
               if (isSuper && dueToRecordCount > 0) alerts.push({ label: "Due to record", count: dueToRecordCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToDueToRecord });
               if ((isAdmin || isSuper) && streamPauseRemindersCount > 0) alerts.push({ label: "Paused repeating to review", count: streamPauseRemindersCount, bg: "#F3E8FF", color: "#6B21A8", dotColor: "#A855F7", onClick: goToStreamPauseReminders });
+              if (isSuper && policyPendingUploadsCount > 0) alerts.push({ label: "Compliance uploads to review", count: policyPendingUploadsCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToCompliance });
+              if (isSuper && policyPendingApprovalsCount > 0) alerts.push({ label: "Policy versions awaiting approval", count: policyPendingApprovalsCount, bg: "#DBEAFE", color: "#1E3A8A", dotColor: "#3B82F6", onClick: goToCompliance });
+              if (policyWorkerPendingCount > 0) alerts.push({ label: "Documents to sign", count: policyWorkerPendingCount, bg: "#FEE2E2", color: "#7F1D1D", dotColor: "#DC2626", onClick: goToWorkerCompliance });
               if (isAdmin && changeRequestCount > 0) alerts.push({ label: "Client requests", count: changeRequestCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToClientRequests });
               if (isAdmin && estimateFollowupCount > 0) alerts.push({ label: "Estimate follow-ups", count: estimateFollowupCount, bg: "#FCE7F3", color: "#9D174D", dotColor: "#EC4899", onClick: goToEstimateFollowups });
               if (isAdmin && unapprovedHoursCount > 0) alerts.push({ label: "Job hours awaiting review", count: unapprovedHoursCount, bg: "#FEF3C7", color: "#92400E", dotColor: "#F59E0B", onClick: goToUnapprovedHours });
@@ -3523,12 +3621,17 @@ export default function HomePage() {
             timelineUrgentCount,
             planningCount,
             announcementCount,
+            policyPendingUploadsCount,
+            policyPendingApprovalsCount,
+            policyWorkerPendingCount,
           }}
           handlers={{
             goToWorkdayApprovals,
             goToUnapprovedHours,
             goToLedgerFollowups,
             goToDueToRecord,
+            goToCompliance,
+            goToWorkerCompliance,
             goToStreamPauseReminders,
             goToGuaranteedPayoutExpiring,
             goToApprovals,
@@ -3656,6 +3759,13 @@ export default function HomePage() {
       )}
       {/* Offline Queue Dialog */}
       <OfflineQueueDialog open={queueDialogOpen} onOpenChange={setQueueDialogOpen} />
+
+      {/* Global compliance-policy gate interceptor. Listens for
+          `policies:required` events dispatched by lib/api.ts whenever the
+          server throws POLICIES_REQUIRED, fetches the fresh required-
+          policies list, and opens the sign wizard. Self-hides when no
+          worker is signed in or there's nothing to sign. */}
+      <PolicyGateInterceptor />
 
       {/* Network Info Dialog */}
       <Dialog.Root open={networkInfoOpen} onOpenChange={(e) => setNetworkInfoOpen(e.open)}>

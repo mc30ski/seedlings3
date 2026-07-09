@@ -26,7 +26,7 @@ export type AdminTabs =
   | "documents"
   | "timeline";
 
-export type SuperTabs = "unclaimed" | "audit" | "settings" | "profile" | "ledger" | "supplies" | "pricing" | "documents" | "timeline" | "payments" | "users" | "reconcile" | "workdays";
+export type SuperTabs = "unclaimed" | "audit" | "settings" | "profile" | "ledger" | "supplies" | "pricing" | "documents" | "timeline" | "payments" | "users" | "reconcile" | "workdays" | "compliance";
 
 export type ClientTabs = "my-jobs" | "public" | "services";
 
@@ -83,11 +83,9 @@ export type Me = {
   homeBaseAddress?: string | null;
   availableDays?: number[];
   availableHoursPerDay?: number;
-  hasInsuranceCert?: boolean;
-  isInsuranceValid?: boolean;
-  insuranceExpiresAt?: string | null;
-  contractorAgreedAt?: string | null;
-  w9Collected?: boolean;
+  // Compliance-policy state (insurance, W-9, contractor agreement, safety
+  // SOP, etc.) is served separately via GET /me/policies in Slice 2 and
+  // rendered on the worker Compliance section (Slice 2 UI).
   // Guaranteed payout onboarding period (contractors only). Active when
   // guaranteedPayoutUntil > now. Surfaced on ProfileTab so the contractor
   // can see their own period and remaining days.
@@ -182,7 +180,9 @@ export type Equipment = {
   // computeRentalCost). null = legacy flat-daily billing. Positive int
   // engages per-job-with-cap mode for this piece.
   equivalentJobs?: number | null;
-  requiresInsurance?: boolean;
+  // Per-piece policy requirements — array of PolicyDocument.id strings.
+  // See services/equipment.ts and Slice 3 gate integration.
+  requiredPolicyIds?: string[];
 
   createdAt: string | undefined;
   updatedAt?: string | undefined;

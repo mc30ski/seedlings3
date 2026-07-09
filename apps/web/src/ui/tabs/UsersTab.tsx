@@ -23,6 +23,7 @@ import { Role } from "@/src/lib/types";
 import { openEventSearch } from "@/src/lib/bus";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
+import { NudgeUserButton } from "@/src/ui/tabs/AdminComplianceTab";
 import ApproveAndLinkClientDialog from "@/src/ui/dialogs/ApproveAndLinkClientDialog";
 import UserActivitySection from "@/src/ui/components/UserActivitySection";
 import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
@@ -48,11 +49,10 @@ type ApiUser = {
   roles: { role: Role }[];
   workerType?: string | null;
   isOwner?: boolean;
-  insuranceCertR2Key?: string | null;
-  insuranceExpiresAt?: string | null;
-  contractorAgreedAt?: string | null;
-  w9Collected?: boolean;
-  w9CollectedAt?: string | null;
+  // Compliance-policy status (insurance, W-9, contractor agreement, safety
+  // SOP, etc.) is surfaced separately in Slice 4 via the admin Compliance
+  // tab + a per-user "Compliance: OK / N pending" chip added to this card
+  // in Slice 5. Removed inline fields as part of the migration.
   // Guaranteed-payout onboarding period (contractors only). Active when
   // guaranteedPayoutUntil > now. See onboarding addendum.
   guaranteedPayoutUntil?: string | null;
@@ -136,6 +136,12 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
 
   const [items, setItems] = useState<ApiUser[]>([]);
   const [loading, setLoading] = useState(false);
+  // Per-user compliance summary — keyed by userId. Loaded once per tab
+  // mount from /admin/policies/user-compliance and rendered as a chip on
+  // each card. Missing entries fall back to "no data" (chip hidden).
+  const [complianceByUserId, setComplianceByUserId] = useState<
+    Record<string, { current: boolean; pendingCount: number }>
+  >({});
 
   // who am I? (used to hide actions for self)
   const [me, setMe] = useState<Me | null>(null);
@@ -293,12 +299,17 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
       if (accessRole === "admin") params.set("role", "ADMIN");
       // "client" filter is applied client-side after fetch
 
-      // Load users + holdings together (holdings is a separate endpoint)
-      const [users, holdings] = await Promise.all([
+      // Load users + holdings + compliance summary together. Compliance is
+      // super-only, so tolerate a 403 by falling back to an empty map (the
+      // chip simply won't render for admin-level viewers).
+      const [users, holdings, complianceSummary] = await Promise.all([
         apiGet<ApiUser[]>(
           `/api/admin/users${params.toString() ? `?${params}` : ""}`
         ),
         apiGet<Holding[]>(`/api/admin/holdings`),
+        apiGet<Array<{ userId: string; current: boolean; pendingCount: number }>>(
+          `/api/admin/policies/user-compliance`,
+        ).catch(() => [] as Array<{ userId: string; current: boolean; pendingCount: number }>),
       ]);
 
       setItems(users);
@@ -310,6 +321,13 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
         map[h.userId].push(h);
       }
       setHoldingsByUser(map);
+
+      // Index compliance summary by userId for O(1) chip lookup.
+      const complianceMap: Record<string, { current: boolean; pendingCount: number }> = {};
+      for (const c of complianceSummary) {
+        complianceMap[c.userId] = { current: c.current, pendingCount: c.pendingCount };
+      }
+      setComplianceByUserId(complianceMap);
       setConfirm(null);
     } catch (err) {
       publishInlineMessage({
@@ -469,15 +487,9 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
     }
   }
 
-  async function toggleW9(userId: string, current: boolean) {
-    try {
-      await apiPatch(`/api/admin/users/${userId}/w9`, { collected: !current });
-      publishInlineMessage({ type: "SUCCESS", text: !current ? "W-9 marked collected" : "W-9 unmarked" });
-      load();
-    } catch (err: any) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("W-9 update failed", err) });
-    }
-  }
+  // toggleW9 was removed with the compliance-policy migration. W-9 is now
+  // a PolicyDocument (workerAction = NONE + adminCanUploadOnBehalf) and
+  // admin uploads via the Slice 4 Compliance tab's "upload on behalf" flow.
 
   // Owner-flag toggle (super-only). Singleton enforced server-side. We mirror
   // it client-side so the button doesn't render on users who can't take it
@@ -792,8 +804,6 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
           const isContractor = u.workerType === "CONTRACTOR";
           const isEmployee = u.workerType === "EMPLOYEE";
           const isTrainee = u.workerType === "TRAINEE";
-          const insuranceExpired = isContractor && u.insuranceExpiresAt && new Date(u.insuranceExpiresAt) < new Date();
-          const noInsurance = isContractor && !u.insuranceCertR2Key;
           const displayName = u.displayName || u.email;
 
           // Guaranteed-payout state derived per-row. Active when the
@@ -841,17 +851,37 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
                     {isContractor && <Badge colorPalette="orange">Contractor</Badge>}
                     {isTrainee && <Badge colorPalette="cyan">Trainee</Badge>}
                     {!u.workerType && isWorker && <Badge colorPalette="gray" variant="outline">Unclassified</Badge>}
-                    {isContractor && !noInsurance && !insuranceExpired && (
-                      <Badge colorPalette="green" variant="subtle">Insured · {fmtDate(u.insuranceExpiresAt)}</Badge>
-                    )}
-                    {insuranceExpired && (
-                      <Badge colorPalette="red" variant="solid">Insurance Expired</Badge>
-                    )}
-                    {noInsurance && (
-                      <Badge colorPalette="red" variant="solid">No Insurance</Badge>
-                    )}
-                    {isContractor && u.w9Collected && (
-                      <Badge colorPalette="teal" variant="subtle">W-9</Badge>
+                    {/* Compliance chip. Sourced from the bulk
+                        /admin/policies/user-compliance endpoint. Counts
+                        BLOCK-enforcement policies where the worker is
+                        missing a current signature — i.e., things that
+                        actually gate their work (workday start, job
+                        claim, equipment reserve). WARN/INFO misses are
+                        excluded on purpose so this chip only lights up
+                        for issues that stop the worker from working. See
+                        the Compliance sign matrix for the full paperwork
+                        picture. */}
+                    {complianceByUserId[u.id] && (
+                      complianceByUserId[u.id].pendingCount > 0 ? (
+                        <HStack gap={1}>
+                          <Badge
+                            colorPalette="red"
+                            variant="solid"
+                            title="Number of BLOCK-enforcement policies still preventing this worker from starting a workday, claiming jobs, or reserving equipment. Non-blocking WARN/INFO misses aren't counted — see the sign matrix for the full paperwork picture."
+                          >
+                            Compliance blocks: {complianceByUserId[u.id].pendingCount}
+                          </Badge>
+                          <NudgeUserButton userId={u.id} hasPending={true} />
+                        </HStack>
+                      ) : (
+                        <Badge
+                          colorPalette="green"
+                          variant="subtle"
+                          title="No BLOCK-enforcement policies are currently gating this worker. They may still have optional (WARN/INFO) items showing on their compliance tab — see the sign matrix."
+                        >
+                          Compliance: cleared
+                        </Badge>
+                      )
                     )}
                     {isContractor && guaranteedPayoutActive && (
                       <Badge
@@ -1050,16 +1080,11 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
                         Unclassify
                       </Button>
                     )}
-                    {isContractor && (
-                      <Button
-                        size={{ base: "xs", md: "sm" }}
-                        onClick={() => toggleW9(u.id, !!u.w9Collected)}
-                        variant={u.w9Collected ? "subtle" : "outline"}
-                        colorPalette={u.w9Collected ? "teal" : "gray"}
-                      >
-                        {u.w9Collected ? "W-9 ✓" : "Collect W-9"}
-                      </Button>
-                    )}
+                    {/* "Collect W-9" button removed with the compliance-policy
+                        migration. W-9 is now a PolicyDocument with
+                        workerAction = NONE + adminCanUploadOnBehalf; the
+                        Slice 4 Compliance tab surfaces the upload-on-behalf
+                        flow with a full audit trail and versioning. */}
                     {/* Guaranteed payout period — Super-only mutation.
                         Opens the date picker dialog; handles both "Start"
                         (no current period) and "Manage" (active, can extend

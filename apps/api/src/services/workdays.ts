@@ -372,6 +372,15 @@ export async function startWorkday(
     return { workday: summarize(existing), created: false };
   }
 
+  // Compliance gate — every active BLOCK policy that lists WORKDAY_START in
+  // its gatesServices must have a current signature (or exception) for
+  // this worker. Throws POLICIES_REQUIRED with pendingPolicyIds so the
+  // frontend can open the sign wizard and retry. Actor-vs-subject: gate
+  // fires against the worker whose workday this is, even when an admin
+  // is starting on their behalf via impersonation.
+  const { policies } = await import("./policies");
+  await policies.assertPoliciesSigned(userId, "WORKDAY_START");
+
   const now = new Date();
   const startedAt = input.startedAt ? new Date(input.startedAt) : now;
   assertInWindow(startedAt, "startedAt", dayMidnightEt(today), now);

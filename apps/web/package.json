@@ -9,7 +9,10 @@
     "dev": "next dev -p 3000",
     "build": "next build",
     "start": "next start -p 3000",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test:e2e": "playwright test --project=employee",
+    "test:e2e:all": "playwright test",
+    "test:e2e:report": "playwright show-report tests/e2e/report"
   },
   "dependencies": {
     "@chakra-ui/react": "^3.25.0",
@@ -30,7 +33,10 @@
     "rrule": "^2.8.1"
   },
   "devDependencies": {
+    "@clerk/testing": "^2.2.4",
+    "@playwright/test": "^1.61.1",
     "@types/node": "^20.19.11",
+    "dotenv": "^17.4.2",
     "eslint": "8.57.0",
     "eslint-config-next": "^14.2.26",
     "typescript": "^5.4.5"

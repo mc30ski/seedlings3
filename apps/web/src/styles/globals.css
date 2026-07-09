@@ -27,3 +27,11 @@
   0%, 100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.45); }
   50% { box-shadow: 0 0 0 8px rgba(22, 163, 74, 0); }
 }
+
+/* Red pulse — used on the compliance banner when the worker has
+   BLOCK-level policies pending. Signals "you can't start work until
+   you sign these". */
+@keyframes seedlings-pulse-red {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.5); }
+  50% { box-shadow: 0 0 0 8px rgba(220, 38, 38, 0); }
+}

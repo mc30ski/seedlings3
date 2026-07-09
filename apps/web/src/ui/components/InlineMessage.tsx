@@ -19,6 +19,13 @@ export type InlineMessageEventDetail = {
   fadeOutMs?: number;
   /** Optional icon override (defaults to one chosen by `type`). */
   icon?: React.ElementType;
+  /**
+   * Optional server error code the message came from. When set to a code
+   * that has its own dedicated recovery UI, `publishInlineMessage` skips
+   * the toast — one canonical surface per problem. Currently used to
+   * suppress POLICIES_REQUIRED (handled by PolicyGateInterceptor).
+   */
+  code?: string;
 };
 
 type Props = {
@@ -239,7 +246,21 @@ function getPalette(kind: MessageKind) {
 /** Publish a message to InlineMessage.
  * If you omit `scope`, only components without a scope will show it.
  */
+/**
+ * Server error codes that have their own dedicated recovery UI. Toasts
+ * carrying these codes are suppressed so the user only sees one surface
+ * per problem (matching that recovery UI). Callers can pass `code`
+ * directly in the detail, or use `getErrorMessage(msg, err)` which lifts
+ * `err.code` for them.
+ */
+const CODES_HANDLED_ELSEWHERE = new Set([
+  "POLICIES_REQUIRED", // → PolicyGateInterceptor dialog
+]);
+
 export function publishInlineMessage(detail: InlineMessageEventDetail) {
+  if (detail.type === "ERROR" && detail.code && CODES_HANDLED_ELSEWHERE.has(detail.code)) {
+    return;
+  }
   window.dispatchEvent(
     new CustomEvent<InlineMessageEventDetail>(EVENT_NAME, { detail })
   );

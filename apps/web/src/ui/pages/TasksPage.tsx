@@ -80,6 +80,10 @@ type ShortcutCounts = {
   // whose only pending item is an announcement).
   planningCount: number;
   announcementCount: number;
+  // Compliance policy shortcuts (Slice 5).
+  policyPendingUploadsCount: number;
+  policyPendingApprovalsCount: number;
+  policyWorkerPendingCount: number;
 };
 
 type ShortcutHandlers = {
@@ -87,6 +91,8 @@ type ShortcutHandlers = {
   goToUnapprovedHours: () => void;
   goToLedgerFollowups: () => void;
   goToDueToRecord: () => void;
+  goToCompliance: () => void;
+  goToWorkerCompliance: () => void;
   goToStreamPauseReminders: () => void;
   goToGuaranteedPayoutExpiring: () => void;
   goToApprovals: () => void;
@@ -208,6 +214,8 @@ export default function TasksPage({
       n += counts.ledgerFollowupCount;
       n += counts.guaranteedPayoutExpiringCount;
       n += counts.pendingUsersCount;
+      n += counts.policyPendingUploadsCount;
+      n += counts.policyPendingApprovalsCount;
     }
     if (isAdmin) {
       n += counts.estimateFollowupCount;
@@ -218,6 +226,10 @@ export default function TasksPage({
     }
     n += counts.planningCount;
     n += counts.announcementCount;
+    // Worker-side "documents to sign" — role-agnostic since anyone with
+    // a workerType may have policies to sign, including admins/supers who
+    // also work in the field.
+    n += counts.policyWorkerPendingCount;
     return n;
   }, [isAdmin, isSuper, counts]);
 
@@ -348,6 +360,34 @@ export default function TasksPage({
               count={counts.dueToRecordCount}
               dotColor="#F97316"
               onReview={wrap(handlers.goToDueToRecord)}
+            />
+          )}
+          {/* Worker-side "Documents to sign" — surfaces the compliance
+              sign wizard shortcut on the personal Tasks page. Rendered
+              first (above admin shortcuts) so a worker with pending
+              policies sees it before scrolling past admin queues. */}
+          {counts.policyWorkerPendingCount > 0 && (
+            <ShortcutCard
+              label="Documents to sign"
+              count={counts.policyWorkerPendingCount}
+              dotColor="#DC2626"
+              onReview={wrap(handlers.goToWorkerCompliance)}
+            />
+          )}
+          {isSuper && counts.policyPendingUploadsCount > 0 && (
+            <ShortcutCard
+              label="Compliance uploads to review"
+              count={counts.policyPendingUploadsCount}
+              dotColor="#F97316"
+              onReview={wrap(handlers.goToCompliance)}
+            />
+          )}
+          {isSuper && counts.policyPendingApprovalsCount > 0 && (
+            <ShortcutCard
+              label="Policy versions awaiting approval"
+              count={counts.policyPendingApprovalsCount}
+              dotColor="#3B82F6"
+              onReview={wrap(handlers.goToCompliance)}
             />
           )}
           {(isAdmin || isSuper) && (

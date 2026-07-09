@@ -3431,67 +3431,97 @@ export default async function workerRoutes(app: FastifyInstance) {
     return withUrls;
   });
 
-  // ── Insurance ──
+  // ── Compliance policies (Slice 2) ──
+  //
+  // Worker-facing endpoints for the PolicyDocument / PolicyDocumentVersion /
+  // PolicySignature system. Replaces the old insurance / W-9 / contractor-
+  // agreement worker routes with a unified sign / acknowledge / upload
+  // flow driven by services/policies.ts.
 
-  app.post("/insurance/upload-url", workerGuard, async (req: any) => {
+  app.get("/me/policies", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
-    const body = req.body || {};
-    const fileName = String(body.fileName ?? "certificate.pdf");
-    const contentType = String(body.contentType ?? "application/pdf");
-
-    const key = `insurance/${uid}/${Date.now()}-${fileName}`;
-    const uploadUrl = await getUploadUrl(key, contentType, 300, "docs");
-
-    return { uploadUrl, key, contentType };
+    return services.policies.getWorkerPoliciesView(uid);
   });
 
-  app.post("/insurance/confirm", workerGuard, async (req: any) => {
+  // Cheap count for the alerts dropdown badge — same required list as
+  // /me/policies but without loading the full history, description text,
+  // or version content. Returned as { pendingCount } for symmetry with
+  // the other alert endpoints.
+  app.get("/me/policies/count", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
-    const body = req.body || {};
-    if (!body.key) throw app.httpErrors.badRequest("key is required");
-    if (!body.expiresAt) throw app.httpErrors.badRequest("expiresAt is required");
-
-    await services.users.updateInsuranceCert(
-      uid,
-      String(body.key),
-      body.fileName ? String(body.fileName) : null,
-      body.contentType ? String(body.contentType) : null,
-      String(body.expiresAt),
-    );
-
-    return { ok: true };
+    const view = await services.policies.getWorkerPoliciesView(uid);
+    return { pendingCount: view.required.length };
   });
 
-  app.get("/insurance", workerGuard, async (req: any) => {
+  app.post("/me/policies/versions/:id/upload-url", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
-    const user = await prisma.user.findUniqueOrThrow({
-      where: { id: uid },
-      select: {
-        insuranceCertR2Key: true,
-        insuranceCertFileName: true,
-        insuranceExpiresAt: true,
-      },
-    });
+    const b = req.body || {};
+    const fileName = String(b.fileName ?? "artifact.pdf");
+    const contentType = String(b.contentType ?? "application/pdf");
+    return services.policies.getWorkerUploadUrl(uid, String(req.params.id), fileName, contentType);
+  });
 
-    let url: string | null = null;
-    if (user.insuranceCertR2Key) {
-        url = await getDownloadUrl(user.insuranceCertR2Key, 3600, "docs");
+  app.post("/me/policies/versions/:id/page-view", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const b = req.body || {};
+    if (typeof b.pageNumber !== "number") {
+      throw app.httpErrors.badRequest("pageNumber is required");
     }
-
-    return {
-      hasCert: !!user.insuranceCertR2Key,
-      fileName: user.insuranceCertFileName,
-      expiresAt: user.insuranceExpiresAt,
-      url,
-    };
+    await services.policies.recordPageView(
+      uid,
+      String(req.params.id),
+      Number(b.pageNumber),
+      (req.ip as string) ?? null,
+      (req.headers["user-agent"] as string) ?? null,
+    );
+    return { ok: true };
   });
 
-  // ── Contractor Agreement ──
-
-  app.post("/contractor-agreement", workerGuard, async (req: any) => {
+  app.post("/me/policies/versions/:id/sign", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
-    await services.users.recordContractorAgreement(uid);
+    const b = req.body || {};
+    if (!b.typedName) throw app.httpErrors.badRequest("typedName is required");
+    const created = await services.policies.signPolicy(uid, String(req.params.id), {
+      typedName: String(b.typedName),
+      uploadR2Key: b.uploadR2Key ? String(b.uploadR2Key) : undefined,
+      uploadFileName: b.uploadFileName ? String(b.uploadFileName) : undefined,
+      uploadContentType: b.uploadContentType ? String(b.uploadContentType) : undefined,
+      uploadDigest: b.uploadDigest ? String(b.uploadDigest) : undefined,
+      uploadExpiresAt: b.uploadExpiresAt ? new Date(String(b.uploadExpiresAt)) : null,
+      clientIp: (req.ip as string) ?? null,
+      userAgent: (req.headers["user-agent"] as string) ?? null,
+    });
+    return { signatureId: created.id };
+  });
+
+  app.post("/me/policies/versions/:id/acknowledge", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const created = await services.policies.acknowledgePolicy(uid, String(req.params.id), {
+      clientIp: (req.ip as string) ?? null,
+      userAgent: (req.headers["user-agent"] as string) ?? null,
+    });
+    return { signatureId: created.id };
+  });
+
+  // Worker cancels their own PENDING_REVIEW signature. Soft-revokes the
+  // row; audit trail preserved. Only usable while the upload is still
+  // awaiting admin review — once approved or rejected, only an admin can
+  // touch the record.
+  app.post("/me/policies/signatures/:id/cancel", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    await services.policies.cancelPendingSignatureAsWorker(uid, String(req.params.id));
     return { ok: true };
+  });
+
+  // View-content presigned GET — worker downloads either the version's
+  // published content (e.g., PDF policy body) or their own signature's
+  // uploaded artifact for review.
+  app.get("/me/policies/download", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const q = (req.query || {}) as { r2Key?: string };
+    if (!q.r2Key) throw app.httpErrors.badRequest("r2Key query param required");
+    const url = await services.policies.getWorkerContentDownloadUrl(uid, String(q.r2Key));
+    return { url };
   });
 
   // Settings (read-only for workers)

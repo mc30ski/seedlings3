@@ -46,6 +46,11 @@ export const SETTING_SECTIONS: SettingSection[] = [
     description: "Upload size limits and image-quality settings for job photos and company documents.",
   },
   {
+    key: "compliance",
+    title: "Compliance",
+    description: "Policy-system controls: 2-eyes enforcement on Approve + Publish, default grace hours after a new version publishes. See docs/features/compliance.md.",
+  },
+  {
     key: "integrations",
     title: "Integrations",
     description: "API keys and credentials for external services.",

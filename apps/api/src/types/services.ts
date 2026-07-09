@@ -180,7 +180,7 @@ export type ServicesEquipment = {
       qrSlug?: string | null;
       dailyRate?: number | null;
       equivalentJobs?: number | null;
-      requiresInsurance?: boolean;
+      requiredPolicyIds?: string[];
     }
   ): Promise<Equipment>;
 
@@ -203,7 +203,7 @@ export type ServicesEquipment = {
         | "age"
         | "dailyRate"
         | "equivalentJobs"
-        | "requiresInsurance"
+        | "requiredPolicyIds"
       >
     >
   ): Promise<Equipment>;
@@ -290,11 +290,8 @@ export type ServicesUsers = {
     email?: string | null;
     displayName?: string | null;
     workerType?: string | null;
-    hasInsuranceCert?: boolean;
-    isInsuranceValid?: boolean;
-    insuranceExpiresAt?: string | null;
-    contractorAgreedAt?: string | null;
-    w9Collected?: boolean;
+    // Compliance-policy state (insurance, W-9, contractor agreement, safety
+    // SOP, etc.) served separately via GET /me/policies in Slice 2.
     // Super-only impersonation echo fields — always present so the UI can
     // unconditionally check realRoles to decide whether to render the View-as
     // menu. When impersonation isn't active they mirror the regular fields.
@@ -305,9 +302,6 @@ export type ServicesUsers = {
 
   setWorkerType(currentUserId: string, userId: string, workerType: string | null): Promise<User>;
   setIsOwner(currentUserId: string, userId: string, isOwner: boolean): Promise<User>;
-  updateInsuranceCert(userId: string, r2Key: string, fileName: string | null, contentType: string | null, expiresAt: string): Promise<User>;
-  recordContractorAgreement(userId: string): Promise<User>;
-  setW9Collected(currentUserId: string, userId: string, collected: boolean): Promise<User>;
   setPrivilegeOverrides(
     currentUserId: string,
     userId: string,
@@ -1009,6 +1003,7 @@ export type Services = {
   timelineEvents: typeof import("../services/timelineEvents").timelineEvents;
   banners: typeof import("../services/banners").banners;
   paymentRequests: typeof import("../services/paymentRequests").paymentRequests;
+  policies: typeof import("../services/policies").policies;
 };
 
 export type ServicesSettings = {

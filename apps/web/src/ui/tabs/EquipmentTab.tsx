@@ -798,6 +798,10 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
       publishInlineMessage({
         type: "ERROR",
         text: getErrorMessage(`Equipment '${e.qrSlug}' reserved failed.`, err),
+        // POLICIES_REQUIRED is handled by PolicyGateInterceptor's dialog;
+        // publishInlineMessage suppresses toasts for that code so the
+        // worker only sees one surface.
+        code: (err as { code?: string })?.code,
       });
     }
   }
@@ -1125,8 +1129,62 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   const canWorkerReserve = (e: Equipment) =>
     purpose === "WORKER" &&
     e.status === "AVAILABLE" &&
-    !isTrainee &&
-    (!e.requiresInsurance || me?.isInsuranceValid || me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE");
+    !isTrainee;
+    // Compliance-policy gating (previously "insurance required") has TWO
+    // enforcement layers now:
+    //   1. `openReserveConfirm` below does a fast client-side pre-check —
+    //      if the equipment lists policies the worker hasn't cleared yet,
+    //      dispatch the interceptor event directly so the compliance
+    //      dialog opens BEFORE the confirm-reservation dialog. Saves the
+    //      worker from accepting terms on a reservation that would then
+    //      immediately fail.
+    //   2. Server-side `assertPoliciesSigned` in the reserve endpoint —
+    //      always runs, catches races (e.g., admin revokes a signature
+    //      between our pre-check and the reserve call). The interceptor
+    //      picks that up via the same event on the second layer.
+
+  /**
+   * Fast pre-flight check that runs when a worker clicks Reserve.
+   * If the equipment has any policy requirements the worker hasn't
+   * cleared yet (unsigned OR awaiting admin review), dispatch the
+   * `policies:required` event so PolicyGateInterceptor opens the correct
+   * dialog immediately — bypassing the reserve-confirm step. Returns true
+   * when it opened the compliance dialog (caller should NOT open the
+   * confirm dialog); false when the reservation should proceed normally.
+   *
+   * Silent-fail on API errors — the server-side gate will still catch it.
+   */
+  async function openReserveConfirm(e: Equipment) {
+    const equipmentPolicyIds = e.requiredPolicyIds ?? [];
+    if (equipmentPolicyIds.length > 0 && purpose === "WORKER") {
+      try {
+        const data = await apiGet<{
+          required: Array<{ policyId: string }>;
+          awaitingReview?: Array<{ policyId: string }>;
+        }>("/api/me/policies");
+        const requiredPending = data.required
+          .filter((p) => equipmentPolicyIds.includes(p.policyId))
+          .map((p) => p.policyId);
+        const awaitingPending = (data.awaitingReview ?? [])
+          .filter((p) => equipmentPolicyIds.includes(p.policyId))
+          .map((p) => p.policyId);
+        const pendingIds = [...requiredPending, ...awaitingPending];
+        if (pendingIds.length > 0) {
+          window.dispatchEvent(
+            new CustomEvent("policies:required", {
+              detail: { pendingPolicyIds: pendingIds },
+            }),
+          );
+          return; // stop — don't open the reserve confirm dialog
+        }
+      } catch {
+        // Pre-check failed; fall through and let the reserve API surface
+        // any compliance issue via the second-layer interceptor.
+      }
+    }
+    setReserveConfirmEquip(e);
+    setReserveChecked(false);
+  }
 
   // Super "act on behalf of a worker" capabilities. The Super Equipment
   // Inventory tab is the same as the Admin tab plus the ability for the
@@ -1777,8 +1835,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                           return (
                             <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="green.400" color="green.900" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "green.500" }} title="Reserve" onClick={(ev: any) => {
                               ev.stopPropagation();
-                              setReserveConfirmEquip(e);
-                              setReserveChecked(false);
+                              void openReserveConfirm(e);
                             }}><Hand size={12} /></Box>
                           );
                         }
@@ -1818,9 +1875,9 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                         variant="subtle"
                       />
                       <StatusBadge status={e.type} palette="gray" variant="outline" />
-                      {e.requiresInsurance && (
-                        <Box as="span" display="inline-flex" alignItems="center" title="Valid insurance required to reserve this equipment">
-                          <StatusBadge status="Insured" palette="yellow" variant="subtle" />
+                      {(e.requiredPolicyIds?.length ?? 0) > 0 && (
+                        <Box as="span" display="inline-flex" alignItems="center" title={`${e.requiredPolicyIds!.length} compliance polic${e.requiredPolicyIds!.length === 1 ? "y" : "ies"} required to reserve this equipment`}>
+                          <StatusBadge status="Policy req" palette="yellow" variant="subtle" />
                         </Box>
                       )}
                     </Box>
@@ -1877,9 +1934,9 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     variant="subtle"
                   />
                   <StatusBadge status={e.type} palette="gray" variant="outline" />
-                  {e.requiresInsurance && (
-                    <Box as="span" display="inline-flex" alignItems="center" title="Valid insurance required to reserve this equipment">
-                      <StatusBadge status="Insured" palette="yellow" variant="subtle" />
+                  {(e.requiredPolicyIds?.length ?? 0) > 0 && (
+                    <Box as="span" display="inline-flex" alignItems="center" title={`${e.requiredPolicyIds!.length} compliance polic${e.requiredPolicyIds!.length === 1 ? "y" : "ies"} required to reserve this equipment`}>
+                      <StatusBadge status="Policy req" palette="yellow" variant="subtle" />
                     </Box>
                   )}
                 </Box>
@@ -2038,7 +2095,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     id={"equipment-reserve"}
                     itemId={e.id}
                     label={"Reserve"}
-                    onClick={async () => { setReserveConfirmEquip(e); setReserveChecked(false); }}
+                    onClick={async () => { await openReserveConfirm(e); }}
                     variant={"solid"}
                     colorPalette={"green"}
                     disabled={loading}
@@ -2049,9 +2106,11 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                 {purpose === "WORKER" && e.status === "AVAILABLE" && isTrainee && (
                   <HStack gap={1} fontSize="xs" color="gray.500"><AlertTriangle size={12} /><Text>Trainees cannot reserve equipment</Text></HStack>
                 )}
-                {purpose === "WORKER" && e.status === "AVAILABLE" && !isTrainee && e.requiresInsurance && !me?.isInsuranceValid && me?.workerType !== "EMPLOYEE" && me?.workerType !== "TRAINEE" && (
-                  <HStack gap={1} fontSize="xs" color="orange.500"><AlertTriangle size={12} /><Text>Insurance required to reserve</Text></HStack>
-                )}
+                {/* Inline "insurance required" hint removed with the
+                    compliance-policy migration. Slice 3 wires the reactive
+                    sign wizard into the reserve action itself — a worker
+                    who's out of compliance gets a modal listing the
+                    outstanding policies, not just a static warning. */}
                 {canAdminForceRelease(e) && (
                   <StatusButton
                     id={"equipment-forceRelease"}
@@ -2433,16 +2492,6 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                       You agree to return it in the same condition and report any damage or issues immediately.
                       You assume all liability for any injury, damage, or loss arising from the use of this equipment.
                     </Text>
-
-                    {(me?.workerType === "CONTRACTOR" || !me?.workerType) && (
-                      <Box p={2} bg="orange.50" rounded="md" borderWidth="1px" borderColor="orange.200">
-                        <Text fontSize="sm" color="orange.700">
-                          As a contractor, you are required to maintain valid general liability insurance
-                          while using company equipment. Your insurance must cover any third-party claims
-                          arising from your use of this equipment.
-                        </Text>
-                      </Box>
-                    )}
 
                     {/* Per-mode pricing recap moved into the orange chip
                         above (which now reads from `instructiveBillingText`),

@@ -143,14 +143,18 @@ export function fmtTimeOpts(
  *  evening" / time-of-day-aware UI logic instead of `new Date().getHours()`
  *  (which would use the browser's local timezone — wrong for a user
  *  outside ET). Falls back to 12 (midday) if Intl is unavailable so the
- *  fallback never produces a wildly different result. */
+ *  fallback never produces a wildly different result.
+ *
+ *  Uses `hourCycle: "h23"` to force the 0-23 range. Without it, `en-US`
+ *  with `hour12: false` reports midnight as "24" (h24 cycle), which
+ *  fails the "0-23" contract every day at midnight ET. */
 export function bizHour(): number {
   try {
     return parseInt(
       new Intl.DateTimeFormat("en-US", {
         timeZone: BIZ_TZ,
-        hour: "numeric",
-        hour12: false,
+        hour: "2-digit",
+        hourCycle: "h23",
       }).format(new Date()),
       10,
     );
