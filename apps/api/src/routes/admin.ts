@@ -759,6 +759,43 @@ export default async function adminRoutes(app: FastifyInstance) {
     return services.clients.get(String(req.params.id));
   });
 
+  // Super-only: list every ClientContact for a client that has a Clerk
+  // account, so the frontend can render the "View as which contact?"
+  // picker. Contacts without a clerkUserId are still listed so the
+  // picker can explain why they're not selectable ("Never logged in").
+  //
+  // Sorted: primary first, then by createdAt ascending (stable order).
+  app.get("/admin/clients/:id/impersonatable-contacts", superGuard, async (req: any) => {
+    const clientId = String(req.params.id);
+    const contacts = await prisma.clientContact.findMany({
+      where: { clientId },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        role: true,
+        isPrimary: true,
+        clerkUserId: true,
+      },
+      orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+    });
+    return {
+      clientId,
+      contacts: contacts.map((c) => ({
+        id: c.id,
+        firstName: c.firstName,
+        lastName: c.lastName,
+        email: c.email,
+        role: c.role,
+        isPrimary: c.isPrimary,
+        // Boolean, never the clerkUserId itself — frontend doesn't need
+        // to know that value, only whether the contact CAN be impersonated.
+        hasClerkAccount: !!c.clerkUserId,
+      })),
+    };
+  });
+
   app.post("/admin/clients", adminGuard, async (req: any) => {
     return services.clients.create(await currentUserId(req), req.body);
   });

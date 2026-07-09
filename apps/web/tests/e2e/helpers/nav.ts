@@ -42,3 +42,38 @@ export async function gotoSuperCompliance(page: Page, opts: { path?: string } = 
   await page.goto(path);
   await page.waitForLoadState("networkidle");
 }
+
+/**
+ * Navigate a Super user to Super → Directory → Clients. This is where
+ * the Super-only "View as this client" button lives; regular admins
+ * cannot reach this tab (topTab="super" requires the SUPER role).
+ */
+export async function gotoSuperClients(page: Page, opts: { path?: string } = {}) {
+  const path = opts.path ?? "/";
+  await page.goto(path);
+  await page.evaluate(() => {
+    localStorage.setItem("seedlings_topTab", JSON.stringify("super"));
+    localStorage.setItem("seedlings_superTab", JSON.stringify("clients"));
+    localStorage.setItem("seedlings_superCategory", JSON.stringify("Directory"));
+  });
+  await page.goto(path);
+  await page.waitForLoadState("networkidle");
+}
+
+/**
+ * Navigate to the admin-side Clients tab (Admin → Directory → Clients).
+ * Used by tests that verify the "View as" button does NOT appear on the
+ * admin variant even when the caller is Super — the purpose="ADMIN"
+ * gate on ClientsTab is what enforces this.
+ */
+export async function gotoAdminClients(page: Page, opts: { path?: string } = {}) {
+  const path = opts.path ?? "/";
+  await page.goto(path);
+  await page.evaluate(() => {
+    localStorage.setItem("seedlings_topTab", JSON.stringify("admin"));
+    localStorage.setItem("seedlings_adminTab", JSON.stringify("clients"));
+    localStorage.setItem("seedlings_adminCategory", JSON.stringify("Directory"));
+  });
+  await page.goto(path);
+  await page.waitForLoadState("networkidle");
+}

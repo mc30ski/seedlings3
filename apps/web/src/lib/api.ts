@@ -37,11 +37,26 @@ async function authHeaders(h: Headers) {
 // user is actually SUPER, so a non-Super browser sending a forged value is
 // a no-op — but we still only emit it when we have a value stored locally.
 const IMPERSONATE_STORAGE_KEY = "seedlings_impersonateAs";
+const CLIENT_IMPERSONATE_STORAGE_KEY = "seedlings_impersonateClientContact";
 function attachImpersonateHeader(h: Headers) {
   if (!IS_BROWSER) return;
   try {
     const val = localStorage.getItem(IMPERSONATE_STORAGE_KEY);
     if (val) h.set("X-Impersonate-As", val);
+    // Client "View as" is a separate impersonation flavor — different
+    // header, different storage key. Both may be set independently; the
+    // backend applies them independently too. See plugins/clientImpersonation.ts.
+    const clientRaw = localStorage.getItem(CLIENT_IMPERSONATE_STORAGE_KEY);
+    if (clientRaw) {
+      try {
+        const parsed = JSON.parse(clientRaw) as { contactId?: string } | null;
+        if (parsed?.contactId) {
+          h.set("X-Impersonate-Client-Contact", parsed.contactId);
+        }
+      } catch {
+        // Malformed JSON — ignore.
+      }
+    }
   } catch {
     // localStorage can throw in private mode / disabled storage; just skip.
   }

@@ -1186,6 +1186,19 @@ export default function HomePage() {
           categoryIcon: AiOutlineTeam,
         },
         {
+          // Clients — Super's home for the "View as this client"
+          // affordance (Super-only impersonation for support debugging).
+          // Mounted with purpose="SUPER" so ClientsTab can distinguish
+          // this from the admin-side Clients mount and render the "View
+          // as" button only here. See ViewAsClientButton gate below.
+          value: "clients",
+          label: "Clients",
+          icon: FiUsers,
+          content: wrapWithInlineMessage(<ClientsTab me={me} purpose="SUPER" />),
+          category: "Directory",
+          categoryIcon: AiOutlineTeam,
+        },
+        {
           // ── Money ──
           value: "payments",
           label: "Payments",

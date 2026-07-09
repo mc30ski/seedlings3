@@ -71,6 +71,61 @@ export async function deleteScratchUser(prisma: PrismaClient, userId: string) {
   await prisma.user.deleteMany({ where: { id: userId } });
 }
 
+/** Create a scratch Client + N ClientContact rows for testing the
+ *  Super client "View as" flow. Contacts default to having a Clerk ID
+ *  set (so they're impersonatable); pass `clerkUserId: null` for a
+ *  contact that has never logged in. Returns IDs for cleanup. */
+export async function createScratchClientWithContacts(
+  prisma: PrismaClient,
+  opts: {
+    clientName: string;
+    contacts: Array<{
+      firstName: string;
+      lastName: string;
+      isPrimary?: boolean;
+      role?: string;
+      clerkUserId?: string | null;
+      email?: string;
+    }>;
+  },
+): Promise<{ clientId: string; contactIds: string[] }> {
+  const uid = randomUUID();
+  const client = await prisma.client.create({
+    data: {
+      type: "PERSON",
+      displayName: opts.clientName,
+      status: "ACTIVE",
+    },
+  });
+  const contactIds: string[] = [];
+  for (const [i, c] of opts.contacts.entries()) {
+    const contact = await prisma.clientContact.create({
+      data: {
+        clientId: client.id,
+        firstName: c.firstName,
+        lastName: c.lastName,
+        role: c.role ?? "OWNER",
+        isPrimary: c.isPrimary ?? i === 0,
+        email: c.email ?? `test-${uid.slice(0, 6)}-${i}@example.test`,
+        clerkUserId:
+          c.clerkUserId === null
+            ? null
+            : (c.clerkUserId ?? `user_test_client_${uid.replace(/-/g, "").slice(0, 20)}_${i}`),
+      },
+    });
+    contactIds.push(contact.id);
+  }
+  return { clientId: client.id, contactIds };
+}
+
+/** Cleanup counterpart. Contacts don't cascade automatically on this
+ *  schema — the FK from ClientContact to Client is Restrict/Restrict —
+ *  so delete contacts first, then the client. */
+export async function deleteScratchClient(prisma: PrismaClient, clientId: string) {
+  await prisma.clientContact.deleteMany({ where: { clientId } });
+  await prisma.client.deleteMany({ where: { id: clientId } });
+}
+
 export async function resetWorkdayState(prisma: PrismaClient, userId: string) {
   // Compute today's ET date the same way the server does — via Intl in
   // America/New_York — so the workdayDate string we delete matches what
