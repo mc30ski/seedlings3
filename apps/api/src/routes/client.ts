@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyRequest } from "fastify";
 import { prisma } from "../db/prisma";
 import { getDownloadUrl } from "../lib/r2";
 import { etMidnight, etToday, etStartOfMonth, etAddDays, etFormatDateOpts } from "../lib/dates";
+import { effectiveClerkUserId } from "../plugins/clientImpersonation";
 
 /**
  * Client-facing routes. Require Clerk auth but NOT worker/admin roles.
@@ -15,13 +16,26 @@ import { etMidnight, etToday, etStartOfMonth, etAddDays, etFormatDateOpts } from
  * would gaslight clients about service the business actually performed.
  */
 export default async function clientRoutes(app: FastifyInstance) {
-  // Guard: must be authenticated via Clerk
+  // Guard: must be authenticated via Clerk. When a Super is impersonating
+  // a client (via the x-impersonate-client-contact header, resolved by
+  // plugins/clientImpersonation.ts), the caller's own clerkUserId is
+  // real but we want every route body to run against the impersonated
+  // client's identity. Swap it here so the downstream `req.auth.clerkUserId`
+  // reads on lines 63/159/etc pick up the target's ID with zero per-route
+  // edits. The `effectiveClerkUserId` helper returns the impersonation
+  // target when active, or the real caller otherwise.
+  //
+  // Read-only enforcement (no non-GET methods while impersonating) is
+  // already handled at the plugin layer — nothing further to check here.
   const clientGuard = {
     preHandler: async (req: FastifyRequest) => {
-      const clerkUserId = req.auth?.clerkUserId;
+      const clerkUserId = effectiveClerkUserId(req);
       if (!clerkUserId) {
         throw app.httpErrors.unauthorized("Authentication required.");
       }
+      // Route bodies read from req.auth.clerkUserId — patch it so they
+      // transparently see the impersonation target.
+      (req as any).auth = { ...(req as any).auth, clerkUserId };
     },
   };
 

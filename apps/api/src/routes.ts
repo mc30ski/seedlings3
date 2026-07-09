@@ -4,6 +4,7 @@ import sensible from "@fastify/sensible";
 import { getVersionInfo } from "./lib/version";
 import auth from "./plugins/auth";
 import rbac from "./plugins/rbac";
+import clientImpersonation from "./plugins/clientImpersonation";
 import errorMapper from "./plugins/errorMapper";
 import adminRoutes from "./routes/admin";
 import systemRoutes from "./routes/system";
@@ -159,6 +160,11 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(
     async (api) => {
       await api.register(rbac);
+      // Register client-impersonation AFTER rbac so it can read the
+      // already-attached req.auth.clerkUserId. Its onRequest hook only
+      // fires when the special header is present + caller is SUPER;
+      // otherwise it's a no-op.
+      await api.register(clientImpersonation);
       await api.register(publicRoutes);
       await api.register(clientRoutes);
       await api.register(previewRoutes);

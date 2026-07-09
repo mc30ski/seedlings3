@@ -42,10 +42,11 @@ export default defineConfig({
     {
       name: "employee",
       dependencies: ["auth-setup"],
-      // Admin-facing specs (prefixed compliance-admin-*, admin-*, etc.)
-      // run under the `super` project — exclude them here so employee
+      // Admin-facing specs (any filename with a hyphen-delimited `-admin`
+      // token, e.g. `foo-admin.spec.ts` or `foo-admin-bar.spec.ts`) run
+      // under the `super` project — exclude them here so employee
       // doesn't try to load pages it can't access.
-      testMatch: /specs\/(?!.*-admin-|mobile-).*\.spec\.ts$/,
+      testMatch: /specs\/(?!.*-admin(?:-|\.)|mobile-).*\.spec\.ts$/,
       use: {
         ...devices["Desktop Chrome"],
         storageState: "./playwright/.auth/employee.json",
@@ -65,8 +66,10 @@ export default defineConfig({
       name: "super",
       dependencies: ["auth-setup"],
       // Super user (Michael) has SUPER + ADMIN + WORKER roles so this
-      // project runs any spec that touches admin/super UI.
-      testMatch: /specs\/.*-admin-.*\.spec\.ts$/,
+      // project runs any spec that includes the `-admin` token in its
+      // filename. The `(?:-|\.)` matches either a further hyphen
+      // (multi-word suffix) or the terminal `.spec.ts`.
+      testMatch: /specs\/.*-admin(?:-.*)?\.spec\.ts$/,
       use: {
         ...devices["Desktop Chrome"],
         storageState: "./playwright/.auth/super.json",

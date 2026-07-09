@@ -69,6 +69,11 @@ disagree, one of them is wrong; fix both in the same PR.
   Enforced by [`apps/api/src/services/policies-build-gate.test.ts`](apps/api/src/services/policies-build-gate.test.ts)
   + Playwright specs under [`apps/web/tests/e2e/specs/compliance-banner-*.spec.ts`](apps/web/tests/e2e/specs/).
   Run with `cd apps/web && npx playwright test --project=employee compliance-banner`.
+- **Client View-As** → [`docs/features/client-view-as.md`](docs/features/client-view-as.md)
+  (Super-only read-only impersonation of a specific ClientContact for
+  support/debugging). Enforced at the plugin layer in
+  [`apps/api/src/plugins/clientImpersonation.ts`](apps/api/src/plugins/clientImpersonation.ts)
+  + Playwright specs at `apps/web/tests/e2e/specs/client-view-as-*.spec.ts`.
 
 ## Other load-bearing rules
 

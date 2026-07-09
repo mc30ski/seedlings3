@@ -36,6 +36,7 @@ import {
 import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 import ClientDialog from "@/src/ui/dialogs/ClientDialog";
+import ViewAsClientButton from "@/src/ui/components/ViewAsClientButton";
 import ContactDialog from "@/src/ui/dialogs/ContactDialog";
 import UnlinkedClientAccountsSection from "@/src/ui/components/UnlinkedClientAccountsSection";
 import ClientContactLinkActions from "@/src/ui/components/ClientContactLinkActions";
@@ -669,6 +670,26 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                       busyId={statusButtonBusyId}
                       setBusyId={setStatusButtonBusyId}
                     />
+                    {/* Super-only "View as this client" — sits next to
+                        Edit in the action row so operators debugging a
+                        client-facing issue can reach it quickly. Three
+                        gates:
+                          1. `isSuper` — actor has the SUPER role.
+                          2. `purpose === "SUPER"` — ClientsTab is
+                             mounted under the Super shell (never the
+                             admin variant).
+                          3. At least one contact on this client has a
+                             clerkUserId. Rendering the button when no
+                             contact can be impersonated would only lead
+                             to an inline error toast on click — better
+                             to hide it entirely.
+                        The `clerkUserId` field is already included in
+                        the admin clients list response (see
+                        services/clients.ts), so this check adds no
+                        extra request. */}
+                    {isSuper && purpose === "SUPER" && c.contacts?.some((ct) => !!ct.clerkUserId) && (
+                      <ViewAsClientButton clientId={c.id} clientName={c.displayName} />
+                    )}
                     {/* Client-level "Pause" / "Unpause" buttons removed
                         in Step 3. The client-level PAUSED state was
                         cosmetic and confusing. The real workflow —

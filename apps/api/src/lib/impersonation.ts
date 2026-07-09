@@ -68,3 +68,39 @@ export function resolveImpersonation(
   if (!isReallySuper) return null;
   return parseImpersonationHeader(headerValue);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Client "View as" — Super-only impersonation of a specific ClientContact.
+//
+// Distinct from the role impersonation above: role impersonation says
+// "treat me as if my role were X". Client impersonation says "treat me as
+// if I were logged in as this specific client account". It swaps the
+// effective Clerk user ID so all downstream client-facing queries
+// (properties, invoices, activity feed) return the target's real data.
+//
+// Read-only by design: any non-safe HTTP method is refused at the plugin
+// layer. See plugins/clientImpersonation.ts.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const CLIENT_IMPERSONATE_HEADER = "x-impersonate-client-contact";
+
+/**
+ * Parse the client-impersonation header value. Accepts a CUID-shaped
+ * ClientContact ID string. Returns the raw string if it plausibly looks
+ * like a contact ID; the real existence check happens in the resolver
+ * (which hits the DB). Returns null for empty / malformed values.
+ *
+ * We don't accept email addresses or Clerk user IDs — the value MUST be a
+ * ClientContact.id so the picker's choice is unambiguous when a single
+ * Clerk user is linked to multiple contacts across multiple Clients.
+ */
+export function parseClientImpersonationHeader(
+  value: string | string[] | undefined | null,
+): string | null {
+  if (!value) return null;
+  const raw = (Array.isArray(value) ? value[0] : value).trim();
+  // Cuid is 25 lowercase alphanumeric chars. Be forgiving on length; the
+  // real existence check below catches anything that doesn't map.
+  if (!/^[a-z0-9]{10,40}$/.test(raw)) return null;
+  return raw;
+}
