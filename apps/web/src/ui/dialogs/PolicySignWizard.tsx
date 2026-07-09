@@ -328,6 +328,20 @@ export default function PolicySignWizard({ open, policies, displayName, onClose,
             <Dialog.Footer px={4} py={3} borderTopWidth="1px">
               <HStack w="full" gap={2} justify="space-between" wrap="wrap">
                 <HStack gap={2}>
+                  {/* Cancel — closes the wizard without signing. The gated
+                      action that triggered this wizard was already rejected
+                      server-side, so cancelling just returns the worker to
+                      where they were. If they want to try the action again
+                      later, the gate will re-fire the wizard. Present on
+                      every step so the worker is never trapped. */}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={onClose}
+                    disabled={busy || uploading}
+                  >
+                    Cancel
+                  </Button>
                   {currentStepIdx > 0 && (
                     <Button
                       size="sm"
