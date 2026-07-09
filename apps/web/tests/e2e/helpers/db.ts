@@ -52,7 +52,7 @@ export async function createScratchPolicy(
     title: string;
     enforcement: "BLOCK" | "WARN" | "INFO";
     targetWorkerTypes?: Array<"EMPLOYEE" | "CONTRACTOR" | "TRAINEE">;
-    workerAction?: "SIGN" | "SIGN_AND_UPLOAD" | "ACKNOWLEDGE" | "NONE";
+    workerAction?: "SIGN" | "ACKNOWLEDGE" | "NONE";
     requiresWorkerUpload?: boolean;
     workerUploadRequiresApproval?: boolean;
     graceUntil?: Date | null;
@@ -180,7 +180,7 @@ export async function signPolicyDirect(
     userId: string;
     policyDocumentVersionId: string;
     contentDigestAtSign: string;
-    workerActionAtSign?: "SIGN" | "SIGN_AND_UPLOAD" | "ACKNOWLEDGE";
+    workerActionAtSign?: "SIGN" | "ACKNOWLEDGE";
   },
 ) {
   return prisma.policySignature.create({
