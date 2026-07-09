@@ -283,7 +283,17 @@ export type ServicesUsers = {
 
   pendingApprovalCount(): Promise<{ pending: number }>;
 
-  me(token: string, impersonateHeader?: string | string[] | null): Promise<{
+  me(
+    token: string,
+    impersonateHeader?: string | string[] | null,
+    // Super-only client "View as" contact ID. Set by
+    // plugins/clientImpersonation.ts on request.impersonatedContact.id and
+    // passed through from the /me route. When active + the caller is really
+    // SUPER, the returned payload is overlaid to look like a signed-in
+    // client (empty roles, client identity fields) so UI visibility guards
+    // render the client tabs. Ignored for non-Super callers.
+    clientImpersonationContactId?: string | null,
+  ): Promise<{
     id: string;
     isApproved: boolean;
     roles: Role[];
@@ -298,6 +308,7 @@ export type ServicesUsers = {
     realRoles?: Role[];
     realWorkerType?: string | null;
     isImpersonating?: boolean;
+    isClientImpersonating?: boolean;
   }>;
 
   setWorkerType(currentUserId: string, userId: string, workerType: string | null): Promise<User>;

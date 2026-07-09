@@ -39,10 +39,22 @@ export default async function meRoutes(app: FastifyInstance) {
         message: "Missing token (header/cookie)",
       });
     } else {
-      // Super-only impersonation header — services.users.me ignores it unless
-      // the underlying user is actually SUPER (silent fallback), so no extra
-      // gating needed here.
-      return services.users.me(token, req.headers[IMPERSONATE_HEADER]);
+      // Super-only impersonation headers — services.users.me ignores both
+      // unless the underlying user is actually SUPER (silent fallback), so
+      // no extra gating is needed here.
+      //
+      // The client-impersonation contact ID is read from `req.impersonatedContact.id`
+      // rather than the raw header. That field is set by
+      // plugins/clientImpersonation.ts AFTER it verifies the caller is real
+      // SUPER, the target exists, and the target has a Clerk account. If any
+      // of those checks fail the plugin either 400s (invalid target) or
+      // silently no-ops (non-Super) before this route runs, so we can trust
+      // the presence of impersonatedContact here.
+      return services.users.me(
+        token,
+        req.headers[IMPERSONATE_HEADER],
+        req.impersonatedContact?.id ?? null,
+      );
     }
   });
 

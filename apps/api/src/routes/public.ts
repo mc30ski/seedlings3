@@ -698,18 +698,6 @@ export default async function publicRoutes(app: FastifyInstance) {
       const hasBlockedRole = !!user?.roles?.some((r: any) =>
         r.role === "WORKER" || r.role === "ADMIN",
       );
-      // TEMP DEBUG — remove once Super-override is confirmed working.
-      // eslint-disable-next-line no-console
-      console.log("[pay/self-report DEBUG]", {
-        clerkUserId,
-        userFound: !!user,
-        userId: user?.id,
-        userEmail: user?.email,
-        roles: user?.roles?.map((r: any) => r.role) ?? [],
-        isSuper,
-        hasBlockedRole,
-        willBlock: !isSuper && hasBlockedRole,
-      });
       if (!isSuper && hasBlockedRole) {
         return reply.code(403).send({
           error: "worker_self_report_forbidden",
