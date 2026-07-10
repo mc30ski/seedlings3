@@ -490,6 +490,7 @@ function PolicyDetailDrawer({
   const [exceptionDialogOpen, setExceptionDialogOpen] = useState(false);
   const [editMetadataOpen, setEditMetadataOpen] = useState(false);
   const [previewVersion, setPreviewVersion] = useState<VersionRow | null>(null);
+  const [editingVersion, setEditingVersion] = useState<VersionRow | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<
     | { kind: "rollback"; versionId: string; versionNumber: number }
@@ -765,6 +766,7 @@ function PolicyDetailDrawer({
                           onPublish={() => publishVersion(v.id)}
                           onRollback={() => askRollbackVersion(v.id, v.versionNumber)}
                           onPreview={() => setPreviewVersion(v)}
+                          onEdit={() => setEditingVersion(v)}
                         />
                       ))}
                     </VStack>
@@ -855,6 +857,17 @@ function PolicyDetailDrawer({
           onClose={() => setEditMetadataOpen(false)}
           onSaved={() => {
             setEditMetadataOpen(false);
+            void load();
+            onChanged();
+          }}
+        />
+      )}
+      {editingVersion && detail && (
+        <EditVersionDialog
+          version={editingVersion}
+          onClose={() => setEditingVersion(null)}
+          onSaved={() => {
+            setEditingVersion(null);
             void load();
             onChanged();
           }}
@@ -1020,6 +1033,7 @@ function VersionRow({
   onPublish,
   onRollback,
   onPreview,
+  onEdit,
 }: {
   version: VersionRow;
   isCurrent: boolean;
@@ -1029,6 +1043,8 @@ function VersionRow({
   onPublish: () => void;
   onRollback: () => void;
   onPreview: () => void;
+  /** DRAFT-only: open the edit-content dialog for this version. */
+  onEdit: () => void;
 }) {
   // A version's DB status can be PUBLISHED even after a newer version
   // supersedes it. Show "Superseded" (gray) for previously-published-but-
@@ -1088,9 +1104,14 @@ function VersionRow({
               <Eye size={10} /> Preview
             </Button>
             {version.status === "DRAFT" && (
-              <Button size="xs" variant="outline" onClick={onSubmit} loading={busy === `submit-${version.id}`}>
-                Submit
-              </Button>
+              <>
+                <Button size="xs" variant="outline" onClick={onEdit}>
+                  <FileText size={10} /> Edit
+                </Button>
+                <Button size="xs" variant="outline" onClick={onSubmit} loading={busy === `submit-${version.id}`}>
+                  Submit
+                </Button>
+              </>
             )}
             {version.status === "PENDING_APPROVAL" && (
               <Button size="xs" variant="outline" colorPalette="blue" onClick={onApprove} loading={busy === `approve-${version.id}`}>
@@ -1299,6 +1320,110 @@ function NewVersionDialog({
                 <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
                 <Button colorPalette="blue" onClick={submit} loading={busy} disabled={!changeNote.trim()}>
                   Create draft
+                </Button>
+              </HStack>
+            </Dialog.Footer>
+          </Dialog.Content>
+        </Dialog.Positioner>
+      </Portal>
+    </Dialog.Root>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Edit-draft dialog
+//
+// Distinct from NewVersionDialog: this one PATCHes an existing DRAFT
+// version's contentMarkdown / changeNote / forcesResign rather than
+// creating a new row. Only shown on DRAFT status — once the version
+// moves to PENDING_APPROVAL / APPROVED / PUBLISHED it becomes
+// immutable (server enforces via updateDraft's status guard). Lets the
+// operator fix a typo they spotted in Preview without deleting +
+// recreating the whole draft.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function EditVersionDialog({
+  version,
+  onClose,
+  onSaved,
+}: {
+  version: VersionRow;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [contentMarkdown, setContentMarkdown] = useState(version.contentMarkdown ?? "");
+  const [changeNote, setChangeNote] = useState(version.changeNote);
+  const [forcesResign, setForcesResign] = useState(version.forcesResign);
+  const [busy, setBusy] = useState(false);
+
+  async function submit() {
+    if (!changeNote.trim()) return;
+    setBusy(true);
+    try {
+      await apiPatch(`/api/admin/policies/versions/${version.id}`, {
+        contentMarkdown,
+        changeNote: changeNote.trim(),
+        forcesResign,
+      });
+      publishInlineMessage({ type: "SUCCESS", text: "Draft updated." });
+      onSaved();
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Update failed.", err) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog.Root open onOpenChange={(e) => { if (!e.open) onClose(); }} placement="center">
+      <Portal>
+        <Dialog.Backdrop />
+        <Dialog.Positioner>
+          <Dialog.Content mx="4" maxW="2xl" w="full" rounded="2xl" p={4}>
+            <Dialog.Header>
+              <Dialog.Title>Edit draft — v{version.versionNumber}</Dialog.Title>
+            </Dialog.Header>
+            <Dialog.Body>
+              <VStack align="stretch" gap={3}>
+                <Box>
+                  <Text fontSize="xs" color="fg.muted" mb={1}>Change note (why this version?)</Text>
+                  <Input
+                    value={changeNote}
+                    onChange={(e) => setChangeNote(e.target.value)}
+                    size="sm"
+                  />
+                </Box>
+                {version.contentFormat === "MARKDOWN" && (
+                  <Box>
+                    <Text fontSize="xs" color="fg.muted" mb={1}>Content (Markdown)</Text>
+                    <Textarea
+                      value={contentMarkdown}
+                      onChange={(e) => setContentMarkdown(e.target.value)}
+                      rows={16}
+                      size="sm"
+                      fontFamily="mono"
+                    />
+                  </Box>
+                )}
+                <HStack>
+                  <input
+                    id="editForcesResign"
+                    type="checkbox"
+                    checked={forcesResign}
+                    onChange={(e) => setForcesResign(e.target.checked)}
+                  />
+                  <label htmlFor="editForcesResign" style={{ fontSize: "12px" }}>
+                    Forces re-sign — every worker's current signature becomes invalid at publish time.
+                    Uncheck for typo fixes; check for material content changes.
+                  </label>
+                </HStack>
+              </VStack>
+            </Dialog.Body>
+            <Dialog.Footer>
+              <HStack gap={2} w="full" justify="flex-end">
+                <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
+                <Button colorPalette="blue" onClick={submit} loading={busy} disabled={!changeNote.trim()}>
+                  Save
                 </Button>
               </HStack>
             </Dialog.Footer>
