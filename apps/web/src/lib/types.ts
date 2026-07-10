@@ -61,6 +61,7 @@ export type EventTypes =
   | "paymentsTabToServicesTabSearch"
   | "jobsTabToServicesTabSearch"
   | "servicesTabToJobsTabSearch"
+  | "clientsTabToServicesTabSearch"
   | "remindersToJobsTabSearch"
   | "jobsToEquipmentKindFilter";
 
@@ -252,6 +253,12 @@ export type Client = {
   updatedAt?: string | null;
 
   contacts?: Contact[];
+  /** Number of Jobs in status PAUSED across this client's properties.
+   *  Drives the "N services paused" hint + click-through on the Admin
+   *  Clients tab. Both bulk-paused (via "Pause services") and
+   *  individually-paused Jobs count. Populated by /admin/clients only;
+   *  the read-only /clients (worker) endpoint may omit it. */
+  pausedJobsCount?: number;
 };
 
 export const CLIENT_KIND = [

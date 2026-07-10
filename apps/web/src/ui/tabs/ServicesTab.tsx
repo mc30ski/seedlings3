@@ -485,6 +485,27 @@ export default function ServicesTab({
     onEventSearchRun("paymentsTabToServicesTabSearch", setQ, inputRef, setHighlightId);
   }, []);
 
+  // Handoff from ClientsTab "N services paused" click. Same event pattern
+  // as the other cross-tab searches — index.tsx routes to Services, we
+  // consume the `:run` event here. Beyond setting q to the client name,
+  // this also flips the Job status filter to PAUSED so the operator
+  // lands on the exact subset they were looking at.
+  useEffect(() => {
+    const onRun = (ev: Event) => {
+      const { q: clientName } = (ev as CustomEvent<{ q?: string }>).detail || {};
+      if (typeof clientName !== "string") return;
+      setQ(clientName);
+      setJobStatusFilter(["PAUSED"]);
+      requestAnimationFrame(() => {
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      });
+    };
+    window.addEventListener("clientsTabToServicesTabSearch:run", onRun as EventListener);
+    return () =>
+      window.removeEventListener("clientsTabToServicesTabSearch:run", onRun as EventListener);
+  }, []);
+
   // Navigate from Admin Jobs tab → specific occurrence
   useEffect(() => {
     return onEventSearchRun("jobsTabToServicesTabSearch", setQ, inputRef, (id) => {

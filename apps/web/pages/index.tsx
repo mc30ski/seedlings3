@@ -540,18 +540,18 @@ export default function HomePage() {
       setTopTab(isAdmin ? "admin" : isWorker ? "worker" : "client");
   }, [isAdmin, isWorker, topTab, me]);
 
-  // When a signed-in approved client lands on the prior default tab
-  // ("public" / Community), flip them to "My Properties" — the
-  // personalized view is the more useful landing target. Honors any
-  // explicit later navigation: switching to Community manually persists
-  // and won't be bounced back the next session (the redirect only fires
-  // when the user's stored choice is still "public").
+  // On every load, a signed-in approved client lands on "My Properties" —
+  // the personalized view is the useful landing target every time, not
+  // just the first session. Fires once per mount via the ref so the
+  // client can still switch to Community / Services mid-session and stay
+  // there for the rest of THIS visit; the next load reseeds on My
+  // Properties. Skipped when they're already on my-jobs (no-op nudge).
   const clientDefaultFlippedRef = useRef(false);
   useEffect(() => {
     if (!me?.isApproved) return;
     if (isWorker || isAdmin) return;
     if (topTab !== "client") return;
-    if (clientInnerTab !== "public") return;
+    if (clientInnerTab === "my-jobs") return;
     if (clientDefaultFlippedRef.current) return;
     clientDefaultFlippedRef.current = true;
     setClientInnerTab("my-jobs");
@@ -1349,6 +1349,12 @@ export default function HomePage() {
   // that handler is actually mounted when the event fires. A previous
   // change routed this to "jobs" which silently broke the button.
   setupSearchEvent("jobsTabToServicesTabSearch", "services" as any);
+  // clientsTabToServicesTabSearch — "N services paused" click on the
+  // ClientsTab card. Routes to Services; ServicesTab's :run listener
+  // sets q to the client's displayName AND flips jobStatusFilter to
+  // ["PAUSED"] so the operator lands directly on that client's paused
+  // job list.
+  setupSearchEvent("clientsTabToServicesTabSearch", "services" as any);
 
   // Payments "Job" link → Jobs tab, highlighted to the exact occurrence the
   // payment was recorded against. We send the OCCURRENCE id (plus its
