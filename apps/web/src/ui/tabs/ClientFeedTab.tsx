@@ -31,8 +31,6 @@ type FeedItem = {
   kind: string;
   area: string;
   workers: string[];
-  durationMinutes: number | null;
-  estimatedMinutes: number | null;
   photos: FeedPhoto[];
 };
 
@@ -63,13 +61,6 @@ function relativeTime(dateStr: string): string {
   const days = Math.floor(hours / 24);
   if (days === 1) return "Tomorrow";
   return fmtDateWeekday(dateStr);
-}
-
-function formatDuration(mins: number): string {
-  if (mins < 60) return `${mins} min`;
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
 function workerLabel(workers: string[]): string {

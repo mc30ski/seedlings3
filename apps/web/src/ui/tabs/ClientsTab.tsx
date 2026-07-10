@@ -17,7 +17,7 @@ import {
   Accordion,
   createListCollection,
 } from "@chakra-ui/react";
-import { Filter, LayoutList, Mail, MessageCircle, Plus, RefreshCw, Star, Tag, X } from "lucide-react";
+import { Filter, LayoutList, Mail, MessageCircle, PauseCircle, Plus, RefreshCw, Star, Tag, X } from "lucide-react";
 import { determineRoles, prettyStatus, clientStatusColor, clientLabel } from "@/src/lib/lib";
 import {
   type TabPropsType,
@@ -70,6 +70,10 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
   const [statusFilter, setStatusFilter] = usePersistedState<string[]>(`${pfx}_status`, ["ALL"]);
   const [kind, setKind] = usePersistedState<string[]>(`${pfx}_kind`, ["ALL"]);
   const [vipOnly, setVipOnly] = useState(false);
+  // "Paused services only" — narrows the list to clients with at least
+  // one PAUSED Job. Not persisted (transient operator gesture — after a
+  // pause action, they toggle this on to audit, then toggle it back off).
+  const [pausedOnly, setPausedOnly] = useState(false);
   const [tagFilter, setTagFilter] = useState<string>("ALL");
 
   const [items, setItems] = useState<Client[]>([]);
@@ -215,12 +219,16 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
       rows = rows.filter((r) => (r as any).isVip);
     }
 
+    if (pausedOnly) {
+      rows = rows.filter((r) => (r.pausedJobsCount ?? 0) > 0);
+    }
+
     if (tagFilter !== "ALL") {
       rows = rows.filter((r) => parseAdminTags((r as any).adminTags).includes(tagFilter));
     }
 
     return rows;
-  }, [items, q, kind, statusFilter, vipOnly, tagFilter, highlightId, isTrainee, traineeClientIds]);
+  }, [items, q, kind, statusFilter, vipOnly, pausedOnly, tagFilter, highlightId, isTrainee, traineeClientIds]);
 
   function openCreate() {
     setEditing(null);
@@ -520,6 +528,23 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
         </Button>
         {forAdmin && (
           <Button
+            size="sm"
+            variant={pausedOnly ? "solid" : "outline"}
+            px="2"
+            onClick={() => setPausedOnly(!pausedOnly)}
+            title={pausedOnly ? "Showing only clients with paused services" : "Show only clients with paused services"}
+            css={pausedOnly ? {
+              background: "var(--chakra-colors-yellow-100)",
+              color: "var(--chakra-colors-yellow-800)",
+              border: "1px solid var(--chakra-colors-yellow-400)",
+              "&:hover": { background: "var(--chakra-colors-yellow-200)" },
+            } : undefined}
+          >
+            <PauseCircle size={14} />
+          </Button>
+        )}
+        {forAdmin && (
+          <Button
             variant="solid"
             size="sm"
             px="2"
@@ -544,7 +569,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
           );
         })()}
       </HStack>
-      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || vipOnly) && (
+      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || vipOnly || pausedOnly) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
           {kind[0] !== "ALL" && (
             <Badge size="sm" colorPalette="blue" variant="subtle">
@@ -561,7 +586,12 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
               VIP
             </Badge>
           )}
-          {!(kind[0] === "ALL" && statusFilter[0] === "ALL" && !vipOnly && !q && !highlightId) && (
+          {pausedOnly && (
+            <Badge size="sm" colorPalette="yellow" variant="subtle">
+              Paused services only
+            </Badge>
+          )}
+          {!(kind[0] === "ALL" && statusFilter[0] === "ALL" && !vipOnly && !pausedOnly && !q && !highlightId) && (
             <Badge
               size="sm"
               colorPalette="red"
@@ -571,6 +601,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                 setKind(["ALL"]);
                 setStatusFilter(["ALL"]);
                 setVipOnly(false);
+                setPausedOnly(false);
                 setQ("");
                 setHighlightId(null);
               }}
@@ -723,6 +754,32 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                           busyId={statusButtonBusyId}
                           setBusyId={setStatusButtonBusyId}
                         />
+                        {/* Follow-up hint: after a Pause services action,
+                            the operator gets no on-card confirmation of
+                            what actually paused. This clickable count is
+                            that surface — jumps to Services filtered to
+                            this client + PAUSED job status. Zero-count
+                            is intentionally hidden (no signal to nudge on). */}
+                        {(c.pausedJobsCount ?? 0) > 0 && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            colorPalette="yellow"
+                            px="2"
+                            onClick={() =>
+                              openEventSearch(
+                                "clientsTabToServicesTabSearch",
+                                c.displayName,
+                                true,
+                                c.id,
+                              )
+                            }
+                            title={`View this client's ${c.pausedJobsCount} paused service${c.pausedJobsCount === 1 ? "" : "s"} in the Services tab`}
+                          >
+                            <PauseCircle size={12} />
+                            {c.pausedJobsCount} paused
+                          </Button>
+                        )}
                       </>
                     )}
                     {/* Archive now applies directly from ACTIVE (previous

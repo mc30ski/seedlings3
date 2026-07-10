@@ -37,7 +37,6 @@ type CompletedJob = {
   price?: number | null;
   property: { id: string; displayName: string; street1?: string | null; city?: string | null; state?: string | null };
   workers: string[];
-  durationMinutes: number | null;
   photos: Photo[];
   paid: boolean;
   paymentPending?: boolean;
@@ -57,7 +56,6 @@ type UpcomingJob = {
   status: string;
   startAt?: string | null;
   startedAt?: string | null;
-  estimatedMinutes?: number | null;
   workflow?: string | null;
   isOneOff?: boolean | null;
   frequencyDays?: number | null;
@@ -104,13 +102,6 @@ type LinkResponse =
         contacts: Array<{ contactId: string; contactName: string; isPrimary: boolean }>;
       };
     };
-
-function formatDuration(mins: number): string {
-  if (mins < 60) return `${mins} min`;
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  return m > 0 ? `${h}h ${m}m` : `${h}h`;
-}
 
 function workerLabel(workers: string[]): string {
   // Casual UI shows first names only — server now returns full "First Last"
@@ -626,9 +617,6 @@ export default function ClientMyJobsTab() {
                               </Badge>
                             );
                           })()}
-                          {job.estimatedMinutes && (
-                            <Text fontSize="xs" color="fg.muted">~{formatDuration(job.estimatedMinutes)}</Text>
-                          )}
                         </HStack>
                         {job.workers.length > 0 && (
                           <Text fontSize="xs" color="fg.muted">Crew: {workerLabel(job.workers)}</Text>
@@ -768,7 +756,6 @@ export default function ClientMyJobsTab() {
                         </HStack>
                         <HStack gap={3} wrap="wrap" fontSize="xs" color="fg.muted">
                           {job.completedAt && <Text>Completed: {fmtDate(job.completedAt)}</Text>}
-                          {job.durationMinutes != null && job.durationMinutes > 0 && <Text>Duration: {formatDuration(job.durationMinutes)}</Text>}
                         </HStack>
                         {job.workers.length > 0 && (
                           <Text fontSize="xs" color="fg.muted">Crew: {workerLabel(job.workers)}</Text>

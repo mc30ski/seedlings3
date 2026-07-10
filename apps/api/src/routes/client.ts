@@ -316,9 +316,14 @@ export default async function clientRoutes(app: FastifyInstance) {
         // ANNOUNCEMENT, ESTIMATE) never surface to the client — same
         // rule applied by the worker route.
         workflow: { in: ["STANDARD", "ONE_OFF"] },
-        // isAdminOnly is set on ops-scratch rows the client should
-        // never see (estimates, admin-only reminders, etc.).
-        isAdminOnly: false,
+        // isAdminOnly is INTENTIONALLY NOT filtered here. That flag is
+        // about worker ASSIGNMENT behavior ("Administered — workers
+        // cannot claim, must be assigned") — nothing to do with what the
+        // client sees. Estimates auto-set it to true but they're already
+        // excluded by the workflow filter above, so leaving it off can't
+        // leak them. Removing the filter here fixes a bug where admins
+        // who checked "Administered" on a legitimate service to control
+        // assignment inadvertently hid the completed job from the client.
         // Historical data has some rows in a completion state with
         // completedAt=null (admin PATCH paths didn't always stamp it —
         // fixed forward but historical rows persist). Include those by
@@ -340,8 +345,13 @@ export default async function clientRoutes(app: FastifyInstance) {
         status: true,
         startAt: true,
         completedAt: true,
-        estimatedMinutes: true,
-        startedAt: true,
+        // estimatedMinutes / startedAt: intentionally not selected.
+        // Duration and estimated-duration must not surface on the
+        // client's history — how long a job took doesn't matter to the
+        // client and can leave a bad impression ("that only took 20
+        // minutes?"). Kept out of the payload at the boundary so a
+        // future accidental render can't leak it. Same rationale on
+        // /client/upcoming below.
         workflow: true,
         jobType: true,
         price: true,
@@ -411,9 +421,7 @@ export default async function clientRoutes(app: FastifyInstance) {
           // full name. Casual UI uses workerLabel() to extract the first
           // name for friendlier "Crew: Mark & Sarah" rendering.
           workers: occ.assignees.filter((a) => a.role !== "observer").map((a) => (a.user?.displayName ?? "").trim()).filter(Boolean),
-          durationMinutes: occ.startedAt && occ.completedAt
-            ? Math.round((new Date(occ.completedAt).getTime() - new Date(occ.startedAt).getTime()) / 60000)
-            : null,
+          // durationMinutes intentionally omitted — see comment on the select above.
           photos: photos.filter(Boolean),
           // `paid` is true ONLY after the admin confirms the payment.
           // Until then, the row exists (because the client self-reported
@@ -489,9 +497,9 @@ export default async function clientRoutes(app: FastifyInstance) {
         // Belt-and-suspenders exclusion for any occurrence flagged as
         // an estimate via legacy isEstimate.
         isEstimate: false,
-        // isAdminOnly is set on ops-scratch rows the client should
-        // never see.
-        isAdminOnly: false,
+        // isAdminOnly is INTENTIONALLY NOT filtered — see the same
+        // note in the /client/jobs query above. It's an assignment
+        // rule, not a visibility rule.
         OR: [
           {
             // Truly-active IN_PROGRESS: started less than 2 days ago
@@ -523,7 +531,8 @@ export default async function clientRoutes(app: FastifyInstance) {
         status: true,
         startAt: true,
         startedAt: true,
-        estimatedMinutes: true,
+        // estimatedMinutes intentionally not selected — see the note on
+        // the /client/jobs select above. Not exposed to clients.
         workflow: true,
         isOneOff: true,
         frequencyDays: true,
@@ -600,7 +609,7 @@ export default async function clientRoutes(app: FastifyInstance) {
           status: occ.status,
           startAt: occ.startAt,
           startedAt: occ.startedAt,
-          estimatedMinutes: occ.estimatedMinutes,
+          // estimatedMinutes intentionally omitted — see comment on the select above.
           workflow: occ.workflow,
           isOneOff: (occ as any).isOneOff ?? false,
           frequencyDays: effectiveFreq,

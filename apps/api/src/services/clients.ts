@@ -184,6 +184,30 @@ export const clients: ServicesClients = {
       },
     });
 
+    // Per-client count of Jobs in PAUSED status. Powers the "N services
+    // paused" line + click-through + "paused services only" filter on
+    // Admin → Directory → Clients. Bulk-paused Jobs (via /admin/clients/
+    // :id/pause-services) and individually-paused Jobs both count — the
+    // client card is the operator's "did the pause actually cover
+    // everything?" surface, not a status breakdown by cause.
+    const clientIds = rows.map((r) => r.id);
+    const pausedByClient = new Map<string, number>();
+    if (clientIds.length > 0) {
+      const pausedRows = await prisma.$queryRaw<
+        Array<{ clientId: string; count: bigint }>
+      >`
+        SELECT p."clientId" AS "clientId", COUNT(*)::bigint AS count
+        FROM "Job" j
+        JOIN "Property" p ON j."propertyId" = p.id
+        WHERE p."clientId" = ANY(${clientIds}::text[])
+          AND j."status" = 'PAUSED'
+        GROUP BY p."clientId"
+      `;
+      for (const r of pausedRows) {
+        pausedByClient.set(r.clientId, Number(r.count));
+      }
+    }
+
     return rows.map((c) => {
       const { _count, ...client } = c;
       const primaryContact =
@@ -198,6 +222,7 @@ export const clients: ServicesClients = {
 
         contactCount: _count.contacts,
         propertyCount: _count.properties,
+        pausedJobsCount: pausedByClient.get(c.id) ?? 0,
         primaryContact,
       };
     });
