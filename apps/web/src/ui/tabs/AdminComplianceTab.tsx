@@ -2557,6 +2557,9 @@ type SignMatrixData = {
     enforcement: string;
     workerAction: string;
     targetWorkerTypes: string[];
+    resignTrigger: string;
+    resignParamDays: number | null;
+    resignParamMonthDay: string | null;
   }>;
   cells: Array<{
     userId: string;
@@ -2566,6 +2569,43 @@ type SignMatrixData = {
     expiresAt: string | null;
   }>;
 };
+
+/** Compact human-readable resign cadence for the Sign matrix column
+ *  header. Uses the concrete N / MM-DD when the trigger has parameters
+ *  so an operator can distinguish "Every 90 days" from "Every 365 days"
+ *  at a glance without hovering the header for a tooltip.
+ *
+ *    ONE_TIME        → "Sign once"
+ *    DAYS_SINCE_SIGN → "Every 180 days" (or "Every N days" when N missing)
+ *    ANNUAL_ON_DATE  → "Yearly on Mar 15" (or plain "Yearly" when no MM-DD)
+ *    ANNIVERSARY     → "Yearly" (legacy — new UI writes ANNUAL_ON_DATE only)
+ */
+function formatResignCadence(
+  trigger: string,
+  paramDays: number | null,
+  paramMonthDay: string | null,
+): string {
+  switch (trigger) {
+    case "ONE_TIME":
+      return "Sign once";
+    case "DAYS_SINCE_SIGN":
+      return paramDays != null && paramDays > 0
+        ? `Every ${paramDays} days`
+        : "Every N days";
+    case "ANNUAL_ON_DATE": {
+      if (!paramMonthDay || !/^\d{2}-\d{2}$/.test(paramMonthDay)) return "Yearly";
+      const [mm, dd] = paramMonthDay.split("-").map(Number);
+      const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      const monthName = months[mm - 1];
+      if (!monthName) return "Yearly";
+      return `Yearly on ${monthName} ${dd}`;
+    }
+    case "ANNIVERSARY":
+      return "Yearly";
+    default:
+      return trigger;
+  }
+}
 
 function SignMatrixView() {
   const [data, setData] = useState<SignMatrixData | null>(null);
@@ -2816,6 +2856,9 @@ function SignMatrixView() {
                       </Badge>
                       <Badge size="xs" colorPalette="gray" variant="outline">
                         {WORKER_ACTION_LABEL[p.workerAction as "SIGN" | "ACKNOWLEDGE" | "NONE"] ?? p.workerAction}
+                      </Badge>
+                      <Badge size="xs" colorPalette="purple" variant="subtle">
+                        {formatResignCadence(p.resignTrigger, p.resignParamDays, p.resignParamMonthDay)}
                       </Badge>
                     </HStack>
                   </VStack>

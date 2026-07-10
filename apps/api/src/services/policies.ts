@@ -1030,6 +1030,9 @@ export const policies = {
       enforcement: string;
       workerAction: string;
       targetWorkerTypes: string[];
+      resignTrigger: string;
+      resignParamDays: number | null;
+      resignParamMonthDay: string | null;
     }>;
     cells: Array<{
       userId: string;
@@ -1069,6 +1072,9 @@ export const policies = {
           enforcement: p.enforcement,
           workerAction: p.workerAction,
           targetWorkerTypes: p.targetWorkerTypes,
+          resignTrigger: p.resignTrigger,
+          resignParamDays: p.resignParamDays,
+          resignParamMonthDay: p.resignParamMonthDay,
         })),
         cells: [],
       };
@@ -1225,6 +1231,9 @@ export const policies = {
         enforcement: p.enforcement,
         workerAction: p.workerAction,
         targetWorkerTypes: p.targetWorkerTypes,
+        resignTrigger: p.resignTrigger,
+        resignParamDays: p.resignParamDays,
+        resignParamMonthDay: p.resignParamMonthDay,
       })),
       cells,
     };
