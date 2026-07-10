@@ -15,7 +15,7 @@ import {
   Textarea,
   VStack,
 } from "@chakra-ui/react";
-import { Calendar, CheckCircle2, Download, Eye, SkipForward, X } from "lucide-react";
+import { Calendar, Download, Eye, SkipForward } from "lucide-react";
 import { apiDelete, apiGet, apiPost } from "@/src/lib/api";
 import { getClientImpersonation } from "@/src/lib/impersonation";
 import { fmtDate, fmtDateWeekday, bizToday, bizAddDays } from "@/src/lib/lib";
@@ -59,13 +59,10 @@ type UpcomingJob = {
   startedAt?: string | null;
   estimatedMinutes?: number | null;
   workflow?: string | null;
-  isEstimate?: boolean | null;
   isOneOff?: boolean | null;
   frequencyDays?: number | null;
   jobType?: string | null;
   price?: number | null;
-  proposalAmount?: number | null;
-  proposalNotes?: string | null;
   property: { id: string; displayName: string; street1?: string | null; city?: string | null; state?: string | null };
   workers: string[];
   photos?: Photo[];
@@ -155,7 +152,10 @@ export default function ClientMyJobsTab() {
   // Month-by-month pagination for completed history. Default window
   // shows just the current calendar month; "Show more" expands one
   // month at a time up to a year. Server enforces the same ceilings.
-  const [completedMonthsBack, setCompletedMonthsBack] = useState(1);
+  // Default matches the server-side DEFAULT_MONTHS_BACK in routes/client.ts.
+  // Three months = "current + previous 2" so clients don't see an empty
+  // history on the first days of a month.
+  const [completedMonthsBack, setCompletedMonthsBack] = useState(3);
   const [completedHasMore, setCompletedHasMore] = useState(false);
   const [completedMaxMonths, setCompletedMaxMonths] = useState(12);
   const [completedLoadingMore, setCompletedLoadingMore] = useState(false);
@@ -169,8 +169,6 @@ export default function ClientMyJobsTab() {
   const [actionDialog, setActionDialog] = useState<
     | { type: "reschedule"; job: UpcomingJob }
     | { type: "skip"; job: UpcomingJob }
-    | { type: "accept"; job: UpcomingJob }
-    | { type: "decline"; job: UpcomingJob }
     | null
   >(null);
   const [proposedDate, setProposedDate] = useState("");
@@ -350,17 +348,9 @@ export default function ClientMyJobsTab() {
           comment: actionComment.trim() || undefined,
         });
         publishInlineMessage({ type: "SUCCESS", text: "Skip request sent." });
-      } else if (type === "accept") {
-        await apiPost(`/api/client/estimates/${job.id}/accept`, {
-          comment: actionComment.trim() || undefined,
-        });
-        publishInlineMessage({ type: "SUCCESS", text: "Estimate accepted." });
-      } else if (type === "decline") {
-        await apiPost(`/api/client/estimates/${job.id}/decline`, {
-          reason: actionComment.trim() || undefined,
-        });
-        publishInlineMessage({ type: "INFO", text: "Estimate declined." });
       }
+      // Estimate accept/decline flows removed — estimates are never
+      // shown to the client.
       setActionDialog(null);
       await reloadUpcoming();
     } catch (err) {
@@ -594,12 +584,14 @@ export default function ClientMyJobsTab() {
           <VStack align="stretch" gap={2}>
             {upcoming.map((job) => {
               const isActive = job.status === "IN_PROGRESS";
-              const isEstimate = job.workflow === "ESTIMATE" || job.isEstimate;
-              const isProposalSubmitted = isEstimate && job.status === "PROPOSAL_SUBMITTED";
-              const canRequestChange = !isEstimate && (job.status === "SCHEDULED" || job.status === "ACCEPTED") && !job.pendingChangeRequest;
+              // Estimates are never shown to clients — filtered out
+              // server-side in /client/upcoming. Any estimate reference
+              // here is dead code that used to gate the removed
+              // accept/decline UI.
+              const canRequestChange = (job.status === "SCHEDULED" || job.status === "ACCEPTED") && !job.pendingChangeRequest;
               const addr = [job.property.street1, job.property.city, job.property.state].filter(Boolean).join(", ");
               return (
-                <Card.Root key={job.id} variant="outline" borderColor={isActive ? "blue.300" : isEstimate ? "purple.200" : undefined} bg={isActive ? "blue.50" : isEstimate ? "purple.50" : undefined}>
+                <Card.Root key={job.id} variant="outline" borderColor={isActive ? "blue.300" : undefined} bg={isActive ? "blue.50" : undefined}>
                   <Card.Body py="2" px="3">
                     <HStack justify="space-between" align="start">
                       <VStack align="start" gap={1} flex="1" minW={0}>
@@ -607,11 +599,11 @@ export default function ClientMyJobsTab() {
                         {addr && <Box fontSize="xs"><MapLink address={addr} /></Box>}
                         <HStack gap={2} wrap="wrap">
                           <Badge
-                            colorPalette={isEstimate ? "purple" : isActive ? "blue" : "gray"}
-                            variant={isActive || isEstimate ? "solid" : "outline"}
+                            colorPalette={isActive ? "blue" : "gray"}
+                            variant={isActive ? "solid" : "outline"}
                             fontSize="xs" borderRadius="full" px="2"
                           >
-                            {isEstimate ? (isProposalSubmitted ? "Estimate ready" : "Estimate") : isActive ? "In Progress" : "Scheduled"}
+                            {isActive ? "In Progress" : "Scheduled"}
                           </Badge>
                           {job.jobType && (
                             <Badge colorPalette="gray" variant="subtle" fontSize="xs" borderRadius="full" px="2">
@@ -641,13 +633,10 @@ export default function ClientMyJobsTab() {
                         {job.workers.length > 0 && (
                           <Text fontSize="xs" color="fg.muted">Crew: {workerLabel(job.workers)}</Text>
                         )}
-                        {(job.proposalAmount != null || job.price != null) && (
+                        {job.price != null && (
                           <Text fontSize="xs" color="green.600" fontWeight="medium">
-                            ${(job.proposalAmount ?? job.price ?? 0).toFixed(2)}{isEstimate ? " (proposed)" : ""}
+                            ${job.price.toFixed(2)}
                           </Text>
-                        )}
-                        {isProposalSubmitted && job.proposalNotes && (
-                          <Text fontSize="xs" color="fg.muted" mt={1}>{job.proposalNotes}</Text>
                         )}
                       </VStack>
                       <VStack align="end" gap={1} flexShrink={0}>
@@ -721,16 +710,7 @@ export default function ClientMyJobsTab() {
                         </HStack>
                       );
                     })()}
-                    {isProposalSubmitted && (
-                      <HStack gap={1} mt={2}>
-                        <Button size="xs" colorPalette="green" onClick={() => openAction("accept", job)}>
-                          <CheckCircle2 size={12} /> Accept Estimate
-                        </Button>
-                        <Button size="xs" variant="outline" colorPalette="red" onClick={() => openAction("decline", job)}>
-                          <X size={12} /> Decline
-                        </Button>
-                      </HStack>
-                    )}
+                    {/* Estimate accept/decline buttons removed. */}
 
                     {(job.photos ?? []).length > 0 && (
                       <HStack gap={2} mt={2} wrap="wrap">
@@ -900,7 +880,7 @@ export default function ClientMyJobsTab() {
         </Box>
       )}
 
-      {/* Reschedule / Skip / Accept / Decline dialog */}
+      {/* Reschedule / Skip dialog (Accept/Decline estimate flows removed). */}
       <Dialog.Root open={!!actionDialog} onOpenChange={(e) => { if (!e.open) setActionDialog(null); }}>
         <Portal>
           <Dialog.Backdrop />
@@ -911,8 +891,6 @@ export default function ClientMyJobsTab() {
                 <Dialog.Title>
                   {actionDialog?.type === "reschedule" && "Request Reschedule"}
                   {actionDialog?.type === "skip" && "Request to Skip"}
-                  {actionDialog?.type === "accept" && "Accept Estimate"}
-                  {actionDialog?.type === "decline" && "Decline Estimate"}
                 </Dialog.Title>
               </Dialog.Header>
               <Dialog.Body>
@@ -987,38 +965,7 @@ export default function ClientMyJobsTab() {
                     </>
                   )}
 
-                  {actionDialog?.type === "accept" && (
-                    <>
-                      <Box>
-                        <Text fontSize="sm" mb={1}>Comment (optional)</Text>
-                        <Textarea
-                          value={actionComment}
-                          onChange={(e) => setActionComment(e.target.value)}
-                          placeholder="Any questions or notes?"
-                          rows={2}
-                        />
-                      </Box>
-                      {actionDialog.job.proposalAmount != null && (
-                        <Box p={2} bg="green.50" rounded="md" borderWidth="1px" borderColor="green.200">
-                          <Text fontSize="sm" color="green.800" fontWeight="semibold">
-                            Estimate: ${actionDialog.job.proposalAmount.toFixed(2)}
-                          </Text>
-                        </Box>
-                      )}
-                    </>
-                  )}
-
-                  {actionDialog?.type === "decline" && (
-                    <Box>
-                      <Text fontSize="sm" mb={1}>Reason (optional)</Text>
-                      <Textarea
-                        value={actionComment}
-                        onChange={(e) => setActionComment(e.target.value)}
-                        placeholder="Help us understand"
-                        rows={2}
-                      />
-                    </Box>
-                  )}
+                  {/* Estimate accept/decline dialog panes removed. */}
                 </VStack>
               </Dialog.Body>
               <Dialog.Footer>
@@ -1027,14 +974,12 @@ export default function ClientMyJobsTab() {
                     Cancel
                   </Button>
                   <Button
-                    colorPalette={actionDialog?.type === "decline" ? "red" : actionDialog?.type === "accept" ? "green" : "blue"}
+                    colorPalette="blue"
                     onClick={() => void submitAction()}
                     loading={actionBusy}
                   >
                     {actionDialog?.type === "reschedule" && "Send Request"}
                     {actionDialog?.type === "skip" && "Send Skip Request"}
-                    {actionDialog?.type === "accept" && "Accept"}
-                    {actionDialog?.type === "decline" && "Decline"}
                   </Button>
                 </HStack>
               </Dialog.Footer>

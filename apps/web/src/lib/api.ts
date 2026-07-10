@@ -217,6 +217,21 @@ export async function request<T>(
     // cancelled the wizard. No more overlapping dialogs, no more manual
     // retry, no more stale "Failed to start workday" toast surfaced
     // behind the sign wizard.
+    //
+    // View-as caveat: when the URL targets another user via
+    // `?viewAsUserId=<id>`, the pending policies belong to THAT worker,
+    // not the calling admin. Auto-opening the sign wizard would fetch
+    // the admin's own policies (they've already signed everything),
+    // filter to zero matches, and hang the caller forever waiting for a
+    // `policies:wizard-closed` event that would never fire. Skip the
+    // interception and let the caller surface an inline error naming
+    // the underlying compliance block instead.
+    const isViewAsCall = /[?&]viewAsUserId=/.test(path);
+    if (IS_BROWSER && code === "POLICIES_REQUIRED" && isViewAsCall) {
+      err.message =
+        "This worker has unsigned compliance policies. They must sign in and complete them, OR grant them an exception from Super → Directory → Compliance → (open the policy) → Grant exception.";
+      throw err;
+    }
     if (IS_BROWSER && code === "POLICIES_REQUIRED") {
       const evt = new CustomEvent("policies:required", {
         detail: {
