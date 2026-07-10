@@ -308,6 +308,33 @@ export default function BusinessExpensesTab() {
   // Dialog
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<BusinessExpense | null>(null);
+  // Set when the dialog was opened from a Record-flow suggestion. Passed
+  // through to the create-row POST so the server can inherit the
+  // source's `recurrenceSeriesId` — the mechanism that keeps a monthly
+  // series glued together even if the operator retypes the description
+  // slightly on some future entry. Null in the plain Add Entry flow;
+  // populated as `sourceExpenseId` in the API payload only for CREATE.
+  const [sourceExpenseId, setSourceExpenseId] = useState<string | null>(null);
+  // Candidates surfaced by the /match-recurring pre-flight check when
+  // the operator is about to create a new recurring row from scratch
+  // (Add Entry, not Record). If non-empty, the dialog shows a "looks
+  // like a continuation of your existing series — join it?" hint that
+  // lets them choose Join (set sourceExpenseId to the candidate's
+  // latestId, resubmit) or Continue-as-new (create a fresh series).
+  const [continuationCandidates, setContinuationCandidates] = useState<Array<{
+    seriesId: string;
+    latestId: string;
+    description: string;
+    vendor: string | null;
+    latestCost: number;
+    latestDate: string;
+    recurrence: string;
+  }>>([]);
+  // Separate flag for "operator already answered the continuation hint
+  // this dialog cycle — don't re-run the pre-flight on Save." Both Join
+  // and Create-as-new set this so the next Save proceeds to the actual
+  // create-row POST.
+  const [continuationAnswered, setContinuationAnswered] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<BusinessExpense | null>(null);
   // Capitalization threshold from FIXED_ASSET_MIN_COST setting — drives the
   // "$X" reference in the capitalize-vs-expense rule-of-thumb note below.
@@ -569,6 +596,9 @@ export default function BusinessExpensesTab() {
 
   function openCreate() {
     setEditing(null);
+    setSourceExpenseId(null);
+    setContinuationCandidates([]);
+    setContinuationAnswered(false);
     // If the user is filtered to a specific entry type, default new entries
     // to that type — they're almost certainly adding more of the same.
     setFType(filterType || "EXPENSE");
@@ -589,6 +619,9 @@ export default function BusinessExpensesTab() {
 
   function openEdit(e: BusinessExpense) {
     setEditing(e);
+    setSourceExpenseId(null);
+    setContinuationCandidates([]);
+    setContinuationAnswered(false);
     setFType(e.type);
     setFDate(e.date.slice(0, 10));
     setFCost(e.cost.toFixed(2));
@@ -624,6 +657,14 @@ export default function BusinessExpensesTab() {
   // becomes the most-recent in its series after save.
   function openFromSuggestion(s: DueSoonSuggestion) {
     setEditing(null);
+    // Record flow — the new row explicitly continues the source's
+    // series. Server reads sourceExpenseId out of the payload and
+    // inherits its recurrenceSeriesId onto the new row, so any label
+    // drift the operator introduces here (typo, autocorrect) can't
+    // fork the series.
+    setSourceExpenseId(s.latestId);
+    setContinuationCandidates([]);
+    setContinuationAnswered(false);
     setFType(s.prefill.type);
     setFDate(s.nextExpectedDate);
     setFCost(s.prefill.cost.toFixed(2));
@@ -719,11 +760,63 @@ export default function BusinessExpensesTab() {
         notes: fNotes.trim() || null,
         equipmentId: fType === "EXPENSE" ? (fEquipmentId || null) : null,
         recurrence: fRecurrence || null,
+        // sourceExpenseId is only meaningful on CREATE (Record flow) —
+        // server inherits the source's recurrenceSeriesId onto the new
+        // row. Null on Add Entry unless the operator picked "Join
+        // series" in the continuation hint.
+        sourceExpenseId: !editing ? sourceExpenseId : undefined,
       };
       if (editing) {
         await apiPatch(`/api/admin/business-expenses/${editing.id}`, payload);
         publishInlineMessage({ type: "SUCCESS", text: "Expense updated." });
       } else {
+        // Continuation-hint pre-flight: when this is a fresh recurring
+        // row (not Record flow, no prior sourceExpenseId) with a
+        // description filled in, ask the server if there's an existing
+        // series that soft-matches. If yes, surface the candidates in
+        // the dialog and bail — the operator picks Join or
+        // Continue-as-new, we resubmit with the appropriate
+        // sourceExpenseId. Skipped when the operator already answered
+        // (continuationCandidates already surfaced this cycle) or when
+        // there's no recurrence to worry about.
+        if (
+          !sourceExpenseId &&
+          payload.recurrence &&
+          payload.description &&
+          !continuationAnswered
+        ) {
+          try {
+            const params = new URLSearchParams({
+              type: fType,
+              description: payload.description,
+              vendor: payload.vendor ?? "",
+            });
+            const { candidates } = await apiGet<{
+              candidates: Array<{
+                seriesId: string;
+                latestId: string;
+                description: string;
+                vendor: string | null;
+                latestCost: number;
+                latestDate: string;
+                recurrence: string;
+              }>;
+            }>(`/api/admin/business-expenses/match-recurring?${params.toString()}`);
+            if (candidates.length > 0) {
+              setContinuationCandidates(candidates);
+              setSaving(false);
+              return;
+            }
+            // No candidates — mark answered so we don't re-check on a
+            // subsequent Save press in the same dialog cycle.
+            setContinuationAnswered(true);
+          } catch {
+            // Match-hint pre-flight failed — proceed anyway; the worst
+            // case is a fresh series that we detect on the next Add
+            // Entry cycle. Never block a legitimate create because a
+            // hint endpoint 500'd.
+          }
+        }
         const created = await apiPost<{ id: string }>("/api/admin/business-expenses", payload);
         // Optional buffered receipt → upload against the new BE id. If this
         // fails the BE itself is fine, so we warn and let the user retry via
@@ -1522,6 +1615,73 @@ export default function BusinessExpensesTab() {
               </Dialog.Header>
               <Dialog.Body>
                 <VStack align="stretch" gap={3}>
+                  {continuationCandidates.length > 0 && (
+                    <Box
+                      borderWidth="1px"
+                      borderColor="orange.300"
+                      bg="orange.50"
+                      borderRadius="md"
+                      p={3}
+                    >
+                      <Text fontSize="sm" fontWeight="semibold" color="orange.900" mb={1}>
+                        Looks like a continuation of an existing series
+                      </Text>
+                      <Text fontSize="xs" color="orange.900" mb={2}>
+                        Joining glues this row to the same series so future Records stay in sync — even if the description drifts. Creating as new starts a separate series.
+                      </Text>
+                      <VStack align="stretch" gap={2}>
+                        {continuationCandidates.map((c) => (
+                          <HStack
+                            key={c.seriesId}
+                            justify="space-between"
+                            gap={2}
+                            p={2}
+                            bg="white"
+                            borderWidth="1px"
+                            borderColor="orange.200"
+                            borderRadius="md"
+                          >
+                            <VStack align="start" gap={0} flex="1" minW={0}>
+                              <Text fontSize="xs" fontWeight="medium" lineClamp={1}>
+                                {c.description}
+                                {c.vendor ? ` — ${c.vendor}` : ""}
+                              </Text>
+                              <Text fontSize="2xs" color="fg.muted">
+                                last ${c.latestCost.toFixed(2)} on {c.latestDate} · {c.recurrence.toLowerCase()}
+                              </Text>
+                            </VStack>
+                            <Button
+                              size="xs"
+                              colorPalette="orange"
+                              onClick={() => {
+                                setSourceExpenseId(c.latestId);
+                                setContinuationCandidates([]);
+                                setContinuationAnswered(true);
+                              }}
+                            >
+                              Join
+                            </Button>
+                          </HStack>
+                        ))}
+                      </VStack>
+                      <HStack justify="flex-end" mt={2}>
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          onClick={() => {
+                            // Continue-as-new: sourceExpenseId stays
+                            // null so the server mints a fresh series
+                            // id. Answered flag prevents the pre-flight
+                            // from re-firing on the next Save.
+                            setContinuationCandidates([]);
+                            setContinuationAnswered(true);
+                          }}
+                        >
+                          Create as a new series
+                        </Button>
+                      </HStack>
+                    </Box>
+                  )}
                   <Box>
                     <Text fontSize="sm" mb={1}>Type *</Text>
                     {/* Switching type wipes category/equipment so a stale

@@ -2308,6 +2308,13 @@ export default function HomePage() {
         loadLedgerFollowupCount(),
         loadDueToRecordCount(),
         loadStreamPauseRemindersCount(),
+        // Policy counts — omitted from this list originally, which meant
+        // clicking the dropdown refresh button never updated "Documents
+        // to sign" or the admin-side compliance queues. The worker who
+        // signed a policy on another device would see the stale count
+        // until they closed the browser tab. Reported on 2026-07-13.
+        loadPolicyWorkerCount(),
+        loadPolicyAdminCounts(),
       ]);
     } finally {
       setAlertsRefreshing(false);
@@ -2318,6 +2325,7 @@ export default function HomePage() {
     loadUnapprovedHoursCount, loadUnclaimed, loadAnnouncementCount,
     loadDashboardSummary, loadTimelineCount, loadLedgerFollowupCount,
     loadDueToRecordCount, loadStreamPauseRemindersCount,
+    loadPolicyWorkerCount, loadPolicyAdminCounts,
   ]);
 
   // Opening the Tasks page fires the same full refresh as tapping

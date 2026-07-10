@@ -1,4 +1,5 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
+import { randomUUID } from "crypto";
 import { services } from "../services";
 import { prisma } from "../db/prisma";
 import { getUploadUrl, getDownloadUrl, deleteObject } from "../lib/r2";
@@ -5001,6 +5002,43 @@ Respond ONLY with valid JSON in this exact format:
     if (recurrence && !["WEEKLY", "MONTHLY", "QUARTERLY", "ANNUALLY"].includes(recurrence)) {
       throw app.httpErrors.badRequest("recurrence must be WEEKLY, MONTHLY, QUARTERLY, or ANNUALLY");
     }
+    // Series id derivation for recurring rows. Three cases, in priority:
+    //   1. sourceExpenseId provided (the Record-flow path) — copy the
+    //      source row's recurrenceSeriesId. This is what keeps the
+    //      series welded together across months even if the label text
+    //      drifts. If the source row itself has no series id (legacy
+    //      row created pre-backfill), mint one and stamp both rows.
+    //   2. No source but recurrence set — mint a fresh series id so
+    //      future Record-flow inserts on this row can inherit it.
+    //   3. No recurrence — series id stays null; not a recurring row.
+    // sourceExpenseId is validated in-house rather than trusted from the
+    // client: if the caller sends a garbage id we treat it as absent
+    // rather than 400ing (fail-open — the row still gets created, just
+    // with a fresh series id instead of the intended inheritance).
+    let recurrenceSeriesId: string | null = null;
+    if (recurrence) {
+      const rawSourceId = b.sourceExpenseId ? String(b.sourceExpenseId) : null;
+      if (rawSourceId) {
+        const source = await prisma.businessExpense.findUnique({
+          where: { id: rawSourceId },
+          select: { id: true, recurrenceSeriesId: true },
+        });
+        if (source) {
+          if (source.recurrenceSeriesId) {
+            recurrenceSeriesId = source.recurrenceSeriesId;
+          } else {
+            // Source predates the migration — mint an id and stamp it on
+            // the source so subsequent Records inherit the same id.
+            recurrenceSeriesId = randomUUID();
+            await prisma.businessExpense.update({
+              where: { id: source.id },
+              data: { recurrenceSeriesId },
+            });
+          }
+        }
+      }
+      if (!recurrenceSeriesId) recurrenceSeriesId = randomUUID();
+    }
     return prisma.businessExpense.create({
       data: {
         ledgerId: generateLedgerId(),
@@ -5021,8 +5059,100 @@ Respond ONLY with valid JSON in this exact format:
         notes: b.notes ? String(b.notes).trim() : null,
         equipmentId: type === "EXPENSE" ? equipmentId : null,
         recurrence: recurrence as any,
+        recurrenceSeriesId,
       },
     });
+  });
+
+  // Pre-flight for the Add Entry dialog: does an existing recurring
+  // series soft-match the description/vendor/type the operator is about
+  // to create? Returns up to 5 candidates so the dialog can prompt
+  // "Looks like a continuation of your existing 'Vercel — App hosting'
+  // series — join it?" — solving the second half of the Vercel bug
+  // where creating a fresh row via Add Entry (instead of Record) would
+  // fork the stream even after the recurrenceSeriesId model landed.
+  //
+  // Soft match logic (loose on purpose — we're offering a hint, not an
+  // auto-merge): normalized (lowercased + trimmed + punctuation-stripped)
+  // description equality, plus type match, plus normalized vendor
+  // equality when either side has a vendor. Empty vendor on both sides
+  // is also a match.
+  //
+  // Never returns non-recurring rows — a hint only makes sense against
+  // an existing series. Also filters out rows already flagged with the
+  // legacy null seriesId to avoid suggesting joining a pre-backfill
+  // ghost. If backfill hasn't run yet, the endpoint returns nothing and
+  // the dialog falls back to its "no hint" mode.
+  app.get("/admin/business-expenses/match-recurring", superGuard, async (req: any) => {
+    const q = (req.query || {}) as { description?: string; vendor?: string; type?: string };
+    const rawDesc = (q.description ?? "").toString();
+    const rawVendor = (q.vendor ?? "").toString();
+    const rawType = (q.type ?? "EXPENSE").toString().toUpperCase();
+    // Normalize aggressively: lowercase, drop everything that isn't
+    // alphanumeric, collapse whitespace. Same rule on both sides so a
+    // one-character label drift on either the current row or the
+    // candidate history still matches.
+    const norm = (s: string): string =>
+      s
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    const targetDesc = norm(rawDesc);
+    const targetVendor = norm(rawVendor);
+    if (targetDesc.length === 0) return { candidates: [] };
+    if (!["EXPENSE", "CAPITAL_CONTRIBUTION", "OWNER_DRAW"].includes(rawType)) {
+      return { candidates: [] };
+    }
+    // Load all recurring rows of the matching type that have a series
+    // id. Bounded set in practice (<100 recurring series total per
+    // business); no need for a DB-side filter beyond type + not-null.
+    const rows = await prisma.businessExpense.findMany({
+      where: {
+        type: rawType as any,
+        recurrence: { not: null },
+        recurrenceSeriesId: { not: null },
+        occurrenceId: null,
+        supplyPurchase: { is: null },
+      },
+      orderBy: { date: "desc" },
+      select: {
+        id: true,
+        recurrenceSeriesId: true,
+        description: true,
+        vendor: true,
+        cost: true,
+        date: true,
+        recurrence: true,
+      },
+    });
+    // Dedupe by series — return the most recent row per series only.
+    const bySeries = new Map<string, typeof rows[number]>();
+    for (const r of rows) {
+      if (!r.recurrenceSeriesId) continue;
+      if (!bySeries.has(r.recurrenceSeriesId)) bySeries.set(r.recurrenceSeriesId, r);
+    }
+    const candidates = Array.from(bySeries.values())
+      .filter((r) => {
+        if (norm(r.description ?? "") !== targetDesc) return false;
+        // Vendor match: both empty is fine, both non-empty must match
+        // after normalization, one empty and one non-empty doesn't match
+        // (we shouldn't suggest joining a Vercel-vendor series when the
+        // operator hasn't set a vendor — that's a real difference).
+        const rNorm = norm(r.vendor ?? "");
+        return rNorm === targetVendor;
+      })
+      .slice(0, 5)
+      .map((r) => ({
+        seriesId: r.recurrenceSeriesId!,
+        latestId: r.id,
+        description: r.description,
+        vendor: r.vendor,
+        latestCost: r.cost,
+        latestDate: etFormatDate(r.date),
+        recurrence: r.recurrence,
+      }));
+    return { candidates };
   });
 
   app.patch("/admin/business-expenses/:id", superGuard, async (req: any) => {
@@ -5471,15 +5601,26 @@ Respond ONLY with valid JSON in this exact format:
         id: true, type: true, date: true, cost: true, description: true, category: true,
         vendor: true, invoiceNumber: true, notes: true, equipmentId: true,
         recurrence: true, recurrenceSkippedUntil: true,
+        recurrenceSeriesId: true,
       },
     });
 
-    // Group by (type, description, vendor); the first row hit (most recent)
-    // wins. Type is in the key so a recurring monthly draw and a recurring
-    // monthly expense that happen to share a description don't collapse.
+    // Group by recurrenceSeriesId when set. This is the explicit
+    // grouping introduced 2026-07-13 — replaces the fragile legacy key
+    // of (type, description, vendor) that forked whenever the label
+    // text drifted (Vercel incident: two rows with a one-character
+    // description difference showed up as separate series).
+    //
+    // Fallback for rows still missing a series id (backfill didn't run,
+    // or a race between deploy + backfill): key on the legacy
+    // (type, description, vendor) tuple. Defense-in-depth so a
+    // pre-migration row never gets orphaned out of the Due-to-record
+    // panel.
     const seen = new Map<string, typeof rows[number]>();
     for (const r of rows) {
-      const key = `${r.type}::${(r.description || "").trim().toLowerCase()}::${(r.vendor || "").trim().toLowerCase()}`;
+      const key = r.recurrenceSeriesId
+        ? `sid::${r.recurrenceSeriesId}`
+        : `${r.type}::${(r.description || "").trim().toLowerCase()}::${(r.vendor || "").trim().toLowerCase()}`;
       if (!seen.has(key)) seen.set(key, r);
     }
 
@@ -5560,11 +5701,17 @@ Respond ONLY with valid JSON in this exact format:
       select: {
         type: true, date: true, description: true, vendor: true,
         recurrence: true, recurrenceSkippedUntil: true,
+        recurrenceSeriesId: true,
       },
     });
+    // Group by recurrenceSeriesId when set, fall back to legacy key
+    // otherwise — mirrors /due-soon above. See the comment there for
+    // the rationale.
     const seen = new Map<string, typeof rows[number]>();
     for (const r of rows) {
-      const key = `${r.type}::${(r.description || "").trim().toLowerCase()}::${(r.vendor || "").trim().toLowerCase()}`;
+      const key = r.recurrenceSeriesId
+        ? `sid::${r.recurrenceSeriesId}`
+        : `${r.type}::${(r.description || "").trim().toLowerCase()}::${(r.vendor || "").trim().toLowerCase()}`;
       if (!seen.has(key)) seen.set(key, r);
     }
     let count = 0;

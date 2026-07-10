@@ -1510,9 +1510,23 @@ model BusinessExpense {
   receiptUploadedAt  DateTime?
 
   // Optional cadence flag for recurring expenses (e.g. monthly software
-  // subscriptions). Null = one-off. The most recent row in a group keyed
-  // by (description, vendor) drives "due to record" suggestions.
+  // subscriptions). Null = one-off. Series identity is tracked by the
+  // `recurrenceSeriesId` field below — all rows in the same series share
+  // an id, which is what drives "due to record" grouping. Legacy rows
+  // predating the series-id migration may have a null id; the
+  // /business-expenses/due-soon endpoint falls back to the old
+  // (type, description, vendor) key for those.
   recurrence ExpenseRecurrence?
+
+  // Explicit series identifier. All rows in the same recurring series
+  // share this value — mint a fresh id when a NEW recurring expense is
+  // added, copy the source row's id when a subsequent instance is
+  // recorded via the "Record" flow on the Due-to-record panel. This
+  // replaces the previous implicit series key of
+  // (type, description, vendor), which forked whenever the label text
+  // drifted (typo, autocorrect, hidden character). See Vercel incident
+  // 2026-07-13 for the motivating bug.
+  recurrenceSeriesId String?
 
   // When set, the next-expected date for the series is computed from this
   // date instead of `date + cadence`. Used by the "Skip" button on the Due
@@ -1529,6 +1543,7 @@ model BusinessExpense {
   @@index([equipmentId])
   @@index([occurrenceId])
   @@index([type])
+  @@index([recurrenceSeriesId])
 }
 
 model Setting {
