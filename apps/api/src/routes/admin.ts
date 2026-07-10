@@ -7407,10 +7407,18 @@ Respond ONLY with valid JSON in this exact format:
     if (!b.userId) throw app.httpErrors.badRequest("userId is required");
     if (!b.expiresAt) throw app.httpErrors.badRequest("expiresAt is required");
     if (!b.reason) throw app.httpErrors.badRequest("reason is required");
+    // The GrantExceptionDialog's `<input type="date">` sends a bare
+    // "YYYY-MM-DD" string. `new Date("YYYY-MM-DD")` parses as UTC
+    // midnight — 8pm ET the PREVIOUS day during EDT — so an operator
+    // who picked 7/11 would end up with an expiresAt of 2026-07-11T00:00Z
+    // that displays via `fmtDate()` as "7/10". Route the string through
+    // the canonical etEndOfDay helper so "picked 7/11" means "exception
+    // is valid all day 7/11 in the business timezone." Matches the
+    // operator's mental model AND the display date.
     return services.policies.grantException(uid, {
       userId: String(b.userId),
       policyId: String(req.params.id),
-      expiresAt: new Date(String(b.expiresAt)),
+      expiresAt: etEndOfDay(String(b.expiresAt)),
       reason: String(b.reason),
     });
   });
@@ -7461,7 +7469,12 @@ Respond ONLY with valid JSON in this exact format:
       uploadFileName: String(b.uploadFileName ?? ""),
       uploadContentType: String(b.uploadContentType ?? ""),
       uploadDigest: String(b.uploadDigest),
-      uploadExpiresAt: b.uploadExpiresAt ? new Date(String(b.uploadExpiresAt)) : null,
+      // The upload-expiry picker is `<input type="date">` sending a
+      // bare "YYYY-MM-DD" string. Route through etEndOfDay for the same
+      // reason as grantException above: an insurance cert expiring
+      // 2027-12-31 would otherwise be stored as 2027-12-31T00:00Z (= Dec
+      // 30 20:00 ET) and lapse a day early against `UPLOAD_EXPIRED`.
+      uploadExpiresAt: b.uploadExpiresAt ? etEndOfDay(String(b.uploadExpiresAt)) : null,
       typeAcknowledgment: b.typeAcknowledgment ? String(b.typeAcknowledgment) : undefined,
       clientIp: (req.ip as string) ?? null,
       userAgent: (req.headers["user-agent"] as string) ?? null,

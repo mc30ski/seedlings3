@@ -348,7 +348,9 @@ export default function AdminComplianceTab() {
           component definition below) once the operator's happy with the
           policy list and doesn't need the prompt anymore. Delete-safe —
           no other code depends on it. */}
-      <PolicySuggestionsPanel />
+      <PolicySuggestionsPanel
+        existingPolicyTitles={policies.map((p) => p.title)}
+      />
 
         </>
       )}
@@ -3304,10 +3306,57 @@ const POLICY_SUGGESTIONS: SuggestionTier[] = [
   },
 ];
 
-function PolicySuggestionsPanel() {
+/** Normalize a policy title so a suggestion whose title differs only in
+ *  punctuation, casing, or trailing qualifiers ("(real version)") still
+ *  matches an already-created policy. Used by the Suggested policies
+ *  panel to hide items the operator has already built.
+ *
+ *  Rules:
+ *    - lowercase
+ *    - strip any parenthesized content: "Contractor Agreement (real version)"
+ *      → "Contractor Agreement"
+ *    - replace every non-alphanumeric char with a space (so "&", "/", "-",
+ *      and "and" all collapse together)
+ *    - drop the word "and" (Photo & Media = Photo and Media)
+ *    - collapse whitespace + trim
+ */
+function normalizeSuggestionTitle(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\b(and)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function PolicySuggestionsPanel({
+  existingPolicyTitles,
+}: {
+  /** Titles of every non-archived policy the operator currently has. Used
+   *  to auto-hide suggestions the operator has already built. */
+  existingPolicyTitles: string[];
+}) {
   const [expanded, setExpanded] = useState(false);
 
-  const totalSuggestions = POLICY_SUGGESTIONS.reduce((n, tier) => n + tier.items.length, 0);
+  // Set of normalized titles of policies the operator already has. A
+  // suggestion whose normalized title is in this set is filtered out.
+  const existingNormalized = new Set(
+    existingPolicyTitles.map(normalizeSuggestionTitle),
+  );
+  const visibleTiers = POLICY_SUGGESTIONS.map((tier) => ({
+    ...tier,
+    items: tier.items.filter(
+      (item) => !existingNormalized.has(normalizeSuggestionTitle(item.title)),
+    ),
+  })).filter((tier) => tier.items.length > 0);
+  const totalSuggestions = visibleTiers.reduce(
+    (n, tier) => n + tier.items.length,
+    0,
+  );
+
+  // Panel hides entirely when every suggestion has been fulfilled.
+  if (totalSuggestions === 0) return null;
 
   return (
     <Box
@@ -3334,7 +3383,7 @@ function PolicySuggestionsPanel() {
         </Box>
         <VStack align="start" gap={0} flex="1" minW={0}>
           <Text fontSize="sm" fontWeight="semibold" color="blue.900" textAlign="left">
-            Suggested policies — {totalSuggestions} ideas across {POLICY_SUGGESTIONS.length} tiers
+            Suggested policies — {totalSuggestions} ideas across {visibleTiers.length} tiers
           </Text>
           <Text fontSize="xs" color="blue.800" textAlign="left">
             Reminder of policies worth building next. Grouped by priority. Click to {expanded ? "hide" : "expand"}.
@@ -3347,7 +3396,7 @@ function PolicySuggestionsPanel() {
       {expanded && (
         <Box borderTopWidth="1px" borderColor="blue.200" bg="white" p={3}>
           <VStack align="stretch" gap={4}>
-            {POLICY_SUGGESTIONS.map((tier) => (
+            {visibleTiers.map((tier) => (
               <Box key={tier.key}>
                 <Text fontSize="sm" fontWeight="semibold" color="blue.900" mb={0.5}>
                   {tier.title}
