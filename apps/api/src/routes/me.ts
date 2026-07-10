@@ -63,6 +63,9 @@ export default async function meRoutes(app: FastifyInstance) {
   // Honors the X-Reveal-Pre-Cutoff header the same way every money endpoint
   // does — i.e. when a Super sends reveal=true, this returns null and the
   // UI shows the unfiltered state. See lib/businessStartCutoff.ts.
+  // view-as-allow: returns the EFFECTIVE Business Start Date cutoff for
+  // the current request, driven by the caller's own reveal header. Not a
+  // per-worker resource.
   app.get("/me/business-start", { preHandler: app.requireApproved.bind(app) }, async (req: any) => {
     const cutoff = await resolveCutoff(req);
     return {
@@ -106,6 +109,9 @@ export default async function meRoutes(app: FastifyInstance) {
   // the unique constraint on `endpoint` makes that a no-op when valid and
   // a fresh insert when iOS/Android quietly invalidated the old one.
 
+  // view-as-allow: push subscriptions are per-device and belong to the
+  // caller's device. No admin has a reason to enumerate another user's
+  // subscriptions.
   app.get("/me/push-subscriptions", async (req: any, reply: FastifyReply) => {
     const clerkUserId = req.auth?.clerkUserId;
     if (!clerkUserId) return reply.code(401).send({ error: "Unauthorized" });

@@ -3363,6 +3363,38 @@ async function seedPolicyFixtures() {
     ].join("\n"),
   });
 
+  await seedPolicy({
+    key: "SOCIAL_MEDIA",
+    title: "Social Media Policy",
+    description: "What you can and can't post from a Seedlings job — protecting yourself, your coworkers, and our clients.",
+    targetWorkerTypes: ["EMPLOYEE", "CONTRACTOR", "TRAINEE"],
+    enforcement: "INFO",
+    workerAction: "ACKNOWLEDGE",
+    resignTrigger: "DAYS_SINCE_SIGN",
+    resignParamDays: 180,
+    gatesServices: [],
+    sortOrder: 95,
+    contentMarkdown: [
+      "# Social Media Policy",
+      "",
+      "Anything you post from a Seedlings job reflects on the company.",
+      "",
+      "**You consent to photos of yourself at work being shared freely** — post them on your own social media if you want, and Seedlings may share them too. If you'd rather your image not be shared, tell the office and we'll respect that.",
+      "",
+      "**Coworkers first.** Photos you take at work may include other people on the crew. Check with them before you post, and if anyone asks not to be shared, respect that — blur or crop them out before you share.",
+      "",
+      "**Never share a client's property or personal details.** That includes: street numbers, mailboxes, name signs, license plates, paperwork in view, the client's face, or a look into their windows.",
+      "",
+      "If a client-site photo captures any of that, use the app's built-in **redact editor** before sharing. Tap the photo on any upload screen, drag rectangles over the sensitive spots, then pick **Black out** (solid bar) or **Blur** per rectangle. Redactions bake into the file; the original un-redacted version never leaves your device.",
+      "",
+      "**When in doubt, don't post.** One leaked client address does more damage than a hundred posts you skipped.",
+      "",
+      "---",
+      "",
+      "By acknowledging this policy, I consent to photos of myself taken at work being shared freely — by me on my own social media and by Seedlings for its own use. I understand that photos I share may include coworkers, and I'll check with them and respect their preferences before posting.",
+    ].join("\n"),
+  });
+
   // NEW: contractor-only insurance certificate policy. Exercises the
   // requiresWorkerUpload + workerUploadRequiresExpiry + workerUploadRequiresApproval
   // + adminCanUploadOnBehalf combination. Only CONTRACTOR is targeted.

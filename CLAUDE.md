@@ -87,6 +87,14 @@ disagree, one of them is wrong; fix both in the same PR.
 - **Payments build gate invariants must not be relaxed** — see
   `apps/api/src/services/payments-build-gate.test.ts` and the
   documentation in `docs/FINANCIAL_SYSTEM.md`.
+- **View-as endpoints must be view-as-aware or explicitly annotated** —
+  every `GET /me/*` route in `apps/api/src/routes/` either accepts
+  `?viewAsUserId=<id>` (with an ADMIN/SUPER role gate) OR carries a
+  `// view-as-allow: <reason>` comment above the route. Enforced by
+  [`apps/api/src/services/view-as-endpoints-build-gate.test.ts`](apps/api/src/services/view-as-endpoints-build-gate.test.ts).
+  Policy + shipped-bug history at
+  [`docs/VIEW_AS_ENDPOINTS.md`](docs/VIEW_AS_ENDPOINTS.md). This class of
+  bug has shipped three times — don't ship a fourth.
 
 ## Working style for this repo
 

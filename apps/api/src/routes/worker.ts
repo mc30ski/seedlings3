@@ -1484,11 +1484,17 @@ export default async function workerRoutes(app: FastifyInstance) {
 
   // Groups the caller can claim on behalf of (i.e. they are the claimer).
   // Used by the JobsTab Claim chooser.
+  // view-as-allow: the "as-claimer" scope is inherently caller-only —
+  // returns groups where the CALLER is the current claimer. Admin/Super
+  // hits /admin/groups for cross-worker visibility instead.
   app.get("/me/groups-as-claimer", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
     return services.groups.listForClaimer(uid);
   });
 
+  // view-as-allow: worker's own outstanding payment requests for the
+  // planning-tab nudge. Admin sees cross-worker payment state under
+  // /admin/payment-requests / /admin/payments.
   // The caller's own outstanding payment requests — sent to a client but
   // not yet paid. Powers the Planning-tab nudge so a claimer can chase a
   // request that's gone quiet.
@@ -3439,10 +3445,34 @@ export default async function workerRoutes(app: FastifyInstance) {
   // flow driven by services/policies.ts.
 
   app.get("/me/policies", workerGuard, async (req: any) => {
-    const uid = await currentUserId(req);
-    return services.policies.getWorkerPoliciesView(uid);
+    // Admin/Super can pass ?viewAsUserId=<id> to read another worker's
+    // compliance view — used by the Admin Home "View as" flow to render the
+    // target's ComplianceBanner correctly. Mutations on /me/policies/*
+    // (sign, acknowledge, upload) intentionally do NOT accept viewAsUserId:
+    // those are self-service by design (worker must acknowledge / sign
+    // in-person). Admins act on someone else's compliance via
+    // /admin/policies/... routes.
+    const callerUid = await currentUserId(req);
+    const { viewAsUserId } = (req.query || {}) as { viewAsUserId?: string };
+    let targetUid = callerUid;
+    if (viewAsUserId && viewAsUserId !== callerUid) {
+      const caller = await prisma.user.findUnique({
+        where: { id: callerUid },
+        include: { roles: true },
+      });
+      const isAdmin = caller?.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+      if (!isAdmin) {
+        throw app.httpErrors.forbidden("Admin or Super role required to view another worker's compliance.");
+      }
+      targetUid = viewAsUserId;
+    }
+    return services.policies.getWorkerPoliciesView(targetUid);
   });
 
+  // view-as-allow: drives the caller's own alerts-dropdown badge (their
+  // own notifications feed). The view-as flow does not consume this — the
+  // banner uses /me/policies with viewAsUserId instead.
+  //
   // Cheap count for the alerts dropdown badge — same required list as
   // /me/policies but without loading the full history, description text,
   // or version content. Returned as { pendingCount } for symmetry with
@@ -3513,6 +3543,10 @@ export default async function workerRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
+  // view-as-allow: presigned download URL for the CALLER's own signature
+  // artifact / policy body. Admin equivalents live under
+  // /admin/policies/signatures/... for downloading someone else's upload.
+  //
   // View-content presigned GET — worker downloads either the version's
   // published content (e.g., PDF policy body) or their own signature's
   // uploaded artifact for review.
@@ -3547,6 +3581,10 @@ export default async function workerRoutes(app: FastifyInstance) {
     });
   });
 
+  // view-as-allow: worker's own statistics (Home / Statistics tab).
+  // Admin's cross-worker Statistics view hits /admin/statistics with a
+  // workerIds filter instead — the view-as pattern isn't used here.
+  //
   // Worker statistics (proxies to admin statistics endpoint logic, scoped to self)
   app.get("/me/statistics", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
@@ -4343,18 +4381,26 @@ export default async function workerRoutes(app: FastifyInstance) {
   // userCanLogAgainstVehicle so an unassigned worker can't slip a
   // mileage entry in.
 
+  // view-as-allow: vehicles the CALLER is assigned to — feeds the
+  // MileageStrip, which is only rendered in self-service mode
+  // (HomeTab.tsx suppresses MileageStrip when isViewingOther is true).
   app.get("/me/vehicles", workerGuard, async (req: any) => {
     const { listAssignedVehiclesForUser } = await import("../services/vehicles");
     const uid = await services.currentUser.me(req.auth?.clerkUserId).then((u) => u.id);
     return listAssignedVehiclesForUser(uid);
   });
 
+  // view-as-allow: caller's own currently-open mileage sessions. Feeds
+  // the MileageStrip and the End-workday dialog's "close open sessions"
+  // prompt — both self-service surfaces.
   app.get("/me/mileage/open", workerGuard, async (req: any) => {
     const { listOpenEntriesForUser } = await import("../services/mileage");
     const uid = await services.currentUser.me(req.auth?.clerkUserId).then((u) => u.id);
     return listOpenEntriesForUser(uid);
   });
 
+  // view-as-allow: caller's own mileage-entry list. Admin's cross-worker
+  // mileage view uses /admin/mileage instead.
   app.get("/me/mileage", workerGuard, async (req: any) => {
     const { listEntriesForUser } = await import("../services/mileage");
     const uid = await services.currentUser.me(req.auth?.clerkUserId).then((u) => u.id);

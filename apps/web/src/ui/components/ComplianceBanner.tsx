@@ -36,13 +36,31 @@ type WorkerPoliciesSummary = {
  * exception, etc.). Also removes itself when the wizard closes with all
  * items handled.
  */
-export default function ComplianceBanner({ disabled = false }: { disabled?: boolean }) {
+export default function ComplianceBanner({
+  disabled = false,
+  viewAsUserId = null,
+  viewAsDisplayName = null,
+}: {
+  disabled?: boolean;
+  /** When set, fetch and display the named worker's compliance status
+   *  instead of the caller's own. Used by the Admin Home "View as" flow
+   *  so a Super can see what pending items are blocking the target worker
+   *  from starting work. Actions (Sign now / View profile) are hidden in
+   *  this mode — the Super manages the target via Super → Directory →
+   *  Compliance. */
+  viewAsUserId?: string | null;
+  viewAsDisplayName?: string | null;
+}) {
   const [summary, setSummary] = useState<WorkerPoliciesSummary | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const isViewingAs = !!viewAsUserId;
 
   const load = useCallback(async () => {
     try {
-      const data = await apiGet<WorkerPoliciesSummary>("/api/me/policies");
+      const url = viewAsUserId
+        ? `/api/me/policies?viewAsUserId=${encodeURIComponent(viewAsUserId)}`
+        : "/api/me/policies";
+      const data = await apiGet<WorkerPoliciesSummary>(url);
       setSummary(data);
     } catch {
       // Silent failure — a fetch error shouldn't render an alarming red
@@ -52,11 +70,17 @@ export default function ComplianceBanner({ disabled = false }: { disabled?: bool
     } finally {
       setLoaded(true);
     }
-  }, []);
+  }, [viewAsUserId]);
 
   useEffect(() => {
     if (disabled) return;
     void load();
+    // View-as banner reflects the TARGET worker's compliance, so
+    // policies:signed / policies:changed events fired by the CALLER's own
+    // sign wizard shouldn't force a refetch — they'd introduce noise
+    // (Super signs their own item → Jacob's banner blinks). Self-service
+    // path still listens.
+    if (isViewingAs) return;
     const onChanged = () => void load();
     window.addEventListener("policies:signed", onChanged);
     window.addEventListener("policies:changed", onChanged);
@@ -64,7 +88,7 @@ export default function ComplianceBanner({ disabled = false }: { disabled?: bool
       window.removeEventListener("policies:signed", onChanged);
       window.removeEventListener("policies:changed", onChanged);
     };
-  }, [disabled, load]);
+  }, [disabled, load, isViewingAs]);
 
   if (disabled || !loaded || !summary) return null;
   const required = summary.required;
@@ -95,12 +119,40 @@ export default function ComplianceBanner({ disabled = false }: { disabled?: bool
     );
   };
 
+  // View-as mode: instead of "Sign now" (nonsensical — Super can't sign
+  // for Jacob) and "View profile" (would open Super's profile), send the
+  // operator to Super → Directory → Compliance where they can grant an
+  // exception or upload on the worker's behalf.
+  const openSuperCompliance = () => {
+    window.dispatchEvent(
+      new CustomEvent("navigate:superTab", { detail: { tab: "compliance" } }),
+    );
+  };
+
   const bg = hasBlocking ? "red.50" : "orange.50";
   const border = hasBlocking ? "red.300" : "orange.300";
   const iconColor = hasBlocking ? "red.600" : "orange.600";
   const buttonPalette: "red" | "orange" = hasBlocking ? "red" : "orange";
 
+  // View-as mode reframes the "you have..." copy in the third person so
+  // the operator sees whose compliance they're looking at, not their own.
+  const subject = isViewingAs
+    ? (viewAsDisplayName || summary?.displayName || "This worker")
+    : null;
   const summaryText = (() => {
+    if (isViewingAs) {
+      if (hasBlocking && recommended.length === 0) {
+        return blocking.length === 1
+          ? `${subject} has 1 required document blocking them from starting work.`
+          : `${subject} has ${blocking.length} required documents blocking them from starting work.`;
+      }
+      if (hasBlocking && recommended.length > 0) {
+        return `${subject} has ${blocking.length} required + ${recommended.length} recommended pending document${blocking.length + recommended.length === 1 ? "" : "s"}.`;
+      }
+      return recommended.length === 1
+        ? `${subject} has 1 recommended document pending.`
+        : `${subject} has ${recommended.length} recommended documents pending.`;
+    }
     if (hasBlocking && recommended.length === 0) {
       return blocking.length === 1
         ? "You have 1 required document to sign before you can start work."
@@ -147,12 +199,20 @@ export default function ComplianceBanner({ disabled = false }: { disabled?: bool
             </Text>
           </VStack>
           <HStack gap={2} flexShrink={0}>
-            <Button size="sm" variant="outline" colorPalette={buttonPalette} onClick={openProfile}>
-              View profile
-            </Button>
-            <Button size="sm" colorPalette={buttonPalette} onClick={openWizard}>
-              Sign now
-            </Button>
+            {isViewingAs ? (
+              <Button size="sm" colorPalette={buttonPalette} onClick={openSuperCompliance}>
+                Manage in Compliance
+              </Button>
+            ) : (
+              <>
+                <Button size="sm" variant="outline" colorPalette={buttonPalette} onClick={openProfile}>
+                  View profile
+                </Button>
+                <Button size="sm" colorPalette={buttonPalette} onClick={openWizard}>
+                  Sign now
+                </Button>
+              </>
+            )}
           </HStack>
         </HStack>
       </Card.Body>

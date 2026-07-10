@@ -707,7 +707,10 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
             cleared. Sign now button dispatches the same `policies:required`
             event PolicyGateInterceptor listens for, reusing the wizard
             flow. Hidden while an admin is impersonating another worker. */}
-        <ComplianceBanner disabled={isViewingOther} />
+        <ComplianceBanner
+          viewAsUserId={viewAsUserId ?? null}
+          viewAsDisplayName={isViewingOther ? (viewAsDisplayName ?? null) : null}
+        />
 
         {/* Workday — mileage is injected INSIDE the workday card via the
             mileageSlot prop so they share ONE border, ONE background, ONE
