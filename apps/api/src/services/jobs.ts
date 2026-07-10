@@ -1400,6 +1400,22 @@ export const jobs: ServicesJobs = {
       if ("completedAt" in patch) data.completedAt = patch.completedAt ? new Date(patch.completedAt) : null;
       if ("totalPausedMs" in patch) data.totalPausedMs = patch.totalPausedMs != null ? Math.max(0, Math.round(Number(patch.totalPausedMs))) : 0;
 
+      // Auto-stamp completedAt when transitioning INTO a completion
+      // state (COMPLETED / PENDING_PAYMENT / CLOSED). Without this the
+      // admin PATCH path can leave a row at status=COMPLETED with
+      // completedAt=null — the client's service-history query filters
+      // on completedAt, so a null value silently HIDES real completed
+      // work from the client's view. Only fires when the patch didn't
+      // already pass an explicit completedAt and the row didn't already
+      // have one.
+      const isEnteringCompletion =
+        typeof data.status === "string" &&
+        (data.status === "COMPLETED" || data.status === "PENDING_PAYMENT" || data.status === "CLOSED");
+      const patchDidntSetCompletedAt = !("completedAt" in patch) || patch.completedAt == null;
+      if (isEnteringCompletion && patchDidntSetCompletedAt && !original.completedAt) {
+        data.completedAt = new Date();
+      }
+
       // Auto-revert status when admin clears a timestamp that
       // semantically defines a status. Without this, an admin clearing
       // startedAt on an IN_PROGRESS occurrence leaves status=IN_PROGRESS

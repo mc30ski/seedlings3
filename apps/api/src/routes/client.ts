@@ -52,6 +52,12 @@ export default async function clientRoutes(app: FastifyInstance) {
    *  across all rows is what every other client-portal endpoint
    *  scopes its data by. */
   async function getLinkedContacts(clerkUserId: string) {
+    // Returns every property regardless of `status` (ACTIVE or
+    // ARCHIVED). Callers that want only ACTIVE (e.g. the /client/me
+    // "my properties" list shown in the UI) filter at the response
+    // mapping. History and change-request scoping keep ARCHIVED
+    // included so old, paid-for work on a retired property is still
+    // visible to the client instead of being silently hidden.
     return prisma.clientContact.findMany({
       where: { clerkUserId },
       orderBy: { createdAt: "asc" },
@@ -59,8 +65,7 @@ export default async function clientRoutes(app: FastifyInstance) {
         client: {
           include: {
             properties: {
-              where: { status: "ACTIVE" },
-              select: { id: true, displayName: true, street1: true, city: true, state: true },
+              select: { id: true, displayName: true, street1: true, city: true, state: true, status: true },
             },
           },
         },
@@ -221,9 +226,13 @@ export default async function clientRoutes(app: FastifyInstance) {
     // Identity comes from the oldest contact row (stable across
     // multi-client setups). The properties payload is the union
     // across every linked client so the portal can show all of
-    // them in one list.
+    // them in one list.  Filter to ACTIVE at the response layer —
+    // getLinkedContacts returns ALL properties so downstream history
+    // queries can include archived ones, but the client's "My
+    // Properties" list shouldn't clutter with retired addresses.
+    const isActiveProp = (p: { status?: string }) => p.status === "ACTIVE";
     const primary = contacts[0];
-    const allProperties = contacts.flatMap((c) => c.client.properties);
+    const allProperties = contacts.flatMap((c) => c.client.properties).filter(isActiveProp);
 
     return {
       linked: true,
@@ -247,7 +256,7 @@ export default async function clientRoutes(app: FastifyInstance) {
       clients: contacts.map((c) => ({
         id: c.client.id,
         displayName: c.client.displayName,
-        properties: c.client.properties,
+        properties: c.client.properties.filter(isActiveProp),
       })),
     };
   });
@@ -265,17 +274,23 @@ export default async function clientRoutes(app: FastifyInstance) {
     if (propertyIds.length === 0) return { items: [], monthsBack: 1, maxMonthsBack: 12, hasMore: false };
 
     // Service history window: monthsBack=N covers the current calendar
-    // month plus the previous (N-1) months. Default is the current month
-    // only; the client's "Show more" button increments monthsBack one
-    // step at a time, up to 12 (one year). Beyond a year, the data is
-    // archived from the client's point of view — they call/text us if
-    // they need older records.
+    // month plus the previous (N-1) months. Default is 3 months — enough
+    // to always show the client's most recent visits regardless of what
+    // day of the month they open the app. A "monthsBack=1" default meant
+    // that on the 1st or 2nd of any month, clients saw essentially
+    // nothing and had to hit "Show more" to see last month's history —
+    // which is what most people would consider "recent."
+    // Client's "Show more" button increments monthsBack from there, up
+    // to 12 (one year). Beyond a year, the data is archived from the
+    // client's point of view — they call/text us if they need older
+    // records.
     const MAX_MONTHS_BACK = 12;
     const MAX_JOBS = 100;
+    const DEFAULT_MONTHS_BACK = 3;
     const rawMonths = Number(req.query?.monthsBack);
     const monthsBack = Number.isFinite(rawMonths)
       ? Math.min(MAX_MONTHS_BACK, Math.max(1, Math.floor(rawMonths)))
-      : 1;
+      : DEFAULT_MONTHS_BACK;
     // First-of-month in ET, then walk back monthsBack-1 months via string
     // arithmetic so DST/UTC don't shift the boundary.
     const startKey = etStartOfMonth(); // YYYY-MM-01 in ET
@@ -289,13 +304,35 @@ export default async function clientRoutes(app: FastifyInstance) {
 
     const occurrences = await prisma.jobOccurrence.findMany({
       where: {
-        status: { in: ["CLOSED", "PENDING_PAYMENT"] },
+        // COMPLETED, CLOSED, and PENDING_PAYMENT are all "the work is
+        // done" states from the client's point of view. Previously only
+        // CLOSED/PENDING_PAYMENT was listed here, which silently hid
+        // every occurrence in COMPLETED status — real, finished work the
+        // client couldn't see.
+        status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] },
         job: { propertyId: { in: propertyIds } },
-        workflow: { not: "ESTIMATE" },
-        isEstimate: false,
-        completedAt: { gte: startOfMonth },
+        // Only real client-facing service work belongs in the history.
+        // Internal workflows (TASK, REMINDER, EVENT, FOLLOWUP,
+        // ANNOUNCEMENT, ESTIMATE) never surface to the client — same
+        // rule applied by the worker route.
+        workflow: { in: ["STANDARD", "ONE_OFF"] },
+        // isAdminOnly is set on ops-scratch rows the client should
+        // never see (estimates, admin-only reminders, etc.).
+        isAdminOnly: false,
+        // Historical data has some rows in a completion state with
+        // completedAt=null (admin PATCH paths didn't always stamp it —
+        // fixed forward but historical rows persist). Include those by
+        // falling back to startedAt when completedAt is null so the
+        // client's history isn't silently blank for legacy rows.
+        OR: [
+          { completedAt: { gte: startOfMonth } },
+          { AND: [{ completedAt: null }, { startedAt: { gte: startOfMonth } }] },
+        ],
       },
-      orderBy: { completedAt: "desc" },
+      // Prisma can't order by COALESCE; explicit tie-breaker on startedAt
+      // for the null-completedAt fallback rows so they still sort roughly
+      // by recency.
+      orderBy: [{ completedAt: "desc" }, { startedAt: "desc" }],
       take: MAX_JOBS,
       select: {
         id: true,
@@ -425,10 +462,58 @@ export default async function clientRoutes(app: FastifyInstance) {
     const propertyIds = contacts.flatMap((c) => c.client.properties.map((p) => p.id));
     if (propertyIds.length === 0) return { items: [] };
 
+    // Date cutoff for the "upcoming" list. A SCHEDULED / ACCEPTED /
+    // PAUSED occurrence with startAt before the start of today (ET) is
+    // stale — probably a job whose close-out step was skipped by the
+    // crew. Those must NOT show as "upcoming."
+    //
+    // IN_PROGRESS gets a 2-day grace window instead of a hard cutoff:
+    // a worker who started a job late last night should still see it as
+    // in progress. An IN_PROGRESS row older than 2 days is stale and
+    // hidden — surfacing it as "Happening Now" a month later looks
+    // broken to the client (which is exactly the 6/2 bug the operator
+    // hit).
+    const upcomingCutoff = etMidnight(etToday());
+    // date-handling-allow: elapsed-time
+    const inProgressCutoff = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+
     const occurrences = await prisma.jobOccurrence.findMany({
       where: {
-        status: { in: ["SCHEDULED", "IN_PROGRESS", "ACCEPTED", "PROPOSAL_SUBMITTED"] },
+        // PROPOSAL_SUBMITTED intentionally excluded — estimates are
+        // internal and must never surface in the client portal.
         job: { propertyId: { in: propertyIds } },
+        // Only real client-facing service work surfaces to the client.
+        // Internal workflows (TASK, REMINDER, EVENT, FOLLOWUP,
+        // ANNOUNCEMENT, ESTIMATE) never leak into the portal.
+        workflow: { in: ["STANDARD", "ONE_OFF"] },
+        // Belt-and-suspenders exclusion for any occurrence flagged as
+        // an estimate via legacy isEstimate.
+        isEstimate: false,
+        // isAdminOnly is set on ops-scratch rows the client should
+        // never see.
+        isAdminOnly: false,
+        OR: [
+          {
+            // Truly-active IN_PROGRESS: started less than 2 days ago
+            // and either startedAt or startAt is within the grace
+            // window. Rows outside this window are hidden as stale.
+            status: "IN_PROGRESS",
+            OR: [
+              { startedAt: { gte: inProgressCutoff } },
+              { startAt: { gte: inProgressCutoff } },
+            ],
+          },
+          {
+            // Everything else: strict "must be today or later" cutoff.
+            // Note that ACCEPTED here is technically dead (only present
+            // in the ESTIMATE workflow which is filtered out above) but
+            // kept for safety.  PAUSED is included so paused-mid-job
+            // rows still appear in the client's Upcoming view — dropping
+            // them silently would look like the job vanished.
+            status: { in: ["SCHEDULED", "ACCEPTED", "PAUSED"] },
+            startAt: { gte: upcomingCutoff },
+          },
+        ],
       },
       orderBy: { startAt: "asc" },
       take: 50,
@@ -440,13 +525,10 @@ export default async function clientRoutes(app: FastifyInstance) {
         startedAt: true,
         estimatedMinutes: true,
         workflow: true,
-        isEstimate: true,
         isOneOff: true,
         frequencyDays: true,
         jobType: true,
         price: true,
-        proposalAmount: true,
-        proposalNotes: true,
         notes: true,
         job: {
           select: {
@@ -520,13 +602,10 @@ export default async function clientRoutes(app: FastifyInstance) {
           startedAt: occ.startedAt,
           estimatedMinutes: occ.estimatedMinutes,
           workflow: occ.workflow,
-          isEstimate: occ.isEstimate,
           isOneOff: (occ as any).isOneOff ?? false,
           frequencyDays: effectiveFreq,
           jobType: occ.jobType,
           price: occ.price,
-          proposalAmount: (occ as any).proposalAmount ?? null,
-          proposalNotes: (occ as any).proposalNotes ?? null,
           property: occ.job?.property ?? null,
           // Return full displayName ("First Last") — receipts need the
           // full name. Casual UI uses workerLabel() to extract the first
@@ -795,48 +874,8 @@ export default async function clientRoutes(app: FastifyInstance) {
 
   // ── Estimate accept / decline (client) ──────────────────────────────────
 
-  /**
-   * Estimate accept/decline — records the client's decision as a comment on the
-   * occurrence. Admin sees the comment and proceeds with the existing
-   * accept-estimate / reject-estimate flows on their side.
-   */
-  app.post("/client/estimates/:id/accept", clientGuard, async (req: any) => {
-    const id = String(req.params.id);
-    const clerkUserId = req.auth.clerkUserId!;
-    const body = req.body || {};
-    const occ = await verifyOccurrenceForClient(id, clerkUserId);
-    if (occ.workflow !== "ESTIMATE" && !occ.isEstimate) throw app.httpErrors.badRequest("Not an estimate.");
-    if (occ.status !== "PROPOSAL_SUBMITTED") throw app.httpErrors.badRequest("Only submitted estimates can be accepted.");
-    const me = await getMyUser(clerkUserId);
-    if (!me) throw app.httpErrors.unauthorized("User not provisioned.");
-    const note = body.comment ? String(body.comment).trim() : "";
-    await prisma.occurrenceComment.create({
-      data: {
-        occurrenceId: id,
-        authorId: me.id,
-        body: `✅ Client accepted the estimate.${note ? `\n\n${note}` : ""}`,
-      },
-    });
-    return { accepted: true };
-  });
-
-  app.post("/client/estimates/:id/decline", clientGuard, async (req: any) => {
-    const id = String(req.params.id);
-    const clerkUserId = req.auth.clerkUserId!;
-    const body = req.body || {};
-    const occ = await verifyOccurrenceForClient(id, clerkUserId);
-    if (occ.workflow !== "ESTIMATE" && !occ.isEstimate) throw app.httpErrors.badRequest("Not an estimate.");
-    if (occ.status !== "PROPOSAL_SUBMITTED") throw app.httpErrors.badRequest("Only submitted estimates can be declined.");
-    const me = await getMyUser(clerkUserId);
-    if (!me) throw app.httpErrors.unauthorized("User not provisioned.");
-    const reason = body.reason ? String(body.reason).trim() : "";
-    await prisma.occurrenceComment.create({
-      data: {
-        occurrenceId: id,
-        authorId: me.id,
-        body: `❌ Client declined the estimate.${reason ? `\n\nReason: ${reason}` : ""}`,
-      },
-    });
-    return { declined: true };
-  });
+  // Client-facing estimate accept/decline endpoints removed —
+  // estimates are internal to the company and must never surface in the
+  // client portal.  If a client-visible quote flow is ever needed again
+  // it should be redesigned from scratch as a separate feature.
 }

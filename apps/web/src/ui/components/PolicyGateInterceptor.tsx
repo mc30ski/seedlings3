@@ -65,12 +65,38 @@ export default function PolicyGateInterceptor() {
   // `policies:wizard-closed` event. api.ts uses that payload to decide
   // whether to auto-retry the request that triggered the wizard.
   const completedRef = useRef(false);
+  // Tracks whether a `policies:required` event has been received and
+  // NOT yet answered with a `policies:wizard-closed` dispatch. api.ts
+  // registers a one-shot listener the moment it dispatches
+  // `policies:required`, then awaits the closed event to release the
+  // caller's promise. If any code path in this component finishes the
+  // cycle without dispatching, the caller hangs forever. This flag
+  // guards against that: every terminal state (successful sign,
+  // cancelled wizard, dismissed panel, stale-IDs fallthrough) must
+  // dispatch exactly once, and this ref makes the "did we?" question
+  // trivially checkable.
+  const closedPendingRef = useRef(false);
+
+  const dispatchClosedIfPending = useCallback(() => {
+    if (!closedPendingRef.current) return;
+    closedPendingRef.current = false;
+    const completed = completedRef.current;
+    completedRef.current = false;
+    window.dispatchEvent(
+      new CustomEvent("policies:wizard-closed", { detail: { completed } }),
+    );
+  }, []);
 
   const closeAll = useCallback(() => {
     setWizardOpen(false);
     setWizardPolicies([]);
     setAwaitingPanelRows([]);
-  }, []);
+    // Safety net: dispatch even if we never opened the wizard. Covers
+    // the "no filter matched" fallthrough in fetchAndRoute AND the
+    // awaiting-review panel dismissal — both would otherwise hang the
+    // api.ts caller forever.
+    dispatchClosedIfPending();
+  }, [dispatchClosedIfPending]);
 
   const handleWizardCompleted = useCallback(() => {
     completedRef.current = true;
@@ -80,13 +106,10 @@ export default function PolicyGateInterceptor() {
   }, []);
 
   const handleWizardClose = useCallback(() => {
-    const completed = completedRef.current;
-    completedRef.current = false;
-    window.dispatchEvent(
-      new CustomEvent("policies:wizard-closed", { detail: { completed } }),
-    );
+    // dispatchClosedIfPending reads completedRef + resets both refs.
+    dispatchClosedIfPending();
     closeAll();
-  }, [closeAll]);
+  }, [closeAll, dispatchClosedIfPending]);
 
   const fetchAndRoute = useCallback(async (targetIds: string[] | null) => {
     if (loading) return;
@@ -136,6 +159,11 @@ export default function PolicyGateInterceptor() {
         | { pendingPolicyIds?: string[]; message?: string }
         | undefined;
       const ids = detail?.pendingPolicyIds ?? [];
+      // Mark a wizard-closed dispatch as owed BEFORE fetching. Every
+      // terminal path (wizard onClose, panel Close, stale-IDs
+      // fallthrough) reads this flag and dispatches exactly once,
+      // releasing the api.ts caller.
+      closedPendingRef.current = true;
       void fetchAndRoute(ids.length > 0 ? ids : null);
     };
     window.addEventListener("policies:required", handler);
