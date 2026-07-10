@@ -2096,17 +2096,44 @@ export const policies = {
 
   /**
    * If a policy's current version has published grace that expired within
-   * the last 7 days, and the worker hasn't already received an auto-grace
-   * extension for this policy, grant them a 24h catch-up window as an
+   * the last 7 days AND the worker doesn't already hold a currently-valid
+   * signature on that policy, grant them a 24h catch-up window as an
    * exception. Silent — no user-facing message, just prevents an immediate
    * hard block for a dormant returner. Returns the number of extensions
    * granted so the caller can decide whether to re-query exceptions.
+   *
+   * IMPORTANT: skips policies where the worker already has a currently
+   * valid signature. Otherwise every signed worker whose policy grace
+   * has just expired ends up with an "Exception" pill on the sign matrix
+   * — which the matrix renders in preference to the signature — making
+   * a compliant worker look non-compliant. Live production incident on
+   * 2026-07-11 landed us here.
    */
   async _maybeGrantAutoGraceExtensions(
     userId: string,
     policies: Array<{
       id: string;
+      currentVersionId: string | null;
+      archivedAt: Date | null;
+      enforcement: string;
+      workerAction: string;
+      targetWorkerTypes: string[];
+      requiresWorkerUpload: boolean;
+      workerUploadRequiresExpiry: boolean;
+      workerUploadRequiresApproval: boolean;
+      resignTrigger: string;
+      resignParamDays: number | null;
+      resignParamMonthDay: string | null;
       currentVersion: { graceUntil: Date | null } | null;
+      versions: Array<{
+        id: string;
+        policyDocumentId: string;
+        status: string;
+        contentDigest: string;
+        publishedAt: Date | null;
+        graceUntil: Date | null;
+        forcesResign: boolean;
+      }>;
     }>,
     now: Date,
   ): Promise<number> {
@@ -2115,16 +2142,100 @@ export const policies = {
     // date-handling-allow: elapsed-time
     const EXTENSION_MS = 24 * 60 * 60 * 1000;
 
-    // Filter to policies where auto-grace is potentially applicable.
-    const candidatePolicyIds = policies
-      .filter((p) => {
-        const graceUntil = p.currentVersion?.graceUntil;
-        if (!graceUntil) return false;
-        const expiredMs = now.getTime() - graceUntil.getTime();
-        return expiredMs > 0 && expiredMs <= GRACE_LOOKBACK_MS;
-      })
-      .map((p) => p.id);
-    if (candidatePolicyIds.length === 0) return 0;
+    // Filter to policies where auto-grace is potentially applicable
+    // (recent grace expiry). Signature-currency check happens next —
+    // it needs a DB fetch so we scope it to the graceUntil-eligible set
+    // to avoid pulling every worker sig every time /me/policies is hit.
+    const graceEligible = policies.filter((p) => {
+      const graceUntil = p.currentVersion?.graceUntil;
+      if (!graceUntil) return false;
+      const expiredMs = now.getTime() - graceUntil.getTime();
+      return expiredMs > 0 && expiredMs <= GRACE_LOOKBACK_MS;
+    });
+    if (graceEligible.length === 0) return 0;
+    const graceEligibleIds = graceEligible.map((p) => p.id);
+
+    // Signature-currency check — skip policies where the worker already
+    // has a currently-valid signature. Without this filter, every worker
+    // hits the endpoint gets an unnecessary exception the moment the
+    // policy grace crosses into the past, even if they signed a week ago.
+    const workerSigs = await prisma.policySignature.findMany({
+      where: {
+        userId,
+        version: { policyDocumentId: { in: graceEligibleIds } },
+      },
+      orderBy: { signedAt: "desc" },
+    });
+    const sigsByPolicyId = new Map<string, typeof workerSigs>();
+    for (const s of workerSigs) {
+      // Find the parent policyDocumentId via the version chain — every
+      // policy row in graceEligible carries its versions inline for
+      // isSignatureCurrent(), so we can dereference cheaply.
+      const parent = graceEligible.find((p) =>
+        p.versions.some((v) => v.id === s.policyDocumentVersionId),
+      );
+      if (!parent) continue;
+      const arr = sigsByPolicyId.get(parent.id) ?? [];
+      arr.push(s);
+      sigsByPolicyId.set(parent.id, arr);
+    }
+
+    const stillNeedsAutoGrace = graceEligible.filter((p) => {
+      const sigs = sigsByPolicyId.get(p.id) ?? [];
+      if (sigs.length === 0) return true;
+      const versionsById = new Map<string, VersionForPredicate>();
+      for (const v of p.versions) {
+        versionsById.set(v.id, {
+          id: v.id,
+          policyDocumentId: v.policyDocumentId,
+          status: v.status as VersionForPredicate["status"],
+          contentDigest: v.contentDigest,
+          publishedAt: v.publishedAt,
+          graceUntil: v.graceUntil,
+          forcesResign: v.forcesResign,
+        });
+      }
+      const policyForPredicate: PolicyForPredicate = {
+        id: p.id,
+        targetWorkerTypes: p.targetWorkerTypes,
+        enforcement: p.enforcement as PolicyForPredicate["enforcement"],
+        workerAction: p.workerAction as PolicyForPredicate["workerAction"],
+        requiresWorkerUpload: p.requiresWorkerUpload,
+        workerUploadRequiresExpiry: p.workerUploadRequiresExpiry,
+        workerUploadRequiresApproval: p.workerUploadRequiresApproval,
+        resignTrigger: p.resignTrigger as PolicyForPredicate["resignTrigger"],
+        resignParamDays: p.resignParamDays,
+        resignParamMonthDay: p.resignParamMonthDay,
+        currentVersionId: p.currentVersionId,
+        archivedAt: p.archivedAt,
+      };
+      // Walk from newest signature backward; if ANY qualifies, the
+      // worker is current on this policy — no auto-grace needed.
+      for (const sig of sigs) {
+        const version = versionsById.get(sig.policyDocumentVersionId);
+        if (!version) continue;
+        const result = isSignatureCurrent(
+          {
+            id: sig.id,
+            userId: sig.userId,
+            policyDocumentVersionId: sig.policyDocumentVersionId,
+            contentDigestAtSign: sig.contentDigestAtSign,
+            signedAt: sig.signedAt,
+            uploadStatus: sig.uploadStatus,
+            uploadExpiresAt: sig.uploadExpiresAt,
+            revokedAt: sig.revokedAt,
+          },
+          policyForPredicate,
+          version,
+          versionsById,
+          now,
+        );
+        if (result.current) return false; // already covered — skip
+      }
+      return true; // no valid signature — auto-grace applies
+    });
+    if (stillNeedsAutoGrace.length === 0) return 0;
+    const candidatePolicyIds = stillNeedsAutoGrace.map((p) => p.id);
 
     // Idempotency lookup — one query for all candidate policies.
     const existing = await prisma.policyException.findMany({

@@ -190,6 +190,14 @@ export const clients: ServicesClients = {
     // :id/pause-services) and individually-paused Jobs both count — the
     // client card is the operator's "did the pause actually cover
     // everything?" surface, not a status breakdown by cause.
+    //
+    // Only counts paused jobs whose CLIENT and PROPERTY are both ACTIVE.
+    // "Paused services" is meaningless for an archived client (they're
+    // no longer receiving services at all) or an archived property (that
+    // location is retired). Without these predicates the "Paused
+    // services only" filter surfaces archived clients whose old paused
+    // jobs are effectively defunct — operator screenshot 2026-07-11
+    // caught Claire (Archived) appearing in the filter.
     const clientIds = rows.map((r) => r.id);
     const pausedByClient = new Map<string, number>();
     if (clientIds.length > 0) {
@@ -199,8 +207,11 @@ export const clients: ServicesClients = {
         SELECT p."clientId" AS "clientId", COUNT(*)::bigint AS count
         FROM "Job" j
         JOIN "Property" p ON j."propertyId" = p.id
+        JOIN "Client" c ON c.id = p."clientId"
         WHERE p."clientId" = ANY(${clientIds}::text[])
           AND j."status" = 'PAUSED'
+          AND p."status" = 'ACTIVE'
+          AND c."status" = 'ACTIVE'
         GROUP BY p."clientId"
       `;
       for (const r of pausedRows) {

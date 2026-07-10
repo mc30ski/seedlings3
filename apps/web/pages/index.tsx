@@ -1564,6 +1564,16 @@ export default function HomePage() {
   }, []);
   useEffect(() => {
     if (!isSignedIn || !me?.id) return;
+    // Skip while a Super is in a client view-as session. The /api/me
+    // overlay makes `me` look client-shaped (empty roles, client
+    // display name), but the earnings fetch would still go out under
+    // the Super's real Clerk token — the server would happily return
+    // the SUPER's own earnings, which the pill would then render on
+    // top of the view-as shell. That misrepresents what the client
+    // actually sees and can leak the operator's own numbers over the
+    // client preview. The pill also has no place in a client view;
+    // real clients aren't authorized on the underlying endpoint.
+    if (me.isClientImpersonating) return;
     // Dedicated endpoint for the title-bar money chip — NOT the same one
     // ProfileTab uses (/api/payments/earnings-summary). Keeping them
     // separate so changes to ProfileTab's stats or admin Payments-tab
@@ -3279,8 +3289,13 @@ export default function HomePage() {
               </Box>
             )}
             {/* Earnings pill — click cycles Today → Wk → Mo → All.
-                (Experiment: replaced the weather toggle. To revert, restore from git.) */}
-            {earnings != null && (
+                (Experiment: replaced the weather toggle. To revert, restore from git.)
+                Hidden under Super view-as: the fetch is short-circuited
+                above, but a stale earnings value from BEFORE entering
+                view-as would still show through the pill without this
+                guard. Belt-and-suspenders.
+             */}
+            {earnings != null && !me?.isClientImpersonating && (
               <Box
                 as="button"
                 cursor="pointer"

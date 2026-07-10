@@ -3517,7 +3517,12 @@ export default async function workerRoutes(app: FastifyInstance) {
       uploadFileName: b.uploadFileName ? String(b.uploadFileName) : undefined,
       uploadContentType: b.uploadContentType ? String(b.uploadContentType) : undefined,
       uploadDigest: b.uploadDigest ? String(b.uploadDigest) : undefined,
-      uploadExpiresAt: b.uploadExpiresAt ? new Date(String(b.uploadExpiresAt)) : null,
+      // Worker's cert-expiry picker is `<input type="date">` sending
+      // "YYYY-MM-DD". Route through etEndOfDay so an insurance cert
+      // expiring 2027-12-31 lasts through end of 12/31 ET rather than
+      // silently expiring at 8pm ET on 12/30 due to UTC-midnight parsing.
+      // Same fix as admin.ts's adminUploadOnBehalf.
+      uploadExpiresAt: b.uploadExpiresAt ? etEndOfDay(String(b.uploadExpiresAt)) : null,
       clientIp: (req.ip as string) ?? null,
       userAgent: (req.headers["user-agent"] as string) ?? null,
     });
