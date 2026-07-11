@@ -5525,7 +5525,7 @@ Respond ONLY with valid JSON in this exact format:
   });
 
   app.get("/admin/business-expenses/pnl-report", superGuard, async (req: any) => {
-    const q = (req.query || {}) as { from?: string; to?: string };
+    const q = (req.query || {}) as { from?: string; to?: string; section179?: string };
     if (!q.from || !q.to) {
       throw app.httpErrors.badRequest("from and to query params required (YYYY-MM-DD).");
     }
@@ -5535,8 +5535,23 @@ Respond ONLY with valid JSON in this exact format:
     // Business Start Date filter — pre-cutoff data hidden from every view.
     const cutoff = await resolveCutoff(req);
     if (cutoff && cutoff > start) start = cutoff;
+    // §179 toggle: default true. Only "false" (case-insensitive) turns
+    // capitalization back on for fixed-asset-eligible rows. Bad values
+    // silently fall through to the default so a client bug can't
+    // accidentally hide expenses.
+    const section179 = String(q.section179 ?? "true").toLowerCase() !== "false";
     const { buildPnLReport } = await import("../services/pnlReport");
-    return buildPnLReport(start, end, { fromStr: q.from, toStr: q.to });
+    const report = await buildPnLReport(start, end, {
+      fromStr: q.from,
+      toStr: q.to,
+      section179,
+    });
+    // Echo the effective toggle + threshold back so the UI can show
+    // the toggle state and interpolate the threshold value into the
+    // helper copy without a second round-trip to /settings.
+    const { loadFixedAssetMinCost } = await import("../services/exports");
+    const fixedAssetMinCost = await loadFixedAssetMinCost();
+    return { ...report, section179, fixedAssetMinCost };
   });
 
   // Drill-down rows for a specific qbAccount in the P&L. The Preview tab
@@ -5544,7 +5559,7 @@ Respond ONLY with valid JSON in this exact format:
   // report, plus the qbAccount string that identifies which line to
   // detail. See pnlReportDetails in services/pnlReport.ts.
   app.get("/admin/business-expenses/pnl-report/details", superGuard, async (req: any) => {
-    const q = (req.query || {}) as { from?: string; to?: string; qbAccount?: string };
+    const q = (req.query || {}) as { from?: string; to?: string; qbAccount?: string; section179?: string };
     if (!q.from || !q.to) {
       throw app.httpErrors.badRequest("from and to query params required (YYYY-MM-DD).");
     }
@@ -5556,8 +5571,9 @@ Respond ONLY with valid JSON in this exact format:
     const end = etEndOfDay(q.to);
     const cutoff = await resolveCutoff(req);
     if (cutoff && cutoff > start) start = cutoff;
+    const section179 = String(q.section179 ?? "true").toLowerCase() !== "false";
     const { pnlReportDetails } = await import("../services/pnlReport");
-    return pnlReportDetails(start, end, qbAccount);
+    return pnlReportDetails(start, end, qbAccount, { section179 });
   });
 
   // Recurring-expense suggestions. Groups freestanding (non-job, non-supply)

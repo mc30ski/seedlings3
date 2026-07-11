@@ -165,11 +165,23 @@ const INCOME_ACCOUNT_SERVICES = "Services";
 /**
  * Build the P&L report for [start, end]. ET-anchored boundaries are the
  * caller's responsibility (see the route handler for the conversion).
+ *
+ * `section179` (default true) controls how purchases at or above the
+ * fixed-asset threshold are treated:
+ *   • true  — treated as ordinary expenses in the year of purchase
+ *             (§179 election), flow into the operating-expense section
+ *             under the operator-chosen category. Matches how most
+ *             small businesses actually file taxes.
+ *   • false — capitalized to the balance sheet, excluded from the P&L,
+ *             and surfaced in the `excluded` bucket so nothing
+ *             silently disappears. Historical behavior.
+ * Purchases BELOW the threshold are always expensed — the toggle has
+ * no effect on those.
  */
 export async function buildPnLReport(
   start: Date,
   end: Date,
-  options: { fromStr: string; toStr: string },
+  options: { fromStr: string; toStr: string; section179?: boolean },
 ): Promise<PnLReport> {
   const [
     payments,
@@ -352,12 +364,29 @@ export async function buildPnLReport(
     }
   };
 
-  // Operating expense rows from BusinessExpense (fixed assets excluded —
-  // they're capitalized to balance sheet, never on the P&L).
+  // Section 179 election toggle. Default true — matches how most
+  // small businesses actually file taxes (fully expense equipment in
+  // year of purchase). Only affects rows AT OR ABOVE the fixed-asset
+  // threshold; rows below flow to the expense section regardless.
+  const section179 = options.section179 !== false;
+
+  // Operating expense rows from BusinessExpense.
   for (const r of operatingExpenses) {
     // Capitalization check uses effective date to stay consistent with
     // the QB Expenses CSV's split (see effectiveExpenseDate).
-    if (isFixedAsset({ cost: r.cost, date: effectiveExpenseDate(r) }, fixedAssetMinCost)) continue;
+    const isCapEligible = isFixedAsset({ cost: r.cost, date: effectiveExpenseDate(r) }, fixedAssetMinCost);
+    if (isCapEligible && !section179) {
+      // Section 179 toggle is OFF — capitalize this asset to the balance
+      // sheet and surface in the Excluded bucket so it's visible on the
+      // report even though it doesn't roll into any total. Prevents the
+      // silent-disappearance failure mode.
+      addToExcludedAccount("Fixed Assets (capitalized)", r.cost);
+      continue;
+    }
+    // Section 179 on → fixed-asset rows flow through as ordinary
+    // expenses, routed by their operator-chosen category the same way
+    // sub-threshold rows are. No special-casing beyond bypassing the
+    // capitalize branch above.
     const meta = catMeta.get(r.category ?? "Other");
     if (meta?.plSection === "EXCLUDE_FROM_PNL") {
       // Explicit opt-out — still surface under "Excluded from P&L"
@@ -656,11 +685,40 @@ export async function pnlReportDetails(
   start: Date,
   end: Date,
   qbAccount: string,
+  options: { section179?: boolean } = {},
 ): Promise<PnLDetail> {
+  const section179 = options.section179 !== false;
   const [equipRentalAccount, categories] = await Promise.all([
     loadEquipmentRentalIncomeAccount(),
     loadExpenseCategories(),
   ]);
+
+  // ── Excluded: Fixed Assets (capitalized) ───────────────────────────────
+  // Reachable only when the §179 toggle is OFF — otherwise these rows
+  // flow to their operator-chosen category and are surfaced via the
+  // normal expense drilldown above. Loads every BusinessExpense row
+  // whose effective date lies in window AND meets isFixedAsset(),
+  // regardless of category.
+  if (qbAccount === "Fixed Assets (capitalized)") {
+    const expenses = await prisma.businessExpense.findMany({
+      where: { type: "EXPENSE", ...expenseAnchorDateWhere(start, end) },
+      include: { occurrence: { select: { completedAt: true } } },
+    });
+    const fixedAssetMinCost = await loadFixedAssetMinCost();
+    const rows: PnLDetailRow[] = [];
+    for (const r of expenses) {
+      const effDate = effectiveExpenseDate(r);
+      if (!isFixedAsset({ cost: r.cost, date: effDate }, fixedAssetMinCost)) continue;
+      rows.push({
+        date: etFormatDate(effDate),
+        primary: r.description || r.category || "(uncategorized)",
+        secondary: [r.category, r.vendor].filter(Boolean).join(" · ") || undefined,
+        amount: round2(r.cost),
+      });
+    }
+    rows.sort((a, b) => a.date.localeCompare(b.date));
+    return { qbAccount, rows, total: round2(sum(rows.map((r) => r.amount))) };
+  }
 
   // ── Income: Services ────────────────────────────────────────────────────
   if (qbAccount === INCOME_ACCOUNT_SERVICES) {
@@ -950,11 +1008,16 @@ export async function pnlReportDetails(
   const fixedAssetMinCost = await loadFixedAssetMinCost();
   const rows: PnLDetailRow[] = [];
   for (const r of expenses) {
-    // Match the main P&L: fixed-asset rows belong on the balance sheet,
-    // never on the P&L. Same effective-date capitalization check used in
-    // the totals computation.
     const effDate = effectiveExpenseDate(r);
-    if (isFixedAsset({ cost: r.cost, date: effDate }, fixedAssetMinCost)) continue;
+    // Fixed-asset check mirrors the section179-aware branch in
+    // buildPnLReport. When §179 is on, capitalized rows flow through
+    // as ordinary expenses under their operator-chosen category —
+    // they appear in the drill-down for that account. When off,
+    // capitalized rows are excluded from operating-expense drill-downs
+    // and instead surface via the "Fixed Assets (capitalized)"
+    // drill-down handled below.
+    const isCapEligible = isFixedAsset({ cost: r.cost, date: effDate }, fixedAssetMinCost);
+    if (isCapEligible && !section179) continue;
     rows.push({
       date: etFormatDate(effDate),
       primary: r.category ?? "(uncategorized)",

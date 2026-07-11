@@ -16,6 +16,37 @@
 //
 // Dry-run prints how many groups and rows would be affected. Confirm
 // actually writes.
+//
+// ────────────────────────────────────────────────────────────────────
+// DO NOT REWRITE THIS AS INLINE SQL.
+//
+// A tempting one-shot equivalent looks like:
+//
+//   UPDATE "BusinessExpense" AS be
+//   SET "recurrenceSeriesId" = groups.new_id
+//   FROM (
+//     SELECT concat(...) AS series_key,
+//            gen_random_uuid()::text AS new_id
+//     FROM "BusinessExpense" ...
+//     GROUP BY series_key
+//   ) AS groups
+//   WHERE ...
+//
+// The problem: `gen_random_uuid()` is VOLATILE. Depending on Postgres'
+// chosen query plan (which varies with row count / stats), it can be
+// evaluated PER-ROW rather than once per group, giving rows in the
+// same natural group different series ids and instantly re-forking
+// every stream the backfill was meant to consolidate.
+//
+// This bit prod once (Vercel + Google Workspace + Claude Code all
+// forked mid-June 2026 because someone — me — pasted a SQL variant of
+// this into Neon). The consolidate SQL to undo it is a real one-off
+// cleanup, not a substitute for a correct backfill.
+//
+// The tsx implementation below is safe because the UUID is minted in
+// JavaScript inside the per-group loop — Postgres never gets a chance
+// to over-evaluate it.
+// ────────────────────────────────────────────────────────────────────
 
 import { prisma } from "../src/db/prisma";
 import { randomUUID } from "crypto";

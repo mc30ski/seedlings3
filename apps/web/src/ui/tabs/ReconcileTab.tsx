@@ -5,6 +5,7 @@ import { Badge, Box, Button, Card, HStack, Select, Spinner, Table, Text, VStack,
 import { FiDownload, FiInfo } from "react-icons/fi";
 import { ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
 import { apiGet, apiDownload } from "@/src/lib/api";
+import { usePersistedState } from "@/src/lib/usePersistedState";
 import DateInput from "@/src/ui/components/DateInput";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import {
@@ -82,6 +83,14 @@ type PnLReport = {
     total: number;
     totalRatePct: number;
   };
+  /** Echoed by the route so the UI can render the toggle state
+   *  without a race between the local persisted value and the server
+   *  interpretation. */
+  section179: boolean;
+  /** Live FIXED_ASSET_MIN_COST setting value — the threshold above
+   *  which purchases are considered fixed assets. Rendered into the
+   *  toggle's helper text. */
+  fixedAssetMinCost: number;
 };
 
 type PnLDetailRow = {
@@ -351,6 +360,17 @@ export default function ReconcileTab() {
   const [end, setEnd] = useState(bizAddDays(thisMondayDefault, 6));
   const [report, setReport] = useState<PnLReport | null>(null);
   const [loading, setLoading] = useState(false);
+  // §179 election toggle. Persisted per-operator so setting it once
+  // sticks across visits. Default true = fixed-asset purchases show
+  // as expenses on the P&L (matches how most small businesses file).
+  // Uncheck to see the P&L with those purchases capitalized to the
+  // balance sheet instead. Only affects rows AT OR ABOVE the
+  // FIXED_ASSET_MIN_COST threshold — smaller purchases are always
+  // expenses regardless.
+  const [section179, setSection179] = usePersistedState<boolean>(
+    "reconcile_section179",
+    true,
+  );
   // Period (worker-side) state — fetched in parallel with the P&L
   // from the same date range. Drives the Period Summary,
   // Reconciliation Targets, and per-worker drill-downs at the bottom
@@ -419,7 +439,7 @@ export default function ReconcileTab() {
     // start the other. Each failure surfaces its own toast — the
     // other side still renders if available. Each handler guards on
     // the request token so a stale response can't clobber the latest.
-    const pnlPromise = apiGet<PnLReport>(`/api/admin/business-expenses/pnl-report?from=${start}&to=${end}`)
+    const pnlPromise = apiGet<PnLReport>(`/api/admin/business-expenses/pnl-report?from=${start}&to=${end}&section179=${section179}`)
       .then((r) => {
         if (token === requestTokenRef.current) setReport(r);
       })
@@ -444,7 +464,7 @@ export default function ReconcileTab() {
         if (token === requestTokenRef.current) setPeriodLoading(false);
       });
     await Promise.all([pnlPromise, periodPromise]);
-  }, [start, end]);
+  }, [start, end, section179]);
 
   useEffect(() => {
     void load();
@@ -462,6 +482,15 @@ export default function ReconcileTab() {
     setExpandedWorkerDays(new Set());
     setExpandedWorkerJobs(new Set());
   }, [start, end]);
+
+  // Toggle change → clear the P&L bits so the numbers don't briefly
+  // reflect the old toggle state on top of the new report. Period
+  // (worker-side) data is section179-independent so we leave it alone.
+  useEffect(() => {
+    setReport(null);
+    setExpanded(new Set());
+    setDetails({});
+  }, [section179]);
 
   async function toggleAccount(qbAccount: string) {
     setExpanded((prev) => {
@@ -494,7 +523,7 @@ export default function ReconcileTab() {
       if (!cached || (typeof cached === "object" && "error" in cached)) {
         setDetails((d) => ({ ...d, [qbAccount]: "loading" }));
         apiGet<PnLDetail>(
-          `/api/admin/business-expenses/pnl-report/details?from=${start}&to=${end}&qbAccount=${encodeURIComponent(qbAccount)}`,
+          `/api/admin/business-expenses/pnl-report/details?from=${start}&to=${end}&qbAccount=${encodeURIComponent(qbAccount)}&section179=${section179}`,
         )
           .then((data) => setDetails((d) => ({ ...d, [qbAccount]: data })))
           .catch((err: any) =>
@@ -862,6 +891,38 @@ export default function ReconcileTab() {
         />
         {!isSectionCollapsed("pnl") && (
         <Card.Body>
+          {/* §179 election toggle. Sits above the P&L rows so its state
+              is visible before the operator scans the numbers. Only
+              matters for rows AT OR ABOVE the FIXED_ASSET_MIN_COST
+              threshold — the copy interpolates the live threshold from
+              the report payload so raising it in Settings is
+              immediately reflected. */}
+          <HStack
+            gap={2}
+            align="flex-start"
+            mb={4}
+            p={3}
+            borderWidth="1px"
+            borderColor="gray.200"
+            borderRadius="md"
+            bg="gray.50"
+          >
+            <input
+              type="checkbox"
+              id="reconcile-section179"
+              checked={section179}
+              onChange={(e) => setSection179(e.target.checked)}
+              style={{ marginTop: "3px" }}
+            />
+            <VStack align="start" gap={0.5} flex="1" minW={0}>
+              <label htmlFor="reconcile-section179" style={{ fontSize: "14px", fontWeight: 500, cursor: "pointer" }}>
+                Treat purchases over ${(report?.fixedAssetMinCost ?? 500).toLocaleString()} as expenses (Section 179)
+              </label>
+              <Text fontSize="xs" color="fg.muted">
+                Purchases at or under <Text as="span" fontWeight="semibold">${(report?.fixedAssetMinCost ?? 500).toLocaleString()}</Text> are always expensed on the P&L. Above that threshold, they&apos;re capitalized to your balance sheet unless this is checked. Uncheck to see what the P&L looks like without the §179 election on those purchases.
+              </Text>
+            </VStack>
+          </HStack>
           {loading && !report ? (
             <HStack justify="center" py={6}><Spinner /></HStack>
           ) : !report ? (
