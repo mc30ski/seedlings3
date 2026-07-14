@@ -3768,16 +3768,15 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
             const isClaimer = !!myAssignee && !isObserver && myAssignee.assignedById === myId;
 
-            // Peek mode: this card was surfaced by the "Team" toggle
-            // because the occurrence is assigned to another worker.
-            // The server sets `_peekRedacted = true` on these after
-            // stripping financials; the frontend also detects it
-            // purely from `isAssignedToOthers` so a stale server
-            // (missing the redaction pass) still hides UIs. Either
-            // signal is enough — no risk of "Set Reminder" leaking
-            // onto teammates' cards because the server hot-reload
-            // didn't fire.
-            const isPeek = isAssignedToOthers || !!(occ as any)._peekRedacted;
+            // Peek mode is a WORKER-tab-only concept: on the worker
+            // view, cards for jobs the current user isn't assigned to
+            // are surfaced by the "Team" toggle and rendered read-
+            // only. On the Admin Jobs tab this concept doesn't apply
+            // — admins see and act on everyone's jobs normally, so
+            // `isPeek` stays false regardless of assignment.
+            const isPeek =
+              isWorkerView &&
+              (isAssignedToOthers || !!(occ as any)._peekRedacted);
 
             const isTentative = !!occ.isTentative;
 
@@ -4619,10 +4618,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   // Green pulse for IN_PROGRESS jobs — same animation
                   // the workday strip uses so "actively running work"
                   // reads the same on Home and on the Jobs timeline.
-                  // Skipped on peek rows so someone else's active job
-                  // doesn't visually compete with the operator's own.
-                  ...(isInProgress && !isPeek ? {
-                    animation: "seedlings-pulse-green 2.5s ease-in-out infinite",
+                  // Peek rows get the MUTED variant (half alpha,
+                  // tighter spread) so a teammate's active job
+                  // whispers "in progress" instead of competing with
+                  // the operator's own actionable rows.
+                  ...(isInProgress ? {
+                    animation: isPeek
+                      ? "seedlings-pulse-green-muted 2.5s ease-in-out infinite"
+                      : "seedlings-pulse-green 2.5s ease-in-out infinite",
                   } : {}),
                 }}
                 onClick={cardMode === "ultra" ? (e: any) => {

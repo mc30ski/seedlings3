@@ -2805,11 +2805,13 @@ Respond ONLY with valid JSON in this exact format:
       hoursByUser.set(w.userId, (hoursByUser.get(w.userId) ?? 0) + activeMs / 3_600_000);
     }
 
-    // Jobs completed today per worker, counted from JobOccurrence
-    // directly (not from PaymentSplit — a job completed today may not
-    // have had its payment recorded yet, and we still want to credit
-    // the worker for having done it). Observers excluded — they
-    // watched, didn't do the work.
+    // Jobs completed today with every field computeMyOccurrenceNet
+    // needs to project each worker's promised net (before the
+    // client's payment lands). This is the same source-of-truth path
+    // reconcileWorkers + payroll exports use — snapshot when
+    // present, projection otherwise, PaymentSplit only when confirmed.
+    // Observers excluded from job count + earnings (they watched;
+    // didn't earn).
     const completedOccs = await prisma.jobOccurrence.findMany({
       where: {
         status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
@@ -2823,46 +2825,83 @@ Respond ONLY with valid JSON in this exact format:
       },
       select: {
         id: true,
+        price: true,
+        proposalAmount: true,
+        completionSplits: true,
         assignees: { select: { userId: true, role: true } },
+        addons: { select: { price: true } },
+        expenses: { select: { cost: true } },
+        payment: {
+          select: {
+            confirmed: true,
+            skippedAt: true,
+            writtenOff: true,
+            splits: {
+              where: { guaranteedPayoutPaidAt: null },
+              select: { userId: true, amount: true },
+            },
+          },
+        },
       },
     });
+
+    // Fetch worker rates once — computeMyOccurrenceNet needs the
+    // per-worker fee/margin percent for the projection path.
+    const { contractorFeePercent, employeeMarginPercent } = await (async () => {
+      const { loadRates } = await import("../services/payments");
+      return loadRates(prisma);
+    })();
+    const workerType = new Map(workers.map((w) => [w.id, w.workerType]));
+    const rateFor = (userId: string) => {
+      const t = workerType.get(userId);
+      return t === "CONTRACTOR" ? contractorFeePercent : employeeMarginPercent;
+    };
+
+    const { computeMyOccurrenceNet } = await import("../services/workerEarnings");
     const jobIdsByUser = new Map<string, Set<string>>();
+    const netByUser = new Map<string, number>();
     for (const occ of completedOccs) {
       for (const a of occ.assignees) {
         if (!userIds.includes(a.userId)) continue;
         if (a.role === "observer") continue;
+        // Count the job.
         const set = jobIdsByUser.get(a.userId) ?? new Set<string>();
         set.add(occ.id);
         jobIdsByUser.set(a.userId, set);
+        // Project this worker's earnings for this occurrence.
+        // Scope payment.splits to this user before handing to the
+        // helper — its contract says the sub-array must already be
+        // filtered to the single caller.
+        const paymentForUser = occ.payment
+          ? {
+              ...occ.payment,
+              splits: occ.payment.splits.filter((s) => s.userId === a.userId),
+            }
+          : null;
+        const net = computeMyOccurrenceNet(
+          {
+            price: occ.price,
+            proposalAmount: occ.proposalAmount,
+            completionSplits: occ.completionSplits,
+            addons: occ.addons,
+            expenses: occ.expenses,
+            assignees: occ.assignees,
+            payment: paymentForUser,
+          },
+          a.userId,
+          rateFor(a.userId),
+        );
+        netByUser.set(a.userId, (netByUser.get(a.userId) ?? 0) + net);
       }
     }
 
-    // Client-payment splits anchored on the occurrence's completedAt.
-    // Drives the money-earned column — separate from the job count
-    // because a completed job may not have paid out yet (client hasn't
-    // paid, admin hasn't recorded, etc.). Excludes GP-flagged splits
-    // (see loadGpWorkAnchoredItems below).
-    const splits = await prisma.paymentSplit.findMany({
-      where: {
-        userId: { in: userIds },
-        guaranteedPayoutPaidAt: null,
-        payment: {
-          skippedAt: null,
-          occurrence: {
-            status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
-            completedAt: { gte: dayStart, lte: dayEnd },
-          },
-        },
-      },
-      select: { userId: true, amount: true },
-    });
-    const netByUser = new Map<string, number>();
-    for (const s of splits) {
-      netByUser.set(s.userId, (netByUser.get(s.userId) ?? 0) + s.amount);
-    }
-
     // GP wage-path earnings for today (contractor jobs completed while
-    // the contractor is inside their guaranteed-payout window).
+    // the contractor is inside their guaranteed-payout window). These
+    // occurrences ALSO appear in completedOccs above, but their
+    // computeMyOccurrenceNet result for a GP contractor is $0 because
+    // splits carry guaranteedPayoutPaidAt (already filtered out).
+    // loadGpWorkAnchoredItems is the wage-path source of truth for
+    // that specific case.
     const gpItems = await loadGpWorkAnchoredItems(dayStart, dayEnd);
     const userSet = new Set(userIds);
     for (const item of gpItems) {
@@ -2900,48 +2939,114 @@ Respond ONLY with valid JSON in this exact format:
 
     // Business Start Date filter — see lib/businessStartCutoff.ts.
     const cutoff = await resolveCutoff(req);
-    // Skip splits flagged with guaranteedPayoutPaidAt — their cash flowed
-    // via a GP advance row instead, counted below.
-    const splits = await prisma.paymentSplit.findMany({
-      where: {
-        userId,
-        guaranteedPayoutPaidAt: null,
-        // Skipped payments' splits are excluded from every earnings tile.
-        payment: {
-          skippedAt: null,
-          ...(cutoff ? { createdAt: { gte: cutoff } } : {}),
-        },
-      },
-      include: { payment: { select: { createdAt: true, method: true } } },
+
+    // Branch by target-worker type so the admin drilldown mirrors what
+    // the worker sees on their own Profile → Payments (worker.ts:2138).
+    // EMPLOYEE / TRAINEE: bucket each assigned job by work date at its
+    // promised net (paid or unpaid) via computeMyOccurrenceNet.
+    // CONTRACTOR / unclassified: cash-basis on confirmed splits +
+    // work-anchored GP items — matches the contractor branch of the
+    // self endpoint.
+    const target = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { workerType: true },
     });
-    // GP wage-path earnings: bucketed at occurrence.completedAt. Same
-    // source as the Gusto Contractors CSV's work-anchored half.
-    const gpItems = await loadGpWorkAnchoredItems(
-      cutoff ?? new Date(0),
-      new Date(),
-      { userId },
-    );
+    const isEmployeeTarget = target?.workerType === "EMPLOYEE" || target?.workerType === "TRAINEE";
+    const settingKey = isEmployeeTarget ? "EMPLOYEE_BUSINESS_MARGIN_PERCENT" : "CONTRACTOR_PLATFORM_FEE_PERCENT";
+    const setting = await prisma.setting.findUnique({ where: { key: settingKey } });
+    const targetRate = Number(setting?.value ?? 0);
 
     let thisWeek = 0, thisMonth = 0, thisYear = 0, allTime = 0;
     const byMethod: Record<string, number> = {};
     let jobCount = 0;
 
-    for (const sp of splits) {
-      allTime += sp.amount;
-      const d = sp.payment.createdAt;
-      if (d >= startOfWeek) thisWeek += sp.amount;
-      if (d >= startOfMonth) thisMonth += sp.amount;
-      if (d >= startOfYear) thisYear += sp.amount;
-      byMethod[sp.payment.method] = (byMethod[sp.payment.method] ?? 0) + sp.amount;
-      jobCount++;
-    }
-    for (const item of gpItems) {
-      allTime += item.amount;
-      const d = item.completedAt;
-      if (d >= startOfWeek) thisWeek += item.amount;
-      if (d >= startOfMonth) thisMonth += item.amount;
-      if (d >= startOfYear) thisYear += item.amount;
-      jobCount++;
+    if (isEmployeeTarget) {
+      const { computeMyOccurrenceNet } = await import("../services/workerEarnings");
+      const occs = await prisma.jobOccurrence.findMany({
+        where: {
+          assignees: { some: { userId, OR: [{ role: null }, { role: { not: "observer" } }] } },
+          workflow: { in: ["STANDARD", "ONE_OFF"] as any },
+          status: { notIn: ["CANCELED", "ARCHIVED"] as any },
+          ...occurrenceWorkDateCutoff(cutoff),
+        },
+        select: {
+          startAt: true,
+          completedAt: true,
+          price: true,
+          proposalAmount: true,
+          completionSplits: true,
+          addons: { select: { price: true } },
+          expenses: { select: { cost: true } },
+          assignees: { select: { userId: true, role: true } },
+          payment: {
+            select: {
+              method: true,
+              confirmed: true,
+              skippedAt: true,
+              splits: { where: { userId, guaranteedPayoutPaidAt: null }, select: { amount: true } },
+            },
+          },
+        },
+      });
+      for (const occ of occs) {
+        const when = occ.completedAt ?? occ.startAt;
+        if (!when) continue;
+        const value = computeMyOccurrenceNet(occ, userId, targetRate);
+        if (value <= 0) continue;
+        allTime += value;
+        if (when >= startOfWeek) thisWeek += value;
+        if (when >= startOfMonth) thisMonth += value;
+        if (when >= startOfYear) thisYear += value;
+        if (
+          occ.payment &&
+          !occ.payment.skippedAt &&
+          occ.payment.confirmed &&
+          occ.payment.method &&
+          (occ.payment.splits?.length ?? 0) > 0
+        ) {
+          byMethod[occ.payment.method] = (byMethod[occ.payment.method] ?? 0) + value;
+        }
+        jobCount++;
+      }
+    } else {
+      // Skip splits flagged with guaranteedPayoutPaidAt — their cash flowed
+      // via a GP advance row instead, counted below.
+      const splits = await prisma.paymentSplit.findMany({
+        where: {
+          userId,
+          guaranteedPayoutPaidAt: null,
+          // Skipped payments' splits are excluded from every earnings tile.
+          payment: {
+            skippedAt: null,
+            ...(cutoff ? { createdAt: { gte: cutoff } } : {}),
+          },
+        },
+        include: { payment: { select: { createdAt: true, method: true } } },
+      });
+      // GP wage-path earnings: bucketed at occurrence.completedAt. Same
+      // source as the Gusto Contractors CSV's work-anchored half.
+      const gpItems = await loadGpWorkAnchoredItems(
+        cutoff ?? new Date(0),
+        new Date(),
+        { userId },
+      );
+      for (const sp of splits) {
+        allTime += sp.amount;
+        const d = sp.payment.createdAt;
+        if (d >= startOfWeek) thisWeek += sp.amount;
+        if (d >= startOfMonth) thisMonth += sp.amount;
+        if (d >= startOfYear) thisYear += sp.amount;
+        byMethod[sp.payment.method] = (byMethod[sp.payment.method] ?? 0) + sp.amount;
+        jobCount++;
+      }
+      for (const item of gpItems) {
+        allTime += item.amount;
+        const d = item.completedAt;
+        if (d >= startOfWeek) thisWeek += item.amount;
+        if (d >= startOfMonth) thisMonth += item.amount;
+        if (d >= startOfYear) thisYear += item.amount;
+        jobCount++;
+      }
     }
 
     return {
@@ -3022,12 +3127,16 @@ Respond ONLY with valid JSON in this exact format:
         completedAt: true,
         estimatedMinutes: true,
         price: true,
+        proposalAmount: true,
+        completionSplits: true,
+        addons: { select: { price: true } },
         workflow: true,
         isEstimate: true,
         startAt: true,
         assignees: {
           select: {
             userId: true,
+            role: true,
             user: { select: { id: true, displayName: true, email: true, workerType: true } },
           },
         },
@@ -3043,9 +3152,12 @@ Respond ONLY with valid JSON in this exact format:
           select: {
             amountPaid: true,
             method: true,
+            confirmed: true,
+            skippedAt: true,
             platformFeeAmount: true,
             businessMarginAmount: true,
             splits: {
+              where: { guaranteedPayoutPaidAt: null },
               select: { userId: true, amount: true },
             },
           },
@@ -3137,6 +3249,17 @@ Respond ONLY with valid JSON in this exact format:
       });
     }
 
+    // Rate lookup for computeMyOccurrenceNet projection path.
+    const [_statsFeeSetting, _statsMarginSetting] = await Promise.all([
+      prisma.setting.findUnique({ where: { key: "CONTRACTOR_PLATFORM_FEE_PERCENT" } }),
+      prisma.setting.findUnique({ where: { key: "EMPLOYEE_BUSINESS_MARGIN_PERCENT" } }),
+    ]);
+    const _statsContractorFee = Number(_statsFeeSetting?.value ?? 0);
+    const _statsEmployeeMargin = Number(_statsMarginSetting?.value ?? 0);
+    const _statsRateFor = (workerType: string | null | undefined) =>
+      workerType === "CONTRACTOR" ? _statsContractorFee : _statsEmployeeMargin;
+    const { computeMyOccurrenceNet: _statsComputeNet } = await import("../services/workerEarnings");
+
     const propertySetMap = new Map<string, Set<string>>();
 
     for (const occ of occurrences) {
@@ -3156,12 +3279,40 @@ Respond ONLY with valid JSON in this exact format:
 
         stat.jobsCompleted++;
 
-        // Earnings from splits — overridden by GP advance amount when the
-        // contractor was advance-paid for this occurrence (split exists
-        // for bookkeeping but cash already flowed via advance).
-        const split = occ.payment?.splits.find((s) => s.userId === a.userId);
-        const gpAdvance = advanceByKey.get(`${a.userId}:${occ.id}`);
-        const earnings = gpAdvance ?? split?.amount ?? 0;
+        // Earnings —
+        //   EMPLOYEE / TRAINEE: use computeMyOccurrenceNet so unpaid
+        //   completed jobs still credit the worker with their promised
+        //   net (matches payroll — they get paid regardless of client-
+        //   payment timing).
+        //   CONTRACTOR / unclassified: keep the cash-basis behavior
+        //   (split.amount, with GP advance override) — contractors are
+        //   only paid on confirmed splits.
+        let earnings: number;
+        if (a.user.workerType === "EMPLOYEE" || a.user.workerType === "TRAINEE") {
+          const paymentForUser = occ.payment
+            ? {
+                ...occ.payment,
+                splits: occ.payment.splits.filter((s) => s.userId === a.userId),
+              }
+            : null;
+          earnings = _statsComputeNet(
+            {
+              price: occ.price,
+              proposalAmount: (occ as any).proposalAmount ?? null,
+              completionSplits: (occ as any).completionSplits,
+              addons: (occ as any).addons ?? [],
+              expenses: occ.expenses,
+              assignees: occ.assignees,
+              payment: paymentForUser,
+            },
+            a.userId,
+            _statsRateFor(a.user.workerType),
+          );
+        } else {
+          const split = occ.payment?.splits.find((s) => s.userId === a.userId);
+          const gpAdvance = advanceByKey.get(`${a.userId}:${occ.id}`);
+          earnings = gpAdvance ?? split?.amount ?? 0;
+        }
         if (earnings > 0) {
           const splitRatio = occ.payment && occ.payment.splits.length > 0
             ? earnings / occ.payment.splits.reduce((s, sp) => s + sp.amount, 0)
@@ -3436,14 +3587,55 @@ Respond ONLY with valid JSON in this exact format:
       select: { id: true, displayName: true, workerType: true, guaranteedPayoutUntil: true },
     });
 
-    // Top workers by jobs completed in range
+    // Top workers by jobs completed in range.
+    //
+    // Earnings use the 3-tier projection path (snapshot → per-worker
+    // projection → cash-split fallback) so an employee's pending-
+    // payment jobs still count toward the chip total. Previously this
+    // summed splits only, understating anyone with unpaid completed
+    // work — see the same projection in wageGross below.
+    // Rates loaded once here rather than inline in the loop.
+    const [_topFeeSetting, _topMarginSetting] = await Promise.all([
+      prisma.setting.findUnique({ where: { key: "CONTRACTOR_PLATFORM_FEE_PERCENT" } }),
+      prisma.setting.findUnique({ where: { key: "EMPLOYEE_BUSINESS_MARGIN_PERCENT" } }),
+    ]);
+    const _topContractorFee = Number(_topFeeSetting?.value ?? 20) || 0;
+    const _topEmployeeMargin = Number(_topMarginSetting?.value ?? 30) || 0;
+    const _topWorkerType = new Map(workers.map((w) => [w.id, w.workerType]));
+    function _topProjectedNet(o: any, userId: string): number {
+      // (1) Snapshot path — set at Initiate Payment time.
+      const promised = o.promisedPayouts as Array<{ userId: string; net: number }> | null | undefined;
+      if (Array.isArray(promised)) {
+        const me = promised.find((p) => p.userId === userId);
+        if (me && typeof me.net === "number") return me.net;
+      }
+      // (2) On-the-fly projection — any occurrence not yet snapshotted.
+      const priceTotal =
+        (o.price ?? o.proposalAmount ?? 0) +
+        (o.addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0);
+      const expTotal = (o.expenses ?? []).reduce((s: number, e: any) => s + (e.cost ?? 0), 0);
+      const N = Math.max(0, priceTotal - expTotal);
+      const cs = o.completionSplits as Array<{ userId: string; percent: number }> | null | undefined;
+      const active = (o.assignees ?? []).filter((a: any) => a.role !== "observer");
+      const csPct = Array.isArray(cs) ? Number(cs.find((sp) => sp.userId === userId)?.percent ?? 0) : 0;
+      const fraction = csPct > 0
+        ? csPct / 100
+        : active.length > 0 && active.some((a: any) => a.userId === userId) ? 1 / active.length : 0;
+      if (fraction > 0) {
+        const ratePct = _topWorkerType.get(userId) === "CONTRACTOR" ? _topContractorFee : _topEmployeeMargin;
+        const projectedNet = N * fraction * (1 - ratePct / 100);
+        if (projectedNet > 0) return projectedNet;
+      }
+      // (3) Cash-based fallback.
+      const split = o.payment?.splits?.find((sp: any) => sp.userId === userId);
+      return split?.amount ?? 0;
+    }
     const workerJobCounts = new Map<string, { name: string; jobs: number; earnings: number }>();
     for (const o of occurrences.filter((oc) => oc.status === "CLOSED" || oc.status === "PENDING_PAYMENT")) {
       for (const a of o.assignees.filter((as_) => as_.role !== "observer")) {
         const existing = workerJobCounts.get(a.userId) ?? { name: "", jobs: 0, earnings: 0 };
         existing.jobs++;
-        const split = o.payment?.splits?.find((sp) => sp.userId === a.userId);
-        if (split) existing.earnings += split.amount;
+        existing.earnings += _topProjectedNet(o, a.userId);
         workerJobCounts.set(a.userId, existing);
       }
     }
@@ -3701,10 +3893,13 @@ Respond ONLY with valid JSON in this exact format:
         (o.status === "CLOSED" || o.status === "PENDING_PAYMENT") &&
         o.assignees.some((a) => a.userId === w.id && a.role !== "observer")
       );
-      const totalEarnings = wJobs.reduce((s, o) => {
-        const split = o.payment?.splits?.find((sp) => sp.userId === w.id);
-        return s + (split?.amount ?? 0);
-      }, 0);
+      // totalEarnings mirrors wageGross below: snapshot → projection →
+      // split fallback. Previously this summed splits only, which
+      // understated employees with pending-payment jobs (they get paid
+      // regardless of client-payment timing). See wageGross comment
+      // for the derivation.
+      // Placeholder — populated after wageGross computes below.
+      let totalEarnings = 0;
       const totalExpensesW = wJobs.reduce((s, o) => {
         const occExpenses = o.expenses.reduce((es, e) => es + e.cost, 0);
         const assigneeCount = o.assignees.filter((a) => a.role !== "observer").length;
@@ -3792,6 +3987,7 @@ Respond ONLY with valid JSON in this exact format:
         const split = o.payment?.splits?.find((sp) => sp.userId === w.id);
         return s + (split?.amount ?? 0);
       }, 0);
+      totalEarnings = wageGross;
       const avgHourlyRate = wageHours > 0 ? wageGross / wageHours : null;
 
       // Active "guaranteed payout period" — contextualizes wage compliance

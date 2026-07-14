@@ -3320,15 +3320,6 @@ const POLICY_SUGGESTIONS: SuggestionTier[] = [
     subtitle: "Operational quality and consistency, not strict legal cover.",
     items: [
       {
-        title: "Photo / Media Release",
-        targets: "All workers",
-        enforcement: "WARN",
-        reSign: "Once",
-        upload: "None",
-        description:
-          "Publicity waiver so before/after photos and marketing content can include worker images. One-time signature covers ongoing use.",
-      },
-      {
         title: "Uniform / Appearance Policy",
         targets: "All workers",
         enforcement: "INFO",
