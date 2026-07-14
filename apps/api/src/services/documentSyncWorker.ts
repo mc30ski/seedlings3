@@ -315,6 +315,25 @@ function documentFolderName(doc: { id: string; title: string }): string {
 }
 
 /**
+ * Human-readable Drive filename for a document version. Format:
+ *   `<stem> (<versionId>).<ext>`
+ * so the operator's eye lands on the filename first and the id sits
+ * quietly in parens. Extension is preserved (or "no ext" gracefully
+ * handled). Slashes stripped for Drive safety.
+ */
+function versionFileName(originalFilename: string, versionId: string): string {
+  const safe = (originalFilename || "file").replace(/[\/\\]/g, "_");
+  const lastDot = safe.lastIndexOf(".");
+  // No extension, or dotfile ("_.gitignore"-style) → append id at end.
+  if (lastDot <= 0 || lastDot === safe.length - 1) {
+    return `${safe} (${versionId})`;
+  }
+  const stem = safe.slice(0, lastDot);
+  const ext = safe.slice(lastDot);
+  return `${stem} (${versionId})${ext}`;
+}
+
+/**
  * Ensure the per-document folder exists inside its taxonomy-type
  * bucket. Persist the resulting folder id in DocumentSyncState so
  * future tasks don't have to re-look-up.
@@ -423,20 +442,49 @@ async function uploadVersion(documentId: string, versionId: string): Promise<Tas
   });
   if (!version || version.documentId !== documentId) return "SKIPPED";
 
-  // Already uploaded? Skip idempotently.
+  const expectedName = versionFileName(version.originalFilename, version.id);
+
+  // Already uploaded? Don't re-upload the bytes — but check the
+  // current Drive filename against the expected one and rename if it
+  // drifted (e.g. an older sync used the pre-rename convention). This
+  // is what makes "Sync everything" self-heal legacy filenames.
   const existing = await prisma.documentSyncState.findUnique({
     where: { entityId: versionId },
   });
-  if (existing) return "SKIPPED";
+  if (existing) {
+    try {
+      const meta = await getFile(existing.driveId, "id,name");
+      if (meta.name !== expectedName) {
+        await moveAndRenameFile({ fileId: existing.driveId, newName: expectedName });
+        await prisma.documentSyncState.update({
+          where: { entityId: versionId },
+          data: { lastSyncedAt: new Date() },
+        });
+      }
+    } catch (err) {
+      // File went missing on Drive side (manual delete etc.) — drop
+      // the stale state row so a subsequent sync re-uploads fresh.
+      if (err instanceof DriveApiError && err.status === 404) {
+        await prisma.documentSyncState.delete({ where: { entityId: versionId } });
+        // Fall through to the upload path below.
+      } else {
+        throw err;
+      }
+    }
+    // Refetch state — if we deleted it above, we need to know so we
+    // fall into the upload path. Otherwise we're done.
+    const stillExists = await prisma.documentSyncState.findUnique({
+      where: { entityId: versionId },
+    });
+    if (stillExists) return "SKIPPED";
+  }
 
   const folderId = await ensureDocumentFolder(version.document);
 
   const { bytes, contentType } = await getObjectBuffer(version.r2Key, "docs");
   const driveFile = await uploadFile({
     parentFolderId: folderId,
-    // Name convention: "<versionId>_<originalFilename>" so operators can
-    // sort by version + still see the source filename.
-    name: `${version.id}_${version.originalFilename}`,
+    name: expectedName,
     contentType: contentType ?? version.contentType,
     bytes,
   });

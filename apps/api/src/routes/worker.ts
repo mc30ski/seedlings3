@@ -18,7 +18,7 @@ import {
   expensesIncludeWithCutoff,
   occurrenceWorkDateCutoff,
 } from "../lib/businessStartCutoff";
-import { redactObserverFieldsForCaller, redactTraineeFieldsForCaller } from "../lib/observerRedaction";
+import { redactObserverFieldsForCaller, redactTraineeFieldsForCaller, redactPeekFieldsForCaller } from "../lib/observerRedaction";
 
 async function currentUserId(req: any) {
   return (await services.currentUser.me(req.auth?.clerkUserId)).id;
@@ -1441,6 +1441,15 @@ export default async function workerRoutes(app: FastifyInstance) {
       effectiveUser?.workerType,
       effectiveIsAdmin,
     );
+    // Peek redaction: for the Worker Jobs "Team" toggle. Any occ that
+    // has assignees but the caller isn't one of them gets financials
+    // stripped (price, splits, payouts, expense costs, admin-only
+    // client context). Runs regardless of whether the client asked
+    // for peek data — defense in depth, since the /occurrences
+    // endpoint returns the whole team's list to every worker today.
+    // No admin bypass — this endpoint is the Worker Jobs feed; admins
+    // using it get the worker experience. See helper for rationale.
+    redactPeekFieldsForCaller(filtered as any[], uid);
 
     return filtered;
   });

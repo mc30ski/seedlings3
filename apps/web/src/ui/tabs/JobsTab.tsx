@@ -17,7 +17,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertCircle, AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, Eye, Filter, Hand, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, PinOff, Play, RefreshCw, Repeat, Share2, Star, Tag, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, Eye, Filter, Hand, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, PinOff, Play, RefreshCw, Repeat, Share2, Star, Tag, Users, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import {
   useWorkdayGate,
@@ -908,6 +908,16 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     return () => window.removeEventListener("adminJobs:showUnapprovedHours", onShow);
   }, [forAdmin, applyUnapprovedHours]);
 
+  // Worker-only "peek at others" toggle. When on, the load filter is
+  // relaxed to include jobs assigned to other workers (not just mine +
+  // unassigned + announcements). Every occurrence surfaced only because
+  // of this toggle gets tagged with `_isPeek = true` at load-time, and
+  // every action-render branch on those cards is short-circuited so
+  // peek-mode is read-only. Off by default. Not available to trainees
+  // (their scope is intentionally narrower — see `isTrainee` below).
+  // Not shown on the Admin Jobs tab (admins already see everything).
+  const [peekOthers, setPeekOthers] = usePersistedState<boolean>("wjobs_peekOthers", false);
+
   const [datePreset, setDatePreset] = usePersistedState<DatePreset>(`${pfx}_datePreset`, "now");
   const presetDates = useMemo(() => computeDatesFromPreset(datePreset), [datePreset]);
   const [dateFrom, setDateFrom] = usePersistedState(`${pfx}_dateFrom`, presetDates.from);
@@ -1064,6 +1074,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   // group context, not as a solo claim.
   const [pendingClaimGroupId, setPendingClaimGroupId] = useState<string | null>(null);
   const isTrainee = viewAsWorkerType !== undefined ? viewAsWorkerType === "TRAINEE" : me?.workerType === "TRAINEE";
+  // Peek is only active when: the toggle is on, we're on the worker
+  // tab (never admin), and the current viewer isn't a trainee.
+  const peekActive = peekOthers && isWorkerView && !isTrainee;
   const [manageOccurrence, setManageOccurrence] = useState<WorkerOccurrence | null>(null);
   const [completeDialogOcc, setCompleteDialogOcc] = useState<WorkerOccurrence | null>(null);
   // Admin-only "Reset Job" confirm. Holds the occurrence the admin
@@ -1399,6 +1412,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           // announcements + highlighted occurrence. Timeline events
           // (workflow=EVENT) are admin-only and hidden entirely.
           // Followups remain team-scoped: visible to assignees only.
+          //
+          // When `peekActive`, we ALSO keep occurrences assigned to
+          // OTHER workers (not me + not unassigned + not announcements)
+          // and tag them with `_isPeek = true`. Downstream renders
+          // treat peek cards as strictly view-only.
           list = list.filter((occ) => {
             if (keepOccId && occ.id === keepOccId) return true;
             // Events are admin-only Timeline items — hide from all
@@ -1407,11 +1425,18 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             // Announcements are universally visible
             if (occ.workflow === "ANNOUNCEMENT") return true;
             const assignees = occ.assignees ?? [];
-            // Followups: only show if user is an assignee
+            // Followups: only show if user is an assignee (peek does
+            // NOT expand this — followups are team-scoped by design).
             if (occ.workflow === "FOLLOWUP") {
               return assignees.some((a) => a.userId === myId);
             }
-            return assignees.length === 0 || assignees.some((a) => a.userId === myId);
+            const mineOrOpen = assignees.length === 0 || assignees.some((a) => a.userId === myId);
+            if (mineOrOpen) return true;
+            // Peek: show others' assigned jobs. Server has already
+            // stripped financials on these and set `_peekRedacted =
+            // true`; the per-card renderer uses that flag as the
+            // isPeek signal — no client-side tagging needed here.
+            return peekActive;
           });
         }
       }
@@ -1530,7 +1555,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     apiGet<CollectionLite[]>("/api/equipment-collections")
       .then((list) => setEquipmentCollections(Array.isArray(list) ? list : []))
       .catch(() => setEquipmentCollections([]));
-  }, [dateFrom, dateTo, viewAsUserIds, isTrainee]);
+  }, [dateFrom, dateTo, viewAsUserIds, isTrainee, peekActive]);
 
   // Re-fetch data after offline queue syncs
   const loadRef = useRef(load);
@@ -2631,6 +2656,34 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)", border: "1px solid var(--chakra-colors-gray-300)", borderRadius: "6px" }}>
           <RefreshCw size={14} />
         </Button>
+        {/* Team view toggle — worker-only, non-trainee. Icon-only to
+            fit the compact button row. Purple on-state ties visually
+            to the per-card peek chip + footer. */}
+        {isWorkerView && !isTrainee && (
+          <Button
+            size="sm"
+            variant="ghost"
+            px="2"
+            flexShrink={0}
+            onClick={() => setPeekOthers(!peekOthers)}
+            css={peekOthers ? {
+              background: "var(--chakra-colors-purple-100)",
+              color: "var(--chakra-colors-purple-800)",
+              border: "1px solid var(--chakra-colors-purple-400)",
+              borderRadius: "6px",
+              "&:hover": { background: "var(--chakra-colors-purple-200)" },
+            } : {
+              background: "var(--chakra-colors-gray-100)",
+              border: "1px solid var(--chakra-colors-gray-300)",
+              borderRadius: "6px",
+            }}
+            title={peekOthers
+              ? "Hide teammates' jobs"
+              : "Show teammates' jobs (view-only)"}
+          >
+            <Users size={14} />
+          </Button>
+        )}
         {/* Density cycle button — icon reflects current density; clicking
             advances to the next (ultra → semi → expanded → ultra) and
             clears all per-card overrides. */}
@@ -2683,7 +2736,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           }}
         >
           <Filter size={14} />
-          {filtersOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
         </Button>
         <Button
           size="sm"
@@ -2862,6 +2914,19 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               </VStack>
             )}
           </Box>
+          {peekActive && (
+            <Badge
+              size="sm"
+              colorPalette="purple"
+              variant="subtle"
+              cursor="pointer"
+              onClick={() => setPeekOthers(false)}
+              title="Click to hide teammates' jobs"
+            >
+              <Users size={10} style={{ marginRight: 4 }} />
+              Team view
+            </Badge>
+          )}
           {headerBelowSlot}
           {overdueActive && (
             <Badge size="sm" colorPalette="red" variant="subtle">Overdue</Badge>
@@ -2896,7 +2961,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           {highlightOccId && <Badge size="sm" colorPalette="teal" variant="subtle">Filtered to 1 occurrence</Badge>}
           {!highlightOccId && filterJobId && <Badge size="sm" colorPalette="teal" variant="subtle">Filtered to job</Badge>}
           {q && <Badge size="sm" colorPalette="gray" variant="subtle">"{q}"</Badge>}
-          {!(kind[0] === "ALL" && statusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !likedOnly && !showCanceled && !showArchived && !pausedRepeatingOnly && !highlightOccId && !filterJobId && !q && !viewAsUserIds?.length && datePreset) && (
+          {!(kind[0] === "ALL" && statusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !likedOnly && !showCanceled && !showArchived && !pausedRepeatingOnly && !highlightOccId && !filterJobId && !q && !viewAsUserIds?.length && datePreset && !peekActive) && (
             <Badge
               size="sm"
               colorPalette="red"
@@ -2912,6 +2977,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 setLikedOnly(false);
                 setShowCanceled(false);
                 setShowArchived(false);
+                setPeekOthers(false);
                 setQ("");
                 setHighlightOccId(null);
                 setFilterJobId(null);
@@ -3219,7 +3285,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           </Select.Positioner>
         </Select.Root>
       </HStack>
-      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || vipOnly || likedOnly || showCanceled || showArchived || highlightOccId || filterJobId || datePreset || dateFrom || dateTo) && (
+      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || vipOnly || likedOnly || showCanceled || showArchived || highlightOccId || filterJobId || datePreset || dateFrom || dateTo || peekActive) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
           <Box position="relative" onClick={(e: any) => e.stopPropagation()}>
             <Badge
@@ -3277,6 +3343,19 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               </VStack>
             )}
           </Box>
+          {peekActive && (
+            <Badge
+              size="sm"
+              colorPalette="purple"
+              variant="subtle"
+              cursor="pointer"
+              onClick={() => setPeekOthers(false)}
+              title="Click to hide teammates' jobs"
+            >
+              <Users size={10} style={{ marginRight: 4 }} />
+              Team view
+            </Badge>
+          )}
           {headerBelowSlot}
           {overdueActive && (
             <Badge size="sm" colorPalette="red" variant="subtle">
@@ -3335,7 +3414,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               Filtered to job
             </Badge>
           )}
-          {!(kind[0] === "ALL" && statusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !likedOnly && !showCanceled && !showArchived && !pausedRepeatingOnly && !highlightOccId && !filterJobId && !q && !viewAsUserIds?.length && datePreset) && (
+          {!(kind[0] === "ALL" && statusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !likedOnly && !showCanceled && !showArchived && !pausedRepeatingOnly && !highlightOccId && !filterJobId && !q && !viewAsUserIds?.length && datePreset && !peekActive) && (
             <Badge
               size="sm"
               colorPalette="red"
@@ -3351,6 +3430,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 setLikedOnly(false);
                 setShowCanceled(false);
                 setShowArchived(false);
+                setPeekOthers(false);
                 setQ("");
                 setHighlightOccId(null);
                 setFilterJobId(null);
@@ -3688,6 +3768,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
             const isClaimer = !!myAssignee && !isObserver && myAssignee.assignedById === myId;
 
+            // Peek mode: this card was surfaced by the "Team" toggle
+            // because the occurrence is assigned to another worker.
+            // The server sets `_peekRedacted = true` on these after
+            // stripping financials; the frontend also detects it
+            // purely from `isAssignedToOthers` so a stale server
+            // (missing the redaction pass) still hides UIs. Either
+            // signal is enough — no risk of "Set Reminder" leaking
+            // onto teammates' cards because the server hot-reload
+            // didn't fire.
+            const isPeek = isAssignedToOthers || !!(occ as any)._peekRedacted;
+
             const isTentative = !!occ.isTentative;
 
             const isEstimateOcc = occ.workflow === "ESTIMATE" || occ.isEstimate;
@@ -3772,7 +3863,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         same vertical height (32px). HStack lives directly
                         inside Card.Root — no Card.Body — to avoid the extra
                         body padding the other ultra paths skip. */}
-                    <HStack px="3" py="1" gap={2} minH="32px" align="center" fontSize="xs">
+                    <HStack px="3" py="1" gap={2} h="44px" align="center" fontSize="xs">
                       <Bell size={13} style={{ color: "var(--chakra-colors-purple-600)", flexShrink: 0 }} />
                       <Badge colorPalette="purple" variant="solid" fontSize="xs" px="1.5" borderRadius="full" flexShrink={0}>Reminder</Badge>
                       {ghostHighPriority && <Badge colorPalette="red" variant="solid" fontSize="xs" px="1.5" borderRadius="full" flexShrink={0}>!</Badge>}
@@ -3965,7 +4056,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     onClick={toggleCard}
                     css={pinCss}
                   >
-                    <HStack px="3" py="1" gap={2} minH="32px" align="center" fontSize="xs">
+                    <HStack px="3" py="1" gap={2} h="44px" align="center" fontSize="xs">
                       <Pin size={13} fill="currentColor" style={{ color: `var(--chakra-colors-${ghostColor}-600)`, flexShrink: 0 }} />
                       <Badge colorPalette={ghostColor} variant="solid" fontSize="xs" px="1.5" borderRadius="full" flexShrink={0}>Pinned</Badge>
                       <Text fontWeight="medium" flex="1" minW={0} overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
@@ -4190,7 +4281,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             // tentative job that needs client confirmation still has to
             // surface that affordance on collapsed/ultra cards (parity with
             // the expanded-card action row).
-            const quickActionButton = isTrainee ? null : (() => {
+            // Peek mode is strictly view-only — never render the quick
+            // action affordance on other workers' cards.
+            const quickActionButton = isTrainee || isPeek ? null : (() => {
               if (needsConfirmation && (isClaimer || forAdmin)) {
                 return (
                   <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="orange.400" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "orange.500" }} title="Confirm Client" onClick={(e: any) => {
@@ -4402,7 +4495,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             // ultra, semi, and expanded title rows all render the same button
             // + menu without code duplication. Body uses position:fixed and
             // computes coords from its parent Box; renders wherever it's used.
-            const moreActionsMenu = (
+            const moreActionsMenu = isPeek ? null : (
               <Box position="relative">
                 <Button variant="ghost" size="xs" px="1" minW="0" onClick={(e) => { e.stopPropagation(); setActionMenuOcc((v) => v === occ.id ? null : occ.id); }} title="More actions">
                   <MoreHorizontal size={16} />
@@ -4517,6 +4610,20 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   cursor: cardMode === "ultra" ? "pointer" : "default",
                   "& a, & button": { pointerEvents: "auto" },
                   ...(isHighPriority ? { borderLeft: "4px solid var(--chakra-colors-purple-600)" } : isReminder ? { borderLeft: "4px solid var(--chakra-colors-purple-400)" } : isAnnouncement ? { borderLeft: "4px solid var(--chakra-colors-purple-400)", ...(isClosed ? { opacity: 0.7 } : {}) } : (isFollowup && !isClosed) ? { borderLeft: "4px solid var(--chakra-colors-red-400)" } : (isFollowup && isClosed) ? { borderLeft: "4px solid var(--chakra-colors-red-300)", opacity: 0.7 } : (isEvent && !isClosed) ? { borderLeft: "4px solid var(--chakra-colors-yellow-400)" } : (isEvent && isClosed) ? { borderLeft: "4px solid var(--chakra-colors-yellow-300)", opacity: 0.7 } : isTask ? { borderLeft: "4px solid var(--chakra-colors-blue-400)" } : {}),
+                  // Peek rows fade back so they visually recede from
+                  // the operator's own actionable rows. Applied last
+                  // so it overrides any subtler category-based opacity
+                  // (closed followup 0.7 etc) — peek should always
+                  // read as "not yours" first.
+                  ...(isPeek ? { opacity: 0.6 } : {}),
+                  // Green pulse for IN_PROGRESS jobs — same animation
+                  // the workday strip uses so "actively running work"
+                  // reads the same on Home and on the Jobs timeline.
+                  // Skipped on peek rows so someone else's active job
+                  // doesn't visually compete with the operator's own.
+                  ...(isInProgress && !isPeek ? {
+                    animation: "seedlings-pulse-green 2.5s ease-in-out infinite",
+                  } : {}),
                 }}
                 onClick={cardMode === "ultra" ? (e: any) => {
                   if (!toggleCard) return;
@@ -4581,7 +4688,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         px="3"
                         py="1"
                         gap={2}
-                        minH="32px"
+                        // Fixed height (not minH) so every ultra row lands
+                        // at the same visual height regardless of content —
+                        // task rows without a $ badge, job rows with one,
+                        // and peek rows all read as a uniform stripe.
+                        // 44px accommodates the tallest content inside
+                        // (Badge is ~22px, $/assignee stripe is ~24px)
+                        // without clipping.
+                        h="44px"
                         align="center"
                         fontSize="xs"
                       >
@@ -4643,6 +4757,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         {isObserver && (
                           <Box flexShrink={0} display="inline-flex" alignItems="center" title="You're an observer">
                             <Eye size={14} color="var(--chakra-colors-blue-500)" />
+                          </Box>
+                        )}
+                        {isPeek && (
+                          <Box flexShrink={0} display="inline-flex" alignItems="center" title="Another worker's job — view only">
+                            <Users size={14} color="var(--chakra-colors-purple-500)" />
                           </Box>
                         )}
                         <Text
@@ -4736,6 +4855,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         {isObserver && (
                           <Box flexShrink={0} display="flex" alignItems="center" title="You're an observer">
                             <Eye size={14} color="var(--chakra-colors-blue-500)" />
+                          </Box>
+                        )}
+                        {isPeek && (
+                          <Box flexShrink={0} display="flex" alignItems="center" title="Another worker's job — view only">
+                            <Users size={14} color="var(--chakra-colors-purple-500)" />
                           </Box>
                         )}
                         <Text fontSize="sm" fontWeight="semibold" minW={0} flex="1" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
@@ -5023,6 +5147,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           {isObserver && (
                             <Box flexShrink={0} display="flex" alignItems="center" title="You're an observer">
                               <Eye size={16} color="var(--chakra-colors-blue-500)" />
+                            </Box>
+                          )}
+                          {isPeek && (
+                            <Box flexShrink={0} display="flex" alignItems="center" title="Another worker's job — view only">
+                              <Users size={16} color="var(--chakra-colors-purple-500)" />
                             </Box>
                           )}
                           <Text fontSize="md" fontWeight="semibold" minW={0} flex="1">
@@ -5333,6 +5462,45 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       </Box>
                     )}
                 </Card.Header>
+
+                {/* Peek strip — renders at the top of the card body
+                    (immediately below the title bar) whenever the
+                    card is a "view-only, someone else's job" row.
+                    Only reachable in semi/expanded density; the ultra
+                    branch returned earlier and surfaces the same info
+                    via the small Users chip in the title bar.
+                    Prominent purple pill so the read-only nature is
+                    impossible to miss + names the actual assignees.
+                    Zero interactive elements. */}
+                {isPeek && (
+                  <Box px="3" pt="2">
+                    <HStack
+                      gap={2}
+                      align="center"
+                      px={2}
+                      py={1.5}
+                      borderRadius="md"
+                      bg="purple.50"
+                      borderWidth="1px"
+                      borderColor="purple.200"
+                    >
+                      <Users size={12} color="var(--chakra-colors-purple-500)" style={{ flexShrink: 0 }} />
+                      <Text fontSize="xs" color="purple.900" lineClamp={1} flex={1} minW={0}>
+                        {(() => {
+                          const workerAssignees = (occ.assignees ?? [])
+                            .filter((a) => (a.role ?? "") !== "observer")
+                            .map((a) => a.user?.displayName || a.user?.email || "Unknown");
+                          const names = workerAssignees.length === 0
+                            ? "unassigned"
+                            : workerAssignees.length <= 2
+                              ? workerAssignees.join(" & ")
+                              : `${workerAssignees.slice(0, 2).join(", ")} +${workerAssignees.length - 2}`;
+                          return `View only · assigned to ${names}`;
+                        })()}
+                      </Text>
+                    </HStack>
+                  </Box>
+                )}
 
                 {/* Resolved client-request note — visible to workers
                  *  and admins so they know the latest exchange with the
@@ -6411,7 +6579,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     client confirmation). Workers/observers see it only on
                     non-tentative jobs since the start/complete affordances
                     don't apply until the client has confirmed. */}
-                {!isCardCompact && !isTrainee && (isUnassigned || isActiveAssignee || (forAdmin && (isAdmin || isSuper))) && (!isTentative || (forAdmin && (isAdmin || isSuper))) && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || (occ.status as string) === "PAUSED" || occ.status === "PENDING_PAYMENT" || occ.status === "CLOSED" || occ.status === "PROPOSAL_SUBMITTED") && (
+                {!isCardCompact && !isTrainee && !isPeek && (isUnassigned || isActiveAssignee || (forAdmin && (isAdmin || isSuper))) && (!isTentative || (forAdmin && (isAdmin || isSuper))) && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || (occ.status as string) === "PAUSED" || occ.status === "PENDING_PAYMENT" || occ.status === "CLOSED" || occ.status === "PROPOSAL_SUBMITTED") && (
                   <Card.Footer py="2" px="3" pt="0">
                     {/* HStack (not VStack) so Manage in Services lands on
                         the same row as the per-status primary action
@@ -7301,7 +7469,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 )}
 
                 {/* Secondary footer: task/reminder reopen + reminder buttons when the regular footer doesn't show */}
-                {(isWorkerView || forAdmin || ((isAdmin || isSuper) && isTaskOrReminder)) && !isCardCompact && !(
+                {(isWorkerView || forAdmin || ((isAdmin || isSuper) && isTaskOrReminder)) && !isCardCompact && !isPeek && !(
                   !isTrainee && (isUnassigned || isActiveAssignee || (forAdmin && (isAdmin || isSuper))) && !isTentative &&
                   (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || (occ.status as string) === "PAUSED" || occ.status === "PENDING_PAYMENT" || occ.status === "CLOSED" || occ.status === "PROPOSAL_SUBMITTED")
                 ) && (
