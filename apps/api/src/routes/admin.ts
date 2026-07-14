@@ -2805,8 +2805,43 @@ Respond ONLY with valid JSON in this exact format:
       hoursByUser.set(w.userId, (hoursByUser.get(w.userId) ?? 0) + activeMs / 3_600_000);
     }
 
+    // Jobs completed today per worker, counted from JobOccurrence
+    // directly (not from PaymentSplit — a job completed today may not
+    // have had its payment recorded yet, and we still want to credit
+    // the worker for having done it). Observers excluded — they
+    // watched, didn't do the work.
+    const completedOccs = await prisma.jobOccurrence.findMany({
+      where: {
+        status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
+        completedAt: { gte: dayStart, lte: dayEnd },
+        assignees: {
+          some: {
+            userId: { in: userIds },
+            OR: [{ role: null }, { role: { not: "observer" } }],
+          },
+        },
+      },
+      select: {
+        id: true,
+        assignees: { select: { userId: true, role: true } },
+      },
+    });
+    const jobIdsByUser = new Map<string, Set<string>>();
+    for (const occ of completedOccs) {
+      for (const a of occ.assignees) {
+        if (!userIds.includes(a.userId)) continue;
+        if (a.role === "observer") continue;
+        const set = jobIdsByUser.get(a.userId) ?? new Set<string>();
+        set.add(occ.id);
+        jobIdsByUser.set(a.userId, set);
+      }
+    }
+
     // Client-payment splits anchored on the occurrence's completedAt.
-    // Excludes GP-flagged splits (see loadGpWorkAnchoredItems below).
+    // Drives the money-earned column — separate from the job count
+    // because a completed job may not have paid out yet (client hasn't
+    // paid, admin hasn't recorded, etc.). Excludes GP-flagged splits
+    // (see loadGpWorkAnchoredItems below).
     const splits = await prisma.paymentSplit.findMany({
       where: {
         userId: { in: userIds },
@@ -2819,19 +2854,11 @@ Respond ONLY with valid JSON in this exact format:
           },
         },
       },
-      select: {
-        userId: true,
-        amount: true,
-        payment: { select: { occurrenceId: true } },
-      },
+      select: { userId: true, amount: true },
     });
     const netByUser = new Map<string, number>();
-    const jobIdsByUser = new Map<string, Set<string>>();
     for (const s of splits) {
       netByUser.set(s.userId, (netByUser.get(s.userId) ?? 0) + s.amount);
-      const set = jobIdsByUser.get(s.userId) ?? new Set<string>();
-      set.add(s.payment.occurrenceId);
-      jobIdsByUser.set(s.userId, set);
     }
 
     // GP wage-path earnings for today (contractor jobs completed while
@@ -2841,9 +2868,6 @@ Respond ONLY with valid JSON in this exact format:
     for (const item of gpItems) {
       if (!userSet.has(item.userId)) continue;
       netByUser.set(item.userId, (netByUser.get(item.userId) ?? 0) + item.amount);
-      const set = jobIdsByUser.get(item.userId) ?? new Set<string>();
-      set.add(item.occurrenceId);
-      jobIdsByUser.set(item.userId, set);
     }
 
     return workers.map((w) => {
