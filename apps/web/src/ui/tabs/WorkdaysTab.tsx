@@ -671,23 +671,93 @@ export default function WorkdaysTab({
           {/* DIDN'T WORK — short list of workers without a row, restricted
               to users with ≥1 workday in history (server enforces).
               Each row gets an "Add workday" affordance so Super can
-              backfill a row for a worker who forgot to clock in. */}
+              backfill a row for a worker who forgot to clock in.
+
+              Also surfaces mileage sessions on this date for drivers
+              who logged mileage without clocking a workday (e.g., the
+              driver was an Observer on the job — didn't do the work
+              but ran the truck). Without this, a lone pending mileage
+              entry is invisible in the UI even though it drives the
+              "Workdays / mileage to review" alert count. */}
           {data.didntWork.length > 0 && (
             <SectionCard title="Didn't work" color="gray" count={data.didntWork.length} muted>
               <VStack align="stretch" gap={0}>
-                {data.didntWork.map((u) => (
-                  <HStack key={u.userId} py={1} fontSize="sm" color="fg.muted">
-                    <Text flex="1">{workerLabel(u)}</Text>
-                    {u.workerType && <Badge size="xs" variant="outline">{u.workerType}</Badge>}
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      onClick={() => setCreateForUser(u)}
-                    >
-                      Add workday
-                    </Button>
-                  </HStack>
-                ))}
+                {data.didntWork.map((u) => {
+                  const sessions = mileageByUser[u.userId] ?? [];
+                  const pendingSessions = sessions.filter(
+                    (e) => e.endedAt != null && e.approvedAt == null,
+                  );
+                  const totalMiles = sessions.reduce((s, e) => s + (e.miles ?? 0), 0);
+                  return (
+                    <VStack key={u.userId} align="stretch" gap={1} py={1}>
+                      <HStack fontSize="sm" color="fg.muted">
+                        <Text flex="1">{workerLabel(u)}</Text>
+                        {u.workerType && <Badge size="xs" variant="outline">{u.workerType}</Badge>}
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          onClick={() => setCreateForUser(u)}
+                        >
+                          Add workday
+                        </Button>
+                      </HStack>
+                      {sessions.length > 0 && (
+                        <HStack
+                          justify="space-between"
+                          align="start"
+                          gap={2}
+                          wrap="wrap"
+                          pl={2}
+                        >
+                          <HStack gap={2} align="start" flex={1} minW={0}>
+                            <Box color="fg.muted" mt={0.5}>
+                              <Car size={12} />
+                            </Box>
+                            <VStack align="start" gap={0} flex={1} minW={0}>
+                              <HStack gap={2}>
+                                <Text fontSize="xs">
+                                  {sessions.length} session{sessions.length === 1 ? "" : "s"}
+                                  {" · "}
+                                  {totalMiles.toLocaleString()} mi
+                                  {pendingSessions.length > 0 && (
+                                    <Text as="span" color="orange.700" fontWeight="medium">
+                                      {" · "}{pendingSessions.length} pending
+                                    </Text>
+                                  )}
+                                </Text>
+                                <StatusChip
+                                  open={sessions.some((s) => s.endedAt == null)}
+                                  approved={
+                                    sessions.length > 0 &&
+                                    sessions.every((s) => s.endedAt != null && s.approvedAt != null)
+                                  }
+                                />
+                              </HStack>
+                              <Text fontSize="2xs" color="fg.muted" lineClamp={1}>
+                                {sessions.map((e) => e.vehicleName).join(", ")}
+                              </Text>
+                            </VStack>
+                          </HStack>
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            colorPalette="blue"
+                            onClick={() => {
+                              setReviewMileageFor({
+                                driverUserId: u.userId,
+                                driverLabel: workerLabel(u),
+                                entryDate: selectedDate,
+                                entries: sessions,
+                              });
+                            }}
+                          >
+                            Review
+                          </Button>
+                        </HStack>
+                      )}
+                    </VStack>
+                  );
+                })}
               </VStack>
             </SectionCard>
           )}
