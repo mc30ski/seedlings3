@@ -159,7 +159,16 @@ export default function TodayHourlyPayPanel({ workerIds, refreshNonce = 0 }: Pro
                     <HStack flex={2} gap={2} minW={0}>
                       <Text truncate>{r.displayName}</Text>
                       {r.workerType && (
-                        <Badge size="xs" variant="outline">
+                        <Badge
+                          size="xs"
+                          variant="subtle"
+                          colorPalette={
+                            r.workerType === "EMPLOYEE" ? "blue"
+                              : r.workerType === "CONTRACTOR" ? "orange"
+                              : r.workerType === "TRAINEE" ? "cyan"
+                              : "gray"
+                          }
+                        >
                           {r.workerType.toLowerCase()}
                         </Badge>
                       )}
@@ -174,7 +183,7 @@ export default function TodayHourlyPayPanel({ workerIds, refreshNonce = 0 }: Pro
                 );
               })}
               <Text fontSize="2xs" color="fg.muted" mt={1} pt={1} borderTopWidth={1} borderColor="gray.100">
-                Excludes in-progress workdays. $/hr = today's pay ÷ hours from completed workdays.
+                Excludes in-progress workdays. Jobs count includes every completed job today; Earned reflects payments recorded so far (may lag completed jobs until the payment is recorded). $/hr = Earned ÷ Hours.
               </Text>
             </VStack>
           ) : null}
