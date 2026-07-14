@@ -2743,6 +2743,126 @@ Respond ONLY with valid JSON in this exact format:
     return { ok: true };
   });
 
+  // Per-worker "current hourly pay" panel data — Admin Jobs Home tab.
+  //
+  //   - Hours: from WorkerWorkday rows for today with endedAt set
+  //     (in-progress workdays excluded per operator request).
+  //   - Net pay: sum of PaymentSplit.amount for occurrences whose
+  //     completedAt lands today. GP-flagged splits excluded (their
+  //     cash already flowed on the wage-path Gusto run) and
+  //     re-anchored here via loadGpWorkAnchoredItems.
+  //   - $/hr = netPaid / hoursActive (0 when no hours logged yet).
+  //
+  // Query: `?workerIds=id1,id2` filters to a subset; omit for all
+  // approved workers. Admin-visible (not super-only).
+  app.get("/admin/workers/earnings-today", adminGuard, async (req: any) => {
+    const q = (req.query || {}) as { workerIds?: string };
+    const requestedIds = q.workerIds
+      ? String(q.workerIds).split(",").map((s) => s.trim()).filter(Boolean)
+      : undefined;
+
+    const today = etToday();
+    const dayStart = etMidnight(today);
+    const dayEnd = etEndOfDay(today);
+
+    const workers = await prisma.user.findMany({
+      where: {
+        workerType: { not: null },
+        isApproved: true,
+        ...(requestedIds && requestedIds.length > 0
+          ? { id: { in: requestedIds } }
+          : {}),
+      },
+      select: {
+        id: true,
+        displayName: true,
+        email: true,
+        workerType: true,
+      },
+      orderBy: { displayName: "asc" },
+    });
+    const userIds = workers.map((w) => w.id);
+    if (userIds.length === 0) return [];
+
+    // Hours from today's COMPLETED workdays only.
+    const workdays = await prisma.workerWorkday.findMany({
+      where: {
+        workdayDate: today,
+        userId: { in: userIds },
+        endedAt: { not: null },
+      },
+      select: {
+        userId: true,
+        startedAt: true,
+        endedAt: true,
+        totalPausedMs: true,
+      },
+    });
+    const hoursByUser = new Map<string, number>();
+    for (const w of workdays) {
+      const rawMs = w.endedAt!.getTime() - w.startedAt.getTime();
+      const activeMs = Math.max(0, rawMs - w.totalPausedMs);
+      hoursByUser.set(w.userId, (hoursByUser.get(w.userId) ?? 0) + activeMs / 3_600_000);
+    }
+
+    // Client-payment splits anchored on the occurrence's completedAt.
+    // Excludes GP-flagged splits (see loadGpWorkAnchoredItems below).
+    const splits = await prisma.paymentSplit.findMany({
+      where: {
+        userId: { in: userIds },
+        guaranteedPayoutPaidAt: null,
+        payment: {
+          skippedAt: null,
+          occurrence: {
+            status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
+            completedAt: { gte: dayStart, lte: dayEnd },
+          },
+        },
+      },
+      select: {
+        userId: true,
+        amount: true,
+        payment: { select: { occurrenceId: true } },
+      },
+    });
+    const netByUser = new Map<string, number>();
+    const jobIdsByUser = new Map<string, Set<string>>();
+    for (const s of splits) {
+      netByUser.set(s.userId, (netByUser.get(s.userId) ?? 0) + s.amount);
+      const set = jobIdsByUser.get(s.userId) ?? new Set<string>();
+      set.add(s.payment.occurrenceId);
+      jobIdsByUser.set(s.userId, set);
+    }
+
+    // GP wage-path earnings for today (contractor jobs completed while
+    // the contractor is inside their guaranteed-payout window).
+    const gpItems = await loadGpWorkAnchoredItems(dayStart, dayEnd);
+    const userSet = new Set(userIds);
+    for (const item of gpItems) {
+      if (!userSet.has(item.userId)) continue;
+      netByUser.set(item.userId, (netByUser.get(item.userId) ?? 0) + item.amount);
+      const set = jobIdsByUser.get(item.userId) ?? new Set<string>();
+      set.add(item.occurrenceId);
+      jobIdsByUser.set(item.userId, set);
+    }
+
+    return workers.map((w) => {
+      const hoursToday = hoursByUser.get(w.id) ?? 0;
+      const netPaidToday = netByUser.get(w.id) ?? 0;
+      const jobsCompleted = jobIdsByUser.get(w.id)?.size ?? 0;
+      const equivalentHourlyRate = hoursToday > 0 ? netPaidToday / hoursToday : 0;
+      return {
+        userId: w.id,
+        displayName: w.displayName ?? w.email ?? "Unknown",
+        workerType: w.workerType,
+        hoursToday: Math.round(hoursToday * 100) / 100,
+        netPaidToday: Math.round(netPaidToday * 100) / 100,
+        jobsCompleted,
+        equivalentHourlyRate: Math.round(equivalentHourlyRate * 100) / 100,
+      };
+    });
+  });
+
   app.get("/admin/users/:id/earnings-summary", adminGuard, async (req: any) => {
     const userId = String(req.params.id);
     // ET-anchored period starts. On Vercel (UTC server), naive Date getters

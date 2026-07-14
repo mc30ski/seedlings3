@@ -15,6 +15,7 @@ import HomeBanners from "@/src/ui/components/HomeBanners";
 import ComplianceBanner from "@/src/ui/components/ComplianceBanner";
 import WorkdayStrip from "@/src/ui/components/WorkdayStrip";
 import MileageStrip from "@/src/ui/components/MileageStrip";
+import TodayHourlyPayPanel from "@/src/ui/components/TodayHourlyPayPanel";
 import type { Me } from "@/src/lib/types";
 
 type Props = {
@@ -722,6 +723,11 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
             viewAsDisplayName={isViewingOther ? (viewAsDisplayName ?? null) : null}
             canImpersonate={!!me?.realRoles?.includes("SUPER")}
             mileageSlot={!isViewingOther ? <MileageStrip embedded /> : null}
+            // The strip's trailing 12px margin double-counted with
+            // this VStack's gap={4}, making the space before the hero
+            // visibly larger than any other between-section gap. Let
+            // the parent VStack own all exterior spacing.
+            noBottomMargin
           />
         )}
 
@@ -1097,6 +1103,23 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
               </HStack>
             </Card.Body>
           </Card.Root>
+        )}
+
+        {/* Today's hourly pay — admin-only. Sits between the hero and
+            the weekly earnings graph so admins get a same-day snapshot
+            (jobs, hours, $, $/hr per worker) without expanding a card.
+            Gated on any admin-view prop (aggregate, subset, or
+            view-as-single-worker); regular worker Home never renders it. */}
+        {(isAggregate || viewAsUserId) && (
+          <TodayHourlyPayPanel
+            workerIds={
+              viewAsUserId
+                ? viewAsUserId
+                : isSubset
+                  ? (subsetUserIds ?? []).join(",")
+                  : ""
+            }
+          />
         )}
 
         {/* Weekly earnings trend over the last 2 months */}

@@ -1579,7 +1579,6 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
           }}
         >
           <Filter size={14} />
-          {filtersOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
         </Button>
         <Button
           variant="ghost"

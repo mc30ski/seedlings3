@@ -207,3 +207,68 @@ export function redactTraineeFieldsForCaller(
   }
   return occurrences;
 }
+
+// ─── Peek redaction ────────────────────────────────────────────────────
+//
+// Powers the Worker Jobs "Team" toggle. When a worker turns Team on,
+// the client shows occurrences assigned to OTHER workers alongside
+// their own. Those cards are strictly view-only on the client, but
+// the payload can still leak other workers' pay data (price, splits,
+// payouts) since the observer/trainee redaction paths only fire when
+// the caller has some assignment relationship to the occurrence.
+//
+// This helper closes the gap: for any occurrence that HAS assignees
+// and the caller is NOT one of them (and not an admin), strip the
+// same financial fields observer redaction strips. Unassigned /
+// claimable jobs pass through unredacted because the worker
+// legitimately needs to see the price to decide whether to claim.
+
+/**
+ * True when `occ` has ≥1 assignee AND `callerUserId` is not among them.
+ * Announcements + unassigned/claimable jobs return false — those are
+ * legitimately visible to any worker without redaction.
+ */
+export function isPeekingOccurrence(
+  occ: { assignees?: Assignee[] | null } | null | undefined,
+  callerUserId: string,
+): boolean {
+  const assignees = occ?.assignees ?? [];
+  if (assignees.length === 0) return false;
+  return !assignees.some((a) => a.userId === callerUserId);
+}
+
+/**
+ * For an array of occurrences, strip financial detail from any where
+ * the caller is a "peeker" (not an assignee, but the occ has
+ * assignees). Reuses `redactOccurrenceForObserver` since the fields
+ * to strip are the same — the difference is just which occurrences
+ * qualify.
+ *
+ * IMPORTANT — no admin bypass here (unlike observer/trainee
+ * redaction). The peek feature lives on the Worker Jobs tab and its
+ * purpose is to give workers a view-only peek at teammates'
+ * schedules WITHOUT exposing other workers' pay. Admins using the
+ * Worker tab are opting into the worker experience; they see the
+ * worker-view redaction alongside everyone else. Admins who need
+ * the unredacted picture use the Admin Jobs tab, which hits
+ * different endpoints and doesn't touch this helper.
+ *
+ * Chain order matters: observer redaction first (only affects occs
+ * where caller IS an observer-only assignee), then trainee, then peek
+ * (only affects occs where caller is NOT assigned at all — disjoint
+ * sets, but the `_observerRedacted` guard keeps re-processing cheap).
+ * Sets `_peekRedacted = true` as a UI hint.
+ */
+export function redactPeekFieldsForCaller(
+  occurrences: any[],
+  callerUserId: string,
+): any[] {
+  for (const occ of occurrences) {
+    if (occ._observerRedacted) continue;
+    if (isPeekingOccurrence(occ, callerUserId)) {
+      redactOccurrenceForObserver(occ);
+      occ._peekRedacted = true;
+    }
+  }
+  return occurrences;
+}

@@ -555,6 +555,14 @@ export default function WorkdayStrip({
 
   return (
     <>
+      {/* Cards wrapper — VStack owns the between-card spacing so the
+          strip's trailing external spacing is fully controlled by
+          `noBottomMargin`. Prior to this refactor each card had its
+          own `mb={cardMb}` which double-counted with the parent
+          VStack's gap on HomeTab, producing a visibly larger gap
+          before the next sibling. Kept gap={3} internally to match
+          the historic mb=3 look between forgot-yesterday + workday. */}
+      <VStack align="stretch" gap={3} mb={cardMb}>
       {/* Forgot-yesterday — its own card so it doesn't inherit today's
           state-themed background. Workers MUST address this before
           starting today, so it gets its own attention-getting orange
@@ -565,7 +573,6 @@ export default function WorkdayStrip({
           bg="orange.50"
           borderColor="orange.400"
           borderWidth="2px"
-          mb={cardMb}
         >
           <Card.Body p={3}>
             <ForgotPriorRow
@@ -580,12 +587,13 @@ export default function WorkdayStrip({
           gets the loudest treatment (it's the one thing the worker must
           do); IN_PROGRESS is reassuring green; PAUSED is amber to remind
           them the clock is stopped; COMPLETED dims back to a subtle gray
-          (the work is done). */}
+          (the work is done). Always noBottomMargin — the wrapping VStack
+          above handles both internal spacing and trailing external mb. */}
       <WorkdayCard
         today={payload.today}
         viewAsName={viewAsDisplayName}
         canAct={canAct}
-        noBottomMargin={noBottomMargin}
+        noBottomMargin={true}
         mileageSlot={mileageSlot}
         // Defensive default — a pre-deploy cached `/api/me/workday/today`
         // response (served by the service worker when offline or stale)
@@ -621,6 +629,7 @@ export default function WorkdayStrip({
         onEdit={(w) => setDialog({ kind: "edit", workday: w })}
         onCancel={(w) => setDialog({ kind: "cancel", workday: w })}
       />
+      </VStack>
 
       {/* Dialogs — only one of these renders at a time. Each gets the
           viewAs name so the in-dialog impersonation block can call out

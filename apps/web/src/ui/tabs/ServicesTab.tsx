@@ -752,7 +752,6 @@ export default function ServicesTab({
           }}
         >
           <Filter size={14} />
-          {filtersOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
         </Button>
         {forAdmin && (
           <Button
