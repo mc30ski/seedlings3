@@ -2924,7 +2924,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               title="Click to hide teammates' jobs"
             >
               <Users size={10} style={{ marginRight: 4 }} />
-              Team view
+              Team
             </Badge>
           )}
           {headerBelowSlot}
@@ -3353,7 +3353,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               title="Click to hide teammates' jobs"
             >
               <Users size={10} style={{ marginRight: 4 }} />
-              Team view
+              Team
             </Badge>
           )}
           {headerBelowSlot}
@@ -4609,12 +4609,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   cursor: cardMode === "ultra" ? "pointer" : "default",
                   "& a, & button": { pointerEvents: "auto" },
                   ...(isHighPriority ? { borderLeft: "4px solid var(--chakra-colors-purple-600)" } : isReminder ? { borderLeft: "4px solid var(--chakra-colors-purple-400)" } : isAnnouncement ? { borderLeft: "4px solid var(--chakra-colors-purple-400)", ...(isClosed ? { opacity: 0.7 } : {}) } : (isFollowup && !isClosed) ? { borderLeft: "4px solid var(--chakra-colors-red-400)" } : (isFollowup && isClosed) ? { borderLeft: "4px solid var(--chakra-colors-red-300)", opacity: 0.7 } : (isEvent && !isClosed) ? { borderLeft: "4px solid var(--chakra-colors-yellow-400)" } : (isEvent && isClosed) ? { borderLeft: "4px solid var(--chakra-colors-yellow-300)", opacity: 0.7 } : isTask ? { borderLeft: "4px solid var(--chakra-colors-blue-400)" } : {}),
-                  // Peek rows fade back so they visually recede from
-                  // the operator's own actionable rows. Applied last
-                  // so it overrides any subtler category-based opacity
-                  // (closed followup 0.7 etc) — peek should always
-                  // read as "not yours" first.
-                  ...(isPeek ? { opacity: 0.6 } : {}),
+                  // Peek rows previously used opacity 0.6 to recede,
+                  // but it made the cards too hard to read. The
+                  // purple Users chip + "View only" strip + missing
+                  // action buttons already communicate the peek
+                  // state; no dimming needed.
                   // Green pulse for IN_PROGRESS jobs — same animation
                   // the workday strip uses so "actively running work"
                   // reads the same on Home and on the Jobs timeline.
