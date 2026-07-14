@@ -10,6 +10,12 @@ import {
   getObjectText,
   getUploadUrl,
 } from "../lib/r2";
+import {
+  enqueueSyncMetadata,
+  enqueueUploadVersion,
+  enqueueDeleteVersion,
+  enqueueMoveToDeleted,
+} from "./documentSyncQueue";
 
 // Helpers ----------------------------------------------------------------
 
@@ -171,6 +177,7 @@ export const companyDocuments = {
       await writeAudit(tx, AUDIT.DOCUMENT.CREATED, currentUserId, {
         documentId: doc.id, type: doc.type, title: doc.title,
       });
+      await enqueueSyncMetadata(tx, doc.id);
       return doc;
     });
   },
@@ -199,6 +206,7 @@ export const companyDocuments = {
       await writeAudit(tx, AUDIT.DOCUMENT.UPDATED, currentUserId, {
         documentId: id, changed: Object.keys(data),
       });
+      await enqueueSyncMetadata(tx, id);
       return updated;
     });
   },
@@ -213,6 +221,7 @@ export const companyDocuments = {
         data: { archivedAt: new Date() },
       });
       await writeAudit(tx, AUDIT.DOCUMENT.ARCHIVED, currentUserId, { documentId: id });
+      await enqueueSyncMetadata(tx, id);
       return updated;
     });
   },
@@ -243,6 +252,7 @@ export const companyDocuments = {
         data: { archivedAt: null },
       });
       await writeAudit(tx, AUDIT.DOCUMENT.UNARCHIVED, currentUserId, { documentId: id });
+      await enqueueSyncMetadata(tx, id);
       return updated;
     });
   },
@@ -281,6 +291,13 @@ export const companyDocuments = {
       await tx.companyDocument.delete({ where: { id } });
       await writeAudit(tx, AUDIT.DOCUMENT.DELETED, currentUserId, {
         documentId: id, type: doc.type, title: doc.title,
+        versionCount: doc.versions.length,
+      });
+      // Capture title + versionCount in the payload — both are gone from
+      // the DB by the time the sync worker runs, and MOVE_TO_DELETED
+      // uses them to build the destination folder name.
+      await enqueueMoveToDeleted(tx, id, {
+        title: doc.title,
         versionCount: doc.versions.length,
       });
     });
@@ -363,6 +380,13 @@ export const companyDocuments = {
       await writeAudit(tx, AUDIT.DOCUMENT.VERSION_ADDED, currentUserId, {
         documentId, versionId,
       });
+      // A new version means: upload the bytes to Drive, then re-sync
+      // metadata (currentVersionId moved). Metadata sync is also
+      // enqueued by the worker itself after a successful upload, but we
+      // enqueue here too so metadata refreshes even if the upload
+      // permanently fails.
+      await enqueueUploadVersion(tx, documentId, versionId);
+      await enqueueSyncMetadata(tx, documentId);
       return doc;
     });
   },
@@ -386,6 +410,7 @@ export const companyDocuments = {
       await writeAudit(tx, AUDIT.DOCUMENT.VERSION_RESTORED, currentUserId, {
         documentId, versionId,
       });
+      await enqueueSyncMetadata(tx, documentId);
       return updated;
     });
   },
@@ -415,6 +440,13 @@ export const companyDocuments = {
       await tx.companyDocumentVersion.delete({ where: { id: versionId } });
       await writeAudit(tx, AUDIT.DOCUMENT.VERSION_DELETED, currentUserId, {
         documentId, versionId,
+      });
+      // Filename + size captured for the sync panel — the DB row is
+      // gone by the time the worker runs, so the queue payload is the
+      // only surviving source of "which file did we delete?"
+      await enqueueDeleteVersion(tx, documentId, versionId, {
+        originalFilename: version.originalFilename,
+        sizeBytes: version.sizeBytes,
       });
     });
     return { ok: true };

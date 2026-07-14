@@ -2154,6 +2154,69 @@ model CompanyDocumentVersion {
   @@index([documentId, uploadedAt])
 }
 
+// ─── Google Drive backup ────────────────────────────────────────────────
+//
+// Off-site backup of CompanyDocument + CompanyDocumentVersion into a
+// folder in admin@'s Google Drive. Full spec:
+// docs/features/documents-gdrive-backup.md.
+//
+// Two-table split:
+//   DocumentSyncQueue — pending / in-progress work
+//   DocumentSyncState — durable "what's in Drive now" map (folder per
+//                       CompanyDocument, file per CompanyDocumentVersion,
+//                       polymorphic on `kind`)
+//
+// The queue writes happen IN THE SAME TRANSACTION as each app mutation,
+// so a sync task can't be lost between DB commit and the next worker run.
+
+model DocumentSyncQueue {
+  id            String   @id @default(cuid())
+  // SYNC_DOCUMENT_METADATA | UPLOAD_DOCUMENT_VERSION |
+  // DELETE_DOCUMENT_VERSION | MOVE_TO_DELETED | SYNC_TAXONOMY
+  taskType      String
+  // The CompanyDocument this task acts on (null for SYNC_TAXONOMY).
+  documentId    String?
+  // The CompanyDocumentVersion this task acts on (only version-level tasks).
+  versionId     String?
+  // Task-specific extra fields captured at enqueue time (e.g.
+  // MOVE_TO_DELETED needs the title + versionCount because both are gone
+  // from the DB by the time the worker runs).
+  payload       Json?
+  // PENDING | IN_PROGRESS | DONE | FAILED
+  state         String   @default("PENDING")
+  attempts      Int      @default(0)
+  lastError     String?
+  // Backoff — worker skips rows whose nextAttemptAt is in the future.
+  nextAttemptAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([state, nextAttemptAt])
+  @@index([documentId, state])
+  @@index([taskType, state])
+}
+
+model DocumentSyncState {
+  id            String   @id @default(cuid())
+  // DOCUMENT (folder) | VERSION (file)
+  kind          String
+  // For DOCUMENT rows: the CompanyDocument.id (unique per doc).
+  // For VERSION rows: the CompanyDocumentVersion.id (unique per version).
+  entityId      String   @unique
+  // Grouping key for VERSION rows so the worker can find all files
+  // belonging to a document at once (matches the doc's entityId).
+  // Null for DOCUMENT rows.
+  documentId    String?
+  // The Drive resource id — folderId for DOCUMENT, fileId for VERSION.
+  driveId       String   @unique
+  lastSyncedAt  DateTime
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([kind])
+  @@index([documentId])
+}
+
 // Timeline events — important upcoming dates surfaced in the Timeline tab
 // alongside CompanyDocument expirations. `rrule` is a RFC 5545 RRULE string
 // (e.g., "FREQ=YEARLY;BYMONTH=4;BYMONTHDAY=15"); empty/null = one-time at

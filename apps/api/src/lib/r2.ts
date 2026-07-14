@@ -100,3 +100,28 @@ export async function getObjectText(
   }
   return body.transformToString("utf-8");
 }
+
+/**
+ * Fetch an object's raw bytes as a Buffer. Used by the Google Drive
+ * backup worker to stream a version's PDF (or any binary) into Drive.
+ * `maxBytes` guards against loading a surprise multi-GB blob into
+ * memory — cap defaults to 100MB, well above the CompanyDocument
+ * max-size setting (25MB default).
+ */
+export async function getObjectBuffer(
+  key: string,
+  bucket: BucketType = "photos",
+  maxBytes = 100_000_000,
+): Promise<{ bytes: Buffer; contentType: string | undefined }> {
+  const command = new GetObjectCommand({ Bucket: bucketName(bucket), Key: key });
+  const res = await s3.send(command);
+  if (res.ContentLength != null && res.ContentLength > maxBytes) {
+    throw new Error(`Object too large to buffer (${res.ContentLength} bytes).`);
+  }
+  const body = res.Body as { transformToByteArray?: () => Promise<Uint8Array> } | undefined;
+  if (!body?.transformToByteArray) {
+    throw new Error("Object body is not readable as bytes.");
+  }
+  const arr = await body.transformToByteArray();
+  return { bytes: Buffer.from(arr), contentType: res.ContentType };
+}
