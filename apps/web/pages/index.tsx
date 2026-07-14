@@ -3048,10 +3048,21 @@ export default function HomePage() {
   const goToWorkdayApprovals = useCallback(() => {
     setTopTab("super");
     setSuperInnerTab("workdays");
-    const oldest = pendingWorkdaysByDate[0]?.workdayDate ?? null;
+    // Jump to the oldest date across BOTH pending workdays AND pending
+    // mileage. Otherwise a lone pending mileage entry (a driver who
+    // logged mileage without clocking a workday — Observer scenario)
+    // dumps the operator on today's tab even though the actionable
+    // item is on a prior date, making the alert count feel like a
+    // ghost. See also the mileage chip render on "Didn't work" rows
+    // in WorkdaysTab.tsx which makes the entry actually reachable.
+    const workdayOldest = pendingWorkdaysByDate[0]?.workdayDate ?? null;
+    const mileageOldest = pendingMileageByDate[0]?.entryDate ?? null;
+    const oldest = workdayOldest && mileageOldest
+      ? (workdayOldest < mileageOldest ? workdayOldest : mileageOldest)
+      : (workdayOldest ?? mileageOldest);
     setWorkdaysJumpDate(oldest);
     setWorkdaysJumpNonce((n) => n + 1);
-  }, [pendingWorkdaysByDate]);
+  }, [pendingWorkdaysByDate, pendingMileageByDate]);
 
   // Land on Super → Money → Ledger with the "Followups only" filter
   // pre-applied. The Ledger tab listens for this event on mount and
@@ -3382,7 +3393,14 @@ export default function HomePage() {
               // categories side-by-side.
               if (isSuper && pendingWorkdays + pendingMileage > 0) {
                 alerts.push({
-                  label: "Workdays to review",
+                  // Combined count intentionally — workdays + mileage
+                  // share the same drill-in (Workdays tab, with mileage
+                  // sub-rows). Label mentions both so a lone pending
+                  // mileage entry doesn't read as a phantom "Workday to
+                  // review." See goToWorkdayApprovals which now also
+                  // jumps to the correct date whichever source has the
+                  // oldest.
+                  label: "Workdays / mileage to review",
                   count: pendingWorkdays + pendingMileage,
                   bg: "#E0E7FF",
                   color: "#3730A3",
