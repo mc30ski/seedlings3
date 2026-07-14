@@ -42,6 +42,28 @@ async function currentUserId(req: any) {
   return (await services.currentUser.me(req.auth?.clerkUserId)).id;
 }
 
+// Recurring-expense forecast. Same-day-of-month math with
+// end-of-month clamping (Jan 31 + 1mo → Feb 28). Shared by the
+// due-soon suggestion panel and the record/edit endpoints so the
+// "Next occurrence expected …" toast agrees with the panel.
+// setDate/setMonth/setFullYear are the documented recurrence
+// exception — see docs/DATE_HANDLING.md "Legitimate exceptions".
+function nextRecurrenceDate(d: Date, cadence: string): Date {
+  const out = new Date(d);
+  if (cadence === "WEEKLY") {
+    out.setDate(out.getDate() + 7);
+    return out;
+  }
+  const day = out.getDate();
+  out.setDate(1);
+  if (cadence === "MONTHLY") out.setMonth(out.getMonth() + 1);
+  else if (cadence === "QUARTERLY") out.setMonth(out.getMonth() + 3);
+  else if (cadence === "ANNUALLY") out.setFullYear(out.getFullYear() + 1);
+  const lastDay = new Date(out.getFullYear(), out.getMonth() + 1, 0).getDate();
+  out.setDate(Math.min(day, lastDay));
+  return out;
+}
+
 export default async function adminRoutes(app: FastifyInstance) {
   const adminGuard = {
     preHandler: (req: FastifyRequest, reply: FastifyReply) =>
@@ -5039,7 +5061,7 @@ Respond ONLY with valid JSON in this exact format:
       }
       if (!recurrenceSeriesId) recurrenceSeriesId = randomUUID();
     }
-    return prisma.businessExpense.create({
+    const created = await prisma.businessExpense.create({
       data: {
         ledgerId: generateLedgerId(),
         createdById: uid,
@@ -5062,6 +5084,14 @@ Respond ONLY with valid JSON in this exact format:
         recurrenceSeriesId,
       },
     });
+    // For recurring rows, tell the client when the next instance is
+    // expected so the success toast can say "Next occurrence expected
+    // Aug 15." — matches the copy on repeating jobs' payment-accepted
+    // toasts.
+    const nextExpectedDate = recurrence
+      ? etFormatDate(nextRecurrenceDate(created.date, recurrence))
+      : null;
+    return { ...created, nextExpectedDate };
   });
 
   // Pre-flight for the Add Entry dialog: does an existing recurring
@@ -5258,7 +5288,7 @@ Respond ONLY with valid JSON in this exact format:
         data.invoiceNumber = null;
       }
     }
-    return prisma.$transaction(async (tx) => {
+    const updated = await prisma.$transaction(async (tx) => {
       const updated = await tx.businessExpense.update({ where: { id }, data });
       if (linkedExpense) {
         const expenseSync: any = {};
@@ -5270,6 +5300,13 @@ Respond ONLY with valid JSON in this exact format:
       }
       return updated;
     });
+    // Same tail as the create endpoint: if the row is (still or now)
+    // recurring, echo the next expected date so the client's "Expense
+    // updated" toast can trail with the forecast.
+    const nextExpectedDate = updated.recurrence
+      ? etFormatDate(nextRecurrenceDate(updated.date, String(updated.recurrence)))
+      : null;
+    return { ...updated, nextExpectedDate };
   });
 
   app.delete("/admin/business-expenses/:id", superGuard, async (req: any) => {
@@ -5565,23 +5602,6 @@ Respond ONLY with valid JSON in this exact format:
   // the most recent row drives the next-expected date. Anything overdue or
   // due within the lead-window appears as a suggestion to record.
   app.get("/admin/business-expenses/due-soon", superGuard, async (_req: any) => {
-    // Same-day-of-month math with end-of-month clamping (Jan 31 + 1mo → Feb 28).
-    function nextDate(d: Date, cadence: string): Date {
-      const out = new Date(d);
-      if (cadence === "WEEKLY") {
-        out.setDate(out.getDate() + 7);
-        return out;
-      }
-      const day = out.getDate();
-      out.setDate(1);
-      if (cadence === "MONTHLY") out.setMonth(out.getMonth() + 1);
-      else if (cadence === "QUARTERLY") out.setMonth(out.getMonth() + 3);
-      else if (cadence === "ANNUALLY") out.setFullYear(out.getFullYear() + 1);
-      const lastDay = new Date(out.getFullYear(), out.getMonth() + 1, 0).getDate();
-      out.setDate(Math.min(day, lastDay));
-      return out;
-    }
-
     const LEAD_DAYS = 7; // suggest 0–7 days before the expected next date
     const now = new Date();
     const horizon = new Date(now); horizon.setDate(horizon.getDate() + LEAD_DAYS);
@@ -5627,12 +5647,12 @@ Respond ONLY with valid JSON in this exact format:
     const suggestions = Array.from(seen.values())
       .map((latest) => {
         const cadence = String(latest.recurrence);
-        const baseNext = nextDate(latest.date, cadence);
+        const baseNext = nextRecurrenceDate(latest.date, cadence);
         // Skip marker advances the "next expected" by one cadence past the
         // skipped date. Each click of Skip stores the date being skipped.
         const expected =
           latest.recurrenceSkippedUntil && latest.recurrenceSkippedUntil >= baseNext
-            ? nextDate(latest.recurrenceSkippedUntil, cadence)
+            ? nextRecurrenceDate(latest.recurrenceSkippedUntil, cadence)
             : baseNext;
         return { latest, expected };
       })
@@ -5677,18 +5697,6 @@ Respond ONLY with valid JSON in this exact format:
   // recurring series in practice), safe to recompute per call.
   // Super-only.
   app.get("/admin/business-expenses/due-soon/count", superGuard, async (_req: any) => {
-    function nextDate(d: Date, cadence: string): Date {
-      const out = new Date(d);
-      if (cadence === "WEEKLY") { out.setDate(out.getDate() + 7); return out; }
-      const day = out.getDate();
-      out.setDate(1);
-      if (cadence === "MONTHLY") out.setMonth(out.getMonth() + 1);
-      else if (cadence === "QUARTERLY") out.setMonth(out.getMonth() + 3);
-      else if (cadence === "ANNUALLY") out.setFullYear(out.getFullYear() + 1);
-      const lastDay = new Date(out.getFullYear(), out.getMonth() + 1, 0).getDate();
-      out.setDate(Math.min(day, lastDay));
-      return out;
-    }
     const now = new Date();
     const todayKey = etFormatDate(now);
     const rows = await prisma.businessExpense.findMany({
@@ -5717,10 +5725,10 @@ Respond ONLY with valid JSON in this exact format:
     let count = 0;
     for (const latest of seen.values()) {
       const cadence = String(latest.recurrence);
-      const baseNext = nextDate(latest.date, cadence);
+      const baseNext = nextRecurrenceDate(latest.date, cadence);
       const expected =
         latest.recurrenceSkippedUntil && latest.recurrenceSkippedUntil >= baseNext
-          ? nextDate(latest.recurrenceSkippedUntil, cadence)
+          ? nextRecurrenceDate(latest.recurrenceSkippedUntil, cadence)
           : baseNext;
       // Overdue = expected ET-calendar-day is strictly before today.
       // etDaysBetween(from, to) returns positive when `to` is after

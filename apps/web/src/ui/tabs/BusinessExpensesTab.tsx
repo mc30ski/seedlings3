@@ -767,8 +767,17 @@ export default function BusinessExpensesTab() {
         sourceExpenseId: !editing ? sourceExpenseId : undefined,
       };
       if (editing) {
-        await apiPatch(`/api/admin/business-expenses/${editing.id}`, payload);
-        publishInlineMessage({ type: "SUCCESS", text: "Expense updated." });
+        const updated = await apiPatch<{ nextExpectedDate?: string | null }>(
+          `/api/admin/business-expenses/${editing.id}`,
+          payload,
+        );
+        const updatedNextTail = updated?.nextExpectedDate
+          ? ` Next occurrence expected ${fmtDate(updated.nextExpectedDate)}.`
+          : "";
+        publishInlineMessage({
+          type: "SUCCESS",
+          text: `Expense updated.${updatedNextTail}`,
+        });
       } else {
         // Continuation-hint pre-flight: when this is a fresh recurring
         // row (not Record flow, no prior sourceExpenseId) with a
@@ -817,7 +826,16 @@ export default function BusinessExpensesTab() {
             // hint endpoint 500'd.
           }
         }
-        const created = await apiPost<{ id: string }>("/api/admin/business-expenses", payload);
+        const created = await apiPost<{ id: string; nextExpectedDate?: string | null }>(
+          "/api/admin/business-expenses",
+          payload,
+        );
+        // For recurring rows the API echoes back the next expected date;
+        // append it to the toast so the operator sees the forecast the
+        // same way the repeating-jobs payment toast does.
+        const nextTail = created?.nextExpectedDate
+          ? ` Next occurrence expected ${fmtDate(created.nextExpectedDate)}.`
+          : "";
         // Optional buffered receipt → upload against the new BE id. If this
         // fails the BE itself is fine, so we warn and let the user retry via
         // edit instead of rolling back the create.
@@ -844,7 +862,10 @@ export default function BusinessExpensesTab() {
               fileName: file.name,
               contentType,
             });
-            publishInlineMessage({ type: "SUCCESS", text: "Expense added with receipt." });
+            publishInlineMessage({
+              type: "SUCCESS",
+              text: `Expense added with receipt.${nextTail}`,
+            });
           } catch (e) {
             publishInlineMessage({
               type: "WARNING",
@@ -852,7 +873,10 @@ export default function BusinessExpensesTab() {
             });
           }
         } else {
-          publishInlineMessage({ type: "SUCCESS", text: "Expense added." });
+          publishInlineMessage({
+            type: "SUCCESS",
+            text: `Expense added.${nextTail}`,
+          });
         }
       }
       setDialogOpen(false);
