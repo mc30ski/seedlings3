@@ -1109,6 +1109,17 @@ export default function HomePage() {
           categoryIcon: FiBarChart2,
         },
         {
+          // Compliance — admin surface for the PolicyDocument system.
+          // Placed under Records right after Workdays so both worker-
+          // gate surfaces (hours + policy signatures) sit side-by-side.
+          value: "compliance",
+          label: "Compliance",
+          icon: FiClock,
+          content: wrapWithInlineMessage(<AdminComplianceTab />),
+          category: "Records",
+          categoryIcon: FiBarChart2,
+        },
+        {
           value: "timeline",
           label: "Timeline",
           icon: FiCalendar,
@@ -1170,18 +1181,6 @@ export default function HomePage() {
           label: "Users",
           icon: AiOutlineTeam,
           content: wrapWithInlineMessage(<UsersTab role="admin" />),
-          category: "Directory",
-          categoryIcon: AiOutlineTeam,
-        },
-        {
-          // Compliance — admin surface for the PolicyDocument system.
-          // Lives under Directory alongside Users because the operator
-          // usually flips between "who works here" and "what have they
-          // signed" while onboarding/offboarding.
-          value: "compliance",
-          label: "Compliance",
-          icon: AiOutlineTeam,
-          content: wrapWithInlineMessage(<AdminComplianceTab />),
           category: "Directory",
           categoryIcon: AiOutlineTeam,
         },

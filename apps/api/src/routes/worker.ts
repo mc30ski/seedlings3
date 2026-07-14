@@ -1444,12 +1444,11 @@ export default async function workerRoutes(app: FastifyInstance) {
     // Peek redaction: for the Worker Jobs "Team" toggle. Any occ that
     // has assignees but the caller isn't one of them gets financials
     // stripped (price, splits, payouts, expense costs, admin-only
-    // client context). Runs regardless of whether the client asked
-    // for peek data — defense in depth, since the /occurrences
-    // endpoint returns the whole team's list to every worker today.
-    // No admin bypass — this endpoint is the Worker Jobs feed; admins
-    // using it get the worker experience. See helper for rationale.
-    redactPeekFieldsForCaller(filtered as any[], uid);
+    // client context). Admin bypass matches observer/trainee — admins
+    // see everything unredacted; the worker-view read-only
+    // treatment is applied client-side (JobsTab isPeek is gated on
+    // isWorkerView), so admins on either tab remain unaffected.
+    redactPeekFieldsForCaller(filtered as any[], uid, effectiveIsAdmin);
 
     return filtered;
   });
@@ -3627,11 +3626,13 @@ export default async function workerRoutes(app: FastifyInstance) {
       },
       select: {
         id: true, status: true, kind: true, startedAt: true, completedAt: true,
-        estimatedMinutes: true, price: true, workflow: true, isEstimate: true, startAt: true,
-        assignees: { select: { userId: true, user: { select: { id: true, displayName: true, email: true, workerType: true } } } },
+        estimatedMinutes: true, price: true, proposalAmount: true, completionSplits: true,
+        addons: { select: { price: true } },
+        workflow: true, isEstimate: true, startAt: true,
+        assignees: { select: { userId: true, role: true, user: { select: { id: true, displayName: true, email: true, workerType: true } } } },
         payment: {
           where: cutoff ? { createdAt: { gte: cutoff } } : undefined,
-          select: { amountPaid: true, method: true, skippedAt: true, platformFeeAmount: true, businessMarginAmount: true, splits: { select: { userId: true, amount: true } } },
+          select: { amountPaid: true, method: true, confirmed: true, skippedAt: true, platformFeeAmount: true, businessMarginAmount: true, splits: { where: { guaranteedPayoutPaidAt: null }, select: { userId: true, amount: true } } },
         },
         expenses: {
           where: cutoff
@@ -3682,6 +3683,13 @@ export default async function workerRoutes(app: FastifyInstance) {
     const jobsByDay: Record<string, number> = {};
     const propertySet = new Set<string>();
 
+    // Rate + helper for the employee projection path.
+    const _isEmployeeSelf = user.workerType === "EMPLOYEE" || user.workerType === "TRAINEE";
+    const _statsSettingKey = _isEmployeeSelf ? "EMPLOYEE_BUSINESS_MARGIN_PERCENT" : "CONTRACTOR_PLATFORM_FEE_PERCENT";
+    const _statsSetting = await prisma.setting.findUnique({ where: { key: _statsSettingKey } });
+    const _statsRate = Number(_statsSetting?.value ?? 0);
+    const { computeMyOccurrenceNet: _statsComputeNet } = await import("../services/workerEarnings");
+
     for (const occ of occurrences) {
       if (occ.workflow === "ESTIMATE" || occ.isEstimate) continue;
       jobsCompleted++;
@@ -3690,11 +3698,37 @@ export default async function workerRoutes(app: FastifyInstance) {
       const expenseTotal = occ.expenses.reduce((s, e) => s + e.cost, 0);
       // Skipped payments: pretend it never happened — earnings for
       // this occurrence contribute $0 to worker statistics.
-      const split = occ.payment?.skippedAt
-        ? undefined
-        : occ.payment?.splits.find((s) => s.userId === uid);
-      const gpAdvance = advanceByOccId.get(occ.id);
-      const earnings = gpAdvance ?? split?.amount ?? 0;
+      let earnings: number;
+      if (_isEmployeeSelf) {
+        // Employees: project the promised net so pending-payment jobs
+        // still contribute to earnings. Skipped payments → helper
+        // returns 0 automatically.
+        const paymentForMe = occ.payment
+          ? {
+              ...occ.payment,
+              splits: occ.payment.splits.filter((s) => s.userId === uid),
+            }
+          : null;
+        earnings = _statsComputeNet(
+          {
+            price: occ.price,
+            proposalAmount: (occ as any).proposalAmount ?? null,
+            completionSplits: (occ as any).completionSplits,
+            addons: (occ as any).addons ?? [],
+            expenses: occ.expenses,
+            assignees: occ.assignees,
+            payment: paymentForMe,
+          },
+          uid,
+          _statsRate,
+        );
+      } else {
+        const split = occ.payment?.skippedAt
+          ? undefined
+          : occ.payment?.splits.find((s) => s.userId === uid);
+        const gpAdvance = advanceByOccId.get(occ.id);
+        earnings = gpAdvance ?? split?.amount ?? 0;
+      }
       if (earnings > 0) {
         const splitRatio = occ.payment && occ.payment.splits.length > 0
           ? earnings / occ.payment.splits.reduce((s, sp) => s + sp.amount, 0) : 1;

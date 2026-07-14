@@ -244,14 +244,12 @@ export function isPeekingOccurrence(
  * to strip are the same — the difference is just which occurrences
  * qualify.
  *
- * IMPORTANT — no admin bypass here (unlike observer/trainee
- * redaction). The peek feature lives on the Worker Jobs tab and its
- * purpose is to give workers a view-only peek at teammates'
- * schedules WITHOUT exposing other workers' pay. Admins using the
- * Worker tab are opting into the worker experience; they see the
- * worker-view redaction alongside everyone else. Admins who need
- * the unredacted picture use the Admin Jobs tab, which hits
- * different endpoints and doesn't touch this helper.
+ * Admin bypass matches observer/trainee: admins always see full
+ * financial data. The Admin Jobs tab and the Worker Jobs tab share
+ * this endpoint (/occurrences), and admins acting on the Admin tab
+ * (or even the Worker tab) get the unredacted view — the "worker-
+ * only peek" restriction is enforced client-side by the Worker tab
+ * rendering.
  *
  * Chain order matters: observer redaction first (only affects occs
  * where caller IS an observer-only assignee), then trainee, then peek
@@ -262,7 +260,9 @@ export function isPeekingOccurrence(
 export function redactPeekFieldsForCaller(
   occurrences: any[],
   callerUserId: string,
+  callerIsAdmin: boolean,
 ): any[] {
+  if (callerIsAdmin) return occurrences;
   for (const occ of occurrences) {
     if (occ._observerRedacted) continue;
     if (isPeekingOccurrence(occ, callerUserId)) {

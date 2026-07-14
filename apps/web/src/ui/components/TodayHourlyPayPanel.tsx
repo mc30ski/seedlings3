@@ -183,7 +183,7 @@ export default function TodayHourlyPayPanel({ workerIds, refreshNonce = 0 }: Pro
                 );
               })}
               <Text fontSize="2xs" color="fg.muted" mt={1} pt={1} borderTopWidth={1} borderColor="gray.100">
-                Excludes in-progress workdays. Jobs count includes every completed job today; Earned reflects payments recorded so far (may lag completed jobs until the payment is recorded). $/hr = Earned ÷ Hours.
+                Excludes in-progress workdays. Earned = promised net for every completed job today (uses the same snapshot/projection payroll uses; doesn't wait for client payment). $/hr = Earned ÷ Hours.
               </Text>
             </VStack>
           ) : null}
