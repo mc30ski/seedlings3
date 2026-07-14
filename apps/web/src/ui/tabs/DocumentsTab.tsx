@@ -56,6 +56,7 @@ import UploadDocumentVersionDialog from "@/src/ui/dialogs/UploadDocumentVersionD
 import EditDocumentMetadataDialog from "@/src/ui/dialogs/EditDocumentMetadataDialog";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import MarkdownViewerDialog from "@/src/ui/dialogs/MarkdownViewerDialog";
+import DocumentSyncStatusPanel from "@/src/ui/components/DocumentSyncStatusPanel";
 
 type CompanyDocumentVersion = {
   id: string;
@@ -280,6 +281,11 @@ export default function DocumentsTab({ isSuper = false }: Props) {
     }
   }, []);
 
+  // Bumped on every load — DocumentSyncStatusPanel watches this and
+  // refetches its status so doc mutations reflect in the sync panel
+  // immediately (queue depth, health, etc.) without a manual refresh.
+  const [syncPanelNonce, setSyncPanelNonce] = useState(0);
+
   async function load() {
     setLoading(true);
     try {
@@ -289,6 +295,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
       if (q.trim()) params.set("q", q.trim());
       const list = await apiGet<CompanyDocument[]>(`${apiBase}?${params}`);
       setItems(Array.isArray(list) ? list : []);
+      setSyncPanelNonce((n) => n + 1);
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load.", err) });
       setItems([]);
@@ -635,6 +642,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
 
   return (
     <Box w="full">
+      {isSuper && <DocumentSyncStatusPanel refreshNonce={syncPanelNonce} />}
       <HStack gap={2} mb={2}>
         <Button
           size="sm"

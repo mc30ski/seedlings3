@@ -25,7 +25,7 @@ Complete list of external services the app integrates with. Detailed setup for e
 
 ### Identity / Auth
 
-- **Clerk** — user auth on both web (`@clerk/nextjs`) and API (`@clerk/clerk-sdk-node`).
+- **Clerk** — user auth on both web (`@clerk/nextjs`) and API (`@clerk/backend`). The legacy `@clerk/clerk-sdk-node` package is still installed but only used by the Playwright e2e sign-in setup.
 
 ### Database
 
@@ -34,11 +34,11 @@ Complete list of external services the app integrates with. Detailed setup for e
 ### Object Storage
 
 - **Cloudflare R2** — S3-compatible, accessed via `@aws-sdk/client-s3`. Five buckets via these env vars:
-  - `R2_BUCKET_NAME` — default app bucket (job-occurrence photos)
-  - `R2_DOCS_BUCKET_NAME` — documents
-  - `R2_PROPERTY_PHOTOS_BUCKET_NAME` — property photos
-  - `R2_EQUIPMENT_PHOTOS_BUCKET_NAME` — equipment photos
-  - `R2_RECEIPTS_BUCKET_NAME` — receipts
+  - `R2_BUCKET_NAME` — job-occurrence photos (photos bucket, auto-delete lifecycle)
+  - `R2_PROPERTY_PHOTOS_BUCKET_NAME` — property photos (auto-delete lifecycle)
+  - `R2_EQUIPMENT_PHOTOS_BUCKET_NAME` — equipment photos (auto-delete lifecycle)
+  - `R2_DOCS_BUCKET_NAME` — company documents (permanent, no auto-delete)
+  - `R2_RECEIPTS_BUCKET_NAME` — business expense receipts (permanent, no auto-delete)
 
 ### Hosting
 
@@ -76,6 +76,14 @@ Complete list of external services the app integrates with. Detailed setup for e
 
 - **Anthropic** — Claude via `@anthropic-ai/sdk`, `ANTHROPIC_API_KEY`. Used for AI-generated estimates and route suggestions (see [AI Features](#ai-features)).
 
+### Long-term Backup (planned — no code yet)
+
+- **Google Drive** — one-way backup of `CompanyDocument` records into a folder in `admin@seedlingslawncare.com`'s Drive. Auth is OAuth 2.0 as the admin user (long-lived refresh token) — NOT a service account. **Not yet implemented in code; Google Cloud setup in progress.**
+  - Google Cloud project: `seedlings-documents-backup`
+  - OAuth scope: `https://www.googleapis.com/auth/drive` (full Drive access — needed because we point the app at a pre-existing folder)
+  - Planned env: `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`, `GOOGLE_DRIVE_ROOT_FOLDER_ID` (different value per environment). Sync will be gated by a `DOCUMENT_SYNC_ENABLED` Setting row (off by default in dev).
+  - Full spec: [`docs/features/documents-gdrive-backup.md`](docs/features/documents-gdrive-backup.md).
+
 > **Not integrated:** no payment processor (Stripe/Square/etc.) — payments are recorded manually after the client pays. No third-party error/observability SaaS (Sentry, Datadog, PostHog).
 
 ---
@@ -92,8 +100,7 @@ There are three environments:
 ### Branch strategy
 
 - `main` → **Preview** deployments for both projects
-- `production` → **Production** deployments for both projects  
-  (either push/merge to this branch or use “Promote to Production” in Vercel which rebuilds with Production env vars)
+- `production` → **Production** deployments for both projects (either push/merge to this branch or use "Promote to Production" in Vercel which rebuilds with Production env vars)
 
 ### Project wiring (Vercel)
 
@@ -110,7 +117,7 @@ For the **API** project you have two options for Output Directory:
 
 The Vercel web application uses a proxy `[...path].ts` to funnel all web requests through so that it can set the bypass tokens to allow access to the API preview.
 
-web application → `api.ts` (adds bypass) → web server `pages/api/_proxy/[...path].ts` → (adds bypass) → api server less functions
+web application → `api.ts` (adds bypass) → web server `pages/api/_proxy/[...path].ts` → (adds bypass) → API serverless functions
 
 ---
 
@@ -175,34 +182,37 @@ You can run these promotion steps manually from your laptop or later automate th
 
 ---
 
-## Photo Storage (Cloudflare R2)
+## Object Storage (Cloudflare R2)
 
-Job occurrence photos are stored in **Cloudflare R2** (S3-compatible object storage).
+Photos, documents, and receipts are stored in **Cloudflare R2** (S3-compatible object storage). The API is stateless with respect to bytes — it hands out presigned URLs and clients upload/download directly.
 
 ### Setup
 
-- **Cloudflare account** with R2 enabled (free tier: 10GB storage, 10M reads, 1M writes/month)
-- **Four buckets** across two categories:
-  - **Photos** (auto-delete after 90 days via lifecycle rules):
-    - `seedlings-photos-dev` — development
-    - `seedlings-photos` — production
-  - **Documents** (permanent — no lifecycle rules):
-    - `seedlings-documents-dev` — development
-    - `seedlings-documents` — production
-- **Lifecycle rules**: photo buckets have an object lifecycle rule to auto-delete after 90 days. Document buckets have NO lifecycle rules (insurance certs, W-9s, etc. are permanent).
-- **API token**: created in Cloudflare dashboard → R2 → Manage R2 API Tokens → Object Read & Write, scoped to all four buckets
+- **Cloudflare account** with R2 enabled (free tier: 10GB storage, 10M reads, 1M writes/month).
+- **Five buckets** across two categories (each has a `-dev` and prod pair):
+  - **Photos** (auto-delete lifecycle):
+    - `R2_BUCKET_NAME` — job-occurrence photos (e.g. `seedlings-photos` / `seedlings-photos-dev`)
+    - `R2_PROPERTY_PHOTOS_BUCKET_NAME` — property photos (e.g. `seedlings-property-photos` / `-dev`)
+    - `R2_EQUIPMENT_PHOTOS_BUCKET_NAME` — equipment photos (e.g. `seedlings-equipment-photos` / `-dev`)
+  - **Permanent** (no lifecycle):
+    - `R2_DOCS_BUCKET_NAME` — company documents (e.g. `seedlings-documents` / `-dev`) — insurance certs, W-9s, tax records
+    - `R2_RECEIPTS_BUCKET_NAME` — business expense receipts (e.g. `seedlings-receipts` / `-dev`)
+- **Lifecycle rules**: photo buckets auto-delete objects after their configured retention window; document + receipt buckets have NO lifecycle rules.
+- **API token**: created in Cloudflare dashboard → R2 → Manage R2 API Tokens → Object Read & Write, scoped to all five buckets.
 
 ### Environment Variables
 
 Set these in `apps/api/.env` (dev) and Vercel environment variables (production):
 
 ```
-R2_ACCOUNT_ID=<your-cloudflare-account-id>
 R2_ACCESS_KEY_ID=<your-r2-api-token-access-key>
 R2_SECRET_ACCESS_KEY=<your-r2-api-token-secret-key>
-R2_BUCKET_NAME=seedlings-photos-dev         # or seedlings-photos for production
-R2_DOCS_BUCKET_NAME=seedlings-documents-dev # or seedlings-documents for production
 R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+R2_BUCKET_NAME=seedlings-photos-dev
+R2_DOCS_BUCKET_NAME=seedlings-documents-dev
+R2_PROPERTY_PHOTOS_BUCKET_NAME=seedlings-property-photos-dev
+R2_EQUIPMENT_PHOTOS_BUCKET_NAME=seedlings-equipment-photos-dev
+R2_RECEIPTS_BUCKET_NAME=seedlings-receipts-dev
 ```
 
 ### How It Works
@@ -269,92 +279,60 @@ npm -w apps/api run prisma:migrate:deploy
 # Deploy API + Web via Vercel with prod env vars
 ```
 
-# Domain Model - Clients/Properties/Jobs
+## Feature Overview
 
-## Core Objects
+The app has grown well beyond its MVP scope. High-level tour of what's shipped, grouped by domain. Each area links to its canonical spec + service files where one exists.
 
-- Client — who we serve (individual, household, organization, community)
-- ClientContact — people we call/text/email for a Client
-- Property — where we serve (single address or aggregate site/community)
-- PropertyUnit (optional, post-MVP) — sub-locations inside an aggregate site
+### CRM
 
-- Client
+- **Clients / Contacts / Properties** — admin CRUD. `Client` (types: individual, household, organization, community) → many `ClientContact`s (with roles and `isPrimary`), many `Property`s (kinds: single vs aggregate site; supports `pointOfContactId` routing to a specific contact). Post-MVP `PropertyUnit` schema exists but is unused.
+- **Client View-As** — Super-only read-only impersonation of a specific `ClientContact` for support/debugging. Wire uses an `x-impersonate-client-contact` header; every `GET /me/*` route is either view-as-aware or explicitly annotated. Spec: [`docs/features/client-view-as.md`](docs/features/client-view-as.md). Plugin: [`apps/api/src/plugins/clientImpersonation.ts`](apps/api/src/plugins/clientImpersonation.ts).
 
-  - 1──< ClientContact
-  - 1──< Property (attr:pointOfContactId ──► ClientContact) 1──< PropertyUnit (optional, post-MVP)
+### Jobs & scheduling
 
-## What Ships Now (Admin-Only)
+- **Job / JobSchedule / JobOccurrence** — three-layer model. `Job` is the standing agreement (kind: ENTIRE_SITE vs SINGLE_ADDRESS; status: PROPOSED → ACCEPTED). `JobSchedule` is the auto-renew toggle + cadence. `JobOccurrence` is a real dated instance with its own lifecycle (SCHEDULED → IN_PROGRESS → COMPLETED → CLOSED) and its own kind/assignees (copied from the Job at creation, then editable).
+- **Assignments** — two-layered: `JobAssigneeDefault` (usually these workers) → `JobOccurrenceAssignee` (this specific visit). Only WORKER-role users can be assigned. `Group`/`GroupMember` supports crew-based assignment.
+- **Occurrence add-ons** — `OccurrenceAddon`, `OccurrenceInstruction`, `OccurrenceChangeRequest`, `OccurrenceComment`, `PinnedOccurrence`, `LikedOccurrence`.
+- **Route optimization** — [`apps/api/src/lib/routing/`](apps/api/src/lib/routing/) provides a `RoutingProvider` interface; Mapbox is the only current implementation. `/api/preview/route-suggestions` combines Mapbox distances + Claude for human-readable suggestions.
 
-- Admins create/edit Clients, Contacts, and Properties.
-- No prospect/approval states in MVP.
-- Default comms routing: use `Property.pointOfContactId`.
+### Workdays, mileage, vehicles
 
-## Entity Notes
+- **WorkerWorkday** — one row per worker per day (`workdayDate`, `startedAt`, `pausedAt`, `endedAt`, `totalPausedMs`). Approval window is admin-controlled. Services: [`apps/api/src/services/workdays.ts`](apps/api/src/services/workdays.ts).
+- **Vehicle / VehicleAssignment / MileageEntry** — per-driver mileage sessions with start/end odometer, ET-anchored `entryDate` (TEXT column, YYYY-MM-DD). Approval mirrors workdays.
 
-- Client
-  - Types: `individual | household | organization | community`
-  - Has many **ClientContacts** and **Properties**
-  - Keep `notesInternal`
-- ClientContact
-  - `isPrimary` (prefer exactly one)
-  - Optional `role` (`owner | spouse | community_manager | property_manager | billing | technical | operations | legal | other`)
-  - `normalizedPhone` + unique `email` for dedupe
-- Property
-  - `kind`: `single | aggregate_site`
-  - Aggregate site extras: `siteName`, `unitLabel` (e.g., “home”), `unitCount` (rough OK), optional `siteBoundaryGeo`
-  - `pointOfContactId` → **ClientContact** (default POC)
-- PropertyUnit (post-MVP)
-  - Optional sub-locations for aggregate sites (only if you need per-unit notes/codes/photos)
+### Payments, expenses, taxes
 
-1. Job = the template
-   A Job represents the standing “work agreement” for a Property.
+- **Payment / PaymentSplit** — per-occurrence payment collection; splits distribute revenue to workers (employees/trainees made whole on underpay, contractors pro-rata). Spec: [`docs/FINANCIAL_SYSTEM.md`](docs/FINANCIAL_SYSTEM.md). Invariants locked by [`apps/api/src/services/payments-build-gate.test.ts`](apps/api/src/services/payments-build-gate.test.ts).
+- **BusinessExpense** — freestanding + job-paired + supply-paired variants. Recurring rows (WEEKLY/MONTHLY/QUARTERLY/ANNUALLY) surface in the "Due to Record" panel with `recurrenceSeriesId` welding the series together across label drift.
+- **GuaranteedPayoutAdvance** — time-bounded onboarding window (1–90 days) where contractor pay is decoupled from client payment. Single table does triple-duty: advance tracking, reconciliation flag on `PaymentSplit`, source of 1099 totals.
+- **Business Start Date filter** — non-destructive money cleanup: when the setting is on, pre-cutoff `Payment`/`Expense`/`Checkout`/`AuditEvent` rows hide from every view and export. Helpers: [`apps/api/src/lib/businessStartCutoff.ts`](apps/api/src/lib/businessStartCutoff.ts).
+- **QuickBooks / tax exports** — [`apps/api/src/services/exports.ts`](apps/api/src/services/exports.ts) generates Schedule C-aware exports. Cash-basis only; shortfall/overage/margin fields are operator-dashboard only, never tax line items. Invariant enforced in the payments build gate.
 
-- kind (required): ENTIRE_SITE vs SINGLE_ADDRESS
-- status: PROPOSED → ACCEPTED
-- clients: which business entities are involved (owner/payer/etc.)
-- contacts: which people to communicate with (decision maker/on-site/notify)
+### Equipment & supplies
 
-2. JobSchedule = the auto-renew toggle
-   Instead of true recurring calendar events, JobSchedule just stores:
+- **Equipment** — with QR slug (see below), photos (`EquipmentPhoto`), owner's-manual chunks (`EquipmentInstruction`), and `EquipmentCollection` groupings.
+- **Checkout / CheckoutSplit** — checkout lifecycle (`reservedAt` → `checkedOutAt` → `releasedAt`). Group rentals split via `writeCheckoutSplits` at release time. Equipment can opt into per-job billing (`Equipment.equivalentJobs`); `Checkout.rentalCost` stores actual billings, not notional.
+- **Supply / SupplyPurchase / SupplyHold / SupplyAdjustment** — inventory with holds during job work + audit trail on adjustments.
 
-- autoRenew on/off
-- a simple cadence (weekly/biweekly/monthly) + a couple parameters
-- optional preferred time window
-- helpers like horizonDays / nextGenerateAt
+### Compliance
 
-3. JobOccurrence = a real calendar entry (the instance)
-   Each scheduled visit is a real row.
+- **PolicyDocument** — policy documents with versions, enforcement levels (BLOCK/WARN/INFO), targeted worker types, and required actions (SIGN / SIGN_AND_UPLOAD / ACKNOWLEDGE / NONE).
+- **PolicySignature** — immutable revoke-and-replace signatures with content digest pinning + admin-on-behalf audit.
+- **PolicyException** — time-bounded excuses per user × policy. Full spec: [`docs/features/compliance.md`](docs/features/compliance.md). Enforced by [`apps/api/src/services/policies-build-gate.test.ts`](apps/api/src/services/policies-build-gate.test.ts).
 
-- has dates (windowStart/windowEnd and/or startAt/endAt)
-- has its own lifecycle (SCHEDULED → COMPLETED)
-- has its own kind (required), initially copied from the Job but editable
+### Documents
 
-Important: the “copy Job.kind → JobOccurrence.kind” happens in your service code when creating the occurrence.
+- **CompanyDocument / CompanyDocumentVersion** — company-wide filing cabinet (insurance certs, W-9s, articles of organization, etc.). Stored in R2; taxonomy driven by a `Setting` row. Google Drive backup planned (see Long-term Backup above).
 
-4. Assignments are two-layered (defaults + per-instance overrides)
+### Observability
 
-- JobAssigneeDefault: “usually these workers do this job”
-- JobOccurrenceAssignee: “these workers are assigned to this specific visit”
+- **AuditEvent** — mutation-level audit trail written via [`apps/api/src/lib/auditLogger.ts`](apps/api/src/lib/auditLogger.ts).
+- **TimelineEvent** — user-facing event/reminder log with cadence-aware `nextDueDate` and optional archival ([`apps/api/src/services/timelineEvents.ts`](apps/api/src/services/timelineEvents.ts)).
+- **Notifications banner** — `BannerNotification` / `BannerRecipient` / `BannerDismissal` for broadcast messages.
 
-When you create an occurrence, you typically:
+### Domain model — full picture
 
-- copy Job.kind → JobOccurrence.kind
-- copy JobAssigneeDefault (active) → JobOccurrenceAssignee
-
-After creation, you can change the occurrence assignees without touching defaults.
-
-5. Only WORKER users can be assigned
-   This is enforced in your API/service layer:
-
-- only allow assignment if user.roles.some({ role: WORKER })
-- (optionally) also require user.isApproved = true
-
-## Post-MVP Plug-Ins (drop-in later)
-
-- **Worker submissions & approvals**: add `reviewStatus` to Client (`PENDING | APPROVED | REJECTED`), optional `Property.status` (`PENDING | ACTIVE`)
-- **Jobs**: add `Job`, `JobContact`, `JobClient`, optional `Job.scope` (`entire_site | single_address`) and `JobUnit`
-- **Granularity** for sites: add `PropertyUnit` when per-unit state is needed
-- **Security/PII**: encrypt sensitive `accessNotes` if you store codes; audit reads
+Prisma schema has ~68 models across the areas above. For anything specific: read [`apps/api/prisma/schema.prisma`](apps/api/prisma/schema.prisma) — it's the canonical source. Feature-level specs live under [`docs/features/`](docs/features/) and other canonical references live directly in [`docs/`](docs/) (e.g. `DATE_HANDLING.md`, `FINANCIAL_SYSTEM.md`, `VIEW_AS_ENDPOINTS.md`).
 
 ---
 
@@ -369,15 +347,18 @@ All API environment variables live in `apps/api/.env` (gitignored). They must al
 | `DATABASE_URL`     | Neon Postgres connection string | [Neon Console](https://console.neon.tech) → Project → Connection Details |
 | `CLERK_SECRET_KEY` | Clerk backend secret key        | [Clerk Dashboard](https://dashboard.clerk.com) → API Keys                |
 
-### Cloudflare R2 (Photo & Document Storage)
+### Cloudflare R2 (Photo, Document, and Receipt Storage)
 
-| Variable               | Description                                      | Where to get it                                                       |
-| ---------------------- | ------------------------------------------------ | --------------------------------------------------------------------- |
-| `R2_ACCESS_KEY_ID`     | R2 API access key                                | [Cloudflare Dashboard](https://dash.cloudflare.com) → R2 → API Tokens |
-| `R2_SECRET_ACCESS_KEY` | R2 API secret key                                | Same as above                                                         |
-| `R2_ENDPOINT`          | R2 S3-compatible endpoint                        | Cloudflare R2 bucket settings                                         |
-| `R2_BUCKET_NAME`       | Photo bucket name (has auto-delete lifecycle)    | e.g. `seedlings-photos-dev`                                           |
-| `R2_DOCS_BUCKET_NAME`  | Document bucket name (permanent, no auto-delete) | e.g. `seedlings-documents-dev`                                        |
+| Variable                           | Description                                                | Where to get it                                                       |
+| ---------------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------- |
+| `R2_ACCESS_KEY_ID`                 | R2 API access key                                          | [Cloudflare Dashboard](https://dash.cloudflare.com) → R2 → API Tokens |
+| `R2_SECRET_ACCESS_KEY`             | R2 API secret key                                          | Same as above                                                         |
+| `R2_ENDPOINT`                      | R2 S3-compatible endpoint                                  | Cloudflare R2 bucket settings                                         |
+| `R2_BUCKET_NAME`                   | Job-occurrence photos (auto-delete lifecycle)              | e.g. `seedlings-photos-dev`                                           |
+| `R2_PROPERTY_PHOTOS_BUCKET_NAME`   | Property photos (auto-delete lifecycle)                    | e.g. `seedlings-property-photos-dev`                                  |
+| `R2_EQUIPMENT_PHOTOS_BUCKET_NAME`  | Equipment photos (auto-delete lifecycle)                   | e.g. `seedlings-equipment-photos-dev`                                 |
+| `R2_DOCS_BUCKET_NAME`              | Company documents (permanent, no auto-delete)              | e.g. `seedlings-documents-dev`                                        |
+| `R2_RECEIPTS_BUCKET_NAME`          | Business expense receipts (permanent, no auto-delete)      | e.g. `seedlings-receipts-dev`                                         |
 
 ### AI & Routing
 
@@ -385,6 +366,33 @@ All API environment variables live in `apps/api/.env` (gitignored). They must al
 | --------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ANTHROPIC_API_KEY`   | Claude API key for AI features (estimate generation, route suggestions) | [Anthropic Console](https://console.anthropic.com) → API Keys → Create Key. Requires credits ($5 min).                                         |
 | `MAPBOX_ACCESS_TOKEN` | Mapbox token for route optimization (geocoding, driving distances)      | [Mapbox](https://account.mapbox.com) → sign up (free) → default public token on dashboard (starts with `pk.`). Free tier: 100k requests/month. |
+
+### Weather
+
+| Variable              | Description                                                             | Where to get it                                                                                                                                |
+| --------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OPENWEATHER_API_KEY` | OpenWeather current + forecast API key                                  | [OpenWeather](https://openweathermap.org/api) → sign up → API keys. Free tier: 60 calls/min, 1M calls/month.                                   |
+
+### Web Push (VAPID)
+
+Push notifications go through the `web-push` library and each browser's push service (FCM/Mozilla Autopush/APNs). Generate the keypair once with `npx web-push generate-vapid-keys`.
+
+| Variable                          | Description                                                                     |
+| --------------------------------- | ------------------------------------------------------------------------------- |
+| `VAPID_PUBLIC_KEY`                | VAPID public key (API side, for identifying the sender)                         |
+| `VAPID_PRIVATE_KEY`               | VAPID private key                                                               |
+| `VAPID_SUBJECT`                   | Contact URL/mailto for the sender (e.g. `mailto:admin@seedlingslawncare.com`)   |
+| `NEXT_PUBLIC_VAPID_PUBLIC_KEY`    | Same public key, exposed to the web app so it can subscribe browsers            |
+
+### Security / operational
+
+| Variable                    | Description                                                                                                        |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `CRON_SECRET`               | Shared secret required in the `Authorization: Bearer` header for `/api/cron/*` routes; set the same value in Vercel |
+| `WEB_ORIGIN`                | Comma-separated allow-list of exact origins for CORS (e.g. `https://seedlings.team,http://localhost:3000`)          |
+| `WEB_ORIGIN_REGEX`          | Optional regex for wildcard preview URLs (`^https://seedlings3-web-git-.*\.vercel\.app$`)                           |
+| `ADMIN_BOOTSTRAP_EMAILS`    | Comma-separated emails automatically granted ADMIN role on first sign-in (bootstrap mechanism only)                 |
+| `PAYMENT_REQUEST_BASE_URL`  | Public URL used to construct client-facing payment request links (defaults to production domain when unset)         |
 
 ### AI Features
 
@@ -395,7 +403,7 @@ All API environment variables live in `apps/api/.env` (gitignored). They must al
 - Provider is abstracted: see `apps/api/src/lib/routing/` — add new providers by implementing `RoutingProvider` interface in `types.ts` and registering in `index.ts`
 - UI dropdown for provider selection (currently only Mapbox)
 
-**Estimate Generation** (`/api/admin/occurrences/:id/generate-estimate`):
+**Estimate Generation** (`/api/admin/occurrences/:occurrenceId/generate-estimate`):
 
 - Uses Claude to generate client-facing estimates with a 20% business margin
 - Returns both an internal cost breakdown and a client message
@@ -444,12 +452,12 @@ All API environment variables live in `apps/api/.env` (gitignored). They must al
 - `sendEmail(to, subject, body)` — Resend wrapper
 - `notifyWorker(userId, message, link)` — auto-picks SMS (if phone) or email
 
-**Daily Cron Job** (`/api/cron/daily-notifications`):
+**Cron Jobs** (configured in [`apps/api/vercel.json`](apps/api/vercel.json), require Vercel Pro):
 
-- Configured in `vercel.json` to run daily at 6pm ET (10pm UTC)
-- Queries workers with jobs tomorrow
-- Sends SMS or email with link to start Plan Next Work Day workflow
-- Requires Vercel Pro plan for cron jobs
+- `/api/cron/daily-notifications` — daily at 22:00 UTC (6pm ET). Queries workers with jobs tomorrow, sends SMS or email with a link to the Plan Next Work Day workflow.
+- `/api/cron/guaranteed-payout-expirations` — daily at 05:05 UTC. Finds contractors whose guaranteed-payout onboarding window is expiring soon and posts a Timeline reminder for admins.
+
+Both crons require the `Authorization: Bearer $CRON_SECRET` header (Vercel injects this automatically for scheduled invocations).
 
 ### Adding a New Routing Provider
 
@@ -460,28 +468,54 @@ All API environment variables live in `apps/api/.env` (gitignored). They must al
 
 ### All Vercel Environment Variables (copy-paste checklist)
 
-For production deployment, add these to Vercel → Project Settings → Environment Variables:
+For production deployment, add these to the **API** project (Vercel → Project Settings → Environment Variables):
 
 ```
+# Core
 DATABASE_URL=<your Neon production connection string>
 CLERK_SECRET_KEY=<your Clerk secret key>
+
+# CORS + admin bootstrap
+WEB_ORIGIN=https://seedlings.team,https://seedlingslawncare.com
+WEB_ORIGIN_REGEX=^https://seedlings3-web-git-.*\.vercel\.app$
+ADMIN_BOOTSTRAP_EMAILS=<comma-separated emails to auto-grant ADMIN on first sign-in>
+
+# R2 (5 buckets)
 R2_ACCESS_KEY_ID=<your Cloudflare R2 access key>
 R2_SECRET_ACCESS_KEY=<your Cloudflare R2 secret key>
 R2_ENDPOINT=<your R2 endpoint URL>
-R2_BUCKET_NAME=<photo bucket name>
-R2_DOCS_BUCKET_NAME=<documents bucket name>
+R2_BUCKET_NAME=seedlings-photos
+R2_PROPERTY_PHOTOS_BUCKET_NAME=seedlings-property-photos
+R2_EQUIPMENT_PHOTOS_BUCKET_NAME=seedlings-equipment-photos
+R2_DOCS_BUCKET_NAME=seedlings-documents
+R2_RECEIPTS_BUCKET_NAME=seedlings-receipts
+
+# AI + routing + weather
 ANTHROPIC_API_KEY=<your Anthropic API key>
 MAPBOX_ACCESS_TOKEN=<your Mapbox public token>
+OPENWEATHER_API_KEY=<your OpenWeather API key>
+
+# Notifications
 TWILIO_ACCOUNT_SID=<your Twilio Account SID>
 TWILIO_AUTH_TOKEN=<your Twilio Auth Token>
 TWILIO_PHONE_NUMBER=<your Twilio number in +1XXXXXXXXXX format>
 RESEND_API_KEY=<your Resend API key>
+
+# Push (VAPID)
+VAPID_PUBLIC_KEY=<generated with `npx web-push generate-vapid-keys`>
+VAPID_PRIVATE_KEY=<generated with same command>
+VAPID_SUBJECT=mailto:admin@seedlingslawncare.com
+
+# Cron auth + payment links
+CRON_SECRET=<random long string; same value on Vercel + local .env>
+PAYMENT_REQUEST_BASE_URL=https://seedlings.team
 ```
 
-For the web app (Next.js), also add:
+For the **Web** project (Next.js), also add:
 
 ```
 NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN=<your Mapbox public token>
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=<your Clerk publishable key>
 NEXT_PUBLIC_API_BASE_URL=<your API URL>
+NEXT_PUBLIC_VAPID_PUBLIC_KEY=<same value as VAPID_PUBLIC_KEY above>
 ```

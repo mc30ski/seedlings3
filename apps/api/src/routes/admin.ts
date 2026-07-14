@@ -42,6 +42,136 @@ async function currentUserId(req: any) {
   return (await services.currentUser.me(req.auth?.clerkUserId)).id;
 }
 
+/**
+ * Attach current doc + version metadata to DocumentSyncQueue rows for
+ * the Sync Status panel. Batch-fetches so a 500-row queue doesn't N+1.
+ *
+ * Key subtlety: a DELETE_DOCUMENT_VERSION task exists AFTER the version
+ * row has been hard-deleted from the DB, so we can't join. The
+ * `originalFilename` + `sizeBytes` fields on the row's payload are the
+ * only surviving reference and are read here.
+ */
+async function enrichSyncTasks(
+  rows: Array<{
+    id: string;
+    taskType: string;
+    documentId: string | null;
+    versionId: string | null;
+    payload: unknown;
+    state: string;
+    attempts: number;
+    lastError: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+    nextAttemptAt: Date;
+  }>,
+) {
+  const docIds = Array.from(
+    new Set(rows.map((r) => r.documentId).filter((v): v is string => !!v)),
+  );
+  const versionIds = Array.from(
+    new Set(rows.map((r) => r.versionId).filter((v): v is string => !!v)),
+  );
+  const [docs, versions] = await Promise.all([
+    docIds.length
+      ? prisma.companyDocument.findMany({
+          where: { id: { in: docIds } },
+          select: {
+            id: true,
+            title: true,
+            type: true,
+            description: true,
+            adminHidden: true,
+            expiresAt: true,
+            archivedAt: true,
+            currentVersionId: true,
+            _count: { select: { versions: true } },
+          },
+        })
+      : Promise.resolve([] as any[]),
+    versionIds.length
+      ? prisma.companyDocumentVersion.findMany({
+          where: { id: { in: versionIds } },
+          select: {
+            id: true,
+            originalFilename: true,
+            sizeBytes: true,
+            contentType: true,
+            uploadedAt: true,
+          },
+        })
+      : Promise.resolve([] as any[]),
+  ]);
+  const docById = new Map(docs.map((d) => [d.id, d]));
+  const versionById = new Map(versions.map((v) => [v.id, v]));
+
+  return rows.map((r) => {
+    const doc = r.documentId ? docById.get(r.documentId) ?? null : null;
+    const version = r.versionId ? versionById.get(r.versionId) ?? null : null;
+    const payload = (r.payload ?? null) as Record<string, unknown> | null;
+    return {
+      id: r.id,
+      taskType: r.taskType,
+      documentId: r.documentId,
+      versionId: r.versionId,
+      state: r.state,
+      attempts: r.attempts,
+      lastError: r.lastError,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+      nextAttemptAt: r.nextAttemptAt,
+      // Doc-level detail (null when doc no longer exists, e.g. after
+      // hard delete — MOVE_TO_DELETED handles that case).
+      documentTitle: doc?.title ?? null,
+      documentType: doc?.type ?? null,
+      documentArchived: !!doc?.archivedAt,
+      documentDescription: doc?.description ?? null,
+      documentAdminHidden: doc?.adminHidden ?? null,
+      documentExpiresAt: doc?.expiresAt ?? null,
+      documentCurrentVersionId: doc?.currentVersionId ?? null,
+      documentVersionCount: doc?._count?.versions ?? null,
+      // Version-level detail. UPLOAD/DELETE tasks care about this.
+      // DELETE tasks: version is gone from DB by the time the worker
+      // runs — payload carries the filename as a fallback.
+      versionOriginalFilename:
+        version?.originalFilename ??
+        (typeof payload?.originalFilename === "string" ? payload.originalFilename : null),
+      versionSizeBytes:
+        version?.sizeBytes ??
+        (typeof payload?.sizeBytes === "number" ? payload.sizeBytes : null),
+      versionContentType: version?.contentType ?? null,
+      versionUploadedAt: version?.uploadedAt ?? null,
+      // MOVE_TO_DELETED specifics — hard-deleted doc's title lives here.
+      payloadTitle:
+        typeof payload?.title === "string" ? payload.title : null,
+      payloadVersionCount:
+        typeof payload?.versionCount === "number" ? payload.versionCount : null,
+    };
+  });
+}
+
+// Recurring-expense forecast. Same-day-of-month math with
+// end-of-month clamping (Jan 31 + 1mo → Feb 28). Shared by the
+// due-soon suggestion panel and the record/edit endpoints so the
+// "Next occurrence expected …" toast agrees with the panel.
+// setDate/setMonth/setFullYear are the documented recurrence
+// exception — see docs/DATE_HANDLING.md "Legitimate exceptions".
+function nextRecurrenceDate(d: Date, cadence: string): Date {
+  const out = new Date(d);
+  if (cadence === "WEEKLY") {
+    out.setDate(out.getDate() + 7);
+    return out;
+  }
+  const day = out.getDate();
+  out.setDate(1);
+  if (cadence === "MONTHLY") out.setMonth(out.getMonth() + 1);
+  else if (cadence === "QUARTERLY") out.setMonth(out.getMonth() + 3);
+  else if (cadence === "ANNUALLY") out.setFullYear(out.getFullYear() + 1);
+  const lastDay = new Date(out.getFullYear(), out.getMonth() + 1, 0).getDate();
+  out.setDate(Math.min(day, lastDay));
+  return out;
+}
+
 export default async function adminRoutes(app: FastifyInstance) {
   const adminGuard = {
     preHandler: (req: FastifyRequest, reply: FastifyReply) =>
@@ -5039,7 +5169,7 @@ Respond ONLY with valid JSON in this exact format:
       }
       if (!recurrenceSeriesId) recurrenceSeriesId = randomUUID();
     }
-    return prisma.businessExpense.create({
+    const created = await prisma.businessExpense.create({
       data: {
         ledgerId: generateLedgerId(),
         createdById: uid,
@@ -5062,6 +5192,14 @@ Respond ONLY with valid JSON in this exact format:
         recurrenceSeriesId,
       },
     });
+    // For recurring rows, tell the client when the next instance is
+    // expected so the success toast can say "Next occurrence expected
+    // Aug 15." — matches the copy on repeating jobs' payment-accepted
+    // toasts.
+    const nextExpectedDate = recurrence
+      ? etFormatDate(nextRecurrenceDate(created.date, recurrence))
+      : null;
+    return { ...created, nextExpectedDate };
   });
 
   // Pre-flight for the Add Entry dialog: does an existing recurring
@@ -5258,7 +5396,7 @@ Respond ONLY with valid JSON in this exact format:
         data.invoiceNumber = null;
       }
     }
-    return prisma.$transaction(async (tx) => {
+    const updated = await prisma.$transaction(async (tx) => {
       const updated = await tx.businessExpense.update({ where: { id }, data });
       if (linkedExpense) {
         const expenseSync: any = {};
@@ -5270,6 +5408,13 @@ Respond ONLY with valid JSON in this exact format:
       }
       return updated;
     });
+    // Same tail as the create endpoint: if the row is (still or now)
+    // recurring, echo the next expected date so the client's "Expense
+    // updated" toast can trail with the forecast.
+    const nextExpectedDate = updated.recurrence
+      ? etFormatDate(nextRecurrenceDate(updated.date, String(updated.recurrence)))
+      : null;
+    return { ...updated, nextExpectedDate };
   });
 
   app.delete("/admin/business-expenses/:id", superGuard, async (req: any) => {
@@ -5565,23 +5710,6 @@ Respond ONLY with valid JSON in this exact format:
   // the most recent row drives the next-expected date. Anything overdue or
   // due within the lead-window appears as a suggestion to record.
   app.get("/admin/business-expenses/due-soon", superGuard, async (_req: any) => {
-    // Same-day-of-month math with end-of-month clamping (Jan 31 + 1mo → Feb 28).
-    function nextDate(d: Date, cadence: string): Date {
-      const out = new Date(d);
-      if (cadence === "WEEKLY") {
-        out.setDate(out.getDate() + 7);
-        return out;
-      }
-      const day = out.getDate();
-      out.setDate(1);
-      if (cadence === "MONTHLY") out.setMonth(out.getMonth() + 1);
-      else if (cadence === "QUARTERLY") out.setMonth(out.getMonth() + 3);
-      else if (cadence === "ANNUALLY") out.setFullYear(out.getFullYear() + 1);
-      const lastDay = new Date(out.getFullYear(), out.getMonth() + 1, 0).getDate();
-      out.setDate(Math.min(day, lastDay));
-      return out;
-    }
-
     const LEAD_DAYS = 7; // suggest 0–7 days before the expected next date
     const now = new Date();
     const horizon = new Date(now); horizon.setDate(horizon.getDate() + LEAD_DAYS);
@@ -5627,12 +5755,12 @@ Respond ONLY with valid JSON in this exact format:
     const suggestions = Array.from(seen.values())
       .map((latest) => {
         const cadence = String(latest.recurrence);
-        const baseNext = nextDate(latest.date, cadence);
+        const baseNext = nextRecurrenceDate(latest.date, cadence);
         // Skip marker advances the "next expected" by one cadence past the
         // skipped date. Each click of Skip stores the date being skipped.
         const expected =
           latest.recurrenceSkippedUntil && latest.recurrenceSkippedUntil >= baseNext
-            ? nextDate(latest.recurrenceSkippedUntil, cadence)
+            ? nextRecurrenceDate(latest.recurrenceSkippedUntil, cadence)
             : baseNext;
         return { latest, expected };
       })
@@ -5677,18 +5805,6 @@ Respond ONLY with valid JSON in this exact format:
   // recurring series in practice), safe to recompute per call.
   // Super-only.
   app.get("/admin/business-expenses/due-soon/count", superGuard, async (_req: any) => {
-    function nextDate(d: Date, cadence: string): Date {
-      const out = new Date(d);
-      if (cadence === "WEEKLY") { out.setDate(out.getDate() + 7); return out; }
-      const day = out.getDate();
-      out.setDate(1);
-      if (cadence === "MONTHLY") out.setMonth(out.getMonth() + 1);
-      else if (cadence === "QUARTERLY") out.setMonth(out.getMonth() + 3);
-      else if (cadence === "ANNUALLY") out.setFullYear(out.getFullYear() + 1);
-      const lastDay = new Date(out.getFullYear(), out.getMonth() + 1, 0).getDate();
-      out.setDate(Math.min(day, lastDay));
-      return out;
-    }
     const now = new Date();
     const todayKey = etFormatDate(now);
     const rows = await prisma.businessExpense.findMany({
@@ -5717,10 +5833,10 @@ Respond ONLY with valid JSON in this exact format:
     let count = 0;
     for (const latest of seen.values()) {
       const cadence = String(latest.recurrence);
-      const baseNext = nextDate(latest.date, cadence);
+      const baseNext = nextRecurrenceDate(latest.date, cadence);
       const expected =
         latest.recurrenceSkippedUntil && latest.recurrenceSkippedUntil >= baseNext
-          ? nextDate(latest.recurrenceSkippedUntil, cadence)
+          ? nextRecurrenceDate(latest.recurrenceSkippedUntil, cadence)
           : baseNext;
       // Overdue = expected ET-calendar-day is strictly before today.
       // etDaysBetween(from, to) returns positive when `to` is after
@@ -6662,6 +6778,179 @@ Respond ONLY with valid JSON in this exact format:
       );
     },
   );
+
+  // ----------------------------------------------------------------------
+  // Google Drive backup — Super only
+  //   GET  /super/documents/sync/status  — queue depth, last sync, health
+  //   POST /super/documents/sync/run     — Force Sync Now (drain queue)
+  //   POST /super/documents/sync/backfill — enqueue one task per existing doc
+  //
+  // See docs/features/documents-gdrive-backup.md for full spec.
+  // ----------------------------------------------------------------------
+
+  app.get("/super/documents/sync/status", superGuard, async () => {
+    const [
+      enabledSetting,
+      pendingCount,
+      inProgressCount,
+      failingCount,
+      terminatedCount,
+      newestPending,
+      newestDone,
+      recentFailures,
+    ] = await Promise.all([
+      prisma.setting.findUnique({ where: { key: "DOCUMENT_SYNC_ENABLED" } }),
+      prisma.documentSyncQueue.count({ where: { state: "PENDING" } }),
+      prisma.documentSyncQueue.count({ where: { state: "IN_PROGRESS" } }),
+      // "Failing" = pending row with attempts >= 3 that keeps getting
+      // retried. These are the ones that should surface to the operator.
+      prisma.documentSyncQueue.count({
+        where: { state: "PENDING", attempts: { gte: 3 } },
+      }),
+      // Terminal FAILED — worker has given up (attempts >= 10) or
+      // operator dismissed. Needs manual retry or dismiss to move out.
+      prisma.documentSyncQueue.count({ where: { state: "FAILED" } }),
+      prisma.documentSyncQueue.findFirst({
+        where: { state: "PENDING" },
+        orderBy: { createdAt: "asc" },
+        select: { createdAt: true },
+      }),
+      prisma.documentSyncQueue.findFirst({
+        where: { state: "DONE" },
+        orderBy: { updatedAt: "desc" },
+        select: { updatedAt: true },
+      }),
+      prisma.documentSyncQueue.findMany({
+        where: { state: "PENDING", attempts: { gte: 3 } },
+        orderBy: { updatedAt: "desc" },
+        take: 10,
+        select: {
+          id: true,
+          taskType: true,
+          documentId: true,
+          attempts: true,
+          lastError: true,
+          nextAttemptAt: true,
+        },
+      }),
+    ]);
+    const enabled = enabledSetting?.value === "true";
+    // Health rollup — red when there are terminal-failed OR pending-with-repeated-failures
+    // (both mean human attention needed); amber when backlog exists but no red flags;
+    // green when everything is drained.
+    const health = (failingCount + terminatedCount) > 0
+      ? "red"
+      : (pendingCount + inProgressCount > 0 ? "amber" : "green");
+    return {
+      enabled,
+      health,
+      counts: {
+        pending: pendingCount,
+        inProgress: inProgressCount,
+        failing: failingCount,
+        terminated: terminatedCount,
+      },
+      oldestPendingAt: newestPending?.createdAt ?? null,
+      lastSuccessAt: newestDone?.updatedAt ?? null,
+      recentFailures,
+    };
+  });
+
+  // Full FAILED (terminal) list for the panel's "Failed tasks" section.
+  // Same shape as the /pending endpoint with document titles resolved.
+  app.get("/super/documents/sync/failed", superGuard, async () => {
+    const rows = await prisma.documentSyncQueue.findMany({
+      where: { state: "FAILED" },
+      orderBy: { updatedAt: "desc" },
+      take: 200,
+    });
+    return enrichSyncTasks(rows);
+  });
+
+  // Reset a task back to PENDING for immediate retry. Works on any
+  // task state; resets attempts to 0 and clears the backoff so the
+  // next worker run picks it up right away.
+  app.post("/super/documents/sync/tasks/:id/retry", superGuard, async (req: any) => {
+    const id = String(req.params.id);
+    const task = await prisma.documentSyncQueue.findUnique({ where: { id } });
+    if (!task) throw app.httpErrors.notFound("Task not found.");
+    const updated = await prisma.documentSyncQueue.update({
+      where: { id },
+      data: {
+        state: "PENDING",
+        attempts: 0,
+        lastError: null,
+        nextAttemptAt: new Date(),
+      },
+    });
+    return { ok: true, task: updated };
+  });
+
+  // Move a task to the terminal FAILED state — worker will never
+  // retry it. Use when the underlying issue is unfixable OR when the
+  // task is stale (e.g. the doc was recreated elsewhere and we no
+  // longer care about this queue row).
+  app.post("/super/documents/sync/tasks/:id/dismiss", superGuard, async (req: any) => {
+    const id = String(req.params.id);
+    const task = await prisma.documentSyncQueue.findUnique({ where: { id } });
+    if (!task) throw app.httpErrors.notFound("Task not found.");
+    const updated = await prisma.documentSyncQueue.update({
+      where: { id },
+      data: {
+        state: "FAILED",
+        lastError: task.lastError ?? "Dismissed by operator.",
+      },
+    });
+    return { ok: true, task: updated };
+  });
+
+  app.get("/super/documents/sync/pending", superGuard, async () => {
+    // Full pending + in-progress backlog for the expandable panel view.
+    // Capped at 500 rows — larger backlogs would indicate a hung worker
+    // and the row-level detail stops being useful.
+    const rows = await prisma.documentSyncQueue.findMany({
+      where: { state: { in: ["PENDING", "IN_PROGRESS"] } },
+      orderBy: [{ nextAttemptAt: "asc" }, { createdAt: "asc" }],
+      take: 500,
+    });
+    return enrichSyncTasks(rows);
+  });
+
+  app.post("/super/documents/sync/run", superGuard, async (req: any) => {
+    const { runSync } = await import("../services/documentSyncWorker");
+    const body = (req.body ?? {}) as { maxTasks?: number };
+    const maxTasks = Math.min(500, Math.max(1, Number(body.maxTasks ?? 100)));
+    const result = await runSync({ maxTasks });
+    return result;
+  });
+
+  app.post("/super/documents/sync/backfill", superGuard, async () => {
+    // Enqueue one SYNC_DOCUMENT_METADATA per existing (non-hard-deleted)
+    // document + one UPLOAD_DOCUMENT_VERSION per existing version.
+    // Idempotent: the metadata task no-ops if state already exists, and
+    // uploadVersion checks DocumentSyncState before uploading (avoids
+    // re-uploading files that are already in Drive).
+    const docs = await prisma.companyDocument.findMany({
+      select: { id: true, versions: { select: { id: true } } },
+    });
+    const rows: Array<{
+      taskType: string;
+      documentId: string | null;
+      versionId: string | null;
+    }> = [];
+    for (const d of docs) {
+      rows.push({ taskType: "SYNC_DOCUMENT_METADATA", documentId: d.id, versionId: null });
+      for (const v of d.versions) {
+        rows.push({ taskType: "UPLOAD_DOCUMENT_VERSION", documentId: d.id, versionId: v.id });
+      }
+    }
+    // Also seed the taxonomy snapshot.
+    rows.push({ taskType: "SYNC_TAXONOMY", documentId: null, versionId: null });
+    if (rows.length > 0) {
+      await prisma.documentSyncQueue.createMany({ data: rows });
+    }
+    return { enqueued: rows.length, docCount: docs.length };
+  });
 
   // ----------------------------------------------------------------------
   // Timeline

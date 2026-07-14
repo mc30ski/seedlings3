@@ -286,4 +286,28 @@ export default async function cronRoutes(app: FastifyInstance) {
 
     return result;
   });
+
+  /**
+   * Google Drive backup — daily sync worker.
+   * Drains up to 100 pending tasks from DocumentSyncQueue, in order,
+   * with retry + exponential backoff on failures. Short-circuits
+   * cleanly when DOCUMENT_SYNC_ENABLED setting is off.
+   *
+   * See docs/features/documents-gdrive-backup.md.
+   */
+  app.get("/cron/document-sync", async (req, reply) => {
+    const secret = process.env.CRON_SECRET;
+    const authHeader = req.headers["authorization"];
+    if (secret && authHeader !== `Bearer ${secret}`) {
+      app.log.warn({ cron: "document-sync", reason: "Unauthorized request blocked" });
+      return reply.status(401).send({ error: "Unauthorized" });
+    }
+    if (!secret && process.env.NODE_ENV === "production") {
+      app.log.warn({ cron: "document-sync", reason: "CRON_SECRET not set in production" });
+    }
+    const { runSync } = await import("../services/documentSyncWorker");
+    const result = await runSync({ maxTasks: 100 });
+    app.log.info({ cron: "document-sync", ...result });
+    return result;
+  });
 }

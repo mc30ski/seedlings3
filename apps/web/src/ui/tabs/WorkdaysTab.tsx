@@ -233,6 +233,7 @@ export default function WorkdaysTab({
       });
       publishInlineMessage({ type: "SUCCESS", text: "Mileage approved." });
       await load();
+      onApprovalsChanged?.();
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
@@ -794,6 +795,7 @@ export default function WorkdaysTab({
           onClose={() => setReviewMileageFor(null)}
           onChanged={() => {
             void load();
+            onApprovalsChanged?.();
             // Rehydrate the dialog's entries from the freshly-loaded
             // map on the next render — we hold the last-known copy in
             // state and refresh it when reload finishes.
