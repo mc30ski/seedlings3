@@ -3719,9 +3719,20 @@ export default async function workerRoutes(app: FastifyInstance) {
         addons: { select: { price: true } },
         expenses: { select: { cost: true } },
         assignees: { select: { userId: true, role: true } },
-        ...(wantDetails
-          ? { job: { select: { property: { select: { displayName: true } } } } }
-          : {}),
+        // Always selected — the extra columns are cheap and keeping the
+        // select shape static makes Prisma's generic typing tractable.
+        // Only surfaced in the response when `?details=1`.
+        jobTags: true,
+        job: {
+          select: {
+            property: {
+              select: {
+                displayName: true,
+                client: { select: { displayName: true } },
+              },
+            },
+          },
+        },
       },
       orderBy: { completedAt: "desc" },
     });
@@ -3735,6 +3746,8 @@ export default async function workerRoutes(app: FastifyInstance) {
       id: string;
       completedAt: string | null;
       label: string;
+      clientName: string | null;
+      tags: string[];
       basePrice: number;
       addonsTotal: number;
       expensesTotal: number;
@@ -3790,12 +3803,29 @@ export default async function workerRoutes(app: FastifyInstance) {
         const feeAmount = grossShare * (projectionRatePct / 100);
 
         const propertyName = (occ as any).job?.property?.displayName ?? null;
+        const clientName = (occ as any).job?.property?.client?.displayName ?? null;
         const label = propertyName ?? occ.title ?? "(untitled)";
+
+        // jobTags is a JSON-string array on the occurrence, e.g.
+        // '["MOW","TRIM","BLOW"]'. Parse defensively — anything malformed
+        // becomes an empty list rather than a render crash.
+        let tags: string[] = [];
+        const rawTags = (occ as any).jobTags;
+        if (typeof rawTags === "string" && rawTags.trim().length > 0) {
+          try {
+            const parsed = JSON.parse(rawTags);
+            if (Array.isArray(parsed)) {
+              tags = parsed.filter((t): t is string => typeof t === "string");
+            }
+          } catch { /* ignore malformed tag payloads */ }
+        }
 
         breakdownJobs.push({
           id: occ.id,
           completedAt: occ.completedAt ? occ.completedAt.toISOString() : null,
           label,
+          clientName,
+          tags,
           basePrice,
           addonsTotal,
           expensesTotal,

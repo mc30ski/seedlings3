@@ -2745,8 +2745,15 @@ Respond ONLY with valid JSON in this exact format:
 
   // Per-worker "current hourly pay" panel data — Admin Jobs Home tab.
   //
-  //   - Hours: from WorkerWorkday rows for today with endedAt set
-  //     (in-progress workdays excluded per operator request).
+  //   - Hours: WorkerWorkday rows for today, BOTH ended AND in-progress.
+  //     For ended rows: active-ms = endedAt - startedAt - totalPausedMs.
+  //     For in-progress rows: active-ms is computed against now (or
+  //     against pausedAt if the worker is currently paused, since the
+  //     open pause segment isn't yet folded into totalPausedMs). This
+  //     surfaces "on the clock right now" workers immediately — before
+  //     they had this we showed 0h all day for anyone still clocked in,
+  //     which contradicted the "start your workday when you start your
+  //     first job" prompt.
   //   - Net pay: sum of PaymentSplit.amount for occurrences whose
   //     completedAt lands today. GP-flagged splits excluded (their
   //     cash already flowed on the wage-path Gusto run) and
@@ -2784,23 +2791,38 @@ Respond ONLY with valid JSON in this exact format:
     const userIds = workers.map((w) => w.id);
     if (userIds.length === 0) return [];
 
-    // Hours from today's COMPLETED workdays only.
+    // Hours from today's workdays — includes in-progress ones so
+    // workers currently on the clock get credit for the hours they've
+    // put in so far (previously showed 0h all day for those workers).
     const workdays = await prisma.workerWorkday.findMany({
       where: {
         workdayDate: today,
         userId: { in: userIds },
-        endedAt: { not: null },
       },
       select: {
         userId: true,
         startedAt: true,
         endedAt: true,
+        pausedAt: true,
         totalPausedMs: true,
       },
     });
+    const nowMs = Date.now();
     const hoursByUser = new Map<string, number>();
     for (const w of workdays) {
-      const rawMs = w.endedAt!.getTime() - w.startedAt.getTime();
+      // Endpoint for the interval:
+      //   - ended workday → endedAt (day is closed).
+      //   - in-progress + not currently paused → now (still ticking).
+      //   - in-progress + currently paused → pausedAt (interval is
+      //     frozen at pause; the open pause segment isn't yet in
+      //     totalPausedMs, so we clip the interval instead of trying
+      //     to double-count it).
+      const endMs = w.endedAt
+        ? w.endedAt.getTime()
+        : w.pausedAt
+          ? w.pausedAt.getTime()
+          : nowMs;
+      const rawMs = endMs - w.startedAt.getTime();
       const activeMs = Math.max(0, rawMs - w.totalPausedMs);
       hoursByUser.set(w.userId, (hoursByUser.get(w.userId) ?? 0) + activeMs / 3_600_000);
     }
@@ -2909,21 +2931,54 @@ Respond ONLY with valid JSON in this exact format:
       netByUser.set(item.userId, (netByUser.get(item.userId) ?? 0) + item.amount);
     }
 
-    return workers.map((w) => {
-      const hoursToday = hoursByUser.get(w.id) ?? 0;
-      const netPaidToday = netByUser.get(w.id) ?? 0;
-      const jobsCompleted = jobIdsByUser.get(w.id)?.size ?? 0;
-      const equivalentHourlyRate = hoursToday > 0 ? netPaidToday / hoursToday : 0;
-      return {
-        userId: w.id,
-        displayName: w.displayName ?? w.email ?? "Unknown",
-        workerType: w.workerType,
-        hoursToday: Math.round(hoursToday * 100) / 100,
-        netPaidToday: Math.round(netPaidToday * 100) / 100,
-        jobsCompleted,
-        equivalentHourlyRate: Math.round(equivalentHourlyRate * 100) / 100,
-      };
+    // Workers with a currently-open job — status IN_PROGRESS or PAUSED,
+    // that they're a non-observer assignee on. Drives the "in progress"
+    // indicator on each row so the reader knows the Earned/$/hr number
+    // is still trailing (will bump once they complete the job).
+    const openJobs = await prisma.jobOccurrence.findMany({
+      where: {
+        status: { in: ["IN_PROGRESS", "PAUSED"] as any },
+        assignees: {
+          some: {
+            userId: { in: userIds },
+            OR: [{ role: null }, { role: { not: "observer" } }],
+          },
+        },
+      },
+      select: {
+        assignees: { select: { userId: true, role: true } },
+      },
     });
+    const inProgressUsers = new Set<string>();
+    for (const occ of openJobs) {
+      for (const a of occ.assignees) {
+        if (a.role === "observer") continue;
+        if (userSet.has(a.userId)) inProgressUsers.add(a.userId);
+      }
+    }
+
+    // Only surface workers who've completed at least one job today.
+    // Workers still on their first job of the day (or nothing yet) are
+    // filtered out so the panel isn't a wall of "0 jobs · 0.00h · $0"
+    // rows — they'll appear the moment their first completion lands.
+    return workers
+      .map((w) => {
+        const hoursToday = hoursByUser.get(w.id) ?? 0;
+        const netPaidToday = netByUser.get(w.id) ?? 0;
+        const jobsCompleted = jobIdsByUser.get(w.id)?.size ?? 0;
+        const equivalentHourlyRate = hoursToday > 0 ? netPaidToday / hoursToday : 0;
+        return {
+          userId: w.id,
+          displayName: w.displayName ?? w.email ?? "Unknown",
+          workerType: w.workerType,
+          hoursToday: Math.round(hoursToday * 100) / 100,
+          netPaidToday: Math.round(netPaidToday * 100) / 100,
+          jobsCompleted,
+          equivalentHourlyRate: Math.round(equivalentHourlyRate * 100) / 100,
+          hasInProgressJob: inProgressUsers.has(w.id),
+        };
+      })
+      .filter((r) => r.jobsCompleted > 0);
   });
 
   app.get("/admin/users/:id/earnings-summary", adminGuard, async (req: any) => {
