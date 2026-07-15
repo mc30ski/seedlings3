@@ -30,7 +30,6 @@ type HourlyPay = {
   jobs: number;
   ratePerHour: number;
   days: number;
-  isOwnerProjection?: boolean;
 };
 
 type Props = {
