@@ -1147,7 +1147,7 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
           return (
             <Box p={3} bg="white" borderWidth="1px" borderColor="gray.200" rounded="md">
               <HStack justify="space-between" mb={2} wrap="wrap" gap={2}>
-                <Text fontSize="sm" fontWeight="semibold" color="fg.default">Weekly Earnings (Jobs)</Text>
+                <Text fontSize="xs" fontWeight="semibold" color="fg.default" textTransform="uppercase" letterSpacing="wide">Weekly Earnings (Jobs)</Text>
                 <Text fontSize="xs" color="fg.muted">Last 2 months · {fmtMoney(totalEarnings)}</Text>
               </HStack>
               <Box h="160px">

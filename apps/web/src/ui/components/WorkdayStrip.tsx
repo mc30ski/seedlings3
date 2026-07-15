@@ -393,6 +393,31 @@ export default function WorkdayStrip({
     return () => window.clearInterval(id);
   }, [needsTick]);
 
+  // Cross-component event: other tabs can request the End Workday dialog
+  // without duplicating its equipment / mileage cleanup logic. Currently
+  // dispatched by the JobsTab "all jobs done for today — end your
+  // workday?" nudge (see JobsTab CompleteJobDialog onCompleted). Only
+  // fires the dialog when the workday is actually endable — silently
+  // ignored otherwise so a stale event can't force an invalid state.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handler = () => {
+      if (!payload) return;
+      const today = payload.today;
+      // Narrow to the two states that carry a `workday` in the union.
+      if (today.state !== "IN_PROGRESS" && today.state !== "PAUSED") return;
+      setDialog({
+        kind: "end",
+        workday: today.workday,
+        activeJobs: payload.activeJobs,
+        activeCheckouts: payload.activeCheckouts,
+        openMileageEntries: payload.openMileageEntries ?? [],
+      });
+    };
+    window.addEventListener("workdayStrip:openEndDialog", handler);
+    return () => window.removeEventListener("workdayStrip:openEndDialog", handler);
+  }, [payload]);
+
   // ── Action wrappers — all refetch after success. Inline-message errors
   // bubble through getErrorMessage so the user sees the server's reason
   // text (e.g. "End time can't be in the future"). ─────────────────────
@@ -585,8 +610,9 @@ export default function WorkdayStrip({
 
       {/* Today's workday card — visually distinct by state. NOT_STARTED
           gets the loudest treatment (it's the one thing the worker must
-          do); IN_PROGRESS is reassuring green; PAUSED is amber to remind
-          them the clock is stopped; COMPLETED dims back to a subtle gray
+          do); IN_PROGRESS is blue (the "time / active work" color —
+          green is reserved for money); PAUSED is amber to remind them
+          the clock is stopped; COMPLETED dims back to a subtle gray
           (the work is done). Always noBottomMargin — the wrapping VStack
           above handles both internal spacing and trailing external mb. */}
       <WorkdayCard
@@ -764,12 +790,15 @@ function WorkdayCard({
   // Conditional pulse:
   //   NOT_STARTED → orange pulse only when the worker actually has work
   //     scheduled today. No pulse on days off so the card recedes.
-  //   IN_PROGRESS → green pulse only when they've completed everything
-  //     scheduled today — a "you can clock out now" cue.
+  //   IN_PROGRESS → blue pulse only when they've completed everything
+  //     scheduled today — a "you can clock out now" cue. Blue matches
+  //     the state theme (see the state-color comment above).
   const pulseNotStarted = todayJobs.remaining > 0;
   const pulseInProgress = todayJobs.scheduled > 0 && todayJobs.remaining === 0;
   const orangePulseStyle = { animation: "seedlings-pulse-orange 2.5s ease-in-out infinite" } as const;
-  const greenPulseStyle = { animation: "seedlings-pulse-green 2.5s ease-in-out infinite" } as const;
+  // Renamed from `bluePulseStyle` — see globals.css and pages/index.tsx
+  // header comment for the "money = green, time/work = blue" semantic.
+  const bluePulseStyle = { animation: "seedlings-pulse-blue 2.5s ease-in-out infinite" } as const;
   // Collapse pref — persisted per-viewer (not per-worker) so it survives
   // reloads. Default expanded; the user opts in to compact mode.
   const [collapsed, setCollapsed] = usePersistedState<boolean>("workdayStripCollapsed", false);
@@ -849,7 +878,7 @@ function WorkdayCard({
       // orange clock icon starts the workday. Keeps the row at
       // job-card height.
     } else if (today.state === "IN_PROGRESS") {
-      bg = "green.50"; borderColor = "green.400"; iconBg = "green.500";
+      bg = "blue.50"; borderColor = "blue.400"; iconBg = "blue.500";
       icon = <Clock size={18} />;
       const active = activeMs(today.workday);
       const allDone = pulseInProgress; // same condition that drives the pulse
@@ -858,7 +887,7 @@ function WorkdayCard({
         primaryAction = () => onEnd(today.workday);
         primaryActionLabel = "End workday";
       }
-      // No explicit End button on the collapsed row — tapping the green
+      // No explicit End button on the collapsed row — tapping the blue
       // clock icon ends the workday. Keeps the row at job-card height.
     } else if (today.state === "PAUSED") {
       bg = "yellow.50"; borderColor = "yellow.400"; iconBg = "yellow.500";
@@ -889,7 +918,7 @@ function WorkdayCard({
     }
     const collapsedPulseStyle =
       today.state === "NOT_STARTED" && pulseNotStarted ? orangePulseStyle :
-      today.state === "IN_PROGRESS" && pulseInProgress ? greenPulseStyle :
+      today.state === "IN_PROGRESS" && pulseInProgress ? bluePulseStyle :
       undefined;
     return (
       <Card.Root
@@ -1015,36 +1044,37 @@ function WorkdayCard({
   }
 
   // ── IN_PROGRESS ──────────────────────────────────────────────────────
-  // Green card with a soft pulse on the live indicator so the worker can
-  // see at a glance "I'm on the clock right now." Cancel sits to the
-  // right as a small ghost-link affordance for "I tapped Start by
-  // mistake."
+  // Blue card with a soft pulse on the live indicator so the worker can
+  // see at a glance "I'm on the clock right now." Blue (not green) to
+  // preserve the "money = green, time/work = blue" semantic split.
+  // Cancel sits to the right as a small ghost-link affordance for "I
+  // tapped Start by mistake."
   if (today.state === "IN_PROGRESS") {
     const active = activeMs(today.workday);
     const paused = totalPausedMsLive(today.workday);
     return (
       <Card.Root
         variant="outline"
-        bg="green.50"
-        borderColor="green.400"
+        bg="blue.50"
+        borderColor="blue.400"
         borderWidth="2px"
         mb={cardMb}
         position="relative"
-        style={pulseInProgress ? greenPulseStyle : undefined}
+        style={pulseInProgress ? bluePulseStyle : undefined}
       >
         <Card.Body p={3} pr={9} {...bodyClickProps}>
           {readOnlyBanner}
           <VStack align="stretch" gap={2}>
             <HStack gap={3} align="center">
-              <Box bg="green.500" color="white" p={1.5} borderRadius="full" flexShrink={0}>
+              <Box bg="blue.500" color="white" p={1.5} borderRadius="full" flexShrink={0}>
                 <Clock size={18} />
               </Box>
               <VStack align="start" gap={0} flex="1" minW="0">
-                <Text fontSize="sm" fontWeight="bold" color="green.900">
+                <Text fontSize="sm" fontWeight="bold" color="blue.900">
                   {viewAsName ? `${viewAsName} is on the clock` : "On the clock"} · {fmtDuration(active)} active
                   {pulseInProgress && " · all jobs completed"}
                 </Text>
-                <Text fontSize="xs" color="green.800">
+                <Text fontSize="xs" color="blue.800">
                   Started at {fmtClockTime(today.workday.startedAt)}
                   {paused > 0 && ` · ${fmtDuration(paused)} paused so far`}
                 </Text>
@@ -1052,7 +1082,7 @@ function WorkdayCard({
             </HStack>
             {canAct && (
               <HStack gap={2} wrap="wrap">
-                <Button size="xs" colorPalette="green" onClick={(e) => { e.stopPropagation(); onEnd(today.workday); }}>
+                <Button size="xs" colorPalette="blue" onClick={(e) => { e.stopPropagation(); onEnd(today.workday); }}>
                   <Check size={14} strokeWidth={3} /> <Text ml={1}>Complete</Text>
                 </Button>
                 <Button size="xs" colorPalette="yellow" onClick={(e) => { e.stopPropagation(); onPause(today.workday); }}>
@@ -1105,7 +1135,7 @@ function WorkdayCard({
             </HStack>
             {canAct && (
               <HStack gap={2} wrap="wrap">
-                <Button size="xs" colorPalette="green" onClick={(e) => { e.stopPropagation(); onEnd(today.workday); }}>
+                <Button size="xs" colorPalette="blue" onClick={(e) => { e.stopPropagation(); onEnd(today.workday); }}>
                   <Check size={14} strokeWidth={3} /> <Text ml={1}>Complete</Text>
                 </Button>
                 <Button size="xs" colorPalette="yellow" onClick={(e) => { e.stopPropagation(); onResume(today.workday); }}>
@@ -1157,7 +1187,7 @@ function WorkdayCard({
               {/* "Continue" — for ending the workday by mistake. Server adds
                   the gap between endedAt and now to totalPausedMs so the
                   off-the-clock interval doesn't count as payable hours. */}
-              <Button size="xs" colorPalette="green" onClick={(e) => { e.stopPropagation(); onReopen(today.workday); }}>
+              <Button size="xs" colorPalette="blue" onClick={(e) => { e.stopPropagation(); onReopen(today.workday); }}>
                 <Play size={12} /> <Text ml={1}>Continue</Text>
               </Button>
             </HStack>
@@ -1472,7 +1502,7 @@ function EndWorkdayDialog({
         <HStack justify="flex-end" w="full" gap={2}>
           <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
           <Button
-            colorPalette="green"
+            colorPalette="blue"
             onClick={() => void submit()}
             disabled={saving || !mileageValid}
             title={
@@ -2180,7 +2210,7 @@ function ReopenWorkdayDialog({
       footer={
         <HStack justify="flex-end" w="full" gap={2}>
           <Button variant="ghost" onClick={onClose} disabled={saving}>Stay ended</Button>
-          <Button colorPalette="green" onClick={() => void confirm()} disabled={saving}>
+          <Button colorPalette="blue" onClick={() => void confirm()} disabled={saving}>
             {saving ? <Spinner size="xs" /> : "Continue workday"}
           </Button>
         </HStack>

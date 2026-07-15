@@ -20,21 +20,25 @@
   50% { box-shadow: 0 0 0 8px rgba(249, 115, 22, 0); }
 }
 
-/* Green pulse — used on the IN_PROGRESS workday card when all of the
+/* Blue pulse — used on the IN_PROGRESS workday card when all of the
    worker's scheduled jobs are done for the day, signaling "time to
-   clock out". Also used on IN_PROGRESS job cards in the timeline. */
-@keyframes seedlings-pulse-green {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.45); }
-  50% { box-shadow: 0 0 0 8px rgba(22, 163, 74, 0); }
+   clock out". Also used on IN_PROGRESS job cards in the timeline.
+   NOTE: originally green — flipped to blue as part of the "money =
+   green, time/work = blue" semantic split so the on-clock signal
+   doesn't get confused with earnings/payments. Blue tint from Chakra
+   blue.500 (#3b82f6). */
+@keyframes seedlings-pulse-blue {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.45); }
+  50% { box-shadow: 0 0 0 8px rgba(59, 130, 246, 0); }
 }
 
-/* Muted green pulse — same rhythm as seedlings-pulse-green but with
+/* Muted blue pulse — same rhythm as seedlings-pulse-blue but with
    half the alpha + tighter spread. Applied to "peek" IN_PROGRESS job
    cards (someone else is actively working, but the card is view-only
    so it shouldn't visually compete with the operator's own rows). */
-@keyframes seedlings-pulse-green-muted {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.20); }
-  50% { box-shadow: 0 0 0 5px rgba(22, 163, 74, 0); }
+@keyframes seedlings-pulse-blue-muted {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.20); }
+  50% { box-shadow: 0 0 0 5px rgba(59, 130, 246, 0); }
 }
 
 /* Cyan pulse — Worker Home "Earning Power" card, top-performer tier. */

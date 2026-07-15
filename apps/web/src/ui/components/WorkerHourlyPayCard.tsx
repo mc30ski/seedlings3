@@ -14,6 +14,7 @@ import { Box, Button, Card, HStack, IconButton, Spinner, Text, VStack } from "@c
 import {
   Award,
   ChevronDown,
+  ChevronsUpDown,
   ChevronUp,
   Crown,
   DollarSign,
@@ -390,16 +391,21 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName }:
           <HStack gap={1}>
             <Button
               size="xs"
-              variant="ghost"
+              variant="outline"
               px="2"
               onClick={cyclePeriod}
               title={cycleTitle}
+              borderColor={tier.border}
+              bg="whiteAlpha.700"
               css={{
                 color: `var(--chakra-colors-${tier.fg.replace(".", "-")})`,
-                "&:hover": { background: "blackAlpha.100" },
+                "&:hover": { background: "white", borderColor: `var(--chakra-colors-${tier.numberFg.replace(".", "-")})` },
               }}
             >
               last {period.label}
+              <Box as="span" ml={1} display="inline-flex" opacity={0.7}>
+                <ChevronsUpDown size={11} />
+              </Box>
             </Button>
             <IconButton
               aria-label="Refresh"
@@ -444,9 +450,17 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName }:
                 </Box>
               )}
             </HStack>
-            <Text fontSize="xs" color={tier.fg} opacity={0.85}>
-              {fmtHours(data.hours)} across {data.jobs} job{data.jobs === 1 ? "" : "s"} · {fmtUSD(data.dollars)} earned
-            </Text>
+            <HStack gap={1.5} align="baseline" wrap="wrap">
+              <Text fontSize="xl" fontWeight="bold" color={tier.numberFg} lineHeight="1">
+                {fmtUSD(data.dollars)}
+              </Text>
+              <Text fontSize="sm" fontWeight="semibold" color={tier.fg}>
+                earned
+              </Text>
+              <Text fontSize="xs" color={tier.fg} opacity={0.75}>
+                · {fmtHours(data.hours)} across {data.jobs} job{data.jobs === 1 ? "" : "s"}
+              </Text>
+            </HStack>
           </>
         ) : (
           <VStack align="start" gap={1} py={2}>

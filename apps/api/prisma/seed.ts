@@ -1234,6 +1234,34 @@ async function seedDatabase() {
   await occ({ jobId: martinezBiweekly.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(0, 9), endAt: addMinutes(daysFromNow(0, 9), 40), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 55.0, estimatedMinutes: 40 });
   await occ({ jobId: churchWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(0, 14), endAt: addMinutes(daysFromNow(0, 14), 90), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 200.0, estimatedMinutes: 90 });
 
+  // ── End-of-day nudge fixture ────────────────────────────────────────
+  // Michael is the ONLY non-observer assignee on this today occurrence
+  // so completing it drops his `remaining` count from 1 → 0 and fires
+  // the "all jobs done for today — end your workday?" prompt in
+  // JobsTab (see WorkdayStrip pulse condition & JobsTab CompleteJob
+  // callback for the check logic). Small, quick to complete (25 min at
+  // Harrington Lake) and starts late enough (2 PM ET) that it's still
+  // in the future for most of the workday — easy to find on the
+  // Worker Jobs timeline. Test flow: sign in as Michael → Start
+  // workday → open this occurrence → Start → Complete → dismiss photo
+  // prompt → the nudge dialog fires.
+  await occ(
+    {
+      jobId: harringtonLakeMow.id,
+      kind: "SINGLE_ADDRESS",
+      startAt: daysFromNow(0, 14),
+      endAt: addMinutes(daysFromNow(0, 14), 25),
+      status: "SCHEDULED",
+      workflow: "STANDARD",
+      jobTags: '["MOW"]',
+      price: 65.0,
+      estimatedMinutes: 25,
+      isClientConfirmed: true,
+      pinnedNote: "END-OF-DAY NUDGE TEST — complete this to trigger the 'end workday?' prompt",
+    },
+    [{ userId: MICHAEL_ID, role: "primary" }],
+  );
+
   // ── Team workday gate fixture ────────────────────────────────────────
   // A job scheduled for today on a property/job that isn't used
   // anywhere else today, with a claimer who's clocked in and a helper
