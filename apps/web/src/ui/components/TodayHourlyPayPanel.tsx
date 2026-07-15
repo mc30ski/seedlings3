@@ -137,8 +137,16 @@ export default function TodayHourlyPayPanel({ workerIds, refreshNonce = 0 }: Pro
               No approved workers found.
             </Text>
           ) : rows ? (
-            <VStack align="stretch" gap={1}>
-              <HStack fontSize="2xs" color="fg.muted" fontWeight="semibold" px={1}>
+            <VStack align="stretch" gap={2}>
+              {/* Table header — only on wide screens. On mobile the
+                  stacked-row layout speaks for itself. */}
+              <HStack
+                fontSize="2xs"
+                color="fg.muted"
+                fontWeight="semibold"
+                px={1}
+                display={{ base: "none", md: "flex" }}
+              >
                 <Text flex={2}>Worker</Text>
                 <Text w="60px" textAlign="right">Jobs</Text>
                 <Text w="80px" textAlign="right">Hours</Text>
@@ -147,8 +155,22 @@ export default function TodayHourlyPayPanel({ workerIds, refreshNonce = 0 }: Pro
               </HStack>
               {rows.map((r) => {
                 const hasActivity = r.hoursToday > 0 || r.jobsCompleted > 0;
+                const chip = r.workerType ? (
+                  <Badge
+                    size="xs"
+                    variant="subtle"
+                    colorPalette={
+                      r.workerType === "EMPLOYEE" ? "blue"
+                        : r.workerType === "CONTRACTOR" ? "orange"
+                        : r.workerType === "TRAINEE" ? "cyan"
+                        : "gray"
+                    }
+                  >
+                    {r.workerType.toLowerCase()}
+                  </Badge>
+                ) : null;
                 return (
-                  <HStack
+                  <Box
                     key={r.userId}
                     fontSize="sm"
                     px={1}
@@ -156,30 +178,35 @@ export default function TodayHourlyPayPanel({ workerIds, refreshNonce = 0 }: Pro
                     borderRadius="sm"
                     color={hasActivity ? undefined : "fg.muted"}
                   >
-                    <HStack flex={2} gap={2} minW={0}>
-                      <Text truncate>{r.displayName}</Text>
-                      {r.workerType && (
-                        <Badge
-                          size="xs"
-                          variant="subtle"
-                          colorPalette={
-                            r.workerType === "EMPLOYEE" ? "blue"
-                              : r.workerType === "CONTRACTOR" ? "orange"
-                              : r.workerType === "TRAINEE" ? "cyan"
-                              : "gray"
-                          }
-                        >
-                          {r.workerType.toLowerCase()}
-                        </Badge>
-                      )}
+                    {/* Desktop: single-row grid with fixed columns. */}
+                    <HStack display={{ base: "none", md: "flex" }}>
+                      <HStack flex={2} gap={2} minW={0}>
+                        <Text truncate>{r.displayName}</Text>
+                        {chip}
+                      </HStack>
+                      <Text w="60px" textAlign="right">{r.jobsCompleted}</Text>
+                      <Text w="80px" textAlign="right">{fmtHours(r.hoursToday)}</Text>
+                      <Text w="90px" textAlign="right">{fmtUSD(r.netPaidToday)}</Text>
+                      <Text w="90px" textAlign="right" fontWeight={hasActivity ? "semibold" : undefined}>
+                        {r.hoursToday > 0 ? `${fmtUSD(r.equivalentHourlyRate)}` : "—"}
+                      </Text>
                     </HStack>
-                    <Text w="60px" textAlign="right">{r.jobsCompleted}</Text>
-                    <Text w="80px" textAlign="right">{fmtHours(r.hoursToday)}</Text>
-                    <Text w="90px" textAlign="right">{fmtUSD(r.netPaidToday)}</Text>
-                    <Text w="90px" textAlign="right" fontWeight={hasActivity ? "semibold" : undefined}>
-                      {r.hoursToday > 0 ? `${fmtUSD(r.equivalentHourlyRate)}` : "—"}
-                    </Text>
-                  </HStack>
+                    {/* Mobile: name + chip on one line, stats on next. */}
+                    <VStack align="stretch" gap={0.5} display={{ base: "flex", md: "none" }}>
+                      <HStack justify="space-between" gap={2}>
+                        <HStack gap={2} minW={0} flex={1}>
+                          <Text truncate>{r.displayName}</Text>
+                          {chip}
+                        </HStack>
+                        <Text fontWeight={hasActivity ? "semibold" : undefined} flexShrink={0}>
+                          {r.hoursToday > 0 ? `${fmtUSD(r.equivalentHourlyRate)}/hr` : "—"}
+                        </Text>
+                      </HStack>
+                      <Text fontSize="xs" color="fg.muted">
+                        {r.jobsCompleted} job{r.jobsCompleted === 1 ? "" : "s"} · {fmtHours(r.hoursToday)} · {fmtUSD(r.netPaidToday)}
+                      </Text>
+                    </VStack>
+                  </Box>
                 );
               })}
               <Text fontSize="2xs" color="fg.muted" mt={1} pt={1} borderTopWidth={1} borderColor="gray.100">

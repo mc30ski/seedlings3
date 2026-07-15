@@ -1292,7 +1292,11 @@ export default async function workerRoutes(app: FastifyInstance) {
 
   // Worker occurrence routes
   app.get("/occurrences", workerGuard, async (req: any) => {
-    const { from, to, includeOccId, viewAsUserId } = (req.query || {}) as { from?: string; to?: string; includeOccId?: string; viewAsUserId?: string };
+    const { from, to, includeOccId, viewAsUserId, workerView } = (req.query || {}) as { from?: string; to?: string; includeOccId?: string; viewAsUserId?: string; workerView?: string };
+    // Worker Jobs tab signals `?workerView=1` so peek redaction runs
+    // even when the caller is admin/super. Admin Jobs tab omits it →
+    // admins keep the unredacted view.
+    const isWorkerViewRequest = workerView === "1";
     // Business Start Date cutoff is operator-only — applies to the worker /
     // admin JobsTab. Client-facing /client/jobs deliberately does not pass
     // this through (a client should always see their own service history
@@ -1444,11 +1448,13 @@ export default async function workerRoutes(app: FastifyInstance) {
     // Peek redaction: for the Worker Jobs "Team" toggle. Any occ that
     // has assignees but the caller isn't one of them gets financials
     // stripped (price, splits, payouts, expense costs, admin-only
-    // client context). Admin bypass matches observer/trainee — admins
-    // see everything unredacted; the worker-view read-only
-    // treatment is applied client-side (JobsTab isPeek is gated on
-    // isWorkerView), so admins on either tab remain unaffected.
-    redactPeekFieldsForCaller(filtered as any[], uid, effectiveIsAdmin);
+    // client context). Admins are bypassed by default (Admin Jobs tab
+    // needs full financials), BUT when the request comes from the
+    // Worker Jobs tab (`?workerView=1`), the bypass is disabled so
+    // admins-using-worker-view see the same redacted teammate data
+    // any worker would.
+    const peekAdminBypass = effectiveIsAdmin && !isWorkerViewRequest;
+    redactPeekFieldsForCaller(filtered as any[], uid, peekAdminBypass);
 
     return filtered;
   });

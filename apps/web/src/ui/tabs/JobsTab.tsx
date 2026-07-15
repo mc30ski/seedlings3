@@ -1375,6 +1375,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       if (qFrom) qs.set("from", qFrom);
       if (qTo) qs.set("to", qTo);
       if (keepOccId) qs.set("includeOccId", keepOccId);
+      // Signal the Worker Jobs feed so the server applies peek
+      // redaction to teammates' financials even when the caller is
+      // admin/super. Without this an admin using the Worker view
+      // would see every teammate's price/splits/payouts (the whole
+      // point of the Team toggle is to give workers a view-only peek).
+      // Admin tab omits this param → normal admin-full-view behavior.
+      if (isWorkerView) qs.set("workerView", "1");
       // When admin is impersonating a single worker, ask the API to attach that
       // worker's reminders/pins/likes instead of the admin's. Without this the DUE
       // filter (which keys off attached reminders) would show the admin's reminders
