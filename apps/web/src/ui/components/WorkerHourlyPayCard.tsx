@@ -43,13 +43,24 @@ type Props = {
   viewAsDisplayName?: string | null;
 };
 
-const PERIODS: Array<{ days: number; label: string }> = [
+// Workers see the short list — the intent is "how am I doing lately",
+// not year-over-year trend analysis. Admins viewing a specific worker
+// via the "View as" picker get the extended list so they can spot
+// longer-arc performance context that the worker themselves doesn't.
+const WORKER_PERIODS: Array<{ days: number; label: string }> = [
   { days: 7, label: "1 week" },
+  { days: 14, label: "2 weeks" },
+  { days: 21, label: "3 weeks" },
   { days: 30, label: "1 month" },
+];
+const ADMIN_EXTRA_PERIODS: Array<{ days: number; label: string }> = [
+  { days: 60, label: "2 months" },
   { days: 90, label: "3 months" },
   { days: 180, label: "6 months" },
   { days: 365, label: "1 year" },
 ];
+const ADMIN_PERIODS = [...WORKER_PERIODS, ...ADMIN_EXTRA_PERIODS];
+const DEFAULT_DAYS = 30;
 
 type Tier = {
   min: number;
@@ -157,14 +168,28 @@ function fmtUSD(n: number): string {
 }
 
 export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName }: Props = {}) {
-  const [days, setDays] = usePersistedState<number>("home_hourlyPayDays", 365);
+  const [days, setDays] = usePersistedState<number>("home_hourlyPayDays", DEFAULT_DAYS);
   const [data, setData] = useState<HourlyPay | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Admin-viewing-a-worker gets the extended list; regular worker
+  // Home is capped at 1 month.
+  const isAdminView = !!viewAsUserId;
+  const periods = isAdminView ? ADMIN_PERIODS : WORKER_PERIODS;
+
+  // Clamp stale persisted values that fall outside the current allowed
+  // list — e.g. a worker previously saw 365 and later got locked to
+  // the short list. Snap to DEFAULT_DAYS in that case.
+  const currentPeriod = periods.find((p) => p.days === days);
+  const effectiveDays = currentPeriod ? days : DEFAULT_DAYS;
+  useEffect(() => {
+    if (!currentPeriod) setDays(DEFAULT_DAYS);
+  }, [currentPeriod, setDays]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const qs = new URLSearchParams({ days: String(days) });
+      const qs = new URLSearchParams({ days: String(effectiveDays) });
       if (viewAsUserId) qs.set("viewAsUserId", viewAsUserId);
       const d = await apiGet<HourlyPay>(`/api/me/hourly-pay?${qs.toString()}`);
       setData(d);
@@ -176,18 +201,21 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName }:
     } finally {
       setLoading(false);
     }
-  }, [days, viewAsUserId]);
+  }, [effectiveDays, viewAsUserId]);
 
   useEffect(() => { void load(); }, [load]);
 
-  const period = PERIODS.find((p) => p.days === days) ?? PERIODS[4];
+  const period =
+    periods.find((p) => p.days === effectiveDays) ??
+    periods.find((p) => p.days === DEFAULT_DAYS) ??
+    periods[0];
 
   // Cycle-forward on click of the label chip — dead simple UI, no
   // dropdown mechanics. Long-press or the refresh icon handle the
   // rare "wait, I meant to go back" case (they can just click again).
   function cyclePeriod() {
-    const idx = PERIODS.findIndex((p) => p.days === days);
-    const next = PERIODS[(idx + 1) % PERIODS.length];
+    const idx = periods.findIndex((p) => p.days === effectiveDays);
+    const next = periods[(idx + 1) % periods.length];
     setDays(next.days);
   }
 
