@@ -9,10 +9,12 @@
 // Data: /api/me/hourly-pay?days=N (see routes/worker.ts).
 
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Box, Button, Card, HStack, IconButton, Spinner, Text, VStack } from "@chakra-ui/react";
 import {
   Award,
+  ChevronDown,
+  ChevronUp,
   Crown,
   DollarSign,
   RefreshCw,
@@ -22,14 +24,42 @@ import {
 } from "lucide-react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import { apiGet } from "@/src/lib/api";
+import { fmtDateOpts, fmtTimeOpts } from "@/src/lib/lib";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 
+type BreakdownJob = {
+  id: string;
+  completedAt: string | null;
+  label: string;
+  basePrice: number;
+  addonsTotal: number;
+  expensesTotal: number;
+  net: number;
+  myPercent: number;
+  shareSource: "completionSplits" | "even-split" | "none";
+  grossShare: number;
+  feeAmount: number;
+  projected: number;
+};
+type BreakdownWorkday = {
+  startedAt: string;
+  endedAt: string;
+  pausedMs: number;
+  activeMs: number;
+};
+type HourlyPayDetails = {
+  ratePct: number;
+  rateLabel: string;
+  jobs: BreakdownJob[];
+  workdays: BreakdownWorkday[];
+};
 type HourlyPay = {
   dollars: number;
   hours: number;
   jobs: number;
   ratePerHour: number;
   days: number;
+  details?: HourlyPayDetails;
 };
 
 type Props = {
@@ -166,10 +196,51 @@ function fmtUSD(n: number): string {
   });
 }
 
+function fmtUSDPrecise(n: number): string {
+  return n.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function fmtMsAsHrs(ms: number): string {
+  const h = ms / 3_600_000;
+  return `${h.toFixed(2)}h`;
+}
+
+function fmtCompletedAt(iso: string | null): string {
+  return fmtDateOpts(iso, { month: "short", day: "numeric" });
+}
+
+function fmtWorkdayStart(iso: string): string {
+  const day = fmtDateOpts(iso, { month: "short", day: "numeric" });
+  const t = fmtTimeOpts(iso, { hour: "numeric", minute: "2-digit" });
+  return `${day} ${t}`;
+}
+
+function shareSourceLabel(s: BreakdownJob["shareSource"]): string {
+  if (s === "completionSplits") return "from splits at completion";
+  if (s === "even-split") return "even split among crew";
+  return "no share";
+}
+
 export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName }: Props = {}) {
   const [days, setDays] = usePersistedState<number>("home_hourlyPayDays", DEFAULT_DAYS);
   const [data, setData] = useState<HourlyPay | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // "How was this calculated?" panel — collapsed by default, fires a
+  // second request on first expand and caches the payload keyed by
+  // (days, viewAsUserId). Re-expanding after a period change re-fetches.
+  const [expanded, setExpanded] = useState(false);
+  const [details, setDetails] = useState<HourlyPayDetails | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  // True once a details fetch has actually failed. Used to distinguish
+  // "no data yet because we haven't fetched" (show spinner) from "no
+  // data because the fetch failed" (show error fallback).
+  const [detailsError, setDetailsError] = useState(false);
 
   // Admin-viewing-a-worker gets the extended list; regular worker
   // Home is capped at 1 month.
@@ -203,6 +274,62 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName }:
   }, [effectiveDays, viewAsUserId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Any change to the summary inputs invalidates the details cache so
+  // the next render pulls fresh breakdown data. If the panel is open
+  // right now, the effect below will re-fetch immediately; otherwise
+  // the next expand triggers the fetch.
+  useEffect(() => {
+    setDetails(null);
+    setDetailsError(false);
+  }, [effectiveDays, viewAsUserId]);
+
+  const loadDetails = useCallback(async () => {
+    setDetailsLoading(true);
+    setDetailsError(false);
+    try {
+      const qs = new URLSearchParams({ days: String(effectiveDays), details: "1" });
+      if (viewAsUserId) qs.set("viewAsUserId", viewAsUserId);
+      const d = await apiGet<HourlyPay>(`/api/me/hourly-pay?${qs.toString()}`);
+      // Rewrite summary too — the details fetch is authoritative for
+      // the same window, so keep them in sync in case the underlying
+      // data changed between fetches.
+      setData(d);
+      setDetails(d.details ?? null);
+    } catch (err) {
+      setDetailsError(true);
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Failed to load pay breakdown.", err),
+      });
+    } finally {
+      setDetailsLoading(false);
+    }
+  }, [effectiveDays, viewAsUserId]);
+
+  // Single source of truth for "when the panel is open and we don't
+  // have data, fetch it". Handles the initial expand AND the case
+  // where a period / view-as change wipes the cache while expanded.
+  // The `!detailsError` guard prevents an infinite retry loop when
+  // the backend is failing.
+  useEffect(() => {
+    if (expanded && !details && !detailsLoading && !detailsError) {
+      void loadDetails();
+    }
+  }, [expanded, details, detailsLoading, detailsError, loadDetails]);
+
+  function toggleExpanded() {
+    setExpanded((v) => !v);
+  }
+
+  function refreshAll() {
+    void load();
+    if (expanded) {
+      // Clear details + error so the effect above re-fetches.
+      setDetails(null);
+      setDetailsError(false);
+    }
+  }
 
   const period =
     periods.find((p) => p.days === effectiveDays) ??
@@ -271,8 +398,8 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName }:
               aria-label="Refresh"
               size="xs"
               variant="ghost"
-              onClick={() => void load()}
-              loading={loading}
+              onClick={refreshAll}
+              loading={loading || detailsLoading}
               css={{
                 color: `var(--chakra-colors-${tier.fg.replace(".", "-")})`,
               }}
@@ -324,7 +451,199 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName }:
             </Text>
           </VStack>
         )}
+
+        <Box mt={3} borderTopWidth="1px" borderColor={tier.border} pt={2}>
+          <Button
+            size="xs"
+            variant="ghost"
+            width="100%"
+            justifyContent="space-between"
+            onClick={toggleExpanded}
+            aria-expanded={expanded}
+            css={{ color: `var(--chakra-colors-${tier.fg.replace(".", "-")})` }}
+          >
+            <Text fontSize="xs" fontWeight="medium">
+              How was this approximate value calculated?
+            </Text>
+            {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </Button>
+
+          {expanded && (
+            <Box mt={2}>
+              {details ? (
+                <BreakdownPanel
+                  data={data}
+                  details={details}
+                  period={period}
+                  fg={tier.fg}
+                />
+              ) : detailsError ? (
+                <Text fontSize="xs" color={tier.fg} opacity={0.7} py={2}>
+                  Couldn't load the breakdown. Tap the refresh button and try again.
+                </Text>
+              ) : (
+                <HStack gap={2} py={2}>
+                  <Spinner size="sm" />
+                  <Text fontSize="xs" color={tier.fg}>Loading breakdown…</Text>
+                </HStack>
+              )}
+            </Box>
+          )}
+        </Box>
       </Card.Body>
     </Card.Root>
+  );
+}
+
+function BreakdownPanel({
+  data,
+  details,
+  period,
+  fg,
+}: {
+  data: HourlyPay;
+  details: HourlyPayDetails;
+  period: { days: number; label: string };
+  fg: string;
+}) {
+  // Sanity: sum of projected values should equal `data.dollars` within
+  // a rounding cent. Same for workday active-ms and `data.hours`.
+  const dollarsCheck = useMemo(
+    () => details.jobs.reduce((s, j) => s + j.projected, 0),
+    [details.jobs],
+  );
+  const hoursCheck = useMemo(
+    () => details.workdays.reduce((s, w) => s + w.activeMs, 0) / 3_600_000,
+    [details.workdays],
+  );
+
+  const rowBg = "blackAlpha.50";
+  const zebra = "blackAlpha.100";
+
+  return (
+    <VStack align="stretch" gap={3}>
+      <Box>
+        <Text fontSize="xs" fontWeight="semibold" color={fg} mb={1}>
+          The formula
+        </Text>
+        <Box
+          bg={rowBg}
+          borderRadius="md"
+          p={2}
+          fontFamily="mono"
+          fontSize="xs"
+          color={fg}
+          overflowX="auto"
+        >
+          <Text>
+            For each completed job you worked on (as a non-observer)
+            in the last {period.label}:
+          </Text>
+          <Text mt={1}>
+            &nbsp;&nbsp;projected = (price − expenses) × your_share × (1 − rate%)
+          </Text>
+          <Text mt={2}>
+            Then: $/hr = Σ projected ÷ workday hours
+          </Text>
+          <Text mt={2}>
+            rate% = <b>{details.ratePct}%</b> ({details.rateLabel})
+          </Text>
+        </Box>
+      </Box>
+
+      <Box>
+        <HStack justify="space-between" mb={1}>
+          <Text fontSize="xs" fontWeight="semibold" color={fg}>
+            Jobs ({details.jobs.length})
+          </Text>
+          <Text fontSize="xs" color={fg} opacity={0.7}>
+            Σ projected: {fmtUSDPrecise(dollarsCheck)}
+          </Text>
+        </HStack>
+        {details.jobs.length === 0 ? (
+          <Text fontSize="xs" color={fg} opacity={0.7} px={1}>
+            No qualifying completed jobs in this window.
+          </Text>
+        ) : (
+          <Box borderRadius="md" overflow="hidden">
+            {details.jobs.map((j, idx) => (
+              <Box
+                key={j.id}
+                bg={idx % 2 === 0 ? rowBg : zebra}
+                p={2}
+                fontSize="xs"
+                color={fg}
+              >
+                <HStack justify="space-between" gap={2} align="baseline">
+                  <Text fontWeight="semibold" flex={1} minW={0} truncate>
+                    {fmtCompletedAt(j.completedAt)} · {j.label}
+                  </Text>
+                  <Text fontWeight="bold" flexShrink={0}>
+                    {fmtUSDPrecise(j.projected)}
+                  </Text>
+                </HStack>
+                <Text fontFamily="mono" mt={1} opacity={0.85}>
+                  ({fmtUSDPrecise(j.basePrice)}
+                  {j.addonsTotal > 0 ? ` + ${fmtUSDPrecise(j.addonsTotal)} addons` : ""}
+                  {j.expensesTotal > 0 ? ` − ${fmtUSDPrecise(j.expensesTotal)} exp` : ""}
+                  ) = <b>{fmtUSDPrecise(j.net)}</b> net
+                </Text>
+                <Text fontFamily="mono" opacity={0.85}>
+                  × {j.myPercent.toFixed(1)}% share ({shareSourceLabel(j.shareSource)})
+                  = {fmtUSDPrecise(j.grossShare)}
+                </Text>
+                <Text fontFamily="mono" opacity={0.85}>
+                  − {fmtUSDPrecise(j.feeAmount)} fee
+                  = <b>{fmtUSDPrecise(j.projected)}</b>
+                </Text>
+              </Box>
+            ))}
+          </Box>
+        )}
+      </Box>
+
+      <Box>
+        <HStack justify="space-between" mb={1}>
+          <Text fontSize="xs" fontWeight="semibold" color={fg}>
+            Workdays ({details.workdays.length})
+          </Text>
+          <Text fontSize="xs" color={fg} opacity={0.7}>
+            Σ active: {hoursCheck.toFixed(2)}h
+          </Text>
+        </HStack>
+        {details.workdays.length === 0 ? (
+          <Text fontSize="xs" color={fg} opacity={0.7} px={1}>
+            No completed workdays in this window.
+          </Text>
+        ) : (
+          <Box borderRadius="md" overflow="hidden">
+            {details.workdays.map((w, idx) => (
+              <HStack
+                key={`${w.startedAt}-${idx}`}
+                justify="space-between"
+                bg={idx % 2 === 0 ? rowBg : zebra}
+                p={2}
+                fontSize="xs"
+                color={fg}
+                fontFamily="mono"
+              >
+                <Text>{fmtWorkdayStart(w.startedAt)}</Text>
+                <Text opacity={0.85}>
+                  {w.pausedMs > 0 ? `− ${fmtMsAsHrs(w.pausedMs)} paused → ` : ""}
+                  <b>{fmtMsAsHrs(w.activeMs)}</b>
+                </Text>
+              </HStack>
+            ))}
+          </Box>
+        )}
+      </Box>
+
+      <Box bg={rowBg} borderRadius="md" p={2}>
+        <Text fontSize="xs" fontFamily="mono" color={fg}>
+          <b>{fmtUSDPrecise(data.dollars)}</b> ÷ <b>{data.hours.toFixed(2)}h</b>
+          {" "}= <b>${data.ratePerHour.toFixed(2)}/hr</b>
+        </Text>
+      </Box>
+    </VStack>
   );
 }

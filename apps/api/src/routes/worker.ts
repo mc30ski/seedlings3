@@ -3691,6 +3691,12 @@ export default async function workerRoutes(app: FastifyInstance) {
     }
     const hours = activeMs / 3_600_000;
 
+    // Optional per-item breakdown for the card's "how was this
+    // calculated?" expander. Off by default to keep the initial load
+    // small — expensive fields (property include, per-workday rows)
+    // only get selected when the client asks.
+    const wantDetails = (req.query?.details as string | undefined) === "1";
+
     // Dollars — projected across every qualifying job.
     const occs = await prisma.jobOccurrence.findMany({
       where: {
@@ -3704,16 +3710,42 @@ export default async function workerRoutes(app: FastifyInstance) {
         OR: [{ payment: null }, { payment: { skippedAt: null } }],
       },
       select: {
+        id: true,
+        completedAt: true,
+        title: true,
         price: true,
         proposalAmount: true,
         completionSplits: true,
         addons: { select: { price: true } },
         expenses: { select: { cost: true } },
         assignees: { select: { userId: true, role: true } },
+        ...(wantDetails
+          ? { job: { select: { property: { select: { displayName: true } } } } }
+          : {}),
       },
+      orderBy: { completedAt: "desc" },
     });
     const { computeMyOccurrenceNet } = await import("../services/workerEarnings");
     let dollars = 0;
+
+    // Per-job breakdown rows (only populated when details=1). Mirrors
+    // the exact math computeMyOccurrenceNet runs so the card can show
+    // the user how each number was derived.
+    const breakdownJobs: Array<{
+      id: string;
+      completedAt: string | null;
+      label: string;
+      basePrice: number;
+      addonsTotal: number;
+      expensesTotal: number;
+      net: number;
+      myPercent: number;
+      shareSource: "completionSplits" | "even-split" | "none";
+      grossShare: number;
+      feeAmount: number;
+      projected: number;
+    }> = [];
+
     for (const occ of occs) {
       const value = computeMyOccurrenceNet(
         {
@@ -3729,8 +3761,76 @@ export default async function workerRoutes(app: FastifyInstance) {
         projectionRatePct,
       );
       dollars += value;
+
+      if (wantDetails) {
+        const basePrice = (occ.price ?? occ.proposalAmount ?? 0);
+        const addonsTotal = (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
+        const displayPrice = basePrice + addonsTotal;
+        const expensesTotal = (occ.expenses ?? []).reduce((s, e) => s + (e.cost ?? 0), 0);
+        const net = Math.max(0, displayPrice - expensesTotal);
+
+        // Re-derive myPercent so we can show the user which source we
+        // used and what number was applied — mirrors the helper's
+        // branch order.
+        let myPercent = 0;
+        let shareSource: "completionSplits" | "even-split" | "none" = "none";
+        const cs = occ.completionSplits as Array<{ userId: string; percent: number }> | null | undefined;
+        if (Array.isArray(cs) && cs.length > 0) {
+          const mine = cs.find((s) => s.userId === uid);
+          myPercent = Number(mine?.percent ?? 0);
+          shareSource = "completionSplits";
+        } else {
+          const active = (occ.assignees ?? []).filter((a) => a.role !== "observer");
+          if (active.some((a) => a.userId === uid) && active.length > 0) {
+            myPercent = 100 / active.length;
+            shareSource = "even-split";
+          }
+        }
+        const grossShare = net * (myPercent / 100);
+        const feeAmount = grossShare * (projectionRatePct / 100);
+
+        const propertyName = (occ as any).job?.property?.displayName ?? null;
+        const label = propertyName ?? occ.title ?? "(untitled)";
+
+        breakdownJobs.push({
+          id: occ.id,
+          completedAt: occ.completedAt ? occ.completedAt.toISOString() : null,
+          label,
+          basePrice,
+          addonsTotal,
+          expensesTotal,
+          net,
+          myPercent,
+          shareSource,
+          grossShare,
+          feeAmount,
+          projected: value,
+        });
+      }
     }
     const jobs = occs.length;
+
+    // Per-workday breakdown rows (only populated when details=1).
+    const breakdownWorkdays: Array<{
+      startedAt: string;
+      endedAt: string;
+      pausedMs: number;
+      activeMs: number;
+    }> = [];
+    if (wantDetails) {
+      for (const w of workdays) {
+        const wallClock = w.endedAt!.getTime() - w.startedAt.getTime();
+        const active = Math.max(0, wallClock - w.totalPausedMs);
+        breakdownWorkdays.push({
+          startedAt: w.startedAt.toISOString(),
+          endedAt: w.endedAt!.toISOString(),
+          pausedMs: w.totalPausedMs,
+          activeMs: active,
+        });
+      }
+      // Newest first for display parity with the jobs list.
+      breakdownWorkdays.sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1));
+    }
 
     const ratePerHour = hours > 0 ? dollars / hours : 0;
     return {
@@ -3739,6 +3839,18 @@ export default async function workerRoutes(app: FastifyInstance) {
       jobs,
       ratePerHour: Math.round(ratePerHour * 100) / 100,
       days,
+      ...(wantDetails
+        ? {
+            details: {
+              ratePct: projectionRatePct,
+              rateLabel: isContractor
+                ? "Contractor platform fee"
+                : "Employee business margin",
+              jobs: breakdownJobs,
+              workdays: breakdownWorkdays,
+            },
+          }
+        : {}),
     };
   });
 
