@@ -2,7 +2,8 @@
 import { useEffect, useState, useCallback, useRef, ReactNode } from "react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import { Badge, Box, Button, Container, Dialog, HStack, Portal, Spinner, Text, VStack } from "@chakra-ui/react";
-import { AlertTriangle, ArrowLeftCircle, Link2 } from "lucide-react";
+import { AlertTriangle, ArrowLeftCircle, Clock, Link2, Pause as PauseIcon } from "lucide-react";
+import { fetchWorkdayToday, type WorkdayTodayPayload } from "@/src/lib/workday";
 import { useOffline } from "@/src/lib/offline";
 import OfflineQueueDialog from "@/src/ui/dialogs/OfflineQueueDialog";
 import PolicyGateInterceptor from "@/src/ui/components/PolicyGateInterceptor";
@@ -1530,6 +1531,47 @@ export default function HomePage() {
   const [earnings, setEarnings] = useState<{ today: number; thisWeek: number; thisMonth: number; allTime: number } | null>(null);
   const [earningsPeriod, setEarningsPeriod] = usePersistedState<EarningsPeriod>("titleEarningsPeriod", "thisWeek");
 
+  // Title-bar "on the clock" bubble — surfaces the running workday
+  // duration alongside a quick tap to jump to Worker → Home (where all
+  // the workday controls live). Only renders while the worker is
+  // IN_PROGRESS or PAUSED. Ticks every second while running so the
+  // duration is live; frozen while paused. Refetches on
+  // seedlings:workday-changed so start/pause/resume/end from anywhere
+  // in the app propagate here without a full reload.
+  const [workdayPayload, setWorkdayPayload] = useState<WorkdayTodayPayload | null>(null);
+  const [workdayTick, setWorkdayTick] = useState(0);
+  useEffect(() => {
+    if (!isSignedIn || !me?.id) return;
+    if (me.isClientImpersonating) return;
+    let cancelled = false;
+    const load = () => {
+      fetchWorkdayToday()
+        .then((p) => { if (!cancelled) setWorkdayPayload(p); })
+        .catch(() => {});
+    };
+    load();
+    const onChanged = () => load();
+    window.addEventListener("seedlings:workday-changed", onChanged);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") load();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("seedlings:workday-changed", onChanged);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [isSignedIn, me?.id, me?.isClientImpersonating]);
+  // 1-sec live tick for the running duration. Cleared on PAUSED /
+  // COMPLETED / NOT_STARTED so we don't waste cycles when nothing
+  // changes visually.
+  const workdayState = workdayPayload?.today.state;
+  useEffect(() => {
+    if (workdayState !== "IN_PROGRESS") return;
+    const id = window.setInterval(() => setWorkdayTick((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [workdayState]);
+
   // Title-bar weather chip + bar visibility.
   // Click cycle: hidden → collapsed → expanded → hidden. Persisted so the
   // user's chosen state survives reloads. WeatherBar is still mounted in
@@ -1613,6 +1655,42 @@ export default function HomePage() {
   function cycleEarningsPeriod() {
     const idx = EARNINGS_PERIODS.indexOf(earningsPeriod);
     setEarningsPeriod(EARNINGS_PERIODS[(idx + 1) % EARNINGS_PERIODS.length]);
+  }
+
+  // Compact H:MM:SS / M:SS formatter for the on-the-clock bubble. Uses
+  // seconds because the bubble ticks live — hiding seconds would leave
+  // the visual static for whole minutes at a time and defeat the point.
+  function fmtDurationClock(ms: number): string {
+    const totalSec = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    const mm = m.toString().padStart(2, "0");
+    const ss = s.toString().padStart(2, "0");
+    return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`;
+  }
+  function computeActiveMs(payload: WorkdayTodayPayload | null): number {
+    if (!payload) return 0;
+    const t = payload.today;
+    if (t.state !== "IN_PROGRESS" && t.state !== "PAUSED") return 0;
+    const wd = t.workday;
+    // Ended-at is null while in flight — clamp against now (for
+    // IN_PROGRESS) or pausedAt (for PAUSED so the number freezes at
+    // pause and the open pause segment isn't yet in totalPausedMs).
+    const endpoint = t.state === "PAUSED" && wd.pausedAt
+      ? new Date(wd.pausedAt).getTime()
+      : Date.now();
+    const raw = endpoint - new Date(wd.startedAt).getTime();
+    return Math.max(0, raw - wd.totalPausedMs);
+  }
+  // Navigate to Worker → Home so the WorkdayStrip (with its End /
+  // Pause / Resume / Edit / Cancel controls) is what the user sees.
+  // Mirrors the tab-switch event other components already use.
+  function jumpToWorkdayControls() {
+    window.dispatchEvent(
+      new CustomEvent("seedlings:switchTab", { detail: { outer: "worker", inner: "home" } }),
+    );
+    try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch { /* no-op */ }
   }
 
   const headerBtnRef = useRef<HTMLDivElement | null>(null);
@@ -3306,13 +3384,16 @@ export default function HomePage() {
                 </Text>
               </Box>
             )}
-            {/* Earnings pill — click cycles Today → Wk → Mo → All.
-                (Experiment: replaced the weather toggle. To revert, restore from git.)
-                Hidden under Super view-as: the fetch is short-circuited
-                above, but a stale earnings value from BEFORE entering
-                view-as would still show through the pill without this
-                guard. Belt-and-suspenders.
-             */}
+            {/* Earnings pill — DISABLED (may return). Previously a green
+                cycle-through-period money chip (Today / Wk / Mo). Was
+                pulled in favor of the "on the clock" duration bubble
+                below because workers not ending their workdays was a
+                bigger operational issue than making running totals
+                more visible in the header. All the supporting fetch +
+                cycle plumbing (fetchEarnings / EARNINGS_PERIODS /
+                cycleEarningsPeriod / setEarnings etc.) is kept intact
+                for a straight re-enable — just uncomment this block if
+                the earnings chip needs to come back.
             {earnings != null && !me?.isClientImpersonating && (
               <Box
                 as="button"
@@ -3332,6 +3413,54 @@ export default function HomePage() {
                 </Text>
               </Box>
             )}
+            */}
+
+            {/* On-the-clock bubble — replaces the earnings pill. Renders
+                only while workday is IN_PROGRESS (blue, ticking) or
+                PAUSED (amber, frozen). Tapping jumps to Worker → Home
+                where the WorkdayStrip exposes Complete / Pause / End /
+                Resume / Edit. The `workdayTick` dep on the aria-label +
+                text below is what re-renders the duration every second
+                — the state itself doesn't change, only the derived ms.
+                Hidden entirely for client impersonation sessions since
+                the shell isn't a worker context. */}
+            {workdayPayload && !me?.isClientImpersonating && (workdayState === "IN_PROGRESS" || workdayState === "PAUSED") && (() => {
+              const running = workdayState === "IN_PROGRESS";
+              const activeMs = computeActiveMs(workdayPayload);
+              void workdayTick;
+              // Solid blue.500 + white text for IN_PROGRESS — same
+              // treatment as the WorkdayStrip's "Complete" button so
+              // the bubble reads as an obvious action target rather
+              // than a subtle status chip. Amber.500 + white for
+              // PAUSED (matches the strip's PAUSED-state theme).
+              const bg = running ? "blue.500" : "yellow.500";
+              const bgHover = running ? "blue.600" : "yellow.600";
+              return (
+                <Box
+                  as="button"
+                  cursor="pointer"
+                  px="3"
+                  py="1.5"
+                  borderRadius="full"
+                  bg={bg}
+                  color="white"
+                  shadow="sm"
+                  _hover={{ bg: bgHover, shadow: "md" }}
+                  title={running ? "On the clock — tap for workday controls" : "Workday paused — tap for controls"}
+                  onClick={jumpToWorkdayControls}
+                  display="inline-flex"
+                  alignItems="center"
+                  gap="1.5"
+                >
+                  <Box display="inline-flex" alignItems="center">
+                    {running ? <Clock size={14} /> : <PauseIcon size={14} />}
+                  </Box>
+                  <Text fontSize="sm" fontWeight="bold" lineHeight="1" whiteSpace="nowrap" fontVariantNumeric="tabular-nums">
+                    {fmtDurationClock(activeMs)}
+                  </Text>
+                </Box>
+              );
+            })()}
             {/* Combined alert badge — staff only. Clients have no alerts
              *  (no Pending Users / Pending Payments / Unclaimed jobs /
              *  Planning / Timeline). Without this gate, clients see a

@@ -1137,6 +1137,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     return pricingHints.find((p) => pricingJobTags(p.parsedValue).includes(addonTag)) ?? null;
   }, [pricingHints, addonTag]);
   const [photoPromptOccId, setPhotoPromptOccId] = useState<string | null>(null);
+  // "You just finished your last job — time to end your workday" prompt.
+  // Set right after a successful completion when the worker's remaining
+  // scheduled-count hits 0 and they're still on the clock. Chained after
+  // the photo prompt so we don't stack two modals at once. Workers who
+  // forget to end their workday drove this — the passive green pulse on
+  // the strip wasn't enough of a nudge on its own.
+  const [promptEndWorkday, setPromptEndWorkday] = useState(false);
 
   // Close quick action menu on outside click
   useEffect(() => {
@@ -4684,17 +4691,19 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   // purple Users chip + "View only" strip + missing
                   // action buttons already communicate the peek
                   // state; no dimming needed.
-                  // Green pulse for IN_PROGRESS jobs — same animation
+                  // Blue pulse for IN_PROGRESS jobs — same animation
                   // the workday strip uses so "actively running work"
                   // reads the same on Home and on the Jobs timeline.
-                  // Peek rows get the MUTED variant (half alpha,
-                  // tighter spread) so a teammate's active job
-                  // whispers "in progress" instead of competing with
-                  // the operator's own actionable rows.
+                  // (Was green; flipped as part of the "money = green,
+                  // time/work = blue" semantic split — see globals.css
+                  // + WorkdayStrip state-color comment.) Peek rows get
+                  // the MUTED variant (half alpha, tighter spread) so
+                  // a teammate's active job whispers "in progress"
+                  // instead of competing with the operator's own rows.
                   ...(isInProgress ? {
                     animation: isPeek
-                      ? "seedlings-pulse-green-muted 2.5s ease-in-out infinite"
-                      : "seedlings-pulse-green 2.5s ease-in-out infinite",
+                      ? "seedlings-pulse-blue-muted 2.5s ease-in-out infinite"
+                      : "seedlings-pulse-blue 2.5s ease-in-out infinite",
                   } : {}),
                 }}
                 onClick={cardMode === "ultra" ? (e: any) => {
@@ -8554,6 +8563,28 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 await load(false);
                 // Prompt for photos after completion
                 setPhotoPromptOccId(occToComplete.id);
+                // "Was that the last one?" check — hit /me/workday/today
+                // (uses the same source-of-truth counts the WorkdayStrip
+                // renders from) and queue the End-Workday nudge if the
+                // caller has finished everything AND is still on the
+                // clock. Impersonated admins are skipped — we only want
+                // to nudge the worker themselves. Failures are silent —
+                // it's a hint, not a hard requirement.
+                if (!forAdmin) {
+                  try {
+                    const wd = await apiGet<{
+                      today?: { state?: string };
+                      todayJobs?: { scheduled?: number; remaining?: number };
+                    }>("/api/me/workday/today");
+                    const state = wd?.today?.state;
+                    const scheduled = wd?.todayJobs?.scheduled ?? 0;
+                    const remaining = wd?.todayJobs?.remaining ?? 0;
+                    const onClock = state === "IN_PROGRESS" || state === "PAUSED";
+                    if (onClock && scheduled > 0 && remaining === 0) {
+                      setPromptEndWorkday(true);
+                    }
+                  } catch { /* non-fatal — nudge is best-effort */ }
+                }
               } catch (err) {
                 publishInlineMessage({ type: "ERROR", text: getErrorMessage("Complete failed.", err) });
               }
@@ -8588,6 +8619,63 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 <HStack justify="flex-end" w="full">
                   <Button colorPalette="blue" onClick={() => { setPhotoPromptOccId(null); void load(false); }}>
                     Done
+                  </Button>
+                </HStack>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
+
+      {/* End-of-day nudge — appears after the photo prompt closes when
+          the just-completed job was the worker's last scheduled one AND
+          they're still on the clock. Gated on `!photoPromptOccId` so we
+          never stack two dialogs. Info-only prompt: dismissing leaves
+          the workday state unchanged. Tapping "End workday now" scrolls
+          to the top so the WorkdayStrip (with its green pulse + End
+          button) is in view — actually ending the day goes through
+          WorkdayStrip's normal End dialog (equipment / mileage checks
+          etc.), which we deliberately don't try to short-circuit here. */}
+      <Dialog.Root
+        open={promptEndWorkday && !photoPromptOccId}
+        onOpenChange={(e) => { if (!e.open) setPromptEndWorkday(false); }}
+      >
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg">
+              <Dialog.Header>
+                <Dialog.Title>All jobs done for today</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <Text fontSize="sm" color="fg.muted">
+                  You've completed every scheduled job for today. Ready to end your workday so
+                  your hours don't keep ticking? You can always start again if more work comes in.
+                </Text>
+              </Dialog.Body>
+              <Dialog.Footer>
+                <HStack justify="flex-end" w="full" gap={2}>
+                  <Button variant="ghost" onClick={() => setPromptEndWorkday(false)}>
+                    Not yet
+                  </Button>
+                  <Button
+                    colorPalette="green"
+                    onClick={() => {
+                      setPromptEndWorkday(false);
+                      // Scroll so the WorkdayStrip is visible when the
+                      // dialog opens (mobile: keeps context above the
+                      // fold), then ask WorkdayStrip to open its End
+                      // dialog. That's the source-of-truth flow for
+                      // ending — equipment check, mileage cleanup,
+                      // odometer entry, etc. — none of which we want
+                      // to reimplement here.
+                      try {
+                        window.scrollTo({ top: 0, behavior: "smooth" });
+                      } catch { /* older browsers — no-op */ }
+                      window.dispatchEvent(new CustomEvent("workdayStrip:openEndDialog"));
+                    }}
+                  >
+                    End workday now
                   </Button>
                 </HStack>
               </Dialog.Footer>

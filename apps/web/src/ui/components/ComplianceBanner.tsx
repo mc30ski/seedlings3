@@ -186,35 +186,64 @@ export default function ComplianceBanner({
       style={{ animation: pulseAnimation }}
     >
       <Card.Body p={3}>
-        <HStack align="center" gap={3} wrap="wrap">
-          <Box color={iconColor} flexShrink={0}>
-            <AlertTriangle size={20} />
-          </Box>
-          <VStack align="start" gap={0} flex={1} minW={0}>
-            <Text fontSize="sm" fontWeight="semibold">
-              Compliance
-            </Text>
-            <Text fontSize="xs" color="fg.muted" lineClamp={2}>
-              {summaryText}
-            </Text>
-          </VStack>
-          <HStack gap={2} flexShrink={0}>
+        {/* Mobile: icon+text on top row, actions on a full-width second
+            row so the summary can wrap freely. Desktop: everything on
+            one row. Prior to this the summary was line-clamped to 2 to
+            keep the row height stable, but the third line ("You have 1
+            required + 2 recommended…") got truncated on phones with the
+            buttons eating half the width. Never clamp compliance copy —
+            it's information the worker needs before starting work. */}
+        <VStack align="stretch" gap={2}>
+          <HStack align="center" gap={3}>
+            <Box color={iconColor} flexShrink={0}>
+              <AlertTriangle size={20} />
+            </Box>
+            <VStack align="start" gap={0} flex={1} minW={0}>
+              <Text fontSize="sm" fontWeight="semibold">
+                Compliance
+              </Text>
+              <Text fontSize="xs" color="fg.muted">
+                {summaryText}
+              </Text>
+            </VStack>
+          </HStack>
+          <HStack
+            gap={2}
+            justify={{ base: "stretch", md: "flex-end" }}
+            wrap="wrap"
+          >
             {isViewingAs ? (
-              <Button size="sm" colorPalette={buttonPalette} onClick={openSuperCompliance}>
+              <Button
+                size="sm"
+                colorPalette={buttonPalette}
+                onClick={openSuperCompliance}
+                flex={{ base: 1, md: "0 0 auto" }}
+              >
                 Manage in Compliance
               </Button>
             ) : (
               <>
-                <Button size="sm" variant="outline" colorPalette={buttonPalette} onClick={openProfile}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  colorPalette={buttonPalette}
+                  onClick={openProfile}
+                  flex={{ base: 1, md: "0 0 auto" }}
+                >
                   View profile
                 </Button>
-                <Button size="sm" colorPalette={buttonPalette} onClick={openWizard}>
+                <Button
+                  size="sm"
+                  colorPalette={buttonPalette}
+                  onClick={openWizard}
+                  flex={{ base: 1, md: "0 0 auto" }}
+                >
                   Sign now
                 </Button>
               </>
             )}
           </HStack>
-        </HStack>
+        </VStack>
       </Card.Body>
     </Card.Root>
   );
