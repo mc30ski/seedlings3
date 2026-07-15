@@ -3600,6 +3600,141 @@ export default async function workerRoutes(app: FastifyInstance) {
     });
   });
 
+  // view-as-allow: worker's own approximate-hourly-pay rollup for the
+  // Home card. Projects as if the caller were an employee — every
+  // completed job in the caller's set gets its price minus expenses,
+  // times the caller's crew share, minus employee margin — summed and
+  // divided by the caller's workday hours.
+  //
+  // Two "sets" of jobs, chosen automatically:
+  //   • For owners (User.isOwner): every completed company job in the
+  //     window. Owners don't get slotted into crews, so the natural
+  //     interpretation is "if I'd done all this work myself as
+  //     employee, what would my rate be?" 100% crew share, employee
+  //     margin, divided by owner's personal hours.
+  //   • For everyone else: only jobs the caller is on the crew of.
+  //     The projection respects their actual crew share.
+  app.get("/me/hourly-pay", workerGuard, async (req: any) => {
+    const callerUid = await currentUserId(req);
+    const { viewAsUserId } = (req.query || {}) as { viewAsUserId?: string };
+    let uid = callerUid;
+    // Admin override — Admin Home's "View as" picker uses this to see
+    // exactly what the selected worker sees on their Home card.
+    if (viewAsUserId && viewAsUserId !== callerUid) {
+      const caller = await prisma.user.findUnique({
+        where: { id: callerUid },
+        include: { roles: true },
+      });
+      const isAdmin = caller?.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+      if (!isAdmin) throw app.httpErrors.forbidden("Only admins can view another worker's pay.");
+      uid = viewAsUserId;
+    }
+    const daysParam = req.query?.days ? Number(req.query.days) : 365;
+    const days = daysParam > 0 ? Math.min(3650, Math.max(1, Math.floor(daysParam))) : 0;
+    const now = new Date();
+    const start = days > 0
+      ? new Date(now.getTime() - days * 24 * 60 * 60 * 1000) // date-handling-allow: rolling window
+      : new Date(0);
+
+    const cutoff = await resolveCutoff(req);
+    const effectiveStart = cutoff && cutoff > start ? cutoff : start;
+
+    const me = await prisma.user.findUnique({
+      where: { id: uid },
+      select: { isOwner: true, workerType: true },
+    });
+    const isOwner = !!me?.isOwner;
+    const isContractor = me?.workerType === "CONTRACTOR";
+
+    // Hours: sum active minutes from completed workdays in the window.
+    const workdays = await prisma.workerWorkday.findMany({
+      where: {
+        userId: uid,
+        endedAt: { not: null, gte: effectiveStart, lte: now },
+      },
+      select: { startedAt: true, endedAt: true, totalPausedMs: true },
+    });
+    let activeMs = 0;
+    for (const w of workdays) {
+      const wallClock = w.endedAt!.getTime() - w.startedAt.getTime();
+      const active = Math.max(0, wallClock - w.totalPausedMs);
+      activeMs += active;
+    }
+    const hours = activeMs / 3_600_000;
+
+    // Rate branches on the caller's worker type — contractors have
+    // their own platform-fee rate that maps to their actual take-home
+    // math; employees / trainees / owners use the employee margin.
+    const [marginSetting, feeSetting] = await Promise.all([
+      prisma.setting.findUnique({ where: { key: "EMPLOYEE_BUSINESS_MARGIN_PERCENT" } }),
+      prisma.setting.findUnique({ where: { key: "CONTRACTOR_PLATFORM_FEE_PERCENT" } }),
+    ]);
+    const employeeMarginPct = Number(marginSetting?.value ?? 0);
+    const contractorFeePct = Number(feeSetting?.value ?? 0);
+    const projectionRatePct = isContractor ? contractorFeePct : employeeMarginPct;
+
+    const occs = await prisma.jobOccurrence.findMany({
+      where: {
+        // Owner: every completed company job. Everyone else: only
+        // jobs where they're a non-observer crew member.
+        ...(isOwner
+          ? {}
+          : {
+              assignees: {
+                some: { userId: uid, OR: [{ role: null }, { role: { not: "observer" } }] },
+              },
+            }),
+        workflow: { in: ["STANDARD", "ONE_OFF"] as any },
+        status: { notIn: ["CANCELED", "ARCHIVED"] as any },
+        completedAt: { gte: effectiveStart, lte: now },
+      },
+      select: {
+        price: true,
+        proposalAmount: true,
+        completionSplits: true,
+        addons: { select: { price: true } },
+        expenses: { select: { cost: true } },
+        assignees: { select: { userId: true, role: true } },
+      },
+    });
+    const { computeMyOccurrenceNet } = await import("../services/workerEarnings");
+    let dollars = 0;
+    let jobs = 0;
+    for (const occ of occs) {
+      const value = computeMyOccurrenceNet(
+        {
+          price: occ.price,
+          proposalAmount: occ.proposalAmount,
+          completionSplits: occ.completionSplits,
+          addons: occ.addons,
+          expenses: occ.expenses,
+          assignees: occ.assignees,
+          payment: null,
+        },
+        uid,
+        projectionRatePct,
+        // Owners take 100% of the projected net for every job —
+        // "as if I'd done it myself as employee." Others get their
+        // actual crew share.
+        isOwner ? { assumeSoloClaim: true } : undefined,
+      );
+      if (value > 0) {
+        dollars += value;
+        jobs++;
+      }
+    }
+
+    const ratePerHour = hours > 0 ? dollars / hours : 0;
+    return {
+      dollars: Math.round(dollars * 100) / 100,
+      hours: Math.round(hours * 100) / 100,
+      jobs,
+      ratePerHour: Math.round(ratePerHour * 100) / 100,
+      days,
+      isOwnerProjection: isOwner,
+    };
+  });
+
   // view-as-allow: worker's own statistics (Home / Statistics tab).
   // Admin's cross-worker Statistics view hits /admin/statistics with a
   // workerIds filter instead — the view-as pattern isn't used here.
