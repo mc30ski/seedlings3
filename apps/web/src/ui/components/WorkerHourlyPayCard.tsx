@@ -31,6 +31,8 @@ type BreakdownJob = {
   id: string;
   completedAt: string | null;
   label: string;
+  clientName: string | null;
+  tags: string[];
   basePrice: number;
   addonsTotal: number;
   expensesTotal: number;
@@ -212,6 +214,11 @@ function fmtMsAsHrs(ms: number): string {
 
 function fmtCompletedAt(iso: string | null): string {
   return fmtDateOpts(iso, { month: "short", day: "numeric" });
+}
+
+function fmtCompletedTime(iso: string | null): string {
+  if (!iso) return "";
+  return fmtTimeOpts(iso, { hour: "numeric", minute: "2-digit" });
 }
 
 function fmtWorkdayStart(iso: string): string {
@@ -476,6 +483,7 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName }:
                   details={details}
                   period={period}
                   fg={tier.fg}
+                  isAdminContext={!!viewAsUserId}
                 />
               ) : detailsError ? (
                 <Text fontSize="xs" color={tier.fg} opacity={0.7} py={2}>
@@ -495,16 +503,50 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName }:
   );
 }
 
+// Deep-link into the Jobs tab and highlight a specific occurrence.
+// Mirrors the pattern used elsewhere in pages/index.tsx (Services →
+// Jobs, Reminders → Jobs): dispatch a tab switch, then poll for the
+// tab to signal ready via window.__jobsTabReady before firing the
+// highlight event. Caps attempts so a never-mounted tab doesn't hang.
+//
+// anchorAt is critical for worker deep-links: without it, applyHighlight
+// falls back to a ±1yr window which clampWorkerDates then trims to the
+// most-recent 62 days, missing anything older. Passing the occurrence's
+// completedAt makes applyHighlight pin the range to that exact ET day
+// so the load always includes it.
+function jumpToOccurrence(
+  occId: string,
+  adminContext: boolean,
+  anchorAt: string | null,
+) {
+  const outer = adminContext ? "admin" : "worker";
+  window.dispatchEvent(
+    new CustomEvent("seedlings:switchTab", { detail: { outer, inner: "jobs" } }),
+  );
+  let attempts = 0;
+  const interval = setInterval(() => {
+    attempts++;
+    if ((window as any).__jobsTabReady || attempts >= 30) {
+      clearInterval(interval);
+      window.dispatchEvent(
+        new CustomEvent("jobsTab:highlightOcc", { detail: { occId, anchorAt } }),
+      );
+    }
+  }, 100);
+}
+
 function BreakdownPanel({
   data,
   details,
   period,
   fg,
+  isAdminContext,
 }: {
   data: HourlyPay;
   details: HourlyPayDetails;
   period: { days: number; label: string };
   fg: string;
+  isAdminContext: boolean;
 }) {
   // Sanity: sum of projected values should equal `data.dollars` within
   // a rounding cent. Same for workday active-ms and `data.hours`.
@@ -566,38 +608,82 @@ function BreakdownPanel({
           </Text>
         ) : (
           <Box borderRadius="md" overflow="hidden">
-            {details.jobs.map((j, idx) => (
-              <Box
-                key={j.id}
-                bg={idx % 2 === 0 ? rowBg : zebra}
-                p={2}
-                fontSize="xs"
-                color={fg}
-              >
-                <HStack justify="space-between" gap={2} align="baseline">
-                  <Text fontWeight="semibold" flex={1} minW={0} truncate>
-                    {fmtCompletedAt(j.completedAt)} · {j.label}
+            {details.jobs.map((j, idx) => {
+              // Build the identity line: date · time · property · client.
+              // Time-of-day + client are the practical differentiators when
+              // the same property gets serviced multiple times a day, and
+              // when different clients happen to share property names.
+              const time = fmtCompletedTime(j.completedAt);
+              const identityParts = [
+                fmtCompletedAt(j.completedAt),
+                time || null,
+                j.label,
+                j.clientName,
+              ].filter(Boolean) as string[];
+              return (
+                <Box
+                  key={j.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => jumpToOccurrence(j.id, isAdminContext, j.completedAt)}
+                  onKeyDown={(e: React.KeyboardEvent) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      jumpToOccurrence(j.id, isAdminContext, j.completedAt);
+                    }
+                  }}
+                  bg={idx % 2 === 0 ? rowBg : zebra}
+                  p={2}
+                  fontSize="xs"
+                  color={fg}
+                  cursor="pointer"
+                  transition="background-color 120ms ease"
+                  _hover={{ bg: "blackAlpha.200" }}
+                  _focus={{ outline: "2px solid", outlineColor: "blue.400", outlineOffset: "-2px" }}
+                  title="Open this job in the Jobs tab"
+                >
+                  <HStack justify="space-between" gap={2} align="baseline">
+                    <Text fontWeight="semibold" flex={1} minW={0} truncate>
+                      {identityParts.join(" · ")}
+                    </Text>
+                    <Text fontWeight="bold" flexShrink={0}>
+                      {fmtUSDPrecise(j.projected)}
+                    </Text>
+                  </HStack>
+                  {j.tags.length > 0 && (
+                    <HStack gap={1} mt={1} wrap="wrap">
+                      {j.tags.map((t) => (
+                        <Text
+                          key={t}
+                          fontSize="2xs"
+                          fontWeight="bold"
+                          px={1}
+                          bg="blackAlpha.100"
+                          borderRadius="sm"
+                          color={fg}
+                        >
+                          {t}
+                        </Text>
+                      ))}
+                    </HStack>
+                  )}
+                  <Text fontFamily="mono" mt={1} opacity={0.85}>
+                    ({fmtUSDPrecise(j.basePrice)}
+                    {j.addonsTotal > 0 ? ` + ${fmtUSDPrecise(j.addonsTotal)} addons` : ""}
+                    {j.expensesTotal > 0 ? ` − ${fmtUSDPrecise(j.expensesTotal)} exp` : ""}
+                    ) = <b>{fmtUSDPrecise(j.net)}</b> net
                   </Text>
-                  <Text fontWeight="bold" flexShrink={0}>
-                    {fmtUSDPrecise(j.projected)}
+                  <Text fontFamily="mono" opacity={0.85}>
+                    × {j.myPercent.toFixed(1)}% share ({shareSourceLabel(j.shareSource)})
+                    = {fmtUSDPrecise(j.grossShare)}
                   </Text>
-                </HStack>
-                <Text fontFamily="mono" mt={1} opacity={0.85}>
-                  ({fmtUSDPrecise(j.basePrice)}
-                  {j.addonsTotal > 0 ? ` + ${fmtUSDPrecise(j.addonsTotal)} addons` : ""}
-                  {j.expensesTotal > 0 ? ` − ${fmtUSDPrecise(j.expensesTotal)} exp` : ""}
-                  ) = <b>{fmtUSDPrecise(j.net)}</b> net
-                </Text>
-                <Text fontFamily="mono" opacity={0.85}>
-                  × {j.myPercent.toFixed(1)}% share ({shareSourceLabel(j.shareSource)})
-                  = {fmtUSDPrecise(j.grossShare)}
-                </Text>
-                <Text fontFamily="mono" opacity={0.85}>
-                  − {fmtUSDPrecise(j.feeAmount)} fee
-                  = <b>{fmtUSDPrecise(j.projected)}</b>
-                </Text>
-              </Box>
-            ))}
+                  <Text fontFamily="mono" opacity={0.85}>
+                    − {fmtUSDPrecise(j.feeAmount)} fee
+                    = <b>{fmtUSDPrecise(j.projected)}</b>
+                  </Text>
+                </Box>
+              );
+            })}
           </Box>
         )}
       </Box>

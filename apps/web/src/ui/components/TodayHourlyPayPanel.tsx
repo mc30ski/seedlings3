@@ -21,6 +21,7 @@ type WorkerEarningsToday = {
   netPaidToday: number;
   jobsCompleted: number;
   equivalentHourlyRate: number;
+  hasInProgressJob: boolean;
 };
 
 type Props = {
@@ -134,7 +135,8 @@ export default function TodayHourlyPayPanel({ workerIds, refreshNonce = 0 }: Pro
             <Text fontSize="xs" color="fg.muted">Loading…</Text>
           ) : rows && rows.length === 0 ? (
             <Text fontSize="xs" color="fg.muted">
-              No approved workers found.
+              No completed jobs yet today. Workers appear here as they
+              finish their first job.
             </Text>
           ) : rows ? (
             <VStack align="stretch" gap={2}>
@@ -169,6 +171,20 @@ export default function TodayHourlyPayPanel({ workerIds, refreshNonce = 0 }: Pro
                     {r.workerType.toLowerCase()}
                   </Badge>
                 ) : null;
+                // "In progress" chip — signals that this row's Earned
+                // and $/hr are still trailing (worker has an active job
+                // that hasn't completed yet, so the numbers will bump
+                // once it does).
+                const inProgressChip = r.hasInProgressJob ? (
+                  <Badge
+                    size="xs"
+                    variant="subtle"
+                    colorPalette="green"
+                    title="Currently on a job — this row's Earned and $/hr will update when they finish."
+                  >
+                    in progress
+                  </Badge>
+                ) : null;
                 return (
                   <Box
                     key={r.userId}
@@ -183,6 +199,7 @@ export default function TodayHourlyPayPanel({ workerIds, refreshNonce = 0 }: Pro
                       <HStack flex={2} gap={2} minW={0}>
                         <Text truncate>{r.displayName}</Text>
                         {chip}
+                        {inProgressChip}
                       </HStack>
                       <Text w="60px" textAlign="right">{r.jobsCompleted}</Text>
                       <Text w="80px" textAlign="right">{fmtHours(r.hoursToday)}</Text>
@@ -194,9 +211,10 @@ export default function TodayHourlyPayPanel({ workerIds, refreshNonce = 0 }: Pro
                     {/* Mobile: name + chip on one line, stats on next. */}
                     <VStack align="stretch" gap={0.5} display={{ base: "flex", md: "none" }}>
                       <HStack justify="space-between" gap={2}>
-                        <HStack gap={2} minW={0} flex={1}>
+                        <HStack gap={2} minW={0} flex={1} wrap="wrap">
                           <Text truncate>{r.displayName}</Text>
                           {chip}
+                          {inProgressChip}
                         </HStack>
                         <Text fontWeight={hasActivity ? "semibold" : undefined} flexShrink={0}>
                           {r.hoursToday > 0 ? `${fmtUSD(r.equivalentHourlyRate)}/hr` : "—"}
@@ -210,7 +228,7 @@ export default function TodayHourlyPayPanel({ workerIds, refreshNonce = 0 }: Pro
                 );
               })}
               <Text fontSize="2xs" color="fg.muted" mt={1} pt={1} borderTopWidth={1} borderColor="gray.100">
-                Excludes in-progress workdays. Earned = promised net for every completed job today (uses the same snapshot/projection payroll uses; doesn't wait for client payment). $/hr = Earned ÷ Hours.
+                Includes in-progress workdays (hours count up to now, or up to the current pause if paused). Earned = promised net for every completed job today (uses the same snapshot/projection payroll uses; doesn't wait for client payment). $/hr = Earned ÷ Hours.
               </Text>
             </VStack>
           ) : null}
