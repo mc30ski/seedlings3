@@ -4278,6 +4278,67 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               : isAssignedToOthers ? "gray.700"
               : "gray.700";
 
+            // STREAM_PAUSED indicator — a purple pause circle that stands
+            // in for the quick action button when the repeating service
+            // is paused. Info-only (tap for details), so it renders for
+            // every viewer including trainees and peekers. Takes
+            // precedence over the normal quickActionButton branches
+            // because a paused stream can't be started, resumed, or
+            // completed — the only meaningful affordance is "why is
+            // this paused / when does it resume".
+            const pauseIndicator = (occ.status as string) === "STREAM_PAUSED" ? (
+              <Box
+                as="button"
+                flexShrink={0}
+                w="22px"
+                h="22px"
+                minW="22px"
+                borderRadius="full"
+                bg="purple.500"
+                color="white"
+                display="flex"
+                alignItems="center"
+                justifyContent="center"
+                _hover={{ bg: "purple.600" }}
+                title="Repeating paused — tap for details"
+                onClick={(e: any) => {
+                  e.stopPropagation();
+                  setConfirmAction({
+                    title: "Repeating service paused",
+                    message: "",
+                    messageNode: (
+                      <VStack align="start" gap={2}>
+                        <Text fontSize="sm">
+                          This repeating service is currently paused and can't be started.
+                        </Text>
+                        {(((occ as any).streamPausedAt) || ((occ as any).streamResumeReminderAt)) && (
+                          <Text fontSize="sm" color="fg.muted">
+                            {(occ as any).streamPausedAt && (
+                              <>Paused <b>{fmtDate((occ as any).streamPausedAt)}</b></>
+                            )}
+                            {(occ as any).streamPausedAt && (occ as any).streamResumeReminderAt && " · "}
+                            {(occ as any).streamResumeReminderAt && (
+                              <>Reminder to resume by <b>{fmtDate((occ as any).streamResumeReminderAt)}</b></>
+                            )}
+                          </Text>
+                        )}
+                        {(occ as any).streamPauseReason && (
+                          <Text fontSize="sm" fontStyle="italic" color="fg.muted">
+                            "{(occ as any).streamPauseReason}"
+                          </Text>
+                        )}
+                      </VStack>
+                    ),
+                    confirmLabel: "OK",
+                    colorPalette: "purple",
+                    onConfirm: () => {},
+                  });
+                }}
+              >
+                <Pause size={12} />
+              </Box>
+            ) : null;
+
             // Context-dependent quick-action button (Confirm Client / Start /
             // Pause-Complete menu / Resume / Accept Payment / Claim / etc.)
             // Renders the same circular button used in the semi-card header,
@@ -4289,7 +4350,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             // the expanded-card action row).
             // Peek mode is strictly view-only — never render the quick
             // action affordance on other workers' cards.
-            const quickActionButton = isTrainee || isPeek ? null : (() => {
+            // Paused-stream takes precedence over everything else — no
+            // start / resume / complete button when the service is paused.
+            const quickActionButton = pauseIndicator ?? (isTrainee || isPeek ? null : (() => {
               if (needsConfirmation && (isClaimer || forAdmin)) {
                 return (
                   <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="orange.400" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "orange.500" }} title="Confirm Client" onClick={(e: any) => {
@@ -4495,7 +4558,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 );
               }
               return null;
-            })();
+            })());
 
             // "More actions" dropdown — extracted into a JSX variable so the
             // ultra, semi, and expanded title rows all render the same button
