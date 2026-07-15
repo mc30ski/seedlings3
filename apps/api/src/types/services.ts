@@ -2,8 +2,8 @@ import type {
   Equipment,
   AuditEvent,
   User,
-  UserRole,
   Client,
+  UserRole,
   ClientContact,
   ClientStatus,
   Property,
@@ -181,7 +181,7 @@ export type ServicesEquipment = {
       dailyRate?: number | null;
       equivalentJobs?: number | null;
       requiredPolicyIds?: string[];
-    }
+    },
   ): Promise<Equipment>;
 
   update(
@@ -205,7 +205,7 @@ export type ServicesEquipment = {
         | "equivalentJobs"
         | "requiredPolicyIds"
       >
-    >
+    >,
   ): Promise<Equipment>;
 
   // Blocked if status is RESERVED or CHECKED_OUT (or any active row exists)
@@ -220,24 +220,24 @@ export type ServicesEquipment = {
     currentUserId: string,
     id: string,
     userId: string,
-    opts?: { groupId?: string | null }
+    opts?: { groupId?: string | null },
   ): Promise<ReserveResult>;
   cancelReservation(
     currentUserId: string,
     id: string,
-    userId: string
+    userId: string,
   ): Promise<CancelResult>;
   checkoutWithQr(
     currentUserId: string,
     id: string,
     userId: string,
-    slug: string
+    slug: string,
   ): Promise<CheckoutResult>;
   returnWithQr(
     currentUserId: string,
     id: string,
     userId: string,
-    slug: string
+    slug: string,
   ): Promise<ReleaseResult>;
 
   maintenanceStart(currentUserId: string, id: string): Promise<Equipment>;
@@ -246,13 +246,23 @@ export type ServicesEquipment = {
   // `cutoff` is the Business Start Date filter — pre-cutoff Checkouts (by
   // releasedAt) are excluded. Pass null/undefined for no filter. See
   // lib/businessStartCutoff.ts.
-  listEquipmentCharges(params?: { userId?: string; from?: string; to?: string; cutoff?: Date | null }): Promise<any[]>;
+  listEquipmentCharges(params?: {
+    userId?: string;
+    from?: string;
+    to?: string;
+    cutoff?: Date | null;
+  }): Promise<any[]>;
   // Usage view respects the BSD cutoff just like other money-adjacent views —
   // pre-cutoff checkouts are hidden so the operator's "fresh slate" view of
   // the books is consistent across surfaces. Anchored on checkedOutAt (the
   // usage event) rather than releasedAt, so active (releasedAt=null) checkouts
   // post-cutoff still appear. Super reveal flips cutoff to null upstream.
-  listUsage(params?: { from?: string; to?: string; userId?: string; cutoff?: Date | null }): Promise<any[]>;
+  listUsage(params?: {
+    from?: string;
+    to?: string;
+    userId?: string;
+    cutoff?: Date | null;
+  }): Promise<any[]>;
 };
 
 export type ServicesUsers = {
@@ -272,14 +282,18 @@ export type ServicesUsers = {
   removeRole(
     clerkUserId: string,
     userId: string,
-    role: Role
+    role: Role,
   ): Promise<{ deleted: boolean }>;
   // Hard-delete user (Clerk + DB)
   remove(
     clerkUserId: string,
     userId: string,
-    actorUserId: string
-  ): Promise<{ deleted: true; clerkDeleted: boolean; contactsUnlinked: number }>;
+    actorUserId: string,
+  ): Promise<{
+    deleted: true;
+    clerkDeleted: boolean;
+    contactsUnlinked: number;
+  }>;
 
   pendingApprovalCount(): Promise<{ pending: number }>;
 
@@ -311,8 +325,16 @@ export type ServicesUsers = {
     isClientImpersonating?: boolean;
   }>;
 
-  setWorkerType(currentUserId: string, userId: string, workerType: string | null): Promise<User>;
-  setIsOwner(currentUserId: string, userId: string, isOwner: boolean): Promise<User>;
+  setWorkerType(
+    currentUserId: string,
+    userId: string,
+    workerType: string | null,
+  ): Promise<User>;
+  setIsOwner(
+    currentUserId: string,
+    userId: string,
+    isOwner: boolean,
+  ): Promise<User>;
   setPrivilegeOverrides(
     currentUserId: string,
     userId: string,
@@ -334,16 +356,22 @@ export type ServicesClients = {
   update(
     currentUserId: string,
     id: string,
-    payload: ClientUpsert
+    payload: ClientUpsert,
   ): Promise<Client | null>;
   // pause/unpause removed in Step 3 — see services/clients.ts comment.
-  archive(currentUserId: string, id: string): Promise<{
+  archive(
+    currentUserId: string,
+    id: string,
+  ): Promise<{
     archived: boolean;
     propertiesArchived: number;
     jobsArchived: number;
     cascadeGroupId: string;
   }>;
-  unarchive(currentUserId: string, id: string): Promise<{
+  unarchive(
+    currentUserId: string,
+    id: string,
+  ): Promise<{
     unarchived: boolean;
     propertiesUnarchived: number;
     jobsUnarchived: number;
@@ -355,7 +383,10 @@ export type ServicesClients = {
    *  operator gesture. Idempotent per Job (skips already-paused). Tags
    *  each affected Job with `clientBulkPausedAt` so bulk-resume can find
    *  them without touching individually-paused Jobs. */
-  bulkPauseServices(currentUserId: string, clientId: string): Promise<{
+  bulkPauseServices(
+    currentUserId: string,
+    clientId: string,
+  ): Promise<{
     jobsPaused: number;
     cascadeGroupId: string;
   }>;
@@ -363,7 +394,10 @@ export type ServicesClients = {
   /** Reverse `bulkPauseServices`. Only touches Jobs whose
    *  `clientBulkPausedAt` is set — leaves independently-paused Jobs
    *  paused. */
-  bulkResumeServices(currentUserId: string, clientId: string): Promise<{
+  bulkResumeServices(
+    currentUserId: string,
+    clientId: string,
+  ): Promise<{
     jobsResumed: number;
     cascadeGroupId: string;
   }>;
@@ -373,32 +407,32 @@ export type ServicesClients = {
   addContact(
     currentUserId: string,
     clientId: string,
-    payload: ContactUpsert
+    payload: ContactUpsert,
   ): Promise<ClientContact | null>;
   updateContact(
     currentUserId: string,
     id: string,
     contactId: string,
-    payload: ContactUpsert
+    payload: ContactUpsert,
   ): Promise<ClientContact | null>;
   // pauseContact/unpauseContact removed in Step 3 — see services/clients.ts.
   archiveContact(
     currentUserId: string,
-    id: string
+    id: string,
   ): Promise<ClientContact | null>;
   unarchiveContact(
     currentUserId: string,
-    id: string
+    id: string,
   ): Promise<ClientContact | null>;
   deleteContact(
     currentUserId: string,
     clientId: string,
-    contactId: string
+    contactId: string,
   ): Promise<{ deleted: true }>;
   setPrimaryContact(
     currentUserId: string,
     clientId: string,
-    contactId: string
+    contactId: string,
   ): Promise<{ primarySet: true }>;
 };
 
@@ -437,7 +471,7 @@ export type ServicesProperties = {
   update(
     currentUserId: string,
     id: string,
-    payload: PropertyUpsert
+    payload: PropertyUpsert,
   ): Promise<Property>;
   archive(
     currentUserId: string,
@@ -448,13 +482,17 @@ export type ServicesProperties = {
     currentUserId: string,
     id: string,
     opts?: { cascadeGroupId?: string; tx?: any },
-  ): Promise<{ unarchived: true; jobsUnarchived: number; cascadeGroupId: string }>;
+  ): Promise<{
+    unarchived: true;
+    jobsUnarchived: number;
+    cascadeGroupId: string;
+  }>;
   hardDelete(currentUserId: string, id: string): Promise<{ deleted: true }>;
 
   setPrimaryContact(
     currentUserId: string,
     id: string,
-    contactId: string | null
+    contactId: string | null,
   ): Promise<{ primarySet: true }>;
 };
 
@@ -530,9 +568,16 @@ export type ServicesJobs = {
     to?: string;
   }): Promise<JobListItem[]>;
 
-  listAllOccurrences(params?: { from?: string; to?: string; cutoff?: Date | null }): Promise<any[]>;
+  listAllOccurrences(params?: {
+    from?: string;
+    to?: string;
+    cutoff?: Date | null;
+  }): Promise<any[]>;
   getOccurrencesByIds(ids: string[], cutoff?: Date | null): Promise<any[]>;
-  listMyOccurrences(userId: string, options?: { isAdmin?: boolean }): Promise<any[]>;
+  listMyOccurrences(
+    userId: string,
+    options?: { isAdmin?: boolean },
+  ): Promise<any[]>;
   listAvailableOccurrences(): Promise<any[]>;
   claimOccurrence(
     currentUserId: string,
@@ -545,11 +590,18 @@ export type ServicesJobs = {
     status: JobOccurrenceStatus,
     notes?: string,
     location?: { lat: number; lng: number },
-    timestamps?: { startedAt?: string; completedAt?: string; totalPausedMs?: number },
-    extras?: { completionSplits?: Array<{ userId: string; percent: number }> }
+    timestamps?: {
+      startedAt?: string;
+      completedAt?: string;
+      totalPausedMs?: number;
+    },
+    extras?: { completionSplits?: Array<{ userId: string; percent: number }> },
   ): Promise<JobOccurrence>;
 
-  get(id: string, cutoff?: Date | null): Promise<
+  get(
+    id: string,
+    cutoff?: Date | null,
+  ): Promise<
     Job & {
       property: Property;
       schedule?: JobSchedule | null;
@@ -565,18 +617,18 @@ export type ServicesJobs = {
   upsertSchedule(
     currentUserId: string,
     jobId: string,
-    patch: JobScheduleUpsert
+    patch: JobScheduleUpsert,
   ): Promise<JobSchedule>;
   generateOccurrences(
     currentUserId: string,
-    jobId: string
+    jobId: string,
   ): Promise<{ generated: number }>;
 
   // “create a one-off from the job” (manual instance, can act like template usage)
   createOccurrence(
     currentUserId: string,
     jobId: string,
-    input: CreateOccurrenceInput
+    input: CreateOccurrenceInput,
   ): Promise<JobOccurrence>;
 
   updateOccurrence(
@@ -595,43 +647,48 @@ export type ServicesJobs = {
       isAdminOnly?: boolean;
       paymentRevertReason?: string | null;
     },
-    options?: { isAdmin?: boolean }
+    options?: { isAdmin?: boolean },
   ): Promise<JobOccurrence>;
 
   addOccurrenceAssignee(
     currentUserId: string,
     occurrenceId: string,
     targetUserId: string,
-    role?: string | null
+    role?: string | null,
   ): Promise<{ added: true } | { added: false; reason: string }>;
 
   removeOccurrenceAssignee(
     currentUserId: string,
     occurrenceId: string,
-    targetUserId: string
+    targetUserId: string,
   ): Promise<{ removed: true }>;
 
   adminAddOccurrenceAssignee(
     adminUserId: string,
     occurrenceId: string,
     targetUserId: string,
-    role?: string | null
+    role?: string | null,
   ): Promise<{ added: true } | { added: false; reason: string }>;
 
   createTask(
     currentUserId: string,
-    input: { title: string; notes?: string; startAt: string; linkedOccurrenceId?: string }
+    input: {
+      title: string;
+      notes?: string;
+      startAt: string;
+      linkedOccurrenceId?: string;
+    },
   ): Promise<JobOccurrence>;
 
   adminRemoveOccurrenceAssignee(
     adminUserId: string,
     occurrenceId: string,
-    targetUserId: string
+    targetUserId: string,
   ): Promise<{ removed: true }>;
 
   unclaimOccurrence(
     currentUserId: string,
-    occurrenceId: string
+    occurrenceId: string,
   ): Promise<{ unclaimed: true }>;
 
   archiveJob(
@@ -644,7 +701,10 @@ export type ServicesJobs = {
     jobId: string,
     opts?: { cascadeGroupId?: string; tx?: any },
   ): Promise<Job>;
-  archiveOccurrence(currentUserId: string, occurrenceId: string): Promise<JobOccurrence>;
+  archiveOccurrence(
+    currentUserId: string,
+    occurrenceId: string,
+  ): Promise<JobOccurrence>;
   listArchivedJobs(params?: { page?: number; pageSize?: number }): Promise<{
     items: JobListItem[];
     total: number;
@@ -653,21 +713,47 @@ export type ServicesJobs = {
   }>;
   createEvent(
     adminUserId: string,
-    input: { title: string; notes?: string; startAt: string; frequencyDays?: number | null }
+    input: {
+      title: string;
+      notes?: string;
+      startAt: string;
+      frequencyDays?: number | null;
+    },
   ): Promise<JobOccurrence>;
-  completeEvent(adminUserId: string, occurrenceId: string): Promise<{ completed: JobOccurrence; next: JobOccurrence | null }>;
+  completeEvent(
+    adminUserId: string,
+    occurrenceId: string,
+  ): Promise<{ completed: JobOccurrence; next: JobOccurrence | null }>;
 
   createFollowup(
     adminUserId: string,
-    input: { title: string; notes?: string; startAt: string; frequencyDays?: number | null; clientIds?: string[]; jobIds?: string[] }
+    input: {
+      title: string;
+      notes?: string;
+      startAt: string;
+      frequencyDays?: number | null;
+      clientIds?: string[];
+      jobIds?: string[];
+    },
   ): Promise<JobOccurrence>;
-  completeFollowup(adminUserId: string, occurrenceId: string): Promise<{ completed: JobOccurrence; next: JobOccurrence | null }>;
+  completeFollowup(
+    adminUserId: string,
+    occurrenceId: string,
+  ): Promise<{ completed: JobOccurrence; next: JobOccurrence | null }>;
 
   createAnnouncement(
     adminUserId: string,
-    input: { title: string; notes?: string; startAt: string; frequencyDays?: number | null }
+    input: {
+      title: string;
+      notes?: string;
+      startAt: string;
+      frequencyDays?: number | null;
+    },
   ): Promise<JobOccurrence>;
-  completeAnnouncement(adminUserId: string, occurrenceId: string): Promise<{ completed: JobOccurrence; next: JobOccurrence | null }>;
+  completeAnnouncement(
+    adminUserId: string,
+    occurrenceId: string,
+  ): Promise<{ completed: JobOccurrence; next: JobOccurrence | null }>;
 
   deleteJob(jobId: string): Promise<{ deleted: true }>;
   deleteOccurrence(occurrenceId: string): Promise<{ deleted: true }>;
@@ -676,14 +762,14 @@ export type ServicesJobs = {
   setOccurrenceAssignees(
     currentUserId: string,
     occurrenceId: string,
-    input: AssignOccurrenceInput
+    input: AssignOccurrenceInput,
   ): Promise<{ updated: true }>;
 
   // Admin-only: move ownership of an occurrence to another worker.
   reassignClaimer(
     adminUserId: string,
     occurrenceId: string,
-    newClaimerUserId: string
+    newClaimerUserId: string,
   ): Promise<any>;
 
   // Admin-only: change a specific assignee's role on an occurrence.
@@ -692,7 +778,7 @@ export type ServicesJobs = {
     adminUserId: string,
     occurrenceId: string,
     targetUserId: string,
-    newRole: string | null
+    newRole: string | null,
   ): Promise<any>;
 
   // Admin-only: lightweight estimate creation from the dispatch flow.
@@ -712,7 +798,7 @@ export type ServicesJobs = {
       jobType?: string;
       assigneeUserIds?: string[];
       jobId?: string;
-    }
+    },
   ): Promise<JobOccurrence>;
 
   // Worker/admin: standalone reminder (no parent job/occurrence).
@@ -724,7 +810,7 @@ export type ServicesJobs = {
       startAt: string;
       linkedOccurrenceId?: string;
       isHighPriority?: boolean;
-    }
+    },
   ): Promise<JobOccurrence>;
 };
 
@@ -745,7 +831,7 @@ export type ServicesPayments = {
       // Server persists these to JobOccurrence.completionSplits and re-
       // snapshots promisedPayouts before creating the Payment row.
       completionSplits: Array<{ userId: string; percent: number }>;
-    }
+    },
   ): Promise<any>;
 
   listMyPayments(
@@ -753,7 +839,7 @@ export type ServicesPayments = {
     // `cutoff` is the Business Start Date filter — pre-cutoff payments are
     // excluded. Pass null (or omit) for no filter. See
     // lib/businessStartCutoff.ts.
-    params?: { from?: string; to?: string; cutoff?: Date | null }
+    params?: { from?: string; to?: string; cutoff?: Date | null },
   ): Promise<{ items: any[]; totalAmount: number }>;
 
   listAllPayments(params?: {
@@ -764,7 +850,11 @@ export type ServicesPayments = {
     cutoff?: Date | null;
   }): Promise<{
     items: any[];
-    personTotals: Array<{ userId: string; displayName: string | null; total: number }>;
+    personTotals: Array<{
+      userId: string;
+      displayName: string | null;
+      total: number;
+    }>;
   }>;
 
   getPaymentByOccurrence(occurrenceId: string): Promise<any | null>;
@@ -777,16 +867,16 @@ export type ServicesPayments = {
       method?: string;
       note?: string | null;
       splits?: Array<{ userId: string; amount: number }>;
-    }
+    },
   ): Promise<any>;
 
-  deletePayment(
-    currentUserId: string,
-    paymentId: string
-  ): Promise<void>;
+  deletePayment(currentUserId: string, paymentId: string): Promise<void>;
 
   recalculateSplits(occurrenceId: string): Promise<any>;
-  forceCreateNextOccurrence(currentUserId: string, occurrenceId: string): Promise<any>;
+  forceCreateNextOccurrence(
+    currentUserId: string,
+    occurrenceId: string,
+  ): Promise<any>;
   adminMarkInvoicePaid(
     currentUserId: string,
     occurrenceId: string,
@@ -806,7 +896,12 @@ export type ServicesPayments = {
    */
   selfReportPayment(
     actorUserId: string | null,
-    input: { occurrenceId: string; method: string; amountPaid: number; note?: string | null },
+    input: {
+      occurrenceId: string;
+      method: string;
+      amountPaid: number;
+      note?: string | null;
+    },
   ): Promise<any>;
 
   /**
@@ -818,7 +913,12 @@ export type ServicesPayments = {
   approvePayment(
     currentUserId: string,
     paymentId: string,
-    overrides?: { amountPaid?: number; method?: string; note?: string | null; processorFeeAmount?: number },
+    overrides?: {
+      amountPaid?: number;
+      method?: string;
+      note?: string | null;
+      processorFeeAmount?: number;
+    },
   ): Promise<any>;
 
   /**
@@ -880,9 +980,9 @@ export type ExpenseInput = {
   cost: number;
   description: string;
   // Tax-ledger fields — populated on the linked BusinessExpense row.
-  category?: string | null;     // Schedule C label, defaults to "Supplies"
+  category?: string | null; // Schedule C label, defaults to "Supplies"
   vendor?: string | null;
-  date?: string | null;          // ISO date; defaults to today
+  date?: string | null; // ISO date; defaults to today
 };
 
 export type ExpensePatchInput = {
@@ -897,29 +997,27 @@ export type ServicesExpenses = {
   addExpense(
     currentUserId: string,
     occurrenceId: string,
-    input: ExpenseInput
+    input: ExpenseInput,
   ): Promise<any>;
 
   updateExpense(
     currentUserId: string,
     expenseId: string,
-    input: ExpensePatchInput
+    input: ExpensePatchInput,
   ): Promise<any>;
 
   deleteExpense(
     currentUserId: string,
-    expenseId: string
+    expenseId: string,
   ): Promise<{ deleted: true }>;
 
   adminAddExpense(
     currentUserId: string,
     occurrenceId: string,
-    input: ExpenseInput
+    input: ExpenseInput,
   ): Promise<any>;
 
-  adminDeleteExpense(
-    expenseId: string
-  ): Promise<{ deleted: true }>;
+  adminDeleteExpense(expenseId: string): Promise<{ deleted: true }>;
 
   listExpensesByOccurrence(occurrenceId: string): Promise<any[]>;
 };
@@ -966,34 +1064,70 @@ export type SupplyHoldInput = {
 };
 
 export type ServicesSupplies = {
-  list(opts?: { includeArchived?: boolean; q?: string; includeHoldDetails?: boolean }): Promise<any[]>;
+  list(opts?: {
+    includeArchived?: boolean;
+    q?: string;
+    includeHoldDetails?: boolean;
+  }): Promise<any[]>;
   getById(id: string): Promise<any | null>;
   create(currentUserId: string, input: SupplyCreateInput): Promise<any>;
-  update(currentUserId: string, id: string, input: SupplyPatchInput): Promise<any>;
+  update(
+    currentUserId: string,
+    id: string,
+    input: SupplyPatchInput,
+  ): Promise<any>;
   archive(currentUserId: string, id: string): Promise<{ archived: true }>;
   unarchive(currentUserId: string, id: string): Promise<{ archived: false }>;
 
-  recordPurchase(currentUserId: string, supplyId: string, input: SupplyPurchaseInput): Promise<any>;
-  reversePurchase(currentUserId: string, purchaseId: string): Promise<{ reversed: true }>;
+  recordPurchase(
+    currentUserId: string,
+    supplyId: string,
+    input: SupplyPurchaseInput,
+  ): Promise<any>;
+  reversePurchase(
+    currentUserId: string,
+    purchaseId: string,
+  ): Promise<{ reversed: true }>;
 
-  recordAdjustment(currentUserId: string, supplyId: string, input: SupplyAdjustmentInput): Promise<any>;
+  recordAdjustment(
+    currentUserId: string,
+    supplyId: string,
+    input: SupplyAdjustmentInput,
+  ): Promise<any>;
 
   // `cutoff` is the Business Start Date filter — pre-cutoff SupplyPurchase
   // rows hidden. Holds and adjustments pass through (they're operational,
   // not money). See lib/businessStartCutoff.ts.
-  listHistory(supplyId: string, opts?: { cutoff?: Date | null }): Promise<any[]>;
+  listHistory(
+    supplyId: string,
+    opts?: { cutoff?: Date | null },
+  ): Promise<any[]>;
 
   // Add a hold (consumption reservation) on an occurrence — creates a paired
   // job-level Expense for payout deduction. Workers (claimers) and admins can
   // call this; the route layer enforces.
-  addHold(currentUserId: string, occurrenceId: string, input: SupplyHoldInput): Promise<any>;
+  addHold(
+    currentUserId: string,
+    occurrenceId: string,
+    input: SupplyHoldInput,
+  ): Promise<any>;
   removeHold(currentUserId: string, holdId: string): Promise<{ removed: true }>;
-  adjustHold(currentUserId: string, holdId: string, newQuantity: number): Promise<any>;
+  adjustHold(
+    currentUserId: string,
+    holdId: string,
+    newQuantity: number,
+  ): Promise<any>;
 
   // Lifecycle: invoked by jobs service when an occurrence transitions.
-  consumeHoldsForOccurrence(occurrenceId: string): Promise<{ consumed: number }>;
-  releaseHoldsForOccurrence(occurrenceId: string): Promise<{ released: number }>;
-  reactivateHoldsForOccurrence(occurrenceId: string): Promise<{ reactivated: number }>;
+  consumeHoldsForOccurrence(
+    occurrenceId: string,
+  ): Promise<{ consumed: number }>;
+  releaseHoldsForOccurrence(
+    occurrenceId: string,
+  ): Promise<{ released: number }>;
+  reactivateHoldsForOccurrence(
+    occurrenceId: string,
+  ): Promise<{ reactivated: number }>;
 };
 
 export type Services = {

@@ -16,6 +16,7 @@ import ComplianceBanner from "@/src/ui/components/ComplianceBanner";
 import WorkdayStrip from "@/src/ui/components/WorkdayStrip";
 import MileageStrip from "@/src/ui/components/MileageStrip";
 import TodayHourlyPayPanel from "@/src/ui/components/TodayHourlyPayPanel";
+import WorkerHourlyPayCard from "@/src/ui/components/WorkerHourlyPayCard";
 import type { Me } from "@/src/lib/types";
 
 type Props = {
@@ -1105,11 +1106,25 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
           </Card.Root>
         )}
 
-        {/* Today's hourly pay — admin-only. Sits between the hero and
-            the weekly earnings graph so admins get a same-day snapshot
-            (jobs, hours, $, $/hr per worker) without expanding a card.
-            Gated on any admin-view prop (aggregate, subset, or
-            view-as-single-worker); regular worker Home never renders it. */}
+        {/* Approximate pay-per-hour card — worker's own on their Home,
+            OR the impersonated worker's when Admin Home is viewing a
+            single worker via the "View as" picker (so admins can see
+            exactly what that worker sees). Hidden in aggregate /
+            subset views since those already show a per-worker table
+            below. */}
+        {!isAggregate && !isSubset && (
+          <WorkerHourlyPayCard
+            viewAsUserId={viewAsUserId ?? null}
+            viewAsDisplayName={viewAsDisplayName ?? null}
+          />
+        )}
+
+        {/* Today's hourly pay — admin-only, per-worker snapshot table.
+            Sits BELOW the Approximate pay-per-hour card so the admin
+            first sees the impersonated worker's number, then the
+            team-wide day-of-work rollup. Gated on any admin-view prop
+            (aggregate, subset, or view-as-single-worker); regular
+            worker Home never renders it. */}
         {(isAggregate || viewAsUserId) && (
           <TodayHourlyPayPanel
             workerIds={
