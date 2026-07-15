@@ -1657,17 +1657,25 @@ export default function HomePage() {
     setEarningsPeriod(EARNINGS_PERIODS[(idx + 1) % EARNINGS_PERIODS.length]);
   }
 
-  // Compact H:MM:SS / M:SS formatter for the on-the-clock bubble. Uses
-  // seconds because the bubble ticks live — hiding seconds would leave
-  // the visual static for whole minutes at a time and defeat the point.
+  // On-the-clock bubble duration format:
+  //   < 1 hour   →  "M:SS"  (e.g. "5:23") — ticks every second so the
+  //                 worker can see the clock is live.
+  //   ≥ 1 hour   →  "Hh MMm" (e.g. "1h 23m") — drops seconds so the
+  //                 pill doesn't grow to 7 characters (1:23:45) in the
+  //                 title bar. The unit suffixes disambiguate from the
+  //                 M:SS format (1:05 is fine at < 1h; 1h 05m is fine
+  //                 at ≥ 1h).
   function fmtDurationClock(ms: number): string {
     const totalSec = Math.max(0, Math.floor(ms / 1000));
     const h = Math.floor(totalSec / 3600);
     const m = Math.floor((totalSec % 3600) / 60);
     const s = totalSec % 60;
-    const mm = m.toString().padStart(2, "0");
+    if (h > 0) {
+      const mm = m.toString().padStart(2, "0");
+      return `${h}h ${mm}m`;
+    }
     const ss = s.toString().padStart(2, "0");
-    return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`;
+    return `${m}:${ss}`;
   }
   function computeActiveMs(payload: WorkdayTodayPayload | null): number {
     if (!payload) return 0;

@@ -898,10 +898,29 @@ function WorkdayCard({
         primaryAction = () => onResume(today.workday);
         primaryActionLabel = "Resume workday";
       }
+      // PAUSED collapsed row shows BOTH Resume (primary yellow) and End
+      // (secondary blue outline) — the "take a break then decide to call
+      // it a day" flow shouldn't require expanding the card. The End
+      // dialog itself surfaces the paused-time warning so the worker
+      // understands what gets counted before confirming.
+      const pausedWorkday = today.workday;
       primary = primaryAction ? (
-        <Button size="xs" colorPalette="yellow" onClick={(e) => { e.stopPropagation(); primaryAction!(); }}>
-          <Play size={12} /> <Text ml={1}>Resume</Text>
-        </Button>
+        <HStack gap={1} flexShrink={0}>
+          <Button size="xs" colorPalette="yellow" onClick={(e) => { e.stopPropagation(); primaryAction!(); }}>
+            <Play size={12} /> <Text ml={1}>Resume</Text>
+          </Button>
+          {canAct && (
+            <Button
+              size="xs"
+              variant="outline"
+              colorPalette="blue"
+              onClick={(e) => { e.stopPropagation(); onEnd(pausedWorkday); }}
+              title="End workday now (see warning about paused time)"
+            >
+              <Check size={12} /> <Text ml={1}>End</Text>
+            </Button>
+          )}
+        </HStack>
       ) : null;
     } else if (today.state === "COMPLETED") {
       bg = "gray.50"; borderColor = "gray.300"; iconBg = "gray.500";
@@ -1521,6 +1540,30 @@ function EndWorkdayDialog({
       }
     >
       <VStack align="stretch" gap={3}>
+        {/* Paused-when-ending warning — surfaces the semantics of
+            ending mid-pause so workers don't lose track of what
+            counts. The server closes the open pause segment into
+            totalPausedMs at end time (endWorkday in services/workdays
+            handles this), which for a mid-pause end means the entire
+            paused-since → end-time window is unpaid. Workers arriving
+            here from the "I'll just call it a day" flow need to see
+            that in plain English before confirming. */}
+        {workday.pausedAt && (
+          <Box p={2} bg="orange.50" borderWidth="1px" borderColor="orange.400" borderRadius="md">
+            <Text fontSize="xs" color="orange.900" fontWeight="semibold" mb={1}>
+              Your workday is currently paused.
+            </Text>
+            <Text fontSize="xs" color="orange.900">
+              You paused at <b>{fmtClockTime(workday.pausedAt)}</b>. Ending now
+              will lock in that pause — the time between
+              {" "}<b>{fmtClockTime(workday.pausedAt)}</b> and the end time below
+              will count as <b>unpaid pause</b>, not active work.
+            </Text>
+            <Text fontSize="xs" color="orange.900" mt={1}>
+              If you meant to keep working, tap <b>Cancel</b> and hit <b>Resume</b> first.
+            </Text>
+          </Box>
+        )}
         {/* Soft warnings — never block, just inform. */}
         {activeJobs.length > 0 && (
           <Box p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" borderRadius="md">

@@ -23,7 +23,6 @@ import {
   TrendingUp,
   type LucideIcon,
 } from "lucide-react";
-import { usePersistedState } from "@/src/lib/usePersistedState";
 import { apiGet } from "@/src/lib/api";
 import { fmtDateOpts, fmtTimeOpts } from "@/src/lib/lib";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
@@ -79,20 +78,34 @@ type Props = {
 // not year-over-year trend analysis. Admins viewing a specific worker
 // via the "View as" picker get the extended list so they can spot
 // longer-arc performance context that the worker themselves doesn't.
+// Labels are lowercase because the button renders them alongside a
+// "Showing …" tooltip prefix ("last 3 days", "last week", etc.). The
+// yesterday-case reads standalone since "last yesterday" is broken
+// English — see buttonPeriodLabel below.
 const WORKER_PERIODS: Array<{ days: number; label: string }> = [
-  { days: 7, label: "1 week" },
+  { days: 1, label: "yesterday" },
+  { days: 3, label: "3 days" },
+  { days: 7, label: "week" },
   { days: 14, label: "2 weeks" },
   { days: 21, label: "3 weeks" },
-  { days: 30, label: "1 month" },
+  { days: 30, label: "month" },
 ];
 const ADMIN_EXTRA_PERIODS: Array<{ days: number; label: string }> = [
   { days: 60, label: "2 months" },
   { days: 90, label: "3 months" },
   { days: 180, label: "6 months" },
-  { days: 365, label: "1 year" },
+  { days: 365, label: "year" },
 ];
 const ADMIN_PERIODS = [...WORKER_PERIODS, ...ADMIN_EXTRA_PERIODS];
 const DEFAULT_DAYS = 30;
+
+// Buttons render as "last {label}" for periods like "3 days", "week",
+// "month", "year". The special case is "yesterday" — reads by itself
+// because "last yesterday" is broken English. Same helper is used by
+// the tooltip so the two never drift.
+function buttonPeriodLabel(label: string): string {
+  return label === "yesterday" ? "yesterday" : `last ${label}`;
+}
 
 type Tier = {
   min: number;
@@ -235,7 +248,13 @@ function shareSourceLabel(s: BreakdownJob["shareSource"]): string {
 }
 
 export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName }: Props = {}) {
-  const [days, setDays] = usePersistedState<number>("home_hourlyPayDays", DEFAULT_DAYS);
+  // Period is session-only (plain useState, no persistence). Every fresh
+  // page load resets to DEFAULT_DAYS so the card always starts at the
+  // "how am I doing lately" default instead of remembering whatever the
+  // user last cycled to. Deliberate — the previous persisted-state
+  // version confused users who came back the next day expecting the
+  // default and saw a stale window.
+  const [days, setDays] = useState<number>(DEFAULT_DAYS);
   const [data, setData] = useState<HourlyPay | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -370,7 +389,8 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName }:
   const tier = tierFor(rate);
   const Icon = tier.icon;
   const hasHours = data.hours > 0;
-  const cycleTitle = `Showing last ${period.label} — click to change period`;
+  const periodDisplay = buttonPeriodLabel(period.label);
+  const cycleTitle = `Showing ${periodDisplay} — click to change period`;
 
   return (
     <Card.Root
@@ -402,7 +422,7 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName }:
                 "&:hover": { background: "white", borderColor: `var(--chakra-colors-${tier.numberFg.replace(".", "-")})` },
               }}
             >
-              last {period.label}
+              {periodDisplay}
               <Box as="span" ml={1} display="inline-flex" opacity={0.7}>
                 <ChevronsUpDown size={11} />
               </Box>
@@ -593,7 +613,7 @@ function BreakdownPanel({
         >
           <Text>
             For each completed job you worked on (as a non-observer)
-            in the last {period.label}:
+            {period.label === "yesterday" ? " yesterday" : ` in the last ${period.label}`}:
           </Text>
           <Text mt={1}>
             &nbsp;&nbsp;projected = (price − expenses) × your_share × (1 − rate%)

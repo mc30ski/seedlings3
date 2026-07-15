@@ -3995,7 +3995,14 @@ async function seedVehicleFixtures() {
  *                    is still open so the "Edit times" affordance fires)
  *   ADMIN_WORKER_ID → forgot-yesterday (open IN_PROGRESS row from yesterday,
  *                    nothing today — surfaces the orange catch-up strip)
- *   MICHAEL_ID     → NOT_STARTED (no row — surfaces the "Start workday" button)
+ *   MICHAEL_ID     → IN_PROGRESS started ~90m ago (with a 12m prior pause
+ *                    already resolved). Drives the title-bar on-clock
+ *                    bubble in a visibly ticked state (1:2x:xx) plus the
+ *                    end-of-day nudge test — completing Michael's one
+ *                    scheduled today job trips the "all jobs done"
+ *                    dialog since remaining hits 0. If NOT_STARTED
+ *                    coverage is needed, EMPLOYEE_ID's fixture already
+ *                    exercises it for the team-workday-gate demo.
  */
 async function seedWorkdayFixtures() {
   console.log("  Workday fixtures (one row per state for each seed worker)...");
@@ -4055,10 +4062,24 @@ async function seedWorkdayFixtures() {
     },
   });
 
-  // ── MICHAEL_ID: NOT_STARTED ─────────────────────────────────────────
-  // No row at all — exercises the "Workday hasn't started yet" + Start
-  // workday button on the Hero strip.
-  //  (No-op: deliberately seeding nothing for Michael.)
+  // ── MICHAEL_ID: IN_PROGRESS ────────────────────────────────────────
+  // Started ~90 minutes ago with a 12m prior pause already resolved
+  // into totalPausedMs. Chosen specifically so the title-bar
+  // on-the-clock bubble shows a visible ticking duration in
+  // H:MM:SS format (~1:2x:xx) rather than a fresh-start "0:00:00"
+  // that would be indistinguishable from a paused clock. Also lets
+  // the end-of-day nudge test run without needing the "Start workday"
+  // preamble — Michael's single scheduled today job (Harrington Lake
+  // 2 PM) can be completed straight from IN_PROGRESS, tripping the
+  // "all jobs done for today" prompt.
+  await prisma.workerWorkday.create({
+    data: {
+      userId: MICHAEL_ID,
+      workdayDate: today,
+      startedAt: new Date(now.getTime() - hrs(1) - mins(30)),
+      totalPausedMs: mins(12),
+    },
+  });
 
   // ─── Super Workdays tab fixtures ──────────────────────────────────────
   // Past-day rows for the Super approval surface. Two days back is well
