@@ -2,7 +2,7 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaNeon } from "@prisma/adapter-neon";
 import { neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
-import { etFormatDate } from "../src/lib/dates";
+import { etAddDays, etFormatDate, etInstantFromParts, etMidnight } from "../src/lib/dates";
 import { createHash } from "crypto";
 
 // ── Safety guard ────────────────────────────────────────────────────────────
@@ -4179,6 +4179,90 @@ async function seedWorkdayFixtures() {
     void y; void m; void d;
   }
   console.log(`    Backfilled ${backfilledCount} workday rows from ${completedOccs.length} completed occurrences.`);
+
+  // ─── Reverse pass: companion jobs for otherwise-bare workdays ────────
+  //
+  // The state-only workday fixtures above (Super Workdays approval demo)
+  // land on dates that don't necessarily have completed jobs for the same
+  // worker. Left alone, that shows up as "workday with 0 jobs" on the
+  // Approximate-Pay-Per-Hour card breakdown — the user flagged that as
+  // clearly-not-normal seed data.
+  //
+  // This pass walks every closed workday (all sources), and if the worker
+  // has zero qualifying completed jobs on that ET date, spawns a single
+  // lightweight companion mow-style occurrence. Uses upsert-style checks
+  // to stay idempotent across reseeds. Uses a JobAssigneeDefault as the
+  // parent Job when available; otherwise falls back to any Job so the
+  // occurrence has a valid parent (property, name, etc.).
+  console.log("    Companion-job pass: fill bare workdays with a completed job...");
+  const closedWorkdays = await prisma.workerWorkday.findMany({
+    where: { endedAt: { not: null } },
+    select: { userId: true, workdayDate: true, startedAt: true },
+  });
+  let companionCreated = 0;
+  let companionSkippedNoJob = 0;
+  for (const w of closedWorkdays) {
+    // ET day bounds — completedAt is a UTC instant; use etMidnight of
+    // the workday and etMidnight of the next day as [start, end).
+    // DST-safe via the canonical helpers.
+    const dayStart = etMidnight(w.workdayDate);
+    const dayEnd = etMidnight(etAddDays(w.workdayDate, 1));
+    const existingCount = await prisma.jobOccurrence.count({
+      where: {
+        completedAt: { gte: dayStart, lt: dayEnd },
+        workflow: { in: ["STANDARD", "ONE_OFF"] },
+        status: { notIn: ["CANCELED", "ARCHIVED"] },
+        assignees: {
+          some: {
+            userId: w.userId,
+            OR: [{ role: null }, { role: { not: "observer" } }],
+          },
+        },
+      },
+    });
+    if (existingCount > 0) continue;
+
+    const defaultAssign = await prisma.jobAssigneeDefault.findFirst({
+      where: { userId: w.userId },
+      include: { job: { select: { id: true, kind: true } } },
+    });
+    const jobRow = defaultAssign?.job
+      ?? (await prisma.job.findFirst({ select: { id: true, kind: true } }));
+    if (!jobRow) {
+      companionSkippedNoJob += 1;
+      continue;
+    }
+
+    const startAt = etInstantFromParts(w.workdayDate, "10:00");
+    const completedAt = new Date(startAt.getTime() + 45 * 60 * 1000);
+    // Skip if this would land in the future (safety — some fixture
+    // arithmetic can produce forward-drifted dates near DST edges).
+    if (completedAt.getTime() > Date.now() + 60 * 1000) continue;
+
+    await prisma.jobOccurrence.create({
+      data: {
+        jobId: jobRow.id,
+        kind: jobRow.kind ?? "SINGLE_ADDRESS",
+        startAt,
+        endAt: completedAt,
+        startedAt: startAt,
+        completedAt,
+        status: "CLOSED",
+        workflow: "STANDARD",
+        jobTags: '["MOW"]',
+        price: 75.0,
+        estimatedMinutes: 45,
+        completionSplits: [{ userId: w.userId, percent: 100 }],
+        assignees: {
+          create: [{ userId: w.userId, role: "primary" }],
+        },
+      },
+    });
+    companionCreated += 1;
+  }
+  console.log(
+    `    Companion-job pass: created ${companionCreated} occurrences (${companionSkippedNoJob} skipped — no parent Job available).`,
+  );
 }
 
 // ── Payments-focused template ──────────────────────────────────────────────
