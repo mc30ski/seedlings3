@@ -87,6 +87,12 @@ type Summary = {
     title: string | null;
     propertyName: string | null;
     clientName: string | null;
+    // Time-tracking fields for the "elapsed since started" text. When
+    // status === "PAUSED", the UI freezes the elapsed at pausedAt so
+    // the number matches what the operator sees on the WorkdayStrip.
+    startedAt: string | null;
+    pausedAt: string | null;
+    totalPausedMs: number;
     assignees: { userId: string; displayName: string; isClaimer: boolean }[];
   }[];
   // Aggregate-only: per-row breakdown of work finished today. Includes any
@@ -100,6 +106,9 @@ type Summary = {
     title: string | null;
     propertyName: string | null;
     clientName: string | null;
+    // Time fields for the "took Xm" duration on each row.
+    startedAt: string | null;
+    totalPausedMs: number;
     assignees: { userId: string; displayName: string; isClaimer: boolean }[];
   }[];
   // Aggregate-only: workers currently on the clock (workday endedAt null).
@@ -844,6 +853,21 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
                               </Text>
                             )}
                           </Text>
+                          {/* Live elapsed since the job actually started —
+                              matches the "Xh Ym" cell shown on Workdays
+                              in progress. Freezes at pausedAt when the
+                              job is PAUSED so the number matches the
+                              WorkdayStrip's paused-clock behavior.
+                              Hidden when startedAt is null (job was
+                              never actually clocked-in — no
+                              meaningful duration to show). */}
+                          {occ.startedAt && (
+                            <LiveJobElapsed
+                              startedAt={occ.startedAt}
+                              pausedAt={occ.status === "PAUSED" ? occ.pausedAt : null}
+                              totalPausedMs={occ.totalPausedMs}
+                            />
+                          )}
                           <Text fontSize="xs" color="gray.600" whiteSpace="nowrap">
                             {assigneeText}
                           </Text>
@@ -960,6 +984,24 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
                               </Text>
                             )}
                           </Text>
+                          {/* "Took Xh Ym" — static duration derived from
+                              startedAt / completedAt / totalPausedMs.
+                              Hidden when either bound is missing (rare
+                              — job was manually completed without a
+                              real start). */}
+                          {occ.startedAt && occ.completedAt && (() => {
+                            const ms = Math.max(
+                              0,
+                              new Date(occ.completedAt).getTime()
+                                - new Date(occ.startedAt).getTime()
+                                - (occ.totalPausedMs ?? 0),
+                            );
+                            return (
+                              <Text fontSize="xs" color="gray.600" whiteSpace="nowrap" fontVariantNumeric="tabular-nums">
+                                {fmtJobElapsed(ms)}
+                              </Text>
+                            );
+                          })()}
                           <Text fontSize="xs" color="gray.600" whiteSpace="nowrap">
                             {assigneeText}
                           </Text>
@@ -1447,6 +1489,56 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
   );
 }
 
+// Shared "how long has this been running" formatter used by both the
+// Jobs in progress and Completed today rows on the Admin Home Team
+// Overview panel. Sub-hour intervals stay in minutes so short jobs
+// don't collapse to "0h Xm"; hour-plus intervals use "Hh Mm".
+function fmtJobElapsed(ms: number): string {
+  const totalMin = Math.max(0, Math.floor(ms / 60_000));
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+// Live-ticking elapsed cell for a Jobs-in-progress row. Owns its own
+// 30-second interval so ticking a single cell doesn't force the whole
+// HomeTab render tree to re-run every 30s (matches
+// WorkdaysInProgressPanel's tick cadence). Freezes at pausedAt when
+// the row is paused so the number stays consistent with the
+// WorkdayStrip's paused-clock behavior.
+function LiveJobElapsed({
+  startedAt,
+  pausedAt,
+  totalPausedMs,
+}: {
+  startedAt: string;
+  pausedAt: string | null;
+  totalPausedMs: number;
+}) {
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  useEffect(() => {
+    if (pausedAt) return; // frozen — no need to tick
+    const id = window.setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => window.clearInterval(id);
+  }, [pausedAt]);
+  const endMs = pausedAt ? new Date(pausedAt).getTime() : nowMs;
+  const activeMs = Math.max(
+    0,
+    endMs - new Date(startedAt).getTime() - (totalPausedMs ?? 0),
+  );
+  return (
+    <Text
+      fontSize="xs"
+      color="gray.600"
+      whiteSpace="nowrap"
+      fontVariantNumeric="tabular-nums"
+    >
+      {fmtJobElapsed(activeMs)}{pausedAt ? " · paused" : ""}
+    </Text>
+  );
+}
+
 // Team Overview panel row-list for currently-on-the-clock workdays.
 // Extracted so the live-tick useEffect + duration computation don't
 // bloat the main HomeTab render tree. Ticks every 30 seconds — same
@@ -1470,13 +1562,6 @@ function WorkdaysInProgressPanel({
     const id = window.setInterval(() => setNowMs(Date.now()), 30_000);
     return () => window.clearInterval(id);
   }, []);
-  function fmtDur(ms: number): string {
-    const totalMin = Math.max(0, Math.floor(ms / 60_000));
-    const h = Math.floor(totalMin / 60);
-    const m = totalMin % 60;
-    if (h > 0) return `${h}h ${m}m`;
-    return `${m}m`;
-  }
   return (
     <VStack align="stretch" gap={1} w="full" mt={2} pt={2} borderTopWidth="1px" borderColor="gray.300">
       <Text fontSize="xs" fontWeight="medium" color="gray.700" textTransform="uppercase">
@@ -1521,7 +1606,7 @@ function WorkdaysInProgressPanel({
               </Text>
             </Text>
             <Text fontSize="xs" color="gray.600" whiteSpace="nowrap" fontVariantNumeric="tabular-nums">
-              {fmtDur(activeMs)}{isPaused ? " · paused" : ""}
+              {fmtJobElapsed(activeMs)}{isPaused ? " · paused" : ""}
             </Text>
           </HStack>
         );

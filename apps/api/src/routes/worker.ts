@@ -918,6 +918,11 @@ export default async function workerRoutes(app: FastifyInstance) {
           startAt: true,
           status: true,
           title: true,
+          // Actual start / paused-since / accumulated-pause fields feed the
+          // live "how long has this been running" duration on each row.
+          startedAt: true,
+          pausedAt: true,
+          totalPausedMs: true,
           job: {
             select: {
               property: {
@@ -964,6 +969,10 @@ export default async function workerRoutes(app: FastifyInstance) {
           completedAt: true,
           status: true,
           title: true,
+          // Actual start + accumulated-pause fields let the UI compute
+          // a "took Xh Ym" duration on each row.
+          startedAt: true,
+          totalPausedMs: true,
           job: {
             select: {
               property: {
@@ -1108,6 +1117,12 @@ export default async function workerRoutes(app: FastifyInstance) {
         title: occ.title ?? null,
         propertyName: occ.job?.property?.displayName ?? null,
         clientName: occ.job?.property?.client?.displayName ?? null,
+        // Time-tracking fields for the row's live "elapsed" text. Null
+        // startedAt means the row was manually created without a real
+        // start (rare) — the UI hides the duration in that case.
+        startedAt: occ.startedAt ? occ.startedAt.toISOString() : null,
+        pausedAt: occ.pausedAt ? occ.pausedAt.toISOString() : null,
+        totalPausedMs: occ.totalPausedMs ?? 0,
         assignees: (occ.assignees ?? []).map((a: any) => ({
           userId: a.userId,
           displayName: a.user?.displayName ?? a.user?.email ?? a.userId,
@@ -1125,6 +1140,10 @@ export default async function workerRoutes(app: FastifyInstance) {
         title: occ.title ?? null,
         propertyName: occ.job?.property?.displayName ?? null,
         clientName: occ.job?.property?.client?.displayName ?? null,
+        // Time fields for the "took Xm" duration on each row. Null
+        // startedAt means we can't compute a duration — UI hides it.
+        startedAt: occ.startedAt ? occ.startedAt.toISOString() : null,
+        totalPausedMs: occ.totalPausedMs ?? 0,
         assignees: (occ.assignees ?? []).map((a: any) => ({
           userId: a.userId,
           displayName: a.user?.displayName ?? a.user?.email ?? a.userId,
