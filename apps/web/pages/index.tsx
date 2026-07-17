@@ -2,14 +2,15 @@
 import { useEffect, useState, useCallback, useRef, ReactNode } from "react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import { Badge, Box, Button, Container, Dialog, HStack, Portal, Spinner, Text, VStack } from "@chakra-ui/react";
-import { AlertTriangle, ArrowLeftCircle, Clock, Link2, Pause as PauseIcon } from "lucide-react";
-import { fetchWorkdayToday, type WorkdayTodayPayload } from "@/src/lib/workday";
+import { AlertTriangle, ArrowLeftCircle, Link2 } from "lucide-react";
+import OnClockBubble from "@/src/ui/components/OnClockBubble";
 import { useOffline } from "@/src/lib/offline";
 import OfflineQueueDialog from "@/src/ui/dialogs/OfflineQueueDialog";
 import PolicyGateInterceptor from "@/src/ui/components/PolicyGateInterceptor";
 import { apiGet } from "@/src/lib/api";
 import { setCompressionDefaults } from "@/src/lib/imageRedact";
 import { bizDateKey, bizToday, bizTomorrow, bizYesterday, bizAddDays, bizHour } from "@/src/lib/lib";
+import { isOccurrenceOverdue, loadPaymentRequestExpiryHours } from "@/src/lib/overdueRule";
 import { computeDatesFromPreset } from "@/src/lib/datePresets";
 import BrandLabel from "@/src/ui/helpers/BrandLabel";
 import { useRouter } from "next/router";
@@ -1537,47 +1538,6 @@ export default function HomePage() {
   const [earnings, setEarnings] = useState<{ today: number; thisWeek: number; thisMonth: number; allTime: number } | null>(null);
   const [earningsPeriod, setEarningsPeriod] = usePersistedState<EarningsPeriod>("titleEarningsPeriod", "thisWeek");
 
-  // Title-bar "on the clock" bubble — surfaces the running workday
-  // duration alongside a quick tap to jump to Worker → Home (where all
-  // the workday controls live). Only renders while the worker is
-  // IN_PROGRESS or PAUSED. Ticks every second while running so the
-  // duration is live; frozen while paused. Refetches on
-  // seedlings:workday-changed so start/pause/resume/end from anywhere
-  // in the app propagate here without a full reload.
-  const [workdayPayload, setWorkdayPayload] = useState<WorkdayTodayPayload | null>(null);
-  const [workdayTick, setWorkdayTick] = useState(0);
-  useEffect(() => {
-    if (!isSignedIn || !me?.id) return;
-    if (me.isClientImpersonating) return;
-    let cancelled = false;
-    const load = () => {
-      fetchWorkdayToday()
-        .then((p) => { if (!cancelled) setWorkdayPayload(p); })
-        .catch(() => {});
-    };
-    load();
-    const onChanged = () => load();
-    window.addEventListener("seedlings:workday-changed", onChanged);
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") load();
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      cancelled = true;
-      window.removeEventListener("seedlings:workday-changed", onChanged);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [isSignedIn, me?.id, me?.isClientImpersonating]);
-  // 1-sec live tick for the running duration. Cleared on PAUSED /
-  // COMPLETED / NOT_STARTED so we don't waste cycles when nothing
-  // changes visually.
-  const workdayState = workdayPayload?.today.state;
-  useEffect(() => {
-    if (workdayState !== "IN_PROGRESS") return;
-    const id = window.setInterval(() => setWorkdayTick((n) => n + 1), 1000);
-    return () => window.clearInterval(id);
-  }, [workdayState]);
-
   // Title-bar weather chip + bar visibility.
   // Click cycle: hidden → collapsed → expanded → hidden. Persisted so the
   // user's chosen state survives reloads. WeatherBar is still mounted in
@@ -1661,50 +1621,6 @@ export default function HomePage() {
   function cycleEarningsPeriod() {
     const idx = EARNINGS_PERIODS.indexOf(earningsPeriod);
     setEarningsPeriod(EARNINGS_PERIODS[(idx + 1) % EARNINGS_PERIODS.length]);
-  }
-
-  // On-the-clock bubble duration format:
-  //   < 1 hour   →  "M:SS"  (e.g. "5:23") — ticks every second so the
-  //                 worker can see the clock is live.
-  //   ≥ 1 hour   →  "Hh MMm" (e.g. "1h 23m") — drops seconds so the
-  //                 pill doesn't grow to 7 characters (1:23:45) in the
-  //                 title bar. The unit suffixes disambiguate from the
-  //                 M:SS format (1:05 is fine at < 1h; 1h 05m is fine
-  //                 at ≥ 1h).
-  function fmtDurationClock(ms: number): string {
-    const totalSec = Math.max(0, Math.floor(ms / 1000));
-    const h = Math.floor(totalSec / 3600);
-    const m = Math.floor((totalSec % 3600) / 60);
-    const s = totalSec % 60;
-    if (h > 0) {
-      const mm = m.toString().padStart(2, "0");
-      return `${h}h ${mm}m`;
-    }
-    const ss = s.toString().padStart(2, "0");
-    return `${m}:${ss}`;
-  }
-  function computeActiveMs(payload: WorkdayTodayPayload | null): number {
-    if (!payload) return 0;
-    const t = payload.today;
-    if (t.state !== "IN_PROGRESS" && t.state !== "PAUSED") return 0;
-    const wd = t.workday;
-    // Ended-at is null while in flight — clamp against now (for
-    // IN_PROGRESS) or pausedAt (for PAUSED so the number freezes at
-    // pause and the open pause segment isn't yet in totalPausedMs).
-    const endpoint = t.state === "PAUSED" && wd.pausedAt
-      ? new Date(wd.pausedAt).getTime()
-      : Date.now();
-    const raw = endpoint - new Date(wd.startedAt).getTime();
-    return Math.max(0, raw - wd.totalPausedMs);
-  }
-  // Navigate to Worker → Home so the WorkdayStrip (with its End /
-  // Pause / Resume / Edit / Cancel controls) is what the user sees.
-  // Mirrors the tab-switch event other components already use.
-  function jumpToWorkdayControls() {
-    window.dispatchEvent(
-      new CustomEvent("seedlings:switchTab", { detail: { outer: "worker", inner: "home" } }),
-    );
-    try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch { /* no-op */ }
   }
 
   const headerBtnRef = useRef<HTMLDivElement | null>(null);
@@ -2025,7 +1941,12 @@ export default function HomePage() {
     void loadGuaranteedPayoutSummary();
   }, [loadGuaranteedPayoutSummary]);
 
-  // Overdue count for admin header badge — matches Admin Jobs tab overdue logic
+  // Overdue count for admin header badge — matches Admin Jobs tab
+  // overdue logic. Predicate lives in lib/overdueRule so all three
+  // overdue sites (this badge, ServicesTab chip, JobsTab chip) stay in
+  // sync. PENDING_PAYMENT rows only count once the invoice pay link has
+  // expired (per PAYMENT_REQUEST_TOKEN_EXPIRY_HOURS setting) — matches
+  // "we can't do anything until the link times out" mental model.
   const [overdueCount, setOverdueCount] = useState(0);
   const loadOverdue = useCallback(async () => {
     if (!isAdmin) { setOverdueCount(0); markAlertLoaded("overdue"); return; }
@@ -2033,14 +1954,16 @@ export default function HomePage() {
       const today = bizToday();
       const toStr = bizYesterday();
       const fromStr = bizAddDays(today, -60);
-      const list = await apiGet<any[]>(`/api/occurrences?from=${fromStr}&to=${toStr}`);
-      const excludeStatuses = new Set(["COMPLETED", "CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
-      // Match JobsTab's overdue filter — announcements are not "overdue" work
-      const count = (Array.isArray(list) ? list : []).filter(
-        (o) => o.workflow !== "ANNOUNCEMENT" &&
-          o.startAt && !excludeStatuses.has(o.status) &&
-          bizDateKey(o.startAt) < today &&
-          bizDateKey(o.startAt) >= fromStr
+      const [list, expiryHours] = await Promise.all([
+        apiGet<any[]>(`/api/occurrences?from=${fromStr}&to=${toStr}`),
+        loadPaymentRequestExpiryHours(),
+      ]);
+      const nowMs = Date.now();
+      const count = (Array.isArray(list) ? list : []).filter((o) =>
+        isOccurrenceOverdue(o, { todayKey: today, expiryHours, nowMs })
+        // Extra 60-day lower bound preserves the badge's existing
+        // scope (don't scan ancient history for the alert count).
+        && o.startAt && bizDateKey(o.startAt) >= fromStr,
       ).length;
       setOverdueCount(count);
     } catch {
@@ -3429,52 +3352,20 @@ export default function HomePage() {
             )}
             */}
 
-            {/* On-the-clock bubble — replaces the earnings pill. Renders
-                only while workday is IN_PROGRESS (blue, ticking) or
-                PAUSED (amber, frozen). Tapping jumps to Worker → Home
-                where the WorkdayStrip exposes Complete / Pause / End /
-                Resume / Edit. The `workdayTick` dep on the aria-label +
-                text below is what re-renders the duration every second
-                — the state itself doesn't change, only the derived ms.
-                Hidden entirely for client impersonation sessions since
-                the shell isn't a worker context. */}
-            {workdayPayload && !me?.isClientImpersonating && (workdayState === "IN_PROGRESS" || workdayState === "PAUSED") && (() => {
-              const running = workdayState === "IN_PROGRESS";
-              const activeMs = computeActiveMs(workdayPayload);
-              void workdayTick;
-              // Solid blue.500 + white text for IN_PROGRESS — same
-              // treatment as the WorkdayStrip's "Complete" button so
-              // the bubble reads as an obvious action target rather
-              // than a subtle status chip. Amber.500 + white for
-              // PAUSED (matches the strip's PAUSED-state theme).
-              const bg = running ? "blue.500" : "yellow.500";
-              const bgHover = running ? "blue.600" : "yellow.600";
-              return (
-                <Box
-                  as="button"
-                  cursor="pointer"
-                  px="3"
-                  py="1.5"
-                  borderRadius="full"
-                  bg={bg}
-                  color="white"
-                  shadow="sm"
-                  _hover={{ bg: bgHover, shadow: "md" }}
-                  title={running ? "On the clock — tap for workday controls" : "Workday paused — tap for controls"}
-                  onClick={jumpToWorkdayControls}
-                  display="inline-flex"
-                  alignItems="center"
-                  gap="1.5"
-                >
-                  <Box display="inline-flex" alignItems="center">
-                    {running ? <Clock size={14} /> : <PauseIcon size={14} />}
-                  </Box>
-                  <Text fontSize="sm" fontWeight="bold" lineHeight="1" whiteSpace="nowrap" fontVariantNumeric="tabular-nums">
-                    {fmtDurationClock(activeMs)}
-                  </Text>
-                </Box>
-              );
-            })()}
+            {/* On-the-clock bubble — replaces the earnings pill. Its
+                state (workdayPayload, tick) is INSIDE the component
+                deliberately so the 1-Hz ticker doesn't force the whole
+                app shell to re-render every second. Prior version
+                inlined the state here; that cascaded into
+                refreshAllAlerts re-firing every tick while the Tasks
+                page was open (~17 count endpoints polling forever).
+                Component self-hides when NOT_STARTED / COMPLETED /
+                client-impersonating / not signed in. */}
+            <OnClockBubble
+              isSignedIn={!!isSignedIn}
+              isClientImpersonating={!!me?.isClientImpersonating}
+              meId={me?.id}
+            />
             {/* Combined alert badge — staff only. Clients have no alerts
              *  (no Pending Users / Pending Payments / Unclaimed jobs /
              *  Planning / Timeline). Without this gate, clients see a

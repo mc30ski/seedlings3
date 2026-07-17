@@ -2234,8 +2234,8 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                         <Badge size="sm" colorPalette="red" variant="solid">Written off</Badge>
                       )}
                       {(p as any).skippedAt && (
-                        <Badge size="sm" colorPalette="gray" variant="solid" title="Super-erased — treated as if the service never happened. Excluded from every income/payroll/1099 aggregate.">
-                          Skipped
+                        <Badge size="sm" colorPalette="gray" variant="solid" title="Super-voided — treated as if the service never happened. Excluded from every income/payroll/1099 aggregate.">
+                          Voided
                         </Badge>
                       )}
                       <Badge size="sm" colorPalette="gray">{methodLabel(p.method)}</Badge>
@@ -2576,8 +2576,8 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                               <Badge size="sm" colorPalette="red" variant="solid">Written off</Badge>
                             )}
                             {skipped && (
-                              <Badge size="sm" colorPalette="gray" variant="solid" title="Super-erased — treated as if the service never happened. Excluded from every income/payroll/1099 aggregate.">
-                                Skipped
+                              <Badge size="sm" colorPalette="gray" variant="solid" title="Super-voided — treated as if the service never happened. Excluded from every income/payroll/1099 aggregate.">
+                                Voided
                               </Badge>
                             )}
                             {adjustedFrom != null && adjustedFrom !== p.amountPaid && (

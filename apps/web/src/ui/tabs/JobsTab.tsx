@@ -33,6 +33,7 @@ import { projectViewerPayout, projectTeamPayoutsForOcc, perWorkerShare, rateForV
 import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
 import { getLocation } from "@/src/lib/geo";
 import { determineRoles, occurrenceStatusColor, prettyStatus, clientLabel, fmtDate, fmtDateTime, fmtDateWeekday, fmtDateOpts, fmtTimeOpts, bizDateKey, bizToday, bizYesterday, bizAddDays, bizAddYears, bizYearOf, bizDaysBetween, bizInstantFromEtParts, bizToLocalInputValue, bizParseLocalInputValue, jobTypeLabel } from "@/src/lib/lib";
+import { isOccurrenceOverdue, loadPaymentRequestExpiryHours, DEFAULT_PAYMENT_REQUEST_EXPIRY_HOURS } from "@/src/lib/overdueRule";
 import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
 import { useBranding } from "@/src/lib/useBranding";
 import { type TabPropsType, type WorkerOccurrence, JOB_OCCURRENCE_STATUS, JOB_KIND } from "@/src/lib/types";
@@ -924,6 +925,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [dateTo, setDateTo] = usePersistedState(`${pfx}_dateTo`, presetDates.to);
   const [quickDate, setQuickDate] = useState<string[]>([]);
   const [overdueActive, setOverdueActive] = useState(false);
+  // Pay-link expiry hours — loaded once, cached via the shared module.
+  // Feeds the Overdue predicate so PENDING_PAYMENT rows only count as
+  // Overdue once their invoice link has expired. Initialized to the
+  // shared default so the first render is correct without waiting on
+  // the fetch (defaults match the backend).
+  const [overdueExpiryHours, setOverdueExpiryHours] = useState<number>(DEFAULT_PAYMENT_REQUEST_EXPIRY_HOURS);
+  useEffect(() => {
+    let cancelled = false;
+    void loadPaymentRequestExpiryHours().then((h) => { if (!cancelled) setOverdueExpiryHours(h); });
+    return () => { cancelled = true; };
+  }, []);
   // "Hours awaiting approval" focused mode — entered via the title-bar
   // alert. Narrows visible rows to completed STANDARD/ONE_OFF occurrences
   // whose hoursApprovedAt is null. Reset by Clear / preset / overdue toggle.
@@ -1777,10 +1789,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
   async function refreshOverdueCount() {
     try {
-      let list = await apiGet<WorkerOccurrence[]>(
-        `/api/occurrences?to=${bizYesterday()}`
-      );
-      if (!Array.isArray(list)) list = [];
+      const [rawList, expiryHours] = await Promise.all([
+        apiGet<WorkerOccurrence[]>(`/api/occurrences?to=${bizYesterday()}`),
+        loadPaymentRequestExpiryHours(),
+      ]);
+      let list: WorkerOccurrence[] = Array.isArray(rawList) ? rawList : [];
 
       // Apply the same visibility filtering as load()
       if (viewAsUserIds?.length) {
@@ -1801,12 +1814,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         }
       }
 
-      const overdueExcludeCount = new Set(["COMPLETED", "CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
+      // Shared predicate — see lib/overdueRule.ts. PENDING_PAYMENT rows
+      // only count once their invoice pay link has expired.
       const todayKey = bizDateKey(new Date());
-      const count = list.filter((o) => {
-        if (o.workflow === "ANNOUNCEMENT") return false;
-        return o.startAt && !overdueExcludeCount.has(o.status as string) && bizDateKey(o.startAt) < todayKey;
-      }).length;
+      const nowMs = Date.now();
+      const count = list.filter((o) =>
+        isOccurrenceOverdue(o as any, { todayKey, expiryHours, nowMs }),
+      ).length;
       setOverdueCount(count);
     } catch {
       // silently ignore
@@ -2372,12 +2386,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       rows = rows.filter((occ) => (occ.status as string) === "STREAM_PAUSED");
     }
     if (overdueActive) {
-      const overdueExclude = new Set(["COMPLETED", "CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
+      // Shared predicate (lib/overdueRule.ts). PENDING_PAYMENT rows only
+      // appear once their invoice pay link has expired — keeps the
+      // filter aligned with the chip count.
       const todayKey = bizDateKey(new Date());
+      const nowMs = Date.now();
       rows = rows.filter((occ) =>
-        occ.workflow !== "ANNOUNCEMENT" &&
-        !overdueExclude.has(occ.status) &&
-        occ.startAt && bizDateKey(occ.startAt) < todayKey
+        isOccurrenceOverdue(occ as any, { todayKey, expiryHours: overdueExpiryHours, nowMs }),
       );
     }
     if (unapprovedHoursActive) {
@@ -2494,7 +2509,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     }
 
     return rows;
-  }, [items, q, kind, statusFilter, typeFilter, overdueActive, unapprovedHoursActive, vipOnly, likedOnly, likedIds, isTrainee, highlightOccId, filterJobId, pinnedIds, isWorkerView, dateFrom, dateTo, showCanceled, showArchived, pausedRepeatingOnly, forAdmin, foreignRows]);
+  }, [items, q, kind, statusFilter, typeFilter, overdueActive, overdueExpiryHours, unapprovedHoursActive, vipOnly, likedOnly, likedIds, isTrainee, highlightOccId, filterJobId, pinnedIds, isWorkerView, dateFrom, dateTo, showCanceled, showArchived, pausedRepeatingOnly, forAdmin, foreignRows]);
 
   const dayGroups = useMemo(() => {
     const groups: { key: string; label: string; items: WorkerOccurrence[] }[] = [];
@@ -3157,7 +3172,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             border: "1px solid var(--chakra-colors-red-400)",
             "&:hover": { background: "var(--chakra-colors-red-200)" },
           } : undefined}
-          title="Show overdue"
+          title="Show overdue — the scheduled day has passed and the item isn't in a done status. Awaiting-payment rows only count once the client's invoice pay link has expired (see PAYMENT_REQUEST_TOKEN_EXPIRY_HOURS setting)."
         >
           <AlertTriangle size={14} color="var(--chakra-colors-red-500)" />
           {overdueCount > 0 && (

@@ -258,16 +258,23 @@ export async function buildPnLReport(
       },
       select: { processorFeeAmount: true },
     }),
-    // Contract labor synthesized from contractor PaymentSplit rows on
-    // confirmed payments. Mirrors the QB Expenses export's filtering:
-    // employee-class splits excluded (their wages go through Gusto W-2),
-    // GP-flagged splits excluded (those advances are captured separately
-    // via GuaranteedPayoutAdvance, just like the export).
+    // Contract labor + wages base synthesized from PaymentSplit rows on
+    // confirmed payments. Deliberately DOES include written-off
+    // payments (drops the `writtenOff: false` filter that every other
+    // aggregate uses) because the top-up on a write-off is real money
+    // the business pays via Gusto — the wages incur employer payroll
+    // tax regardless of whether the client paid.
+    //
+    // Safe for contractors: on a written-off Payment their split
+    // resolves to `amount = 0` (pro-rata loss), so including write-off
+    // rows can only add employee wages, never inflate contract labor.
+    //
+    // Skipped rows are still excluded — those "pretend it never
+    // happened" and no wages were actually paid.
     prisma.payment.findMany({
       where: {
         confirmed: true,
         confirmedAt: { gte: start, lte: end },
-        writtenOff: false,
         skippedAt: null,
       },
       select: {
@@ -961,11 +968,16 @@ export async function pnlReportDetails(
     // uses so the drilldown rows sum to the bucket's reported total
     // exactly (no drift if the setting changed between calls — both
     // requests read the same current config).
+    // Drilldown wages base must match the bucket total exactly, which
+    // means using the same filters as the buildPnLReport wages query
+    // above — include write-offs (business pays those wages via
+    // top-up → employer taxes owed), exclude skipped (pretend never
+    // happened). Any drift here vs. the main query would leave the
+    // drilldown rows not summing to the reported total.
     const payments = await prisma.payment.findMany({
       where: {
         confirmed: true,
         confirmedAt: { gte: start, lte: end },
-        writtenOff: false,
         skippedAt: null,
       },
       select: {

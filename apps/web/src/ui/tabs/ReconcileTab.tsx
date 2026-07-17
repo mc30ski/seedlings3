@@ -959,54 +959,54 @@ export default function ReconcileTab() {
                   {fmtUSD(report.netOperatingIncome)}
                 </Text>
               </HStack>
-              {/* Cash-adjusted subtotal — shows the deduction line for
-                  fixed-asset purchases + the resulting cash reality
-                  after equipment CapEx. Suppressed entirely when there
-                  are no fixed-asset purchases in the window, otherwise
-                  it'd just duplicate NOI. Your CPA decides §179 vs
-                  multi-year depreciation at tax time; this shows the
-                  cash-out number without waiting for that decision. */}
-              {report.fixedAssetPurchases > 0.005 && (
-                <>
-                  <HStack
-                    justify="space-between"
-                    px={3}
-                    py={1.5}
-                    bg="orange.50"
-                    borderTopWidth="1px"
-                    borderColor="gray.200"
-                  >
-                    <VStack align="start" gap={0}>
-                      <Text fontSize="sm" fontWeight="semibold" color="orange.900">
-                        Less: Fixed asset purchases
-                      </Text>
-                      <Text fontSize="2xs" color="orange.800" fontStyle="italic">
-                        Capitalized to balance sheet — click Excluded below for the row detail
-                      </Text>
-                    </VStack>
-                    <Text fontSize="sm" fontWeight="semibold" color="orange.900">
-                      −{fmtUSD(report.fixedAssetPurchases)}
-                    </Text>
-                  </HStack>
-                  <HStack
-                    justify="space-between"
-                    px={3}
-                    py={2.5}
-                    bg={report.operatingCashAfterCapEx < 0 ? "red.50" : "green.50"}
-                    borderTopWidth="2px"
-                    borderColor="gray.300"
-                  >
-                    <Text fontSize="md" fontWeight="bold">Operating Cash After CapEx</Text>
-                    <Text
-                      fontSize="md"
-                      fontWeight="bold"
-                      color={report.operatingCashAfterCapEx < 0 ? "red.600" : "green.700"}
-                    >
-                      {fmtUSD(report.operatingCashAfterCapEx)}
-                    </Text>
-                  </HStack>
-                </>
-              )}
+              {/* Cash-adjusted subtotal — deduction line for fixed-asset
+                  purchases + the resulting cash reality after
+                  equipment CapEx. Rendered UNCONDITIONALLY (even when
+                  the CapEx figure is $0) so the P&L layout is stable
+                  across periods — an operator scanning back through
+                  months shouldn't see the bottom rows shift between
+                  reports. A zero CapEx period just shows "−$0.00" and
+                  the cash-after line equals NOI. Your CPA decides §179
+                  vs multi-year depreciation at tax time; this shows
+                  the cash-out number without waiting for that
+                  decision. */}
+              <HStack
+                justify="space-between"
+                px={3}
+                py={1.5}
+                bg="orange.50"
+                borderTopWidth="1px"
+                borderColor="gray.200"
+              >
+                <VStack align="start" gap={0}>
+                  <Text fontSize="sm" fontWeight="semibold" color="orange.900">
+                    Less: Fixed asset purchases
+                  </Text>
+                  <Text fontSize="2xs" color="orange.800" fontStyle="italic">
+                    Capitalized to balance sheet — click Excluded below for the row detail
+                  </Text>
+                </VStack>
+                <Text fontSize="sm" fontWeight="semibold" color="orange.900">
+                  −{fmtUSD(report.fixedAssetPurchases)}
+                </Text>
+              </HStack>
+              <HStack
+                justify="space-between"
+                px={3}
+                py={2.5}
+                bg={report.operatingCashAfterCapEx < 0 ? "red.50" : "green.50"}
+                borderTopWidth="2px"
+                borderColor="gray.300"
+              >
+                <Text fontSize="md" fontWeight="bold">Operating Cash After CapEx</Text>
+                <Text
+                  fontSize="md"
+                  fontWeight="bold"
+                  color={report.operatingCashAfterCapEx < 0 ? "red.600" : "green.700"}
+                >
+                  {fmtUSD(report.operatingCashAfterCapEx)}
+                </Text>
+              </HStack>
               {/* Estimated taxable operating income — adds back the
                   non-deductible portion of expenses (Meals 50%, etc.)
                   that NOI already subtracted. Only surfaced when there

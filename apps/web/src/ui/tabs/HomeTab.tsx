@@ -766,6 +766,20 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
                   {s.activeWork > 0 ? ` · ${s.activeWork} in progress` : ""}
                   {(s.tomorrow ?? 0) > 0 ? ` · ${s.tomorrow} tomorrow` : ""}
                 </Text>
+                {/* "Workdays in progress" panel — one row per worker
+                    currently on the clock (workday endedAt is null).
+                    Rendered ABOVE "Jobs in progress now" because the
+                    "who's clocked in" question is the foundational
+                    lens: an admin wants to see who's on before
+                    drilling into what any of them is doing. Duration
+                    ticks live every 30 seconds; states derive from
+                    pausedAt (set → PAUSED with amber dot, else
+                    IN_PROGRESS with blue dot, matching the
+                    WorkdayStrip's state theme). */}
+                {(s.workdaysInProgress?.length ?? 0) > 0 && (
+                  <WorkdaysInProgressPanel workdays={s.workdaysInProgress ?? []} />
+                )}
+
                 {/* Live "who's doing what" panel — only renders in aggregate
                     mode when at least one job is active. Each row links to
                     the occurrence on the Admin Jobs tab via the existing
@@ -876,19 +890,6 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
                       );
                     })}
                   </VStack>
-                )}
-
-                {/* "Workdays in progress" panel — one row per worker
-                    currently on the clock (workday endedAt is null).
-                    Complements "In progress now" (which is about jobs)
-                    by showing "who is clocked in right now" — workers
-                    driving between jobs, on breaks, etc. appear here
-                    even when no job is active. Duration ticks live
-                    every 30 seconds; states derive from pausedAt (set
-                    → PAUSED with amber dot, else IN_PROGRESS with blue
-                    dot, matching the WorkdayStrip's state theme). */}
-                {(s.workdaysInProgress?.length ?? 0) > 0 && (
-                  <WorkdaysInProgressPanel workdays={s.workdaysInProgress ?? []} />
                 )}
 
                 {/* "Completed today" panel — mirrors "In progress now" in

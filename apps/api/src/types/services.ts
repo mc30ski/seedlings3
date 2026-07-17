@@ -969,6 +969,16 @@ export type ServicesPayments = {
     reason?: string | null,
   ): Promise<any>;
 
+  /** Occurrence-level Write off — same shape as skipOccurrence but
+   *  delegates to writeOffPayment. Used from Outstanding Requests when
+   *  the client has ghosted and the operator wants a bad-debt record
+   *  on the P&L (rather than a full erasure via Void). */
+  writeOffOccurrence(
+    currentUserId: string,
+    occurrenceId: string,
+    reason?: string | null,
+  ): Promise<any>;
+
   /** Reverse a skip. Clears skippedAt so the payment reappears in
    *  every aggregate. Same Super + type-APPROVE gate as skip. */
   unskipPayment(currentUserId: string, paymentId: string): Promise<any>;
