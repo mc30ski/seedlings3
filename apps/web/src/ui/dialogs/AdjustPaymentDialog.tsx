@@ -10,6 +10,7 @@ import {
   Portal,
   Select,
   Text,
+  Textarea,
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
@@ -39,6 +40,10 @@ type AdjustRow = {
   amountPaid: number;
   method: string;
   processorFeeAmount: number | null;
+  /** Existing note on the payment (whatever the worker wrote when they
+   *  first recorded it, if anything). Seeds the note textarea so the
+   *  admin sees what's there before adding to it. */
+  note?: string | null;
 };
 
 type Props = {
@@ -51,6 +56,7 @@ type Props = {
     amountOverride?: number;
     methodOverride?: string;
     feeOverride?: number;
+    noteOverride?: string | null;
   }) => void;
   onCancel: () => void;
 };
@@ -68,6 +74,13 @@ export default function AdjustPaymentDialog({ row, onConfirm, onCancel }: Props)
   const [amountStr, setAmountStr] = useState("");
   const [methodKey, setMethodKey] = useState("");
   const [feeStr, setFeeStr] = useState("");
+  /** Free-text note. Mirrors the "Reconcile Paid" flow on Awaiting
+   *  Payment where the admin can attach a memo at the moment of
+   *  approval (e.g. "client paid via check delivered to my house on
+   *  7/12"). Seeded from the payment's existing note so the admin
+   *  either sees / edits the worker's original text OR starts from
+   *  blank if there wasn't one. */
+  const [noteStr, setNoteStr] = useState("");
   /** True once the admin manually edits the fee — pins the value so a
    *  later amount/method change doesn't blow away their override. Reset
    *  on dialog open. */
@@ -80,6 +93,7 @@ export default function AdjustPaymentDialog({ row, onConfirm, onCancel }: Props)
     setAmountStr(row.amountPaid.toFixed(2));
     setMethodKey(row.method);
     setFeeStr((row.processorFeeAmount ?? 0).toFixed(2));
+    setNoteStr(row.note ?? "");
     setFeeManuallyEdited(false);
   }, [row]);
 
@@ -138,7 +152,12 @@ export default function AdjustPaymentDialog({ row, onConfirm, onCancel }: Props)
 
   function confirm() {
     if (!row || !canConfirm) return;
-    const changes: { amountOverride?: number; methodOverride?: string; feeOverride?: number } = {};
+    const changes: {
+      amountOverride?: number;
+      methodOverride?: string;
+      feeOverride?: number;
+      noteOverride?: string | null;
+    } = {};
     const finalAmount = round2(amountNum);
     if (finalAmount !== round2(row.amountPaid)) changes.amountOverride = finalAmount;
     if (methodKey !== row.method) changes.methodOverride = methodKey;
@@ -147,6 +166,15 @@ export default function AdjustPaymentDialog({ row, onConfirm, onCancel }: Props)
     // ApprovePaymentDialog policy so back-end semantics line up.
     if (hasFee && Math.abs(feeNum - computedFee) >= PENNY) {
       changes.feeOverride = round2(feeNum);
+    }
+    // Note override — only when the trimmed value differs from what was
+    // originally on the row (empty vs. empty is a no-op). Clearing an
+    // existing note sends null explicitly so the backend can distinguish
+    // "not editing" from "erase this."
+    const originalNote = (row.note ?? "").trim();
+    const nextNote = noteStr.trim();
+    if (nextNote !== originalNote) {
+      changes.noteOverride = nextNote.length > 0 ? nextNote : null;
     }
     onConfirm(changes);
   }
@@ -212,6 +240,18 @@ export default function AdjustPaymentDialog({ row, onConfirm, onCancel }: Props)
                       </Select.Content>
                     </Select.Positioner>
                   </Select.Root>
+                </Box>
+
+                <Box>
+                  <Text fontSize="sm" fontWeight="medium" mb={1}>
+                    Note (optional)
+                  </Text>
+                  <Textarea
+                    value={noteStr}
+                    onChange={(e) => setNoteStr(e.target.value)}
+                    placeholder="Anything to remember about this payment…"
+                    rows={2}
+                  />
                 </Box>
 
                 {hasFee && (

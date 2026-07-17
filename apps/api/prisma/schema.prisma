@@ -975,7 +975,20 @@ model JobOccurrence {
   // (SERVER mode). Drives the "either-or" workflow on the job card —
   // once set, Accept Payment is hidden and the worker either re-sends
   // or cancels. Cleared by paymentRequests.cancelPaymentRequest.
+  // NOTE: this is the LAST-sent timestamp; it moves forward on every
+  // re-send. For the immutable original-request time, see
+  // paymentRequestFirstSentAt below.
   paymentRequestSentAt DateTime?
+  // Preserved timestamp of the FIRST time this request went out. Written
+  // once and never overwritten until the request is cancelled (which
+  // clears all three payment-request timestamps, resetting the cycle).
+  // Powers the "originally requested N days ago" display.
+  paymentRequestFirstSentAt DateTime?
+  // Number of RE-sends since the original request went out (does not
+  // count the initial send). Incremented by sendForOccurrence and
+  // recordClaimerHandoff whenever paymentRequestFirstSentAt is already
+  // set. Reset to 0 by cancelPaymentRequest.
+  paymentRequestResendCount Int      @default(0)
   // Per-worker percentage allocation locked in by the claimer at completion
   // time. Stored as JSON: [{ userId: "...", percent: 50 }, ...]. Drives the
   // PaymentSplit math; survives overpayments (extras distribute pro-rata).

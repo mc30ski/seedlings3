@@ -45,8 +45,19 @@ type OutstandingRow = {
   occurrenceId: string;
   jobId: string | null;
   startAt: string | null;
+  /** Latest send timestamp — moves forward on every re-send. Powers the
+   *  "Re-sent N× (last today)" badge. */
   requestedAt: string;
   daysSinceRequested: number;
+  /** Preserved timestamp of the FIRST time this request went out. Never
+   *  moves once set; cleared only by cancel/reject. Powers the
+   *  "Originally requested N days ago" label so the operator can see
+   *  how long the client has actually been sitting on this invoice. */
+  firstSentAt: string;
+  daysSinceFirstSent: number;
+  /** Number of RE-sends since the original send (does not count the
+   *  initial send). Zero for one-and-done invoices. */
+  resendCount: number;
   stale: boolean;
   linkExpiresAt: string | null;
   linkExpired: boolean;
@@ -63,6 +74,23 @@ function agoLabel(days: number): string {
   if (days <= 0) return "Requested today";
   if (days === 1) return "Requested 1 day ago";
   return `Requested ${days} days ago`;
+}
+
+/** Same "N days ago" wording anchored on the original send. Only used
+ *  when a request has been re-sent at least once — otherwise the plain
+ *  agoLabel already reads correctly. */
+function firstSentLabel(days: number): string {
+  if (days <= 0) return "Originally requested today";
+  if (days === 1) return "Originally requested 1 day ago";
+  return `Originally requested ${days} days ago`;
+}
+
+/** Short "last today / 1 day ago / 3 days ago" fragment for the re-send
+ *  badge tooltip / label. */
+function lastResendFragment(days: number): string {
+  if (days <= 0) return "today";
+  if (days === 1) return "1 day ago";
+  return `${days} days ago`;
 }
 
 export default function OutstandingRequestsSection() {
@@ -361,9 +389,35 @@ export default function OutstandingRequestsSection() {
                     {r.client ? ` — ${r.client}` : ""}
                   </Text>
                   <HStack gap={1.5} flexWrap="wrap">
-                    <Badge size="sm" colorPalette={r.stale ? "orange" : "gray"}>
-                      {agoLabel(r.daysSinceRequested)}
+                    {/* Age badge — anchored on the ORIGINAL request when
+                        it's been re-sent, otherwise on the (single) send.
+                        The stale-orange color follows the same "days since
+                        latest send" trigger as before; original age is
+                        just a display anchor, not a staleness signal
+                        (the client-facing pay link expiry is what actually
+                        matters for stale). */}
+                    <Badge
+                      size="sm"
+                      colorPalette={r.stale ? "orange" : "gray"}
+                      title={
+                        r.resendCount > 0
+                          ? `Original request sent ${r.daysSinceFirstSent}d ago; latest re-send ${lastResendFragment(r.daysSinceRequested)}.`
+                          : undefined
+                      }
+                    >
+                      {r.resendCount > 0
+                        ? firstSentLabel(r.daysSinceFirstSent)
+                        : agoLabel(r.daysSinceRequested)}
                     </Badge>
+                    {r.resendCount > 0 && (
+                      <Badge
+                        size="sm"
+                        colorPalette="blue"
+                        title={`This request has been re-sent ${r.resendCount} time${r.resendCount === 1 ? "" : "s"} since the original send. Latest re-send: ${lastResendFragment(r.daysSinceRequested)}.`}
+                      >
+                        Re-sent {r.resendCount}× · last {lastResendFragment(r.daysSinceRequested)}
+                      </Badge>
+                    )}
                     {r.linkExpired && (
                       <Badge size="sm" colorPalette="red">Pay link expired</Badge>
                     )}
