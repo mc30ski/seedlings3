@@ -23,7 +23,7 @@ import {
   Textarea,
   VStack,
 } from "@chakra-ui/react";
-import { Check, ExternalLink, RefreshCw, SkipForward } from "lucide-react";
+import { Check, ExternalLink, RefreshCw, SkipForward, XCircle } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
 import { bumpAdminPayments } from "@/src/lib/bus";
 import { formatNextOccurrenceOutcome, type PaymentActionResult } from "@/src/lib/paymentMessages";
@@ -84,6 +84,14 @@ export default function OutstandingRequestsSection() {
   // Gated by type-APPROVE via ConfirmDialog.requiredInputValue.
   const [skipRow, setSkipRow] = useState<OutstandingRow | null>(null);
   const [skipBusy, setSkipBusy] = useState(false);
+
+  // Write-off dialog state — Super-only "client ghosted, take the loss."
+  // Distinct from Skip/Void: employees + trainees still get their promised
+  // net paid from business funds, and the loss surfaces on the P&L as
+  // acknowledged bad debt rather than being erased entirely. Gated by
+  // type-APPROVE via ConfirmDialog.requiredInputValue.
+  const [writeOffRow, setWriteOffRow] = useState<OutstandingRow | null>(null);
+  const [writeOffBusy, setWriteOffBusy] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -243,16 +251,45 @@ export default function OutstandingRequestsSection() {
       publishInlineMessage({
         type: "SUCCESS",
         text: nextLine
-          ? `Service skipped — treated as if it never happened. ${nextLine}`
-          : "Service skipped — treated as if it never happened.",
+          ? `Service voided — treated as if it never happened. ${nextLine}`
+          : "Service voided — treated as if it never happened.",
       });
       bumpAdminPayments();
       setSkipRow(null);
       await load();
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Skip failed.", err) });
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Void failed.", err) });
     } finally {
       setSkipBusy(false);
+    }
+  }
+
+  // Write off an outstanding request — client ghosted / isn't going to
+  // pay. Backend materializes a $0 CASH Payment then writes it off,
+  // triggering employee top-up + contractor $0 + next-occurrence
+  // generation. See services/payments.ts writeOffOccurrence.
+  async function submitWriteOff() {
+    if (!writeOffRow) return;
+    setWriteOffBusy(true);
+    try {
+      const result: PaymentActionResult = await apiPost(
+        `/api/admin/occurrences/${writeOffRow.occurrenceId}/write-off`,
+        {},
+      );
+      const nextLine = formatNextOccurrenceOutcome(result);
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: nextLine
+          ? `Payment written off — employees paid, contractors $0. ${nextLine}`
+          : "Payment written off — employees paid, contractors $0.",
+      });
+      bumpAdminPayments();
+      setWriteOffRow(null);
+      await load();
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Write off failed.", err) });
+    } finally {
+      setWriteOffBusy(false);
     }
   }
 
@@ -383,11 +420,20 @@ export default function OutstandingRequestsSection() {
                 <Button
                   size="xs"
                   variant="ghost"
+                  colorPalette="purple"
+                  onClick={() => setWriteOffRow(r)}
+                  title="Super only — write off (client ghosted / never paid). Employees + trainees still get their promised net from business funds; contractors get $0; the loss appears as bad debt on the P&L."
+                >
+                  <XCircle size={12} /> Write off
+                </Button>
+                <Button
+                  size="xs"
+                  variant="ghost"
                   colorPalette="red"
                   onClick={() => setSkipRow(r)}
-                  title="Super only — pretend this service never happened. Erases income, payroll, and 1099 aggregation for this occurrence."
+                  title="Super only — void this service (treat as if it never happened). Erases income, payroll, and 1099 aggregation for this occurrence. Distinct from Write Off, which acknowledges the loss but keeps the row on operator dashboards."
                 >
-                  <SkipForward size={12} /> Skip service
+                  <SkipForward size={12} /> Void service
                 </Button>
               </HStack>
             </Box>
@@ -547,14 +593,18 @@ export default function OutstandingRequestsSection() {
         </Portal>
       </Dialog.Root>
 
-      {/* Skip dialog — Super-only, "pretend this service never happened."
+      {/* Void dialog — Super-only, "pretend this service never happened."
           Requires typing APPROVE (case-insensitive) in the input to enable
-          the Skip button. Everything the operator needs to understand
-          before pulling the trigger is spelled out in the messageNode. */}
+          the Void button. Everything the operator needs to understand
+          before pulling the trigger is spelled out in the messageNode.
+          Backend endpoint + internal state names still use "skip" —
+          renaming those (the URL, the DB field `skippedAt`, the
+          `skipRow`/`submitSkip` variables) would be pure churn without
+          any user-facing benefit. Only the visible copy uses "void". */}
       {skipRow && (
         <ConfirmDialog
           open
-          title="Skip this service"
+          title="Void this service"
           message=""
           messageNode={
             <VStack align="stretch" gap={3}>
@@ -563,9 +613,10 @@ export default function OutstandingRequestsSection() {
                   {skipRow.property ?? "This service"}
                   {skipRow.client ? ` — ${skipRow.client}` : ""}
                 </b>{" "}
-                will be treated as if it never happened. This is not a
-                write-off (which still counts on operator dashboards).
-                It is a full erasure from every financial view.
+                will be voided — treated as if it never happened. This
+                is <b>not</b> a Write Off (which still counts as an
+                acknowledged loss on operator dashboards). This is a
+                full erasure from every financial view.
               </Text>
               <Box
                 borderWidth="1px"
@@ -609,13 +660,82 @@ export default function OutstandingRequestsSection() {
               </Box>
             </VStack>
           }
-          confirmLabel="Skip service"
+          confirmLabel="Void service"
           confirmColorPalette="red"
           inputLabel="Type APPROVE to confirm"
           inputPlaceholder="APPROVE"
           requiredInputValue="APPROVE"
           onConfirm={() => void submitSkip()}
           onCancel={() => { if (!skipBusy) setSkipRow(null); }}
+        />
+      )}
+
+      {/* Write-off dialog — Super-only, "client ghosted, take the loss."
+          Distinct from Void in that the row STAYS on the books as an
+          acknowledged bad debt (visible on P&L), and W-2 employees +
+          trainees still get their promised net paid from business
+          funds (contractors get $0 because their pay is contingent on
+          client payment). Same type-APPROVE gate as Void. */}
+      {writeOffRow && (
+        <ConfirmDialog
+          open
+          title="Write off this payment"
+          message=""
+          messageNode={
+            <VStack align="stretch" gap={3}>
+              <Text fontSize="sm" color="fg.default">
+                <b>
+                  {writeOffRow.property ?? "This service"}
+                  {writeOffRow.client ? ` — ${writeOffRow.client}` : ""}
+                </b>{" "}
+                will be marked as a write-off — you're acknowledging the
+                client isn't going to pay. Unlike Void, this stays on the
+                books as bad debt.
+              </Text>
+              <Box
+                borderWidth="1px"
+                borderColor="purple.300"
+                bg="purple.50"
+                borderRadius="md"
+                p={3}
+              >
+                <VStack align="start" gap={1.5}>
+                  <Text fontSize="xs" fontWeight="semibold" color="purple.900">
+                    What this does — read before typing APPROVE:
+                  </Text>
+                  <Text fontSize="xs" color="purple.900">
+                    • Income recorded as $0 for this visit.
+                  </Text>
+                  <Text fontSize="xs" color="purple.900">
+                    • Employees + trainees are still paid their promised
+                    net (business absorbs the shortfall).
+                  </Text>
+                  <Text fontSize="xs" color="purple.900">
+                    • Contractors get $0 — their pay is contingent on
+                    client payment.
+                  </Text>
+                  <Text fontSize="xs" color="purple.900">
+                    • The row stays visible on the operator dashboards +
+                    P&L as an acknowledged loss (bad debt).
+                  </Text>
+                  <Text fontSize="xs" color="purple.900">
+                    • The next occurrence for this job will still be
+                    created (schedule continuity preserved).
+                  </Text>
+                  <Text fontSize="xs" color="purple.900">
+                    • Undoing this is possible via the Payments tab.
+                  </Text>
+                </VStack>
+              </Box>
+            </VStack>
+          }
+          confirmLabel="Write off"
+          confirmColorPalette="purple"
+          inputLabel="Type APPROVE to confirm"
+          inputPlaceholder="APPROVE"
+          requiredInputValue="APPROVE"
+          onConfirm={() => void submitWriteOff()}
+          onCancel={() => { if (!writeOffBusy) setWriteOffRow(null); }}
         />
       )}
     </Card.Root>

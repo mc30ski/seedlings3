@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
+import { DEFAULT_PAYMENT_REQUEST_EXPIRY_HOURS, isOccurrenceOverdue, isPaymentLinkExpired, loadPaymentRequestExpiryHours } from "@/src/lib/overdueRule";
 import {
   Badge,
   Box,
@@ -131,6 +132,15 @@ export default function ServicesTab({
   const [overdueActive, setOverdueActive] = usePersistedState("services_overdue", false);
   const [vipOnly, setVipOnly] = useState(false);
   const [overdueCount, setOverdueCount] = useState(0);
+  // Pay-link expiry hours — feeds the Overdue predicate so
+  // PENDING_PAYMENT rows aren't marked Overdue while the client can
+  // still pay via the tokenized link. See lib/overdueRule.ts.
+  const [overdueExpiryHours, setOverdueExpiryHours] = useState<number>(DEFAULT_PAYMENT_REQUEST_EXPIRY_HOURS);
+  useEffect(() => {
+    let cancelled = false;
+    void loadPaymentRequestExpiryHours().then((h) => { if (!cancelled) setOverdueExpiryHours(h); });
+    return () => { cancelled = true; };
+  }, []);
   const presetBeforeOverdueRef = useRef<DatePreset>("thisMonth");
   const [datePreset, setDatePreset] = usePersistedState<DatePreset>("services_datePreset", "thisMonth");
   const presetDates = useMemo(() => computeDatesFromPreset(datePreset), [datePreset]);
@@ -465,11 +475,17 @@ export default function ServicesTab({
 
   async function refreshOverdueCount() {
     try {
-      const list = await apiGet<{ id: string; status: string }[]>(
-        `/api/occurrences?to=${bizYesterday()}`
-      );
-      const count = (Array.isArray(list) ? list : []).filter(
-        (o) => o.status !== "COMPLETED" && o.status !== "CLOSED" && o.status !== "ARCHIVED" && o.status !== "CANCELED" && o.status !== "REJECTED" && o.status !== "ACCEPTED"
+      const [list, expiryHours] = await Promise.all([
+        apiGet<any[]>(`/api/occurrences?to=${bizYesterday()}`),
+        loadPaymentRequestExpiryHours(),
+      ]);
+      const todayKey = bizDateKey(new Date());
+      const nowMs = Date.now();
+      // Shared predicate — see lib/overdueRule.ts. Key change vs. the
+      // old inline filter: PENDING_PAYMENT rows only count once their
+      // invoice pay link has expired.
+      const count = (Array.isArray(list) ? list : []).filter((o) =>
+        isOccurrenceOverdue(o, { todayKey, expiryHours, nowMs }),
       ).length;
       setOverdueCount(count);
     } catch {
@@ -1039,7 +1055,7 @@ export default function ServicesTab({
             border: "1px solid var(--chakra-colors-red-400)",
             "&:hover": { background: "var(--chakra-colors-red-200)" },
           } : undefined}
-          title="Show overdue"
+          title="Show overdue — the scheduled day has passed and the item isn't in a done status. Awaiting-payment rows only count once the client's invoice pay link has expired (see PAYMENT_REQUEST_TOKEN_EXPIRY_HOURS setting)."
         >
           <AlertTriangle size={14} color="var(--chakra-colors-red-500)" />
           {!overdueActive && overdueCount > 0 && (
@@ -1300,7 +1316,15 @@ export default function ServicesTab({
                 if (tf === "ONE_OFF" && !o.isOneOff) return false;
                 if (tf === "ESTIMATE" && !o.isEstimate) return false;
                 if (tf === "TENTATIVE" && !o.isTentative) return false;
-                if (overdueActive && (new Set(["COMPLETED", "CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"])).has(o.status)) return false;
+                if (overdueActive) {
+                  // Done statuses are never Overdue.
+                  if ((new Set(["COMPLETED", "CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"])).has(o.status)) return false;
+                  // PENDING_PAYMENT gets the pay-link-expired grace
+                  // period — hide rows whose invoice link is still
+                  // live so the "Overdue" filter matches the count
+                  // predicate in lib/overdueRule.ts.
+                  if (o.status === "PENDING_PAYMENT" && !isPaymentLinkExpired(o as any, overdueExpiryHours)) return false;
+                }
                 if (skippedNextOnly) {
                   const reason = (o.payment as any)?.nextOccurrenceSkipReason;
                   if (!reason || reason === "one_off") return false;

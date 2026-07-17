@@ -1951,6 +1951,79 @@ export const payments: ServicesPayments = {
     });
   },
 
+  // Occurrence-level Write off — mirrors `skipOccurrence` for surfaces
+  // (Outstanding Requests) where a payment request was sent but no
+  // Payment row exists yet. Client ghosted, isn't going to pay, but
+  // we want to keep the acknowledged-loss on the books (bad debt
+  // visible on P&L). Materializes a $0/CASH Payment first so all
+  // downstream logic has a Payment to work with, then delegates to
+  // writeOffPayment (which runs approvePayment(0) → next-occurrence
+  // generation + occurrence CLOSED + employee top-up + contractor $0,
+  // then stamps writtenOff metadata).
+  //
+  // If a Payment row already exists (worker or client self-reported),
+  // caller should use writeOffPayment directly. This function refuses
+  // when there's an existing Payment because its $0/CASH
+  // materialization would clobber the reported amount.
+  async writeOffOccurrence(currentUserId, occurrenceId, reason) {
+    const occ = await prisma.jobOccurrence.findUnique({
+      where: { id: occurrenceId },
+      select: {
+        id: true,
+        status: true,
+        assignees: { select: { userId: true, role: true } },
+      },
+    });
+    if (!occ) throw new ServiceError("NOT_FOUND", "Occurrence not found.", 404);
+    if (occ.status !== JobOccurrenceStatus.PENDING_PAYMENT) {
+      throw new ServiceError(
+        "INVALID_STATUS",
+        `Cannot write off — occurrence status is "${occ.status}", expected "PENDING_PAYMENT".`,
+        409,
+      );
+    }
+    const existingPayment = await prisma.payment.findUnique({
+      where: { occurrenceId },
+    });
+    if (existingPayment) {
+      // Delegate — the operator is writing off an already-reported
+      // payment. Guards on writeOffPayment (confirmed / already
+      // written off) fire consistently.
+      return payments.writeOffPayment(currentUserId, existingPayment.id, reason);
+    }
+    const activeAssignees = (occ.assignees ?? []).filter((a) => a.role !== "observer");
+    if (activeAssignees.length === 0) {
+      throw new ServiceError(
+        "NO_CLAIMER",
+        "Cannot write off — the occurrence has no active worker assigned.",
+        409,
+      );
+    }
+    // Even split — matches adminMarkInvoicePaid / skipOccurrence so
+    // all three paths produce identical Payment shapes on the way in.
+    // Unlike skip, write-off DOES land amounts on the splits ledger
+    // (employees are made whole via top-up from business funds), so
+    // the split percents actually matter here.
+    const basePercent = Math.floor(100 / activeAssignees.length);
+    const remainder = 100 - basePercent * activeAssignees.length;
+    const completionSplits = activeAssignees.map((a, i) => ({
+      userId: a.userId,
+      percent: basePercent + (i === 0 ? remainder : 0),
+    }));
+    const payment = await payments.createPayment(currentUserId, {
+      occurrenceId,
+      amountPaid: 0,
+      // CASH is always present in PAYMENT_METHODS with zero fees —
+      // safe default. Method is largely irrelevant because the
+      // amountPaid is $0.
+      method: "CASH",
+      note: null,
+      completionSplits,
+      context: "ADMIN" as any,
+    } as any);
+    return payments.writeOffPayment(currentUserId, payment.id, reason);
+  },
+
   async writeOffPayment(currentUserId, paymentId, reason) {
     const existing = await prisma.payment.findUnique({ where: { id: paymentId } });
     if (!existing) throw new ServiceError("NOT_FOUND", "Payment not found.", 404);

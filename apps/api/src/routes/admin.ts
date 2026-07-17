@@ -7554,6 +7554,18 @@ Respond ONLY with valid JSON in this exact format:
     return services.payments.skipOccurrence(uid, String(req.params.occurrenceId), reason);
   });
 
+  // Occurrence-level write-off — used from Outstanding Requests when
+  // the client has ghosted (payment request sent, never paid, never
+  // going to pay). Materializes a $0/CASH Payment then writes it off,
+  // which triggers employee top-up + contractor $0 + occurrence CLOSED
+  // + next-occurrence generation + bad-debt visible on P&L. Same Super
+  // + type-APPROVE gate as skipOccurrence.
+  app.post("/admin/occurrences/:occurrenceId/write-off", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const reason = req.body?.reason ? String(req.body.reason) : null;
+    return services.payments.writeOffOccurrence(uid, String(req.params.occurrenceId), reason);
+  });
+
   // Reverse a skip. Payment returns to its approved-$0 state and reappears
   // in every aggregate. Same Super + type-APPROVE gate as skip.
   app.post("/admin/payments/:id/unskip", superGuard, async (req: any) => {

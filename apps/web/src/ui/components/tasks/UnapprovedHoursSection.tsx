@@ -70,9 +70,31 @@ function actualMinutes(row: UnapprovedHoursRow): number | null {
   return Math.max(0, Math.round(ms / 60_000));
 }
 
+// Non-observer crew size — how many workers actually contributed
+// wall-clock time to the job. Used to normalize the estimate so it's
+// comparable to the actual wall-clock minutes (a 60-min job with a
+// 2-worker crew is expected to elapse in 30 min real time). Mirrors
+// the job card's math at JobsTab.tsx: `estimatedMinutes / workerCount`
+// when the crew is > 1.
+function crewSize(row: UnapprovedHoursRow): number {
+  return Math.max(1, row.assignees.length);
+}
+
+// Estimate adjusted to per-worker wall-clock, so it lines up with the
+// actual (which IS wall-clock). Without this, a 60-min estimate on a
+// 2-worker crew that finished in 13 min real time reads as "Actual 13m
+// vs Est 60m (-78%)" — misleading, because the crew was expected to
+// take 30 min real time. Adjusted, the same row reads "Actual 13m vs
+// Est 30m (-57%)", matching the job card's per-worker framing.
+function adjustedEstimate(row: UnapprovedHoursRow): number | null {
+  if (row.estimatedMinutes == null) return null;
+  const crew = crewSize(row);
+  return crew > 1 ? Math.round(row.estimatedMinutes / crew) : row.estimatedMinutes;
+}
+
 function variancePercent(row: UnapprovedHoursRow): number | null {
   const actual = actualMinutes(row);
-  const est = row.estimatedMinutes;
+  const est = adjustedEstimate(row);
   if (!actual || !est) return null;
   return Math.round(((actual - est) / est) * 100);
 }
@@ -177,7 +199,12 @@ export default function UnapprovedHoursSection() {
                 </Text>
                 <HStack gap={2} mt={0.5}>
                   <Text fontSize="2xs" color="fg.muted">
-                    Est <b>{fmtMinutes(r.estimatedMinutes)}</b> · Actual <b>{fmtMinutes(actual)}</b>
+                    Est <b>{fmtMinutes(adjustedEstimate(r))}</b> · Actual <b>{fmtMinutes(actual)}</b>
+                    {crewSize(r) > 1 && (
+                      <Text as="span" color="fg.muted">
+                        {" "}({crewSize(r)} workers)
+                      </Text>
+                    )}
                   </Text>
                   {pct != null && (
                     <Badge
