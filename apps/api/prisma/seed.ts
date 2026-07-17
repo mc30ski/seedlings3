@@ -3993,8 +3993,11 @@ async function seedVehicleFixtures() {
  *   CONTRACTOR_ID  → PAUSED (started 4h ago, paused 30m ago, 12m prior pause)
  *   TRAINEE_ID     → COMPLETED (8h day with 30m lunch — today's edit window
  *                    is still open so the "Edit times" affordance fires)
- *   ADMIN_WORKER_ID → forgot-yesterday (open IN_PROGRESS row from yesterday,
- *                    nothing today — surfaces the orange catch-up strip)
+ *   ADMIN_WORKER_ID → forgot-yesterday + today IN_PROGRESS (open row from
+ *                    yesterday surfaces the orange catch-up strip; the
+ *                    today row started ~3h ago and gives the Admin Home
+ *                    Team Overview "Workdays in progress" panel a third
+ *                    row alongside Michael + Contractor)
  *   MICHAEL_ID     → IN_PROGRESS started ~90m ago (with a 12m prior pause
  *                    already resolved). Drives the title-bar on-clock
  *                    bubble in a visibly ticked state (1:2x:xx) plus the
@@ -4059,6 +4062,24 @@ async function seedWorkdayFixtures() {
       userId: ADMIN_WORKER_ID,
       workdayDate: yesterday,
       startedAt: new Date(now.getTime() - hrs(28)), // ~yesterday 8am-ish
+    },
+  });
+
+  // ── ADMIN_WORKER_ID: IN_PROGRESS today ─────────────────────────────
+  // Fresh today workday started ~3h ago. Coexists with the
+  // forgot-yesterday row above — realistic scenario for a worker who
+  // clocked in this morning without addressing the still-open prior
+  // day. Populates the Admin Home Team Overview "Workdays in progress"
+  // panel with a third distinct row (Michael IN_PROGRESS ~90m,
+  // Contractor PAUSED ~4h, Admin Worker IN_PROGRESS ~3h) so an admin
+  // testing can see multiple workers on the clock at once with
+  // different durations.
+  await prisma.workerWorkday.create({
+    data: {
+      userId: ADMIN_WORKER_ID,
+      workdayDate: today,
+      startedAt: new Date(now.getTime() - hrs(3)),
+      totalPausedMs: mins(5), // one quick coffee break
     },
   });
 

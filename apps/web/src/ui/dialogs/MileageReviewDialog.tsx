@@ -31,6 +31,7 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
 export type MileageReviewEntry = {
   id: string;
@@ -116,6 +117,12 @@ function EntryCard({
   );
   const [notes, setNotes] = useState(entry.notes ?? "");
   const [busy, setBusy] = useState(false);
+  // Two-step confirm for the destructive Reject action. Uses the
+  // shared ConfirmDialog component so this looks like every other
+  // Confirm dialog in the app (previously used native window.confirm,
+  // which stood out badly on mobile and didn't match the visual
+  // language of the surrounding surfaces).
+  const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
 
   const dirty = useMemo(() => {
     if (bizToLocalInputValue(entry.startedAt) !== startedAt) return true;
@@ -192,13 +199,11 @@ function EntryCard({
     }
   }
 
-  async function reject() {
-    // Destructive — confirm before hard-deleting the row. The server
-    // refuses to reject already-approved entries, so this button is
-    // hidden for those (unapprove first).
-    if (!window.confirm(
-      `Reject and delete this ${entry.vehicleName ?? "mileage"} session? This can't be undone.`,
-    )) return;
+  async function doReject() {
+    // Server refuses to reject already-approved entries, so this
+    // button is hidden for those (unapprove first). Confirmation is
+    // handled by the ConfirmDialog rendered below.
+    setRejectConfirmOpen(false);
     setBusy(true);
     try {
       await apiPost(`/api/super/mileage/${entry.id}/reject`);
@@ -301,7 +306,7 @@ function EntryCard({
               size="xs"
               variant="ghost"
               colorPalette="red"
-              onClick={reject}
+              onClick={() => setRejectConfirmOpen(true)}
               loading={busy}
               title="Reject and delete this session — for wrong-vehicle rows, tester noise, etc."
             >
@@ -353,6 +358,15 @@ function EntryCard({
           )}
         </HStack>
       </VStack>
+      <ConfirmDialog
+        open={rejectConfirmOpen}
+        title="Reject mileage session?"
+        message={`This deletes the ${entry.vehicleName ?? "mileage"} session from ${new Date(entry.startedAt).toLocaleString()}. It can't be undone — the row will disappear from every report and from the driver's day.`}
+        confirmLabel="Reject session"
+        confirmColorPalette="red"
+        onConfirm={() => void doReject()}
+        onCancel={() => setRejectConfirmOpen(false)}
+      />
     </Box>
   );
 }

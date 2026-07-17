@@ -102,6 +102,17 @@ type Summary = {
     clientName: string | null;
     assignees: { userId: string; displayName: string; isClaimer: boolean }[];
   }[];
+  // Aggregate-only: workers currently on the clock (workday endedAt null).
+  // Each row carries just enough to compute a live-ticking active duration
+  // + the display name. UI derives IN_PROGRESS vs PAUSED from pausedAt.
+  workdaysInProgress?: {
+    id: string;
+    userId: string;
+    displayName: string;
+    startedAt: string;
+    pausedAt: string | null;
+    totalPausedMs: number;
+  }[];
 };
 
 type TabFilter = { status?: string; type?: string; kind?: string; datePreset?: string; dateFrom?: string; dateTo?: string; overdue?: boolean; method?: string };
@@ -753,7 +764,7 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
                 {(s.inProgressJobs?.length ?? 0) > 0 && (
                   <VStack align="stretch" gap={1} w="full" mt={2} pt={2} borderTopWidth="1px" borderColor="gray.300">
                     <Text fontSize="xs" fontWeight="medium" color="gray.700" textTransform="uppercase">
-                      In progress now
+                      Jobs in progress now
                     </Text>
                     {(s.inProgressJobs ?? []).map((occ) => {
                       const claimer = occ.assignees.find((a) => a.isClaimer);
@@ -841,6 +852,19 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
                       );
                     })}
                   </VStack>
+                )}
+
+                {/* "Workdays in progress" panel — one row per worker
+                    currently on the clock (workday endedAt is null).
+                    Complements "In progress now" (which is about jobs)
+                    by showing "who is clocked in right now" — workers
+                    driving between jobs, on breaks, etc. appear here
+                    even when no job is active. Duration ticks live
+                    every 30 seconds; states derive from pausedAt (set
+                    → PAUSED with amber dot, else IN_PROGRESS with blue
+                    dot, matching the WorkdayStrip's state theme). */}
+                {(s.workdaysInProgress?.length ?? 0) > 0 && (
+                  <WorkdaysInProgressPanel workdays={s.workdaysInProgress ?? []} />
                 )}
 
                 {/* "Completed today" panel — mirrors "In progress now" in
@@ -1420,5 +1444,88 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
 
       </VStack>
     </Box>
+  );
+}
+
+// Team Overview panel row-list for currently-on-the-clock workdays.
+// Extracted so the live-tick useEffect + duration computation don't
+// bloat the main HomeTab render tree. Ticks every 30 seconds — same
+// cadence the MileageStrip uses for its "elapsed" text; workers are
+// almost always going to look at this on the minute-scale, not
+// second-scale, so 1-Hz would just burn cycles.
+function WorkdaysInProgressPanel({
+  workdays,
+}: {
+  workdays: {
+    id: string;
+    userId: string;
+    displayName: string;
+    startedAt: string;
+    pausedAt: string | null;
+    totalPausedMs: number;
+  }[];
+}) {
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
+  function fmtDur(ms: number): string {
+    const totalMin = Math.max(0, Math.floor(ms / 60_000));
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+  }
+  return (
+    <VStack align="stretch" gap={1} w="full" mt={2} pt={2} borderTopWidth="1px" borderColor="gray.300">
+      <Text fontSize="xs" fontWeight="medium" color="gray.700" textTransform="uppercase">
+        Workdays in progress
+      </Text>
+      {workdays.map((wd) => {
+        const isPaused = !!wd.pausedAt;
+        // Endpoint for the interval:
+        //   - In-progress + not paused → now (still ticking).
+        //   - In-progress + paused → pausedAt (interval is frozen at
+        //     pause; the open pause segment isn't yet in
+        //     totalPausedMs, so we clip the endpoint to avoid
+        //     double-counting).
+        const endMs = isPaused
+          ? new Date(wd.pausedAt!).getTime()
+          : nowMs;
+        const rawMs = endMs - new Date(wd.startedAt).getTime();
+        const activeMs = Math.max(0, rawMs - wd.totalPausedMs);
+        const startedLabel = fmtTimeOpts(wd.startedAt, { hour: "numeric", minute: "2-digit" });
+        return (
+          <HStack
+            key={wd.id}
+            gap={2}
+            fontSize="sm"
+            p={1.5}
+            borderRadius="sm"
+          >
+            {/* Blue = actively on the clock, amber = paused — matches
+                the WorkdayStrip's state theme. */}
+            <Box
+              w="8px"
+              h="8px"
+              borderRadius="full"
+              bg={isPaused ? "yellow.400" : "blue.500"}
+              flexShrink={0}
+              title={isPaused ? "Paused" : "On the clock"}
+            />
+            <Text flex="1" minW={0} truncate color="gray.800">
+              {wd.displayName}
+              <Text as="span" color="gray.500" fontSize="xs" ml={1}>
+                · started {startedLabel}
+              </Text>
+            </Text>
+            <Text fontSize="xs" color="gray.600" whiteSpace="nowrap" fontVariantNumeric="tabular-nums">
+              {fmtDur(activeMs)}{isPaused ? " · paused" : ""}
+            </Text>
+          </HStack>
+        );
+      })}
+    </VStack>
   );
 }
