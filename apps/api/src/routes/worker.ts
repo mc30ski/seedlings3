@@ -752,6 +752,7 @@ export default async function workerRoutes(app: FastifyInstance) {
       equipmentCheckedOut, equipmentReserved,
       inProgressList,
       completedTodayList,
+      workdaysInProgressList,
     ] = await Promise.all([
       prisma.jobOccurrence.count({
         where: {
@@ -986,6 +987,30 @@ export default async function workerRoutes(app: FastifyInstance) {
         orderBy: { completedAt: "desc" }, // most recent completion first
         take: 25,
       }),
+      // Workdays currently on the clock — IN_PROGRESS (endedAt null,
+      // pausedAt null) or PAUSED (endedAt null, pausedAt set) for
+      // today's ET date. Feeds the "Workdays in progress" panel under
+      // the Team Overview banner so an admin can see at a glance which
+      // workers are still on the clock without opening the per-worker
+      // Today's-hourly-pay panel. In subset mode, restricted to the
+      // selected workers.
+      prisma.workerWorkday.findMany({
+        where: {
+          workdayDate: todayStr,
+          endedAt: null,
+          ...(isSubset ? { userId: { in: subsetIds } } : {}),
+        },
+        select: {
+          id: true,
+          userId: true,
+          startedAt: true,
+          pausedAt: true,
+          totalPausedMs: true,
+          user: { select: { displayName: true, email: true } },
+        },
+        orderBy: { startedAt: "asc" },
+        take: 25,
+      }),
     ]);
 
     const todayPotentialAmount = (todayJobs as any[]).reduce((s, o) => s + totalWorkerPayouts(o), 0);
@@ -1105,6 +1130,18 @@ export default async function workerRoutes(app: FastifyInstance) {
           displayName: a.user?.displayName ?? a.user?.email ?? a.userId,
           isClaimer: a.assignedById === a.userId,
         })),
+      })),
+      // Currently-on-the-clock workdays. Each row carries the fields the
+      // Team Overview panel needs to compute a live-ticking active
+      // duration + render a "who's on the clock" list. State is derived
+      // by the UI: pausedAt set → PAUSED, else IN_PROGRESS.
+      workdaysInProgress: (workdaysInProgressList as any[]).map((wd) => ({
+        id: wd.id,
+        userId: wd.userId,
+        displayName: wd.user?.displayName ?? wd.user?.email ?? wd.userId,
+        startedAt: wd.startedAt.toISOString(),
+        pausedAt: wd.pausedAt ? wd.pausedAt.toISOString() : null,
+        totalPausedMs: wd.totalPausedMs,
       })),
     };
   });
