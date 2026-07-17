@@ -3676,6 +3676,13 @@ export default async function workerRoutes(app: FastifyInstance) {
     const projectionRatePct = isContractor ? contractorFeePct : employeeMarginPct;
 
     // Hours — active minutes from completed workdays in the window.
+    // Deliberately workday-only (not augmented by job times) — workers
+    // legitimately do drive time, prep, admin, restock etc. that isn't
+    // on any single job. Payroll pays them for the clocked window. If a
+    // worker's workday is shorter than their jobs (they started/edited
+    // jobs outside the workday), the Workday Review flow is where that
+    // gets fixed — either the workday gets extended, or the job times
+    // get corrected.
     const workdays = await prisma.workerWorkday.findMany({
       where: {
         userId: uid,

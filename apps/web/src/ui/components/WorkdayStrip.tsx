@@ -1449,6 +1449,34 @@ function EndWorkdayDialog({
   // Per-open-session inputs. Keys are the mileage entry id.
   // Only used in the self-service path — for view-as we display a
   // warning without inputs.
+  // Track which open sessions have been canceled inline. Canceling
+  // deletes the session server-side and drops it from `visibleOpen`
+  // below — the End Workday flow then no longer requires an ending
+  // odometer for it. Handles the "picked wrong vehicle, want to cancel
+  // and just end my workday" case without forcing the worker to
+  // out-of-band navigate to the Mileage strip first.
+  const [canceledIds, setCanceledIds] = useState<Set<string>>(() => new Set());
+  const [canceling, setCanceling] = useState<string | null>(null);
+  const visibleOpen = openMileageEntries.filter((e) => !canceledIds.has(e.id));
+  async function cancelMileageInline(entryId: string, vehicleName: string) {
+    if (!window.confirm(
+      `Cancel the ${vehicleName} session? This deletes the session — no miles will be recorded.`,
+    )) return;
+    setCanceling(entryId);
+    try {
+      await apiPost(`/api/me/mileage/${entryId}/cancel`, {});
+      setCanceledIds((prev) => {
+        const next = new Set(prev);
+        next.add(entryId);
+        return next;
+      });
+    } catch (err) {
+      setError(getErrorMessage("Couldn't cancel session.", err));
+    } finally {
+      setCanceling(null);
+    }
+  }
+
   const [mileageInputs, setMileageInputs] = useState<Record<string, { endOdometer: string; notes: string }>>(
     () => {
       const seed: Record<string, { endOdometer: string; notes: string }> = {};
@@ -1459,10 +1487,10 @@ function EndWorkdayDialog({
     },
   );
 
-  const canCloseMileage = !isViewingAs && openMileageEntries.length > 0;
+  const canCloseMileage = !isViewingAs && visibleOpen.length > 0;
   const mileageValid = !canCloseMileage
     ? true
-    : openMileageEntries.every((e) => {
+    : visibleOpen.every((e) => {
         const raw = mileageInputs[e.id]?.endOdometer ?? "";
         if (!/^\d+$/.test(raw.trim())) return false;
         return Number(raw) >= e.startOdometer;
@@ -1483,7 +1511,7 @@ function EndWorkdayDialog({
       // before ending the workday so the worker can retry.
       if (canCloseMileage) {
         const stopCalls = await Promise.allSettled(
-          openMileageEntries.map((e) =>
+          visibleOpen.map((e) =>
             apiPost(`/api/me/mileage/${e.id}/stop`, {
               endOdometer: Number(mileageInputs[e.id]?.endOdometer),
               notes: mileageInputs[e.id]?.notes || null,
@@ -1627,13 +1655,16 @@ function EndWorkdayDialog({
             </Text>
           </Box>
         )}
-        {openMileageEntries.length > 0 && !isViewingAs && (
+        {visibleOpen.length > 0 && !isViewingAs && (
           <Box p={2} bg="teal.50" borderWidth="1px" borderColor="teal.300" borderRadius="md">
             <Text fontSize="xs" color="teal.900" mb={2} fontWeight="semibold">
-              Record ending odometer{openMileageEntries.length === 1 ? "" : "s"}:
+              Record ending odometer{visibleOpen.length === 1 ? "" : "s"}:
+            </Text>
+            <Text fontSize="2xs" color="teal.800" mb={2} fontStyle="italic">
+              Picked the wrong vehicle? Tap "Cancel session" below to delete it — you can then end the workday and start a new mileage session with the right vehicle.
             </Text>
             <VStack align="stretch" gap={2}>
-              {openMileageEntries.map((e) => {
+              {visibleOpen.map((e) => {
                 const state = mileageInputs[e.id] ?? { endOdometer: "", notes: MILEAGE_DEFAULT_NOTE };
                 const num = Number(state.endOdometer);
                 const isValid =
@@ -1711,6 +1742,20 @@ function EndWorkdayDialog({
                         {(num - e.startOdometer).toLocaleString()} mi this session
                       </Text>
                     )}
+                    <HStack justify="flex-end" mt={1}>
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        colorPalette="red"
+                        onClick={() => void cancelMileageInline(e.id, e.vehicleName)}
+                        loading={canceling === e.id}
+                        disabled={saving}
+                        title="Cancel this session — deletes it without recording miles"
+                      >
+                        <X size={12} />
+                        <Text ml={1} fontSize="2xs">Cancel session</Text>
+                      </Button>
+                    </HStack>
                   </Box>
                 );
               })}

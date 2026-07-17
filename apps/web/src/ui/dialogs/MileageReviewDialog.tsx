@@ -24,7 +24,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { CheckCircle2, RotateCcw } from "lucide-react";
+import { CheckCircle2, RotateCcw, Trash2 } from "lucide-react";
 import { apiPatch, apiPost } from "@/src/lib/api";
 import { bizToLocalInputValue, bizParseLocalInputValue } from "@/src/lib/lib";
 import {
@@ -192,6 +192,28 @@ function EntryCard({
     }
   }
 
+  async function reject() {
+    // Destructive — confirm before hard-deleting the row. The server
+    // refuses to reject already-approved entries, so this button is
+    // hidden for those (unapprove first).
+    if (!window.confirm(
+      `Reject and delete this ${entry.vehicleName ?? "mileage"} session? This can't be undone.`,
+    )) return;
+    setBusy(true);
+    try {
+      await apiPost(`/api/super/mileage/${entry.id}/reject`);
+      publishInlineMessage({ type: "SUCCESS", text: "Entry rejected." });
+      onChanged();
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Reject failed.", err),
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <Box
       borderWidth="1px"
@@ -268,7 +290,24 @@ function EntryCard({
             placeholder="Using vehicle to service lawns"
           />
         </Field>
-        <HStack gap={2} justify="flex-end" mt={1}>
+        <HStack gap={2} justify="flex-end" mt={1} wrap="wrap">
+          {/* Reject — hard-delete the row. Only shown for un-approved
+              entries (open OR pending); already-approved rows must be
+              Unapproved first so we don't silently erase an approval
+              record. Confirms before delete. Ghost-red so it's
+              recoverable-looking but not accidentally-tap prominent. */}
+          {!isApproved && (
+            <Button
+              size="xs"
+              variant="ghost"
+              colorPalette="red"
+              onClick={reject}
+              loading={busy}
+              title="Reject and delete this session — for wrong-vehicle rows, tester noise, etc."
+            >
+              <Trash2 size={12} /> <Text ml={1}>Reject</Text>
+            </Button>
+          )}
           {/* Unapprove — only shown for already-approved entries.
               Mirrors the workday ReviewDialog's ghost-red button in
               the same slot. */}

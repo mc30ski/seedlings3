@@ -2754,6 +2754,16 @@ Respond ONLY with valid JSON in this exact format:
   //     they had this we showed 0h all day for anyone still clocked in,
   //     which contradicted the "start your workday when you start your
   //     first job" prompt.
+  //
+  //   Workday-only is intentional. Workers do drive time, prep,
+  //   admin, restock, etc. that isn't on any single job — payroll
+  //   pays them for their clocked window, not just on-task minutes.
+  //   When a worker's clocked window ends up shorter than their job
+  //   times (they started/edited jobs outside the workday), the
+  //   Workday Review flow is where that gets fixed — either the
+  //   workday gets extended, or the job times get corrected. This
+  //   panel deliberately reflects the current record so the mismatch
+  //   is visible enough to prompt a review.
   //   - Net pay: sum of PaymentSplit.amount for occurrences whose
   //     completedAt lands today. GP-flagged splits excluded (their
   //     cash already flowed on the wage-path Gusto run) and
@@ -8004,6 +8014,15 @@ Respond ONLY with valid JSON in this exact format:
   app.post("/super/mileage/:id/unapprove", superGuard, async (req: any) => {
     const { unapproveEntry } = await import("../services/mileage");
     return unapproveEntry(req.params.id);
+  });
+
+  // Reject / discard a pending mileage entry. Hard-deletes the row.
+  // Super-only; refuses already-approved entries (unapprove first).
+  // Feeds the Review dialog's Reject button for "this session shouldn't
+  // count" — wrong vehicle left open, tester noise, etc.
+  app.post("/super/mileage/:id/reject", superGuard, async (req: any) => {
+    const { rejectEntry } = await import("../services/mileage");
+    return rejectEntry(req.params.id);
   });
 
   // Pending-mileage summary — parallel to /super/workdays/pending-summary.
