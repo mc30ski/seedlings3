@@ -4715,14 +4715,15 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   // reads the same on Home and on the Jobs timeline.
                   // (Was green; flipped as part of the "money = green,
                   // time/work = blue" semantic split — see globals.css
-                  // + WorkdayStrip state-color comment.) Peek rows get
-                  // the MUTED variant (half alpha, tighter spread) so
-                  // a teammate's active job whispers "in progress"
-                  // instead of competing with the operator's own rows.
+                  // + WorkdayStrip state-color comment.) Peek rows use
+                  // the SAME full-intensity pulse as own-rows so the
+                  // Worker Jobs timeline matches the Admin Jobs
+                  // timeline visually — the earlier muted variant made
+                  // teammates' active jobs feel de-prioritized when
+                  // the whole point of peek is "see what everyone's
+                  // doing right now."
                   ...(isInProgress ? {
-                    animation: isPeek
-                      ? "seedlings-pulse-blue-muted 2.5s ease-in-out infinite"
-                      : "seedlings-pulse-blue 2.5s ease-in-out infinite",
+                    animation: "seedlings-pulse-blue 2.5s ease-in-out infinite",
                   } : {}),
                 }}
                 onClick={cardMode === "ultra" ? (e: any) => {

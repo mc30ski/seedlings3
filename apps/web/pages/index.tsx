@@ -591,7 +591,13 @@ export default function HomePage() {
       content: <ClientFeedTab />,
     },
     {
-      value: "services",
+      // Value is `client-services`, NOT `services` — see the docstring
+      // on `ClientTabs` in types.ts. Same value as the Admin Work
+      // Services tab would cause BreadcrumbNav to render a
+      // cross-role chip pairing the two, which is wrong: they're
+      // unrelated tabs (client's subscribed services vs. operator's
+      // job-recipe manager).
+      value: "client-services",
       label: "Services",
       icon: FiClipboard,
       content: <ClientServicesTab />,
