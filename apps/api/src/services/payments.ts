@@ -1941,6 +1941,11 @@ export const payments: ServicesPayments = {
           paymentRequestSentAt: null,
           paymentRequestToken: randomBytes(16).toString("hex"),
           paymentRequestTokenCreatedAt: new Date(),
+          // Rejection restarts the request cycle from zero — clear the
+          // preserved first-sent time and the resend counter (see
+          // cancelPaymentRequest for the same reset).
+          paymentRequestFirstSentAt: null,
+          paymentRequestResendCount: 0,
         },
       });
       await writeAudit(tx, AUDIT.PAYMENT.REJECTED, currentUserId, {

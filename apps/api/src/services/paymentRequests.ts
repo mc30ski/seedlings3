@@ -357,10 +357,22 @@ export const paymentRequests = {
     // Stamp the "request sent" timestamp so the job card flips to
     // the in-flight state and Accept Payment is hidden. Without this,
     // the worker could still record cash directly + create a race.
-    await prisma.jobOccurrence.update({
-      where: { id: occurrenceId },
-      data: { paymentRequestSentAt: new Date() },
-    });
+    // paymentRequestFirstSentAt is only stamped on the first send — a
+    // conditional update covers both cases in one write (COALESCE
+    // preserves the existing value on subsequent sends). The counter
+    // increments only when we've sent before.
+    const now = new Date();
+    await prisma.$executeRaw`
+      UPDATE "JobOccurrence"
+      SET "paymentRequestSentAt" = ${now},
+          "paymentRequestFirstSentAt" = COALESCE("paymentRequestFirstSentAt", ${now}),
+          "paymentRequestResendCount" =
+            CASE WHEN "paymentRequestFirstSentAt" IS NULL
+              THEN 0
+              ELSE "paymentRequestResendCount" + 1
+            END
+      WHERE "id" = ${occurrenceId}
+    `;
 
     await writeAudit(prisma, AUDIT.PAYMENT.REQUEST_SENT, currentUserId, {
       occurrenceId,
@@ -408,10 +420,21 @@ export const paymentRequests = {
       }
       // Stamp the "request sent" timestamp so the job card flips to
       // in-flight state (hides Accept Payment, exposes Re-send + Cancel).
-      await tx.jobOccurrence.update({
-        where: { id: occurrenceId },
-        data: { paymentRequestSentAt: new Date() },
-      });
+      // Same first-sent / resend-count semantics as sendForOccurrence —
+      // first tap seeds paymentRequestFirstSentAt; subsequent taps
+      // bump the counter. See that method for the rationale.
+      const now = new Date();
+      await tx.$executeRaw`
+        UPDATE "JobOccurrence"
+        SET "paymentRequestSentAt" = ${now},
+            "paymentRequestFirstSentAt" = COALESCE("paymentRequestFirstSentAt", ${now}),
+            "paymentRequestResendCount" =
+              CASE WHEN "paymentRequestFirstSentAt" IS NULL
+                THEN 0
+                ELSE "paymentRequestResendCount" + 1
+              END
+        WHERE "id" = ${occurrenceId}
+      `;
       const amount = await computeAmountDue(occurrenceId);
       await writeAudit(tx, AUDIT.PAYMENT.REQUEST_SENT, currentUserId, {
         occurrenceId,
@@ -455,6 +478,11 @@ export const paymentRequests = {
           paymentRequestToken: newTok,
           paymentRequestTokenCreatedAt: new Date(),
           paymentRequestSentAt: null,
+          // Cancel is a "start the request cycle over" action — clear
+          // the historical first-sent time and reset the resend counter
+          // so the next send begins a fresh cycle.
+          paymentRequestFirstSentAt: null,
+          paymentRequestResendCount: 0,
         },
       });
       await writeAudit(tx, AUDIT.PAYMENT.UPDATED, currentUserId, {
@@ -615,6 +643,8 @@ export const paymentRequests = {
         startAt: true,
         price: true,
         paymentRequestSentAt: true,
+        paymentRequestFirstSentAt: true,
+        paymentRequestResendCount: true,
         paymentRequestToken: true,
         paymentRequestTokenCreatedAt: true,
         addons: { select: { price: true } },
@@ -659,6 +689,11 @@ export const paymentRequests = {
     return occs.map((o) => {
       const requestedAt = o.paymentRequestSentAt!;
       const daysSinceRequested = Math.floor((now - requestedAt.getTime()) / dayMs);
+      // First-sent history: for legacy rows the backfill seeded this from
+      // sentAt, so it's non-null in practice for anything in this list.
+      // The nullish fallback keeps the type honest for any edge case.
+      const firstSentAt = o.paymentRequestFirstSentAt ?? requestedAt;
+      const daysSinceFirstSent = Math.floor((now - firstSentAt.getTime()) / dayMs);
       const linkExpiresAt = o.paymentRequestTokenCreatedAt
         ? new Date(o.paymentRequestTokenCreatedAt.getTime() + expiryHours * 3_600_000)
         : null;
@@ -670,6 +705,9 @@ export const paymentRequests = {
         startAt: o.startAt,
         requestedAt,
         daysSinceRequested,
+        firstSentAt,
+        daysSinceFirstSent,
+        resendCount: o.paymentRequestResendCount ?? 0,
         stale: daysSinceRequested >= staleDays,
         linkExpiresAt,
         linkExpired: linkExpiresAt ? linkExpiresAt.getTime() < now : false,

@@ -990,11 +990,14 @@ export default function ReconcileTab() {
                   −{fmtUSD(report.fixedAssetPurchases)}
                 </Text>
               </HStack>
+              {/* Deeper shade than the NOI row above — signals this is
+                  the final bottom-line cash figure for the period,
+                  distinct from the GAAP NOI it derives from. */}
               <HStack
                 justify="space-between"
                 px={3}
                 py={2.5}
-                bg={report.operatingCashAfterCapEx < 0 ? "red.50" : "green.50"}
+                bg={report.operatingCashAfterCapEx < 0 ? "red.100" : "green.100"}
                 borderTopWidth="2px"
                 borderColor="gray.300"
               >
@@ -1002,7 +1005,7 @@ export default function ReconcileTab() {
                 <Text
                   fontSize="md"
                   fontWeight="bold"
-                  color={report.operatingCashAfterCapEx < 0 ? "red.600" : "green.700"}
+                  color={report.operatingCashAfterCapEx < 0 ? "red.700" : "green.800"}
                 >
                   {fmtUSD(report.operatingCashAfterCapEx)}
                 </Text>

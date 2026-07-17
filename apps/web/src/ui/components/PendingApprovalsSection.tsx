@@ -141,9 +141,18 @@ export default function PendingApprovalsSection() {
     overrideAmount?: number,
     feeOverride?: number,
     overrideMethod?: string,
+    /** Optional note override from the AdjustPaymentDialog. `null` means
+     *  "clear the existing note"; `undefined` means "leave the note
+     *  untouched." Same tri-state semantic the backend uses. */
+    overrideNote?: string | null,
   ) {
     try {
-      const body: { amountPaid?: number; processorFeeAmount?: number; method?: string } = {};
+      const body: {
+        amountPaid?: number;
+        processorFeeAmount?: number;
+        method?: string;
+        note?: string | null;
+      } = {};
       if (overrideAmount !== undefined) body.amountPaid = overrideAmount;
       if (feeOverride !== undefined) body.processorFeeAmount = feeOverride;
       // Only send method when it actually changed from the originally-
@@ -152,6 +161,7 @@ export default function PendingApprovalsSection() {
       // snapshot on change — sending the unchanged method would still
       // pass but trips needless validation.
       if (overrideMethod && overrideMethod !== row.method) body.method = overrideMethod;
+      if (overrideNote !== undefined) body.note = overrideNote;
       // Server returns the next-occurrence outcome on the approval path
       // (a populated `nextOccurrence` when the cycle advanced, or
       // `nextOccurrenceSkipReason` when it didn't). composePaymentMessage
@@ -378,11 +388,11 @@ export default function PendingApprovalsSection() {
 
       <AdjustPaymentDialog
         row={adjustingRow}
-        onConfirm={({ amountOverride, methodOverride, feeOverride }) => {
+        onConfirm={({ amountOverride, methodOverride, feeOverride, noteOverride }) => {
           const r = adjustingRow;
           setAdjustingRow(null);
           if (!r) return;
-          void approve(r, amountOverride, feeOverride, methodOverride);
+          void approve(r, amountOverride, feeOverride, methodOverride, noteOverride);
         }}
         onCancel={() => setAdjustingRow(null)}
       />
