@@ -1138,11 +1138,16 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   }, [pricingHints, addonTag]);
   const [photoPromptOccId, setPhotoPromptOccId] = useState<string | null>(null);
   // "You just finished your last job — time to end your workday" prompt.
-  // Set right after a successful completion when the worker's remaining
-  // scheduled-count hits 0 and they're still on the clock. Chained after
-  // the photo prompt so we don't stack two modals at once. Workers who
-  // forget to end their workday drove this — the passive green pulse on
-  // the strip wasn't enough of a nudge on its own.
+  // Set inside the photo-prompt dismissal handler so it can never race
+  // ahead of the photo prompt (an earlier attempt used a
+  // `!photoPromptOccId` gate on the same render tick, but React 18's
+  // async-boundary batching meant the End Workday could win the tick
+  // when the workday check resolved fast — users saw the End Workday
+  // nudge on the last job WITHOUT the photo prompt appearing first).
+  // `pendingEndWorkdayNudge` remembers "we owe the worker the nudge
+  // when they close the photo prompt". Set at completion time;
+  // consumed on photo-prompt close.
+  const [pendingEndWorkdayNudge, setPendingEndWorkdayNudge] = useState(false);
   const [promptEndWorkday, setPromptEndWorkday] = useState(false);
 
   // Close quick action menu on outside click
@@ -1755,6 +1760,20 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     applyHighlight(occId, anchor || null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Photo-prompt dismissal handler. Every dismissal path (Done button
+  // and backdrop/esc via onOpenChange) goes through here so the
+  // pending-end-workday-nudge check happens in exactly one place —
+  // guarantees the End Workday dialog can only appear AFTER the photo
+  // prompt has closed. See `pendingEndWorkdayNudge` for background.
+  function closePhotoPrompt() {
+    setPhotoPromptOccId(null);
+    void load(false);
+    if (pendingEndWorkdayNudge) {
+      setPendingEndWorkdayNudge(false);
+      setPromptEndWorkday(true);
+    }
+  }
 
   async function refreshOverdueCount() {
     try {
@@ -8570,6 +8589,19 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 // clock. Impersonated admins are skipped — we only want
                 // to nudge the worker themselves. Failures are silent —
                 // it's a hint, not a hard requirement.
+                //
+                // We set `pendingEndWorkdayNudge` here — NOT
+                // `promptEndWorkday` directly. The photo prompt's
+                // dismissal handler is the only place that flips
+                // `promptEndWorkday` on, so the End Workday nudge
+                // cannot show while the photo prompt is (or should be)
+                // still open. Prior version set `promptEndWorkday`
+                // straight from here and relied on a
+                // `!photoPromptOccId` gate on the End Workday dialog's
+                // `open` prop — that race-lost when React 18 batched
+                // the two setStates onto the same async tick and users
+                // saw the End Workday dialog without a preceding photo
+                // prompt on the last job.
                 if (!forAdmin) {
                   try {
                     const wd = await apiGet<{
@@ -8581,7 +8613,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     const remaining = wd?.todayJobs?.remaining ?? 0;
                     const onClock = state === "IN_PROGRESS" || state === "PAUSED";
                     if (onClock && scheduled > 0 && remaining === 0) {
-                      setPromptEndWorkday(true);
+                      setPendingEndWorkdayNudge(true);
                     }
                   } catch { /* non-fatal — nudge is best-effort */ }
                 }
@@ -8594,8 +8626,21 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         />
       )}
 
-      {/* Photo prompt after job completion */}
-      <Dialog.Root open={!!photoPromptOccId} onOpenChange={(e) => { if (!e.open) setPhotoPromptOccId(null); }}>
+      {/* Photo prompt after job completion. Both dismissal paths
+          (Done button + backdrop/esc-triggered onOpenChange with
+          e.open=false) go through `closePhotoPrompt` so the
+          pending-end-workday-nudge check happens in exactly one place.
+          If the just-completed job was the worker's last one AND
+          they're still on the clock (flag was set in the completion
+          callback), we flip `promptEndWorkday` on here — after the
+          photo prompt is fully dismissed. Guarantees the photo prompt
+          always shows first. */}
+      <Dialog.Root
+        open={!!photoPromptOccId}
+        onOpenChange={(e) => {
+          if (!e.open) closePhotoPrompt();
+        }}
+      >
         <Portal>
           <Dialog.Backdrop />
           <Dialog.Positioner>
@@ -8617,7 +8662,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               </Dialog.Body>
               <Dialog.Footer>
                 <HStack justify="flex-end" w="full">
-                  <Button colorPalette="blue" onClick={() => { setPhotoPromptOccId(null); void load(false); }}>
+                  <Button colorPalette="blue" onClick={closePhotoPrompt}>
                     Done
                   </Button>
                 </HStack>
@@ -8629,15 +8674,15 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
       {/* End-of-day nudge — appears after the photo prompt closes when
           the just-completed job was the worker's last scheduled one AND
-          they're still on the clock. Gated on `!photoPromptOccId` so we
-          never stack two dialogs. Info-only prompt: dismissing leaves
-          the workday state unchanged. Tapping "End workday now" scrolls
-          to the top so the WorkdayStrip (with its green pulse + End
-          button) is in view — actually ending the day goes through
-          WorkdayStrip's normal End dialog (equipment / mileage checks
-          etc.), which we deliberately don't try to short-circuit here. */}
+          they're still on the clock. `promptEndWorkday` is now only
+          flipped on inside `closePhotoPrompt` (i.e. AFTER the photo
+          prompt actually dismisses), so this dialog can never render
+          alongside the photo prompt. Info-only: dismissing leaves the
+          workday state unchanged. Tapping "End workday now" dispatches
+          to WorkdayStrip's normal End dialog (equipment / mileage
+          checks etc.), which we deliberately don't reimplement here. */}
       <Dialog.Root
-        open={promptEndWorkday && !photoPromptOccId}
+        open={promptEndWorkday}
         onOpenChange={(e) => { if (!e.open) setPromptEndWorkday(false); }}
       >
         <Portal>

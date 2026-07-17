@@ -8,7 +8,6 @@ import {
   Button,
   HStack,
   Image,
-  SimpleGrid,
   Spinner,
   Text,
   VStack,
@@ -226,7 +225,24 @@ export default function OccurrencePhotos({ occurrenceId, isAdmin, canUpload, pho
       {expanded && loading && <Spinner size="sm" />}
 
       {expanded && photos.length > 0 && (
-        <SimpleGrid columns={{ base: 3, md: 4 }} gap={2} w="full" maxH="200px" overflowY="auto" overflowX="hidden">
+        // Fixed 110px square cells in a flex-wrap. Previously used
+        // SimpleGrid + aspectRatio + maxH="200px" — the max-height
+        // constraint on the container broke aspect ratio on wider
+        // viewports (grid cells wanted a taller height than the max
+        // allowed, so max-height won and cells became wider than tall
+        // — especially bad on wrapped rows). Fixed square dimensions
+        // sidestep the interaction entirely: cells look identical
+        // whether they're on row 1 or row 5. maxH lifted to 440px so
+        // 4 rows of thumbnails are visible before internal scroll.
+        <Box
+          display="flex"
+          flexWrap="wrap"
+          gap={2}
+          w="full"
+          maxH="440px"
+          overflowY="auto"
+          overflowX="hidden"
+        >
           {photos.map((p) => (
             <Box
               key={p.id}
@@ -234,8 +250,11 @@ export default function OccurrencePhotos({ occurrenceId, isAdmin, canUpload, pho
               borderRadius="md"
               overflow="hidden"
               cursor="pointer"
+              flexShrink={0}
+              w="110px"
+              h="110px"
               onClick={(e) => { e.stopPropagation(); setViewPhoto(p); }}
-              css={{ aspectRatio: "1", "& img": { objectFit: "cover", width: "100%", height: "100%" } }}
+              css={{ "& img": { objectFit: "cover", width: "100%", height: "100%", display: "block" } }}
             >
               <Image
                 src={p.url}
@@ -248,7 +267,7 @@ export default function OccurrencePhotos({ occurrenceId, isAdmin, canUpload, pho
               />
             </Box>
           ))}
-        </SimpleGrid>
+        </Box>
       )}
 
       {/* Full-size photo viewer — dark overlay */}

@@ -437,6 +437,22 @@ export async function unapproveEntry(entryId: string) {
   });
 }
 
+/** Super-side reject — hard-delete an unapproved entry. Used from the
+ *  Review dialog when the operator decides a session is bogus (worker
+ *  picked the wrong vehicle and forgot to cancel, junk row, etc.). We
+ *  refuse to delete already-approved entries so an approval audit
+ *  can't be silently erased; unapprove first, then reject. Symmetric
+ *  with the worker's own cancelEntry — same underlying delete, just
+ *  gated for the super's use on both open AND closed rows. */
+export async function rejectEntry(entryId: string) {
+  const entry = await prisma.mileageEntry.findUnique({ where: { id: entryId } });
+  if (!entry) throw new Error("Mileage entry not found.");
+  if (entry.approvedAt) {
+    throw new Error("Entry is approved — Unapprove it first before rejecting.");
+  }
+  return prisma.mileageEntry.delete({ where: { id: entry.id } });
+}
+
 /** Aggregate per-vehicle totals for a date range. Powers the admin
  *  yearly-rollup view. */
 export async function vehicleTotalsForRange(

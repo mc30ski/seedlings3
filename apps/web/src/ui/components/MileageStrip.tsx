@@ -221,6 +221,7 @@ export default function MileageStrip({
             key={entry.id}
             entry={entry}
             onStop={() => setStopDialog(entry)}
+            onCanceled={() => void load()}
           />
         ))}
 
@@ -282,9 +283,11 @@ export default function MileageStrip({
 function OpenSessionCard({
   entry,
   onStop,
+  onCanceled,
 }: {
   entry: OpenEntry;
   onStop: () => void;
+  onCanceled: () => void;
 }) {
   // Live elapsed timer — updates every 30s so the strip doesn't
   // burn cycles for a value that's ~minute-granularity anyway.
@@ -294,6 +297,32 @@ function OpenSessionCard({
     return () => window.clearInterval(t);
   }, []);
   const elapsed = formatElapsed(now - new Date(entry.startedAt).getTime());
+  const [canceling, setCanceling] = useState(false);
+  async function cancel() {
+    // Confirm — cancel deletes the row entirely (backend /cancel
+    // endpoint hard-deletes since no odometer was ever recorded). No
+    // undo, so a two-tap confirm is worth the extra step. Users hit
+    // this most often after picking the wrong vehicle at Start.
+    if (!window.confirm(
+      `Cancel the ${entry.vehicle.displayName} session? This deletes the session — no miles will be recorded.`,
+    )) return;
+    setCanceling(true);
+    try {
+      await apiPost(`/api/me/mileage/${entry.id}/cancel`, {});
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: `Canceled ${entry.vehicle.displayName} session.`,
+      });
+      onCanceled();
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Couldn't cancel session.", err),
+      });
+    } finally {
+      setCanceling(false);
+    }
+  }
   return (
     <HStack
       justify="space-between"
@@ -303,8 +332,10 @@ function OpenSessionCard({
       borderColor="orange.200"
       bg="orange.50"
       borderRadius="md"
+      gap={2}
+      wrap="wrap"
     >
-      <VStack align="start" gap={0}>
+      <VStack align="start" gap={0} flex={1} minW={0}>
         <HStack gap={2}>
           <Badge colorPalette="orange" variant="solid" fontSize="2xs">Driving</Badge>
           <Text fontSize="sm" fontWeight="semibold">{entry.vehicle.displayName}</Text>
@@ -313,10 +344,23 @@ function OpenSessionCard({
           Started at {entry.startOdometer.toLocaleString()} mi · {elapsed}
         </Text>
       </VStack>
-      <Button size="sm" variant="outline" colorPalette="orange" onClick={onStop}>
-        <StopCircle size={14} />
-        <Text ml={1}>Stop</Text>
-      </Button>
+      <HStack gap={1} flexShrink={0}>
+        <Button
+          size="xs"
+          variant="ghost"
+          colorPalette="red"
+          onClick={cancel}
+          loading={canceling}
+          title="Cancel this session (deletes it — use if you picked the wrong vehicle)"
+        >
+          <X size={12} />
+          <Text ml={1}>Cancel</Text>
+        </Button>
+        <Button size="sm" variant="outline" colorPalette="orange" onClick={onStop}>
+          <StopCircle size={14} />
+          <Text ml={1}>Stop</Text>
+        </Button>
+      </HStack>
     </HStack>
   );
 }
@@ -445,6 +489,28 @@ function StopDialog({
     }
   }
 
+  async function cancel() {
+    if (!window.confirm(
+      `Cancel the ${entry.vehicle.displayName} session? This deletes the session — no miles will be recorded.`,
+    )) return;
+    setBusy(true);
+    try {
+      await apiPost(`/api/me/mileage/${entry.id}/cancel`, {});
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: `Canceled ${entry.vehicle.displayName} session.`,
+      });
+      onStopped();
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Couldn't cancel session.", err),
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <Dialog.Root open onOpenChange={(e) => { if (!e.open) onClose(); }} placement="center">
       <Portal>
@@ -493,11 +559,17 @@ function StopDialog({
               </VStack>
             </Dialog.Body>
             <Dialog.Footer>
-              <HStack gap={2} w="full" justify="flex-end">
-                <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
-                <Button colorPalette="orange" onClick={submit} loading={busy} disabled={!valid}>
-                  Stop &amp; save
+              <HStack gap={2} w="full" justify="space-between">
+                <Button variant="ghost" colorPalette="red" onClick={cancel} disabled={busy} title="Cancel this session — deletes it without recording miles">
+                  <X size={12} />
+                  <Text ml={1}>Cancel session</Text>
                 </Button>
+                <HStack gap={2}>
+                  <Button variant="ghost" onClick={onClose} disabled={busy}>Close</Button>
+                  <Button colorPalette="orange" onClick={submit} loading={busy} disabled={!valid}>
+                    Stop &amp; save
+                  </Button>
+                </HStack>
               </HStack>
             </Dialog.Footer>
             <Dialog.CloseTrigger asChild>
@@ -628,6 +700,29 @@ function CompactMileageDialog({
       publishInlineMessage({
         type: "ERROR",
         text: getErrorMessage("Couldn't stop session.", err),
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancelStop() {
+    if (step.kind !== "stop") return;
+    if (!window.confirm(
+      `Cancel the ${step.entry.vehicle.displayName} session? This deletes the session — no miles will be recorded.`,
+    )) return;
+    setBusy(true);
+    try {
+      await apiPost(`/api/me/mileage/${step.entry.id}/cancel`, {});
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: `Canceled ${step.entry.vehicle.displayName} session.`,
+      });
+      onDone();
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Couldn't cancel session.", err),
       });
     } finally {
       setBusy(false);
@@ -777,14 +872,26 @@ function CompactMileageDialog({
                       </Button>
                     )}
                     {step.kind === "stop" && (
-                      <Button
-                        colorPalette="orange"
-                        onClick={submitStop}
-                        loading={busy}
-                        disabled={!stopValid}
-                      >
-                        Stop &amp; save
-                      </Button>
+                      <>
+                        <Button
+                          variant="ghost"
+                          colorPalette="red"
+                          onClick={cancelStop}
+                          disabled={busy}
+                          title="Cancel this session — deletes it without recording miles"
+                        >
+                          <X size={12} />
+                          <Text ml={1}>Cancel session</Text>
+                        </Button>
+                        <Button
+                          colorPalette="orange"
+                          onClick={submitStop}
+                          loading={busy}
+                          disabled={!stopValid}
+                        >
+                          Stop &amp; save
+                        </Button>
+                      </>
                     )}
                   </>
                 )}
