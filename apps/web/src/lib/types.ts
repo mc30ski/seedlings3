@@ -28,7 +28,15 @@ export type AdminTabs =
 
 export type SuperTabs = "unclaimed" | "audit" | "settings" | "profile" | "ledger" | "supplies" | "pricing" | "documents" | "timeline" | "payments" | "users" | "reconcile" | "workdays" | "compliance";
 
-export type ClientTabs = "my-jobs" | "public" | "services";
+// Client "Services" uses `client-services` (not just `services`) so
+// BreadcrumbNav's cross-role chip logic (matches inner-tab values
+// across outer roles) doesn't pair it with the Admin Work "Services"
+// tab. Those two tabs share the label but are unrelated: Admin Work →
+// Services is the operator's service-catalog / job-recipe manager;
+// Client → Services is the client's list of services they subscribe
+// to. Wrong-way cross-navigation between them was reported as
+// confusing.
+export type ClientTabs = "my-jobs" | "public" | "client-services";
 
 export type PreviewTabs = "routes";
 

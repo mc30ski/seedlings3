@@ -32,14 +32,6 @@
   50% { box-shadow: 0 0 0 8px rgba(59, 130, 246, 0); }
 }
 
-/* Muted blue pulse — same rhythm as seedlings-pulse-blue but with
-   half the alpha + tighter spread. Applied to "peek" IN_PROGRESS job
-   cards (someone else is actively working, but the card is view-only
-   so it shouldn't visually compete with the operator's own rows). */
-@keyframes seedlings-pulse-blue-muted {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.20); }
-  50% { box-shadow: 0 0 0 5px rgba(59, 130, 246, 0); }
-}
 
 /* Cyan pulse — Worker Home "Earning Power" card, top-performer tier. */
 @keyframes seedlings-pulse-cyan {
