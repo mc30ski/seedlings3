@@ -801,6 +801,16 @@ async function seedDatabase() {
   // Past returned checkout
   await prisma.checkout.create({ data: { equipmentId: chainsawEquip.id, userId: CONTRACTOR_ID, reservedAt: daysAgo(14), checkedOutAt: daysAgo(14), releasedAt: daysAgo(12), rentalDays: 2, rentalCost: 10.0 } });
 
+  // Today activity — checked out this morning + released this afternoon.
+  // Populates the Super Work Home dashboard "today" view (windowCheckouts,
+  // windowIncome, distinctUsed) so the operator sees real numbers on
+  // landing. Times are anchored to NOW so we don't depend on a specific
+  // wall-clock hour for the seed run.
+  const todayCheckoutStart = new Date(NOW.getTime() - 5 * 3_600_000); // 5h ago
+  const todayCheckoutReturn = new Date(NOW.getTime() - 2 * 3_600_000); // 2h ago
+  await prisma.checkout.create({ data: { equipmentId: mower2.id, userId: ADMIN_WORKER_ID, reservedAt: todayCheckoutStart, checkedOutAt: todayCheckoutStart } });
+  await prisma.checkout.create({ data: { equipmentId: trimmer1.id, userId: CONTRACTOR_ID, reservedAt: todayCheckoutStart, checkedOutAt: todayCheckoutStart, releasedAt: todayCheckoutReturn, rentalDays: 1, rentalCost: 5.0 } });
+
   // ── Jobs (18) ─────────────────────────────────────────────────────────────
   console.log("  Creating jobs...");
 
@@ -1234,6 +1244,71 @@ async function seedDatabase() {
   await occ({ jobId: martinezBiweekly.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(0, 9), endAt: addMinutes(daysFromNow(0, 9), 40), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 55.0, estimatedMinutes: 40 });
   await occ({ jobId: churchWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(0, 14), endAt: addMinutes(daysFromNow(0, 14), 90), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 200.0, estimatedMinutes: 90 });
 
+  // ─── COMPLETED TODAY ─────────────────────────────────────────────────────
+  // Fixtures for the Super Work Home dashboard "today" landing view.
+  // Anchors the completedAt / startedAt to NOW-minus-hours so these rows
+  // are always in the past regardless of when the seed script runs
+  // (avoids the "seed ran at 3am so 8am today is in the future" edge
+  // case that the daysFromNow helper hits). Payments for these get
+  // appended to the paymentData list below.
+  const todayHoursAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000);
+  const cTodayHarrington = await occ(
+    {
+      jobId: harringtonMow.id, kind: "SINGLE_ADDRESS",
+      startAt: todayHoursAgo(6), endAt: todayHoursAgo(5),
+      status: "CLOSED", workflow: "STANDARD",
+      jobTags: '["MOW","TRIM","BLOW"]',
+      price: 85.0, estimatedMinutes: 45,
+      startedAt: todayHoursAgo(6),
+      completedAt: todayHoursAgo(5),
+    },
+    [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
+  );
+  const cTodayThompson = await occ(
+    {
+      jobId: thompsonMow.id, kind: "SINGLE_ADDRESS",
+      startAt: todayHoursAgo(5), endAt: todayHoursAgo(4),
+      status: "CLOSED", workflow: "STANDARD",
+      jobTags: '["MOW","TRIM","EDGE","BLOW"]',
+      price: 125.0, estimatedMinutes: 60,
+      startedAt: todayHoursAgo(5),
+      completedAt: todayHoursAgo(4),
+    },
+    [{ userId: CONTRACTOR_ID, role: "primary" }, { userId: TRAINEE_ID, role: "helper" }],
+  );
+  const cTodaySunrise = await occ(
+    {
+      jobId: sunriseWeekly.id, kind: "ENTIRE_SITE",
+      startAt: todayHoursAgo(8), endAt: todayHoursAgo(5),
+      status: "CLOSED", workflow: "STANDARD",
+      jobTags: '["MOW","TRIM","EDGE","BLOW"]',
+      price: 350.0, estimatedMinutes: 180,
+      startedAt: todayHoursAgo(8),
+      completedAt: todayHoursAgo(5),
+    },
+    [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }, { userId: CONTRACTOR_ID, role: "helper" }],
+  );
+  // Awaiting client payment today — a completed job whose invoice was
+  // sent this morning but the client hasn't paid yet. Feeds the
+  // "awaiting client payment" pipeline + the "Requested Xh ago" chip.
+  const cTodayPatelPending = await occ(
+    {
+      jobId: patelMow.id, kind: "SINGLE_ADDRESS",
+      startAt: todayHoursAgo(3), endAt: todayHoursAgo(2),
+      status: "PENDING_PAYMENT", workflow: "STANDARD",
+      jobTags: '["MOW"]',
+      price: 45.0, estimatedMinutes: 25,
+      startedAt: todayHoursAgo(3),
+      completedAt: todayHoursAgo(2),
+      paymentRequestToken: "seed-today-patel-" + Math.random().toString(36).slice(2, 10),
+      paymentRequestTokenCreatedAt: todayHoursAgo(2),
+      paymentRequestSentAt: todayHoursAgo(2),
+      paymentRequestFirstSentAt: todayHoursAgo(2),
+      paymentRequestResendCount: 0,
+    },
+    [{ userId: EMPLOYEE_ID, role: "primary" }],
+  );
+
   // ── End-of-day nudge fixture ────────────────────────────────────────
   // Michael is the ONLY non-observer assignee on this today occurrence
   // so completing it drops his `remaining` count from 1 → 0 and fires
@@ -1463,6 +1538,12 @@ async function seedDatabase() {
     { occId: cRiverBend7.id, amount: 400, method: "CHECK", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 250 }, { userId: CONTRACTOR_ID, amount: 150 }], createdAt: daysAgoRandom(6) },
     { occId: cChurch7.id, amount: 200, method: "CHECK", collector: EMPLOYEE_ID, splits: [{ userId: EMPLOYEE_ID, amount: 200 }], createdAt: daysAgoRandom(5) },
     { occId: cKim14.id, amount: 50, method: "ZELLE", collector: EMPLOYEE_ID, splits: [{ userId: EMPLOYEE_ID, amount: 50 }], createdAt: daysAgoRandom(10) },
+    // Today's completed jobs — populate the SuperWorkHomeTab "today"
+    // view with real revenue + team pay data. createdAt is NOW-minus-a-
+    // few-hours (guaranteed in the past regardless of when seed runs).
+    { occId: cTodayHarrington.id, amount: 85, method: "VENMO", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 50 }, { userId: EMPLOYEE_ID, amount: 35 }], createdAt: new Date(NOW.getTime() - 4 * 3_600_000) },
+    { occId: cTodayThompson.id, amount: 125, method: "CASH", collector: CONTRACTOR_ID, splits: [{ userId: CONTRACTOR_ID, amount: 85 }, { userId: TRAINEE_ID, amount: 40 }], createdAt: new Date(NOW.getTime() - 3 * 3_600_000) },
+    { occId: cTodaySunrise.id, amount: 350, method: "CHECK", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 150 }, { userId: EMPLOYEE_ID, amount: 100 }, { userId: CONTRACTOR_ID, amount: 100 }], createdAt: new Date(NOW.getTime() - 3 * 3_600_000) },
   ];
 
   for (const p of paymentData) {
