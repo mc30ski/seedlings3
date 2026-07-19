@@ -27,7 +27,7 @@ import { apiGet } from "@/src/lib/api";
 import { fmtDateOpts, fmtTimeOpts } from "@/src/lib/lib";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 
-type BreakdownJob = {
+export type BreakdownJob = {
   id: string;
   completedAt: string | null;
   label: string;
@@ -43,19 +43,19 @@ type BreakdownJob = {
   feeAmount: number;
   projected: number;
 };
-type BreakdownWorkday = {
+export type BreakdownWorkday = {
   startedAt: string;
   endedAt: string;
   pausedMs: number;
   activeMs: number;
 };
-type HourlyPayDetails = {
+export type HourlyPayDetails = {
   ratePct: number;
   rateLabel: string;
   jobs: BreakdownJob[];
   workdays: BreakdownWorkday[];
 };
-type HourlyPay = {
+export type HourlyPay = {
   dollars: number;
   hours: number;
   jobs: number;
@@ -82,7 +82,7 @@ type Props = {
 // "Showing …" tooltip prefix ("last 3 days", "last week", etc.). The
 // yesterday-case reads standalone since "last yesterday" is broken
 // English — see buttonPeriodLabel below.
-const WORKER_PERIODS: Array<{ days: number; label: string }> = [
+export const WORKER_PERIODS: Array<{ days: number; label: string }> = [
   { days: 1, label: "yesterday" },
   { days: 3, label: "3 days" },
   { days: 7, label: "week" },
@@ -90,24 +90,24 @@ const WORKER_PERIODS: Array<{ days: number; label: string }> = [
   { days: 21, label: "3 weeks" },
   { days: 30, label: "month" },
 ];
-const ADMIN_EXTRA_PERIODS: Array<{ days: number; label: string }> = [
+export const ADMIN_EXTRA_PERIODS: Array<{ days: number; label: string }> = [
   { days: 60, label: "2 months" },
   { days: 90, label: "3 months" },
   { days: 180, label: "6 months" },
   { days: 365, label: "year" },
 ];
-const ADMIN_PERIODS = [...WORKER_PERIODS, ...ADMIN_EXTRA_PERIODS];
-const DEFAULT_DAYS = 30;
+export const ADMIN_PERIODS = [...WORKER_PERIODS, ...ADMIN_EXTRA_PERIODS];
+export const DEFAULT_DAYS = 30;
 
 // Buttons render as "last {label}" for periods like "3 days", "week",
 // "month", "year". The special case is "yesterday" — reads by itself
 // because "last yesterday" is broken English. Same helper is used by
 // the tooltip so the two never drift.
-function buttonPeriodLabel(label: string): string {
+export function buttonPeriodLabel(label: string): string {
   return label === "yesterday" ? "yesterday" : `last ${label}`;
 }
 
-type Tier = {
+export type Tier = {
   min: number;
   label: string;
   tagline: string;
@@ -123,7 +123,7 @@ type Tier = {
 // Ranges tuned to lawn-care market realities in North Carolina: min
 // wage is $7.25, entry-level $10-15, skilled $20-30, top solo
 // operator $40+, owner or specialist $60+. Tune when we learn more.
-const TIERS: Tier[] = [
+export const TIERS: Tier[] = [
   {
     min: 0,
     label: "Building up",
@@ -192,19 +192,19 @@ const TIERS: Tier[] = [
   },
 ];
 
-function tierFor(rate: number): Tier {
+export function tierFor(rate: number): Tier {
   for (let i = TIERS.length - 1; i >= 0; i--) {
     if (rate >= TIERS[i].min) return TIERS[i];
   }
   return TIERS[0];
 }
 
-function fmtHours(n: number): string {
+export function fmtHours(n: number): string {
   if (n >= 1000) return `${Math.round(n).toLocaleString()}h`;
   return `${n.toFixed(1)}h`;
 }
 
-function fmtUSD(n: number): string {
+export function fmtUSD(n: number): string {
   return n.toLocaleString("en-US", {
     style: "currency",
     currency: "USD",

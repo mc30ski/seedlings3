@@ -26,16 +26,20 @@ import { bizDateKey } from "@/src/lib/lib";
  *  sides stay in lockstep when the operator hasn't overridden it. */
 export const DEFAULT_PAYMENT_REQUEST_EXPIRY_HOURS = 72;
 
-// Terminal statuses — an occurrence in any of these is done and cannot
-// be Overdue, regardless of dates. Same set every existing overdue
-// filter uses.
-const DONE_STATUSES = new Set([
+// Statuses that are never Overdue regardless of dates. Two flavors:
+//   1. Terminal/done — the work is finished or explicitly closed out.
+//   2. Held on purpose — STREAM_PAUSED means the operator paused the
+//      recurring stream (typically because the client asked us to hold
+//      off). Nothing about that is "overdue"; we're honoring a hold.
+const NEVER_OVERDUE_STATUSES = new Set([
   "COMPLETED",
   "CLOSED",
   "ARCHIVED",
   "ACCEPTED",
   "REJECTED",
   "CANCELED",
+  // Held-on-purpose — see comment above.
+  "STREAM_PAUSED",
 ]);
 
 /** Minimal shape needed to evaluate the predicate. Every consumer of
@@ -78,7 +82,7 @@ export function isOccurrenceOverdue(
   // Announcements aren't work items — never Overdue.
   if (occ.workflow === "ANNOUNCEMENT") return false;
   if (!occ.startAt) return false;
-  if (DONE_STATUSES.has(occ.status)) return false;
+  if (NEVER_OVERDUE_STATUSES.has(occ.status)) return false;
   const startKey = bizDateKey(occ.startAt);
   if (startKey >= opts.todayKey) return false;
   // PENDING_PAYMENT gets the pay-link-expired grace period. All other
