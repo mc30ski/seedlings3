@@ -17,6 +17,7 @@ import WorkdayStrip from "@/src/ui/components/WorkdayStrip";
 import MileageStrip from "@/src/ui/components/MileageStrip";
 import TodayHourlyPayPanel from "@/src/ui/components/TodayHourlyPayPanel";
 import WorkerHourlyPayCard from "@/src/ui/components/WorkerHourlyPayCard";
+import AllWorkersHourlyPayCards from "@/src/ui/components/AllWorkersHourlyPayCards";
 import type { Me } from "@/src/lib/types";
 
 type Props = {
@@ -1185,6 +1186,13 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
             viewAsDisplayName={viewAsDisplayName ?? null}
           />
         )}
+
+        {/* Aggregate / no-worker-selected variant of the pay-per-hour
+            card — one mini card per approved worker, side by side. Only
+            renders when we're actually in "all workers" mode (no
+            view-as, no subset). Subset views can rely on the existing
+            TodayHourlyPayPanel below. */}
+        {isAggregate && !isSubset && <AllWorkersHourlyPayCards />}
 
         {/* Today's hourly pay — admin-only, per-worker snapshot table.
             Sits BELOW the Approximate pay-per-hour card so the admin
