@@ -46,6 +46,15 @@ type WorkerCardRow = WorkerListItem & {
   loading: boolean;
 };
 
+/** Sort key for the top→bottom order. Higher = closer to the top.
+ *  Loading rows and rows with no logged hours sink to the bottom so
+ *  the top slots reflect actual earners. */
+function sortRank(row: WorkerCardRow): number {
+  if (row.loading || !row.data) return -Infinity;
+  if (row.data.hours <= 0) return -1;
+  return row.data.ratePerHour;
+}
+
 export default function AllWorkersHourlyPayCards() {
   const [days, setDays] = useState<number>(DEFAULT_DAYS);
   const [workers, setWorkers] = useState<WorkerListItem[] | null>(null);
@@ -125,18 +134,24 @@ export default function AllWorkersHourlyPayCards() {
   const periodDisplay = buttonPeriodLabel(period.label);
   const cycleTitle = `Showing ${periodDisplay} — click to change period`;
 
-  // Rows in a stable displayName order — matches the /admin/users
-  // response (already sorted server-side); recompute defensively.
+  // Rows sorted highest → lowest $/hr, so the top earners lead. Workers
+  // still loading OR with no hours sink to the bottom (they'd otherwise
+  // slot in at rate=0 and shove the earners down as data lands). Ties
+  // break by displayName for a stable order.
   const rows: WorkerCardRow[] = useMemo(() => {
     const list = workers ?? [];
     return list
-      .slice()
-      .sort((a, b) => (a.displayName ?? "").localeCompare(b.displayName ?? ""))
       .map((w) => ({
         ...w,
         data: payByUser[w.id] ?? null,
         loading: payLoading && !(w.id in payByUser),
-      }));
+      }))
+      .sort((a, b) => {
+        const aRank = sortRank(a);
+        const bRank = sortRank(b);
+        if (aRank !== bRank) return bRank - aRank;
+        return (a.displayName ?? "").localeCompare(b.displayName ?? "");
+      });
   }, [workers, payByUser, payLoading]);
 
   if (workers === null) {
