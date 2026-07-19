@@ -55,8 +55,17 @@ function sortRank(row: WorkerCardRow): number {
   return row.data.ratePerHour;
 }
 
-export default function AllWorkersHourlyPayCards() {
-  const [days, setDays] = useState<number>(DEFAULT_DAYS);
+type Props = {
+  /** When set, the outer surface controls the period and the internal
+   *  cycle button is hidden. Used by SuperWorkHomeTab so a single
+   *  dashboard-wide period button drives every section at once. */
+  daysOverride?: number;
+};
+
+export default function AllWorkersHourlyPayCards({ daysOverride }: Props = {}) {
+  const [internalDays, setInternalDays] = useState<number>(DEFAULT_DAYS);
+  const days = daysOverride ?? internalDays;
+  const externallyControlled = daysOverride != null;
   const [workers, setWorkers] = useState<WorkerListItem[] | null>(null);
   // Per-worker HourlyPay results keyed by userId. Held separately from
   // the workers array so the workers list load isn't tied to N per-user
@@ -128,7 +137,7 @@ export default function AllWorkersHourlyPayCards() {
   function cyclePeriod() {
     const idx = ADMIN_PERIODS.findIndex((p) => p.days === days);
     const next = ADMIN_PERIODS[(idx + 1) % ADMIN_PERIODS.length];
-    setDays(next.days);
+    setInternalDays(next.days);
   }
 
   const periodDisplay = buttonPeriodLabel(period.label);
@@ -183,18 +192,20 @@ export default function AllWorkersHourlyPayCards() {
             Approximate pay per hour · team
           </Text>
           <HStack gap={1}>
-            <Button
-              size="xs"
-              variant="outline"
-              px="2"
-              onClick={cyclePeriod}
-              title={cycleTitle}
-            >
-              {periodDisplay}
-              <Box as="span" ml={1} display="inline-flex" opacity={0.7}>
-                <ChevronsUpDown size={11} />
-              </Box>
-            </Button>
+            {!externallyControlled && (
+              <Button
+                size="xs"
+                variant="outline"
+                px="2"
+                onClick={cyclePeriod}
+                title={cycleTitle}
+              >
+                {periodDisplay}
+                <Box as="span" ml={1} display="inline-flex" opacity={0.7}>
+                  <ChevronsUpDown size={11} />
+                </Box>
+              </Button>
+            )}
             <IconButton
               aria-label="Refresh"
               size="xs"

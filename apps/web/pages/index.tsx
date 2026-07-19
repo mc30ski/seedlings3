@@ -23,6 +23,7 @@ import ActivityTab from "@/src/ui/tabs/ActivityTab";
 import HistoryTab from "@/src/ui/tabs/HistoryTab";
 import SettingsTab from "@/src/ui/tabs/SettingsTab";
 import SuperUnclaimedTab from "@/src/ui/tabs/SuperUnclaimedTab";
+import SuperWorkHomeTab from "@/src/ui/tabs/SuperWorkHomeTab";
 import WorkdaysTab from "@/src/ui/tabs/WorkdaysTab";
 import AuditTab from "@/src/ui/tabs/AuditTab";
 import BusinessExpensesTab from "@/src/ui/tabs/BusinessExpensesTab";
@@ -150,14 +151,15 @@ export default function HomePage() {
   const [workerInnerTab, setWorkerInnerTab] = usePersistedState<WorkerTabs>("workerTab", "reminders");
   const [workerCategory, setWorkerCategory] = usePersistedState<string>("workerCategory", "Work");
   const [adminCategory, setAdminCategory] = usePersistedState<string>("adminCategory", "Work");
-  const [superCategory, setSuperCategory] = usePersistedState<string>("superCategory", "Records");
-  const [superInnerTab, setSuperInnerTab] = usePersistedState<SuperTabs>("superTab", "unclaimed");
-  // Migration: existing users have "operations" persisted under superTab
-  // from when the Operations tab existed. Redirect them to a real tab
-  // once, silently — otherwise the Super shell tries to render a
-  // non-existent inner tab and shows nothing.
+  const [superCategory, setSuperCategory] = usePersistedState<string>("superCategory", "Work");
+  const [superInnerTab, setSuperInnerTab] = usePersistedState<SuperTabs>("superTab", "home");
+  // Migration: existing users have "operations" or "unclaimed" persisted
+  // under superTab from when those tabs existed / were the default.
+  // Redirect them to the new "home" tab once, silently — otherwise the
+  // Super shell tries to render a non-existent inner tab and shows nothing.
   useEffect(() => {
-    if ((superInnerTab as string) === "operations") setSuperInnerTab("unclaimed");
+    const stale = superInnerTab as string;
+    if (stale === "operations" || stale === "unclaimed") setSuperInnerTab("home");
   }, []);
 
   // Workday-approval badge state — declared up here (before the tab
@@ -1077,6 +1079,20 @@ export default function HomePage() {
       icon: FiShield,
       visible: () => !!isSignedIn && isSuper,
       innerTabs: [
+        {
+          // ── Work ──
+          // Operations-pulse dashboard — money / jobs / equipment /
+          // team / clients rollup for a rolling period ending today.
+          // One period button drives every section. This is where the
+          // Super lands on entering the Super tab; matches the Admin
+          // shell's "Home" landing pattern.
+          value: "home",
+          label: "Home",
+          icon: FiHome,
+          content: wrapWithInlineMessage(<SuperWorkHomeTab />),
+          category: "Work",
+          categoryIcon: FiHome,
+        },
         {
           // Reconcile — accounting-software validation surface. Replaces
           // the old Exports + P&L Report tabs. Renders a QB-style P&L
