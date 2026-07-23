@@ -70,6 +70,13 @@ type SuperWorkdayRow = {
   uiState: "IN_PROGRESS" | "PAUSED" | "COMPLETED" | "APPROVED";
   isOpen: boolean;
   adminWindowOpen: boolean;
+  /** Projected earnings for the worker on THIS workday date. Same
+   *  math the operations dashboard uses; server-computed so the row
+   *  can show a $/hr chip once approved. */
+  netEarnedOnDate: number;
+  /** Effective $/hr for the day. Null when the row had no active
+   *  minutes (still open, or a closed row with zero worked time). */
+  hourlyRateOnDate: number | null;
 };
 
 type DidntWorkUser = {
@@ -934,6 +941,19 @@ function WorkdayRow({
             {fmtDuration(active)} active
             {row.totalPausedMs > 0 && ` · ${fmtDuration(row.totalPausedMs)} paused`}
           </Text>
+          {row.uiState === "APPROVED" && row.hourlyRateOnDate != null && (
+            <Text
+              fontSize="xs"
+              color="green.700"
+              fontWeight="semibold"
+              title={`Projected earnings for this workday date. Same math the Operations dashboard uses.`}
+            >
+              ${row.hourlyRateOnDate.toFixed(2)}/hr
+              <Text as="span" fontSize="2xs" color="fg.muted" fontWeight="normal" ml={1}>
+                · ${row.netEarnedOnDate.toFixed(2)} earned
+              </Text>
+            </Text>
+          )}
           {row.approvedBy && (
             <Text fontSize="2xs" color="fg.muted">
               Approved by {workerLabel(row.approvedBy)} on{" "}
@@ -1395,7 +1415,18 @@ function BulkApproveConfirm({
                   onClick={onConfirm}
                   disabled={!typedOk}
                 >
-                  {sameDay ? `Approve same-day (${count})` : `Approve all ${count}`}
+                  {/* Button count includes BOTH workdays and mileage
+                      bundles so it matches the dialog title. Previously
+                      it showed only the workday count, which read as
+                      "Approve all 2" when a 3rd mileage bundle was
+                      also selected — confusing. */}
+                  {(() => {
+                    const total = count + mileageCount;
+                    const label = `${total} item${total === 1 ? "" : "s"}`;
+                    return sameDay
+                      ? `Approve same-day (${label})`
+                      : `Approve all ${label}`;
+                  })()}
                 </Button>
               </HStack>
             </Dialog.Footer>

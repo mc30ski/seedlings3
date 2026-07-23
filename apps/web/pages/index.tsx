@@ -106,6 +106,7 @@ import {
   FiTag,
   FiRefreshCw,
   FiTruck,
+  FiUserCheck,
 } from "react-icons/fi";
 import { GrUserAdmin } from "react-icons/gr";
 import { AiOutlineTeam } from "react-icons/ai";
@@ -1138,7 +1139,7 @@ export default function HomePage() {
           // gate surfaces (hours + policy signatures) sit side-by-side.
           value: "compliance",
           label: "Compliance",
-          icon: FiClock,
+          icon: FiUserCheck,
           content: wrapWithInlineMessage(<AdminComplianceTab />),
           category: "Records",
           categoryIcon: FiBarChart2,
