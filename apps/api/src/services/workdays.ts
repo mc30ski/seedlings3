@@ -831,6 +831,15 @@ export type SuperWorkdayRow = WorkdaySummary & {
   // True when the admin/super approval window is open for this row's
   // workdayDate. When false the UI disables Review / Approve / Unapprove.
   adminWindowOpen: boolean;
+  // Projected earnings for this worker on this specific workday date.
+  // Same "snapshot → projection → cash fallback" math the operations
+  // dashboard uses, scoped to occurrences with completedAt inside the
+  // day's ET window. Feeds the $/hr chip on approved workday cards.
+  netEarnedOnDate: number;
+  // Effective $/hr for the day = netEarnedOnDate / active-hours.
+  // Null when the worker had no active hours (row is still open with
+  // 0ms active, or a closed row somehow logged zero active minutes).
+  hourlyRateOnDate: number | null;
 };
 
 function deriveUiState(row: WorkerWorkday): SuperWorkdayRow["uiState"] {
@@ -891,14 +900,118 @@ export async function superListWorkdaysForDate(workdayDate: string): Promise<{
     (a.displayName ?? a.email ?? "").localeCompare(b.displayName ?? b.email ?? ""),
   );
 
-  const superRows: SuperWorkdayRow[] = rows.map((r) => ({
-    ...summarize(r),
-    user: r.user,
-    approvedBy: r.approvedBy,
-    uiState: deriveUiState(r),
-    isOpen: r.endedAt == null,
-    adminWindowOpen,
-  }));
+  // Per-worker earnings for THIS specific workday date. Same math the
+  // /admin/workers/earnings-today endpoint runs, but scoped to
+  // `workdayDate`'s ET window so approved-workday cards can display
+  // the operator-facing $/hr the worker earned on that particular day.
+  //
+  //   projected = (price − expenses) × worker_share × (1 − rate%)
+  //
+  // Rate% is the settings-driven contractor fee / employee margin.
+  // Skipped payments are excluded (Super-marked "pretended never
+  // happened"). Observers earn nothing.
+  const dayStart = dayMidnightEt(workdayDate);
+  const dayEnd = dayEndEt(workdayDate);
+  const userIds = rows.map((r) => r.userId);
+  const netByUser = new Map<string, number>();
+  if (userIds.length > 0) {
+    const [{ loadRates }, { computeMyOccurrenceNet }] = await Promise.all([
+      import("./payments"),
+      import("./workerEarnings"),
+    ]);
+    const { contractorFeePercent, employeeMarginPercent } = await loadRates(prisma);
+    const workerTypeById = new Map(rows.map((r) => [r.userId, r.user.workerType]));
+    const rateFor = (uid: string) => {
+      const t = workerTypeById.get(uid);
+      return t === "CONTRACTOR" ? contractorFeePercent : employeeMarginPercent;
+    };
+
+    const completedOccs = await prisma.jobOccurrence.findMany({
+      where: {
+        status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
+        completedAt: { gte: dayStart, lte: dayEnd },
+        assignees: {
+          some: {
+            userId: { in: userIds },
+            OR: [{ role: null }, { role: { not: "observer" } }],
+          },
+        },
+      },
+      select: {
+        price: true,
+        proposalAmount: true,
+        completionSplits: true,
+        assignees: { select: { userId: true, role: true } },
+        addons: { select: { price: true } },
+        expenses: { select: { cost: true } },
+        payment: {
+          select: {
+            confirmed: true,
+            skippedAt: true,
+            writtenOff: true,
+            splits: {
+              where: { guaranteedPayoutPaidAt: null },
+              select: { userId: true, amount: true },
+            },
+          },
+        },
+      },
+    });
+    for (const occ of completedOccs) {
+      if (occ.payment?.skippedAt) continue;
+      for (const a of occ.assignees) {
+        if (a.role === "observer") continue;
+        if (!userIds.includes(a.userId)) continue;
+        const paymentForUser = occ.payment
+          ? {
+              ...occ.payment,
+              splits: occ.payment.splits.filter((s) => s.userId === a.userId),
+            }
+          : null;
+        const net = computeMyOccurrenceNet(
+          {
+            price: occ.price,
+            proposalAmount: occ.proposalAmount,
+            completionSplits: occ.completionSplits,
+            addons: occ.addons,
+            expenses: occ.expenses,
+            assignees: occ.assignees,
+            payment: paymentForUser,
+          },
+          a.userId,
+          rateFor(a.userId),
+        );
+        netByUser.set(a.userId, (netByUser.get(a.userId) ?? 0) + net);
+      }
+    }
+  }
+
+  // Active-ms helper — same math the /me/hourly-pay endpoint and the
+  // WorkdaysTab client use. Open rows fall back to 0 so the rate is
+  // treated as unknown until the worker ends the day.
+  const activeMsFor = (r: (typeof rows)[number]): number => {
+    if (!r.endedAt) return 0;
+    const wallClock = r.endedAt.getTime() - r.startedAt.getTime();
+    return Math.max(0, wallClock - r.totalPausedMs);
+  };
+
+  const superRows: SuperWorkdayRow[] = rows.map((r) => {
+    const netEarnedOnDate = Math.round((netByUser.get(r.userId) ?? 0) * 100) / 100;
+    const ms = activeMsFor(r);
+    const hours = ms / 3_600_000;
+    const hourlyRateOnDate =
+      hours > 0 ? Math.round((netEarnedOnDate / hours) * 100) / 100 : null;
+    return {
+      ...summarize(r),
+      user: r.user,
+      approvedBy: r.approvedBy,
+      uiState: deriveUiState(r),
+      isOpen: r.endedAt == null,
+      adminWindowOpen,
+      netEarnedOnDate,
+      hourlyRateOnDate,
+    };
+  });
   superRows.sort((a, b) =>
     (a.user.displayName ?? a.user.email ?? "").localeCompare(b.user.displayName ?? b.user.email ?? ""),
   );
@@ -1047,6 +1160,12 @@ export async function superEditWorkdayTimes(
     uiState: deriveUiState(updated),
     isOpen: updated.endedAt == null,
     adminWindowOpen: true,
+    // Earnings-for-this-date is stubbed on single-row mutation returns —
+    // the client refreshes /super/workdays/by-date after every write, so
+    // the real numbers land within one render. Avoids paying for the
+    // per-day occurrence query on every edit / approve / unapprove call.
+    netEarnedOnDate: 0,
+    hourlyRateOnDate: null,
   };
   // (Unused, but kept for symmetry with read paths.) Suppress lint if
   // `isStillOpen` is reported unused — it's referenced by the audit
@@ -1096,6 +1215,8 @@ export async function superApproveWorkday(
       uiState: deriveUiState(fresh!),
       isOpen: false,
       adminWindowOpen: true,
+      netEarnedOnDate: 0,
+      hourlyRateOnDate: null,
     };
   }
 
@@ -1127,6 +1248,8 @@ export async function superApproveWorkday(
     uiState: deriveUiState(updated),
     isOpen: false,
     adminWindowOpen: true,
+    netEarnedOnDate: 0,
+    hourlyRateOnDate: null,
   };
 }
 
@@ -1169,6 +1292,8 @@ export async function superUnapproveWorkday(
     uiState: deriveUiState(updated),
     isOpen: false,
     adminWindowOpen: true,
+    netEarnedOnDate: 0,
+    hourlyRateOnDate: null,
   };
 }
 
@@ -1300,6 +1425,8 @@ export async function superCreateWorkday(
     uiState: deriveUiState(created),
     isOpen: created.endedAt == null,
     adminWindowOpen: windowOpen,
+    netEarnedOnDate: 0,
+    hourlyRateOnDate: null,
   };
 }
 
