@@ -24,7 +24,8 @@
 
 import { describe, it, expect } from "vitest";
 import type { WorkerType } from "@prisma/client";
-import { computeBreakdown, reconcileApproval, type PromisedRow } from "./payments";
+import { computeBreakdown, computeNextOccurrenceStart, reconcileApproval, type PromisedRow } from "./payments";
+import { etFormatDate, etHourMinute, etToday } from "../lib/dates";
 
 // Default rates the seed uses (and the production-default settings).
 // Tests that need other rates override explicitly so the chosen rate is
@@ -346,4 +347,115 @@ describe("Property-based — no negative payouts ever", () => {
       }
     });
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// computeNextOccurrenceStart — recurring-cycle math + "no past scheduling"
+// snap. Locks these invariants:
+//   1. NON-past cycle date → returns naive-math values UNCHANGED (byte
+//      -for-byte identical to the pre-helper code path). Any drift here
+//      changes production behavior for the 99% healthy path.
+//   2. Past cycle date → snaps startAt to today's ET calendar day at
+//      the ORIGINAL time-of-day, preserves the startAt→endAt duration,
+//      sets snappedForward=true.
+//   3. "Today" boundary uses ET calendar day comparison, not wall-clock
+//      hour — an occurrence scheduled for today at 8am when it's now
+//      3pm is NOT snapped (still today's calendar day).
+// ─────────────────────────────────────────────────────────────────────────
+
+describe("computeNextOccurrenceStart — recurring cycle + past-guard", () => {
+  it("future cycle date: returns naive math unchanged, snappedForward=false", () => {
+    // Base = tomorrow 8am ET; freq = 7 → nextStart = ~8 days from now.
+    // Any future cycle date must pass through untouched.
+    const base = new Date();
+    base.setDate(base.getDate() + 1);
+    base.setHours(8, 0, 0, 0);
+    const baseEnd = new Date(base.getTime() + 45 * 60_000); // +45 min
+
+    const result = computeNextOccurrenceStart(base, baseEnd, 7);
+
+    expect(result.snappedForward).toBe(false);
+    // Naive expectation: base + 7 days on the JS Date. Compare using the
+    // same setDate math the production code produced pre-helper.
+    const naive = new Date(base);
+    naive.setDate(naive.getDate() + 7);
+    const naiveEnd = new Date(baseEnd);
+    naiveEnd.setDate(naiveEnd.getDate() + 7);
+    expect(result.startAt.getTime()).toBe(naive.getTime());
+    expect(result.endAt?.getTime()).toBe(naiveEnd.getTime());
+  });
+
+  it("cycle date lands on today: NOT snapped (today is not the past)", () => {
+    // Base = today − 7 days at 8am ET. Freq = 7. Naive nextStart = today
+    // at 8am ET. Even if the wall clock is past 8am, we should NOT snap
+    // because "today" is still today's ET calendar day.
+    const [y, m, d] = etToday().split("-").map(Number);
+    const todayAt8amET = new Date(Date.UTC(y, m - 1, d, 12)); // 8am ET ≈ 12pm UTC (EDT)
+    const baseSeven = new Date(todayAt8amET);
+    baseSeven.setDate(baseSeven.getDate() - 7);
+
+    const result = computeNextOccurrenceStart(baseSeven, null, 7);
+
+    expect(result.snappedForward).toBe(false);
+    // ET calendar day of the returned startAt should match today.
+    expect(etFormatDate(result.startAt)).toBe(etToday());
+  });
+
+  it("cycle date is yesterday: snaps to today, preserves time-of-day", () => {
+    // Base = 8 days ago at 8am ET, freq = 7 → naive lands yesterday 8am.
+    // Must snap to today 8am ET (same wall clock).
+    const [y, m, d] = etToday().split("-").map(Number);
+    const eightDaysAgo = new Date(Date.UTC(y, m - 1, d - 8, 12)); // 8am ET
+    const originalHM = etHourMinute(eightDaysAgo);
+
+    const result = computeNextOccurrenceStart(eightDaysAgo, null, 7);
+
+    expect(result.snappedForward).toBe(true);
+    expect(etFormatDate(result.startAt)).toBe(etToday());
+    // Time-of-day preserved on the ET wall clock.
+    expect(etHourMinute(result.startAt)).toBe(originalHM);
+  });
+
+  it("cycle date is a month ago: snaps to today, preserves duration", () => {
+    // Base = 45 days ago at 8am ET, freq = 7 → naive lands 38 days ago.
+    // 90-min duration must be preserved exactly through the snap.
+    const [y, m, d] = etToday().split("-").map(Number);
+    const base = new Date(Date.UTC(y, m - 1, d - 45, 12)); // 8am ET
+    const baseEnd = new Date(base.getTime() + 90 * 60_000); // 9:30am ET
+
+    const result = computeNextOccurrenceStart(base, baseEnd, 7);
+
+    expect(result.snappedForward).toBe(true);
+    expect(etFormatDate(result.startAt)).toBe(etToday());
+    expect(result.endAt).not.toBeNull();
+    // Duration exact — 90 minutes to the millisecond.
+    expect(result.endAt!.getTime() - result.startAt.getTime()).toBe(90 * 60_000);
+  });
+
+  it("null endAt is preserved on both non-past and past paths", () => {
+    // Regression: a source occurrence without an endAt (rare but legal)
+    // must produce a next occurrence also without an endAt on BOTH
+    // paths. Prior naive code returned null; helper must too.
+    const [y, m, d] = etToday().split("-").map(Number);
+    const futureBase = new Date(Date.UTC(y, m - 1, d + 3, 12));
+    const pastBase = new Date(Date.UTC(y, m - 1, d - 30, 12));
+
+    expect(computeNextOccurrenceStart(futureBase, null, 7).endAt).toBeNull();
+    expect(computeNextOccurrenceStart(pastBase, null, 7).endAt).toBeNull();
+  });
+
+  it("null baseStartAt: falls back to now + freq (matches pre-helper behavior)", () => {
+    // Original code: `const baseDate = fullOcc.startAt ? new Date(fullOcc.startAt) : new Date();`
+    // Helper must preserve the same fallback. Result should be freq days
+    // from now, not snapped (definitely not in the past).
+    const before = Date.now();
+    const result = computeNextOccurrenceStart(null, null, 7);
+    const after = Date.now();
+
+    expect(result.snappedForward).toBe(false);
+    const expectedMin = before + 7 * 86_400_000 - 5_000; // -5s tolerance
+    const expectedMax = after + 7 * 86_400_000 + 5_000;
+    expect(result.startAt.getTime()).toBeGreaterThanOrEqual(expectedMin);
+    expect(result.startAt.getTime()).toBeLessThanOrEqual(expectedMax);
+  });
 });

@@ -3,7 +3,7 @@ import { prisma } from "../db/prisma";
 import { JobOccurrenceStatus, type WorkerType } from "@prisma/client";
 import { ServiceError } from "../lib/errors";
 import type { ServicesPayments } from "../types/services";
-import { etMidnight, etEndOfDay, etFormatDate } from "../lib/dates";
+import { etMidnight, etEndOfDay, etFormatDate, etToday, etInstantFromParts, etHourMinute } from "../lib/dates";
 import { writeAudit } from "../lib/auditLogger";
 import { AUDIT } from "../lib/auditActions";
 import { generateLedgerId } from "../lib/ledgerId";
@@ -190,6 +190,60 @@ export async function fetchAdvanceFlagsByUser(
 function maxDate(a: Date | undefined | null, b: Date): Date {
   if (!a) return b;
   return a.getTime() >= b.getTime() ? a : b;
+}
+
+/**
+ * Compute the next repeating occurrence's start/end times, with a
+ * "no scheduling in the past" guarantee.
+ *
+ * Cycle math: original startAt/endAt + freq days, preserving the
+ * source occurrence's time-of-day. Used by every path that spawns
+ * the next recurring occurrence off a completed one (approve, force-
+ * create).
+ *
+ * If the naive cycle date has already lapsed — typical when a
+ * PENDING_PAYMENT sat unpaid for longer than one frequency period,
+ * then the client finally paid — snap the entire pair forward so the
+ * next occurrence lands on today at the SAME time-of-day, preserving
+ * the startAt→endAt duration. The `snappedForward` flag propagates
+ * up to the toast so the operator sees an explicit "scheduled for
+ * today because the recurring date had already lapsed" note.
+ *
+ * DST-safe: the today-snap reconstructs the ET wall-clock via
+ * etInstantFromParts, so a cycle that crosses a DST boundary still
+ * lands at 8:00 AM ET on the snapped day (not 7:00 or 9:00). The
+ * naive-cycle path uses setDate; payments.ts is on the exemption
+ * list for that rule since the calling context already tolerates
+ * DST edges (admin can nudge the resulting date manually).
+ */
+export function computeNextOccurrenceStart(
+  baseStartAt: Date | null | undefined,
+  baseEndAt: Date | null | undefined,
+  freq: number,
+): { startAt: Date; endAt: Date | null; snappedForward: boolean } {
+  const base = baseStartAt ? new Date(baseStartAt) : new Date();
+  const nextStart = new Date(base);
+  nextStart.setDate(nextStart.getDate() + freq); // date-handling-allow: recurring-cycle
+  const nextEnd = baseEndAt ? new Date(baseEndAt) : null;
+  if (nextEnd) nextEnd.setDate(nextEnd.getDate() + freq); // date-handling-allow: recurring-cycle
+
+  const todayKey = etToday();
+  const nextStartKey = etFormatDate(nextStart);
+  if (nextStartKey >= todayKey) {
+    return { startAt: nextStart, endAt: nextEnd, snappedForward: false };
+  }
+
+  // Reconstruct today's version of the same time-of-day, then shift
+  // endAt by the SAME delta as startAt so the duration is exact even
+  // across DST edges (naive shift would drift by ±1h).
+  const timeOfDay = etHourMinute(nextStart); // "HH:MM" in ET
+  const snappedStart = etInstantFromParts(todayKey, timeOfDay);
+  let snappedEnd: Date | null = null;
+  if (nextEnd) {
+    const durationMs = nextEnd.getTime() - nextStart.getTime();
+    snappedEnd = new Date(snappedStart.getTime() + durationMs);
+  }
+  return { startAt: snappedStart, endAt: snappedEnd, snappedForward: true };
 }
 
 // Canonical per-worker breakdown for a given collected amount + expenses.
@@ -835,11 +889,8 @@ export const payments: ServicesPayments = {
     const effectiveFreq = fullOcc.frequencyDays ?? fullOcc.job.frequencyDays;
     if (!effectiveFreq) throw new ServiceError("NO_FREQUENCY", "No frequency set on job or occurrence.", 400);
 
-    const baseDate = fullOcc.startAt ? new Date(fullOcc.startAt) : new Date();
-    const nextStart = new Date(baseDate);
-    nextStart.setDate(nextStart.getDate() + effectiveFreq);
-    const nextEnd = fullOcc.endAt ? new Date(fullOcc.endAt) : null;
-    if (nextEnd) nextEnd.setDate(nextEnd.getDate() + effectiveFreq);
+    const { startAt: nextStart, endAt: nextEnd, snappedForward } =
+      computeNextOccurrenceStart(fullOcc.startAt, fullOcc.endAt, effectiveFreq);
 
     return prisma.$transaction(async (tx) => {
       const nextOccurrence = await tx.jobOccurrence.create({
@@ -902,7 +953,7 @@ export const payments: ServicesPayments = {
         });
       }
 
-      return { ok: true, nextOccurrence };
+      return { ok: true, nextOccurrence, nextOccurrenceSnappedForward: snappedForward };
     });
   },
 
@@ -1730,6 +1781,11 @@ export const payments: ServicesPayments = {
 
       let nextOccurrence: any = null;
       let nextOccurrenceSkipReason: string | null = null;
+      // True when the naive cycle date landed in the past and we
+      // snapped forward to today. Threaded into the API response so
+      // the approve toast can call it out — the operator should know
+      // the new occurrence isn't on the usual cadence.
+      let nextOccurrenceSnappedForward = false;
       const effectiveFreq = fullOcc?.frequencyDays ?? fullOcc?.job?.frequencyDays;
       if (!fullOcc || !fullOcc.job) {
         nextOccurrenceSkipReason = "occurrence_or_job_not_found";
@@ -1757,11 +1813,9 @@ export const payments: ServicesPayments = {
         fullOcc.workflow !== "ONE_OFF"
       ) {
         const freq = effectiveFreq;
-        const baseDate = fullOcc.startAt ? new Date(fullOcc.startAt) : new Date();
-        const nextStart = new Date(baseDate);
-        nextStart.setDate(nextStart.getDate() + freq);
-        const nextEnd = fullOcc.endAt ? new Date(fullOcc.endAt) : null;
-        if (nextEnd) nextEnd.setDate(nextEnd.getDate() + freq);
+        const { startAt: nextStart, endAt: nextEnd, snappedForward } =
+          computeNextOccurrenceStart(fullOcc.startAt, fullOcc.endAt, freq);
+        nextOccurrenceSnappedForward = snappedForward;
 
         const isAdminOnly = !!fullOcc.isAdminOnly;
 
@@ -1909,7 +1963,12 @@ export const payments: ServicesPayments = {
         });
       }
 
-      return { ...payment, nextOccurrence, nextOccurrenceSkipReason };
+      return {
+        ...payment,
+        nextOccurrence,
+        nextOccurrenceSkipReason,
+        nextOccurrenceSnappedForward,
+      };
     });
   },
 
