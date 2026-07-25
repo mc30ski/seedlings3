@@ -9,6 +9,12 @@ import { fmtDate } from "@/src/lib/lib";
 export type PaymentActionResult = {
   nextOccurrence?: { startAt?: string | null } | null;
   nextOccurrenceSkipReason?: string | null;
+  /** True when the naive cycle date (last startAt + frequencyDays)
+   *  had already lapsed and the server snapped the next occurrence
+   *  forward to today. Flags the toast so the operator sees "we
+   *  didn't schedule this in the past" rather than silently starting
+   *  the cycle on a stale date. */
+  nextOccurrenceSnappedForward?: boolean;
 } | null | undefined;
 
 // Verb fragment slotted into the base "Payment {verb}." sentence so
@@ -46,7 +52,17 @@ const SKIP_REASON_TEXT: Record<string, string> = {
 export function formatNextOccurrenceOutcome(result: PaymentActionResult): string | null {
   if (!result) return null;
   if (result.nextOccurrence?.startAt) {
-    return `Next occurrence scheduled for ${fmtDate(result.nextOccurrence.startAt)}.`;
+    const dateStr = fmtDate(result.nextOccurrence.startAt);
+    if (result.nextOccurrenceSnappedForward) {
+      // "Snapped forward" means the cycle date (last startAt + frequency)
+      // had already passed — typically because a PENDING_PAYMENT sat
+      // unpaid for longer than one frequency period. The server pulled
+      // the next occurrence to today at the same time-of-day rather
+      // than scheduling it in the past. Call this out explicitly so
+      // the operator doesn't wonder why the cadence looks off.
+      return `Next occurrence scheduled for ${dateStr} — the usual recurring date had already lapsed, so it was pulled to today.`;
+    }
+    return `Next occurrence scheduled for ${dateStr}.`;
   }
   const reason = result.nextOccurrenceSkipReason;
   if (!reason) return null;
