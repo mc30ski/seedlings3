@@ -5,6 +5,7 @@ import { Badge, Box, Button, Card, HStack, Select, Spinner, Table, Text, VStack,
 import { FiDownload, FiInfo } from "react-icons/fi";
 import { ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
 import { apiGet, apiDownload } from "@/src/lib/api";
+import { usePersistedState } from "@/src/lib/usePersistedState";
 import DateInput from "@/src/ui/components/DateInput";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import {
@@ -56,8 +57,16 @@ type EmployerPayrollTaxComponent = {
   amount: number;
 };
 
+type PnLMode = "accrual" | "cash";
+
 type PnLReport = {
   range: { from: string; to: string };
+  /** Which wage-anchor mode the server built this report with. See
+   *  services/pnlReport.ts for the full explanation — short version:
+   *  "accrual" (default) anchors wages on Payment.confirmedAt for the
+   *  matching principle; "cash" anchors on completedAt to match the
+   *  workdays CSV (the Gusto source of truth). */
+  mode: PnLMode;
   income: { rows: PnLRow[]; total: number };
   cogs: PnLBucket;
   grossProfit: number;
@@ -360,6 +369,13 @@ export default function ReconcileTab() {
   const [end, setEnd] = useState(bizAddDays(thisMondayDefault, 6));
   const [report, setReport] = useState<PnLReport | null>(null);
   const [loading, setLoading] = useState(false);
+  // Wage-anchor mode for the P&L. Default accrual — matches every
+  // historical view of this tab. Persisted so an operator who prefers
+  // cash-basis reconciliation doesn't have to re-toggle every visit.
+  // Every fetch to /pnl-report and /pnl-report/details includes this
+  // as a query param so the server-side computation stays consistent
+  // with the drill-down rows.
+  const [pnlMode, setPnlMode] = usePersistedState<PnLMode>("reconcile_pnlMode", "accrual");
   // Period (worker-side) state — fetched in parallel with the P&L
   // from the same date range. Drives the Period Summary,
   // Reconciliation Targets, and per-worker drill-downs at the bottom
@@ -428,7 +444,7 @@ export default function ReconcileTab() {
     // start the other. Each failure surfaces its own toast — the
     // other side still renders if available. Each handler guards on
     // the request token so a stale response can't clobber the latest.
-    const pnlPromise = apiGet<PnLReport>(`/api/admin/business-expenses/pnl-report?from=${start}&to=${end}`)
+    const pnlPromise = apiGet<PnLReport>(`/api/admin/business-expenses/pnl-report?from=${start}&to=${end}&mode=${pnlMode}`)
       .then((r) => {
         if (token === requestTokenRef.current) setReport(r);
       })
@@ -453,7 +469,7 @@ export default function ReconcileTab() {
         if (token === requestTokenRef.current) setPeriodLoading(false);
       });
     await Promise.all([pnlPromise, periodPromise]);
-  }, [start, end]);
+  }, [start, end, pnlMode]);
 
   useEffect(() => {
     void load();
@@ -471,6 +487,16 @@ export default function ReconcileTab() {
     setExpandedWorkerDays(new Set());
     setExpandedWorkerJobs(new Set());
   }, [start, end]);
+
+  // Mode change → clear ONLY the P&L + its drilldown cache (wages /
+  // employer-tax details would otherwise disagree with the freshly-
+  // reloaded main report). Period/worker sections are wage-anchor-
+  // agnostic; leaving them intact avoids a needless reload flicker.
+  useEffect(() => {
+    setReport(null);
+    setExpanded(new Set());
+    setDetails({});
+  }, [pnlMode]);
 
   async function toggleAccount(qbAccount: string) {
     setExpanded((prev) => {
@@ -503,7 +529,7 @@ export default function ReconcileTab() {
       if (!cached || (typeof cached === "object" && "error" in cached)) {
         setDetails((d) => ({ ...d, [qbAccount]: "loading" }));
         apiGet<PnLDetail>(
-          `/api/admin/business-expenses/pnl-report/details?from=${start}&to=${end}&qbAccount=${encodeURIComponent(qbAccount)}`,
+          `/api/admin/business-expenses/pnl-report/details?from=${start}&to=${end}&qbAccount=${encodeURIComponent(qbAccount)}&mode=${pnlMode}`,
         )
           .then((data) => setDetails((d) => ({ ...d, [qbAccount]: data })))
           .catch((err: any) =>
@@ -865,12 +891,19 @@ export default function ReconcileTab() {
               )}
             </>
           }
-          subtitle="Cash-basis P&L for the selected window. Tap any line to drill into the underlying rows."
+          subtitle="P&L for the selected window. Tap any line to drill into the underlying rows."
           collapsed={isSectionCollapsed("pnl")}
           onToggle={() => toggleSection("pnl")}
         />
         {!isSectionCollapsed("pnl") && (
         <Card.Body>
+          {/* Wage-anchor mode toggle — Accrual (default) vs Cash basis.
+              Only the wage + employer-tax lines actually differ; every
+              other row (income, expenses, fixed assets) is anchored
+              the same way regardless of mode. The blue info panel
+              below explains what the current mode is doing. */}
+          <PnlModeToggle mode={pnlMode} onChange={setPnlMode} />
+          <PnlModeInfo mode={pnlMode} />
           {loading && !report ? (
             <HStack justify="center" py={6}><Spinner /></HStack>
           ) : !report ? (
@@ -1405,6 +1438,90 @@ function CardSectionHeader({
             {collapsed ? <ChevronRight size={18} /> : <ChevronDown size={18} />}
           </Box>
         )}
+      </HStack>
+    </Box>
+  );
+}
+
+/**
+ * Two-segment toggle for the wage-anchor mode. Rendered at the top of
+ * the P&L section. Persisted state lives on the parent so a mode
+ * change re-fetches the P&L payload with the matching ?mode= query.
+ */
+function PnlModeToggle({
+  mode,
+  onChange,
+}: {
+  mode: PnLMode;
+  onChange: (m: PnLMode) => void;
+}) {
+  return (
+    <HStack
+      gap={0}
+      mb={3}
+      borderWidth="1px"
+      borderColor="gray.300"
+      borderRadius="md"
+      overflow="hidden"
+      display="inline-flex"
+      alignSelf="flex-start"
+    >
+      {(["accrual", "cash"] as const).map((m) => {
+        const active = mode === m;
+        return (
+          <Button
+            key={m}
+            size="xs"
+            variant="ghost"
+            onClick={() => onChange(m)}
+            borderRadius="0"
+            bg={active ? "blue.500" : "transparent"}
+            color={active ? "white" : "gray.700"}
+            _hover={{ bg: active ? "blue.600" : "gray.100" }}
+            fontWeight={active ? "semibold" : "normal"}
+            px={4}
+          >
+            {m === "accrual" ? "Accrual" : "Cash basis"}
+          </Button>
+        );
+      })}
+    </HStack>
+  );
+}
+
+/**
+ * Blue informational panel describing the CURRENT wage-anchor mode.
+ * Explains what "accrual" vs "cash" changes on the P&L so the operator
+ * can spot-check their numbers against the workdays CSV / Gusto entry
+ * without wondering why the wage line shifts between modes.
+ */
+function PnlModeInfo({ mode }: { mode: PnLMode }) {
+  return (
+    <Box
+      mb={4}
+      p={3}
+      bg="blue.50"
+      borderWidth="1px"
+      borderColor="blue.200"
+      borderRadius="md"
+    >
+      <HStack gap={2} align="start">
+        <Box color="blue.600" mt={0.5} flexShrink={0}>
+          <FiInfo size={14} />
+        </Box>
+        <VStack align="start" gap={1}>
+          <Text fontSize="xs" fontWeight="semibold" color="blue.900">
+            {mode === "accrual" ? "Accrual mode (default)" : "Cash-basis mode"}
+          </Text>
+          <Text fontSize="xs" color="blue.900">
+            {mode === "accrual"
+              ? "Wages and employer payroll taxes are counted in the week the client's payment lands — matched to the money that came in. Net Operating Income tells you whether the work you got paid for this week actually made money. When a client pays late, the wages for that job show up here, not in the week you actually paid your workers."
+              : "Wages and employer payroll taxes are counted in the week the work was done — the same week you paid your workers on the regular payroll cycle. Use this view to cross-check the wages column against what you keyed into payroll for this period."}
+          </Text>
+          <Text fontSize="2xs" color="blue.700" opacity={0.85}>
+            Only the wages and employer-tax lines change between the two views. Income, other expenses, and equipment purchases stay the same.
+          </Text>
+        </VStack>
       </HStack>
     </Box>
   );
