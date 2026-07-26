@@ -6075,7 +6075,7 @@ Respond ONLY with valid JSON in this exact format:
   });
 
   app.get("/admin/business-expenses/pnl-report", superGuard, async (req: any) => {
-    const q = (req.query || {}) as { from?: string; to?: string };
+    const q = (req.query || {}) as { from?: string; to?: string; mode?: string };
     if (!q.from || !q.to) {
       throw app.httpErrors.badRequest("from and to query params required (YYYY-MM-DD).");
     }
@@ -6085,8 +6085,12 @@ Respond ONLY with valid JSON in this exact format:
     // Business Start Date filter — pre-cutoff data hidden from every view.
     const cutoff = await resolveCutoff(req);
     if (cutoff && cutoff > start) start = cutoff;
+    // Wage-anchor mode. Default (accrual) matches every prior caller;
+    // "cash" swaps wages + employer taxes to work-anchored (completedAt)
+    // to line up with the workdays CSV / Gusto entry.
+    const mode = q.mode === "cash" ? "cash" : "accrual";
     const { buildPnLReport } = await import("../services/pnlReport");
-    return buildPnLReport(start, end, { fromStr: q.from, toStr: q.to });
+    return buildPnLReport(start, end, { fromStr: q.from, toStr: q.to, mode });
   });
 
   // Drill-down rows for a specific qbAccount in the P&L. The Preview tab
@@ -6094,7 +6098,7 @@ Respond ONLY with valid JSON in this exact format:
   // report, plus the qbAccount string that identifies which line to
   // detail. See pnlReportDetails in services/pnlReport.ts.
   app.get("/admin/business-expenses/pnl-report/details", superGuard, async (req: any) => {
-    const q = (req.query || {}) as { from?: string; to?: string; qbAccount?: string };
+    const q = (req.query || {}) as { from?: string; to?: string; qbAccount?: string; mode?: string };
     if (!q.from || !q.to) {
       throw app.httpErrors.badRequest("from and to query params required (YYYY-MM-DD).");
     }
@@ -6106,8 +6110,11 @@ Respond ONLY with valid JSON in this exact format:
     const end = etEndOfDay(q.to);
     const cutoff = await resolveCutoff(req);
     if (cutoff && cutoff > start) start = cutoff;
+    // Mode must match what buildPnLReport was called with, otherwise
+    // wage / tax drilldown rows won't sum to the reported bucket total.
+    const mode = q.mode === "cash" ? "cash" : "accrual";
     const { pnlReportDetails } = await import("../services/pnlReport");
-    return pnlReportDetails(start, end, qbAccount);
+    return pnlReportDetails(start, end, qbAccount, { mode });
   });
 
   // Recurring-expense suggestions. Groups freestanding (non-job, non-supply)

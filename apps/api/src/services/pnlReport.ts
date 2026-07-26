@@ -12,6 +12,7 @@ import {
   expenseAnchorDateWhere,
   effectiveExpenseDate,
 } from "./exports";
+import { computeBreakdown, loadRates, type WorkerInput } from "./payments";
 import {
   breakdownEmployerTaxes,
   loadPayrollTaxEstimates,
@@ -27,6 +28,120 @@ import {
 // against QB knows where the gap will be.
 const ACCOUNT_WAGES_ACCRUED = "Payroll:Wages (accrued)";
 const ACCOUNT_EMPLOYER_PAYROLL_TAXES = "Payroll:Employer payroll taxes (est.)";
+
+/**
+ * Compute the W-2 wage base for a period using the CASH-basis anchor:
+ * jobs whose `completedAt` falls in [start, end], per-worker net =
+ * `promisedPayouts` snapshot (falling back to a runtime `computeBreakdown`
+ * for legacy occurrences). Sums employee + trainee splits ONLY.
+ *
+ * This mirrors the exact math the workdays CSV export uses (which is
+ * the Gusto data source), so the P&L's cash-basis wages line matches
+ * what the operator actually keys into Gusto for a given work period.
+ *
+ * Owner-earnings splits are not part of the snapshot at all (they're
+ * booked as draws), so they don't need explicit exclusion here.
+ */
+async function loadCashBasisWageEvents(
+  start: Date,
+  end: Date,
+): Promise<Array<{ occurrenceId: string; userId: string; net: number; completedAt: Date }>> {
+  const occs = await prisma.jobOccurrence.findMany({
+    where: {
+      completedAt: { gte: start, lte: end },
+      workflow: { in: ["STANDARD", "ONE_OFF"] as any },
+      status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
+    },
+    select: {
+      id: true,
+      completedAt: true,
+      price: true,
+      proposalAmount: true,
+      completionSplits: true,
+      promisedPayouts: true,
+      addons: { select: { price: true } },
+      expenses: { select: { cost: true } },
+      assignees: {
+        // SQL NULL-safety on role (see equipment.ts / exports.ts pattern).
+        where: { OR: [{ role: null }, { role: { not: "observer" } }] },
+        select: {
+          userId: true,
+          user: { select: { workerType: true } },
+        },
+      },
+    },
+  });
+  if (occs.length === 0) return [];
+  const rates = await loadRates(prisma);
+  const events: Array<{ occurrenceId: string; userId: string; net: number; completedAt: Date }> = [];
+  for (const occ of occs) {
+    if (!occ.completedAt) continue;
+    // Employee/trainee assignees only — this line synthesizes ONLY the
+    // W-2 wage base. Contract labor is handled separately via the
+    // accrual path (which is the correct model for 1099 contractors —
+    // they're paid when the client's payment clears).
+    const w2Assignees = occ.assignees.filter((a) => isEmployeeClass(a.user.workerType));
+    if (w2Assignees.length === 0) continue;
+
+    // Snapshot path — locked at completion time. Preserves the exact
+    // wage that would have been keyed into Gusto for the pay period
+    // this workday fell in.
+    const snapshot = (occ as any).promisedPayouts as
+      | Array<{ userId: string; net: number }>
+      | null
+      | undefined;
+    const snapshotByUser = new Map<string, number>(
+      Array.isArray(snapshot)
+        ? snapshot.map((r) => [String(r.userId), Number(r.net) || 0] as [string, number])
+        : [],
+    );
+
+    // Runtime fallback — for legacy occurrences without a snapshot.
+    // Uses the same computeBreakdown math the snapshot itself would
+    // have captured at completion, so the result is identical modulo
+    // any post-completion price/assignee edits.
+    const completionSplits = (occ as any).completionSplits as
+      | Array<{ userId: string; percent: number }>
+      | null
+      | undefined;
+    const splitPctById = new Map<string, number>(
+      Array.isArray(completionSplits)
+        ? completionSplits.map((s) => [s.userId, Number(s.percent) || 0])
+        : [],
+    );
+    const active = occ.assignees;
+    const fallbackPct = active.length > 0 ? 100 / active.length : 0;
+    const workersList: WorkerInput[] = active.map((a) => ({
+      userId: a.userId,
+      splitPercent: splitPctById.get(a.userId) ?? fallbackPct,
+      workerType: a.user.workerType,
+    }));
+    const priceTotal =
+      (occ.price ?? occ.proposalAmount ?? 0) +
+      occ.addons.reduce((s, a) => s + (a.price ?? 0), 0);
+    const expTotal = occ.expenses.reduce((s, e) => s + (e.cost ?? 0), 0);
+    const fallbackBreakdown = computeBreakdown(priceTotal, expTotal, workersList, rates);
+
+    for (const a of w2Assignees) {
+      const snapshotNet = snapshotByUser.get(a.userId);
+      let net: number;
+      if (snapshotNet != null && snapshotNet > 0) {
+        net = snapshotNet;
+      } else {
+        const promisedRow = fallbackBreakdown.find((r) => r.userId === a.userId);
+        if (!promisedRow || promisedRow.net <= 0) continue;
+        net = promisedRow.net;
+      }
+      events.push({
+        occurrenceId: occ.id,
+        userId: a.userId,
+        net,
+        completedAt: occ.completedAt,
+      });
+    }
+  }
+  return events;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // P&L Report — structured Profit & Loss for the in-app P&L Report tab.
@@ -117,6 +232,17 @@ export type EmployerPayrollTaxComponent = {
 
 export type PnLReport = {
   range: { from: string; to: string };
+  /** Which wage-anchor mode this report was built with. "accrual" is
+   *  the default and matches every historical caller — wages are
+   *  anchored on Payment.confirmedAt, matching the revenue they
+   *  earned (accountants' matching principle → NOI signals whether
+   *  the WORK BILLED this period was profitable). "cash" anchors
+   *  wages on JobOccurrence.completedAt, matching the workdays CSV
+   *  export (the Gusto source of truth) — the number the operator
+   *  actually keyed into payroll for the pay period this work fell
+   *  in. Other than the wages + employer-tax lines, both modes are
+   *  identical. */
+  mode: PnLMode;
   income: { rows: PnLRow[]; total: number };
   cogs: PnLBucket;
   grossProfit: number;
@@ -195,11 +321,19 @@ const INCOME_ACCOUNT_SERVICES = "Services";
  * outside the app. This report shows both the GAAP number (for
  * reconciliation) and the cash-reality number (for daily decisions).
  */
+export type PnLMode = "accrual" | "cash";
+
 export async function buildPnLReport(
   start: Date,
   end: Date,
-  options: { fromStr: string; toStr: string },
+  options: { fromStr: string; toStr: string; mode?: PnLMode },
 ): Promise<PnLReport> {
+  // Mode gates ONLY the wage-anchor swap at the bottom of this
+  // function (and the corresponding drilldowns in pnlReportDetails).
+  // Every other query — income, expenses, contract labor, processor
+  // fees, fixed assets — is unchanged across modes. Default is
+  // "accrual" so every existing caller keeps its exact prior behavior.
+  const mode: PnLMode = options.mode ?? "accrual";
   const [
     payments,
     equipmentRentals,
@@ -435,6 +569,10 @@ export async function buildPnLReport(
   // payroll check. Owner-earnings splits were filtered out at the query
   // level; they don't belong in either bucket (owner takes draws).
   let contractLaborTotal = 0;
+  // Accrual wage total — ALWAYS computed. This is byte-for-byte the
+  // same loop that shipped before the mode toggle; the value drives
+  // the wages/tax lines when mode==="accrual" (default) and is left
+  // unused (but still computed defensively) when mode==="cash".
   let wagesAccruedTotal = 0;
   for (const p of contractorPayments) {
     for (const sp of p.splits) {
@@ -459,27 +597,42 @@ export async function buildPnLReport(
       contractLaborTotal,
     );
   }
-  if (wagesAccruedTotal > 0) {
-    addToAccount(ACCOUNT_WAGES_ACCRUED, "OPERATING_EXPENSE", wagesAccruedTotal);
+
+  // Cash-basis wage total — computed only when the operator asked for
+  // that mode. Same math as the workdays CSV (the Gusto source of
+  // truth), anchored on JobOccurrence.completedAt. See
+  // loadCashBasisWageEvents for the exact snapshot → fallback rules.
+  let wagesCashTotal = 0;
+  if (mode === "cash") {
+    const events = await loadCashBasisWageEvents(start, end);
+    for (const e of events) wagesCashTotal += e.net;
+  }
+
+  // Pick the wage total that feeds the "Wages (accrued)" line + the
+  // employer-tax base for this response. Accrual is the default so
+  // every existing caller behaves exactly as before.
+  const effectiveWagesTotal = mode === "cash" ? wagesCashTotal : wagesAccruedTotal;
+  if (effectiveWagesTotal > 0) {
+    addToAccount(ACCOUNT_WAGES_ACCRUED, "OPERATING_EXPENSE", effectiveWagesTotal);
   }
 
   // Synthetic: Employer payroll taxes (est.) — operator-tunable rates
-  // applied to the Wages (accrued) base above. Only synthesized when
-  // there are W-2 wages to tax, otherwise the line is suppressed
-  // entirely (same self-hide behavior as Contract Labor when there are
-  // no contractors). The per-component breakdown is attached to the
+  // applied to the wages base above. Only synthesized when there are
+  // W-2 wages to tax, otherwise the line is suppressed entirely (same
+  // self-hide behavior as Contract Labor when there are no
+  // contractors). The per-component breakdown is attached to the
   // PnLReport so the UI can render the expand-detail without another
   // roundtrip — see PnLReport.employerPayrollTaxes.
   let employerPayrollTaxes: PnLReport["employerPayrollTaxes"] | undefined;
-  if (wagesAccruedTotal > 0) {
+  if (effectiveWagesTotal > 0) {
     const taxConfig = await loadPayrollTaxEstimates(prisma);
     const totalRatePct = totalEmployerTaxPct(taxConfig);
-    const components = breakdownEmployerTaxes(wagesAccruedTotal, taxConfig);
-    const employerTaxTotal = round2((wagesAccruedTotal * totalRatePct) / 100);
+    const components = breakdownEmployerTaxes(effectiveWagesTotal, taxConfig);
+    const employerTaxTotal = round2((effectiveWagesTotal * totalRatePct) / 100);
     if (employerTaxTotal > 0) {
       addToAccount(ACCOUNT_EMPLOYER_PAYROLL_TAXES, "OPERATING_EXPENSE", employerTaxTotal);
       employerPayrollTaxes = {
-        wages: round2(wagesAccruedTotal),
+        wages: round2(effectiveWagesTotal),
         components,
         total: employerTaxTotal,
         totalRatePct,
@@ -545,6 +698,7 @@ export async function buildPnLReport(
 
   return {
     range: { from: options.fromStr, to: options.toStr },
+    mode,
     income: { rows: incomeRows, total: incomeTotal },
     cogs,
     grossProfit,
@@ -702,7 +856,13 @@ export async function pnlReportDetails(
   start: Date,
   end: Date,
   qbAccount: string,
+  opts: { mode?: PnLMode } = {},
 ): Promise<PnLDetail> {
+  // Drilldown mode must match the mode the main report was built with,
+  // otherwise the row list won't sum to the reported bucket total.
+  // Only the wages + employer-tax branches actually vary by mode —
+  // every other qbAccount branch below ignores it.
+  const mode: PnLMode = opts.mode ?? "accrual";
   const [equipRentalAccount, categories] = await Promise.all([
     loadEquipmentRentalIncomeAccount(),
     loadExpenseCategories(),
@@ -907,6 +1067,53 @@ export async function pnlReportDetails(
   // are excluded (draws, not paychecks) — same filter that gates wages
   // out of Gusto and the Contract Labor synthesis.
   if (qbAccount === ACCOUNT_WAGES_ACCRUED) {
+    if (mode === "cash") {
+      // Cash-basis drilldown — per-workday wage events anchored on
+      // JobOccurrence.completedAt. Matches the workdays CSV export
+      // (the Gusto source of truth), so the row list here is what
+      // the operator actually keyed into payroll for the pay period
+      // this work fell in.
+      const events = await loadCashBasisWageEvents(start, end);
+      const userIds = Array.from(new Set(events.map((e) => e.userId)));
+      const occIds = Array.from(new Set(events.map((e) => e.occurrenceId)));
+      const [users, occs] = await Promise.all([
+        prisma.user.findMany({
+          where: { id: { in: userIds } },
+          select: { id: true, displayName: true, email: true },
+        }),
+        prisma.jobOccurrence.findMany({
+          where: { id: { in: occIds } },
+          select: {
+            id: true,
+            job: {
+              select: {
+                property: {
+                  select: { displayName: true, client: { select: { displayName: true } } },
+                },
+              },
+            },
+          },
+        }),
+      ]);
+      const userById = new Map(users.map((u) => [u.id, u]));
+      const occById = new Map(occs.map((o) => [o.id, o]));
+      const rows: PnLDetailRow[] = events.map((e) => {
+        const u = userById.get(e.userId);
+        const occ = occById.get(e.occurrenceId);
+        const property = occ?.job?.property?.displayName;
+        const client = occ?.job?.property?.client?.displayName;
+        return {
+          date: etFormatDate(e.completedAt),
+          primary: u?.displayName ?? u?.email ?? "(unknown worker)",
+          secondary: [client, property].filter(Boolean).join(" · ") || undefined,
+          amount: round2(e.net),
+        };
+      });
+      rows.sort((a, b) => a.date.localeCompare(b.date));
+      return { qbAccount, rows, total: round2(sum(rows.map((r) => r.amount))) };
+    }
+    // Accrual (default) — per-Payment.confirmedAt rows. UNCHANGED from
+    // the pre-mode-toggle behavior; every existing caller lands here.
     const payments = await prisma.payment.findMany({
       where: {
         confirmed: true,
@@ -974,26 +1181,31 @@ export async function pnlReportDetails(
     // top-up → employer taxes owed), exclude skipped (pretend never
     // happened). Any drift here vs. the main query would leave the
     // drilldown rows not summing to the reported total.
-    const payments = await prisma.payment.findMany({
-      where: {
-        confirmed: true,
-        confirmedAt: { gte: start, lte: end },
-        skippedAt: null,
-      },
-      select: {
-        splits: {
-          where: { ownerEarnings: false },
-          select: {
-            amount: true,
-            user: { select: { workerType: true } },
+    let wages = 0;
+    if (mode === "cash") {
+      const events = await loadCashBasisWageEvents(start, end);
+      for (const e of events) wages += e.net;
+    } else {
+      const payments = await prisma.payment.findMany({
+        where: {
+          confirmed: true,
+          confirmedAt: { gte: start, lte: end },
+          skippedAt: null,
+        },
+        select: {
+          splits: {
+            where: { ownerEarnings: false },
+            select: {
+              amount: true,
+              user: { select: { workerType: true } },
+            },
           },
         },
-      },
-    });
-    let wages = 0;
-    for (const p of payments) {
-      for (const sp of p.splits) {
-        if (isEmployeeClass(sp.user.workerType)) wages += sp.amount ?? 0;
+      });
+      for (const p of payments) {
+        for (const sp of p.splits) {
+          if (isEmployeeClass(sp.user.workerType)) wages += sp.amount ?? 0;
+        }
       }
     }
     const components = breakdownEmployerTaxes(wages, config);
