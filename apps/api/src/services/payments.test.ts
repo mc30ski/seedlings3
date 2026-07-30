@@ -458,4 +458,90 @@ describe("computeNextOccurrenceStart — recurring cycle + past-guard", () => {
     expect(result.startAt.getTime()).toBeGreaterThanOrEqual(expectedMin);
     expect(result.startAt.getTime()).toBeLessThanOrEqual(expectedMax);
   });
+
+  // ── One-time next-visit date override ─────────────────────────────
+  // These tests lock the contract for the `overrideDate` param:
+  //   1. When set → next occurrence lands on override date, NOT cadence
+  //   2. Time-of-day is preserved from the source
+  //   3. Duration between startAt/endAt is preserved
+  //   4. overrideUsed flag is true
+  //   5. When null → naive cadence math runs (byte-for-byte compat)
+  //   6. Past-guard still fires if the override is somehow in the past
+
+  it("override: uses override date instead of cadence, preserves time-of-day", () => {
+    // Base = today at 8am ET, freq = 14 (would normally land 2 weeks out).
+    // Override = 3 days from today. Result: 3-days-out at 8am ET.
+    const [y, m, d] = etToday().split("-").map(Number);
+    const base = new Date(Date.UTC(y, m - 1, d, 12)); // 8am ET (EDT window)
+    const originalHM = etHourMinute(base);
+    const overrideDate = etFormatDate(new Date(Date.UTC(y, m - 1, d + 3, 12)));
+
+    const result = computeNextOccurrenceStart(base, null, 14, overrideDate);
+
+    expect(result.overrideUsed).toBe(true);
+    expect(result.snappedForward).toBe(false);
+    expect(etFormatDate(result.startAt)).toBe(overrideDate);
+    expect(etHourMinute(result.startAt)).toBe(originalHM);
+  });
+
+  it("override: preserves source occurrence's duration", () => {
+    // Source is a 90-minute visit at 8am. Override 3 days out. Result
+    // should be 90 minutes at 8am on the override date.
+    const [y, m, d] = etToday().split("-").map(Number);
+    const base = new Date(Date.UTC(y, m - 1, d, 12));
+    const baseEnd = new Date(base.getTime() + 90 * 60_000);
+    const overrideDate = etFormatDate(new Date(Date.UTC(y, m - 1, d + 3, 12)));
+
+    const result = computeNextOccurrenceStart(base, baseEnd, 14, overrideDate);
+
+    expect(result.overrideUsed).toBe(true);
+    expect(result.endAt).not.toBeNull();
+    expect(result.endAt!.getTime() - result.startAt.getTime()).toBe(90 * 60_000);
+  });
+
+  it("override: null / undefined / empty string → naive cadence (byte compat)", () => {
+    // Regression guard: any falsy override MUST behave exactly like the
+    // pre-override helper. Compares against a control run with no
+    // override param at all.
+    const [y, m, d] = etToday().split("-").map(Number);
+    const base = new Date(Date.UTC(y, m - 1, d + 1, 12));
+
+    const control = computeNextOccurrenceStart(base, null, 7);
+    for (const empty of [null, undefined, ""]) {
+      const r = computeNextOccurrenceStart(base, null, 7, empty as any);
+      expect(r.overrideUsed).toBe(false);
+      expect(r.snappedForward).toBe(control.snappedForward);
+      expect(r.startAt.getTime()).toBe(control.startAt.getTime());
+    }
+  });
+
+  it("override: malformed date string → falls back to cadence (defensive)", () => {
+    // A malformed date shouldn't crash — the guard regex in the helper
+    // just ignores it and runs the naive cadence path. The API endpoint
+    // separately rejects bad input, so this is defense in depth.
+    const [y, m, d] = etToday().split("-").map(Number);
+    const base = new Date(Date.UTC(y, m - 1, d + 1, 12));
+
+    const bad = ["not-a-date", "2026/08/07", "08-07-2026", "2026-8-7"];
+    for (const s of bad) {
+      const r = computeNextOccurrenceStart(base, null, 7, s);
+      expect(r.overrideUsed).toBe(false);
+    }
+  });
+
+  it("override + past-snap: past override date snaps forward to today", () => {
+    // Edge case: override date is somehow in the past (e.g. it was set
+    // weeks ago, payment was delayed, and the day the operator wanted
+    // has since passed). Same "no past scheduling" guard fires — snap
+    // to today, keep overrideUsed=true, snappedForward=true.
+    const [y, m, d] = etToday().split("-").map(Number);
+    const base = new Date(Date.UTC(y, m - 1, d - 10, 12));
+    const pastOverride = etFormatDate(new Date(Date.UTC(y, m - 1, d - 5, 12)));
+
+    const result = computeNextOccurrenceStart(base, null, 14, pastOverride);
+
+    expect(result.overrideUsed).toBe(true);
+    expect(result.snappedForward).toBe(true);
+    expect(etFormatDate(result.startAt)).toBe(etToday());
+  });
 });

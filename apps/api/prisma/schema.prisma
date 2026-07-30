@@ -995,6 +995,26 @@ model JobOccurrence {
   // Null = even-split fallback applies.
   completionSplits Json?
 
+  // One-time date override for the next repeating occurrence. Set by admins
+  // on the CURRENT occurrence when a client has asked to shift ONLY the
+  // next visit (e.g. "come one day earlier next time"). YYYY-MM-DD ET
+  // calendar day. Consumed at payment-approval time by
+  // computeNextOccurrenceStart — when set, replaces the naive
+  // startAt + freqDays cycle math with this date at the source
+  // occurrence's time-of-day. Only meaningful for repeating jobs
+  // (Job.frequencyDays != null); silently ignored for one-offs.
+  //
+  // The affordance stays visible on the occurrence card as long as no
+  // Payment has been confirmed for this occurrence — once approval
+  // fires the override is consumed and cannot be edited (the next
+  // occurrence has already been generated).
+  //
+  // Range validation lives at the API + UI: must be strictly AFTER the
+  // source occurrence's own date; ±7 days of the normal cadence date
+  // saves silently; >7 days OR collision with an existing same-day
+  // scheduled occurrence requires typed APPROVE confirmation.
+  nextStartOverride String?
+
   // Immutable snapshot taken when the occurrence is completed with splits.
   // Locks in what each worker is OWED regardless of what the client ends up
   // paying. Used at approval time to top employees/trainees up to their
