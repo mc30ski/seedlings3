@@ -15,6 +15,13 @@ export type PaymentActionResult = {
    *  didn't schedule this in the past" rather than silently starting
    *  the cycle on a stale date. */
   nextOccurrenceSnappedForward?: boolean;
+  /** True when an admin had set a one-time date override on the
+   *  source occurrence and the server used it to build the next
+   *  occurrence's start date instead of the usual cadence. Toast
+   *  callout mirrors the snap flag so the operator can see at a
+   *  glance that the schedule shift they set weeks ago actually
+   *  landed correctly. */
+  nextOccurrenceOverrideUsed?: boolean;
 } | null | undefined;
 
 // Verb fragment slotted into the base "Payment {verb}." sentence so
@@ -53,6 +60,18 @@ export function formatNextOccurrenceOutcome(result: PaymentActionResult): string
   if (!result) return null;
   if (result.nextOccurrence?.startAt) {
     const dateStr = fmtDate(result.nextOccurrence.startAt);
+    // Priority order for the callout suffix when multiple flags fire:
+    //   1. Override — the operator's deliberate choice; most important
+    //      thing to confirm landed correctly.
+    //   2. Snapped forward — cycle-in-past guard fired.
+    //   3. Plain confirmation.
+    //
+    // An override that ALSO snapped forward reads as an override —
+    // the operator asked for a specific date; if it was in the past
+    // the snap-to-today isn't the story worth telling here.
+    if (result.nextOccurrenceOverrideUsed) {
+      return `Next visit scheduled for ${dateStr} — using the one-time date override you set.`;
+    }
     if (result.nextOccurrenceSnappedForward) {
       // "Snapped forward" means the cycle date (last startAt + frequency)
       // had already passed — typically because a PENDING_PAYMENT sat

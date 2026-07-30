@@ -1962,6 +1962,163 @@ export default async function adminRoutes(app: FastifyInstance) {
     );
   });
 
+  // Set / clear a one-time date override for the next repeating occurrence.
+  //
+  // Body: { date: "YYYY-MM-DD" | null, forceApprove?: boolean }
+  //   - date: null                → clears the override (silent, no gates)
+  //   - date: valid YYYY-MM-DD    → sets the override; validates against
+  //                                 range rules; may require forceApprove
+  //
+  // Validation rules (in order):
+  //   1. Occurrence exists.
+  //   2. Parent Job has frequencyDays set (repeating). Otherwise the
+  //      override has no meaning — one-offs don't generate a next
+  //      occurrence.
+  //   3. Payment does not yet exist OR is not confirmed. Once confirmed
+  //      the next occurrence has already been generated, so the override
+  //      window has closed.
+  //   4. Date is a valid YYYY-MM-DD.
+  //   5. Date is STRICTLY after the source occurrence's ET calendar day.
+  //      (The next visit cannot happen before or on today's visit.)
+  //   6. If override date differs from the normal cadence date by more
+  //      than 7 days OR collides with an existing SCHEDULED repeating
+  //      occurrence for this job on the same ET day, respond 409 with
+  //      { error: "NEEDS_APPROVE", reasons: [...] } so the UI can prompt
+  //      the operator to type APPROVE. Client retries with forceApprove
+  //      = true to bypass.
+  //
+  // Response: { ok: true, nextStartOverride: string | null,
+  //             normalCadenceDate: string | null }
+  app.post("/admin/occurrences/:id/next-start-override", adminGuard, async (req: any) => {
+    const id = String(req.params.id);
+    const body = (req.body ?? {}) as { date?: string | null; forceApprove?: boolean };
+    const rawDate = body.date;
+    const forceApprove = !!body.forceApprove;
+
+    const occ = await prisma.jobOccurrence.findUnique({
+      where: { id },
+      include: {
+        job: { select: { id: true, frequencyDays: true } },
+        payment: { select: { confirmed: true } },
+      },
+    });
+    if (!occ) throw app.httpErrors.notFound("Occurrence not found");
+
+    // Payment already confirmed → next occurrence has been generated,
+    // override window closed. Return 409 so the UI can surface a
+    // sensible error (shouldn't happen since the affordance hides
+    // after payment approval, but defense in depth).
+    if (occ.payment?.confirmed) {
+      throw app.httpErrors.conflict(
+        "Payment has already been approved — the next occurrence has been generated and the override can no longer be set.",
+      );
+    }
+
+    const freq = occ.frequencyDays ?? occ.job?.frequencyDays;
+    if (!freq || freq <= 0) {
+      throw app.httpErrors.badRequest(
+        "This job does not repeat, so a next-visit override cannot be set.",
+      );
+    }
+
+    // Clear path — sets the field to null. No range validation.
+    if (rawDate == null || rawDate === "") {
+      await prisma.jobOccurrence.update({
+        where: { id },
+        data: { nextStartOverride: null },
+      });
+      return { ok: true, nextStartOverride: null, normalCadenceDate: null };
+    }
+
+    if (typeof rawDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
+      throw app.httpErrors.badRequest("Date must be a YYYY-MM-DD string.");
+    }
+
+    // ET calendar-day comparisons throughout — same anchor the
+    // computeNextOccurrenceStart helper uses at generation time.
+    if (!occ.startAt) {
+      throw app.httpErrors.badRequest(
+        "This occurrence has no scheduled date; the override needs a source date to compare against.",
+      );
+    }
+    const sourceKey = etFormatDate(occ.startAt);
+    if (rawDate <= sourceKey) {
+      throw app.httpErrors.badRequest(
+        "The next-visit date must be after this visit's date.",
+      );
+    }
+
+    // Normal cadence date: source + frequencyDays. Used to gauge how
+    // far off the override is (>7 days requires APPROVE).
+    const normalCadenceDate = etAddDays(sourceKey, freq);
+    const daysOff = Math.abs(etDaysBetween(normalCadenceDate, rawDate));
+
+    // Collision check: any existing SCHEDULED repeating occurrence for
+    // this job on the override's ET calendar day (excluding the source
+    // itself, which shouldn't match anyway but belt-and-suspenders).
+    const collision = occ.jobId
+      ? await prisma.jobOccurrence.findFirst({
+          where: {
+            jobId: occ.jobId,
+            id: { not: id },
+            status: JobOccurrenceStatus.SCHEDULED,
+            workflow: "STANDARD",
+            isOneOff: false,
+            startAt: {
+              gte: etMidnight(rawDate),
+              lte: etEndOfDay(rawDate),
+            },
+          },
+          select: { id: true },
+        })
+      : null;
+
+    const reasons: string[] = [];
+    if (daysOff > 7) {
+      reasons.push(
+        `${daysOff} days away from the normal visit date (${normalCadenceDate}).`,
+      );
+    }
+    if (collision) {
+      reasons.push(
+        `Another visit for this job is already scheduled on ${rawDate}.`,
+      );
+    }
+
+    // "Needs APPROVE" path — return a soft-error response the UI can
+    // catch and re-issue with forceApprove=true after the operator
+    // types APPROVE. Not thrown as an HTTP 4xx because the operator's
+    // input isn't invalid — it's just outside the "silent save"
+    // window and needs the extra confirmation.
+    if (reasons.length > 0 && !forceApprove) {
+      return {
+        ok: false,
+        needsApprove: true,
+        reasons,
+        normalCadenceDate,
+        collidingOccurrenceId: collision?.id ?? null,
+      };
+    }
+
+    await prisma.jobOccurrence.update({
+      where: { id },
+      data: { nextStartOverride: rawDate },
+    });
+    if (forceApprove && reasons.length > 0) {
+      await writeAudit(prisma, AUDIT.JOB.OCCURRENCE_UPDATED, await currentUserId(req), {
+        occurrenceId: id,
+        action: "next-start-override-set-with-approve",
+        date: rawDate,
+        reasons,
+      });
+    }
+    return {
+      ok: true,
+      nextStartOverride: rawDate,
+      normalCadenceDate,
+    };
+  });
+
   app.patch("/admin/occurrences/:id/assignees/:userId/role", adminGuard, async (req: any) => {
     const newRole = req.body?.role === "observer" ? "observer" : null;
     return services.jobs.changeAssigneeRole(

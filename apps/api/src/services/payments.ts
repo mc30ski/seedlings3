@@ -220,30 +220,65 @@ export function computeNextOccurrenceStart(
   baseStartAt: Date | null | undefined,
   baseEndAt: Date | null | undefined,
   freq: number,
-): { startAt: Date; endAt: Date | null; snappedForward: boolean } {
+  overrideDate?: string | null,
+): { startAt: Date; endAt: Date | null; snappedForward: boolean; overrideUsed: boolean } {
   const base = baseStartAt ? new Date(baseStartAt) : new Date();
-  const nextStart = new Date(base);
-  nextStart.setDate(nextStart.getDate() + freq); // date-handling-allow: recurring-cycle
-  const nextEnd = baseEndAt ? new Date(baseEndAt) : null;
-  if (nextEnd) nextEnd.setDate(nextEnd.getDate() + freq); // date-handling-allow: recurring-cycle
+
+  // Naive cycle math — computed even when an override is in play, so
+  // the override's "endAt duration" can inherit the same wall-clock
+  // window (start + (naive_end − naive_start)). Keeping this
+  // unconditionally also preserves byte-for-byte compatibility with
+  // the pre-override behavior when overrideDate is null.
+  const naiveStart = new Date(base);
+  naiveStart.setDate(naiveStart.getDate() + freq); // date-handling-allow: recurring-cycle
+  const naiveEnd = baseEndAt ? new Date(baseEndAt) : null;
+  if (naiveEnd) naiveEnd.setDate(naiveEnd.getDate() + freq); // date-handling-allow: recurring-cycle
+
+  let nextStart: Date;
+  let nextEnd: Date | null;
+  let overrideUsed = false;
+
+  if (overrideDate && /^\d{4}-\d{2}-\d{2}$/.test(overrideDate)) {
+    // Override path — an admin has set a one-time date shift on the
+    // source occurrence (e.g. "for THIS next visit come one day
+    // earlier"). Build the next start at the override date + the
+    // source's time-of-day. DST-safe via etInstantFromParts. Endpoint
+    // preserves the source-to-source duration so the visit window is
+    // exactly the same length as usual.
+    const timeOfDay = etHourMinute(base);
+    nextStart = etInstantFromParts(overrideDate, timeOfDay);
+    if (baseEndAt) {
+      const sourceDurationMs = baseEndAt.getTime() - base.getTime();
+      nextEnd = new Date(nextStart.getTime() + sourceDurationMs);
+    } else {
+      nextEnd = null;
+    }
+    overrideUsed = true;
+  } else {
+    nextStart = naiveStart;
+    nextEnd = naiveEnd;
+  }
 
   const todayKey = etToday();
   const nextStartKey = etFormatDate(nextStart);
   if (nextStartKey >= todayKey) {
-    return { startAt: nextStart, endAt: nextEnd, snappedForward: false };
+    return { startAt: nextStart, endAt: nextEnd, snappedForward: false, overrideUsed };
   }
 
   // Reconstruct today's version of the same time-of-day, then shift
   // endAt by the SAME delta as startAt so the duration is exact even
-  // across DST edges (naive shift would drift by ±1h).
-  const timeOfDay = etHourMinute(nextStart); // "HH:MM" in ET
+  // across DST edges (naive shift would drift by ±1h). Applies to
+  // BOTH the cadence path AND the override path — an admin who sets
+  // an override date that's already lapsed by the time the payment
+  // clears still gets a valid future occurrence, not a past one.
+  const timeOfDay = etHourMinute(nextStart);
   const snappedStart = etInstantFromParts(todayKey, timeOfDay);
   let snappedEnd: Date | null = null;
   if (nextEnd) {
     const durationMs = nextEnd.getTime() - nextStart.getTime();
     snappedEnd = new Date(snappedStart.getTime() + durationMs);
   }
-  return { startAt: snappedStart, endAt: snappedEnd, snappedForward: true };
+  return { startAt: snappedStart, endAt: snappedEnd, snappedForward: true, overrideUsed };
 }
 
 // Canonical per-worker breakdown for a given collected amount + expenses.
@@ -889,8 +924,13 @@ export const payments: ServicesPayments = {
     const effectiveFreq = fullOcc.frequencyDays ?? fullOcc.job.frequencyDays;
     if (!effectiveFreq) throw new ServiceError("NO_FREQUENCY", "No frequency set on job or occurrence.", 400);
 
-    const { startAt: nextStart, endAt: nextEnd, snappedForward } =
-      computeNextOccurrenceStart(fullOcc.startAt, fullOcc.endAt, effectiveFreq);
+    const { startAt: nextStart, endAt: nextEnd, snappedForward, overrideUsed } =
+      computeNextOccurrenceStart(
+        fullOcc.startAt,
+        fullOcc.endAt,
+        effectiveFreq,
+        fullOcc.nextStartOverride,
+      );
 
     return prisma.$transaction(async (tx) => {
       const nextOccurrence = await tx.jobOccurrence.create({
@@ -953,7 +993,12 @@ export const payments: ServicesPayments = {
         });
       }
 
-      return { ok: true, nextOccurrence, nextOccurrenceSnappedForward: snappedForward };
+      return {
+        ok: true,
+        nextOccurrence,
+        nextOccurrenceSnappedForward: snappedForward,
+        nextOccurrenceOverrideUsed: overrideUsed,
+      };
     });
   },
 
@@ -1786,6 +1831,11 @@ export const payments: ServicesPayments = {
       // the approve toast can call it out — the operator should know
       // the new occurrence isn't on the usual cadence.
       let nextOccurrenceSnappedForward = false;
+      // True when an admin had set a one-time date override on the
+      // source occurrence (nextStartOverride) and we used it to build
+      // the next occurrence instead of the naive cadence. Toast
+      // callout mirrors the snap flag above.
+      let nextOccurrenceOverrideUsed = false;
       const effectiveFreq = fullOcc?.frequencyDays ?? fullOcc?.job?.frequencyDays;
       if (!fullOcc || !fullOcc.job) {
         nextOccurrenceSkipReason = "occurrence_or_job_not_found";
@@ -1813,9 +1863,15 @@ export const payments: ServicesPayments = {
         fullOcc.workflow !== "ONE_OFF"
       ) {
         const freq = effectiveFreq;
-        const { startAt: nextStart, endAt: nextEnd, snappedForward } =
-          computeNextOccurrenceStart(fullOcc.startAt, fullOcc.endAt, freq);
+        const { startAt: nextStart, endAt: nextEnd, snappedForward, overrideUsed } =
+          computeNextOccurrenceStart(
+            fullOcc.startAt,
+            fullOcc.endAt,
+            freq,
+            fullOcc.nextStartOverride,
+          );
         nextOccurrenceSnappedForward = snappedForward;
+        nextOccurrenceOverrideUsed = overrideUsed;
 
         const isAdminOnly = !!fullOcc.isAdminOnly;
 
@@ -1963,11 +2019,25 @@ export const payments: ServicesPayments = {
         });
       }
 
+      // Consume the one-time override. Once the next occurrence has
+      // been generated using it (or skipped and rescheduled for the
+      // future), the override has served its purpose and the source
+      // occurrence should no longer advertise it on any card. The
+      // source occurrence closes right after approval anyway, so this
+      // is really a cleanliness/read-model thing.
+      if (nextOccurrenceOverrideUsed) {
+        await tx.jobOccurrence.update({
+          where: { id: existing.occurrence.id },
+          data: { nextStartOverride: null },
+        });
+      }
+
       return {
         ...payment,
         nextOccurrence,
         nextOccurrenceSkipReason,
         nextOccurrenceSnappedForward,
+        nextOccurrenceOverrideUsed,
       };
     });
   },

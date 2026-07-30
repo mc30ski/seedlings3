@@ -25,6 +25,7 @@ import {
   type NotReadyTeammate,
 } from "@/src/ui/dialogs/WorkdayRequiredDialog";
 import ImpersonationWarning from "@/src/ui/components/ImpersonationWarning";
+import NextStartOverrideAffordance from "@/src/ui/components/NextStartOverrideAffordance";
 import WorkdayStrip from "@/src/ui/components/WorkdayStrip";
 import MileageStrip from "@/src/ui/components/MileageStrip";
 import RepeatingPauseInfoLine from "@/src/ui/components/RepeatingPauseInfoLine";
@@ -6758,6 +6759,26 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       >
                         Confirm Client
                       </Button>
+                    )}
+                    {/* One-time next-visit date override — admin-only,
+                        repeating jobs only, client-confirmed but no
+                        payment yet. When set, a chip shows the shift;
+                        otherwise a small link. Consumed at payment-
+                        approval time by computeNextOccurrenceStart. */}
+                    {forAdmin && isConfirmed && !isTaskOrReminder &&
+                      (occ.frequencyDays ?? (occ.job as any)?.frequencyDays) &&
+                      !(occ.payment && (occ.payment as any).confirmed) && (
+                      <NextStartOverrideAffordance
+                        occurrenceId={occ.id}
+                        sourceStartAt={occ.startAt!}
+                        frequencyDays={occ.frequencyDays ?? (occ.job as any)?.frequencyDays}
+                        nextStartOverride={(occ as any).nextStartOverride ?? null}
+                        onUpdated={(newValue) => {
+                          setItems((prev) => prev.map((o) =>
+                            o.id === occ.id ? { ...o, nextStartOverride: newValue } as any : o,
+                          ));
+                        }}
+                      />
                     )}
                     {/* Primary action — Start / Complete / Accept Payment.
                         Server enforces claimer-only (jobs.ts updateOccurrenceStatus),

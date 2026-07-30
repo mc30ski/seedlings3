@@ -104,7 +104,12 @@ export default function InlineMessage({
       setIsVisible(true);
 
       if (det.autoHideMs === undefined && (det.type === "SUCCESS" || det.type === "INFO")) {
-        det.autoHideMs = 4000;
+        // 30-second default for SUCCESS / INFO — the prior 4s was too
+        // fast for the operator to actually read the toast, especially
+        // for confirmations that carry follow-up info (e.g. "next
+        // visit scheduled for X"). Users can still tap the ✕ to
+        // dismiss earlier; ERRORs remain sticky forever.
+        det.autoHideMs = 30000;
       }
 
       // arm auto-hide (starts fade, then clears after fadeOutMs).
