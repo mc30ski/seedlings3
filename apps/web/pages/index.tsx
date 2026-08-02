@@ -183,6 +183,14 @@ export default function HomePage() {
   >([]);
   const [workdaysJumpDate, setWorkdaysJumpDate] = useState<string | null>(null);
   const [workdaysJumpNonce, setWorkdaysJumpNonce] = useState(0);
+  // Paused-repeating review handoff — same nonce+payload pattern as
+  // WorkdaysTab. Parent bumps the nonce when the operator clicks the
+  // alert/task-row; child ServicesTab useEffect keyed on the nonce
+  // reads the current occurrenceId payload and applies the filter +
+  // auto-expand. Race-free (no timers, no window events, no session
+  // storage) — plain React props flow.
+  const [streamReviewOccId, setStreamReviewOccId] = useState<string | null>(null);
+  const [streamReviewNonce, setStreamReviewNonce] = useState(0);
   const loadPendingWorkdaysRef = useRef<() => Promise<void>>(async () => {});
   // Super-only: count of open ledger followups (Money → Ledger flags
   // waiting on the operator). Drives the "Ledger followups" entry in the
@@ -830,7 +838,14 @@ export default function HomePage() {
       value: "services",
       label: "Services",
       icon: FiBriefcase,
-      content: wrapWithInlineMessage(<ServicesTab me={me} purpose="ADMIN" />),
+      content: wrapWithInlineMessage(
+        <ServicesTab
+          me={me}
+          purpose="ADMIN"
+          streamReviewOccId={streamReviewOccId}
+          streamReviewNonce={streamReviewNonce}
+        />,
+      ),
     },
     {
       value: "tasks",
@@ -3175,13 +3190,12 @@ export default function HomePage() {
   const goToStreamPauseReminders = useCallback((occurrenceId?: string) => {
     setTopTab("admin");
     setAdminInnerTab("services" as any);
-    setTimeout(() => {
-      window.dispatchEvent(
-        new CustomEvent("seedlings:open-paused-repeating-review", {
-          detail: { occurrenceId: occurrenceId ?? null },
-        }),
-      );
-    }, 150);
+    // Only accept string ids — some call sites pass this handler
+    // directly to onClick, which forwards a MouseEvent. Guard against
+    // that so we don't stuff a MouseEvent into the occurrenceId state.
+    const cleanId = typeof occurrenceId === "string" ? occurrenceId : null;
+    setStreamReviewOccId(cleanId);
+    setStreamReviewNonce((n) => n + 1);
   }, []);
 
   const isDev = process.env.NEXT_PUBLIC_VERCEL_ENV !== "production" && process.env.NODE_ENV !== "production";
