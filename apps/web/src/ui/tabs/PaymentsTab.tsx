@@ -268,6 +268,13 @@ function WorkerPayments({
         p.payment?.method || "",
         p.payment?.note || "",
         p.payment?.collectedBy?.displayName || "",
+        // Receipt-number match: enables direct lookup by typing an
+        // SL-XXXXXXXX (with or without the SL- prefix, case-insensitive)
+        // into the same search box the operator already uses for names
+        // and methods. Includes the bare 8-char tail too for the
+        // "paste the code from an email" case.
+        p.payment?.receiptNumber || "",
+        (p.payment?.receiptNumber ?? "").replace(/^SL-/i, ""),
       ];
       return arr.some((v) => v.toLowerCase().includes(qlc));
     });
@@ -1116,6 +1123,11 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
           p.method || "",
           p.note || "",
           ...p.splits.map((sp) => sp.user?.displayName || sp.user?.email || ""),
+          // Receipt-number match — same rationale as the worker view
+          // above. Includes both the canonical "SL-XXXX" form and the
+          // bare 8-char tail so pasted codes match regardless of prefix.
+          (p as any).receiptNumber || "",
+          ((p as any).receiptNumber ?? "").replace(/^SL-/i, ""),
         ];
         return arr.some((v) => v.toLowerCase().includes(qlc));
       });

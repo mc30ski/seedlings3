@@ -48,6 +48,7 @@ type CompletedJob = {
     paidAt: string;
     confirmed?: boolean;
     selfReported?: boolean;
+    receiptNumber?: string | null;
   } | null;
 };
 
@@ -397,7 +398,11 @@ export default function ClientMyJobsTab() {
       // key on the rare chance the server skipped it.
       methodLabel: job.payment.methodLabel ?? job.payment.method,
       workers: job.workers,
-      receiptId: job.id.slice(-8).toUpperCase(),
+      // Prefer the stored SL-XXXXXXXX; fall back to the legacy
+      // derivation only if the server didn't ship one (shouldn't
+      // happen post-backfill but keeps the client tolerant during any
+      // partial-deploy window).
+      receiptId: job.payment?.receiptNumber ?? `SL-${job.id.slice(-8).toUpperCase()}`,
       logoDataUrl,
     };
   }
@@ -799,6 +804,11 @@ export default function ClientMyJobsTab() {
                             <Text fontSize="xs" color="green.600" fontWeight="medium">
                               ${job.payment.amountPaid.toFixed(2)} via {job.payment.method.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase())}
                             </Text>
+                            {job.payment.receiptNumber && (
+                              <Text fontSize="xs" color="green.700" fontFamily="mono">
+                                {job.payment.receiptNumber}
+                              </Text>
+                            )}
                             <Button
                               size="xs"
                               variant="outline"

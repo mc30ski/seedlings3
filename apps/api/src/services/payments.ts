@@ -7,6 +7,7 @@ import { etMidnight, etEndOfDay, etFormatDate, etToday, etInstantFromParts, etHo
 import { writeAudit } from "../lib/auditLogger";
 import { AUDIT } from "../lib/auditActions";
 import { generateLedgerId } from "../lib/ledgerId";
+import { generateReceiptNumber } from "../lib/receiptNumber";
 import {
   loadPaymentMethods,
   getProcessorFee,
@@ -718,9 +719,11 @@ export const payments: ServicesPayments = {
       // waiting on approval) already reflect the final payouts. The
       // Payment row also stamps shortfall/overage now, so reporting works
       // before approval too.
+      const receiptNumber = await generateReceiptNumber(tx);
       const payment = await tx.payment.create({
         data: {
           ledgerId: generateLedgerId(),
+          receiptNumber,
           occurrenceId,
           amountPaid,
           method,
@@ -1498,9 +1501,11 @@ export const payments: ServicesPayments = {
       const feeCfg = getProcessorFee(method, methodsList);
       const { processorFeeAmount, netReceived } = computeProcessorFee(amountPaid, feeCfg);
 
+      const receiptNumber = await generateReceiptNumber(tx);
       const payment = await tx.payment.create({
         data: {
           ledgerId: generateLedgerId(),
+          receiptNumber,
           occurrenceId,
           amountPaid,
           method,

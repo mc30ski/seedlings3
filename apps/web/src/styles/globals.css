@@ -55,3 +55,16 @@
   0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.5); }
   50% { box-shadow: 0 0 0 8px rgba(220, 38, 38, 0); }
 }
+
+/* App splash — see components/AppSplash.tsx. Keyframes live here (not
+   emotion-generated) so they're on the page from the very first paint;
+   the splash mounts before Chakra's runtime CSS is fully applied and
+   any style dependency causes a visible layout jump as things load. */
+@keyframes seedlings-splash-overlay-fade {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+@keyframes seedlings-splash-logo-expand {
+  from { opacity: 1; transform: translate(-50%, -50%) scale(1);   }
+  to   { opacity: 0; transform: translate(-50%, -50%) scale(1.5); }
+}
