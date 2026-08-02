@@ -3165,9 +3165,23 @@ export default function HomePage() {
   // `setSuperInnerTab("services")` silently fell back to the Super
   // Home tab (Operations pulse). Route both roles through Admin —
   // Super users in this app also carry the Admin role.
-  const goToStreamPauseReminders = useCallback(() => {
+  //
+  // Fires the review event AFTER the tab switch so ServicesTab (which
+  // may not be mounted yet) has time to render. Event detail carries
+  // an optional occurrenceId — when present (per-row Review click),
+  // the tab expands only that occurrence's job and highlights it.
+  // When absent (section arrow / title-bar alert), the tab expands
+  // every reminder-due job.
+  const goToStreamPauseReminders = useCallback((occurrenceId?: string) => {
     setTopTab("admin");
     setAdminInnerTab("services" as any);
+    setTimeout(() => {
+      window.dispatchEvent(
+        new CustomEvent("seedlings:open-paused-repeating-review", {
+          detail: { occurrenceId: occurrenceId ?? null },
+        }),
+      );
+    }, 150);
   }, []);
 
   const isDev = process.env.NEXT_PUBLIC_VERCEL_ENV !== "production" && process.env.NODE_ENV !== "production";

@@ -93,7 +93,11 @@ type ShortcutHandlers = {
   goToDueToRecord: () => void;
   goToCompliance: () => void;
   goToWorkerCompliance: () => void;
-  goToStreamPauseReminders: () => void;
+  /** Optional occurrenceId — when the operator clicks Review on a
+   *  specific row (not the section arrow), we jump to and highlight
+   *  just that occurrence rather than expanding every reminder-due
+   *  job on the Services tab. */
+  goToStreamPauseReminders: (occurrenceId?: string) => void;
   goToGuaranteedPayoutExpiring: () => void;
   goToApprovals: () => void;
   goToEstimateFollowups: () => void;
@@ -399,7 +403,9 @@ export default function TasksPage({
               onGoto={wrap(handlers.goToStreamPauseReminders)}
             >
               <RepeatingPausesDueSection
-                onReview={() => wrap(handlers.goToStreamPauseReminders)()}
+                onReview={(occurrenceId) =>
+                  wrap(() => handlers.goToStreamPauseReminders(occurrenceId))()
+                }
               />
             </CollapsibleSectionCard>
           )}

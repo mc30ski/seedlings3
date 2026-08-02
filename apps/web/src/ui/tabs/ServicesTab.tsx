@@ -456,6 +456,59 @@ export default function ServicesTab({
     }
   }
 
+  // "Paused repeating to review" alert / task-page click opens Admin →
+  // Services and dispatches this event. Two shapes:
+  //   • detail.occurrenceId set → per-row "Review" click. Expand ONLY
+  //     that occurrence's job, then highlight + scroll to that card.
+  //   • detail.occurrenceId null → section arrow or title-bar alert.
+  //     Expand every reminder-due job.
+  // Filter (pausedRepeatingOnly) is turned on either way so the
+  // expanded jobs don't overflow with unrelated occurrences.
+  // Uses /api/admin/stream-pauses/reminders (already the source of
+  // truth for the alert count).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onEvent = async (e: Event) => {
+      const detail = (e as CustomEvent<{ occurrenceId: string | null }>).detail;
+      const targetOccId = detail?.occurrenceId ?? null;
+      setPausedRepeatingOnly(true);
+      try {
+        const rows = await apiGet<Array<{ id: string; job: { id: string } | null }>>(
+          "/api/admin/stream-pauses/reminders",
+        );
+        if (!rows?.length) return;
+        let jobIds: string[];
+        if (targetOccId) {
+          // Per-row Review — expand only the parent job of that occurrence.
+          const match = rows.find((r) => r.id === targetOccId);
+          jobIds = match?.job?.id ? [match.job.id] : [];
+          if (jobIds.length > 0) {
+            setHighlightOccId(targetOccId);
+            setFlashOccId(targetOccId);
+          }
+        } else {
+          jobIds = Array.from(
+            new Set(rows.map((r) => r.job?.id).filter((x): x is string => !!x)),
+          );
+        }
+        if (jobIds.length === 0) return;
+        setExpandedMap((prev) => {
+          const next = { ...prev };
+          jobIds.forEach((id) => { next[id] = true; });
+          return next;
+        });
+        // Load each job's detail so its occurrences (and thus the
+        // paused ones) actually render. loadDetail is idempotent —
+        // no-op for jobs already loaded.
+        for (const id of jobIds) void loadDetail(id);
+      } catch {
+        // Ignore — user still gets the filtered tab, just no auto-expand.
+      }
+    };
+    window.addEventListener("seedlings:open-paused-repeating-review", onEvent as EventListener);
+    return () => window.removeEventListener("seedlings:open-paused-repeating-review", onEvent as EventListener);
+  }, []);
+
   useEffect(() => {
     void load();
     apiGet<any[]>("/api/admin/settings")
@@ -2611,6 +2664,57 @@ export default function ServicesTab({
                                   busyId={statusButtonBusyId}
                                   setBusyId={setStatusButtonBusyId}
                                 />
+                                {/* Dismiss the reminder without resuming.
+                                    Clears streamResumeReminderAt so the
+                                    row drops out of the "Paused repeating
+                                    to review" alert, but keeps
+                                    streamPausedAt / streamPauseReason
+                                    intact so the pause and its history
+                                    are preserved. For the "client hasn't
+                                    given a real return date, stop bugging
+                                    me but I still want to be able to
+                                    find this later" workflow. */}
+                                {!!(occ as any).streamResumeReminderAt && (
+                                  <StatusButton
+                                    id="occ-stream-dismiss-reminder"
+                                    itemId={occ.id}
+                                    label="Dismiss reminder"
+                                    onClick={async () => {
+                                      setConfirmAction({
+                                        title: "Dismiss reminder?",
+                                        message:
+                                          "This clears the reminder date and removes this from the \"Paused repeating to review\" list. The stream stays paused with its reason and history intact — you can still search for it and resume it later.",
+                                        confirmLabel: "Dismiss reminder",
+                                        colorPalette: "purple",
+                                        onConfirm: async () => {
+                                          try {
+                                            await apiPatch(
+                                              `/api/admin/occurrences/${occ.id}/stream-pause`,
+                                              { reminderAt: null },
+                                            );
+                                            publishInlineMessage({
+                                              type: "SUCCESS",
+                                              text: "Reminder dismissed. Stream is still paused.",
+                                            });
+                                            window.dispatchEvent(
+                                              new CustomEvent("seedlings:stream-pauses-changed"),
+                                            );
+                                            await load(false);
+                                          } catch (err) {
+                                            publishInlineMessage({
+                                              type: "ERROR",
+                                              text: getErrorMessage("Couldn't dismiss the reminder.", err),
+                                            });
+                                          }
+                                        },
+                                      });
+                                    }}
+                                    variant="outline"
+                                    colorPalette="purple"
+                                    busyId={statusButtonBusyId}
+                                    setBusyId={setStatusButtonBusyId}
+                                  />
+                                )}
                               </>
                             )}
                             {occ.status === "IN_PROGRESS" && (
