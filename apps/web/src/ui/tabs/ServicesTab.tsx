@@ -106,7 +106,22 @@ const quickDateItemsBase = [
 export default function ServicesTab({
   me,
   purpose = "ADMIN",
-}: TabPropsType) {
+  streamReviewOccId = null,
+  streamReviewNonce = 0,
+}: TabPropsType & {
+  /** Optional occurrenceId to jump to when the operator clicks the
+   *  "Paused repeating to review" alert or a per-row Review button.
+   *  `null` = expand every reminder-due job; string = expand only that
+   *  occurrence's parent job and highlight the card. Payload for
+   *  [[streamReviewNonce]] — see below. */
+  streamReviewOccId?: string | null;
+  /** Nonce bumped by the parent whenever the review affordance is
+   *  clicked. Same pattern as WorkdaysTab's `jumpNonce`. Race-free:
+   *  even if the tab is cold-mounting, the effect runs on the first
+   *  render because it keys off the nonce (which is already !== the
+   *  initial ref value on mount). */
+  streamReviewNonce?: number;
+}) {
   const { isAvail, forAdmin, isSuper, isAdmin } = determineRoles(me, purpose);
   const { labelFor: methodLabel } = usePaymentMethodLabels();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -127,6 +142,14 @@ export default function ServicesTab({
   // service (status = STREAM_PAUSED). When on, everything else hides.
   // Useful for reviewing what's on hold across the whole feed.
   const [pausedRepeatingOnly, setPausedRepeatingOnly] = useState(false);
+  // Job IDs to restrict the top-level list to when the operator entered
+  // via the "Paused repeating to review" alert / task-row. Populated by
+  // the streamReview effect below. Null = no restriction (normal
+  // pausedRepeatingOnly toggle from the toolbar shows every job that
+  // has a paused occurrence). Empty set = show nothing (would-be
+  // matches all evaporated). Cleared when the operator toggles the
+  // pausedRepeatingOnly chip off.
+  const [reviewTargetJobIds, setReviewTargetJobIds] = useState<Set<string> | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [skippedNextOnly, setSkippedNextOnly] = useState(false);
   const [overdueActive, setOverdueActive] = usePersistedState("services_overdue", false);
@@ -456,30 +479,43 @@ export default function ServicesTab({
     }
   }
 
-  // "Paused repeating to review" alert / task-page click opens Admin →
-  // Services and dispatches this event. Two shapes:
-  //   • detail.occurrenceId set → per-row "Review" click. Expand ONLY
-  //     that occurrence's job, then highlight + scroll to that card.
-  //   • detail.occurrenceId null → section arrow or title-bar alert.
+  // "Paused repeating to review" handoff — parent bumps
+  // `streamReviewNonce` (with `streamReviewOccId` as the payload) when
+  // the operator clicks the alert chip, the section arrow, or a
+  // per-row Review button. Effect keys off the nonce alone so:
+  //   • Cold nav (tab was unmounted): first mount already sees the
+  //     bumped nonce vs. the useRef initial of 0 → runs.
+  //   • Hot nav (tab already mounted): nonce changes → runs again.
+  //   • Initial page load (no click yet, nonce still 0): skipped by
+  //     the ref check.
+  // Race-free: no timers, no window events, no sessionStorage.
+  //
+  // Payload semantics:
+  //   • streamReviewOccId == null → section arrow / title-bar alert.
   //     Expand every reminder-due job.
-  // Filter (pausedRepeatingOnly) is turned on either way so the
-  // expanded jobs don't overflow with unrelated occurrences.
-  // Uses /api/admin/stream-pauses/reminders (already the source of
-  // truth for the alert count).
+  //   • streamReviewOccId != null → per-row Review. Expand only that
+  //     occurrence's parent job, then highlight + scroll to the card.
+  // Filter (pausedRepeatingOnly) is turned on either way so expanded
+  // jobs don't overflow with unrelated occurrences. Backing data
+  // source is /api/admin/stream-pauses/reminders.
+  const lastReviewNonceRef = useRef(0);
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const onEvent = async (e: Event) => {
-      const detail = (e as CustomEvent<{ occurrenceId: string | null }>).detail;
-      const targetOccId = detail?.occurrenceId ?? null;
+    if (streamReviewNonce === 0) return; // no click yet
+    if (streamReviewNonce === lastReviewNonceRef.current) return;
+    lastReviewNonceRef.current = streamReviewNonce;
+    const targetOccId = streamReviewOccId;
+    (async () => {
       setPausedRepeatingOnly(true);
       try {
         const rows = await apiGet<Array<{ id: string; job: { id: string } | null }>>(
           "/api/admin/stream-pauses/reminders",
         );
-        if (!rows?.length) return;
+        if (!rows?.length) {
+          setReviewTargetJobIds(new Set());
+          return;
+        }
         let jobIds: string[];
         if (targetOccId) {
-          // Per-row Review — expand only the parent job of that occurrence.
           const match = rows.find((r) => r.id === targetOccId);
           jobIds = match?.job?.id ? [match.job.id] : [];
           if (jobIds.length > 0) {
@@ -491,23 +527,30 @@ export default function ServicesTab({
             new Set(rows.map((r) => r.job?.id).filter((x): x is string => !!x)),
           );
         }
+        // Narrow the top-level job list to exactly these jobs so the
+        // operator sees the review set immediately (not just their
+        // occurrences filtered within the full feed).
+        setReviewTargetJobIds(new Set(jobIds));
         if (jobIds.length === 0) return;
         setExpandedMap((prev) => {
           const next = { ...prev };
           jobIds.forEach((id) => { next[id] = true; });
           return next;
         });
-        // Load each job's detail so its occurrences (and thus the
-        // paused ones) actually render. loadDetail is idempotent —
-        // no-op for jobs already loaded.
+        // Force "show all occurrences" for these jobs so the default
+        // date window doesn't hide the paused row (its startAt may
+        // be well outside dateFrom/dateTo).
+        setShowAllOccs((prev) => {
+          const next = new Set(prev);
+          jobIds.forEach((id) => next.add(id));
+          return next;
+        });
         for (const id of jobIds) void loadDetail(id);
       } catch {
-        // Ignore — user still gets the filtered tab, just no auto-expand.
+        // User still gets the filtered tab, just no auto-expand.
       }
-    };
-    window.addEventListener("seedlings:open-paused-repeating-review", onEvent as EventListener);
-    return () => window.removeEventListener("seedlings:open-paused-repeating-review", onEvent as EventListener);
-  }, []);
+    })();
+  }, [streamReviewNonce, streamReviewOccId]);
 
   useEffect(() => {
     void load();
@@ -769,6 +812,14 @@ export default function ServicesTab({
       if (exact) return [exact];
     }
 
+    // "Paused repeating to review" entry point — restrict to exactly
+    // the jobs whose paused occurrences have a due reminder. Takes
+    // precedence over other filters so the operator sees the review
+    // set and nothing else.
+    if (reviewTargetJobIds) {
+      return items.filter((r) => reviewTargetJobIds.has(r.id));
+    }
+
     let rows = items;
     // showArchived = exclusive filter ("Archived only"). Off = hide archived (default).
     if (showArchived) rows = rows.filter((i) => i.status === "ARCHIVED");
@@ -788,7 +839,7 @@ export default function ServicesTab({
       rows = rows.filter((r) => !!(r.property?.client as any)?.isVip);
     }
     return rows;
-  }, [items, q, kind, jobStatusFilter, showArchived, vipOnly]);
+  }, [items, q, kind, jobStatusFilter, showArchived, vipOnly, reviewTargetJobIds]);
 
   if (!isAvail) return <UnavailableNotice />;
   if (loading && items.length === 0) return <LoadingCenter />;
@@ -1073,7 +1124,15 @@ export default function ServicesTab({
           size="sm"
           variant={pausedRepeatingOnly ? "solid" : "outline"}
           px="2"
-          onClick={() => setPausedRepeatingOnly(!pausedRepeatingOnly)}
+          onClick={() => {
+            const next = !pausedRepeatingOnly;
+            setPausedRepeatingOnly(next);
+            // Toggling off (or manually turning on from the toolbar)
+            // exits the "review-only" job restriction so the operator
+            // sees the whole feed / every paused stream, not just the
+            // reminder-due ones the alert deep-linked to.
+            setReviewTargetJobIds(null);
+          }}
           title={pausedRepeatingOnly ? "Show all occurrences" : "Show only paused repeating"}
           css={pausedRepeatingOnly ? {
             background: "var(--chakra-colors-purple-100)",
@@ -2678,13 +2737,13 @@ export default function ServicesTab({
                                   <StatusButton
                                     id="occ-stream-dismiss-reminder"
                                     itemId={occ.id}
-                                    label="Dismiss reminder"
+                                    label="Dismiss paused reminder"
                                     onClick={async () => {
                                       setConfirmAction({
-                                        title: "Dismiss reminder?",
+                                        title: "Dismiss this paused reminder?",
                                         message:
                                           "This clears the reminder date and removes this from the \"Paused repeating to review\" list. The stream stays paused with its reason and history intact — you can still search for it and resume it later.",
-                                        confirmLabel: "Dismiss reminder",
+                                        confirmLabel: "Dismiss paused reminder",
                                         colorPalette: "purple",
                                         onConfirm: async () => {
                                           try {
@@ -2694,7 +2753,7 @@ export default function ServicesTab({
                                             );
                                             publishInlineMessage({
                                               type: "SUCCESS",
-                                              text: "Reminder dismissed. Stream is still paused.",
+                                              text: "Paused reminder dismissed. Stream is still paused.",
                                             });
                                             window.dispatchEvent(
                                               new CustomEvent("seedlings:stream-pauses-changed"),

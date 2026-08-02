@@ -69,11 +69,17 @@ export default function AppSplash({
       {/* Two separate animations so the fade + expand read as one
           effect without the layout jump you get from putting a
           transform on a full-viewport fixed element. The outer only
-          animates opacity (compositor-only, zero layout impact) and
-          `will-change` locks it into its own layer from the first
-          frame so nothing promotes mid-lifecycle. The inner <img>
-          owns the scale — transform-origin defaults to its own
-          center so it grows in place. */}
+          animates opacity. The inner Box wraps the img and owns the
+          scale — transform-origin defaults to its own center, so it
+          grows in place around the img's center rather than snapping
+          the layout.
+          Both animations MUST be registered through Chakra's
+          `animation` prop (emotion) — passing `keyframes()` into a
+          plain inline `style` interpolates the animation-name but
+          never injects the @keyframes rule into the stylesheet, so
+          the animation is a silent no-op. The img itself is
+          `display: block` so it doesn't sit on the inline baseline
+          (which was contributing to the pre-fade visual snap). */}
       <Box
         position="fixed"
         inset="0"
@@ -82,19 +88,19 @@ export default function AppSplash({
         display="grid"
         placeItems="center"
         pointerEvents="none"
-        style={{ willChange: "opacity" }}
         animation={fading ? `${overlayFade} ${fadeMs}ms ease forwards` : undefined}
       >
-        <img
-          src={typeof window !== "undefined" ? getSeasonIcons().icon : "/seedlings-icon.png"}
-          alt="Seedlings"
-          width={120}
-          height={120}
-          style={{
-            willChange: "transform, opacity",
-            animation: fading ? `${logoExpand} ${fadeMs}ms ease forwards` : undefined,
-          }}
-        />
+        <Box
+          animation={fading ? `${logoExpand} ${fadeMs}ms ease forwards` : undefined}
+        >
+          <img
+            src={typeof window !== "undefined" ? getSeasonIcons().icon : "/seedlings-icon.png"}
+            alt="Seedlings"
+            width={120}
+            height={120}
+            style={{ display: "block" }}
+          />
+        </Box>
       </Box>
     </Portal>
   );

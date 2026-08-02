@@ -3274,6 +3274,8 @@ async function seedDatabase() {
 
   await seedPolicyFixtures();
 
+  await seedStreamPauseFixtures();
+
   await applySettingSections();
 
   console.log("  Seed complete!");
@@ -3581,6 +3583,62 @@ async function seedPolicyFixtures() {
   await seedTestScenarios();
 
   console.log("  ✓ Policy fixtures + test scenarios wired");
+}
+
+/**
+ * Fixtures for the "Paused repeating to review" task/alert. Grabs the
+ * two earliest SCHEDULED STANDARD occurrences on distinct repeating
+ * jobs and transitions them to STREAM_PAUSED with a past reminder date
+ * so they immediately show up on the tasks page + alert chip after a
+ * reseed. Lets the operator verify the deep-link + filter + expand
+ * flow (goToStreamPauseReminders) without manually pausing a stream.
+ */
+async function seedStreamPauseFixtures() {
+  const candidates = await prisma.jobOccurrence.findMany({
+    where: {
+      status: "SCHEDULED",
+      workflow: "STANDARD",
+      job: { schedule: { isNot: null } }, // repeating jobs only
+    },
+    orderBy: { startAt: "asc" },
+    select: { id: true, jobId: true },
+  });
+  // De-dupe by jobId so the two paused rows come from different jobs
+  // — makes the "expand only this job" per-row Review click distinct
+  // from the "expand every reminder-due job" section-arrow click.
+  const seenJobs = new Set<string>();
+  const targets: string[] = [];
+  for (const c of candidates) {
+    if (seenJobs.has(c.jobId)) continue;
+    seenJobs.add(c.jobId);
+    targets.push(c.id);
+    if (targets.length >= 2) break;
+  }
+  if (targets.length === 0) {
+    console.log("  (skipping stream-pause fixture — no SCHEDULED repeating occurrences)");
+    return;
+  }
+  const nowMinus1Day = daysAgo(1, 12);
+  const nowMinus7Days = daysAgo(7, 12);
+  const reasons = [
+    "Client traveling — resume when they get back",
+    "Sprinkler repair pending — hold until fixed",
+  ];
+  for (let i = 0; i < targets.length; i++) {
+    await prisma.jobOccurrence.update({
+      where: { id: targets[i] },
+      data: {
+        status: "STREAM_PAUSED",
+        streamPausedAt: i === 0 ? nowMinus7Days : nowMinus1Day,
+        streamPausedById: MICHAEL_ID,
+        streamPauseReason: reasons[i],
+        // Reminder in the past → immediately shows in the "to review"
+        // list on load.
+        streamResumeReminderAt: i === 0 ? nowMinus1Day : new Date(),
+      },
+    });
+  }
+  console.log(`  seeded ${targets.length} paused-repeating occurrence(s) with due reminders`);
 }
 
 /**
