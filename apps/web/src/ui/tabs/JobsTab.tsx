@@ -33,7 +33,7 @@ import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { projectViewerPayout, projectTeamPayoutsForOcc, perWorkerShare, rateForViewer } from "@/src/lib/paymentMath";
 import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
 import { getLocation } from "@/src/lib/geo";
-import { determineRoles, occurrenceStatusColor, prettyStatus, clientLabel, fmtDate, fmtDateTime, fmtDateWeekday, fmtDateOpts, fmtTimeOpts, bizDateKey, bizToday, bizYesterday, bizAddDays, bizAddYears, bizYearOf, bizDaysBetween, bizInstantFromEtParts, bizToLocalInputValue, bizParseLocalInputValue, jobTypeLabel } from "@/src/lib/lib";
+import { determineRoles, occurrenceStatusColor, prettyStatus, clientLabel, fmtDate, fmtDateTime, fmtDateWeekday, fmtDateOpts, fmtTimeOpts, bizDateKey, bizToday, bizYesterday, bizAddDays, bizAddYears, bizYearOf, bizDaysBetween, bizHourMinute, bizInstantFromEtParts, bizToLocalInputValue, bizParseLocalInputValue, jobTypeLabel , type EtDateKey } from "@/src/lib/lib";
 import { isOccurrenceOverdue, loadPaymentRequestExpiryHours, DEFAULT_PAYMENT_REQUEST_EXPIRY_HOURS } from "@/src/lib/overdueRule";
 import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
 import { useBranding } from "@/src/lib/useBranding";
@@ -690,10 +690,19 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     if (!forAdmin && !rescheduleReason.trim()) return;
     setRescheduleBusy(true);
     try {
-      const patchData: any = { startAt: rescheduleDate + "T09:00:00Z" };
+      // Preserve the source occurrence's ET wall-clock time on the new
+      // date. Previously used a hard-coded "T09:00:00Z" (= 5 AM ET
+      // EDT / 4 AM ET EST) which silently moved every rescheduled job
+      // to early morning regardless of its original time. See the
+      // audit MED #3 finding.
+      const sourceTime = rescheduleOcc.startAt
+        ? bizHourMinute(rescheduleOcc.startAt)
+        : "09:00";
+      const newStartIso = bizInstantFromEtParts(rescheduleDate as EtDateKey, sourceTime);
+      const patchData: any = { startAt: newStartIso };
       if (rescheduleOcc.startAt && rescheduleOcc.endAt) {
         const duration = new Date(rescheduleOcc.endAt).getTime() - new Date(rescheduleOcc.startAt).getTime();
-        patchData.endAt = new Date(new Date(rescheduleDate + "T09:00:00Z").getTime() + duration).toISOString();
+        patchData.endAt = new Date(new Date(newStartIso).getTime() + duration).toISOString();
       }
       if (forAdmin) {
         // Admin uses the admin endpoint — no comment requirement enforced server-side
@@ -1374,13 +1383,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     if (forAdmin) return { from, to, clamped: false };
     const MAX_DAYS = 62;
     if (from && to) {
-      if (bizDaysBetween(from, to) > MAX_DAYS) {
-        return { from: bizAddDays(to, -MAX_DAYS), to, clamped: true };
+      if (bizDaysBetween(from as EtDateKey, to as EtDateKey) > MAX_DAYS) {
+        return { from: bizAddDays(to as EtDateKey, -MAX_DAYS), to, clamped: true };
       }
     } else if (!from && to) {
-      return { from: bizAddDays(to, -MAX_DAYS), to, clamped: true };
+      return { from: bizAddDays(to as EtDateKey, -MAX_DAYS), to, clamped: true };
     } else if (from && !to) {
-      return { from, to: bizAddDays(from, MAX_DAYS), clamped: true };
+      return { from, to: bizAddDays(from as EtDateKey, MAX_DAYS), clamped: true };
     }
     return { from, to, clamped: false };
   }
@@ -2521,7 +2530,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       // through UTC-noon anchors (DST-immune) — no need for the manual
       // noon-UTC dance below.
       const d = new Date(dateKey + "T12:00:00Z"); // for fmtDateWeekday display
-      const diff = bizDaysBetween(todayKey, dateKey);
+      const diff = bizDaysBetween(todayKey, dateKey as EtDateKey);
       if (diff === 0) return "Today";
       if (diff === -1) return "Yesterday";
       if (diff === 1) return "Tomorrow";
@@ -2530,7 +2539,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       if (diff <= -2 && diff >= -6) return `Last ${dayName}`;
       // String math on the YYYY-MM-DD key avoids any Date-vs-Date
       // year drift across DST / timezone boundaries.
-      return fmtDateWeekday(d, { year: bizYearOf(dateKey) !== bizYearOf(todayKey) });
+      return fmtDateWeekday(d, { year: bizYearOf(dateKey as EtDateKey) !== bizYearOf(todayKey) });
     };
 
     // Separate pinned and reminder-due items into their own groups (worker view only).

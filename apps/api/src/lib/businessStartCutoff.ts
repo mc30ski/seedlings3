@@ -32,7 +32,7 @@
 
 import type { FastifyRequest } from "fastify";
 import { prisma } from "../db/prisma";
-import { etMidnight } from "./dates";
+import { etMidnight, type EtDateKey } from "./dates";
 
 export const BUSINESS_START_DATE_KEY = "BUSINESS_START_DATE";
 export const BUSINESS_START_DATE_ENABLED_KEY = "BUSINESS_START_DATE_ENABLED";
@@ -128,7 +128,8 @@ function parseCutoffValue(raw: string): Date | null {
   // UTC on Vercel, which mis-anchored the cutoff by 4-5 hours and let
   // rows from before the official start date slip into reports.
   if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-    const dt = etMidnight(trimmed);
+    // Regex-verified — safe to brand at this boundary.
+    const dt = etMidnight(trimmed as EtDateKey);
     return Number.isFinite(dt.getTime()) ? dt : null;
   }
   const dt = new Date(trimmed);

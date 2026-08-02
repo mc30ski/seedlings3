@@ -3,7 +3,7 @@ import { prisma } from "../db/prisma";
 import Anthropic from "@anthropic-ai/sdk";
 import { getRoutingProvider, AVAILABLE_PROVIDERS, type OptimizedRoute } from "../lib/routing";
 
-import { etMidnight, etToday, etAddDays, etFormatDate } from "../lib/dates";
+import { etMidnight, etToday, etAddDays, etFormatDate , type EtDateKey } from "../lib/dates";
 
 const workerGuard = {
   preHandler: (req: FastifyRequest, reply: FastifyReply) =>
@@ -41,9 +41,9 @@ export default async function previewRoutes(app: FastifyInstance) {
     // Search range: lookAhead days before AND after the target date, but
     // never before today. All string arithmetic in ET so DST edges and the
     // server's UTC clock don't shift the window.
-    const rangeStartStr = etAddDays(targetStr, -lookAhead);
+    const rangeStartStr = etAddDays(targetStr as EtDateKey, -lookAhead);
     const startStr = rangeStartStr < todayStr ? todayStr : rangeStartStr;
-    const endStr = etAddDays(targetStr, lookAhead + 1);
+    const endStr = etAddDays(targetStr as EtDateKey, lookAhead + 1);
 
     // Fetch claimable occurrences only in "suggest" mode
     // When admin is running routes (userId param set), include estimates in suggestions

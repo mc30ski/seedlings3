@@ -13,6 +13,7 @@ import {
 } from "@chakra-ui/react";
 import { AlertTriangle, CheckCircle2, Clock, FileText, XCircle } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
+import { fmtDate } from "@/src/lib/lib";
 import PolicySignWizard, { type RequiredPolicy } from "@/src/ui/dialogs/PolicySignWizard";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
@@ -306,12 +307,8 @@ function AwaitingReviewRowView({
   onReplace: () => void;
   onCancel: () => void;
 }) {
-  const uploadedLabel = row.uploadedAt
-    ? new Date(row.uploadedAt).toLocaleDateString()
-    : null;
-  const expiresLabel = row.uploadExpiresAt
-    ? new Date(row.uploadExpiresAt).toLocaleDateString()
-    : null;
+  const uploadedLabel = row.uploadedAt ? fmtDate(row.uploadedAt) : null;
+  const expiresLabel = row.uploadExpiresAt ? fmtDate(row.uploadExpiresAt) : null;
   return (
     <HStack
       gap={2}
@@ -422,7 +419,7 @@ function HistoryRow({ row }: { row: HistoryRow }) {
         </HStack>
         <HStack gap={2} wrap="wrap">
           <Text fontSize="xs" color="fg.muted">
-            {iconLabel} · {new Date(row.signedAt).toLocaleDateString()}
+            {iconLabel} · {fmtDate(row.signedAt)}
           </Text>
           {row.workerActionAtSign === "NONE" && (
             <Badge size="xs" colorPalette="blue" variant="subtle">
@@ -431,7 +428,7 @@ function HistoryRow({ row }: { row: HistoryRow }) {
           )}
           {row.uploadExpiresAt && (
             <Text fontSize="xs" color="fg.muted">
-              expires {new Date(row.uploadExpiresAt).toLocaleDateString()}
+              expires {fmtDate(row.uploadExpiresAt)}
             </Text>
           )}
         </HStack>

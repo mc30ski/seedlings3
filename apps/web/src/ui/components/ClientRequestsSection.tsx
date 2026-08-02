@@ -87,34 +87,15 @@ type ChangeRequestRow = {
   };
 };
 
-function fmtDateTime(iso: string | null): string {
-  if (!iso) return "—";
-  try {
-    return fmtDateOpts(iso, {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    });
-  } catch {
-    return "—";
-  }
-}
-
-// Date-only formatter. Use for fields the system tracks by day, not
-// time-of-day (job startAt, reschedule suggestions, etc.).
-function fmtDateOnly(iso: string | null): string {
-  if (!iso) return "—";
-  try {
-    return fmtDateOpts(iso, {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-    });
-  } catch {
-    return "—";
-  }
+// Weekday + short date, no time. Local convenience wrapper —
+// canonical fmtDateWeekday uses "long" weekday format ("Wednesday");
+// this variant wants "short" weekday ("Wed") for space-tight rows.
+function fmtDateWithWeekdayShort(iso: string | null): string {
+  return fmtDateOpts(iso, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
 }
 
 function fmtRelative(iso: string): string {
@@ -149,7 +130,7 @@ function propertyAddress(row: ChangeRequestRow): string | null {
 }
 
 function buildOutreachMessage(row: ChangeRequestRow): string {
-  const date = fmtDateOnly(row.occurrence.startAt);
+  const date = fmtDateWithWeekdayShort(row.occurrence.startAt);
   const verb = row.kind === "RESCHEDULE" ? "reschedule" : "skip";
   const firstName = row.occurrence.job?.property?.client?.contacts?.[0]?.firstName ?? "there";
   return `Hi ${firstName}, I got your ${verb} request for ${date}. Wanted to find a date that works for you.`;
@@ -341,11 +322,11 @@ export default function ClientRequestsSection() {
                       {addr && <> · {addr}</>}
                     </Text>
                     <Text fontSize="xs" color="fg.muted">
-                      Scheduled: {fmtDateOnly(row.occurrence.startAt)}
+                      Scheduled: {fmtDateWithWeekdayShort(row.occurrence.startAt)}
                     </Text>
                     {row.kind === "RESCHEDULE" && row.proposedStartAt && (
                       <Text fontSize="xs" color="orange.700" fontWeight="medium">
-                        Client suggested: {fmtDateOnly(row.proposedStartAt)}
+                        Client suggested: {fmtDateWithWeekdayShort(row.proposedStartAt)}
                       </Text>
                     )}
                   </Box>
@@ -492,11 +473,11 @@ export default function ClientRequestsSection() {
                     <VStack align="stretch" gap={3}>
                       <Box p={2} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">
                         <Text fontSize="xs" color="fg.muted">
-                          Currently scheduled: <b>{fmtDateOnly(reschedulingRow.occurrence.startAt)}</b>
+                          Currently scheduled: <b>{fmtDateWithWeekdayShort(reschedulingRow.occurrence.startAt)}</b>
                         </Text>
                         {reschedulingRow.proposedStartAt && (
                           <Text fontSize="xs" color="orange.700">
-                            Client suggested: <b>{fmtDateOnly(reschedulingRow.proposedStartAt)}</b>
+                            Client suggested: <b>{fmtDateWithWeekdayShort(reschedulingRow.proposedStartAt)}</b>
                           </Text>
                         )}
                       </Box>

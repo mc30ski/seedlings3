@@ -28,6 +28,7 @@ import {
   bizInstantFromEtParts,
   fmtTimeOpts,
   fmtDateOpts,
+  type EtDateKey,
 } from "@/src/lib/lib";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -286,7 +287,7 @@ export default function WorkdaysTab({
   }, [selectedDate]);
 
   function dayShift(delta: number) {
-    setSelectedDate(bizAddDays(selectedDate, delta));
+    setSelectedDate(bizAddDays(selectedDate as EtDateKey, delta));
   }
 
   // Bulk-select uses prefixed keys so hours and mileage share one Set
@@ -1454,11 +1455,11 @@ function CreateWorkdayDialog({
   // with 30 minutes of pause. That's a realistic-looking standard
   // workday — Super edits the fields as needed before saving.
   const defaultStartIso = useMemo(
-    () => bizInstantFromEtParts(workdayDate, "08:00"),
+    () => bizInstantFromEtParts(workdayDate as EtDateKey, "08:00"),
     [workdayDate],
   );
   const defaultEndIso = useMemo(
-    () => bizInstantFromEtParts(workdayDate, "17:00"),
+    () => bizInstantFromEtParts(workdayDate as EtDateKey, "17:00"),
     [workdayDate],
   );
   const [startedAt, setStartedAt] = useState(bizToLocalInputValue(defaultStartIso));

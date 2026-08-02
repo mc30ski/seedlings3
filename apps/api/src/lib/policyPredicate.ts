@@ -21,7 +21,7 @@
  * in. That keeps this file dependency-free and easy to reason about.
  */
 
-import { etAddDays, etDaysBetween, etFormatDate } from "./dates";
+import { etAddDays, etDaysBetween, etFormatDate, etMidnight, type EtDateKey } from "./dates";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Input types
@@ -319,7 +319,7 @@ function isResignTriggerLapsed(
  * the target-day in the following year. Feb 29 → Feb 28 fallback on non-leap
  * years handled by inspecting the month-day string directly.
  */
-function nextAnnualDueDate(signedKey: string, monthDay: string): string {
+function nextAnnualDueDate(signedKey: EtDateKey, monthDay: string): EtDateKey {
   // signedKey: "YYYY-MM-DD"
   const signedYear = Number(signedKey.slice(0, 4));
   const [signedMonth, signedDay] = signedKey.slice(5).split("-");
@@ -327,8 +327,8 @@ function nextAnnualDueDate(signedKey: string, monthDay: string): string {
   const signedYm = `${signedMonth}-${signedDay}`;
   // If target is on or after signed's MM-DD in the SAME year, the next
   // trigger is this year's target. Otherwise it's next year's target.
-  const sameYearCandidate = `${signedYear}-${targetMonth}-${targetDay}`;
-  const nextYearCandidate = `${signedYear + 1}-${targetMonth}-${targetDay}`;
+  const sameYearCandidate = `${signedYear}-${targetMonth}-${targetDay}` as EtDateKey;
+  const nextYearCandidate = `${signedYear + 1}-${targetMonth}-${targetDay}` as EtDateKey;
   return monthDay >= signedYm ? sameYearCandidate : nextYearCandidate;
 }
 
@@ -420,9 +420,11 @@ function computeResignExpiry(
       const window = policy.resignParamDays ?? 0;
       if (window <= 0) return null;
       const dueKey = etAddDays(signedKey, window);
-      // Convert back to a Date at ET midnight of the due day. Callers only
-      // care about relative ordering so exact time-of-day doesn't matter.
-      return new Date(`${dueKey}T04:00:00Z`);
+      // ET midnight of the due day. Previously used `T04:00:00Z` which
+      // hard-coded EDT (4h offset); across DST that becomes an hour off
+      // (EST is UTC-5). etMidnight auto-picks the correct offset for
+      // the given date, DST-safe.
+      return etMidnight(dueKey);
     }
     case "ANNIVERSARY":
     case "ANNUAL_ON_DATE": {
@@ -431,7 +433,7 @@ function computeResignExpiry(
           ? policy.resignParamMonthDay
           : signedKey.slice(5); // fallback: worker's own signing MM-DD
       const dueKey = nextAnnualDueDate(signedKey, effectiveMonthDay);
-      return new Date(`${dueKey}T04:00:00Z`);
+      return etMidnight(dueKey);
     }
     default:
       return null;

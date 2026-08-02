@@ -43,7 +43,7 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
-import { bizInstantFromEtParts, bizToday } from "@/src/lib/lib";
+import { bizInstantFromEtParts, bizToday , type EtDateKey } from "@/src/lib/lib";
 import { useOffline } from "@/src/lib/offline";
 import { enqueueAction, type QueuedActionType } from "@/src/lib/offlineQueue";
 import ImpersonationWarning from "@/src/ui/components/ImpersonationWarning";
@@ -1962,7 +1962,7 @@ function ForgotPriorDialog({
   // canonical helper so the DST offset is computed correctly regardless
   // of the operator's device timezone.
   const defaultEndIso = useMemo(
-    () => bizInstantFromEtParts(workday.workdayDate, "17:00"),
+    () => bizInstantFromEtParts(workday.workdayDate as EtDateKey, "17:00"),
     [workday.workdayDate],
   );
 

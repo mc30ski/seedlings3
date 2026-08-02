@@ -26,7 +26,7 @@ import {
 } from "@chakra-ui/react";
 import { CheckCircle2, RotateCcw, Trash2 } from "lucide-react";
 import { apiPatch, apiPost } from "@/src/lib/api";
-import { bizToLocalInputValue, bizParseLocalInputValue } from "@/src/lib/lib";
+import { bizToLocalInputValue, bizParseLocalInputValue, fmtDateTime } from "@/src/lib/lib";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -361,7 +361,7 @@ function EntryCard({
       <ConfirmDialog
         open={rejectConfirmOpen}
         title="Reject mileage session?"
-        message={`This deletes the ${entry.vehicleName ?? "mileage"} session from ${new Date(entry.startedAt).toLocaleString()}. It can't be undone — the row will disappear from every report and from the driver's day.`}
+        message={`This deletes the ${entry.vehicleName ?? "mileage"} session from ${fmtDateTime(entry.startedAt)}. It can't be undone — the row will disappear from every report and from the driver's day.`}
         confirmLabel="Reject session"
         confirmColorPalette="red"
         onConfirm={() => void doReject()}

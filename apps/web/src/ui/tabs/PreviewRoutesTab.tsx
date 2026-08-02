@@ -20,7 +20,7 @@ import { MapLink } from "@/src/ui/helpers/Link";
 import { type Me } from "@/src/lib/types";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import { openEventSearch } from "@/src/lib/bus";
-import { fmtDate, fmtDateTime, bizDateKey, bizTomorrow, bizDaysBetween } from "@/src/lib/lib";
+import { fmtDate, fmtDateTime, bizDateKey, bizTomorrow, bizDaysBetween, bizHourMinute, bizInstantFromEtParts , type EtDateKey } from "@/src/lib/lib";
 import AddressAutocomplete from "@/src/ui/components/AddressAutocomplete";
 
 type RouteJob = {
@@ -307,15 +307,17 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
   async function claimJob(occurrenceId: string, job: any) {
     setClaimingId(occurrenceId);
     try {
-      // Calculate new start date based on targetDate, preserving duration if multi-day
-      const patchData: any = { startAt: targetDate + "T09:00:00Z" };
+      // Calculate new start date based on targetDate, preserving the
+      // source's ET wall-clock time-of-day (and duration if multi-day).
+      // Previously used a hard-coded "T09:00:00Z" (= 5 AM ET EDT / 4 AM
+      // ET EST) which silently moved every claim to early morning
+      // regardless of the job's original time.
+      const sourceTime = job?.startAt ? bizHourMinute(job.startAt) : "09:00";
+      const newStartIso = bizInstantFromEtParts(targetDate, sourceTime);
+      const patchData: any = { startAt: newStartIso };
       if (job?.startAt && job?.endAt) {
-        const origStart = new Date(job.startAt).getTime();
-        const origEnd = new Date(job.endAt).getTime();
-        const durationMs = origEnd - origStart;
-        const newStart = new Date(targetDate + "T09:00:00Z");
-        patchData.startAt = newStart.toISOString();
-        patchData.endAt = new Date(newStart.getTime() + durationMs).toISOString();
+        const durationMs = new Date(job.endAt).getTime() - new Date(job.startAt).getTime();
+        patchData.endAt = new Date(new Date(newStartIso).getTime() + durationMs).toISOString();
       }
 
       const origDate = job?.startAt ? bizDateKey(job.startAt) : null;
@@ -366,7 +368,7 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
     // Validate move is within allowed range — ET calendar days
     // (DST-safe via the canonical helper).
     if (job?.currentDate) {
-      const diffDays = Math.abs(bizDaysBetween(job.currentDate, newDate));
+      const diffDays = Math.abs(bizDaysBetween(job.currentDate, newDate as EtDateKey));
       if (diffDays > maxMoveDays) {
         publishInlineMessage({
           type: "WARNING",
@@ -378,14 +380,14 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
 
     setReschedulingId(occurrenceId);
     try {
-      const patchData: any = { startAt: newDate + "T09:00:00Z" };
+      // Same source-time-preservation fix as claimJob above — was
+      // hard-coding "T09:00:00Z" which lost the original wall-clock.
+      const sourceTime = job?.startAt ? bizHourMinute(job.startAt) : "09:00";
+      const newStartIso = bizInstantFromEtParts(newDate as EtDateKey, sourceTime);
+      const patchData: any = { startAt: newStartIso };
       if (job?.startAt && job?.endAt) {
-        const origStart = new Date(job.startAt).getTime();
-        const origEnd = new Date(job.endAt).getTime();
-        const durationMs = origEnd - origStart;
-        const newStart = new Date(newDate + "T09:00:00Z");
-        patchData.startAt = newStart.toISOString();
-        patchData.endAt = new Date(newStart.getTime() + durationMs).toISOString();
+        const durationMs = new Date(job.endAt).getTime() - new Date(job.startAt).getTime();
+        patchData.endAt = new Date(new Date(newStartIso).getTime() + durationMs).toISOString();
       }
 
       if (userId) {
@@ -559,7 +561,7 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
               size="sm"
               value={targetDate}
               min={todayStr}
-              onChange={(e) => setTargetDate(e.target.value)}
+              onChange={(e) => setTargetDate(e.target.value as EtDateKey)}
             />
           </Box>
           <Box flex="1" minW="140px">

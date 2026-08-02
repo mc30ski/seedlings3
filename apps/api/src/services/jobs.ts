@@ -22,7 +22,7 @@ import {
 import type { ServicesJobs } from "../types/services";
 import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
-import { etMidnight, etEndOfDay, etToday, etFormatDate, etDaysBetween } from "../lib/dates";
+import { etMidnight, etEndOfDay, etToday, etFormatDate, etDaysBetween , type EtDateKey } from "../lib/dates";
 import { ServiceError } from "../lib/errors";
 import {
   occurrenceWorkDateCutoff,
@@ -480,8 +480,8 @@ export const jobs: ServicesJobs = {
 
     if (params?.from || params?.to) {
       const dateRange: Prisma.DateTimeFilter = {};
-      if (params.from) dateRange.gte = etMidnight(params.from);
-      if (params.to) dateRange.lte = etEndOfDay(params.to);
+      if (params.from) dateRange.gte = etMidnight(params.from as EtDateKey);
+      if (params.to) dateRange.lte = etEndOfDay(params.to as EtDateKey);
       // Include jobs with an occurrence in range OR jobs with no occurrences yet
       andClauses.push({
         OR: [
@@ -1883,8 +1883,8 @@ export const jobs: ServicesJobs = {
 
   async listAllOccurrences(params) {
     const dateRange: Prisma.DateTimeFilter = {};
-    if (params?.from) dateRange.gte = etMidnight(params.from);
-    if (params?.to) dateRange.lte = etEndOfDay(params.to);
+    if (params?.from) dateRange.gte = etMidnight(params.from as EtDateKey);
+    if (params?.to) dateRange.lte = etEndOfDay(params.to as EtDateKey);
     const hasDates = params?.from || params?.to;
 
     const occs = await prisma.jobOccurrence.findMany({

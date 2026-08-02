@@ -21,7 +21,7 @@ import {
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 import { type Me, type Role } from "@/src/lib/types";
-import { fmtDate as fmtDateLib, fmtDateOpts, fmtTimeOpts, bizToday, bizDateKey, bizDaysBetween } from "@/src/lib/lib";
+import { fmtDate, fmtDateOpts, fmtDateLong, fmtTimeOpts, bizToday, bizDateKey, bizDaysBetween } from "@/src/lib/lib";
 import { useOffline } from "@/src/lib/offline";
 import { getAllActions, deleteAction, retryAction, clearAllActions, subscribeQueue, type QueuedAction } from "@/src/lib/offlineQueue";
 import { usePushNotifications } from "@/src/lib/usePushNotifications";
@@ -496,12 +496,12 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
                       <Text color="fg.muted" w="80px">Payout:</Text>
                       <Box flex="1">
                         <Badge colorPalette={daysLeft <= 7 ? "yellow" : "purple"} variant="solid">
-                          Guaranteed through {fmtDateLib(me.guaranteedPayoutUntil)} · {daysLeft}d left
+                          Guaranteed through {fmtDate(me.guaranteedPayoutUntil)} · {daysLeft}d left
                         </Badge>
                         <Text fontSize="xs" color="fg.muted" mt={1}>
                           During this onboarding window you're paid for each completed job on the
                           next contractor payroll run for the week the work fell in — same timing
-                          a W-2 employee would see for that work. After {fmtDateLib(me.guaranteedPayoutUntil)},
+                          a W-2 employee would see for that work. After {fmtDate(me.guaranteedPayoutUntil)},
                           the standing contingent-payment terms in your Independent Contractor
                           Agreement apply (paid after the client pays).
                         </Text>
@@ -897,8 +897,6 @@ function AccountSection() {
 function NotificationsSection() {
   const push = usePushNotifications();
 
-  const fmtDate = (s?: string | null) =>
-    s ? fmtDateOpts(s, { month: "short", day: "numeric", year: "numeric" }) : "";
 
   // Best-effort label from user-agent — short, recognizable.
   const deviceLabel = (ua?: string | null, label?: string | null) => {
@@ -1031,8 +1029,8 @@ function NotificationsSection() {
                           <Text fontWeight="medium">{deviceLabel(d.userAgent, d.label)}</Text>
                           {isThis && <Badge size="sm" colorPalette="blue">This device</Badge>}
                         </HStack>
-                        <Text color="fg.muted">Added: {fmtDate(d.createdAt)}</Text>
-                        {d.lastUsedAt && <Text color="fg.muted">Last used: {fmtDate(d.lastUsedAt)}</Text>}
+                        <Text color="fg.muted">Added: {fmtDateLong(d.createdAt)}</Text>
+                        {d.lastUsedAt && <Text color="fg.muted">Last used: {fmtDateLong(d.lastUsedAt)}</Text>}
                       </VStack>
                       <Button
                         size="xs"
@@ -1091,8 +1089,6 @@ function CalendarFeedsSection() {
     publishInlineMessage({ type: "SUCCESS", text: "All feeds revoked." });
   }
 
-  const fmtDate = (s: string) =>
-    fmtDateOpts(s, { month: "short", day: "numeric", year: "numeric" });
 
   const filterSummary = (f: any) => {
     const parts: string[] = [];
@@ -1129,9 +1125,9 @@ function CalendarFeedsSection() {
                   <VStack align="start" gap={0.5} flex="1" minW={0}>
                     <Text fontWeight="medium">{f.label || "Calendar Feed"}</Text>
                     <Text color="fg.muted">Filters: {filterSummary(f.filters)}</Text>
-                    <Text color="fg.muted">Created: {fmtDate(f.createdAt)}</Text>
+                    <Text color="fg.muted">Created: {fmtDateLong(f.createdAt)}</Text>
                     {f.lastAccessedAt && (
-                      <Text color="fg.muted">Last polled: {fmtDate(f.lastAccessedAt)}</Text>
+                      <Text color="fg.muted">Last polled: {fmtDateLong(f.lastAccessedAt)}</Text>
                     )}
                     {!f.lastAccessedAt && (
                       <Text color="orange.500">Never accessed</Text>

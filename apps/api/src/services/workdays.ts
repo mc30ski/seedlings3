@@ -3,7 +3,7 @@ import { prisma } from "../db/prisma";
 import { writeAudit } from "../lib/auditLogger";
 import { AUDIT } from "../lib/auditActions";
 import { ServiceError } from "../lib/errors";
-import { etFormatDate, etToday, etMidnight, etEndOfDay, etInstantFromParts, etAddDays } from "../lib/dates";
+import { etFormatDate, etToday, etMidnight, etEndOfDay, etInstantFromParts, etAddDays , type EtDateKey } from "../lib/dates";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Worker workday service — per-worker daily clock-in/out tracking.
@@ -82,11 +82,11 @@ function todayEt(): string {
 }
 
 function dayMidnightEt(workdayDate: string): Date {
-  return etMidnight(workdayDate);
+  return etMidnight(workdayDate as EtDateKey);
 }
 
 function dayEndEt(workdayDate: string): Date {
-  return etEndOfDay(workdayDate);
+  return etEndOfDay(workdayDate as EtDateKey);
 }
 
 // ── Approval cutoff (worker/admin boundary) ─────────────────────────────
@@ -116,7 +116,7 @@ async function loadApprovalCutoffHour(): Promise<number> {
  *  worker's edit window (same instant). DST-safe via etInstantFromParts. */
 async function approvalOpensAt(workdayDate: string): Promise<Date> {
   const cutoffHour = await loadApprovalCutoffHour();
-  const nextDay = etAddDays(workdayDate, 1);
+  const nextDay = etAddDays(workdayDate as EtDateKey, 1);
   return etInstantFromParts(nextDay, `${String(cutoffHour).padStart(2, "0")}:00`);
 }
 
@@ -264,8 +264,8 @@ export async function getTodayJobCounts(userId: string): Promise<{
     .map((a) => a.occurrenceId);
   if (myWorkingOccIds.length === 0) return { scheduled: 0, remaining: 0 };
   const today = todayEt();
-  const todayMidnight = etMidnight(today);
-  const tomorrowMidnight = etMidnight(etAddDays(today, 1));
+  const todayMidnight = etMidnight(today as EtDateKey);
+  const tomorrowMidnight = etMidnight(etAddDays(today as EtDateKey, 1));
   const [scheduled, remaining] = await Promise.all([
     prisma.jobOccurrence.count({
       where: {

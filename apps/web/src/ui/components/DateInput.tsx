@@ -1,10 +1,16 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import type { EtDateKey } from "@/src/lib/lib";
 
 type Props = {
-  value: string;
-  onChange: (value: string) => void;
+  /** Current value — YYYY-MM-DD ET calendar key. `EtDateKey | string`
+   *  so callers can pass an empty-string "no value" without branding it. */
+  value: EtDateKey | string;
+  /** Fired with the new value. Brands as EtDateKey since a native
+   *  `<input type="date">` guarantees YYYY-MM-DD output. Callers can
+   *  store the result directly in an EtDateKey-typed state. */
+  onChange: (value: EtDateKey) => void;
   size?: string;
   min?: string;
   max?: string;
@@ -14,6 +20,11 @@ type Props = {
 /**
  * Thin wrapper around a native <input type="date"> that imperatively
  * syncs the DOM value, which fixes Safari ignoring React controlled updates.
+ *
+ * onChange is typed to emit `EtDateKey` — the browser's `<input type="date">`
+ * always outputs a YYYY-MM-DD ET calendar-day string (independent of the
+ * viewer's timezone), so branding here is a safe boundary cast that lets
+ * downstream state stay strictly-typed without every consumer casting.
  */
 export default function DateInput({ value, onChange, min, max, css: cssProp }: Props) {
   const ref = useRef<HTMLInputElement>(null);
@@ -31,7 +42,7 @@ export default function DateInput({ value, onChange, min, max, css: cssProp }: P
       defaultValue={value}
       min={min}
       max={max}
-      onChange={(e) => onChange(e.target.value)}
+      onChange={(e) => onChange(e.target.value as EtDateKey)}
       style={{
         flex: 1,
         minWidth: 0,

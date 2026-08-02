@@ -794,7 +794,7 @@ function PolicyDetailDrawer({
                               {ex.user.displayName ?? ex.userId}
                             </Text>
                             <Text color="fg.muted">
-                              until {new Date(ex.expiresAt).toLocaleDateString()}
+                              until {fmtDate(ex.expiresAt)}
                             </Text>
                             <Text color="fg.muted" flex="1" lineClamp={1}>
                               {ex.reason}
@@ -1096,7 +1096,7 @@ function VersionRow({
             </Text>
             <Text fontSize="2xs" color="fg.muted">
               digest {version.contentDigest.slice(0, 12)}… · by {version.createdBy.displayName ?? "?"}
-              {version.publishedAt && ` · published ${new Date(version.publishedAt).toLocaleDateString()}`}
+              {version.publishedAt && ` · published ${fmtDate(version.publishedAt)}`}
             </Text>
           </VStack>
           <HStack gap={1}>
@@ -1500,7 +1500,7 @@ function UploadReviewRow({ row, onReviewed }: { row: PendingUploadReview; onRevi
             </Badge>
             {row.uploadFileName && (
               <Text color="fg.muted" fontSize="2xs">
-                {row.uploadFileName} · signed {new Date(row.signedAt).toLocaleDateString()}
+                {row.uploadFileName} · signed {fmtDate(row.signedAt)}
               </Text>
             )}
           </VStack>

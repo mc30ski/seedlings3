@@ -200,19 +200,27 @@ const FORBIDDEN_PATTERNS: Rule[] = [
   },
   // 10b. Spelled-out millisecond chains that evaluate to 86_400_000.
   //      `1000 * 60 * 60 * 24`, `24 * 60 * 60 * 1000`, `24 * 3600000`,
-  //      etc. — all bypass the literal regex above.
+  //      `24 * 3600 * 1000`, etc. — all bypass the literal regex above.
+  //      Audit surfaced the `24 * 3600 * 1000` variant slipping through;
+  //      added below.
   {
-    pattern: /\b(?:1000\s*\*\s*60\s*\*\s*60\s*\*\s*24|24\s*\*\s*60\s*\*\s*60\s*\*\s*1000|24\s*\*\s*3600000|60\s*\*\s*60\s*\*\s*24\s*\*\s*1000)\b/,
+    pattern: /\b(?:1000\s*\*\s*60\s*\*\s*60\s*\*\s*24|24\s*\*\s*60\s*\*\s*60\s*\*\s*1000|24\s*\*\s*3600000|24\s*\*\s*3600\s*\*\s*1000|60\s*\*\s*60\s*\*\s*24\s*\*\s*1000)\b/,
     reason: "Spelled-out millisecond chain (= 86_400_000) bypasses the day-in-ms rule. DST-fragile for calendar-day arithmetic.",
     fix: "Use bizDaysBetween / bizAddDays / etAddDays on YYYY-MM-DD keys, or annotate with `// date-handling-allow: elapsed-time`.",
   },
   // 11. `new Date("YYYY-MM-DDTHH:mm:ss")` without `Z` — browser-local parse.
   //     Forbidden for ET-anchored submission paths. The bizParseLocalInputValue
   //     helper handles the legitimate `<input type="datetime-local">` case.
+  //     Audit surfaced two shipped bypasses (VehiclesTab combined a
+  //     variable-length startTime template, ScheduleNextDialog just
+  //     concatenated "T00:00:00"); the regex below now catches BOTH the
+  //     literal `T\d\d:\d\d:\d\d"` form AND the `T${...}:...` template
+  //     form via a lookahead that requires a `T` followed by any
+  //     non-`Z` character before the closing quote/backtick.
   {
-    pattern: /new\s+Date\s*\(\s*[^)]*T\d{2}:\d{2}:\d{2}["'`]\s*\)/,
-    reason: "new Date('YYYY-MM-DDTHH:mm:ss') (no Z) parses in browser-local time, wrong for ET-anchored input.",
-    fix: "Use bizParseLocalInputValue(value) for datetime-local inputs, or anchor with `T...Z` for UTC.",
+    pattern: /new\s+Date\s*\(\s*[^)]*T(?:\d{2}:\d{2}(?::\d{2})?|\$\{[^}]+\}[^)]*)["'`]\s*\)/,
+    reason: "new Date('YYYY-MM-DDTHH:mm:ss') without `Z` parses in browser-local time — wrong ET wall-clock for callers outside ET (traveling super, non-ET worker, cron in UTC).",
+    fix: "Use bizInstantFromEtParts(dateKey, 'HH:MM') on the web or etInstantFromParts on the API. Anchor with `T...Z` only when you truly mean UTC.",
   },
   // 12. UTC-day slicing variants. The original `.toISOString().slice(0, 10)`
   //     is caught above; these are equivalent bypasses.
@@ -247,6 +255,37 @@ const FORBIDDEN_PATTERNS: Rule[] = [
     reason: ".toTimeString() formats in browser/server-local time.",
     fix: "Use fmtTimeOpts on the web side, or etFormatTimeOpts on the API.",
   },
+  // 15. Bare `.toLocaleDateString()` / `.toLocaleTimeString()` with NO
+  //     arguments. Audit surfaced 7 shipped bugs of this shape: the
+  //     function defaults to the browser's / server's local locale AND
+  //     timezone. Non-ET viewers see the wrong ET calendar day near
+  //     midnight; server (UTC on Vercel) formats UTC time; both are wrong.
+  //     Rule 2 catches `(undefined, ...)` / `([], ...)` forms; this
+  //     catches the bare-args form.
+  //
+  //     Deliberately does NOT include bare `.toLocaleString()` — that
+  //     variant is overwhelmingly used on NUMBERS for thousands
+  //     separators (`n.toLocaleString()` → "1,234"), which is
+  //     completely fine. Bare `.toLocaleString()` on a Date is a real
+  //     residual gap; caught cases (MileageReviewDialog) already
+  //     surfaced via the audit. If future ones appear, add a
+  //     Date-object-only variant here.
+  {
+    pattern: /\.toLocale(?:Date|Time)String\s*\(\s*\)/,
+    reason: "Bare .toLocaleDateString() / .toLocaleTimeString() uses browser/server locale + timezone. Wrong ET calendar day for non-ET viewers near midnight; wrong wall-clock everywhere else.",
+    fix: "Use fmtDate / fmtDateTime / fmtTimeOpts on the web, or etFormatDate / etFormatDateOpts on the API. Both accept ISO datetime strings AND YYYY-MM-DD keys.",
+  },
+  // 14. RETIRED. Formerly forbade `fmtDate(*Key)` — the off-by-one
+  //     caused by parsing date-only ISO strings as UTC midnight. The
+  //     underlying formatter now auto-routes YYYY-MM-DD input through
+  //     a UTC-noon anchor (see toDisplayInstant in apps/web/src/lib/lib.ts),
+  //     so `fmtDate(usualKey)` is no longer a bug — it produces the
+  //     correct display regardless of input shape.
+  //
+  //     `fmtDateKey(...)` still exists as a stricter, more explicit
+  //     variant; prefer it at new callsites for clarity. But we no
+  //     longer fail CI for using `fmtDate` on a key — the safety is
+  //     in the runtime, not the naming discipline.
   // 14. toLocaleDateString / toLocaleString with a locale string but NO
   //     timeZone — uses the runtime's timezone, not ET. Catches
   //     `.toLocaleDateString("en-US", { weekday: "long" })` etc.

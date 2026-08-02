@@ -31,7 +31,7 @@ import {
   Sliders,
 } from "lucide-react";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
-import { bizToday, fmtDate, fmtDateTime } from "@/src/lib/lib";
+import { bizToday, fmtDate, fmtDateTime , type EtDateKey } from "@/src/lib/lib";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -942,7 +942,7 @@ export default function SuppliesTab({
                     <input
                       type="date"
                       value={bDate}
-                      onChange={(e) => setBDate(e.target.value)}
+                      onChange={(e) => setBDate(e.target.value as EtDateKey)}
                       style={{
                         padding: "6px 8px",
                         fontSize: "14px",

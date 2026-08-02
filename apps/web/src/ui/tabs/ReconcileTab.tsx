@@ -14,6 +14,7 @@ import {
   bizMondayOnOrBefore,
   bizStartOfMonth,
   bizStartOfYear,
+  type EtDateKey,
 } from "@/src/lib/lib";
 
 /**
@@ -691,7 +692,7 @@ export default function ReconcileTab() {
           const nextMonthStart = m === 12
             ? `${y + 1}-01-01`
             : `${y}-${String(m + 1).padStart(2, "0")}-01`;
-          const endStr = bizAddDays(nextMonthStart, -1);
+          const endStr = bizAddDays(nextMonthStart as EtDateKey, -1);
           return { from: startStr, to: endStr };
         },
       },
@@ -774,8 +775,8 @@ export default function ReconcileTab() {
                 value={start}
                 onChange={(val) => {
                   setSelectedPreset(null);
-                  setStart(val);
-                  if (end && val && val > end) setEnd(val);
+                  setStart(val as EtDateKey);
+                  if (end && val && val > end) setEnd(val as EtDateKey);
                 }}
               />
               <Text fontSize="sm">–</Text>
@@ -784,8 +785,8 @@ export default function ReconcileTab() {
                 min={start || undefined}
                 onChange={(val) => {
                   setSelectedPreset(null);
-                  setEnd(val);
-                  if (start && val && val < start) setStart(val);
+                  setEnd(val as EtDateKey);
+                  if (start && val && val < start) setStart(val as EtDateKey);
                 }}
               />
               {/* Preset picker — green chip + dropdown, matching PaymentsTab
@@ -851,7 +852,7 @@ export default function ReconcileTab() {
                           setQuickDateMenuOpen(false);
                           setSelectedPreset(p.key);
                           const r = p.range();
-                          setStart(r.from);
+                          setStart(r.from as EtDateKey);
                           setEnd(r.to);
                         }}
                       >

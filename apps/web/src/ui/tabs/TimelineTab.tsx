@@ -36,7 +36,7 @@ import {
   X,
 } from "lucide-react";
 import { apiDelete, apiGet, apiPost } from "@/src/lib/api";
-import { fmtDate as fmtDateLib, bizDateKey, bizToday, bizDaysBetween } from "@/src/lib/lib";
+import { fmtDate, bizDateKey, bizToday, bizDaysBetween } from "@/src/lib/lib";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -91,9 +91,6 @@ const URGENCY_ITEMS = [
   { label: "Beyond 30 days", value: "future" },
 ];
 
-function fmtDate(iso: string): string {
-  try { return fmtDateLib(iso); } catch { return "—"; }
-}
 function diffDays(iso: string, from: Date = new Date()): number {
   // ET calendar-day diff (DST-safe) via the canonical helper.
   return bizDaysBetween(bizDateKey(from), bizDateKey(iso));

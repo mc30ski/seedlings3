@@ -3,7 +3,7 @@ import { Prisma, Equipment, EquipmentStatus } from "@prisma/client";
 import type { ServicesEquipment, EquipmentWithHolder } from "../types/services";
 import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
-import { etMidnight, etEndOfDay, etFormatDate } from "../lib/dates";
+import { etMidnight, etEndOfDay, etFormatDate , type EtDateKey } from "../lib/dates";
 import { ServiceError } from "../lib/errors";
 import { deleteObject } from "../lib/r2";
 import { generateLedgerId } from "../lib/ledgerId";
@@ -1176,8 +1176,8 @@ export const equipment: ServicesEquipment = {
     if (params?.userId) {
       const userId = params.userId;
       const dateRange: any = {};
-      if (params.from) dateRange.gte = etMidnight(params.from);
-      if (params.to) dateRange.lte = etEndOfDay(params.to);
+      if (params.from) dateRange.gte = etMidnight(params.from as EtDateKey);
+      if (params.to) dateRange.lte = etEndOfDay(params.to as EtDateKey);
       const hasDate = !!(params.from || params.to);
       // Solo rentals for this user (no groupId set). We filter to
       // `rentalCost: { gt: 0 }` so solo employee rentals (which now record
@@ -1267,8 +1267,8 @@ export const equipment: ServicesEquipment = {
     const where: any = { rentalCost: { not: null } };
     if (params?.from || params?.to) {
       where.releasedAt = {};
-      if (params.from) where.releasedAt.gte = etMidnight(params.from);
-      if (params.to) where.releasedAt.lte = etEndOfDay(params.to);
+      if (params.from) where.releasedAt.gte = etMidnight(params.from as EtDateKey);
+      if (params.to) where.releasedAt.lte = etEndOfDay(params.to as EtDateKey);
     }
     // Business Start Date filter — admin all-charges view.
     if (cutoff) {
@@ -1296,12 +1296,12 @@ export const equipment: ServicesEquipment = {
   // to one worker's own checkouts; without it, every worker (admin view).
   async listUsage(params?: { from?: string; to?: string; userId?: string; cutoff?: Date | null }) {
     const where: any = { checkedOutAt: { not: null } };
-    if (params?.to) where.checkedOutAt.lte = etEndOfDay(params.to);
+    if (params?.to) where.checkedOutAt.lte = etEndOfDay(params.to as EtDateKey);
     if (params?.from) {
       // Overlap: the checkout was still open, or released on/after `from`.
       where.OR = [
         { releasedAt: null },
-        { releasedAt: { gte: etMidnight(params.from) } },
+        { releasedAt: { gte: etMidnight(params.from as EtDateKey) } },
       ];
     }
     // Business Start Date filter — hide checkouts that happened pre-cutoff.

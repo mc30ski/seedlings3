@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyRequest } from "fastify";
 import { prisma } from "../db/prisma";
 import { getDownloadUrl } from "../lib/r2";
-import { etMidnight, etToday, etStartOfMonth, etAddDays, etFormatDateOpts } from "../lib/dates";
+import { etMidnight, etToday, etStartOfMonth, etAddDays, etFormatDateOpts , type EtDateKey } from "../lib/dates";
 import { effectiveClerkUserId } from "../plugins/clientImpersonation";
 
 /**
@@ -121,6 +121,9 @@ export default async function clientRoutes(app: FastifyInstance) {
     // client has a recently-stamped unlinked contact, we propose it instead
     // of failing silently — the portal asks the client to confirm.
     const WINDOW_DAYS = 7;
+    // date-handling-allow: elapsed-time — 7-day rolling "recently signed
+    // up from the pay page" window. DST-fragile at the boundary hour but
+    // the check is a smart-hint fallback, not an exact billing cutoff.
     const since = new Date(Date.now() - WINDOW_DAYS * 24 * 3600 * 1000);
     const stamped = await prisma.clientContact.findMany({
       where: {
@@ -189,6 +192,9 @@ export default async function clientRoutes(app: FastifyInstance) {
     if (existing) return { linked: true, contactId: existing.id };
 
     const WINDOW_DAYS = 7;
+    // date-handling-allow: elapsed-time — 7-day rolling "recently signed
+    // up from the pay page" window. DST-fragile at the boundary hour but
+    // the check is a smart-hint fallback, not an exact billing cutoff.
     const since = new Date(Date.now() - WINDOW_DAYS * 24 * 3600 * 1000);
     const baseWhere = {
       clientId,
@@ -300,7 +306,7 @@ export default async function clientRoutes(app: FastifyInstance) {
     const yShift = Math.floor(targetMonth0 / 12);
     const mShifted = ((targetMonth0 % 12) + 12) % 12; // 0..11
     const targetKey = `${sy + yShift}-${String(mShifted + 1).padStart(2, "0")}-01`;
-    const startOfMonth = etMidnight(targetKey);
+    const startOfMonth = etMidnight(targetKey as EtDateKey);
 
     const occurrences = await prisma.jobOccurrence.findMany({
       where: {

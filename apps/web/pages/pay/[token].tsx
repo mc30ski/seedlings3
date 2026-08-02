@@ -92,18 +92,17 @@ type ResolveResponse = {
 // the type for clarity but no longer constrain it to a fixed set.
 type MethodKey = string;
 
-function fmtDate(iso: string | null): string {
-  if (!iso) return "";
-  try {
-    return fmtDateOpts(iso, {
-      weekday: "short",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    });
-  } catch {
-    return "";
-  }
+// Long weekday + month name + day + year, e.g. "Sat, August 12, 2026".
+// Local (not exported) — this exact shape is only used on the public
+// invoice page. Renamed off `fmtDate` to avoid shadowing the canonical
+// helper (which produces "8/12/2026").
+function fmtInvoiceDate(iso: string | null): string {
+  return fmtDateOpts(iso, {
+    weekday: "short",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
 }
 
 function dollar(n: number): string {
@@ -417,7 +416,7 @@ function PaymentPageInner() {
                   <Text fontSize="xs" color="fg.muted">{data.propertyAddress}</Text>
                 )}
                 {data.serviceDate && (
-                  <Text fontSize="xs" color="fg.muted">Service: {fmtDate(data.serviceDate)}</Text>
+                  <Text fontSize="xs" color="fg.muted">Service: {fmtInvoiceDate(data.serviceDate)}</Text>
                 )}
                 <HStack mt={2} align="baseline" justify="space-between">
                   <Text fontSize="xs" color="fg.muted">Total due</Text>

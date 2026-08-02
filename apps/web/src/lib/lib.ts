@@ -94,22 +94,164 @@ function isValidDateInput(d: string | Date): boolean {
   return !isNaN(dt.getTime());
 }
 
-/** Format a date as a short date string in business timezone (Eastern) */
+// ═════════════════════════════════════════════════════════════════════════════
+// Branded date types (Phase 2)
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// TypeScript can't tell `"2026-08-12"` (an ET calendar-day key) from
+// `"2026-08-12T12:00:00Z"` (a UTC instant) — both are `string`. Every date
+// helper that accepts `string | Date` is a landmine when a caller passes
+// the wrong shape (silent off-by-one, silent regex-fail-to-empty-string,
+// silent DST drift). The runtime auto-route in the formatters (Phase 1)
+// closed the display class of that bug. These brands close the compile-
+// time class for arithmetic + comparison + storage.
+//
+// Both brands compile to `string` at runtime — they're zero-cost lenses
+// TypeScript uses to reject miscalls at build time. The brand strings
+// are structurally-typed and shared with `apps/api/src/lib/dates.ts` so
+// a key produced on the API is interchangeable with one produced on the
+// web (same brand, same identity).
+
+/** A YYYY-MM-DD ET calendar-day string. Produced by every helper below
+ *  (bizToday, bizAddDays, bizDateKey, …) and by every Prisma schema
+ *  String field whose intent is a date-key (workdayDate,
+ *  nextStartOverride, inServiceDate, entryDate). Consumers that do
+ *  calendar arithmetic on keys (bizAddDays, bizDaysBetween, etAddDays,
+ *  etMidnight, etInstantFromParts) REQUIRE this brand — a raw `string`
+ *  won't type-check without an explicit `etDateKey()` cast. */
+export type EtDateKey = string & { readonly __brand: "EtDateKey" };
+
+/** A full ISO datetime string with a time component (unambiguous
+ *  UTC instant). Produced by every Prisma DateTime field's JSON
+ *  serialization + every helper that returns an instant. */
+export type IsoInstant = string & { readonly __brand: "IsoInstant" };
+
+/** Validate + brand a string as an EtDateKey. Throws on bad shape (not
+ *  YYYY-MM-DD, not a real calendar day like "2026-02-30"). Use this at
+ *  trusted boundaries where the shape is genuinely known but the type
+ *  hasn't been branded yet (e.g. a hard-coded literal, a URL param
+ *  after regex validation). Never cast (`as EtDateKey`) directly. */
+export function etDateKey(s: string): EtDateKey {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    throw new Error(`etDateKey: not a YYYY-MM-DD string: ${s}`);
+  }
+  const [y, m, d] = s.split("-").map(Number);
+  if (m < 1 || m > 12 || d < 1 || d > 31) {
+    throw new Error(`etDateKey: month/day out of range: ${s}`);
+  }
+  // Round-trip verify against JS Date to catch impossible dates
+  // (Feb 30, Apr 31, etc.).
+  const probe = new Date(Date.UTC(y, m - 1, d, 12));
+  if (probe.getUTCMonth() !== m - 1 || probe.getUTCDate() !== d) {
+    throw new Error(`etDateKey: not a real calendar day: ${s}`);
+  }
+  return s as EtDateKey;
+}
+
+/** Validate + brand a string as an IsoInstant. Throws on non-parseable
+ *  input. Use at trusted boundaries where the string is guaranteed to
+ *  be an ISO datetime (e.g. Prisma DateTime serialization). */
+export function isoInstant(s: string): IsoInstant {
+  if (isNaN(new Date(s).getTime())) {
+    throw new Error(`isoInstant: not a parseable date string: ${s}`);
+  }
+  return s as IsoInstant;
+}
+
+/** Regex for a YYYY-MM-DD ET calendar-day KEY (no time component).
+ *  When a formatter sees this shape, it MUST route through the
+ *  date-key path — parsing the string with `new Date()` treats it as
+ *  UTC midnight, and formatting that instant in ET (UTC-4/-5) rolls
+ *  the wall-clock BACK to 8pm the previous calendar day. That produced
+ *  operator-facing off-by-one bugs. This regex is the branch discriminator
+ *  every formatter below shares. */
+const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Turn any legal date-shaped input into a Date instant that formatters
+ *  can safely feed to `Intl.DateTimeFormat({ timeZone: BIZ_TZ })` without
+ *  rolling the calendar day. Two branches:
+ *
+ *    1. If `d` is a YYYY-MM-DD string, build a Date at UTC noon of that
+ *       day. Noon UTC lands squarely mid-day in any timezone — the
+ *       calendar day never rolls under ET or any other offset.
+ *
+ *    2. Otherwise (Date object OR ISO string with a time component),
+ *       parse as-is. Full ISO strings carry a `T` and are unambiguous;
+ *       Date objects are already instants.
+ *
+ *  Returns null on invalid input so the formatter can render "—". */
+function toDisplayInstant(d: string | Date): Date | null {
+  if (typeof d === "string") {
+    if (DATE_KEY_RE.test(d)) {
+      const [y, m, day] = d.split("-").map(Number);
+      // Reject nonsense month/day values before construction — JS Date
+      // would silently roll them (e.g. "2026-13-45" becomes 2027-02-14
+      // via month + day overflow). We want invalid input to render "—",
+      // not a wrong-but-plausible date.
+      if (m < 1 || m > 12 || day < 1 || day > 31) return null;
+      // UTC-noon anchor guarantees no calendar-day roll under any TZ.
+      const utcNoon = new Date(Date.UTC(y, m - 1, day, 12));
+      // Round-trip verify — catches dates that don't exist in a given
+      // month (Feb 30, Apr 31, etc.) which the range check above misses.
+      if (
+        utcNoon.getUTCFullYear() !== y ||
+        utcNoon.getUTCMonth() !== m - 1 ||
+        utcNoon.getUTCDate() !== day
+      ) {
+        return null;
+      }
+      return utcNoon;
+    }
+    const parsed = new Date(d);
+    return isNaN(parsed.getTime()) ? null : parsed;
+  }
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/** Format a date as a short date string in business timezone (Eastern).
+ *  Accepts a Date, a full ISO datetime string, OR a YYYY-MM-DD calendar
+ *  key — all three shapes render correctly. Callers do not need to
+ *  distinguish key from instant; the helper does. */
 export function fmtDate(d: string | Date | null | undefined): string {
-  if (!d || !isValidDateInput(d)) return "—";
-  return new Date(d).toLocaleDateString("en-US", { timeZone: BIZ_TZ });
+  if (!d) return "—";
+  const instant = toDisplayInstant(d);
+  if (!instant) return "—";
+  return instant.toLocaleDateString("en-US", { timeZone: BIZ_TZ });
 }
 
-/** Format a date+time string in business timezone (Eastern) */
+/** Format a YYYY-MM-DD ET calendar-day string as a short display date
+ *  ("8/12/2026") in the business timezone. Prefer this over `fmtDate()`
+ *  when you know your input is a date-key — it makes intent explicit
+ *  at the callsite AND is stricter (rejects anything non-YYYY-MM-DD).
+ *
+ *  `fmtDate()` will also produce the correct display for a date-key
+ *  input (it routes through the same path internally), so a mistaken
+ *  call there is not a bug. This exported helper is for clarity, not
+ *  correctness. */
+export function fmtDateKey(key: string | null | undefined): string {
+  if (!key || !DATE_KEY_RE.test(key)) return "—";
+  const [y, m, d] = key.split("-").map(Number);
+  const utcNoon = new Date(Date.UTC(y, m - 1, d, 12));
+  return utcNoon.toLocaleDateString("en-US", { timeZone: BIZ_TZ });
+}
+
+/** Format a date+time string in business timezone (Eastern). Accepts
+ *  every shape fmtDate does; a bare YYYY-MM-DD key renders with the
+ *  time as 8am ET (UTC-noon anchor). */
 export function fmtDateTime(d: string | Date | null | undefined): string {
-  if (!d || !isValidDateInput(d)) return "—";
-  return new Date(d).toLocaleString("en-US", { timeZone: BIZ_TZ });
+  if (!d) return "—";
+  const instant = toDisplayInstant(d);
+  if (!instant) return "—";
+  return instant.toLocaleString("en-US", { timeZone: BIZ_TZ });
 }
 
-/** Format a date with weekday in business timezone */
+/** Format a date with weekday in business timezone. Same shape-agnostic
+ *  behavior as fmtDate. */
 export function fmtDateWeekday(d: string | Date | null | undefined, opts?: { year?: boolean }): string {
-  if (!d || !isValidDateInput(d)) return "—";
-  return new Date(d).toLocaleDateString("en-US", {
+  if (!d) return "—";
+  const instant = toDisplayInstant(d);
+  if (!instant) return "—";
+  return instant.toLocaleDateString("en-US", {
     timeZone: BIZ_TZ,
     weekday: "long",
     month: "short",
@@ -118,25 +260,65 @@ export function fmtDateWeekday(d: string | Date | null | undefined, opts?: { yea
   });
 }
 
+/** "Aug 12" — short month + day, no year. Convenience wrapper over
+ *  fmtDateOpts. Use this instead of defining a local `fmtDate` helper
+ *  in your file with the same options; local redefinitions shadow the
+ *  canonical helper and broaden the blast radius of every future
+ *  date-shape mistake. Same shape-agnostic input handling as fmtDate. */
+export function fmtDateShort(d: string | Date | null | undefined): string {
+  return fmtDateOpts(d, { month: "short", day: "numeric" });
+}
+
+/** "Aug 12, 2026" — short month + day + year. Same rationale as
+ *  fmtDateShort above: use this named export instead of a local wrapper. */
+export function fmtDateLong(d: string | Date | null | undefined): string {
+  return fmtDateOpts(d, { month: "short", day: "numeric", year: "numeric" });
+}
+
 /** Flexible escape hatch for one-off display formats. Always ET-anchored
  *  (timeZone is forced). Use this when fmtDate / fmtDateWeekday don't
  *  produce the exact shape you need — for example "Jun 6" without the
- *  weekday. NEVER call `.toLocaleDateString(undefined, ...)` directly. */
+ *  weekday. NEVER call `.toLocaleDateString(undefined, ...)` directly.
+ *  Same shape-agnostic input handling as fmtDate. */
 export function fmtDateOpts(
   d: string | Date | null | undefined,
   opts: Intl.DateTimeFormatOptions,
 ): string {
-  if (!d || !isValidDateInput(d)) return "—";
-  return new Date(d).toLocaleDateString("en-US", { timeZone: BIZ_TZ, ...opts });
+  if (!d) return "—";
+  const instant = toDisplayInstant(d);
+  if (!instant) return "—";
+  return instant.toLocaleDateString("en-US", { timeZone: BIZ_TZ, ...opts });
 }
 
-/** Flexible escape hatch for one-off time formats. Always ET-anchored. */
+/** Flexible escape hatch for one-off time formats. Always ET-anchored.
+ *  A bare YYYY-MM-DD key renders as 8am ET (UTC-noon anchor); prefer
+ *  fmtDate for date-only display since a time on a date-key is
+ *  meaningless. */
 export function fmtTimeOpts(
   d: string | Date | null | undefined,
   opts: Intl.DateTimeFormatOptions,
 ): string {
-  if (!d || !isValidDateInput(d)) return "—";
-  return new Date(d).toLocaleTimeString("en-US", { timeZone: BIZ_TZ, ...opts });
+  if (!d) return "—";
+  const instant = toDisplayInstant(d);
+  if (!instant) return "—";
+  return instant.toLocaleTimeString("en-US", { timeZone: BIZ_TZ, ...opts });
+}
+
+/** Extract the ET wall-clock time-of-day as "HH:MM" (24h) from an
+ *  instant. Use when you need to preserve the source's time-of-day
+ *  across a date-shift operation — e.g. rescheduling a 2 PM ET job
+ *  to a different day should still land at 2 PM ET, not at some
+ *  arbitrary UTC-anchored hour.
+ *
+ *  Pair with `bizInstantFromEtParts(newDateKey, bizHourMinute(source))`
+ *  to build a new instant that inherits the source's ET wall-clock. */
+export function bizHourMinute(d: Date | string): string {
+  return new Date(d).toLocaleTimeString("en-GB", {
+    timeZone: BIZ_TZ,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
 }
 
 /** Current hour in ET (0-23). Use this for "is it morning?" / "good
@@ -216,7 +398,9 @@ export function bizParseLocalInputValue(value: string): string {
   if (!date || !time) {
     throw new Error(`bizParseLocalInputValue: not a valid YYYY-MM-DDTHH:mm value: ${value}`);
   }
-  return bizInstantFromEtParts(date, time);
+  // `date` comes from the value's own split — the input contract guarantees
+  // YYYY-MM-DD. Safe to brand at this trusted boundary.
+  return bizInstantFromEtParts(date as EtDateKey, time);
 }
 
 /** Build a UTC ISO instant from an ET wall-clock date + time.
@@ -232,7 +416,7 @@ export function bizParseLocalInputValue(value: string): string {
  *
  *  Returns an ISO string ending in `.000Z` (UTC) so the backend can
  *  store it as a Prisma DateTime without any further conversion. */
-export function bizInstantFromEtParts(dateKey: string, time: string): string {
+export function bizInstantFromEtParts(dateKey: EtDateKey, time: string): string {
   // dateKey: "YYYY-MM-DD", time: "HH:MM" (24-hour) or "HH:MM:SS"
   if (!dateKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return "";
   const [y, m, d] = dateKey.split("-").map(Number);
@@ -290,18 +474,18 @@ export function bizInstantFromEtParts(dateKey: string, time: string): string {
  *
  *  ALWAYS use this instead of `.toISOString().slice(0, 10)` or
  *  `${y}-${m}-${d}` template literals built from `.getDate()` etc. */
-export function bizDateKey(d: string | Date): string {
+export function bizDateKey(d: string | Date): EtDateKey {
   const dt = typeof d === "string" ? new Date(d) : d;
   // Invalid input yields "" rather than the literal string "Invalid Date"
   // — silent failure here surfaces upstream as the canonical "no value"
   // signal that the rest of the helpers (fmtDate etc.) already treat as
   // missing.
-  if (isNaN(dt.getTime())) return "";
-  return dt.toLocaleDateString("en-CA", { timeZone: BIZ_TZ }); // en-CA gives YYYY-MM-DD
+  if (isNaN(dt.getTime())) return "" as EtDateKey;
+  return dt.toLocaleDateString("en-CA", { timeZone: BIZ_TZ }) as EtDateKey; // en-CA gives YYYY-MM-DD
 }
 
 /** Today's date as YYYY-MM-DD in Eastern Time. */
-export function bizToday(): string {
+export function bizToday(): EtDateKey {
   return bizDateKey(new Date());
 }
 
@@ -310,13 +494,13 @@ export function bizToday(): string {
  *  pattern was DST-fragile when invoked within an hour of midnight ET on
  *  spring-forward / fall-back days (adding exactly 24 hours could land on
  *  the day-after-tomorrow or stay on today). */
-export function bizTomorrow(): string {
+export function bizTomorrow(): EtDateKey {
   return bizAddDays(bizToday(), 1);
 }
 
 /** Yesterday's date as YYYY-MM-DD in Eastern Time. Same DST-safety
  *  rationale as bizTomorrow above. */
-export function bizYesterday(): string {
+export function bizYesterday(): EtDateKey {
   return bizAddDays(bizToday(), -1);
 }
 
@@ -326,11 +510,11 @@ export function bizYesterday(): string {
  *  Returns "" if the input key isn't a valid YYYY-MM-DD — propagates
  *  the "invalid input" signal rather than producing a garbage Date that
  *  crashes Intl.format downstream. */
-export function bizAddDays(key: string, n: number): string {
-  if (!key || !/^\d{4}-\d{2}-\d{2}$/.test(key)) return "";
+export function bizAddDays(key: EtDateKey, n: number): EtDateKey {
+  if (!key || !/^\d{4}-\d{2}-\d{2}$/.test(key)) return "" as EtDateKey;
   const [y, m, d] = key.split("-").map(Number);
   const utcNoon = new Date(Date.UTC(y, m - 1, d + n, 12));
-  return new Intl.DateTimeFormat("en-CA", { timeZone: BIZ_TZ }).format(utcNoon);
+  return new Intl.DateTimeFormat("en-CA", { timeZone: BIZ_TZ }).format(utcNoon) as EtDateKey;
 }
 
 /** Add N calendar months to a YYYY-MM-DD string. Day-of-month is CLAMPED
@@ -346,8 +530,8 @@ export function bizAddDays(key: string, n: number): string {
  *    bizAddMonths("2026-06-15", 1) → "2026-07-15"  (normal case)
  *    bizAddMonths("2025-12-15", 1) → "2026-01-15"  (year boundary)
  */
-export function bizAddMonths(key: string, n: number): string {
-  if (!key || !/^\d{4}-\d{2}-\d{2}$/.test(key)) return "";
+export function bizAddMonths(key: EtDateKey, n: number): EtDateKey {
+  if (!key || !/^\d{4}-\d{2}-\d{2}$/.test(key)) return "" as EtDateKey;
   const [y, m, d] = key.split("-").map(Number);
   // The last day of the target month: pass day 0 of (target + 1) — JS
   // Date constructor interprets day 0 as the last day of the prior month.
@@ -355,7 +539,7 @@ export function bizAddMonths(key: string, n: number): string {
   const lastDayOfTargetMonth = new Date(Date.UTC(y, m - 1 + n + 1, 0)).getUTCDate();
   const clampedDay = Math.min(d, lastDayOfTargetMonth);
   const utcNoon = new Date(Date.UTC(y, m - 1 + n, clampedDay, 12));
-  return new Intl.DateTimeFormat("en-CA", { timeZone: BIZ_TZ }).format(utcNoon);
+  return new Intl.DateTimeFormat("en-CA", { timeZone: BIZ_TZ }).format(utcNoon) as EtDateKey;
 }
 
 /** Add N calendar years to a YYYY-MM-DD string. Day-of-month is CLAMPED:
@@ -367,18 +551,18 @@ export function bizAddMonths(key: string, n: number): string {
  *    bizAddYears("2024-02-29", 4) → "2028-02-29"  (target is also leap)
  *    bizAddYears("2026-06-15", 1) → "2027-06-15"  (normal case)
  */
-export function bizAddYears(key: string, n: number): string {
-  if (!key || !/^\d{4}-\d{2}-\d{2}$/.test(key)) return "";
+export function bizAddYears(key: EtDateKey, n: number): EtDateKey {
+  if (!key || !/^\d{4}-\d{2}-\d{2}$/.test(key)) return "" as EtDateKey;
   const [y, m, d] = key.split("-").map(Number);
   const lastDayOfTargetMonth = new Date(Date.UTC(y + n, m, 0)).getUTCDate();
   const clampedDay = Math.min(d, lastDayOfTargetMonth);
   const utcNoon = new Date(Date.UTC(y + n, m - 1, clampedDay, 12));
-  return new Intl.DateTimeFormat("en-CA", { timeZone: BIZ_TZ }).format(utcNoon);
+  return new Intl.DateTimeFormat("en-CA", { timeZone: BIZ_TZ }).format(utcNoon) as EtDateKey;
 }
 
 /** Extract the year portion of a YYYY-MM-DD key as a number. Pure string
  *  math — no timezone risk. Use this instead of `new Date(key).getFullYear()`. */
-export function bizYearOf(key: string): number {
+export function bizYearOf(key: EtDateKey): number {
   if (!key || !/^\d{4}/.test(key)) return NaN;
   return parseInt(key.slice(0, 4), 10);
 }
@@ -392,7 +576,7 @@ export function bizYearOf(key: string): number {
  *
  *  Both inputs MUST be YYYY-MM-DD strings (no time component). For mixed
  *  Date / ISO inputs, convert via `bizDateKey(d)` first. */
-export function bizDaysBetween(fromKey: string, toKey: string): number {
+export function bizDaysBetween(fromKey: EtDateKey, toKey: EtDateKey): number {
   if (!fromKey || !toKey || !/^\d{4}-\d{2}-\d{2}$/.test(fromKey) || !/^\d{4}-\d{2}-\d{2}$/.test(toKey)) return NaN;
   const [fy, fm, fd] = fromKey.split("-").map(Number);
   const [ty, tm, td] = toKey.split("-").map(Number);
@@ -405,7 +589,7 @@ export function bizDaysBetween(fromKey: string, toKey: string): number {
 
 /** The Monday on-or-before today, as YYYY-MM-DD in Eastern Time. The
  *  canonical week-start for the operator's calendar. */
-export function bizMondayOnOrBefore(): string {
+export function bizMondayOnOrBefore(): EtDateKey {
   const today = bizToday();
   const [y, m, d] = today.split("-").map(Number);
   const utcNoon = new Date(Date.UTC(y, m - 1, d, 12));
@@ -415,13 +599,13 @@ export function bizMondayOnOrBefore(): string {
 }
 
 /** First day of the current month as YYYY-MM-DD in Eastern Time. */
-export function bizStartOfMonth(): string {
-  return `${bizToday().slice(0, 7)}-01`;
+export function bizStartOfMonth(): EtDateKey {
+  return `${bizToday().slice(0, 7)}-01` as EtDateKey;
 }
 
 /** January 1st of the current year as YYYY-MM-DD in Eastern Time. */
-export function bizStartOfYear(): string {
-  return `${bizToday().slice(0, 4)}-01-01`;
+export function bizStartOfYear(): EtDateKey {
+  return `${bizToday().slice(0, 4)}-01-01` as EtDateKey;
 }
 
 /** Append " JOB" to client display names for display purposes. */
@@ -522,13 +706,16 @@ export function propertyStatusColor(value: string): string {
 }
 
 export function prettyDate(iso?: string | null) {
-  if (!iso || !isValidDateInput(iso)) return "—";
+  if (!iso) return "—";
+  const instant = toDisplayInstant(iso);
+  if (!instant) return "—";
   try {
     // ET-anchored. `toLocaleString([], opts)` defaults to the browser's
     // local timezone — that emits PST/CST/etc. text for non-ET users,
     // which contradicts the rest of the app's ET pinning. Always force
-    // `timeZone: BIZ_TZ` here, same as fmtDateTime + friends.
-    return new Date(iso).toLocaleString("en-US", {
+    // `timeZone: BIZ_TZ` here, same as fmtDateTime + friends. Accepts
+    // any shape fmtDate does (Date, ISO datetime string, YYYY-MM-DD key).
+    return instant.toLocaleString("en-US", {
       timeZone: BIZ_TZ,
       year: "numeric",
       month: "short",

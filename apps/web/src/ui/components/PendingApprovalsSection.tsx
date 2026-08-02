@@ -24,7 +24,7 @@ import {
 } from "@chakra-ui/react";
 import { Check, ExternalLink, Pencil, RefreshCw, Slash, XCircle } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
-import { fmtDate as fmtDateLib } from "@/src/lib/lib";
+import { fmtDate } from "@/src/lib/lib";
 import { composePaymentMessage, type PaymentActionResult } from "@/src/lib/paymentMessages";
 import {
   publishInlineMessage,
@@ -91,14 +91,6 @@ function propertyLabel(p: PendingRow["occurrence"]["job"] extends infer J ? J : 
   return [prop.street1, prop.city, prop.state].filter(Boolean).join(", ") || "—";
 }
 
-function fmtDate(iso: string | null): string {
-  if (!iso) return "";
-  try {
-    return fmtDateLib(iso);
-  } catch {
-    return "";
-  }
-}
 
 function dollar(n: number): string {
   return `$${n.toFixed(2)}`;
