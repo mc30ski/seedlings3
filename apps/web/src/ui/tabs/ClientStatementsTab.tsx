@@ -14,7 +14,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { Download, FileText, Info } from "lucide-react";
+import { Download, Eye, FileText, Info } from "lucide-react";
 import { apiGet, apiDownload } from "@/src/lib/api";
 import {
   bizAddDays,
@@ -26,7 +26,8 @@ import {
 } from "@/src/lib/lib";
 import DateInput from "@/src/ui/components/DateInput";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
-import { downloadStatementPDF, type StatementData } from "@/src/lib/statement";
+import { downloadStatementPDF, getStatementBlob, type StatementData } from "@/src/lib/statement";
+import { useLogoDataUrl } from "@/src/lib/useLogoDataUrl";
 
 // Client-facing "Statements" tab.
 //
@@ -92,6 +93,7 @@ const SHORTCUTS: Shortcut[] = [
 const DEFAULT_SHORTCUT = SHORTCUTS.find((s) => s.key === "ytd")!;
 
 export default function ClientStatementsTab() {
+  const logoDataUrl = useLogoDataUrl();
   const [properties, setProperties] = useState<Property[]>([]);
   const [propertyId, setPropertyId] = useState<string>("");
   const [shortcut, setShortcut] = useState<string>(DEFAULT_SHORTCUT.key);
@@ -175,11 +177,18 @@ export default function ClientStatementsTab() {
     [],
   );
 
-  async function handleDownloadPDF() {
+  /** Merge the fetched logo data URL into the statement payload right
+   *  before it's handed to the sync PDF generator. Kept in one spot so
+   *  View + Download can't drift out of sync. */
+  function withLogo(d: StatementData): StatementData {
+    return { ...d, business: { ...d.business, logoDataUrl } };
+  }
+
+  function handleDownloadPDF() {
     if (!data) return;
     setDownloading("pdf");
     try {
-      await downloadStatementPDF(data);
+      downloadStatementPDF(withLogo(data));
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
@@ -187,6 +196,31 @@ export default function ClientStatementsTab() {
       });
     } finally {
       setDownloading(null);
+    }
+  }
+
+  /** Open the statement PDF inline in a new tab via a blob URL.
+   *  Falls back to Download if the popup gets blocked. Mirrors the
+   *  handleViewReceipt pattern from ClientMyJobsTab. */
+  function handleViewPDF() {
+    if (!data) return;
+    try {
+      const blob = getStatementBlob(withLogo(data));
+      const url = URL.createObjectURL(blob);
+      const win = window.open(url, "_blank");
+      if (!win) {
+        downloadStatementPDF(withLogo(data));
+        publishInlineMessage({
+          type: "INFO",
+          text: "Your browser blocked the inline view, so we downloaded it instead.",
+        });
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Couldn't open the statement.", err),
+      });
     }
   }
 
@@ -406,6 +440,7 @@ export default function ClientStatementsTab() {
                 <Table.Root size="sm">
                   <Table.Header>
                     <Table.Row>
+                      <Table.ColumnHeader>Receipt #</Table.ColumnHeader>
                       <Table.ColumnHeader>Service</Table.ColumnHeader>
                       <Table.ColumnHeader>Payment</Table.ColumnHeader>
                       <Table.ColumnHeader>Description</Table.ColumnHeader>
@@ -416,6 +451,9 @@ export default function ClientStatementsTab() {
                   <Table.Body>
                     {data.rows.map((r, i) => (
                       <Table.Row key={i}>
+                        <Table.Cell whiteSpace="nowrap" fontFamily="mono" fontSize="xs">
+                          {r.receiptId}
+                        </Table.Cell>
                         <Table.Cell whiteSpace="nowrap">{r.serviceDate}</Table.Cell>
                         <Table.Cell whiteSpace="nowrap">{r.paymentDate}</Table.Cell>
                         <Table.Cell>{r.description}</Table.Cell>
@@ -433,14 +471,24 @@ export default function ClientStatementsTab() {
         </Card.Body>
       </Card.Root>
 
-      {/* Download row */}
+      {/* View / Download row */}
       <HStack gap={2} justify="flex-end" wrap="wrap">
+        <Button
+          size="sm"
+          variant="outline"
+          colorPalette="blue"
+          disabled={!canDownload}
+          onClick={handleViewPDF}
+          title="Open the statement in a new tab"
+        >
+          <Eye size={14} /> View
+        </Button>
         <Button
           size="sm"
           colorPalette="blue"
           disabled={!canDownload}
           loading={downloading === "pdf"}
-          onClick={() => void handleDownloadPDF()}
+          onClick={handleDownloadPDF}
         >
           <Download size={14} /> Download PDF
         </Button>

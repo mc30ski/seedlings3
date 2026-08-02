@@ -14,6 +14,10 @@ import { fmtDateLong } from "@/src/lib/lib";
 // If a field isn't in `StatementData`, it doesn't belong on the page.
 
 export type StatementRow = {
+  /** Same rule as the Service Receipt PDF's Receipt #: last 8 chars
+   *  of the occurrence id, uppercased. Lets the client match a line
+   *  on the statement against a previously-downloaded receipt. */
+  receiptId: string;
   serviceDate: string; // YYYY-MM-DD (ET calendar day)
   paymentDate: string; // YYYY-MM-DD
   description: string;
@@ -144,13 +148,14 @@ export function generateStatementPDF(data: StatementData): jsPDF {
   y += 22;
 
   // ── Line-item table ──────────────────────────────────────────────────
-  // Columns: Service Date | Payment Date | Description | Method | Amount
+  // Columns: Receipt # | Service Date | Payment Date | Description | Method | Amount
   // Fixed widths tuned for letter-portrait with a 50pt margin.
   const cols = [
-    { label: "Service", x: margin, width: 72, align: "left" as const },
-    { label: "Payment", x: margin + 72, width: 72, align: "left" as const },
-    { label: "Description", x: margin + 144, width: 210, align: "left" as const },
-    { label: "Method", x: margin + 354, width: 66, align: "left" as const },
+    { label: "Receipt #", x: margin, width: 62, align: "left" as const },
+    { label: "Service", x: margin + 62, width: 60, align: "left" as const },
+    { label: "Payment", x: margin + 122, width: 60, align: "left" as const },
+    { label: "Description", x: margin + 182, width: 180, align: "left" as const },
+    { label: "Method", x: margin + 362, width: 56, align: "left" as const },
     { label: "Amount", x: pageWidth - margin, width: 70, align: "right" as const },
   ];
 
@@ -185,6 +190,7 @@ export function generateStatementPDF(data: StatementData): jsPDF {
         drawHeaderRow();
       }
       const cells = [
+        row.receiptId,
         row.serviceDate,
         row.paymentDate,
         row.description,
@@ -193,10 +199,11 @@ export function generateStatementPDF(data: StatementData): jsPDF {
       ];
       cells.forEach((cell, i) => {
         const c = cols[i];
-        // Truncate description if too wide — jsPDF has no auto-wrap on
-        // plain text, so a naive splitTextToSize keeps the row on one
-        // line. Anything past ~40 chars gets ellipsized.
-        const text = i === 2 && cell.length > 40 ? cell.slice(0, 37) + "…" : cell;
+        // Truncate description column (index 3) if too wide — jsPDF
+        // has no auto-wrap on plain text, so a naive splitTextToSize
+        // keeps the row on one line. Anything past ~34 chars gets
+        // ellipsized to fit the narrower slot.
+        const text = i === 3 && cell.length > 34 ? cell.slice(0, 31) + "…" : cell;
         doc.text(text, c.x, y, { align: c.align });
       });
       y += 16;
@@ -210,7 +217,7 @@ export function generateStatementPDF(data: StatementData): jsPDF {
   y += 14;
   doc.setFont("helvetica", "bold");
   doc.setFontSize(11);
-  doc.text("Total", margin + 354, y, { align: "left" });
+  doc.text("Total", margin + 362, y, { align: "left" });
   doc.text(fmtUSD(data.total), pageWidth - margin, y, { align: "right" });
   y += 30;
 
@@ -228,36 +235,23 @@ export function generateStatementPDF(data: StatementData): jsPDF {
   return doc;
 }
 
-/** Fetch a public asset and return it as a base64 data URL. Returns
- *  null on any failure so the caller can render the PDF without the
- *  logo rather than aborting. Browser-only. */
-async function fetchAsDataUrl(url: string): Promise<string | null> {
-  try {
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const blob = await res.blob();
-    return await new Promise<string | null>((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : null);
-      reader.onerror = () => resolve(null);
-      reader.readAsDataURL(blob);
-    });
-  } catch {
-    return null;
-  }
+function filename(data: StatementData): string {
+  const safeProp = (data.property.displayName || "statement").replace(/[^a-zA-Z0-9]+/g, "-");
+  return `statement_${safeProp}_${data.period.from}_to_${data.period.to}.pdf`;
 }
 
-/** Generate + trigger download of the statement PDF. Filename is
- *  scoped to the property + date range so a client saving multiple
- *  statements gets distinct files. Fetches the Seedlings icon from
- *  /public and embeds it in the header — swallows fetch failures so
- *  a broken asset never blocks the download. */
-export async function downloadStatementPDF(data: StatementData): Promise<void> {
-  const logoDataUrl = data.business.logoDataUrl ?? (await fetchAsDataUrl("/seedlings-icon.png"));
-  const doc = generateStatementPDF({
-    ...data,
-    business: { ...data.business, logoDataUrl },
-  });
-  const safeProp = (data.property.displayName || "statement").replace(/[^a-zA-Z0-9]+/g, "-");
-  doc.save(`statement_${safeProp}_${data.period.from}_to_${data.period.to}.pdf`);
+/** Generate + trigger download of the statement PDF. Sync — the
+ *  caller passes `data.business.logoDataUrl` already populated (see
+ *  useLogoDataUrl hook). */
+export function downloadStatementPDF(data: StatementData): void {
+  const doc = generateStatementPDF(data);
+  doc.save(filename(data));
+}
+
+/** Sync blob export mirroring `getReceiptBlob`. Used by the "View"
+ *  button so window.open can fire inside the user gesture without
+ *  running afoul of mobile popup blockers. */
+export function getStatementBlob(data: StatementData): Blob {
+  const doc = generateStatementPDF(data);
+  return doc.output("blob");
 }

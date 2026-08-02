@@ -24,6 +24,12 @@ export type ReceiptData = {
   methodLabel: string;
   workers: string[];
   receiptId: string;
+  /** Optional PNG data URL of the business logo. When present the
+   *  generator draws it in the top-left of the header, shifting the
+   *  business-name text to the right. Caller pre-fetches (see
+   *  useLogoDataUrl) so the generator stays sync and the "View in new
+   *  tab" click handler can call window.open inside the user gesture. */
+  logoDataUrl?: string | null;
 };
 
 export function generateReceiptPDF(data: ReceiptData): jsPDF {
@@ -32,16 +38,26 @@ export function generateReceiptPDF(data: ReceiptData): jsPDF {
   const margin = 50;
   let y = 50;
 
-  // Header
+  // Header — optional logo on the left, business name to its right.
+  const logoSize = 36;
+  const hasLogo = !!data.logoDataUrl;
+  if (hasLogo) {
+    try {
+      doc.addImage(data.logoDataUrl!, "PNG", margin, y - logoSize + 10, logoSize, logoSize);
+    } catch {
+      // Malformed data URL — render without the logo rather than fail.
+    }
+  }
+  const textX = hasLogo ? margin + logoSize + 12 : margin;
   doc.setFontSize(24);
   doc.setFont("helvetica", "bold");
-  doc.text(data.businessName, margin, y);
+  doc.text(data.businessName, textX, y);
   y += 12;
   doc.setFontSize(10);
   doc.setFont("helvetica", "normal");
   doc.setTextColor(100, 100, 100);
-  doc.text("Service Receipt", margin, y);
-  y += 30;
+  doc.text("Service Receipt", textX, y);
+  y += hasLogo ? Math.max(30, logoSize - 8) : 30;
 
   // Divider
   doc.setDrawColor(200, 200, 200);
