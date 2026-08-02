@@ -33,7 +33,6 @@ import { loadFixedAssetMinCost, isFixedAsset, loadGpWorkAnchoredItems } from "..
 import {
   resolveCutoff,
   cutoffWhere,
-  paymentSplitCutoffWhere,
   paymentIncludeWithCutoff,
   expensesIncludeWithCutoff,
   occurrenceWorkDateCutoff,
@@ -6503,13 +6502,9 @@ Respond ONLY with valid JSON in this exact format:
 
   app.get("/admin/export", adminGuard, async (req: any, reply: any) => {
 
-    // Business Start Date filter — pre-cutoff money tables (Payment,
-    // PaymentSplit, Expense, AuditEvent, Checkout) hidden from this raw
-    // export. Non-money tables (Users, Clients, Properties, Jobs, etc.) are
-    // unchanged — the cutoff is a MONEY-only filter, not a schema cutoff.
-    // For full historical exports (e.g. tax season), Super can toggle the
-    // reveal header. See lib/businessStartCutoff.ts and the Tax Export
-    // Integrity memory note (project_tax_export_integrity.md).
+    // Business Start Date filter — pre-cutoff money tables hidden by
+    // default. Super's reveal header toggles this off. See
+    // lib/businessStartCutoff.ts and services/dataExport.ts.
     const cutoff = await resolveCutoff(req);
     if (cutoff) {
       req.log?.info(
@@ -6517,82 +6512,8 @@ Respond ONLY with valid JSON in this exact format:
         "/admin/export running with Business Start Date filter active — pre-cutoff money rows are excluded",
       );
     }
-
-    const [
-      users,
-      userRoles,
-      equipment,
-      checkouts,
-      clients,
-      clientContacts,
-      properties,
-      jobs,
-      jobContacts,
-      jobClients,
-      jobSchedules,
-      jobOccurrences,
-      jobAssigneeDefaults,
-      jobOccurrenceAssignees,
-      payments,
-      paymentSplits,
-      expenses,
-      auditEvents,
-      guaranteedPayoutAdvances,
-    ] = await Promise.all([
-      prisma.user.findMany({ orderBy: { createdAt: "asc" } }),
-      prisma.userRole.findMany(),
-      prisma.equipment.findMany({ orderBy: { createdAt: "asc" } }),
-      prisma.checkout.findMany({ where: { ...cutoffWhere("Checkout", cutoff) } }),
-      prisma.client.findMany({ orderBy: { createdAt: "asc" } }),
-      prisma.clientContact.findMany({ orderBy: { createdAt: "asc" } }),
-      prisma.property.findMany({ orderBy: { createdAt: "asc" } }),
-      prisma.job.findMany({ orderBy: { createdAt: "asc" } }),
-      prisma.jobContact.findMany(),
-      prisma.jobClient.findMany(),
-      prisma.jobSchedule.findMany({ orderBy: { createdAt: "asc" } }),
-      prisma.jobOccurrence.findMany({ orderBy: { createdAt: "asc" } }),
-      prisma.jobAssigneeDefault.findMany({ orderBy: { createdAt: "asc" } }),
-      prisma.jobOccurrenceAssignee.findMany(),
-      prisma.payment.findMany({ where: { ...cutoffWhere("Payment", cutoff) }, orderBy: { createdAt: "asc" } }),
-      prisma.paymentSplit.findMany({ where: { ...paymentSplitCutoffWhere(cutoff) }, orderBy: { createdAt: "asc" } }),
-      prisma.expense.findMany({
-        where: cutoff ? {
-          OR: [
-            { businessExpense: { date: { gte: cutoff } } },
-            { businessExpense: null, createdAt: { gte: cutoff } },
-          ],
-        } : undefined,
-        orderBy: { createdAt: "asc" },
-      }),
-      prisma.auditEvent.findMany({ where: { ...cutoffWhere("AuditEvent", cutoff) }, orderBy: { createdAt: "asc" } }),
-      prisma.guaranteedPayoutAdvance.findMany({
-        where: { ...cutoffWhere("GuaranteedPayoutAdvance", cutoff) },
-        orderBy: { createdAt: "asc" },
-      }),
-    ]);
-
-    const data = {
-      exportedAt: new Date().toISOString(),
-      users,
-      userRoles,
-      equipment,
-      checkouts,
-      clients,
-      clientContacts,
-      properties,
-      jobs,
-      jobContacts,
-      jobClients,
-      jobSchedules,
-      jobOccurrences,
-      jobAssigneeDefaults,
-      jobOccurrenceAssignees,
-      payments,
-      paymentSplits,
-      expenses,
-      auditEvents,
-      guaranteedPayoutAdvances,
-    };
+    const { buildDataSnapshot } = await import("../services/dataExport");
+    const data = await buildDataSnapshot(cutoff);
 
     const filename = `seedlings-export-${etToday()}.json`;
     reply

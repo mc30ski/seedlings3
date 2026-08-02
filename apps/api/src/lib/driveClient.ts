@@ -176,6 +176,25 @@ export async function findFolderByName(name: string, parentId: string): Promise<
   return files[0]?.id ?? null;
 }
 
+/** Look up a file (any mime) by exact name inside a folder. Returns
+ *  the first match's id + name, or null. Used by callers that need to
+ *  avoid overwriting an existing file with the same name (Drive
+ *  ALLOWS same-named files in the same folder — this is the guard
+ *  against that when it's undesirable). Uses a name-scoped query so
+ *  it works regardless of how many files the folder holds. */
+export async function findFileByName(name: string, parentId: string): Promise<{ id: string; name: string } | null> {
+  const safeName = name.replace(/'/g, "\\'");
+  const res = await driveJson("GET", `/files`, {
+    query: {
+      q: `name='${safeName}' and '${parentId}' in parents and trashed=false`,
+      fields: "files(id,name)",
+      pageSize: "10",
+    },
+  });
+  const files = (res.files ?? []) as Array<{ id: string; name: string }>;
+  return files[0] ?? null;
+}
+
 /** mkdir -p semantics: return existing folder id or create-and-return. */
 export async function ensureFolder(name: string, parentId: string): Promise<string> {
   const existing = await findFolderByName(name, parentId);
