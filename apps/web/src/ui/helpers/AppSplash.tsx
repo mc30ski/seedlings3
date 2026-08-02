@@ -3,22 +3,15 @@ import { Box, Portal } from "@chakra-ui/react";
 import { keyframes } from "@emotion/react";
 import { getSeasonIcons } from "@/src/lib/season";
 
-const dropIn = keyframes`
-  0%   { transform: translateY(-40vh) scale(0.95); opacity: 0; }
-  60%  { transform: translateY(6px)   scale(1.00); opacity: 1; }
-  80%  { transform: translateY(-2px)  scale(1.00); opacity: 1; }
-  100% { transform: translateY(0)     scale(1.00); opacity: 1; }
-`;
-
 const fadeOut = keyframes`
-  from { opacity: 1; transform: scale(1.00); }
-  to   { opacity: 0; transform: scale(0.985); }
+  from { opacity: 1; transform: scale(1);   }
+  to   { opacity: 0; transform: scale(1.5); }
 `;
 
 export default function AppSplash({
   show,
   minDurationMs = 1000,
-  fadeMs = 350,
+  fadeMs = 800,
 }: {
   show: boolean;
   minDurationMs?: number;
@@ -76,23 +69,12 @@ export default function AppSplash({
         pointerEvents="none"
         animation={fading ? `${fadeOut} ${fadeMs}ms ease forwards` : undefined}
       >
-        <Box
-          w="96px"
-          h="96px"
-          borderRadius="24px"
-          boxShadow="0 8px 32px rgba(0,0,0,0.12)"
-          display="grid"
-          placeItems="center"
-          animation={`${dropIn} 520ms cubic-bezier(.17,.84,.44,1) both`}
-        >
-          <img
-            src={typeof window !== "undefined" ? getSeasonIcons().icon : "/seedlings-icon.png"}
-            alt="Seedlings"
-            width={84}
-            height={84}
-            style={{ borderRadius: 20 }}
-          />
-        </Box>
+        <img
+          src={typeof window !== "undefined" ? getSeasonIcons().icon : "/seedlings-icon.png"}
+          alt="Seedlings"
+          width={120}
+          height={120}
+        />
       </Box>
     </Portal>
   );
