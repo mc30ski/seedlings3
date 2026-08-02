@@ -36,7 +36,7 @@ export type SuperTabs = "home" | "unclaimed" | "audit" | "settings" | "profile" 
 // Client → Services is the client's list of services they subscribe
 // to. Wrong-way cross-navigation between them was reported as
 // confusing.
-export type ClientTabs = "my-jobs" | "public" | "client-services";
+export type ClientTabs = "my-jobs" | "public" | "client-services" | "statements";
 
 export type PreviewTabs = "routes";
 

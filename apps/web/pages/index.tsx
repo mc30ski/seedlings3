@@ -45,6 +45,7 @@ import AdminJobsTab from "@/src/ui/tabs/AdminJobsTab";
 import ClientFeedTab from "@/src/ui/tabs/ClientFeedTab";
 import ClientMyJobsTab from "@/src/ui/tabs/ClientMyJobsTab";
 import ClientServicesTab from "@/src/ui/tabs/ClientServicesTab";
+import ClientStatementsTab from "@/src/ui/tabs/ClientStatementsTab";
 import RemindersTab from "@/src/ui/tabs/RemindersTab";
 import AdminRemindersTab from "@/src/ui/tabs/AdminRemindersTab";
 import AdminHomeTab from "@/src/ui/tabs/AdminHomeTab";
@@ -587,6 +588,17 @@ export default function HomePage() {
       icon: FiBriefcase,
       visible: () => !!isSignedIn && !!me?.isApproved && !isWorker && !isAdmin,
       content: <ClientMyJobsTab />,
+    },
+    {
+      // Self-serve statement generator (PDF/CSV of confirmed payments
+      // for a chosen property + date range). Sits right under My
+      // Properties so tax-time exports are one click from the
+      // personalized landing tab.
+      value: "statements",
+      label: "Statements",
+      icon: FiFileText,
+      visible: () => !!isSignedIn && !!me?.isApproved && !isWorker && !isAdmin,
+      content: <ClientStatementsTab />,
     },
     {
       value: "public",
@@ -1407,6 +1419,17 @@ export default function HomePage() {
     window.addEventListener("open:paymentsTabToServicesTabSearch", onEvent as EventListener);
     return () => window.removeEventListener("open:paymentsTabToServicesTabSearch", onEvent as EventListener);
   }, []);
+
+  // Client-portal shortcut: banner on My Properties → jump to the
+  // Statements tab in the client dropdown. Kept as a window event so
+  // the child tab component doesn't need to prop-drill the setter.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onEvent = () => setClientInnerTab("statements");
+    window.addEventListener("open:clientStatementsTab", onEvent as EventListener);
+    return () => window.removeEventListener("open:clientStatementsTab", onEvent as EventListener);
+  }, [setClientInnerTab]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const onAdminJobs = topTab === "admin" && adminInnerTab === "jobs";

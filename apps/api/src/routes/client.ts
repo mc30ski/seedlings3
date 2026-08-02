@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyRequest } from "fastify";
 import { prisma } from "../db/prisma";
 import { getDownloadUrl } from "../lib/r2";
-import { etMidnight, etToday, etStartOfMonth, etAddDays, etFormatDateOpts , type EtDateKey } from "../lib/dates";
+import { etMidnight, etEndOfDay, etToday, etStartOfMonth, etAddDays, etFormatDate, etFormatDateOpts, type EtDateKey } from "../lib/dates";
 import { effectiveClerkUserId } from "../plugins/clientImpersonation";
 
 /**
@@ -464,6 +464,228 @@ export default async function clientRoutes(app: FastifyInstance) {
       maxMonthsBack: MAX_MONTHS_BACK,
       hasMore,
       windowStart: startOfMonth.toISOString(),
+    };
+  });
+
+  // ── Statement (client-facing financial summary) ─────────────────────────
+  //
+  // Self-serve annual/period statement for a single property. Client picks
+  // a property + date range, downloads a PDF or CSV that documents every
+  // confirmed payment they made to Seedlings during the period.
+  //
+  // Motivating use case: a client asks for a year-end summary for their
+  // CPA. But generalized: any client can pull any timeframe for any of
+  // their properties (Super impersonation flows through via clientGuard).
+  //
+  // CRITICAL: This is a FINANCIAL STATEMENT surfaced to the client. It
+  // MUST NOT expose any internal operational data — worker names,
+  // assignments, internal notes, times, cost breakdowns, processor fees,
+  // top-ups, business margin, or anything else the client can't already
+  // see on their portal. The response schema below is the whitelist.
+  //
+  // Date-range filter anchor: `Payment.confirmedAt` (cash-basis). Each
+  // row includes BOTH the payment date AND the service date so the
+  // client's CPA can reconcile either way.
+  app.get("/client/statement", clientGuard, async (req: any, reply: any) => {
+    const clerkUserId = req.auth.clerkUserId!;
+    const q = (req.query || {}) as {
+      propertyId?: string;
+      from?: string;
+      to?: string;
+      format?: string;
+    };
+    const propertyId = String(q.propertyId ?? "").trim();
+    const fromStr = String(q.from ?? "").trim();
+    const toStr = String(q.to ?? "").trim();
+    const format = (String(q.format ?? "json").toLowerCase() === "csv") ? "csv" : "json";
+
+    if (!propertyId) throw app.httpErrors.badRequest("propertyId is required");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fromStr)) throw app.httpErrors.badRequest("from must be YYYY-MM-DD");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(toStr)) throw app.httpErrors.badRequest("to must be YYYY-MM-DD");
+    if (fromStr > toStr) throw app.httpErrors.badRequest("from must be <= to");
+
+    // Ownership check: the caller must have a ClientContact link to the
+    // Client that owns this property. Super impersonation flows through
+    // via clientGuard's clerkUserId swap.
+    const contacts = await getLinkedContacts(clerkUserId);
+    if (contacts.length === 0) throw app.httpErrors.forbidden("Not linked to any client");
+    const propertyOwned = contacts.some((c) =>
+      c.client.properties.some((p) => p.id === propertyId),
+    );
+    if (!propertyOwned) throw app.httpErrors.forbidden("Property not accessible");
+
+    // Property + owning client (for the statement header). Loaded fresh
+    // so a rename/archive is reflected on the statement.
+    const property = await prisma.property.findUnique({
+      where: { id: propertyId },
+      select: {
+        id: true, displayName: true, street1: true, street2: true, city: true, state: true, postalCode: true,
+        client: {
+          select: {
+            id: true, displayName: true,
+            contacts: {
+              where: { isPrimary: true, status: "ACTIVE" },
+              select: { firstName: true, lastName: true, email: true, phone: true },
+              take: 1,
+            },
+          },
+        },
+      },
+    });
+    if (!property) throw app.httpErrors.notFound("Property not found");
+
+    // Business info from Settings (any missing key → empty string in the
+    // response, and the client-side renderer omits its row).
+    const bizKeys = ["BUSINESS_NAME", "BUSINESS_EIN", "BUSINESS_ADDRESS", "BUSINESS_PHONE", "BUSINESS_EMAIL"];
+    const bizSettings = await prisma.setting.findMany({
+      where: { key: { in: bizKeys } },
+      select: { key: true, value: true },
+    });
+    const bizMap = new Map(bizSettings.map((s) => [s.key, s.value ?? ""]));
+    const business = {
+      name: bizMap.get("BUSINESS_NAME") ?? "",
+      ein: bizMap.get("BUSINESS_EIN") ?? "",
+      address: bizMap.get("BUSINESS_ADDRESS") ?? "",
+      phone: bizMap.get("BUSINESS_PHONE") ?? "",
+      email: bizMap.get("BUSINESS_EMAIL") ?? "",
+    };
+
+    // Payment fetch — the whitelist. Every field selected below appears
+    // on the client-facing statement; every field NOT selected here
+    // (worker names, internal notes, processor fees, splits, top-ups,
+    // business margin, etc.) is safely omitted at the query layer.
+    const payments = await prisma.payment.findMany({
+      where: {
+        confirmed: true,
+        writtenOff: false,
+        skippedAt: null,
+        confirmedAt: {
+          gte: etMidnight(fromStr as EtDateKey),
+          lte: etEndOfDay(toStr as EtDateKey),
+        },
+        occurrence: {
+          job: { propertyId },
+        },
+      },
+      orderBy: { confirmedAt: "asc" },
+      select: {
+        amountPaid: true,
+        method: true,
+        confirmedAt: true,
+        occurrence: {
+          select: {
+            completedAt: true,
+            startAt: true,
+            jobType: true,
+            jobTags: true,
+            workflow: true,
+          },
+        },
+      },
+    });
+
+    // Resolve payment-method labels via the taxonomy so the display is
+    // "Venmo" not "VENMO", "Cash" not "CASH". Loaded once.
+    const { loadPaymentMethods } = await import("../services/paymentMethods");
+    const methods = await loadPaymentMethods(prisma);
+    const labelByKey = new Map<string, string>(methods.map((m) => [m.key, m.label]));
+    const resolveMethodLabel = (key: string): string =>
+      labelByKey.get(key) ?? key.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+
+    // Build human-readable service description from jobType + jobTags.
+    // jobTags is a JSON-string array like '["MOW","TRIM","EDGE","BLOW"]'.
+    // Fallback to workflow ("STANDARD") if nothing else is populated.
+    function describeService(occ: {
+      jobType: string | null;
+      jobTags: string | null;
+      workflow: string | null;
+    }): string {
+      let tags: string[] = [];
+      if (occ.jobTags) {
+        try {
+          const parsed = JSON.parse(occ.jobTags);
+          if (Array.isArray(parsed)) tags = parsed.filter((t): t is string => typeof t === "string");
+        } catch { /* malformed — ignore */ }
+      }
+      const tagStr = tags.length > 0
+        ? tags.map((t) => t.charAt(0) + t.slice(1).toLowerCase()).join(", ")
+        : "";
+      if (occ.jobType && tagStr) return `${occ.jobType} — ${tagStr}`;
+      if (occ.jobType) return occ.jobType;
+      if (tagStr) return tagStr;
+      return occ.workflow ?? "Service";
+    }
+
+    const rows = payments.map((p) => ({
+      serviceDate: p.occurrence?.completedAt
+        ? etFormatDate(p.occurrence.completedAt)
+        : (p.occurrence?.startAt ? etFormatDate(p.occurrence.startAt) : ""),
+      paymentDate: p.confirmedAt ? etFormatDate(p.confirmedAt) : "",
+      description: describeService({
+        jobType: p.occurrence?.jobType ?? null,
+        jobTags: (p.occurrence as any)?.jobTags ?? null,
+        workflow: p.occurrence?.workflow ?? null,
+      }),
+      method: resolveMethodLabel(p.method),
+      amount: p.amountPaid,
+    }));
+    const total = rows.reduce((s, r) => s + r.amount, 0);
+
+    // Primary contact — first ACTIVE isPrimary contact on the owning
+    // client. Used for the "Client" block in the statement header.
+    const primaryContact = property.client?.contacts[0] ?? null;
+    const clientBlock = {
+      name: property.client?.displayName ?? "",
+      contact: primaryContact ? [primaryContact.firstName, primaryContact.lastName].filter(Boolean).join(" ") : "",
+      email: primaryContact?.email ?? "",
+      phone: primaryContact?.phone ?? "",
+    };
+    const propertyBlock = {
+      displayName: property.displayName ?? "",
+      address: [property.street1, property.street2, property.city, property.state, property.postalCode]
+        .filter(Boolean).join(", "),
+    };
+
+    // CSV response — one row per payment. ISO dates for machine
+    // readability; the JSON path is what the UI uses to render the PDF.
+    if (format === "csv") {
+      const csvEscape = (v: string) => {
+        if (v.includes(",") || v.includes('"') || v.includes("\n")) {
+          return `"${v.replace(/"/g, '""')}"`;
+        }
+        return v;
+      };
+      const lines: string[] = [];
+      lines.push(["Service Date", "Payment Date", "Description", "Method", "Amount"].join(","));
+      for (const r of rows) {
+        lines.push([
+          r.serviceDate,
+          r.paymentDate,
+          csvEscape(r.description),
+          csvEscape(r.method),
+          r.amount.toFixed(2),
+        ].join(","));
+      }
+      lines.push(["", "", "", "Total", total.toFixed(2)].join(","));
+      const csv = lines.join("\n") + "\n";
+      const fname = `statement_${propertyBlock.displayName.replace(/[^a-zA-Z0-9]+/g, "-")}_${fromStr}_to_${toStr}.csv`;
+      // Use Fastify's reply API — writing directly to req.raw.res
+      // without hijack() causes Fastify to also send an implicit
+      // reply, which manifests client-side as a hung / empty download.
+      return reply
+        .type("text/csv; charset=utf-8")
+        .header("Content-Disposition", `attachment; filename="${fname}"`)
+        .send(csv);
+    }
+
+    // JSON — powers the on-screen preview + the client-side PDF generator.
+    return {
+      business,
+      client: clientBlock,
+      property: propertyBlock,
+      period: { from: fromStr, to: toStr },
+      rows,
+      total,
     };
   });
 

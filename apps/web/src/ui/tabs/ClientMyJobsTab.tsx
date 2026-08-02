@@ -15,7 +15,7 @@ import {
   Textarea,
   VStack,
 } from "@chakra-ui/react";
-import { Calendar, Download, Eye, SkipForward } from "lucide-react";
+import { Calendar, Download, Eye, FileText, SkipForward } from "lucide-react";
 import { apiDelete, apiGet, apiPost } from "@/src/lib/api";
 import { getClientImpersonation } from "@/src/lib/impersonation";
 import { fmtDate, fmtDateWeekday, bizToday, bizAddDays } from "@/src/lib/lib";
@@ -537,6 +537,37 @@ export default function ClientMyJobsTab() {
           Welcome back, {profile.contact?.firstName}!
         </Text>
         <Text fontSize="sm" color="green.700" mt={1}>{profile.client?.displayName}</Text>
+      </Box>
+
+      {/* Statements CTA — clickable card that jumps to the Statements
+          tab in the client dropdown. Uses a window event so this child
+          doesn't need a prop-drilled reference to the tab setter. */}
+      <Box
+        as="button"
+        onClick={() => window.dispatchEvent(new CustomEvent("open:clientStatementsTab"))}
+        w="full"
+        textAlign="left"
+        mb={4}
+        p={4}
+        bg="blue.50"
+        borderWidth="1px"
+        borderColor="blue.300"
+        rounded="lg"
+        _hover={{ bg: "blue.100", borderColor: "blue.400" }}
+        cursor="pointer"
+      >
+        <HStack gap={3} align="center">
+          <Box color="blue.600"><FileText size={20} /></Box>
+          <Box flex="1">
+            <Text fontSize="sm" fontWeight="semibold" color="blue.800">
+              Need a statement for taxes or your records?
+            </Text>
+            <Text fontSize="xs" color="blue.700" mt={0.5}>
+              Click here to generate a PDF or CSV of services and payments for any date range.
+            </Text>
+          </Box>
+          <Text fontSize="lg" color="blue.500">›</Text>
+        </HStack>
       </Box>
 
       {/* Properties */}
