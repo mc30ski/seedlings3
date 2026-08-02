@@ -22,6 +22,7 @@ import { fmtDate, fmtDateWeekday, bizToday, bizAddDays } from "@/src/lib/lib";
 import { MapLink } from "@/src/ui/helpers/Link";
 import { type ReceiptData, downloadReceipt, getReceiptBlob } from "@/src/lib/receipt";
 import { useBranding } from "@/src/lib/useBranding";
+import { useLogoDataUrl } from "@/src/lib/useLogoDataUrl";
 import SafePhoto from "@/src/ui/components/SafePhoto";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 
@@ -138,6 +139,7 @@ function cadenceLabel(job: { isOneOff?: boolean | null; frequencyDays?: number |
 
 export default function ClientMyJobsTab() {
   const { businessName } = useBranding();
+  const logoDataUrl = useLogoDataUrl();
   const [profile, setProfile] = useState<ClientProfile | null>(null);
   const [completed, setCompleted] = useState<CompletedJob[]>([]);
   // Month-by-month pagination for completed history. Default window
@@ -396,6 +398,7 @@ export default function ClientMyJobsTab() {
       methodLabel: job.payment.methodLabel ?? job.payment.method,
       workers: job.workers,
       receiptId: job.id.slice(-8).toUpperCase(),
+      logoDataUrl,
     };
   }
 

@@ -68,12 +68,20 @@ export async function applyJobPauseSideEffectsInTx(
   extraAuditMeta?: Record<string, unknown>,
   sideEffectAction: string = "PAUSED_REMOVED_FUTURE_OCCURRENCES",
 ): Promise<void> {
+  // Removes every SCHEDULED occurrence for the job, regardless of
+  // clock time. SCHEDULED means "not yet started" (IN_PROGRESS is a
+  // different status), so an occurrence in this state is always safe
+  // to cancel on pause — including today's occurrence whose startAt
+  // has already passed but no worker has begun. Previously this
+  // filtered on `startAt > new Date()`, which left today's late-morning
+  // occurrence on the board after a mid-day pause. In-progress /
+  // completed / paid rows are naturally spared because they have a
+  // different status.
   const deleted = await tx.jobOccurrence.deleteMany({
     where: {
       jobId,
       status: JobOccurrenceStatus.SCHEDULED,
       workflow: OccurrenceWorkflow.STANDARD,
-      startAt: { gt: new Date() },
     },
   });
   if (deleted.count > 0) {

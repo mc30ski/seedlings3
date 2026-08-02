@@ -574,6 +574,7 @@ export default async function clientRoutes(app: FastifyInstance) {
         confirmedAt: true,
         occurrence: {
           select: {
+            id: true,
             completedAt: true,
             startAt: true,
             jobType: true,
@@ -617,6 +618,11 @@ export default async function clientRoutes(app: FastifyInstance) {
     }
 
     const rows = payments.map((p) => ({
+      // Matches the Service Receipt PDF's Receipt # convention: last 8
+      // chars of the occurrence id, uppercased. Same rule as
+      // receipt.ts's `receiptId` so a client can cross-reference a
+      // downloaded receipt against a line on their statement.
+      receiptId: p.occurrence?.id ? p.occurrence.id.slice(-8).toUpperCase() : "",
       serviceDate: p.occurrence?.completedAt
         ? etFormatDate(p.occurrence.completedAt)
         : (p.occurrence?.startAt ? etFormatDate(p.occurrence.startAt) : ""),
@@ -656,9 +662,10 @@ export default async function clientRoutes(app: FastifyInstance) {
         return v;
       };
       const lines: string[] = [];
-      lines.push(["Service Date", "Payment Date", "Description", "Method", "Amount"].join(","));
+      lines.push(["Receipt #", "Service Date", "Payment Date", "Description", "Method", "Amount"].join(","));
       for (const r of rows) {
         lines.push([
+          r.receiptId,
           r.serviceDate,
           r.paymentDate,
           csvEscape(r.description),
@@ -666,7 +673,7 @@ export default async function clientRoutes(app: FastifyInstance) {
           r.amount.toFixed(2),
         ].join(","));
       }
-      lines.push(["", "", "", "Total", total.toFixed(2)].join(","));
+      lines.push(["", "", "", "", "Total", total.toFixed(2)].join(","));
       const csv = lines.join("\n") + "\n";
       const fname = `statement_${propertyBlock.displayName.replace(/[^a-zA-Z0-9]+/g, "-")}_${fromStr}_to_${toStr}.csv`;
       // Use Fastify's reply API — writing directly to req.raw.res
