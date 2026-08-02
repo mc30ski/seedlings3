@@ -14,6 +14,7 @@ type Props = {
   size?: string;
   min?: string;
   max?: string;
+  disabled?: boolean;
   css?: Record<string, unknown>;
 };
 
@@ -26,7 +27,7 @@ type Props = {
  * viewer's timezone), so branding here is a safe boundary cast that lets
  * downstream state stay strictly-typed without every consumer casting.
  */
-export default function DateInput({ value, onChange, min, max, css: cssProp }: Props) {
+export default function DateInput({ value, onChange, min, max, disabled, css: cssProp }: Props) {
   const ref = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -42,6 +43,7 @@ export default function DateInput({ value, onChange, min, max, css: cssProp }: P
       defaultValue={value}
       min={min}
       max={max}
+      disabled={disabled}
       onChange={(e) => onChange(e.target.value as EtDateKey)}
       style={{
         flex: 1,
@@ -51,8 +53,10 @@ export default function DateInput({ value, onChange, min, max, css: cssProp }: P
         height: "2rem",
         borderRadius: "0.375rem",
         border: "1px solid var(--chakra-colors-border)",
-        background: "var(--chakra-colors-bg)",
-        color: "var(--chakra-colors-fg)",
+        background: disabled ? "var(--chakra-colors-bg-muted, var(--chakra-colors-gray-100))" : "var(--chakra-colors-bg)",
+        color: disabled ? "var(--chakra-colors-fg-muted, var(--chakra-colors-gray-500))" : "var(--chakra-colors-fg)",
+        opacity: disabled ? 0.6 : 1,
+        cursor: disabled ? "not-allowed" : "auto",
         outline: "none",
         ...(cssProp as React.CSSProperties),
       }}

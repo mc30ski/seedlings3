@@ -2271,7 +2271,11 @@ async function seedDatabase() {
 
   // ── Payment request settings ──────────────────────────────────────────────
   const paymentSettings = [
-    { key: "BUSINESS_NAME", value: "Seedlings Lawn Care", description: "Display name of the business — appears on receipts, the public payment page, and other client-facing surfaces." },
+    { key: "BUSINESS_NAME", value: "Seedlings Lawn Care, LLC", description: "Display name of the business — appears on receipts, the public payment page, and other client-facing surfaces." },
+    { key: "BUSINESS_EIN", value: "", description: "Employer Identification Number (EIN) — appears on client-facing statements so a client's accountant has the vendor's tax ID for their records. Leave blank to omit from the statement header." },
+    { key: "BUSINESS_ADDRESS", value: "", description: "Full business mailing address (street, city, state, zip). Appears in the header of client-facing statements. Leave blank to omit." },
+    { key: "BUSINESS_PHONE", value: "", description: "Business phone number shown on client-facing statements. Leave blank to omit." },
+    { key: "BUSINESS_EMAIL", value: "admin@seedlingslawncare.com", description: "Business email address shown on client-facing statements. Distinct from OUTGOING_COMMS_CC — this one is a public contact address." },
     { key: "VENMO_BUSINESS_HANDLE", value: "SeedlingsLawnCare", description: "@handle clients use to send Venmo payments (no @ prefix)." },
     { key: "ZELLE_ADDRESS", value: "seedlingslawncare", description: "Email or phone clients use to send Zelle payments." },
     { key: "PAYMENT_REQUEST_BASE_URL", value: "https://www.seedlings.team", description: "Base URL used when generating payment-request SMS/email links (e.g., {BASE}/pay/{token})." },
