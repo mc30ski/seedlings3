@@ -3,7 +3,14 @@ import { Box, Portal } from "@chakra-ui/react";
 import { keyframes } from "@emotion/react";
 import { getSeasonIcons } from "@/src/lib/season";
 
-const fadeOut = keyframes`
+// Split into two animations — see the JSX comment for why. Keeping
+// the outer box off `transform` avoids a compositor layer promotion
+// at animation-start that snapped the layout down by a couple pixels.
+const overlayFade = keyframes`
+  from { opacity: 1; }
+  to   { opacity: 0; }
+`;
+const logoExpand = keyframes`
   from { opacity: 1; transform: scale(1);   }
   to   { opacity: 0; transform: scale(1.5); }
 `;
@@ -59,6 +66,14 @@ export default function AppSplash({
 
   return (
     <Portal>
+      {/* Two separate animations so the fade + expand read as one
+          effect without the layout jump you get from putting a
+          transform on a full-viewport fixed element. The outer only
+          animates opacity (compositor-only, zero layout impact) and
+          `will-change` locks it into its own layer from the first
+          frame so nothing promotes mid-lifecycle. The inner <img>
+          owns the scale — transform-origin defaults to its own
+          center so it grows in place. */}
       <Box
         position="fixed"
         inset="0"
@@ -67,13 +82,18 @@ export default function AppSplash({
         display="grid"
         placeItems="center"
         pointerEvents="none"
-        animation={fading ? `${fadeOut} ${fadeMs}ms ease forwards` : undefined}
+        style={{ willChange: "opacity" }}
+        animation={fading ? `${overlayFade} ${fadeMs}ms ease forwards` : undefined}
       >
         <img
           src={typeof window !== "undefined" ? getSeasonIcons().icon : "/seedlings-icon.png"}
           alt="Seedlings"
           width={120}
           height={120}
+          style={{
+            willChange: "transform, opacity",
+            animation: fading ? `${logoExpand} ${fadeMs}ms ease forwards` : undefined,
+          }}
         />
       </Box>
     </Portal>
