@@ -1,6 +1,6 @@
 import { prisma } from "../db/prisma";
 import type { ServicesAudit } from "../types/services";
-import { etMidnight, etEndOfDay } from "../lib/dates";
+import { etMidnight, etEndOfDay , type EtDateKey } from "../lib/dates";
 import { cutoffWhere } from "../lib/businessStartCutoff";
 
 export const audit: ServicesAudit = {
@@ -10,8 +10,8 @@ export const audit: ServicesAudit = {
     if (params.action) where.action = params.action;
     if (params.from || params.to) {
       where.createdAt = {
-        gte: params.from ? etMidnight(params.from) : undefined,
-        lte: params.to ? etEndOfDay(params.to) : undefined,
+        gte: params.from ? etMidnight(params.from as EtDateKey) : undefined,
+        lte: params.to ? etEndOfDay(params.to as EtDateKey) : undefined,
       };
     }
     // Business Start Date filter — pre-cutoff audit events hidden. Super can

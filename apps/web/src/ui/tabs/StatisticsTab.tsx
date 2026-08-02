@@ -15,7 +15,7 @@ import {
 } from "@chakra-ui/react";
 import { BarChart3, LayoutGrid, X } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
-import { fmtDate, bizDateKey, bizToday, bizAddDays } from "@/src/lib/lib";
+import { fmtDate, bizDateKey, bizToday, bizAddDays , type EtDateKey } from "@/src/lib/lib";
 import {
   BarChart,
   Bar,
@@ -181,11 +181,11 @@ export default function StatisticsTab({ myId }: Props = {}) {
       <HStack mb={2} gap={2} wrap="wrap" align="flex-end">
         <Box>
           <Text fontSize="xs" fontWeight="medium" mb={1}>From</Text>
-          <Input type="date" size="sm" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+          <Input type="date" size="sm" value={dateFrom} onChange={(e) => setDateFrom(e.target.value as EtDateKey)} />
         </Box>
         <Box>
           <Text fontSize="xs" fontWeight="medium" mb={1}>To</Text>
-          <Input type="date" size="sm" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+          <Input type="date" size="sm" value={dateTo} onChange={(e) => setDateTo(e.target.value as EtDateKey)} />
         </Box>
         {!myId && <Box ref={dropRef} position="relative">
           <Text fontSize="xs" fontWeight="medium" mb={1}>Compare Workers</Text>

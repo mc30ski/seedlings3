@@ -77,7 +77,53 @@
  * implementation) silently picked the AFTER-shift offset on DST days
  * and produced 1 AM ET instead of midnight ET (caught by unit tests).
  */
-export function etMidnight(dateStr: string): Date {
+// ═════════════════════════════════════════════════════════════════════════
+// Branded date types (Phase 2)
+// ═════════════════════════════════════════════════════════════════════════
+//
+// See apps/web/src/lib/lib.ts for the full rationale. Same brand strings
+// as the web side — TypeScript's structural typing means a key produced
+// by etToday() (API) is interchangeable with one produced by bizToday()
+// (web); both satisfy `EtDateKey`.
+
+/** YYYY-MM-DD ET calendar-day string. See the web-side twin for full
+ *  docs. Every producer below returns EtDateKey; every consumer that
+ *  does calendar arithmetic REQUIRES EtDateKey. */
+export type EtDateKey = string & { readonly __brand: "EtDateKey" };
+
+/** Full ISO datetime string. Prisma DateTime fields serialize to this
+ *  shape; every helper returning an instant produces it. */
+export type IsoInstant = string & { readonly __brand: "IsoInstant" };
+
+/** Validate + brand a string as an EtDateKey. Throws on bad shape. Use
+ *  at trusted boundaries only (URL params, request bodies after
+ *  validation, hard-coded literals). Never `as EtDateKey` directly. */
+export function toEtDateKey(s: string): EtDateKey {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    throw new Error(`toEtDateKey: not a YYYY-MM-DD string: ${s}`);
+  }
+  const [y, m, d] = s.split("-").map(Number);
+  if (m < 1 || m > 12 || d < 1 || d > 31) {
+    throw new Error(`toEtDateKey: month/day out of range: ${s}`);
+  }
+  const probe = new Date(Date.UTC(y, m - 1, d, 12));
+  if (probe.getUTCMonth() !== m - 1 || probe.getUTCDate() !== d) {
+    throw new Error(`toEtDateKey: not a real calendar day: ${s}`);
+  }
+  return s as EtDateKey;
+}
+
+/** Validate + brand a string as an IsoInstant. Throws on non-parseable
+ *  input. Use at trusted boundaries where the string is guaranteed to
+ *  be an ISO datetime. */
+export function toIsoInstant(s: string): IsoInstant {
+  if (isNaN(new Date(s).getTime())) {
+    throw new Error(`toIsoInstant: not a parseable date string: ${s}`);
+  }
+  return s as IsoInstant;
+}
+
+export function etMidnight(dateStr: EtDateKey): Date {
   if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
     return new Date(NaN);
   }
@@ -91,7 +137,7 @@ export function etMidnight(dateStr: string): Date {
 }
 
 /** Convert a YYYY-MM-DD string to end-of-day (23:59:59.999) in Eastern time */
-export function etEndOfDay(dateStr: string): Date {
+export function etEndOfDay(dateStr: EtDateKey): Date {
   if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
     return new Date(NaN);
   }
@@ -120,7 +166,7 @@ export function etEndOfDay(dateStr: string): Date {
  * occurrence (EDT). Spring-forward gap times (e.g. 2:30 AM on Mar 8)
  * fall back to EDT — won't throw.
  */
-export function etInstantFromParts(dateKey: string, time: string): Date {
+export function etInstantFromParts(dateKey: EtDateKey, time: string): Date {
   if (!dateKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return new Date(NaN);
   const [y, m, d] = dateKey.split("-").map(Number);
   const parts = time.split(":").map(Number);
@@ -153,17 +199,17 @@ export function etInstantFromParts(dateKey: string, time: string): Date {
 }
 
 /** Get tomorrow's date string in Eastern time (YYYY-MM-DD) */
-export function etTomorrow(): string {
+export function etTomorrow(): EtDateKey {
   const now = new Date(Date.now() + 86400000);
   const formatter = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" });
-  return formatter.format(now);
+  return formatter.format(now) as EtDateKey;
 }
 
 /** Get today's date string in Eastern time (YYYY-MM-DD) */
-export function etToday(): string {
+export function etToday(): EtDateKey {
   const now = new Date();
   const formatter = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }); // en-CA gives YYYY-MM-DD
-  return formatter.format(now);
+  return formatter.format(now) as EtDateKey;
 }
 
 /**
@@ -173,7 +219,9 @@ export function etToday(): string {
  * through to the Date constructor unchanged.
  */
 export function parseUserDate(raw: string): Date {
-  return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? etMidnight(raw) : new Date(raw);
+  // Regex already verified — safe to brand at the boundary. This is
+  // one of the trusted-boundary cast sites the constructor rule allows.
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? etMidnight(raw as EtDateKey) : new Date(raw);
 }
 
 /**
@@ -190,7 +238,7 @@ export function parseUserDate(raw: string): Date {
  *   etDaysBetween("2026-06-06", "2026-06-13") → 7
  *   etDaysBetween("2026-06-13", "2026-06-06") → -7
  */
-export function etDaysBetween(fromKey: string, toKey: string): number {
+export function etDaysBetween(fromKey: EtDateKey, toKey: EtDateKey): number {
   if (!fromKey || !toKey || !/^\d{4}-\d{2}-\d{2}$/.test(fromKey) || !/^\d{4}-\d{2}-\d{2}$/.test(toKey)) return NaN;
   const [fy, fm, fd] = fromKey.split("-").map(Number);
   const [ty, tm, td] = toKey.split("-").map(Number);
@@ -209,13 +257,13 @@ export function etDaysBetween(fromKey: string, toKey: string): number {
  *   etAddDays("2026-06-06", -7)  → "2026-05-30"
  *   etAddDays("2026-06-30",  1)  → "2026-07-01"
  */
-export function etAddDays(dateStr: string, n: number): string {
-  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return "";
+export function etAddDays(dateStr: EtDateKey, n: number): EtDateKey {
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return "" as EtDateKey;
   const [y, m, d] = dateStr.split("-").map(Number);
   // Use UTC noon to dodge DST edges; format back in ET so the result is
   // anchored on the operator's calendar day.
   const utcNoon = new Date(Date.UTC(y, m - 1, d + n, 12));
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(utcNoon);
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(utcNoon) as EtDateKey;
 }
 
 /**
@@ -232,8 +280,8 @@ export function etAddDays(dateStr: string, n: number): string {
  *
  * Always returns the operator's calendar day, never the server's UTC day.
  */
-export function etFormatDate(d: Date): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(d);
+export function etFormatDate(d: Date): EtDateKey {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(d) as EtDateKey;
 }
 
 /**
@@ -321,7 +369,7 @@ export function etHourMinute(d: Date): string {
  * Use this instead of `setDate(now.getDate() - now.getDay())` etc., which
  * does the arithmetic in server time (= UTC on Vercel).
  */
-export function etMondayOnOrBefore(): string {
+export function etMondayOnOrBefore(): EtDateKey {
   const today = etToday();
   const [y, m, d] = today.split("-").map(Number);
   const dow = new Date(Date.UTC(y, m - 1, d, 12)).getUTCDay(); // 0=Sun..6=Sat
@@ -334,7 +382,7 @@ export function etMondayOnOrBefore(): string {
  * by endpoints that follow the US week convention (Sun → Sat) — typically
  * worker payroll-style summaries that mirror `now.getDay() === 0`.
  */
-export function etSundayOnOrBefore(): string {
+export function etSundayOnOrBefore(): EtDateKey {
   const today = etToday();
   const [y, m, d] = today.split("-").map(Number);
   const dow = new Date(Date.UTC(y, m - 1, d, 12)).getUTCDay(); // 0=Sun..6=Sat
@@ -345,16 +393,16 @@ export function etSundayOnOrBefore(): string {
  * Get the first of the current month, as YYYY-MM-DD in ET. For "this
  * month" date-range presets and summary endpoints.
  */
-export function etStartOfMonth(): string {
+export function etStartOfMonth(): EtDateKey {
   const today = etToday();
-  return `${today.slice(0, 7)}-01`;
+  return `${today.slice(0, 7)}-01` as EtDateKey;
 }
 
 /**
  * Get January 1 of the current year, as YYYY-MM-DD in ET. For YTD
  * date-range presets and summary endpoints.
  */
-export function etStartOfYear(): string {
+export function etStartOfYear(): EtDateKey {
   const today = etToday();
-  return `${today.slice(0, 4)}-01-01`;
+  return `${today.slice(0, 4)}-01-01` as EtDateKey;
 }

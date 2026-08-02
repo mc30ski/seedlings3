@@ -2,7 +2,7 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { services } from "../services";
 import { prisma } from "../db/prisma";
 import { getUploadUrl, getDownloadUrl, deleteObject } from "../lib/r2";
-import { etMidnight, etEndOfDay, etToday, etTomorrow, etAddDays, etFormatDate, etDaysBetween } from "../lib/dates";
+import { etMidnight, etEndOfDay, etToday, etTomorrow, etAddDays, etFormatDate, etDaysBetween , type EtDateKey } from "../lib/dates";
 import { Role as RoleVal, JobOccurrenceStatus } from "@prisma/client";
 import { ServiceError } from "../lib/errors";
 import { normalizePhone } from "../lib/phone";
@@ -2237,8 +2237,8 @@ export default async function workerRoutes(app: FastifyInstance) {
     const startOfWeekWindow = etMidnight(dayStr(-6));   // 7-day rolling, today inclusive
     const startOfMonthWindow = etMidnight(dayStr(-29)); // 30-day rolling
     const currentYear = parseInt(todayStr.slice(0, 4), 10);
-    const startOfYear = etMidnight(`${currentYear}-01-01`);
-    const startOfNextYear = etMidnight(`${currentYear + 1}-01-01`);
+    const startOfYear = etMidnight(`${currentYear}-01-01` as EtDateKey);
+    const startOfNextYear = etMidnight(`${currentYear + 1}-01-01` as EtDateKey);
 
     const me = await prisma.user.findUnique({ where: { id: uid }, select: { workerType: true } });
     const isEmployee = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
@@ -2487,8 +2487,8 @@ export default async function workerRoutes(app: FastifyInstance) {
     const startOfWeekWindow = etMidnight(dayStr(-6));
     const startOfMonthWindow = etMidnight(dayStr(-29));
     const currentYear = parseInt(todayStr.slice(0, 4), 10);
-    const startOfYear = etMidnight(`${currentYear}-01-01`);
-    const startOfNextYear = etMidnight(`${currentYear + 1}-01-01`);
+    const startOfYear = etMidnight(`${currentYear}-01-01` as EtDateKey);
+    const startOfNextYear = etMidnight(`${currentYear + 1}-01-01` as EtDateKey);
 
     const me = await prisma.user.findUnique({ where: { id: uid }, select: { workerType: true } });
     const isEmployee = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
@@ -3592,7 +3592,7 @@ export default async function workerRoutes(app: FastifyInstance) {
       // expiring 2027-12-31 lasts through end of 12/31 ET rather than
       // silently expiring at 8pm ET on 12/30 due to UTC-midnight parsing.
       // Same fix as admin.ts's adminUploadOnBehalf.
-      uploadExpiresAt: b.uploadExpiresAt ? etEndOfDay(String(b.uploadExpiresAt)) : null,
+      uploadExpiresAt: b.uploadExpiresAt ? etEndOfDay(String(b.uploadExpiresAt) as EtDateKey) : null,
       clientIp: (req.ip as string) ?? null,
       userAgent: (req.headers["user-agent"] as string) ?? null,
     });
@@ -3959,8 +3959,8 @@ export default async function workerRoutes(app: FastifyInstance) {
     const to = req.query?.to as string | undefined;
 
     const dateFilter: any = {};
-    if (from) dateFilter.gte = etMidnight(from);
-    if (to) dateFilter.lte = etEndOfDay(to);
+    if (from) dateFilter.gte = etMidnight(from as EtDateKey);
+    if (to) dateFilter.lte = etEndOfDay(to as EtDateKey);
     const hasDate = from || to;
 
     // Business Start Date filter — mirror /admin/statistics so the BSD
@@ -4402,7 +4402,11 @@ export default async function workerRoutes(app: FastifyInstance) {
 
     // Enforce 2-day window for non-admins (ET calendar days, DST-safe).
     if (!reschedIsAdmin) {
-      const diffDays = Math.abs(etDaysBetween(etToday(), startAt.slice(0, 10)));
+      // Compare in ET calendar days. Previously used `startAt.slice(0, 10)`
+      // which grabs the UTC day, not ET — for a late-UTC-evening instant
+      // this rejected reschedule requests that were actually within the
+      // 2-day window ET. etFormatDate converts to the correct ET day.
+      const diffDays = Math.abs(etDaysBetween(etToday(), etFormatDate(new Date(startAt))));
       if (diffDays > 2) {
         throw app.httpErrors.badRequest("Workers can only reschedule within 2 days of today");
       }

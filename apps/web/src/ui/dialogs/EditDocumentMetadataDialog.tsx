@@ -15,7 +15,7 @@ import {
 } from "@chakra-ui/react";
 import { Plus } from "lucide-react";
 import { apiPatch } from "@/src/lib/api";
-import { bizDateKey, bizInstantFromEtParts } from "@/src/lib/lib";
+import { bizDateKey, bizInstantFromEtParts , type EtDateKey } from "@/src/lib/lib";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -93,7 +93,7 @@ export default function EditDocumentMetadataDialog({
         ...(isSingletonType ? {} : { description: description.trim() || null }),
         // Send null when the picker is hidden or empty — that's the user
         // saying "no expiration." Send a real ISO when they've picked a date.
-        expiresAt: showExpiration && expiresAt ? bizInstantFromEtParts(expiresAt, "23:59:59") : null,
+        expiresAt: showExpiration && expiresAt ? bizInstantFromEtParts(expiresAt as EtDateKey, "23:59:59") : null,
         adminHidden,
       });
       publishInlineMessage({ type: "SUCCESS", text: "Document updated." });

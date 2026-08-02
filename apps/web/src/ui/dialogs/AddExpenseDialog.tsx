@@ -13,7 +13,7 @@ import {
   createListCollection,
 } from "@chakra-ui/react";
 import { apiGet, apiPost } from "@/src/lib/api";
-import { bizToday } from "@/src/lib/lib";
+import { bizToday , type EtDateKey } from "@/src/lib/lib";
 import {
   getErrorMessage,
   publishInlineMessage,
@@ -340,7 +340,7 @@ export default function AddExpenseDialog({
                   <input
                     type="date"
                     value={date}
-                    onChange={(e) => setDate(e.target.value)}
+                    onChange={(e) => setDate(e.target.value as EtDateKey)}
                     style={{
                       padding: "6px 8px",
                       fontSize: "14px",

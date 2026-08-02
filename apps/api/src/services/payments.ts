@@ -3,7 +3,7 @@ import { prisma } from "../db/prisma";
 import { JobOccurrenceStatus, type WorkerType } from "@prisma/client";
 import { ServiceError } from "../lib/errors";
 import type { ServicesPayments } from "../types/services";
-import { etMidnight, etEndOfDay, etFormatDate, etToday, etInstantFromParts, etHourMinute } from "../lib/dates";
+import { etMidnight, etEndOfDay, etFormatDate, etToday, etInstantFromParts, etHourMinute , type EtDateKey } from "../lib/dates";
 import { writeAudit } from "../lib/auditLogger";
 import { AUDIT } from "../lib/auditActions";
 import { generateLedgerId } from "../lib/ledgerId";
@@ -246,7 +246,7 @@ export function computeNextOccurrenceStart(
     // preserves the source-to-source duration so the visit window is
     // exactly the same length as usual.
     const timeOfDay = etHourMinute(base);
-    nextStart = etInstantFromParts(overrideDate, timeOfDay);
+    nextStart = etInstantFromParts(overrideDate as EtDateKey, timeOfDay);
     if (baseEndAt) {
       const sourceDurationMs = baseEndAt.getTime() - base.getTime();
       nextEnd = new Date(nextStart.getTime() + sourceDurationMs);
@@ -1020,8 +1020,8 @@ export const payments: ServicesPayments = {
     // record-week regardless of when admin approves it.
     if (params?.from || params?.to) {
       const range: any = {};
-      if (params.from) range.gte = etMidnight(params.from);
-      if (params.to) range.lte = etEndOfDay(params.to);
+      if (params.from) range.gte = etMidnight(params.from as EtDateKey);
+      if (params.to) range.lte = etEndOfDay(params.to as EtDateKey);
       where.payment = { createdAt: range };
     }
     // Business Start Date filter — pre-cutoff splits hidden via their parent
@@ -1116,8 +1116,8 @@ export const payments: ServicesPayments = {
     const where: any = {};
     if (params?.from || params?.to) {
       where.createdAt = {};
-      if (params.from) where.createdAt.gte = etMidnight(params.from);
-      if (params.to) where.createdAt.lte = etEndOfDay(params.to);
+      if (params.from) where.createdAt.gte = etMidnight(params.from as EtDateKey);
+      if (params.to) where.createdAt.lte = etEndOfDay(params.to as EtDateKey);
     }
     if (params?.method && params.method !== "ALL") {
       where.method = params.method;

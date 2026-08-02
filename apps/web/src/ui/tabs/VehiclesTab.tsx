@@ -41,7 +41,7 @@ import {
   X,
 } from "lucide-react";
 import { apiGet, apiPatch, apiPost } from "@/src/lib/api";
-import { bizToday, bizAddDays } from "@/src/lib/lib";
+import { bizToday, bizAddDays, bizInstantFromEtParts , type EtDateKey } from "@/src/lib/lib";
 import MileageReviewDialog, { type MileageReviewEntry } from "@/src/ui/dialogs/MileageReviewDialog";
 import StatusChip from "@/src/ui/components/StatusChip";
 import {
@@ -556,16 +556,18 @@ function AddMileageEntryDialog({
     if (!valid) return;
     setBusy(true);
     try {
-      // Combine YYYY-MM-DD + HH:MM into local Date instants. Server
-      // computes entryDate via ET timezone regardless of what timezone
-      // the caller emits; using the local Date constructor is fine
-      // because the backend takes the wall-clock as-is.
-      const startedAt = new Date(`${date}T${startTime}:00`);
-      const endedAt = new Date(`${date}T${endTime}:00`);
+      // Combine YYYY-MM-DD + HH:MM ET wall-clock into UTC ISO instants.
+      // Previously used `new Date(`${date}T${startTime}:00`)` which
+      // parses in the BROWSER's local timezone — a super in another zone
+      // (e.g. traveling) would submit an instant that misrepresents the
+      // ET wall-clock the operator typed. bizInstantFromEtParts is the
+      // canonical fix and DST-safe (auto-picks EDT vs EST).
+      const startedAt = bizInstantFromEtParts(date as EtDateKey, startTime);
+      const endedAt = bizInstantFromEtParts(date as EtDateKey, endTime);
       await apiPost(`/api/super/vehicles/${vehicle.id}/mileage`, {
         driverUserId,
-        startedAt: startedAt.toISOString(),
-        endedAt: endedAt.toISOString(),
+        startedAt,
+        endedAt,
         startOdometer: startNum,
         endOdometer: endNum,
         notes: notes.trim() || null,

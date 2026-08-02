@@ -36,7 +36,7 @@ import DateInput from "@/src/ui/components/DateInput";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { apiPost } from "@/src/lib/api";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
-import { bizAddDays, bizDateKey, fmtDate } from "@/src/lib/lib";
+import { bizAddDays, bizDateKey, fmtDate, fmtDateKey } from "@/src/lib/lib";
 
 type Props = {
   occurrenceId: string;
@@ -125,7 +125,7 @@ export default function NextStartOverrideAffordance({
       }
       publishInlineMessage({
         type: "SUCCESS",
-        text: `Next visit will be scheduled for ${fmtDate(draft)}. This takes effect when payment for this visit is approved.`,
+        text: `Next visit will be scheduled for ${fmtDateKey(draft)}. This takes effect when payment for this visit is approved.`,
       });
       onUpdated(result?.nextStartOverride ?? draft);
       setEditing(false);
@@ -183,14 +183,14 @@ export default function NextStartOverrideAffordance({
           borderColor="purple.200"
           cursor="pointer"
           onClick={openEditor}
-          title={`Usually the next visit would be ${fmtDate(usualKey)}. This one is shifted.`}
+          title={`Usually the next visit would be ${fmtDateKey(usualKey)}. This one is shifted.`}
         >
           <CalendarClock size={12} color="var(--chakra-colors-purple-700)" />
           <Text fontSize="xs" fontWeight="medium" color="purple.900">
-            Next: {fmtDate(nextStartOverride!)}
+            Next: {fmtDateKey(nextStartOverride!)}
           </Text>
           <Text fontSize="2xs" color="purple.700">
-            (usually {fmtDate(usualKey)})
+            (usually {fmtDateKey(usualKey)})
           </Text>
         </HStack>
       ) : (
@@ -227,7 +227,7 @@ export default function NextStartOverrideAffordance({
                     <DateInput value={draft} onChange={setDraft} />
                     <Text fontSize="2xs" color="fg.muted" mt={1}>
                       Usually the next visit lands on{" "}
-                      <Text as="span" fontWeight="semibold">{fmtDate(usualKey)}</Text>
+                      <Text as="span" fontWeight="semibold">{fmtDateKey(usualKey)}</Text>
                       {" — "}
                       {frequencyDays} days after this visit.
                     </Text>
@@ -282,12 +282,12 @@ export default function NextStartOverrideAffordance({
         <ConfirmDialog
           open={!!approveReq}
           title="Confirm off-cycle next visit"
-          message={`You're scheduling the next visit for ${fmtDate(approveReq.date)}.`}
+          message={`You're scheduling the next visit for ${fmtDateKey(approveReq.date)}.`}
           messageNode={
             <VStack align="stretch" gap={2}>
               <Text fontSize="sm">
                 You're scheduling the next visit for{" "}
-                <Text as="span" fontWeight="semibold">{fmtDate(approveReq.date)}</Text>.
+                <Text as="span" fontWeight="semibold">{fmtDateKey(approveReq.date)}</Text>.
               </Text>
               <VStack align="stretch" gap={1} pl={3}>
                 {approveReq.reasons.map((r, i) => (

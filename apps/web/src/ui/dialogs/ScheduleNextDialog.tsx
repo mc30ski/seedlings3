@@ -10,13 +10,17 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import OccurrenceDialog from "@/src/ui/dialogs/OccurrenceDialog";
-import { bizAddDays, fmtDate } from "@/src/lib/lib";
+import { bizAddDays, bizDateKey, bizInstantFromEtParts, fmtDate, type EtDateKey } from "@/src/lib/lib";
 
-// Add N days to a YYYY-MM-DD string in ET via the shared helper. Returns
-// an empty string for null inputs so the existing call sites work unchanged.
-function addDays(isoDate: string | null | undefined, days: number): string {
-  if (!isoDate) return "";
-  return bizAddDays(isoDate.slice(0, 10), days);
+// Add N days to an ISO datetime string in ET, returning the ET calendar
+// key N days later. Empty string for null inputs so existing callers work.
+// Previously used `isoDate.slice(0, 10)` which returns the UTC calendar
+// day — off by one for any late-UTC-evening instant that's still earlier
+// ET (e.g. "2026-08-12T03:00:00Z" is 11 PM EDT on 2026-08-11). bizDateKey
+// formats via the ET timezone and produces the correct calendar day.
+function addDays(isoDate: string | null | undefined, days: number): EtDateKey {
+  if (!isoDate) return "" as EtDateKey;
+  return bizAddDays(bizDateKey(isoDate), days);
 }
 
 type ClosedOccurrence = {
@@ -95,8 +99,8 @@ export default function ScheduleNextDialog({
         submitLabel="Schedule"
         createEndpoint={createEndpoint}
         createBody={createBody}
-        defaultStartAt={nextStartAt ? nextStartAt + "T00:00:00" : null}
-        defaultEndAt={nextEndAt ? nextEndAt + "T00:00:00" : null}
+        defaultStartAt={nextStartAt ? bizInstantFromEtParts(nextStartAt as EtDateKey, "00:00") : null}
+        defaultEndAt={nextEndAt ? bizInstantFromEtParts(nextEndAt as EtDateKey, "00:00") : null}
         defaultNotes={closedOccurrence.notes}
         defaultPrice={closedOccurrence.price}
         defaultEstimatedMinutes={closedOccurrence.estimatedMinutes}
@@ -134,7 +138,7 @@ export default function ScheduleNextDialog({
                   </Text>
                   {nextStartAt && (
                     <Text fontSize="sm" color="fg.muted">
-                      Next date: {fmtDate(nextStartAt + "T12:00:00Z")}
+                      Next date: {fmtDate(nextStartAt)}
                     </Text>
                   )}
                 </VStack>

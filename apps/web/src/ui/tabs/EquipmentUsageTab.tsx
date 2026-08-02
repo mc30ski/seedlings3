@@ -15,7 +15,7 @@ import {
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
 import { usePersistedState } from "@/src/lib/usePersistedState";
-import { bizDateKey, bizToday, bizAddDays, fmtDateOpts } from "@/src/lib/lib";
+import { bizDateKey, bizToday, bizAddDays, fmtDateOpts, fmtDateShort } from "@/src/lib/lib";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -89,9 +89,6 @@ function daysOut(c: UsageRow): number {
   return Math.max(1, Math.ceil((end - start) / 86400000));
 }
 
-function fmtDate(s: string | null): string {
-  return fmtDateOpts(s, { month: "short", day: "numeric" });
-}
 
 type GroupByMode = "person" | "equipment" | "collection" | "day";
 
@@ -355,8 +352,8 @@ export default function EquipmentUsageTab({ purpose }: { purpose: Purpose }) {
                               >
                                 <VStack align="start" gap={0} minW={0}>
                                   <Text fontSize="sm" lineHeight="1.3">
-                                    {fmtDate(r.checkedOutAt)} →{" "}
-                                    {r.active ? "out" : fmtDate(r.releasedAt)}
+                                    {fmtDateShort(r.checkedOutAt)} →{" "}
+                                    {r.active ? "out" : fmtDateShort(r.releasedAt)}
                                   </Text>
                                   {ctx.length > 0 && (
                                     <Text fontSize="xs" color="fg.muted">

@@ -15,6 +15,7 @@ import {
   etSundayOnOrBefore,
   etStartOfMonth,
   etStartOfYear,
+  type EtDateKey,
 } from "../lib/dates";
 import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
@@ -467,7 +468,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       // work completed any time on Aug 14 ET still qualifies for
       // guaranteed-payout treatment. Anchoring at UTC end-of-day would
       // clip the final 4-5 hours of the day for ET operators.
-      nextUntil = etEndOfDay(dateOnly);
+      nextUntil = etEndOfDay(dateOnly as EtDateKey);
       // Enforce the same 1-90 day window the UI bounds the picker to.
       // Defends against direct API calls bypassing the dialog — without
       // this, an unbounded date could create either a never-STARTED
@@ -2051,7 +2052,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     // Normal cadence date: source + frequencyDays. Used to gauge how
     // far off the override is (>7 days requires APPROVE).
     const normalCadenceDate = etAddDays(sourceKey, freq);
-    const daysOff = Math.abs(etDaysBetween(normalCadenceDate, rawDate));
+    const daysOff = Math.abs(etDaysBetween(normalCadenceDate, rawDate as EtDateKey));
 
     // Collision check: any existing SCHEDULED repeating occurrence for
     // this job on the override's ET calendar day (excluding the source
@@ -2065,8 +2066,8 @@ export default async function adminRoutes(app: FastifyInstance) {
             workflow: "STANDARD",
             isOneOff: false,
             startAt: {
-              gte: etMidnight(rawDate),
-              lte: etEndOfDay(rawDate),
+              gte: etMidnight(rawDate as EtDateKey),
+              lte: etEndOfDay(rawDate as EtDateKey),
             },
           },
           select: { id: true },
@@ -3324,8 +3325,8 @@ Respond ONLY with valid JSON in this exact format:
     const to = req.query?.to as string | undefined;
 
     const dateFilter: any = {};
-    if (from) dateFilter.gte = etMidnight(from);
-    if (to) dateFilter.lte = etEndOfDay(to);
+    if (from) dateFilter.gte = etMidnight(from as EtDateKey);
+    if (to) dateFilter.lte = etEndOfDay(to as EtDateKey);
     const hasDate = from || to;
 
     // Business Start Date filter — pre-cutoff occurrences hidden (their work
@@ -3616,8 +3617,8 @@ Respond ONLY with valid JSON in this exact format:
     const where: any = {};
     if (from || to) {
       where.occurrence = { startAt: {} };
-      if (from) where.occurrence.startAt.gte = etMidnight(from);
-      if (to) where.occurrence.startAt.lte = etEndOfDay(to);
+      if (from) where.occurrence.startAt.gte = etMidnight(from as EtDateKey);
+      if (to) where.occurrence.startAt.lte = etEndOfDay(to as EtDateKey);
     }
 
     const photos = await prisma.jobOccurrencePhoto.findMany({
@@ -3708,8 +3709,8 @@ Respond ONLY with valid JSON in this exact format:
   app.get("/admin/operations", adminGuard, async (req: any) => {
     const { from, to } = (req.query || {}) as { from?: string; to?: string };
     const todayKey = etToday();
-    const dateFrom = from ? etMidnight(from) : etMidnight(todayKey);
-    const dateTo = to ? etEndOfDay(to) : etEndOfDay(todayKey);
+    const dateFrom = from ? etMidnight(from as EtDateKey) : etMidnight(todayKey);
+    const dateTo = to ? etEndOfDay(to as EtDateKey) : etEndOfDay(todayKey);
 
     // Business Start Date filter — pre-cutoff occurrences are hidden entirely
     // via Pattern C (occurrence work date) on the top-level where, matching
@@ -5563,8 +5564,8 @@ Respond ONLY with valid JSON in this exact format:
       // expenseAnchorDateWhere — those are cash-basis reconciliation
       // surfaces, not planning views.
       where.date = {};
-      if (q.from) where.date.gte = etMidnight(q.from);
-      if (q.to) where.date.lte = etEndOfDay(q.to);
+      if (q.from) where.date.gte = etMidnight(q.from as EtDateKey);
+      if (q.to) where.date.lte = etEndOfDay(q.to as EtDateKey);
     }
     if (q.category) where.category = q.category;
     if (q.type) {
@@ -6043,8 +6044,8 @@ Respond ONLY with valid JSON in this exact format:
     // while staying in Saturday's bucket on the exports — same data, two
     // different totals. ET boundaries fix the divergence.
     const q = (req.query || {}) as { from?: string; to?: string };
-    const from = q.from ? etMidnight(q.from) : null;
-    const to = q.to ? etEndOfDay(q.to) : null;
+    const from = q.from ? etMidnight(q.from as EtDateKey) : null;
+    const to = q.to ? etEndOfDay(q.to as EtDateKey) : null;
     const inRange = (d: Date) => (!from || d >= from) && (!to || d <= to);
 
     // Business Start Date filter — pre-cutoff rows excluded from the P&L
@@ -6167,8 +6168,8 @@ Respond ONLY with valid JSON in this exact format:
       // with the by-category breakdown, the export totals, and the
       // Cash Flow numbers.
       where.date = {};
-      if (q.from) where.date.gte = etMidnight(q.from);
-      if (q.to) where.date.lte = etEndOfDay(q.to);
+      if (q.from) where.date.gte = etMidnight(q.from as EtDateKey);
+      if (q.to) where.date.lte = etEndOfDay(q.to as EtDateKey);
     }
     // Business Start Date filter — pre-cutoff rows excluded from totals.
     const summaryCutoff = await resolveCutoff(req);
@@ -6223,8 +6224,8 @@ Respond ONLY with valid JSON in this exact format:
     if (!q.from || !q.to || !/^\d{4}-\d{2}-\d{2}$/.test(q.from) || !/^\d{4}-\d{2}-\d{2}$/.test(q.to)) {
       throw app.httpErrors.badRequest("from and to query params required (YYYY-MM-DD).");
     }
-    let start = etMidnight(q.from);
-    const end = etEndOfDay(q.to);
+    let start = etMidnight(q.from as EtDateKey);
+    const end = etEndOfDay(q.to as EtDateKey);
     const cutoff = await resolveCutoff(req);
     if (cutoff && cutoff > start) start = cutoff;
     const { buildReconcileWorkers } = await import("../services/reconcileWorkers");
@@ -6237,8 +6238,8 @@ Respond ONLY with valid JSON in this exact format:
       throw app.httpErrors.badRequest("from and to query params required (YYYY-MM-DD).");
     }
     // ET-anchored boundaries — same as the QB exports + vs-revenue endpoint.
-    let start = etMidnight(q.from);
-    const end = etEndOfDay(q.to);
+    let start = etMidnight(q.from as EtDateKey);
+    const end = etEndOfDay(q.to as EtDateKey);
     // Business Start Date filter — pre-cutoff data hidden from every view.
     const cutoff = await resolveCutoff(req);
     if (cutoff && cutoff > start) start = cutoff;
@@ -6263,8 +6264,8 @@ Respond ONLY with valid JSON in this exact format:
     if (!qbAccount) {
       throw app.httpErrors.badRequest("qbAccount query param required.");
     }
-    let start = etMidnight(q.from);
-    const end = etEndOfDay(q.to);
+    let start = etMidnight(q.from as EtDateKey);
+    const end = etEndOfDay(q.to as EtDateKey);
     const cutoff = await resolveCutoff(req);
     if (cutoff && cutoff > start) start = cutoff;
     // Mode must match what buildPnLReport was called with, otherwise
@@ -7791,8 +7792,8 @@ Respond ONLY with valid JSON in this exact format:
     if (!/^\d{4}-\d{2}-\d{2}$/.test(startStr) || !/^\d{4}-\d{2}-\d{2}$/.test(endStr)) {
       throw app.httpErrors.badRequest("start and end query params must be YYYY-MM-DD");
     }
-    const start = etMidnight(startStr);
-    const end = etEndOfDay(endStr);
+    const start = etMidnight(startStr as EtDateKey);
+    const end = etEndOfDay(endStr as EtDateKey);
     if (end < start) throw app.httpErrors.badRequest("end must be on or after start");
     return { start, end };
   }
@@ -8444,7 +8445,7 @@ Respond ONLY with valid JSON in this exact format:
     return services.policies.grantException(uid, {
       userId: String(b.userId),
       policyId: String(req.params.id),
-      expiresAt: etEndOfDay(String(b.expiresAt)),
+      expiresAt: etEndOfDay(String(b.expiresAt) as EtDateKey),
       reason: String(b.reason),
     });
   });
@@ -8500,7 +8501,7 @@ Respond ONLY with valid JSON in this exact format:
       // reason as grantException above: an insurance cert expiring
       // 2027-12-31 would otherwise be stored as 2027-12-31T00:00Z (= Dec
       // 30 20:00 ET) and lapse a day early against `UPLOAD_EXPIRED`.
-      uploadExpiresAt: b.uploadExpiresAt ? etEndOfDay(String(b.uploadExpiresAt)) : null,
+      uploadExpiresAt: b.uploadExpiresAt ? etEndOfDay(String(b.uploadExpiresAt) as EtDateKey) : null,
       typeAcknowledgment: b.typeAcknowledgment ? String(b.typeAcknowledgment) : undefined,
       clientIp: (req.ip as string) ?? null,
       userAgent: (req.headers["user-agent"] as string) ?? null,
