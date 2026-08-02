@@ -3159,18 +3159,16 @@ export default function HomePage() {
     setWorkerCategory("Profile");
   }, []);
 
-  // Stream-pause reminders — land on the Services tab where the paused
-  // stream cards live. Admin can scroll to find the ones with due
-  // reminder dates (paused chip is visible).
+  // Stream-pause reminders — land on the Admin Services tab where the
+  // paused stream cards live (mounted with purpose="ADMIN"). Super's
+  // innerTabs list has NO "services" entry, so the previous
+  // `setSuperInnerTab("services")` silently fell back to the Super
+  // Home tab (Operations pulse). Route both roles through Admin —
+  // Super users in this app also carry the Admin role.
   const goToStreamPauseReminders = useCallback(() => {
-    setTopTab(isSuper ? "super" : "admin");
-    if (isSuper) {
-      setSuperCategory("Work");
-      setSuperInnerTab("services" as any);
-    } else {
-      setAdminInnerTab("services" as any);
-    }
-  }, [isSuper]);
+    setTopTab("admin");
+    setAdminInnerTab("services" as any);
+  }, []);
 
   const isDev = process.env.NEXT_PUBLIC_VERCEL_ENV !== "production" && process.env.NODE_ENV !== "production";
 
