@@ -2278,6 +2278,7 @@ async function seedDatabase() {
     { key: "BUSINESS_ADDRESS", value: "", description: "Full business mailing address (street, city, state, zip). Appears in the header of client-facing statements. Leave blank to omit." },
     { key: "BUSINESS_PHONE", value: "", description: "Business phone number shown on client-facing statements. Leave blank to omit." },
     { key: "BUSINESS_EMAIL", value: "admin@seedlingslawncare.com", description: "Business email address shown on client-facing statements. Distinct from OUTGOING_COMMS_CC — this one is a public contact address." },
+    { key: "CLIENT_BACKUP_ENABLED", value: "false", description: "Nightly full-database snapshot to Google Drive at CompanyClients/YYYY-MM-DD.json. Off in dev; flip to 'true' in prod. Distinct from DOCUMENT_SYNC_ENABLED (which controls the per-document CompanyDocuments backup) so you can run one without the other. See services/clientBackup.ts." },
     { key: "VENMO_BUSINESS_HANDLE", value: "SeedlingsLawnCare", description: "@handle clients use to send Venmo payments (no @ prefix)." },
     { key: "ZELLE_ADDRESS", value: "seedlingslawncare", description: "Email or phone clients use to send Zelle payments." },
     { key: "PAYMENT_REQUEST_BASE_URL", value: "https://www.seedlings.team", description: "Base URL used when generating payment-request SMS/email links (e.g., {BASE}/pay/{token})." },

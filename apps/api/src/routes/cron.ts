@@ -310,4 +310,36 @@ export default async function cronRoutes(app: FastifyInstance) {
     app.log.info({ cron: "document-sync", ...result });
     return result;
   });
+
+  /**
+   * Full-database snapshot uploaded to Google Drive at
+   *   [GOOGLE_DRIVE_ROOT_FOLDER_ID]/CompanyClients/YYYY-MM-DD.json
+   *
+   * Rolling backup — every night gets its own file, nothing is ever
+   * deleted or overwritten. Same authentication + Drive parent as
+   * /cron/document-sync. Kill switch is the CLIENT_BACKUP_ENABLED
+   * setting (distinct from DOCUMENT_SYNC_ENABLED).
+   *
+   * See services/clientBackup.ts for the payload + folder logic.
+   */
+  app.get("/cron/client-backup", async (req, reply) => {
+    const secret = process.env.CRON_SECRET;
+    const authHeader = req.headers["authorization"];
+    if (secret && authHeader !== `Bearer ${secret}`) {
+      app.log.warn({ cron: "client-backup", reason: "Unauthorized request blocked" });
+      return reply.status(401).send({ error: "Unauthorized" });
+    }
+    if (!secret && process.env.NODE_ENV === "production") {
+      app.log.warn({ cron: "client-backup", reason: "CRON_SECRET not set in production" });
+    }
+    try {
+      const { runClientBackup } = await import("../services/clientBackup");
+      const result = await runClientBackup();
+      app.log.info({ cron: "client-backup", ...result });
+      return result;
+    } catch (err: any) {
+      app.log.error({ cron: "client-backup", err: err?.message ?? String(err) });
+      return reply.status(500).send({ error: err?.message ?? "Backup failed." });
+    }
+  });
 }
