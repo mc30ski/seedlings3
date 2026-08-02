@@ -2453,6 +2453,61 @@ export default async function adminRoutes(app: FastifyInstance) {
     },
   );
 
+  // Look up a payment by its client-facing receipt number. Accepts the
+  // canonical form (SL-XXXXXXXX), the bare 8-char core, and any
+  // reasonable variation of case/whitespace — the lookup normalizes.
+  // Returns 404 when nothing matches so the caller can render an
+  // "unknown receipt #" toast rather than an ambiguous empty payload.
+  // view-as-allow: pure lookup — no per-user filtering applies, admin
+  // scope is the whole business ledger regardless of impersonation.
+  app.get(
+    "/admin/receipts/lookup",
+    adminGuard,
+    async (req: any, reply: any) => {
+      const { normalizeReceiptNumber } = await import("../lib/receiptNumber");
+      const raw = String((req.query || {}).number ?? "");
+      const canonical = normalizeReceiptNumber(raw);
+      if (!canonical) {
+        return reply.code(400).send({ message: "Invalid receipt-number format." });
+      }
+      const payment = await prisma.payment.findUnique({
+        where: { receiptNumber: canonical },
+        select: {
+          id: true,
+          amountPaid: true,
+          method: true,
+          confirmedAt: true,
+          receiptNumber: true,
+          occurrence: {
+            select: {
+              id: true,
+              startAt: true,
+              completedAt: true,
+              jobType: true,
+              status: true,
+              job: {
+                select: {
+                  id: true,
+                  property: {
+                    select: {
+                      id: true,
+                      displayName: true,
+                      client: { select: { id: true, displayName: true } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+      if (!payment) {
+        return reply.code(404).send({ message: "No receipt found." });
+      }
+      return { receipt: payment };
+    },
+  );
+
   // Delete a canceled occurrence permanently
   app.delete(
     "/admin/occurrences/:occurrenceId",

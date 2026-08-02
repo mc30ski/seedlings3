@@ -1204,6 +1204,20 @@ model Payment {
   // Accounting-system-agnostic ledger ID. See Checkout.ledgerId.
   ledgerId String? @unique
 
+  // Client-facing receipt identifier. Format: "SL-XXXXXXXX" where the
+  // 8-char tail is drawn from Crockford's base-32 alphabet (0-9 + A-Z
+  // minus I, L, O, U — no visually/verbally ambiguous chars). Generated
+  // once at Payment.create with retry-on-collision (see
+  // lib/receiptNumber.ts). Immutable — appears on printed receipts,
+  // client statements, and worker/admin job cards; searchable via
+  // /admin/receipts/lookup.
+  //
+  // Non-null and unique — populated on every Payment insert. The
+  // backfill migration (20260802140100_backfill_payment_receipt_number)
+  // populated historical rows and flipped the column to NOT NULL in
+  // one transaction, so there is no partial-state window.
+  receiptNumber String @unique
+
   occurrenceId String        @unique
   occurrence   JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 

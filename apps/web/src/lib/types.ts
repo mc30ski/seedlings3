@@ -619,6 +619,11 @@ export type WorkerPaymentItem = {
     collectedBy?: { id: string; displayName?: string | null };
     createdAt: string;
     splits: PaymentSplitItem[];
+    /** Client-facing "SL-XXXXXXXX" identifier — see Payment.receiptNumber
+     *  in the API schema. Present on every confirmed payment; the
+     *  legacy shape had this as a derived value at PDF-render time, so
+     *  older API code paths may still omit it (hence optional here). */
+    receiptNumber?: string | null;
   };
   occurrence: {
     id: string;

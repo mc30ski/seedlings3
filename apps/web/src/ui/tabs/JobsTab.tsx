@@ -38,6 +38,7 @@ import { isOccurrenceOverdue, loadPaymentRequestExpiryHours, DEFAULT_PAYMENT_REQ
 import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
 import { useBranding } from "@/src/lib/useBranding";
 import { type TabPropsType, type WorkerOccurrence, JOB_OCCURRENCE_STATUS, JOB_KIND } from "@/src/lib/types";
+import { normalizeReceiptNumber } from "@/src/lib/receiptNumber";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import {
   publishInlineMessage,
@@ -804,6 +805,55 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     window.addEventListener("open:servicesTabToJobsTabSearch", onNav as EventListener);
     return () => window.removeEventListener("open:servicesTabToJobsTabSearch", onNav as EventListener);
   }, []);
+
+  // Receipt-number pattern detector on the search box. When the user
+  // pastes/types a valid SL-XXXXXXXX (case-insensitive, prefix
+  // optional), we hit the lookup endpoint, then load the matching
+  // occurrence, widen the date window around its startAt, and
+  // highlight the card. Only fires on a full match (11-char SL-form
+  // or 8-char bare), so typing doesn't spray network calls.
+  useEffect(() => {
+    const canonical = normalizeReceiptNumber(q);
+    if (!canonical) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiGet<{
+          receipt: {
+            occurrence: {
+              id: string;
+              startAt: string | null;
+              job: { id: string } | null;
+            } | null;
+          };
+        }>(`/api/admin/receipts/lookup?number=${encodeURIComponent(canonical)}`);
+        if (cancelled) return;
+        const occId = res.receipt?.occurrence?.id;
+        const startAt = res.receipt?.occurrence?.startAt;
+        if (!occId) return;
+        setHighlightOccId(occId);
+        setCardOverrides(new Map([[occId, "expanded"]]));
+        setFilterJobId(null);
+        setOverdueActive(false);
+        setDatePreset(null);
+        if (startAt) {
+          const occKey = bizDateKey(startAt);
+          const fromKey = bizAddDays(occKey, -3);
+          const toKey = bizAddDays(occKey, 3);
+          setDateFrom(fromKey);
+          setDateTo(toKey);
+          void load(true, { from: fromKey, to: toKey }, occId);
+        }
+      } catch (err: any) {
+        if (cancelled) return;
+        const msg = err?.message ?? "";
+        if (String(msg).includes("404") || /No receipt/i.test(String(msg))) {
+          publishInlineMessage({ type: "INFO", text: `No payment found for receipt "${canonical}".` });
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [q]);
 
   // Check for "show overdue" flag from header badge — on mount and via event
   const applyOverdue = useCallback(() => {
@@ -5743,6 +5793,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             Paid: ${(occ.payment as any).amountPaid.toFixed(2)}
                           </Badge>
                         )}
+                        {occ.payment && (occ.payment as any).receiptNumber && (
+                          <Badge variant="outline" colorPalette="green" fontSize="xs" px="2" py="0.5" borderRadius="full" fontFamily="mono">
+                            {(occ.payment as any).receiptNumber}
+                          </Badge>
+                        )}
                         {displayPrice != null && !occ.payment && (() => {
                           // Payout PROJECTION (no Payment row yet).
                           // Centralized in lib/paymentMath.ts.
@@ -5984,6 +6039,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                               <Badge bg="green.700" color="white" fontSize="sm" px="3" py="0.5" borderRadius="full">
                                 Paid: ${(occ.payment as any).amountPaid.toFixed(2)}
                               </Badge>
+                              {(occ.payment as any).receiptNumber && (
+                                <Badge variant="outline" colorPalette="green" fontSize="xs" px="2" py="0.5" borderRadius="full" fontFamily="mono">
+                                  {(occ.payment as any).receiptNumber}
+                                </Badge>
+                              )}
                               <Button
                                 size="xs"
                                 variant="outline"
@@ -6003,7 +6063,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                     amount: (occ.payment as any).amountPaid,
                                     methodLabel: methodLabel((occ.payment as any).method ?? "CASH"),
                                     workers: (occ.assignees ?? []).filter((a) => a.role !== "observer").map((a) => a.user?.displayName ?? ""),
-                                    receiptId: occ.id.slice(-8).toUpperCase(),
+                                    receiptId: (occ.payment as any).receiptNumber ?? `SL-${occ.id.slice(-8).toUpperCase()}`,
                                   });
                                   setReceiptDialogOpen(true);
                                 }}

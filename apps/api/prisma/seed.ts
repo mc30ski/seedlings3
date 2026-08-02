@@ -3,6 +3,7 @@ import { PrismaNeon } from "@prisma/adapter-neon";
 import { neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
 import { etAddDays, etFormatDate, etInstantFromParts, etMidnight } from "../src/lib/dates";
+import { legacyReceiptNumberFor } from "../src/lib/receiptNumber";
 import { createHash } from "crypto";
 
 // ── Safety guard ────────────────────────────────────────────────────────────
@@ -1562,6 +1563,7 @@ async function seedDatabase() {
     await prisma.payment.create({
       data: {
         occurrenceId: p.occId,
+        receiptNumber: legacyReceiptNumberFor(p.occId),
         amountPaid: p.amount,
         method: p.method,
         collectedById: p.collector,
@@ -3163,6 +3165,7 @@ async function seedDatabase() {
       data: {
         ledgerId: `seed-alert-pending-${Date.now()}`,
         occurrenceId: alertPendingPayApprovalOcc.id,
+        receiptNumber: legacyReceiptNumberFor(alertPendingPayApprovalOcc.id),
         amountPaid: 150,
         method: "CASH",
         note: "Alert fixture — waiting on admin approval",
@@ -4991,6 +4994,7 @@ async function seedPaymentsActive() {
     await prisma.payment.create({
       data: {
         occurrenceId: occ.id,
+        receiptNumber: legacyReceiptNumberFor(occ.id),
         amountPaid: extras.selfReportedAmount,
         method: "ZELLE",
         note: extras.note ?? null,
@@ -5205,6 +5209,7 @@ async function seedPaymentsGuaranteedPayout() {
   const payment3 = await prisma.payment.create({
     data: {
       occurrenceId: occ3.id,
+      receiptNumber: legacyReceiptNumberFor(occ3.id),
       amountPaid: 80.0,
       method: "ZELLE",
       collectedById: MICHAEL_ID,
@@ -5503,6 +5508,7 @@ async function seedBusinessStartCutoffFixtures() {
       const payment = await prisma.payment.create({
         data: {
           occurrenceId: occ.id,
+          receiptNumber: legacyReceiptNumberFor(occ.id),
           amountPaid: collectedAmount,
           method: "ZELLE",
           note: `${label} confirmed payment (test fixture)`,

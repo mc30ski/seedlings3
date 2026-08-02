@@ -387,6 +387,7 @@ export default async function clientRoutes(app: FastifyInstance) {
             createdAt: true,
             confirmed: true,
             selfReported: true,
+            receiptNumber: true,
           },
         },
       },
@@ -448,6 +449,10 @@ export default async function clientRoutes(app: FastifyInstance) {
             paidAt: occ.payment.createdAt,
             confirmed: occ.payment.confirmed,
             selfReported: occ.payment.selfReported,
+            // Canonical stored receipt number (SL-XXXXXXXX). Powers
+            // both the on-card display and the receipt PDF's Receipt#
+            // row so client-visible identity is stable and searchable.
+            receiptNumber: occ.payment.receiptNumber,
           } : null,
         };
       })
@@ -572,6 +577,7 @@ export default async function clientRoutes(app: FastifyInstance) {
         amountPaid: true,
         method: true,
         confirmedAt: true,
+        receiptNumber: true,
         occurrence: {
           select: {
             id: true,
@@ -618,11 +624,12 @@ export default async function clientRoutes(app: FastifyInstance) {
     }
 
     const rows = payments.map((p) => ({
-      // Matches the Service Receipt PDF's Receipt # convention: last 8
-      // chars of the occurrence id, uppercased. Same rule as
-      // receipt.ts's `receiptId` so a client can cross-reference a
-      // downloaded receipt against a line on their statement.
-      receiptId: p.occurrence?.id ? p.occurrence.id.slice(-8).toUpperCase() : "",
+      // Client-facing receipt number stored on Payment. Guaranteed
+      // non-null post-backfill; every historical row was backfilled
+      // with the same "SL-<last-8-uppercase>" derivation the old
+      // receipts used, so a client can cross-reference a downloaded
+      // receipt against a line on their statement.
+      receiptId: p.receiptNumber ?? "",
       serviceDate: p.occurrence?.completedAt
         ? etFormatDate(p.occurrence.completedAt)
         : (p.occurrence?.startAt ? etFormatDate(p.occurrence.startAt) : ""),

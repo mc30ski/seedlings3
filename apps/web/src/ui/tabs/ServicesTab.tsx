@@ -21,6 +21,7 @@ import { AlertCircle, AlertTriangle, Archive, Ban, CalendarRange, ChevronDown, C
 import ChangeRequestsPanel from "@/src/ui/components/ChangeRequestsPanel";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
+import { normalizeReceiptNumber } from "@/src/lib/receiptNumber";
 import { getLocation } from "@/src/lib/geo";
 import {
   determineRoles,
@@ -498,6 +499,52 @@ export default function ServicesTab({
   // Filter (pausedRepeatingOnly) is turned on either way so expanded
   // jobs don't overflow with unrelated occurrences. Backing data
   // source is /api/admin/stream-pauses/reminders.
+  // Receipt-number pattern detector on the search box. When the user
+  // pastes/types a valid SL-XXXXXXXX (case-insensitive, prefix
+  // optional), we hit the lookup endpoint and jump to the matching
+  // occurrence — same highlight+flash treatment as the "Review"
+  // deep-link. Only fires on a full match so partial typing doesn't
+  // trigger network calls, and only for the LAST query the user
+  // committed to (any newer keystroke cancels via a stale-guard).
+  useEffect(() => {
+    const canonical = normalizeReceiptNumber(q);
+    if (!canonical) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiGet<{
+          receipt: {
+            occurrence: { id: string; job: { id: string } | null } | null;
+          };
+        }>(`/api/admin/receipts/lookup?number=${encodeURIComponent(canonical)}`);
+        if (cancelled) return;
+        const occId = res.receipt?.occurrence?.id;
+        const jobId = res.receipt?.occurrence?.job?.id;
+        if (!occId || !jobId) return;
+        setExpandedMap((prev) => ({ ...prev, [jobId]: true }));
+        setShowAllOccs((prev) => {
+          const next = new Set(prev);
+          next.add(jobId);
+          return next;
+        });
+        void loadDetail(jobId);
+        setHighlightId(jobId);
+        setHighlightOccId(occId);
+        setFlashOccId(occId);
+      } catch (err: any) {
+        if (cancelled) return;
+        // 404 = valid format but no matching payment (client typed a
+        // real-looking but nonexistent number). Surface a light toast
+        // so it doesn't feel like the app just quietly ignored them.
+        const msg = err?.message ?? "";
+        if (String(msg).includes("404") || /No receipt/i.test(String(msg))) {
+          publishInlineMessage({ type: "INFO", text: `No payment found for receipt "${canonical}".` });
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [q]);
+
   const lastReviewNonceRef = useRef(0);
   useEffect(() => {
     if (streamReviewNonce === 0) return; // no click yet
@@ -2088,6 +2135,11 @@ export default function ServicesTab({
                                   <Text fontSize="xs" fontWeight="medium" color="green.700">
                                     Paid: ${pay.amountPaid.toFixed(2)} via {methodLabel(pay.method)}
                                   </Text>
+                                  {pay.receiptNumber && (
+                                    <Text fontSize="xs" color="green.700" fontFamily="mono" mt={0.5}>
+                                      Receipt: {pay.receiptNumber}
+                                    </Text>
+                                  )}
                                   {pay.note && (
                                     <TruncatedText color="green.600">{pay.note}</TruncatedText>
                                   )}
