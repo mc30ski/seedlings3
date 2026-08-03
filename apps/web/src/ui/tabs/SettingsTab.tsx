@@ -108,6 +108,7 @@ const NUMERIC_SETTINGS: Record<string, NumericSettingConfig> = {
  *  setting so admins can't save it as free text. */
 const BOOLEAN_SETTINGS = new Set([
   "NOTIFY_PAYMENT_APPROVAL_VIA_SMS_EMAIL",
+  "NOTIFY_CHANGE_REQUEST_VIA_SMS_EMAIL",
   "REQUEST_PAYMENT_FROM_CLIENT_ENABLED",
   // When true, pre-cutoff money rows are hidden from every view & export.
   // Paired with BUSINESS_START_DATE (the cutoff itself). See
@@ -124,6 +125,15 @@ const BOOLEAN_SETTINGS = new Set([
   // contractor commission while figuring out the right billing /
   // sales-tax model with a CPA.
   "EQUIPMENT_BILLING_ENABLED",
+  // Two-eyes enforcement on policy approve + publish. See
+  // services/policies.ts approveVersion() for the check. Leave OFF while
+  // there is only one Super on the team.
+  "POLICY_STRICT_TWO_EYES",
+  // Google Drive backup kill switches. Both wire the corresponding
+  // cron endpoint to short-circuit when off; see services/clientBackup.ts
+  // + services/documentSyncQueue.ts.
+  "CLIENT_BACKUP_ENABLED",
+  "DOCUMENT_SYNC_ENABLED",
 ]);
 
 /** Setting keys whose value is a calendar date (stored as YYYY-MM-DD). Rendered
