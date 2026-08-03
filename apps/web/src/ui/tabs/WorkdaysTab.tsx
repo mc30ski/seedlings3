@@ -942,12 +942,12 @@ function WorkdayRow({
             {fmtDuration(active)} active
             {row.totalPausedMs > 0 && ` · ${fmtDuration(row.totalPausedMs)} paused`}
           </Text>
-          {row.uiState === "APPROVED" && row.hourlyRateOnDate != null && (
+          {row.hourlyRateOnDate != null && (
             <Text
               fontSize="xs"
               color="green.700"
               fontWeight="semibold"
-              title={`Projected earnings for this workday date. Same math the Operations dashboard uses.`}
+              title={`Projected earnings for this workday date. Same math the Operations dashboard uses. Shown pre-approval too so the operator can sanity-check the claimed hours against expected earn rate.`}
             >
               ${row.hourlyRateOnDate.toFixed(2)}/hr
               <Text as="span" fontSize="2xs" color="fg.muted" fontWeight="normal" ml={1}>
