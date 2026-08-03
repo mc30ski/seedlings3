@@ -177,6 +177,10 @@ const SETTING_SECTIONS: Record<string, string> = {
   PAYROLL_TAX_ESTIMATES: "payments",
   // Client Payment Requests
   BUSINESS_NAME: "client_requests",
+  BUSINESS_ADDRESS: "client_requests",
+  BUSINESS_PHONE: "client_requests",
+  BUSINESS_EMAIL: "client_requests",
+  BUSINESS_EIN: "client_requests",
   DEFAULT_PAYMENT_COMMUNICATIONS_MODE: "client_requests",
   PAYMENT_REQUEST_BASE_URL: "client_requests",
   PAYMENT_REQUEST_TOKEN_EXPIRY_HOURS: "client_requests",
@@ -204,6 +208,8 @@ const SETTING_SECTIONS: Record<string, string> = {
   POLICY_DEFAULT_GRACE_HOURS: "compliance",
   // Integrations
   WEATHER_API_KEY: "integrations",
+  DOCUMENT_SYNC_ENABLED: "integrations",
+  CLIENT_BACKUP_ENABLED: "integrations",
 };
 
 // Stamp each setting's section column. Idempotent — updateMany on a key that
