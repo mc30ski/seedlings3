@@ -5642,11 +5642,21 @@ Respond ONLY with valid JSON in this exact format:
     }
     if (q.q && q.q.trim()) {
       const term = q.q.trim();
-      where.OR = [
+      const orConditions: any[] = [
         { description: { contains: term, mode: "insensitive" } },
         { vendor: { contains: term, mode: "insensitive" } },
         { notes: { contains: term, mode: "insensitive" } },
       ];
+      // Numeric match on cost — if the operator types "50" or "$50.00"
+      // or "1,250", parse it and add an exact-cost condition to the OR.
+      // Strips common formatting ($, commas, whitespace) so pasted
+      // values from receipts / bank statements work without ceremony.
+      // Non-numeric queries just skip this branch and text-search only.
+      const numeric = Number(term.replace(/[$,\s]/g, ""));
+      if (Number.isFinite(numeric) && numeric > 0) {
+        orConditions.push({ cost: numeric });
+      }
+      where.OR = orConditions;
     }
     // Followups-only narrowing — fetch the entityIds of every OPEN
     // BusinessExpense followup and restrict the BE query to that set.

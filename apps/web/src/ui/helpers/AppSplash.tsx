@@ -18,7 +18,7 @@ import { getSeasonIcons } from "@/src/lib/season";
 // so no Portal needed as long as no ancestor establishes a transform
 // containing block (none in _app.tsx today).
 
-const FADE_MS = 800;
+const FADE_MS = 1000;
 const MIN_DURATION_MS = 1000;
 
 export default function AppSplash({ show }: { show: boolean }) {
