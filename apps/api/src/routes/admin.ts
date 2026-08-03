@@ -5600,6 +5600,15 @@ Respond ONLY with valid JSON in this exact format:
       // When "true", narrow to rows that have an open LedgerFollowup
       // flag. Drives the "Followups only" filter chip on the Ledger tab.
       flagOnly?: string;
+      // "reconciled" | "unreconciled" | undefined (all). Filters on
+      // BusinessExpense.reconciledAt (null vs set). Drives the
+      // reconciliation filter chip on the Ledger tab.
+      reconciled?: "reconciled" | "unreconciled";
+      // Free-text "Payment From" match — narrow to rows paid via the
+      // named account. Case-sensitive exact match against the stored
+      // value (the picker's collection is what the operator selected
+      // from at write time).
+      paymentFrom?: string;
     };
     const where: any = {};
     if (q.from || q.to) {
@@ -5622,6 +5631,9 @@ Respond ONLY with valid JSON in this exact format:
       if (q.to) where.date.lte = etEndOfDay(q.to as EtDateKey);
     }
     if (q.category) where.category = q.category;
+    if (q.reconciled === "reconciled") where.reconciledAt = { not: null };
+    else if (q.reconciled === "unreconciled") where.reconciledAt = null;
+    if (q.paymentFrom) where.paymentFrom = q.paymentFrom;
     if (q.type) {
       if (!["EXPENSE", "CAPITAL_CONTRIBUTION", "OWNER_DRAW"].includes(q.type)) {
         throw app.httpErrors.badRequest(`Invalid type: ${q.type}`);
@@ -5676,6 +5688,8 @@ Respond ONLY with valid JSON in this exact format:
 
     const include = {
       createdBy: { select: { id: true, displayName: true, email: true } },
+      reconciledBy: { select: { id: true, displayName: true, email: true } },
+      recurrenceEndedBy: { select: { id: true, displayName: true, email: true } },
       equipment: { select: { id: true, shortDesc: true, brand: true, model: true, qrSlug: true } },
       occurrence: {
         select: {
@@ -5879,6 +5893,7 @@ Respond ONLY with valid JSON in this exact format:
         cost: true,
         date: true,
         recurrence: true,
+        recurrenceEndedAt: true,
       },
     });
     // Dedupe by series — return the most recent row per series only.
@@ -5888,6 +5903,11 @@ Respond ONLY with valid JSON in this exact format:
       if (!bySeries.has(r.recurrenceSeriesId)) bySeries.set(r.recurrenceSeriesId, r);
     }
     const candidates = Array.from(bySeries.values())
+      // Ended-series filter — if the operator intentionally ended a
+      // series, don't quietly suggest grafting a new row back onto it.
+      // They can Restart from the ended row's Edit dialog if they
+      // actually want to resume.
+      .filter((r) => r.recurrenceEndedAt == null)
       .filter((r) => {
         if (norm(r.description ?? "") !== targetDesc) return false;
         // Vendor match: both empty is fine, both non-empty must match
@@ -5956,10 +5976,11 @@ Respond ONLY with valid JSON in this exact format:
     }
 
     // Load the existing row up front — needed for the no-op type
-    // comparison below AND to resolve link status for both guards.
+    // comparison below, the link-status guards, AND the
+    // reconciliation-auto-clear check further down.
     const existing = await prisma.businessExpense.findUnique({
       where: { id },
-      select: { type: true },
+      select: { type: true, cost: true, date: true, reconciledAt: true },
     });
     if (!existing) throw app.httpErrors.notFound("Expense not found.");
 
@@ -6013,6 +6034,32 @@ Respond ONLY with valid JSON in this exact format:
         data.invoiceNumber = null;
       }
     }
+
+    // Auto-clear reconciliation on any material edit. A row marked
+    // Reconciled says "the amount + date on this ledger row match
+    // QuickBooks" — if either changes, the match no longer holds and
+    // leaving the chip green would silently mislead the operator.
+    // Description / vendor / notes / category are considered cosmetic
+    // (QB doesn't care about display strings), so they don't trigger.
+    //
+    // Only fires when there's an ACTUAL change vs. the stored value —
+    // the frontend echoes the full record on Save, so cost + date
+    // are always present in the body even for pure notes edits.
+    // Comparing to `existing.*` avoids false-positive clears.
+    //
+    // Only fires when the row was Reconciled to begin with — no point
+    // re-writing null → null.
+    if (existing.reconciledAt) {
+      const costChanged = "cost" in data && data.cost !== existing.cost;
+      const dateChanged =
+        "date" in data &&
+        !!data.date &&
+        (data.date as Date).getTime() !== existing.date.getTime();
+      if (costChanged || dateChanged) {
+        data.reconciledAt = null;
+        data.reconciledById = null;
+      }
+    }
     const updated = await prisma.$transaction(async (tx) => {
       const updated = await tx.businessExpense.update({ where: { id }, data });
       if (linkedExpense) {
@@ -6032,6 +6079,117 @@ Respond ONLY with valid JSON in this exact format:
       ? etFormatDate(nextRecurrenceDate(updated.date, String(updated.recurrence)))
       : null;
     return { ...updated, nextExpectedDate };
+  });
+
+  // Toggle the "ended" flag on a recurring BusinessExpense series.
+  // Accepts ANY row in the series (the panel card sends `latestId`,
+  // but by the time it clicks the actual latest may have shifted if
+  // another instance was recorded in another tab). We defensively
+  // re-derive the latest row from the seriesId inside the endpoint
+  // so the flag always lands on the current tip.
+  //
+  // Body: { ended: boolean } — true stamps the flag + actor, false
+  // clears both (restart). Idempotent — no-op if you re-send the
+  // same value. Applies to all EntryTypes since equity entries can
+  // also be recurring (e.g. monthly owner draw).
+  app.post("/admin/business-expenses/:id/end-recurrence-series", superGuard, async (req: any) => {
+    const id = String(req.params.id);
+    const uid = await currentUserId(req);
+    const b = req.body || {};
+    if (typeof b.ended !== "boolean") {
+      throw app.httpErrors.badRequest("ended must be a boolean.");
+    }
+    const source = await prisma.businessExpense.findUnique({
+      where: { id },
+      select: { id: true, recurrenceSeriesId: true, recurrence: true },
+    });
+    if (!source) throw app.httpErrors.notFound("Business expense not found.");
+    if (!source.recurrence) {
+      throw app.httpErrors.badRequest("This row isn't part of a recurring series.");
+    }
+    // END vs RESTART target different rows deliberately:
+    //   • ENDING: stamp the flag on whichever row is CURRENTLY the
+    //     latest by date. Only that row governs the panel's "is this
+    //     series still active?" check.
+    //   • RESTARTING: clear the flag on EVERY row in the series that
+    //     carries it. Handles the cross-tab race where the operator
+    //     ends series S (flag on row R), then a new instance R' is
+    //     recorded elsewhere (making R' the latest), then the
+    //     operator opens Edit on R and clicks Restart. If we only
+    //     targeted the current latest (R'), R would keep the stale
+    //     flag and the "Series ended" badge would stay visible.
+    //     Clearing all is idempotent + defensive against any
+    //     historical multi-flag state.
+    if (b.ended) {
+      const latest = source.recurrenceSeriesId
+        ? await prisma.businessExpense.findFirst({
+            where: { recurrenceSeriesId: source.recurrenceSeriesId },
+            orderBy: { date: "desc" },
+            select: { id: true },
+          })
+        : source;
+      if (!latest) throw app.httpErrors.notFound("Latest row in series not found.");
+      const updated = await prisma.businessExpense.update({
+        where: { id: latest.id },
+        data: { recurrenceEndedAt: new Date(), recurrenceEndedById: uid },
+        include: {
+          recurrenceEndedBy: { select: { id: true, displayName: true, email: true } },
+        },
+      });
+      return updated;
+    }
+    // Restart path — clear flag on every row in the series that has it.
+    if (source.recurrenceSeriesId) {
+      await prisma.businessExpense.updateMany({
+        where: {
+          recurrenceSeriesId: source.recurrenceSeriesId,
+          recurrenceEndedAt: { not: null },
+        },
+        data: { recurrenceEndedAt: null, recurrenceEndedById: null },
+      });
+    } else {
+      await prisma.businessExpense.update({
+        where: { id: source.id },
+        data: { recurrenceEndedAt: null, recurrenceEndedById: null },
+      });
+    }
+    // Re-fetch the source row so the caller sees its new (null) flag.
+    const refetched = await prisma.businessExpense.findUnique({
+      where: { id: source.id },
+      include: {
+        recurrenceEndedBy: { select: { id: true, displayName: true, email: true } },
+      },
+    });
+    return refetched;
+  });
+
+  // Toggle the QuickBooks-reconciliation flag on a ledger row.
+  // POST with { reconciled: true } stamps reconciledAt + reconciledById
+  // to the caller. { reconciled: false } clears both. Idempotent —
+  // re-sending the same value is a no-op. Applies to all EntryTypes
+  // (EXPENSE, CAPITAL_CONTRIBUTION, OWNER_DRAW).
+  app.post("/admin/business-expenses/:id/reconcile", superGuard, async (req: any) => {
+    const id = String(req.params.id);
+    const uid = await currentUserId(req);
+    const b = req.body || {};
+    if (typeof b.reconciled !== "boolean") {
+      throw app.httpErrors.badRequest("reconciled must be a boolean.");
+    }
+    const existing = await prisma.businessExpense.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!existing) throw app.httpErrors.notFound("Business expense not found.");
+    const updated = await prisma.businessExpense.update({
+      where: { id },
+      data: b.reconciled
+        ? { reconciledAt: new Date(), reconciledById: uid }
+        : { reconciledAt: null, reconciledById: null },
+      include: {
+        reconciledBy: { select: { id: true, displayName: true, email: true } },
+      },
+    });
+    return updated;
   });
 
   app.delete("/admin/business-expenses/:id", superGuard, async (req: any) => {
@@ -6353,7 +6511,7 @@ Respond ONLY with valid JSON in this exact format:
         id: true, type: true, date: true, cost: true, description: true, category: true,
         vendor: true, invoiceNumber: true, notes: true, equipmentId: true,
         recurrence: true, recurrenceSkippedUntil: true,
-        recurrenceSeriesId: true,
+        recurrenceSeriesId: true, recurrenceEndedAt: true,
       },
     });
 
@@ -6377,6 +6535,10 @@ Respond ONLY with valid JSON in this exact format:
     }
 
     const suggestions = Array.from(seen.values())
+      // Ended-series filter — MUST run after the group-and-pick
+      // (rejecting individual ended rows would let the second-most-
+      // recent row keep the series alive in the panel).
+      .filter((latest) => latest.recurrenceEndedAt == null)
       .map((latest) => {
         const cadence = String(latest.recurrence);
         const baseNext = nextRecurrenceDate(latest.date, cadence);
@@ -6441,7 +6603,7 @@ Respond ONLY with valid JSON in this exact format:
       select: {
         type: true, date: true, description: true, vendor: true,
         recurrence: true, recurrenceSkippedUntil: true,
-        recurrenceSeriesId: true,
+        recurrenceSeriesId: true, recurrenceEndedAt: true,
       },
     });
     // Group by recurrenceSeriesId when set, fall back to legacy key
@@ -6456,6 +6618,10 @@ Respond ONLY with valid JSON in this exact format:
     }
     let count = 0;
     for (const latest of seen.values()) {
+      // Ended-series filter — matches /due-soon list. Applied after
+      // grouping so a series with historical rows but an ended
+      // latest row doesn't sneak back into the count.
+      if (latest.recurrenceEndedAt != null) continue;
       const cadence = String(latest.recurrence);
       const baseNext = nextRecurrenceDate(latest.date, cadence);
       const expected =

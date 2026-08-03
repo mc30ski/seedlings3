@@ -305,6 +305,8 @@ model User {
   pinnedEquipment         PinnedEquipment[]
   likedEquipment          LikedEquipment[]
   businessExpenses        BusinessExpense[]
+  businessExpensesReconciled BusinessExpense[] @relation("BusinessExpenseReconciler")
+  businessExpenseSeriesEnded BusinessExpense[] @relation("BusinessExpenseSeriesEnder")
   changeRequestsCreated   OccurrenceChangeRequest[] @relation("ChangeRequestRequester")
   changeRequestsResolved  OccurrenceChangeRequest[] @relation("ChangeRequestResolver")
   hoursApproved           JobOccurrence[]           @relation("HoursApprover")
@@ -1581,6 +1583,40 @@ model BusinessExpense {
   // date, so the next suggestion is one cadence later.
   recurrenceSkippedUntil DateTime?
 
+  // "Ended series" flag — set when the operator explicitly ends a
+  // recurring series (via the "End series" button on the Due-to-record
+  // panel). Applied to the LATEST row in the series (highest `date`).
+  // While set, the series drops out of the Due-to-record panel, its
+  // alert count, and the continuation-matcher hint.
+  //
+  // Historical rows in the series stay untouched — full audit trail
+  // preserved. The series can be restarted at any time from the ended
+  // row's Edit dialog (clears both fields), or auto-resumes when a
+  // fresh row is recorded (new row becomes latest, its flag is null).
+  //
+  // Distinct from `recurrenceSkippedUntil` (skip ONE cycle, series
+  // continues) and from `recurrence = null` (row was never recurring
+  // to begin with).
+  recurrenceEndedAt   DateTime?
+  recurrenceEndedById String?
+  recurrenceEndedBy   User?     @relation("BusinessExpenseSeriesEnder", fields: [recurrenceEndedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  // Reconciliation flag — set when the operator has manually matched
+  // this entry against QuickBooks (or another external source of
+  // truth) and confirmed the two agree. Null = not yet reconciled.
+  // Filterable on the Super → Money → Ledger tab so the operator can
+  // see their outstanding work queue.
+  //
+  // Applies to ALL entry types (EXPENSE, CAPITAL_CONTRIBUTION,
+  // OWNER_DRAW) — reconciliation is a bookkeeping concept, not a
+  // Schedule-C concept, so equity entries are in scope too.
+  //
+  // Historical rows created before this feature shipped stay null
+  // (unreconciled) by design — see the migration note.
+  reconciledAt   DateTime?
+  reconciledById String?
+  reconciledBy   User?     @relation("BusinessExpenseReconciler", fields: [reconciledById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1591,6 +1627,7 @@ model BusinessExpense {
   @@index([occurrenceId])
   @@index([type])
   @@index([recurrenceSeriesId])
+  @@index([reconciledAt])
 }
 
 model Setting {

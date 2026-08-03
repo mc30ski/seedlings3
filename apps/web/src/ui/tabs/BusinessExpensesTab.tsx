@@ -121,6 +121,16 @@ type BusinessExpense = {
   recurrence?: "WEEKLY" | "MONTHLY" | "QUARTERLY" | "ANNUALLY" | null;
   createdAt: string;
   createdBy?: { id: string; displayName?: string | null; email?: string | null };
+  /** Set when the operator has manually reconciled this row against
+   *  QuickBooks. Null = unreconciled. See services/dataExport not-yet
+   *  and the reconciled filter chip in the toolbar. */
+  reconciledAt?: string | null;
+  reconciledBy?: { id: string; displayName?: string | null; email?: string | null } | null;
+  /** Set on the LATEST row of a recurring series when the operator
+   *  explicitly ends it. Historical rows in the same series stay
+   *  null. See services/admin.ts end-recurrence-series. */
+  recurrenceEndedAt?: string | null;
+  recurrenceEndedBy?: { id: string; displayName?: string | null; email?: string | null } | null;
 };
 
 type DueSoonSuggestion = {
@@ -279,6 +289,14 @@ export default function BusinessExpensesTab() {
   // Followups-only filter — Super-only affordance. Server passes flagOnly=true,
   // which restricts the BE list to rows with an open LedgerFollowup.
   const [filterFollowupsOnly, setFilterFollowupsOnly] = useState(false);
+  // Reconciliation filter — "" = all, "reconciled" | "unreconciled" =
+  // narrow. Server maps to a BusinessExpense.reconciledAt where-clause.
+  // Default shows everything (the operator opts into the narrowing).
+  const [filterReconciled, setFilterReconciled] = useState<"" | "reconciled" | "unreconciled">("");
+  // Payment-From filter — "" = all, else exact match against the
+  // stored `paymentFrom` string (populated from the same collection
+  // the create/edit form uses).
+  const [filterPaymentFrom, setFilterPaymentFrom] = useState("");
   const [expensePreset, setExpensePreset] = useState<ExpensePreset>("last30");
   // Quick-date popover visibility. Matches PaymentsTab's pattern — the
   // active preset is shown in a green chip; clicking it toggles the
@@ -308,6 +326,12 @@ export default function BusinessExpensesTab() {
   // Dialog
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<BusinessExpense | null>(null);
+  // When true, the ledger dialog opens in read-only mode: all form
+  // controls are disabled (via a wrapping fieldset[disabled]), the
+  // title reads "View ..." instead of "Edit ...", and the footer
+  // shows only Close (no Save). Reset to false whenever the dialog
+  // closes so the next open starts editable.
+  const [viewMode, setViewMode] = useState(false);
   // Set when the dialog was opened from a Record-flow suggestion. Passed
   // through to the create-row POST so the server can inherit the
   // source's `recurrenceSeriesId` — the mechanism that keeps a monthly
@@ -368,6 +392,11 @@ export default function BusinessExpensesTab() {
   // Recurring-expense suggestions panel.
   const [dueSoon, setDueSoon] = useState<DueSoonSuggestion[]>([]);
   const [confirmSkip, setConfirmSkip] = useState<DueSoonSuggestion | null>(null);
+  // Confirm dialog for the "End series" action on a Due-to-record
+  // card. Distinct from Skip (which advances one cycle) — this stops
+  // the whole series from re-appearing until Restart is clicked from
+  // the ended row's Edit dialog.
+  const [confirmEndSeries, setConfirmEndSeries] = useState<DueSoonSuggestion | null>(null);
   // Separate confirm state for the "Already recorded" path. Distinct from
   // Skip because the operator intent differs ("I paid + recorded this
   // elsewhere — just dismiss" vs. "I'm not paying this cycle"), even
@@ -499,6 +528,8 @@ export default function BusinessExpensesTab() {
       if (filterCategory) params.set("category", filterCategory);
       if (filterType) params.set("type", filterType);
       if (filterFollowupsOnly) params.set("flagOnly", "true");
+      if (filterReconciled) params.set("reconciled", filterReconciled);
+      if (filterPaymentFrom) params.set("paymentFrom", filterPaymentFrom);
       if (q.trim()) params.set("q", q.trim());
       params.set("limit", String(pageSize));
       params.set("offset", String((page - 1) * pageSize));
@@ -565,7 +596,7 @@ export default function BusinessExpensesTab() {
   useEffect(() => {
     setPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, filterFrom, filterTo, filterCategory, filterType, filterFollowupsOnly, pageSize]);
+  }, [q, filterFrom, filterTo, filterCategory, filterType, filterFollowupsOnly, filterReconciled, filterPaymentFrom, pageSize]);
 
   // Re-load when filters or pagination change. Search is debounced; page/
   // pageSize changes load immediately.
@@ -573,7 +604,7 @@ export default function BusinessExpensesTab() {
     const t = setTimeout(() => void load(), 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, filterFrom, filterTo, filterCategory, filterType, filterFollowupsOnly, page, pageSize]);
+  }, [q, filterFrom, filterTo, filterCategory, filterType, filterFollowupsOnly, filterReconciled, filterPaymentFrom, page, pageSize]);
 
   // Load the followup map once on mount and refresh on the cross-tab
   // bus event. Quiet 403 (non-supers won't see the affordance anyway).
@@ -618,6 +649,22 @@ export default function BusinessExpensesTab() {
   }
 
   function openEdit(e: BusinessExpense) {
+    populateForm(e);
+    setViewMode(false);
+    setDialogOpen(true);
+  }
+
+  /** Open the same dialog in read-only mode. Reuses populateForm so
+   *  every field renders exactly as the editable variant would, then
+   *  the wrapping fieldset[disabled] blocks all interaction. Saves
+   *  duplicating the whole dialog markup. */
+  function openView(e: BusinessExpense) {
+    populateForm(e);
+    setViewMode(true);
+    setDialogOpen(true);
+  }
+
+  function populateForm(e: BusinessExpense) {
     setEditing(e);
     setSourceExpenseId(null);
     setContinuationCandidates([]);
@@ -647,7 +694,6 @@ export default function BusinessExpensesTab() {
     setFEquipmentId(e.equipmentId ?? "");
     setFRecurrence(e.recurrence ?? "");
     setFNewReceiptFile(null);
-    setDialogOpen(true);
   }
 
   // Open the Add Expense dialog pre-filled from a "Due to record"
@@ -679,6 +725,71 @@ export default function BusinessExpensesTab() {
     setFRecurrence(s.prefill.recurrence);
     setFNewReceiptFile(null);
     setDialogOpen(true);
+  }
+
+  /** End a recurring series from the Due-to-record panel. Optimistic
+   *  removal from the panel; on failure, restore. The backend
+   *  endpoint accepts any row in the series and re-derives the
+   *  latest internally — so `latestId` from the (potentially stale)
+   *  panel card is fine. */
+  async function doEndSeries(s: DueSoonSuggestion) {
+    const prev = dueSoon;
+    setDueSoon((rows) => rows.filter((r) => r.latestId !== s.latestId));
+    try {
+      await apiPost(
+        `/api/admin/business-expenses/${s.latestId}/end-recurrence-series`,
+        { ended: true },
+      );
+      window.dispatchEvent(new CustomEvent("seedlings:due-to-record-changed"));
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: `Ended series "${s.prefill.description}". Historical entries are preserved.`,
+      });
+      // Also refresh the main list so the ended badge appears on the
+      // latest historical row without a manual reload.
+      void load();
+    } catch (err) {
+      setDueSoon(prev);
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Couldn't end the series.", err),
+      });
+    }
+  }
+
+  /** Restart an ended series from the Edit dialog of the ended row.
+   *  Keeps the dialog OPEN so any in-flight edits to the row's
+   *  fields aren't lost — the operator can then Save or Cancel
+   *  normally. Locally clears the ended flag on the `editing`
+   *  reference so the Restart button + "Series ended" badge
+   *  disappear from view immediately. Refreshes the ledger list in
+   *  the background so the badge also drops on the underlying row
+   *  card. */
+  async function doRestartSeries(row: BusinessExpense) {
+    try {
+      await apiPost(
+        `/api/admin/business-expenses/${row.id}/end-recurrence-series`,
+        { ended: false },
+      );
+      window.dispatchEvent(new CustomEvent("seedlings:due-to-record-changed"));
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: `Restarted series "${row.description}". It will appear in Due-to-record when next due.`,
+      });
+      setEditing((prev) =>
+        prev && prev.id === row.id
+          ? { ...prev, recurrenceEndedAt: null, recurrenceEndedBy: null }
+          : prev,
+      );
+      // Refresh the list in the background so the ledger-row badge
+      // updates without waiting for the operator to close the dialog.
+      void load();
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Couldn't restart the series.", err),
+      });
+    }
   }
 
   // Confirmed skip — store the dismissed expected date on the most recent
@@ -936,11 +1047,26 @@ export default function BusinessExpensesTab() {
     [paymentFromOptions],
   );
 
+  // Toolbar filter collection — no "Other (specify…)" entry; the
+  // filter only picks from the known set. Leading "All" resets.
+  const paymentFromFilterCollection = useMemo(
+    () =>
+      createListCollection({
+        items: [
+          { label: "Payment from: all", value: "" },
+          ...paymentFromOptions.map((label) => ({ label, value: label })),
+        ],
+      }),
+    [paymentFromOptions],
+  );
+
   function clearFilters() {
     setQ("");
     setFilterCategory("");
     setFilterType("");
     setFilterFollowupsOnly(false);
+    setFilterReconciled("");
+    setFilterPaymentFrom("");
     // Reset the date range to the default last-30-days window rather than
     // dumping the user into the full-history "All time" view.
     const r = rangeForExpensePreset("last30");
@@ -949,7 +1075,38 @@ export default function BusinessExpensesTab() {
     setExpensePreset("last30");
   }
 
-  const hasFilters = !!(q || filterFrom || filterTo || filterCategory || filterType || filterFollowupsOnly);
+  const hasFilters = !!(q || filterFrom || filterTo || filterCategory || filterType || filterFollowupsOnly || filterReconciled || filterPaymentFrom);
+
+  // Toggle the reconciled flag on a single row. Optimistic update so
+  // the chip flips immediately; on failure we roll back and surface
+  // the error. The API endpoint returns the freshly-updated row with
+  // reconciledBy relation included; we use it to stamp the tooltip
+  // with the actor's name without a re-fetch.
+  const [reconcileSaving, setReconcileSaving] = useState<string | null>(null);
+  async function toggleReconciled(row: BusinessExpense) {
+    const nextValue = !row.reconciledAt;
+    setReconcileSaving(row.id);
+    try {
+      const updated = await apiPost<BusinessExpense>(
+        `/api/admin/business-expenses/${row.id}/reconcile`,
+        { reconciled: nextValue },
+      );
+      setExpenses((prev) =>
+        prev.map((e) =>
+          e.id === row.id
+            ? { ...e, reconciledAt: updated.reconciledAt ?? null, reconciledBy: updated.reconciledBy ?? null }
+            : e,
+        ),
+      );
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Couldn't update reconciliation status.", err),
+      });
+    } finally {
+      setReconcileSaving(null);
+    }
+  }
 
   return (
     <Box w="full" position="relative">
@@ -1075,7 +1232,7 @@ export default function BusinessExpensesTab() {
                         </Text>
                       </HStack>
                     </Box>
-                    <HStack gap={1}>
+                    <HStack gap={1} wrap="wrap">
                       <Button
                         size="sm"
                         variant="ghost"
@@ -1083,6 +1240,15 @@ export default function BusinessExpensesTab() {
                         title="Skip this period — I'm not paying this cycle"
                       >
                         Skip
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        colorPalette="red"
+                        onClick={() => setConfirmEndSeries(s)}
+                        title="Stop this recurring series entirely — history preserved, no more reminders"
+                      >
+                        End series
                       </Button>
                       <Button
                         size="sm"
@@ -1254,23 +1420,85 @@ export default function BusinessExpensesTab() {
               BusinessExpense rows with an open LedgerFollowup. Quiet for
               non-supers since the flagged set is empty for them. */}
           <HStack mt={2} gap={2} justify="space-between" wrap="wrap">
-            <Button
-              size="xs"
-              variant={filterFollowupsOnly ? "solid" : "outline"}
-              colorPalette={filterFollowupsOnly ? "yellow" : "gray"}
-              onClick={() => setFilterFollowupsOnly((v) => !v)}
-              title="Show only entries flagged for follow-up"
-            >
-              <Flag size={12} />
-              <Text ml="1">
-                Followups only
-                {Object.keys(followupMap).length > 0 && (
-                  <Text as="span" ml={1} opacity={0.85}>
-                    ({Object.keys(followupMap).length})
-                  </Text>
-                )}
-              </Text>
-            </Button>
+            <HStack gap={2} wrap="wrap">
+              <Button
+                size="xs"
+                variant={filterFollowupsOnly ? "solid" : "outline"}
+                colorPalette={filterFollowupsOnly ? "yellow" : "gray"}
+                onClick={() => setFilterFollowupsOnly((v) => !v)}
+                title="Show only entries flagged for follow-up"
+              >
+                <Flag size={12} />
+                <Text ml="1">
+                  Followups only
+                  {Object.keys(followupMap).length > 0 && (
+                    <Text as="span" ml={1} opacity={0.85}>
+                      ({Object.keys(followupMap).length})
+                    </Text>
+                  )}
+                </Text>
+              </Button>
+              {/* Reconciliation cycle: All → Unreconciled → Reconciled → All. */}
+              <Button
+                size="xs"
+                variant={filterReconciled ? "solid" : "outline"}
+                colorPalette={
+                  filterReconciled === "unreconciled" ? "orange"
+                  : filterReconciled === "reconciled" ? "green"
+                  : "gray"
+                }
+                onClick={() => {
+                  setFilterReconciled((v) =>
+                    v === "" ? "unreconciled" : v === "unreconciled" ? "reconciled" : "",
+                  );
+                }}
+                title="Cycle: all → unreconciled → reconciled → all"
+              >
+                {filterReconciled === "reconciled" ? "Reconciled only"
+                  : filterReconciled === "unreconciled" ? "Unreconciled only"
+                  : "Reconciliation: all"}
+              </Button>
+              {/* Payment From filter — Chakra Select.Root with the same
+                  PAYMENT_FROM_OPTIONS list the create/edit form uses. */}
+              {paymentFromOptions.length > 0 && (
+                <Select.Root
+                  size="xs"
+                  collection={paymentFromFilterCollection}
+                  value={[filterPaymentFrom]}
+                  onValueChange={(e) => setFilterPaymentFrom(e.value[0] ?? "")}
+                  positioning={{ strategy: "fixed", hideWhenDetached: true }}
+                  css={{ width: "auto" }}
+                >
+                  <Select.HiddenSelect />
+                  <Select.Control>
+                    <Select.Trigger
+                      css={{
+                        background: filterPaymentFrom
+                          ? "var(--chakra-colors-blue-50)"
+                          : "var(--chakra-colors-bg)",
+                        borderColor: filterPaymentFrom
+                          ? "var(--chakra-colors-blue-400)"
+                          : undefined,
+                      }}
+                      title="Filter by Payment From account"
+                    >
+                      <Select.ValueText placeholder="Payment from: all" />
+                    </Select.Trigger>
+                  </Select.Control>
+                  <Portal>
+                    <Select.Positioner>
+                      <Select.Content>
+                        {paymentFromFilterCollection.items.map((it) => (
+                          <Select.Item item={it} key={it.value}>
+                            {it.label}
+                          </Select.Item>
+                        ))}
+                      </Select.Content>
+                    </Select.Positioner>
+                  </Portal>
+                </Select.Root>
+              )}
+            </HStack>
             {hasFilters && (
               <Button size="xs" variant="ghost" onClick={clearFilters}>
                 <X size={12} /> Clear
@@ -1311,6 +1539,48 @@ export default function BusinessExpensesTab() {
                           {ENTRY_TYPE_LABELS[e.type]}
                         </Badge>
                       )}
+                      {/* Series-ended indicator. Only shows on the latest
+                          row of an ended series (where the flag lives).
+                          Non-clickable — clarity, not action. Restart
+                          lives in the row's Edit dialog. */}
+                      {e.recurrenceEndedAt && (
+                        <Badge
+                          size="sm"
+                          colorPalette="gray"
+                          variant="solid"
+                          borderRadius="full"
+                          px="2"
+                          title={
+                            `Series ended${e.recurrenceEndedBy?.displayName ? ` by ${e.recurrenceEndedBy.displayName}` : ""} on ${fmtDate(e.recurrenceEndedAt)}. Open in Edit to restart.`
+                          }
+                        >
+                          Series ended
+                        </Badge>
+                      )}
+                      {/* Reconciled toggle chip. Click flips state via
+                          POST /reconcile — no confirm dialog since this
+                          is a personal-flag toggle that doesn't alter
+                          money math and the operator will be clicking
+                          many while reconciling against QB. Tooltip on
+                          the reconciled variant shows who + when. */}
+                      <Badge
+                        size="sm"
+                        colorPalette={e.reconciledAt ? "green" : "gray"}
+                        variant={e.reconciledAt ? "solid" : "outline"}
+                        borderRadius="full"
+                        px="2"
+                        cursor="pointer"
+                        opacity={reconcileSaving === e.id ? 0.5 : 1}
+                        _hover={{ opacity: 0.8 }}
+                        title={
+                          e.reconciledAt
+                            ? `Reconciled${e.reconciledBy?.displayName ? ` by ${e.reconciledBy.displayName}` : ""} on ${fmtDate(e.reconciledAt)} — click to unreconcile`
+                            : "Click to mark as reconciled against QuickBooks"
+                        }
+                        onClick={() => { void toggleReconciled(e); }}
+                      >
+                        {e.reconciledAt ? "✓ Reconciled" : "Unreconciled"}
+                      </Badge>
                       {e.recurrence && (
                         <Badge
                           size="sm"
@@ -1522,6 +1792,9 @@ export default function BusinessExpensesTab() {
                           <Paperclip size={12} />
                         </Button>
                       )}
+                      <Button size="xs" variant="ghost" onClick={() => openView(e)} title="View details">
+                        <Eye size={12} />
+                      </Button>
                       <Button size="xs" variant="ghost" onClick={() => openEdit(e)} title="Edit">
                         <Pencil size={12} />
                       </Button>
@@ -1624,7 +1897,15 @@ export default function BusinessExpensesTab() {
       })()}
 
       {/* Add/Edit Dialog */}
-      <Dialog.Root open={dialogOpen} onOpenChange={(e) => { if (!e.open) setDialogOpen(false); }}>
+      <Dialog.Root
+        open={dialogOpen}
+        onOpenChange={(e) => {
+          if (!e.open) {
+            setDialogOpen(false);
+            setViewMode(false);
+          }
+        }}
+      >
         <Portal>
           <Dialog.Backdrop />
           <Dialog.Positioner>
@@ -1632,12 +1913,20 @@ export default function BusinessExpensesTab() {
               <Dialog.CloseTrigger />
               <Dialog.Header>
                 <Dialog.Title>
-                  {editing
-                    ? `Edit ${ENTRY_TYPE_LABELS[fType]}`
-                    : `Add ${ENTRY_TYPE_LABELS[fType]}`}
+                  {viewMode
+                    ? `View ${ENTRY_TYPE_LABELS[fType]}`
+                    : editing
+                      ? `Edit ${ENTRY_TYPE_LABELS[fType]}`
+                      : `Add ${ENTRY_TYPE_LABELS[fType]}`}
                 </Dialog.Title>
               </Dialog.Header>
               <Dialog.Body>
+                {/* fieldset[disabled] recursively disables every form
+                    control inside — Chakra Inputs, Textareas, Buttons,
+                    and Select.Trigger (which is a <button>) all become
+                    non-interactive. Zero-styled fieldset so nothing
+                    visual changes vs. the editable variant. */}
+                <fieldset disabled={viewMode} style={{ border: 0, padding: 0, margin: 0, minInlineSize: "auto" }}>
                 <VStack align="stretch" gap={3}>
                   {continuationCandidates.length > 0 && (
                     <Box
@@ -1949,14 +2238,79 @@ export default function BusinessExpensesTab() {
                     </Box>
                   )}
                 </VStack>
+                </fieldset>
+              </Dialog.Body>
+              <Dialog.Footer>
+                <HStack justify="space-between" w="full" wrap="wrap" gap={2}>
+                  {/* Restart-series affordance — only shown when the
+                      row being edited is the ended latest of a series.
+                      Left-aligned to distinguish from the save/cancel
+                      actions on the right. Available in edit and view
+                      mode so a user browsing history can click it. */}
+                  <Box>
+                    {editing?.recurrenceEndedAt && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        colorPalette="green"
+                        onClick={() => void doRestartSeries(editing)}
+                        title="Clear the ended flag — this series will start showing in Due-to-record again when next due"
+                      >
+                        Restart series
+                      </Button>
+                    )}
+                  </Box>
+                  <HStack gap={2}>
+                    <Button variant="ghost" onClick={() => setDialogOpen(false)} disabled={saving}>
+                      {viewMode ? "Close" : "Cancel"}
+                    </Button>
+                    {!viewMode && (
+                      <Button colorPalette="blue" onClick={save} loading={saving} disabled={!fDate || !fDescription.trim() || !fCost}>
+                        {editing ? "Save" : "Add"}
+                      </Button>
+                    )}
+                  </HStack>
+                </HStack>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
+
+      {/* End-series confirmation. Explicit copy about what's preserved
+          and how to restart so the operator isn't afraid of losing
+          history. Red confirm to signal "this is a bigger step than
+          Skip" without actually being destructive. */}
+      <Dialog.Root open={!!confirmEndSeries} onOpenChange={(e) => { if (!e.open) setConfirmEndSeries(null); }}>
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content mx="4" maxW="sm" w="full" rounded="2xl" p="4" shadow="lg">
+              <Dialog.Header>
+                <Dialog.Title>End this recurring series?</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <Text fontSize="sm">
+                  <b>{confirmEndSeries?.prefill.description}</b>
+                  {confirmEndSeries?.prefill.vendor ? <> from <b>{confirmEndSeries.prefill.vendor}</b></> : null}
+                  {" "}will stop showing up in the Due-to-record list.
+                  {" "}All historical entries stay in the ledger — nothing is deleted.
+                  {" "}You can restart the series at any time from the ended row&apos;s Edit dialog.
+                </Text>
               </Dialog.Body>
               <Dialog.Footer>
                 <HStack justify="flex-end" w="full">
-                  <Button variant="ghost" onClick={() => setDialogOpen(false)} disabled={saving}>
-                    Cancel
-                  </Button>
-                  <Button colorPalette="blue" onClick={save} loading={saving} disabled={!fDate || !fDescription.trim() || !fCost}>
-                    {editing ? "Save" : "Add"}
+                  <Button variant="ghost" onClick={() => setConfirmEndSeries(null)}>Cancel</Button>
+                  <Button
+                    colorPalette="red"
+                    onClick={() => {
+                      if (confirmEndSeries) {
+                        void doEndSeries(confirmEndSeries);
+                        setConfirmEndSeries(null);
+                      }
+                    }}
+                  >
+                    End series
                   </Button>
                 </HStack>
               </Dialog.Footer>
