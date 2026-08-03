@@ -59,7 +59,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { ChevronDown, ChevronUp, Eye, Flag, Info, Paperclip, Pencil, Plus, Repeat, Search, Trash2, X } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronUp, Eye, Flag, Info, Paperclip, Pencil, Plus, Repeat, Search, Trash2, X } from "lucide-react";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import { bizToday, bizAddDays, bizStartOfMonth, bizStartOfYear, fmtDate, fmtDateOpts } from "@/src/lib/lib";
 import {
@@ -1519,7 +1519,14 @@ export default function BusinessExpensesTab() {
       ) : (
         <VStack align="stretch" gap={1}>
           {expenses.map((e) => (
-            <Card.Root key={e.id} variant="outline">
+            <Card.Root
+              key={e.id}
+              variant="outline"
+              // Light-green wash when reconciled — visually separates
+              // "done" rows from the outstanding work queue at a glance.
+              bg={e.reconciledAt ? "green.50" : undefined}
+              borderColor={e.reconciledAt ? "green.200" : undefined}
+            >
               <Card.Body p={3}>
                 <HStack justify="space-between" align="flex-start" gap={2}>
                   <Box flex="1" minW={0}>
@@ -1557,11 +1564,10 @@ export default function BusinessExpensesTab() {
                           Series ended
                         </Badge>
                       )}
-                      {/* Reconciled toggle chip. Click flips state via
-                          POST /reconcile — no confirm dialog since this
-                          is a personal-flag toggle that doesn't alter
-                          money math and the operator will be clicking
-                          many while reconciling against QB. Tooltip on
+                      {/* Reconciled status chip. Display-only — the
+                          toggle lives as a separate check-circle icon
+                          button in the action row, matching the eye /
+                          pencil / flag / trash pattern. Tooltip on
                           the reconciled variant shows who + when. */}
                       <Badge
                         size="sm"
@@ -1569,15 +1575,11 @@ export default function BusinessExpensesTab() {
                         variant={e.reconciledAt ? "solid" : "outline"}
                         borderRadius="full"
                         px="2"
-                        cursor="pointer"
-                        opacity={reconcileSaving === e.id ? 0.5 : 1}
-                        _hover={{ opacity: 0.8 }}
                         title={
                           e.reconciledAt
-                            ? `Reconciled${e.reconciledBy?.displayName ? ` by ${e.reconciledBy.displayName}` : ""} on ${fmtDate(e.reconciledAt)} — click to unreconcile`
-                            : "Click to mark as reconciled against QuickBooks"
+                            ? `Reconciled${e.reconciledBy?.displayName ? ` by ${e.reconciledBy.displayName}` : ""} on ${fmtDate(e.reconciledAt)}`
+                            : "Not yet reconciled against QuickBooks"
                         }
-                        onClick={() => { void toggleReconciled(e); }}
                       >
                         {e.reconciledAt ? "✓ Reconciled" : "Unreconciled"}
                       </Badge>
@@ -1797,6 +1799,26 @@ export default function BusinessExpensesTab() {
                       </Button>
                       <Button size="xs" variant="ghost" onClick={() => openEdit(e)} title="Edit">
                         <Pencil size={12} />
+                      </Button>
+                      {/* Reconcile toggle — filled green check when
+                          reconciled, outlined gray check when not.
+                          Direct click flips state (no confirm — this
+                          is a personal-flag toggle, and the operator
+                          will be clicking many while sweeping the
+                          list against QB). */}
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        colorPalette={e.reconciledAt ? "green" : "gray"}
+                        onClick={() => { void toggleReconciled(e); }}
+                        loading={reconcileSaving === e.id}
+                        title={
+                          e.reconciledAt
+                            ? `Reconciled${e.reconciledBy?.displayName ? ` by ${e.reconciledBy.displayName}` : ""} on ${fmtDate(e.reconciledAt)} — click to unreconcile`
+                            : "Mark as reconciled against QuickBooks"
+                        }
+                      >
+                        <CheckCircle2 size={12} fill={e.reconciledAt ? "currentColor" : "none"} />
                       </Button>
                       {/* Followup flag — amber when this row has an open
                           followup, gray-outline when not. Click opens the
