@@ -831,6 +831,12 @@ export type ServicesPayments = {
       // Server persists these to JobOccurrence.completionSplits and re-
       // snapshots promisedPayouts before creating the Payment row.
       completionSplits: Array<{ userId: string; percent: number }>;
+      /** When set, the Payment row's `createdAt` uses this instant
+       *  instead of the default `now()`. Lets admin-side reconciliation
+       *  flows record when the money ACTUALLY landed vs. when the
+       *  operator opened the app. Approval path pairs this with
+       *  `confirmedAt` so both timestamps align. */
+      createdAt?: Date;
     },
   ): Promise<any>;
 
@@ -885,6 +891,12 @@ export type ServicesPayments = {
       method: string;
       note?: string | null;
       processorFeeAmount?: number | null;
+      /** When set, the resulting Payment's `createdAt` and
+       *  `confirmedAt` are both anchored to this instant so
+       *  cash-basis reports and BSD filters see the payment on
+       *  the day the money actually landed. See approvePayment
+       *  overrides.paidAt for the shared plumbing. */
+      paidAt?: Date;
     },
   ): Promise<any>;
 
@@ -918,6 +930,14 @@ export type ServicesPayments = {
       method?: string;
       note?: string | null;
       processorFeeAmount?: number;
+      /** When set, the payment's `confirmedAt` is stamped to this
+       *  instant instead of `new Date()`. Also shifts `createdAt` so
+       *  every date-bucketed report (cash-basis statements, BSD
+       *  filters, income CSVs, etc.) sees the payment on the day
+       *  the money actually landed — not the day the operator
+       *  happened to open the app. Recommended for reconciliation
+       *  workflows where the operator is entering historical data. */
+      paidAt?: Date;
     },
   ): Promise<any>;
 

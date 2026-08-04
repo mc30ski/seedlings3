@@ -15,6 +15,7 @@ import {
   etSundayOnOrBefore,
   etStartOfMonth,
   etStartOfYear,
+  etInstantFromParts,
   type EtDateKey,
 } from "../lib/dates";
 import { AUDIT } from "../lib/auditActions";
@@ -2564,6 +2565,17 @@ export default async function adminRoutes(app: FastifyInstance) {
         throw app.httpErrors.badRequest("processorFeeAmount must be between 0 and amountPaid");
       }
     }
+    // Optional `paidAt` — YYYY-MM-DD in ET. When present, anchors
+    // both `createdAt` and `confirmedAt` on the resulting Payment to
+    // ET-noon of that date (DST-safe). Absent = fall back to now().
+    let paidAt: Date | undefined;
+    if (body.paidAt) {
+      const key = String(body.paidAt);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) {
+        throw app.httpErrors.badRequest("paidAt must be YYYY-MM-DD");
+      }
+      paidAt = etInstantFromParts(key as EtDateKey, "12:00");
+    }
     return services.payments.adminMarkInvoicePaid(
       await currentUserId(req),
       String(req.params.occurrenceId),
@@ -2572,6 +2584,7 @@ export default async function adminRoutes(app: FastifyInstance) {
         method,
         note: body.note != null ? String(body.note) : null,
         processorFeeAmount,
+        paidAt,
       },
     );
   });
@@ -7826,11 +7839,27 @@ Respond ONLY with valid JSON in this exact format:
   app.post("/admin/payments/:id/approve", superGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const body = req.body || {};
-    const overrides: { amountPaid?: number; method?: string; note?: string | null; processorFeeAmount?: number } = {};
+    const overrides: {
+      amountPaid?: number;
+      method?: string;
+      note?: string | null;
+      processorFeeAmount?: number;
+      paidAt?: Date;
+    } = {};
     if (body.amountPaid !== undefined) overrides.amountPaid = Number(body.amountPaid);
     if (body.method) overrides.method = String(body.method);
     if (body.note !== undefined) overrides.note = body.note === null ? null : String(body.note);
     if (body.processorFeeAmount !== undefined) overrides.processorFeeAmount = Number(body.processorFeeAmount);
+    // paidAt — YYYY-MM-DD in ET. Anchors to ET-noon of that date so
+    // cash-basis reports see the payment on the day the money actually
+    // landed. Absent = fall through to `new Date()` (pre-feature default).
+    if (body.paidAt) {
+      const key = String(body.paidAt);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) {
+        throw app.httpErrors.badRequest("paidAt must be YYYY-MM-DD");
+      }
+      overrides.paidAt = etInstantFromParts(key as EtDateKey, "12:00");
+    }
     return services.payments.approvePayment(uid, String(req.params.id), overrides);
   });
 

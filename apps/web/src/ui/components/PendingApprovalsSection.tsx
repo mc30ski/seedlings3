@@ -137,6 +137,11 @@ export default function PendingApprovalsSection() {
      *  "clear the existing note"; `undefined` means "leave the note
      *  untouched." Same tri-state semantic the backend uses. */
     overrideNote?: string | null,
+    /** YYYY-MM-DD ET, the date the money actually landed. Only sent
+     *  when the operator back-dated it from today. Anchors both
+     *  Payment.createdAt and Payment.confirmedAt so cash-basis reports
+     *  bucket the payment on the correct day. */
+    paidAt?: string,
   ) {
     try {
       const body: {
@@ -144,6 +149,7 @@ export default function PendingApprovalsSection() {
         processorFeeAmount?: number;
         method?: string;
         note?: string | null;
+        paidAt?: string;
       } = {};
       if (overrideAmount !== undefined) body.amountPaid = overrideAmount;
       if (feeOverride !== undefined) body.processorFeeAmount = feeOverride;
@@ -154,6 +160,7 @@ export default function PendingApprovalsSection() {
       // pass but trips needless validation.
       if (overrideMethod && overrideMethod !== row.method) body.method = overrideMethod;
       if (overrideNote !== undefined) body.note = overrideNote;
+      if (paidAt) body.paidAt = paidAt;
       // Server returns the next-occurrence outcome on the approval path
       // (a populated `nextOccurrence` when the cycle advanced, or
       // `nextOccurrenceSkipReason` when it didn't). composePaymentMessage
@@ -349,10 +356,10 @@ export default function PendingApprovalsSection() {
       <ApprovePaymentDialog
         row={approvingRow}
         willScheduleNext={approvingRow ? willScheduleNext(approvingRow) : false}
-        onConfirm={(feeOverride?: number) => {
+        onConfirm={(feeOverride?: number, paidAt?: string) => {
           const r = approvingRow;
           setApprovingRow(null);
-          if (r) void approve(r, undefined, feeOverride);
+          if (r) void approve(r, undefined, feeOverride, undefined, undefined, paidAt);
         }}
         onCancel={() => setApprovingRow(null)}
       />
@@ -380,11 +387,11 @@ export default function PendingApprovalsSection() {
 
       <AdjustPaymentDialog
         row={adjustingRow}
-        onConfirm={({ amountOverride, methodOverride, feeOverride, noteOverride }) => {
+        onConfirm={({ amountOverride, methodOverride, feeOverride, noteOverride, paidAtOverride }) => {
           const r = adjustingRow;
           setAdjustingRow(null);
           if (!r) return;
-          void approve(r, amountOverride, feeOverride, methodOverride, noteOverride);
+          void approve(r, amountOverride, feeOverride, methodOverride, noteOverride, paidAtOverride);
         }}
         onCancel={() => setAdjustingRow(null)}
       />

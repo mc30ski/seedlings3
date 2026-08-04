@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { bizToday, type EtDateKey } from "@/src/lib/lib";
+import DateInput from "@/src/ui/components/DateInput";
 import {
   Box,
   Button,
@@ -57,6 +59,10 @@ type Props = {
     methodOverride?: string;
     feeOverride?: number;
     noteOverride?: string | null;
+    /** YYYY-MM-DD ET. Only set when the admin back-dated the
+     *  "payment received on" field from today. Backend anchors to
+     *  ET-noon; absent = fall through to server's `now()`. */
+    paidAtOverride?: string;
   }) => void;
   onCancel: () => void;
 };
@@ -81,6 +87,7 @@ export default function AdjustPaymentDialog({ row, onConfirm, onCancel }: Props)
    *  either sees / edits the worker's original text OR starts from
    *  blank if there wasn't one. */
   const [noteStr, setNoteStr] = useState("");
+  const [paidAt, setPaidAt] = useState<EtDateKey>(bizToday());
   /** True once the admin manually edits the fee — pins the value so a
    *  later amount/method change doesn't blow away their override. Reset
    *  on dialog open. */
@@ -95,6 +102,7 @@ export default function AdjustPaymentDialog({ row, onConfirm, onCancel }: Props)
     setFeeStr((row.processorFeeAmount ?? 0).toFixed(2));
     setNoteStr(row.note ?? "");
     setFeeManuallyEdited(false);
+    setPaidAt(bizToday());
   }, [row]);
 
   const amountNum = Number.parseFloat(amountStr);
@@ -157,6 +165,7 @@ export default function AdjustPaymentDialog({ row, onConfirm, onCancel }: Props)
       methodOverride?: string;
       feeOverride?: number;
       noteOverride?: string | null;
+      paidAtOverride?: string;
     } = {};
     const finalAmount = round2(amountNum);
     if (finalAmount !== round2(row.amountPaid)) changes.amountOverride = finalAmount;
@@ -175,6 +184,9 @@ export default function AdjustPaymentDialog({ row, onConfirm, onCancel }: Props)
     const nextNote = noteStr.trim();
     if (nextNote !== originalNote) {
       changes.noteOverride = nextNote.length > 0 ? nextNote : null;
+    }
+    if (paidAt !== bizToday()) {
+      changes.paidAtOverride = paidAt;
     }
     onConfirm(changes);
   }
@@ -240,6 +252,26 @@ export default function AdjustPaymentDialog({ row, onConfirm, onCancel }: Props)
                       </Select.Content>
                     </Select.Positioner>
                   </Select.Root>
+                </Box>
+
+                <Box>
+                  <Text fontSize="sm" fontWeight="medium" mb={1}>
+                    Payment received on{" "}
+                    {paidAt !== bizToday() && (
+                      <Text as="span" fontSize="2xs" color="orange.700" fontWeight="normal">
+                        — back-dated
+                      </Text>
+                    )}
+                  </Text>
+                  <DateInput
+                    value={paidAt}
+                    onChange={(v) => setPaidAt(v)}
+                    max={bizToday()}
+                  />
+                  <Text fontSize="2xs" color="fg.muted" mt={1}>
+                    Defaults to today. Back-date when the money actually
+                    landed earlier so cash-basis reports bucket it correctly.
+                  </Text>
                 </Box>
 
                 <Box>
