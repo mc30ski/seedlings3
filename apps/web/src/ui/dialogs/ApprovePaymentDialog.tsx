@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { Box, Button, Dialog, HStack, Input, Portal, Text, VStack } from "@chakra-ui/react";
+import DateInput from "@/src/ui/components/DateInput";
+import { bizToday, type EtDateKey } from "@/src/lib/lib";
 
 type ApproveRow = {
   id: string;
@@ -15,8 +17,12 @@ type Props = {
   row: ApproveRow | null;
   /** Whether approving will auto-schedule the next occurrence (for the message). */
   willScheduleNext: boolean;
-  /** Fires on confirm. feeOverride is set only when the admin changed the fee. */
-  onConfirm: (feeOverride?: number) => void;
+  /** Fires on confirm.
+   *   • feeOverride — set only when the admin changed the fee
+   *   • paidAt — YYYY-MM-DD ET, set only when the admin back-dated
+   *     the "payment received on" field. Absent = today's default
+   *     (backend falls through to now()). */
+  onConfirm: (feeOverride?: number, paidAt?: EtDateKey) => void;
   onCancel: () => void;
 };
 
@@ -33,8 +39,15 @@ export default function ApprovePaymentDialog({ row, willScheduleNext, onConfirm,
   const hasFee = estimateFee > 0;
 
   const [feeStr, setFeeStr] = useState("");
+  // "Payment received on" — defaults to today so the common case stays
+  // one click. Operator can back-date when reconciling a payment that
+  // landed days ago; the backend anchors the picked date to ET-noon.
+  const [paidAt, setPaidAt] = useState<EtDateKey>(bizToday());
   useEffect(() => {
-    if (row) setFeeStr((row.processorFeeAmount ?? 0).toFixed(2));
+    if (row) {
+      setFeeStr((row.processorFeeAmount ?? 0).toFixed(2));
+      setPaidAt(bizToday());
+    }
   }, [row]);
 
   const feeNum = Number.parseFloat(feeStr);
@@ -43,13 +56,17 @@ export default function ApprovePaymentDialog({ row, willScheduleNext, onConfirm,
 
   function confirm() {
     if (!row) return;
+    // Only forward paidAt when the operator back-dated from today.
+    // Sending today's value would still work but it's cleaner for the
+    // server to fall through to its `new Date()` default.
+    const paidAtOverride: EtDateKey | undefined = paidAt !== bizToday() ? paidAt : undefined;
     if (hasFee) {
       if (!feeValid) return;
       // Only flag an override when it differs from the computed estimate.
       const feeOverride = Math.abs(feeNum - estimateFee) >= 0.005 ? feeNum : undefined;
-      onConfirm(feeOverride);
+      onConfirm(feeOverride, paidAtOverride);
     } else {
-      onConfirm(undefined);
+      onConfirm(undefined, paidAtOverride);
     }
   }
 
@@ -112,6 +129,28 @@ export default function ApprovePaymentDialog({ row, willScheduleNext, onConfirm,
                     the payment will never arrive, use Write off.
                   </Text>
                 )}
+                {/* "Payment received on" — anchors the confirmed
+                    payment's date so cash-basis reports bucket it on
+                    the day the money actually landed, not the day
+                    the operator opened the approval queue. */}
+                <Box>
+                  <Text fontSize="xs" fontWeight="medium" mb={1}>
+                    Payment received on{" "}
+                    {paidAt !== bizToday() && (
+                      <Text as="span" fontSize="2xs" color="orange.700" fontWeight="normal">
+                        — back-dated
+                      </Text>
+                    )}
+                  </Text>
+                  <DateInput
+                    value={paidAt}
+                    onChange={(v) => setPaidAt(v)}
+                    max={bizToday()}
+                  />
+                  <Text fontSize="2xs" color="fg.muted" mt={1}>
+                    Defaults to today.
+                  </Text>
+                </Box>
               </VStack>
             </Dialog.Body>
             <Dialog.Footer>

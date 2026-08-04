@@ -599,6 +599,14 @@ export async function persistCompletionSplits(
 export const payments: ServicesPayments = {
   async createPayment(currentUserId, input) {
     const { occurrenceId, amountPaid, method, note, completionSplits } = input;
+    // Optional override — when set, stamps Payment.createdAt to the
+    // caller-provided instant instead of Prisma's default `now()`.
+    // Admin reconciliation flows send this when the operator knows the
+    // actual money-received date (e.g. the deposit landed 3 days ago
+    // but they're only just now recording it in the app). Leaving it
+    // undefined preserves the pre-feature behavior for every other
+    // caller.
+    const createdAtOverride: Date | undefined = (input as any).createdAt;
     // Context controls audit metadata only — fee logic is uniform. Default
     // ON_SITE preserves behavior for callers that don't pass context.
     const context: PaymentContext = (input as any).context ?? "ON_SITE";
@@ -729,6 +737,7 @@ export const payments: ServicesPayments = {
           method,
           note: note || null,
           collectedById: currentUserId,
+          ...(createdAtOverride ? { createdAt: createdAtOverride } : {}),
           platformFeePercent: hasContractors ? rates.contractorFeePercent : null,
           platformFeeAmount: hasContractors ? recon.platformFeeAmount : null,
           businessMarginPercent: hasEmployees ? rates.employeeMarginPercent : null,
@@ -828,9 +837,20 @@ export const payments: ServicesPayments = {
   async adminMarkInvoicePaid(
     currentUserId: string,
     occurrenceId: string,
-    input: { amountPaid: number; method: string; note?: string | null; processorFeeAmount?: number },
+    input: {
+      amountPaid: number;
+      method: string;
+      note?: string | null;
+      processorFeeAmount?: number;
+      /** When set, the resulting Payment row is anchored to this
+       *  instant for both `createdAt` and `confirmedAt` — i.e. every
+       *  date-bucketed report sees it on the day the money actually
+       *  landed. See createPayment / approvePayment for the shared
+       *  override plumbing. Recommended for reconciliation flows. */
+      paidAt?: Date;
+    },
   ) {
-    const { amountPaid, method, note, processorFeeAmount } = input;
+    const { amountPaid, method, note, processorFeeAmount, paidAt } = input;
 
     // Pull active assignees so we can derive default completion splits. The
     // createPayment service requires splits to be non-empty; an occurrence
@@ -892,6 +912,7 @@ export const payments: ServicesPayments = {
       note: note ?? null,
       completionSplits,
       context: "ADMIN" as any,
+      ...(paidAt ? { createdAt: paidAt } : {}),
     } as any);
 
     // Step 2: confirm. This is where the next occurrence is generated for
@@ -899,10 +920,15 @@ export const payments: ServicesPayments = {
     // time — see comment in createPayment). The processor-fee override
     // (when set) is applied here so the actual fee from the processor
     // statement is what gets persisted, not the formula estimate.
+    // Same `paidAt` also passed through so `confirmedAt` aligns with the
+    // Payment.createdAt from step 1 — reports see one consistent date.
+    const approveOverrides: any = {};
+    if (processorFeeAmount !== undefined) approveOverrides.processorFeeAmount = processorFeeAmount;
+    if (paidAt !== undefined) approveOverrides.paidAt = paidAt;
     const approved = await this.approvePayment(
       currentUserId,
       payment.id,
-      processorFeeAmount !== undefined ? { processorFeeAmount } : (undefined as any),
+      Object.keys(approveOverrides).length > 0 ? approveOverrides : (undefined as any),
     );
 
     return approved;
@@ -1708,6 +1734,13 @@ export const payments: ServicesPayments = {
       }
       // Flip the row to confirmed. Stamp adjustment fields when the admin
       // changed the amount at approval time.
+      //
+      // `paidAt` override — when the admin has provided the actual
+      // money-received date (reconciliation workflow), we anchor BOTH
+      // confirmedAt and createdAt to it so cash-basis reports and BSD
+      // filters see the payment on the correct day. Without an override,
+      // both fields fall through to their pre-feature defaults.
+      const paidAtOverride: Date | undefined = (overrides as any)?.paidAt;
       const payment = await tx.payment.update({
         where: { id: paymentId },
         data: {
@@ -1715,8 +1748,9 @@ export const payments: ServicesPayments = {
           method: finalMethod,
           note: finalNote,
           confirmed: true,
-          confirmedAt: new Date(),
+          confirmedAt: paidAtOverride ?? new Date(),
           confirmedById: currentUserId,
+          ...(paidAtOverride ? { createdAt: paidAtOverride } : {}),
           platformFeePercent: hasContractors ? rates.contractorFeePercent : null,
           platformFeeAmount: hasContractors ? recon.platformFeeAmount : null,
           businessMarginPercent: hasEmployees ? rates.employeeMarginPercent : null,

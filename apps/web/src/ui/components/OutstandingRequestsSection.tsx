@@ -31,7 +31,8 @@ import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/Inlin
 import PaymentCommsButtons from "@/src/ui/components/PaymentCommsButtons";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
-import { fmtDateTime } from "@/src/lib/lib";
+import { bizToday, fmtDateTime, type EtDateKey } from "@/src/lib/lib";
+import DateInput from "@/src/ui/components/DateInput";
 
 type PaymentMethodConfig = {
   key: string;
@@ -109,6 +110,12 @@ export default function OutstandingRequestsSection() {
   const [markPaidAmount, setMarkPaidAmount] = useState("");
   const [markPaidMethod, setMarkPaidMethod] = useState("");
   const [markPaidNote, setMarkPaidNote] = useState("");
+  // "Payment received on" date, YYYY-MM-DD ET. Defaults to today so
+  // the common case (I'm reconciling something that just landed) is
+  // one click. Operator can back-date it when reconciling a payment
+  // that actually landed several days ago — the backend anchors this
+  // to ET-noon so cash-basis reports see the payment on the picked day.
+  const [markPaidDate, setMarkPaidDate] = useState<EtDateKey>(bizToday());
   // Processor-fee field is a string so the user can clear/edit freely. It's
   // re-seeded with the computed estimate when method or amount changes; the
   // user can then nudge it to match the actual fee on the processor statement.
@@ -178,6 +185,7 @@ export default function OutstandingRequestsSection() {
     setMarkPaidMethod(firstMethod);
     setMarkPaidNote("");
     setMarkPaidFee(estimateFee(row.amount, firstMethod).toFixed(2));
+    setMarkPaidDate(bizToday());
   }
 
   function closeMarkPaid() {
@@ -250,6 +258,10 @@ export default function OutstandingRequestsSection() {
           method: markPaidMethod,
           note: markPaidNote.trim() || null,
           ...(processorFeeAmount !== undefined ? { processorFeeAmount } : {}),
+          // Backend anchors this to ET-noon of the picked day. Only send
+          // when it differs from today so the pre-feature default (now())
+          // still fires for the common one-click flow.
+          ...(markPaidDate !== bizToday() ? { paidAt: markPaidDate } : {}),
         },
       );
       const nextLine = formatNextOccurrenceOutcome(result);
@@ -627,6 +639,24 @@ export default function OutstandingRequestsSection() {
                       </Box>
                     );
                   })()}
+                  <Box>
+                    <Text fontSize="xs" fontWeight="medium" mb={1}>
+                      Payment received on{" "}
+                      {markPaidDate !== bizToday() && (
+                        <Text as="span" fontSize="2xs" color="orange.700" fontWeight="normal">
+                          — back-dated
+                        </Text>
+                      )}
+                    </Text>
+                    <DateInput
+                      value={markPaidDate}
+                      onChange={(v) => setMarkPaidDate(v)}
+                      max={bizToday()}
+                    />
+                    <Text fontSize="2xs" color="fg.muted" mt={1}>
+                      Defaults to today. Set the actual date the money landed so cash-basis reports and 1099 totals bucket it correctly.
+                    </Text>
+                  </Box>
                   <Box>
                     <Text fontSize="xs" fontWeight="medium" mb={1}>Note (optional)</Text>
                     <Textarea
