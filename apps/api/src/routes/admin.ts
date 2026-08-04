@@ -8023,8 +8023,20 @@ Respond ONLY with valid JSON in this exact format:
     const endStr = String(req.query.end);
     const cutoff = await resolveCutoff(req);
     if (cutoff && cutoff > start) start = cutoff;
+    // Optional userIds narrowing. Tri-state:
+    //   • param absent          → no filter (all workers, backward compat)
+    //   • ?userIds=             → explicit empty subset (zero rows)
+    //   • ?userIds=a,b,c        → restrict to those IDs
+    // The frontend picker sends `userIds=<comma-list>` on every
+    // payroll request so "unchecked everyone" produces an empty CSV
+    // instead of silently reverting to all.
+    const rawUserIds = req.query.userIds;
+    const userIds: string[] | undefined =
+      typeof rawUserIds !== "string"
+        ? undefined
+        : rawUserIds.split(",").map((s) => s.trim()).filter(Boolean);
     const { payrollCsv } = await import("../services/reconcileWorkers");
-    const result = await payrollCsv(start, end);
+    const result = await payrollCsv(start, end, userIds);
     return deliverPlainCsv(reply, "payroll", { startStr, endStr }, result.csv);
   });
 

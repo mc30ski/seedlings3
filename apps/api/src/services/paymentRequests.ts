@@ -647,6 +647,13 @@ export const paymentRequests = {
         paymentRequestResendCount: true,
         paymentRequestToken: true,
         paymentRequestTokenCreatedAt: true,
+        // Reconciliation hint — the payment method key + timestamp
+        // the client last tapped on the /pay/[token] page. Feeds
+        // the "Tapped X" chip on the Awaiting-payment card so the
+        // operator knows where to look when tracking down whether
+        // the client actually paid. See JobOccurrence.paymentIntentMethod.
+        paymentIntentMethod: true,
+        paymentIntentAt: true,
         addons: { select: { price: true } },
         job: {
           select: {
@@ -727,6 +734,8 @@ export const paymentRequests = {
               email: claimer.user.email,
             }
           : null,
+        paymentIntentMethod: o.paymentIntentMethod,
+        paymentIntentAt: o.paymentIntentAt,
       };
     });
   },

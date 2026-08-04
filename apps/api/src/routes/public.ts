@@ -792,4 +792,48 @@ export default async function publicRoutes(app: FastifyInstance) {
       suggestedLastName: primary?.lastName ?? null,
     };
   });
+
+  // Fire-and-forget hint recorder — the client tapped a payment
+  // method's action button on the pay page (Venmo "Open" or Zelle
+  // "Pay with" modal). Not a payment claim, just a hint the operator
+  // uses when reconciling. Latest tap wins.
+  //
+  // Validates the method against the currently ACTIVE PAYMENT_METHODS
+  // taxonomy so a stale bookmarked link can't stuff a bogus value.
+  //
+  // Called via navigator.sendBeacon from the pay page immediately
+  // before the deep-link redirect / manual-pay modal opens, so the
+  // response body is intentionally minimal.
+  app.post("/public/pay/:token/record-intent", async (req: any, reply: any) => {
+    const token = String(req.params.token || "");
+    const body = req.body || {};
+    const method = String(body.method || "").toUpperCase();
+    if (!method) return reply.code(400).send({ error: "method_required" });
+
+    const resolved = await services.paymentRequests.resolveToken(token);
+    if (!resolved) return reply.code(404).send({ error: "not_found" });
+
+    // Only record for methods currently in the client-facing taxonomy.
+    // A method that was removed after the pay link was sent would be
+    // rejected here — which is fine; the hint has no place stored if
+    // the operator can't act on it anyway.
+    const { loadPaymentMethods, listActivePaymentMethods } = await import(
+      "../services/paymentMethods"
+    );
+    const methods = await loadPaymentMethods(prisma);
+    const active = listActivePaymentMethods(methods, "CLIENT_REQUEST");
+    if (!active.some((m) => m.key === method)) {
+      return reply.code(400).send({ error: "unknown_method" });
+    }
+
+    await prisma.jobOccurrence.update({
+      where: { id: resolved.occurrenceId },
+      data: {
+        paymentIntentMethod: method,
+        paymentIntentAt: new Date(),
+      },
+    });
+
+    return { ok: true };
+  });
 }

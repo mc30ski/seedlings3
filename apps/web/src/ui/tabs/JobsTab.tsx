@@ -5172,6 +5172,31 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           {occ.status === "PENDING_PAYMENT" && !occ.payment && !!occ.paymentRequestSentAt && (
                             <StatusBadge status="Awaiting client payment" palette="purple" variant="solid" />
                           )}
+                          {/* Payment intent hint — the method the client
+                              last tapped on the pay page. Soft signal to
+                              help the operator locate the actual payment
+                              (bank / Venmo / Zelle app). If a payment has
+                              been reported and its method differs, a
+                              small ⚠ makes the mismatch discoverable. */}
+                          {occ.status === "PENDING_PAYMENT" && !!occ.paymentIntentMethod && !!occ.paymentIntentAt && (() => {
+                            const intentLabel = methodLabel(occ.paymentIntentMethod);
+                            const reportedMethod = occ.payment?.method ?? null;
+                            const mismatch = !!reportedMethod && reportedMethod !== occ.paymentIntentMethod;
+                            return (
+                              <Badge
+                                colorPalette={mismatch ? "yellow" : "gray"}
+                                variant="subtle"
+                                size="sm"
+                                title={
+                                  mismatch
+                                    ? `Client tapped ${intentLabel} on ${fmtDateTime(occ.paymentIntentAt)}, but the payment was reported as ${methodLabel(reportedMethod!)} — worth verifying.`
+                                    : `Client tapped ${intentLabel} on ${fmtDateTime(occ.paymentIntentAt)}. Not a payment confirmation — just a hint for reconciliation.`
+                                }
+                              >
+                                {mismatch ? "⚠ " : ""}Tapped {intentLabel}
+                              </Badge>
+                            );
+                          })()}
                           {/* Payroll-hours review chip — completed STANDARD/ONE_OFF
                               jobs whose hours haven't been admin-reviewed yet.
                               Sticky across status changes (including CLOSED) so
@@ -5541,6 +5566,31 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           {occ.status === "PENDING_PAYMENT" && !occ.payment && !!occ.paymentRequestSentAt && (
                             <StatusBadge status="Awaiting client payment" palette="purple" variant="solid" />
                           )}
+                          {/* Payment intent hint — the method the client
+                              last tapped on the pay page. Soft signal to
+                              help the operator locate the actual payment
+                              (bank / Venmo / Zelle app). If a payment has
+                              been reported and its method differs, a
+                              small ⚠ makes the mismatch discoverable. */}
+                          {occ.status === "PENDING_PAYMENT" && !!occ.paymentIntentMethod && !!occ.paymentIntentAt && (() => {
+                            const intentLabel = methodLabel(occ.paymentIntentMethod);
+                            const reportedMethod = occ.payment?.method ?? null;
+                            const mismatch = !!reportedMethod && reportedMethod !== occ.paymentIntentMethod;
+                            return (
+                              <Badge
+                                colorPalette={mismatch ? "yellow" : "gray"}
+                                variant="subtle"
+                                size="sm"
+                                title={
+                                  mismatch
+                                    ? `Client tapped ${intentLabel} on ${fmtDateTime(occ.paymentIntentAt)}, but the payment was reported as ${methodLabel(reportedMethod!)} — worth verifying.`
+                                    : `Client tapped ${intentLabel} on ${fmtDateTime(occ.paymentIntentAt)}. Not a payment confirmation — just a hint for reconciliation.`
+                                }
+                              >
+                                {mismatch ? "⚠ " : ""}Tapped {intentLabel}
+                              </Badge>
+                            );
+                          })()}
                           {/* Payroll-hours review chip — completed STANDARD/ONE_OFF
                               jobs whose hours haven't been admin-reviewed yet.
                               Sticky across status changes (including CLOSED) so

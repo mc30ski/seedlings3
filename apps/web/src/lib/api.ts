@@ -279,6 +279,35 @@ export const apiDelete = <T>(p: string, b?: unknown) => request<T>("DELETE", p, 
  * Fetches the URL with the same auth/credentials as request(), then triggers
  * a browser download via an anchor click. Throws on HTTP error.
  */
+/** GET a text response (e.g. text/csv) without triggering a file
+ *  download. Same auth + preview + impersonation headers as
+ *  apiDownload, but returns the raw body as a string so callers can
+ *  render an inline preview. */
+export async function apiGetText(path: string): Promise<string> {
+  const headers = new Headers();
+  await authHeaders(headers);
+  attachImpersonateHeader(headers);
+  attachRevealPreCutoffHeader(headers);
+  const url = makeAbsolute(`${API_BASE}${path}`);
+  const cross = isCrossOrigin(url);
+  if (IS_BROWSER && IS_PREVIEW && BYPASS) {
+    headers.set("x-vercel-protection-bypass", BYPASS);
+    headers.set("x-vercel-set-bypass-cookie", cross ? "samesitenone" : "true");
+  }
+  const res = await fetch(url, {
+    method: "GET",
+    headers,
+    credentials: cross ? "include" : "same-origin",
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`;
+    try { message = (await res.json())?.message || message; } catch {}
+    throw new Error(message);
+  }
+  return await res.text();
+}
+
 export async function apiDownload(path: string, filename: string): Promise<void> {
   const headers = new Headers();
   await authHeaders(headers);

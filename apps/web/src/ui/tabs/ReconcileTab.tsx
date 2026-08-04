@@ -1,10 +1,10 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { Badge, Box, Button, Card, HStack, Select, Spinner, Table, Text, VStack, createListCollection } from "@chakra-ui/react";
+import { Badge, Box, Button, Card, Checkbox, HStack, Select, Spinner, Table, Text, VStack, createListCollection } from "@chakra-ui/react";
 import { FiDownload, FiInfo } from "react-icons/fi";
 import { ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
-import { apiGet, apiDownload } from "@/src/lib/api";
+import { apiGet, apiDownload, apiGetText } from "@/src/lib/api";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import DateInput from "@/src/ui/components/DateInput";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
@@ -247,6 +247,192 @@ type PayrollRow = {
   equivalentHourlyRate: number | null;
 };
 
+/** Client-side mirror of services/reconcileWorkers.ts payrollTypeLabel.
+ *  Keep in sync so the preview matches the downloaded CSV verbatim. */
+function payrollTypeLabelClient(t: string | null | undefined, isOwner: boolean): string {
+  if (isOwner) return "Owner";
+  switch (t) {
+    case "EMPLOYEE": return "Employee";
+    case "TRAINEE": return "Trainee";
+    case "CONTRACTOR": return "Contractor";
+    default: return "Unclassified";
+  }
+}
+
+/** Payroll preview — same column order + formatting as the CSV, plus
+ *  a leading checkbox column that controls the export subset. Totals
+ *  row at the bottom reflects only the checked rows so the operator
+ *  sees the running total for what they're about to download. */
+function PayrollPreviewTable(props: {
+  rows: {
+    userId: string;
+    displayName: string | null;
+    email: string | null;
+    workerType: string | null;
+    isOwner: boolean;
+    hours: number;
+    hourlyWage: number;
+    regularWages: number;
+    additionalEarnings: number;
+    totalGross: number;
+    equivalentHourlyRate: number | null;
+  }[];
+  selectedIds: string[];
+  onToggle: (userId: string) => void;
+  onToggleAll: (checked: boolean) => void;
+}) {
+  const { rows, selectedIds, onToggle, onToggleAll } = props;
+  const selectedSet = new Set(selectedIds);
+  const allChecked = rows.length > 0 && selectedIds.length === rows.length;
+  const noneChecked = selectedIds.length === 0;
+  const totalHours = rows.reduce((s, r) => s + (selectedSet.has(r.userId) ? r.hours : 0), 0);
+  const totalGross = rows.reduce((s, r) => s + (selectedSet.has(r.userId) ? r.totalGross : 0), 0);
+  return (
+    <Box
+      borderWidth="1px"
+      borderColor="gray.200"
+      borderRadius="md"
+      overflow="hidden"
+    >
+      <HStack
+        px={3}
+        py={2}
+        bg="gray.100"
+        borderBottomWidth="1px"
+        borderColor="gray.200"
+        justify="space-between"
+      >
+        <Text fontSize="xs" fontWeight="semibold" color="fg.muted">
+          Preview
+        </Text>
+        <Text fontSize="xs" color={noneChecked ? "orange.700" : "fg.muted"}>
+          {noneChecked
+            ? "No workers selected — export will be empty"
+            : allChecked
+              ? `All ${rows.length} workers`
+              : `${selectedIds.length} of ${rows.length} selected`}
+        </Text>
+      </HStack>
+      <Box maxH="360px" overflow="auto">
+        {rows.length === 0 ? (
+          <Box p={3}>
+            <Text fontSize="xs" color="fg.muted" fontStyle="italic">
+              No workers in the selected range.
+            </Text>
+          </Box>
+        ) : (
+          <Table.Root size="sm" variant="line" striped>
+            <Table.Header position="sticky" top={0} bg="white" zIndex={1}>
+              <Table.Row>
+                <Table.ColumnHeader w="1" px={2}>
+                  <Checkbox.Root
+                    checked={allChecked ? true : noneChecked ? false : "indeterminate"}
+                    onCheckedChange={(e) => onToggleAll(!!e.checked)}
+                    size="sm"
+                  >
+                    <Checkbox.HiddenInput />
+                    <Checkbox.Control />
+                  </Checkbox.Root>
+                </Table.ColumnHeader>
+                <Table.ColumnHeader fontSize="2xs" whiteSpace="nowrap">Worker</Table.ColumnHeader>
+                <Table.ColumnHeader fontSize="2xs" whiteSpace="nowrap">Type</Table.ColumnHeader>
+                <Table.ColumnHeader fontSize="2xs" whiteSpace="nowrap">Email</Table.ColumnHeader>
+                <Table.ColumnHeader fontSize="2xs" whiteSpace="nowrap" textAlign="right">Hours</Table.ColumnHeader>
+                <Table.ColumnHeader fontSize="2xs" whiteSpace="nowrap" textAlign="right">Hourly Wage</Table.ColumnHeader>
+                <Table.ColumnHeader fontSize="2xs" whiteSpace="nowrap" textAlign="right">Regular Wages</Table.ColumnHeader>
+                <Table.ColumnHeader fontSize="2xs" whiteSpace="nowrap" textAlign="right">Additional Earnings</Table.ColumnHeader>
+                <Table.ColumnHeader fontSize="2xs" whiteSpace="nowrap" textAlign="right">Total Gross</Table.ColumnHeader>
+                <Table.ColumnHeader fontSize="2xs" whiteSpace="nowrap" textAlign="right">$/hr</Table.ColumnHeader>
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
+              {rows.map((r) => {
+                const checked = selectedSet.has(r.userId);
+                return (
+                  <Table.Row key={r.userId} opacity={checked ? 1 : 0.4}>
+                    <Table.Cell px={2}>
+                      <Checkbox.Root
+                        checked={checked}
+                        onCheckedChange={() => onToggle(r.userId)}
+                        size="sm"
+                      >
+                        <Checkbox.HiddenInput />
+                        <Checkbox.Control />
+                      </Checkbox.Root>
+                    </Table.Cell>
+                    <Table.Cell fontSize="xs" whiteSpace="nowrap">
+                      {r.displayName ?? "(unnamed)"}
+                    </Table.Cell>
+                    <Table.Cell fontSize="xs" whiteSpace="nowrap">
+                      {payrollTypeLabelClient(r.workerType, r.isOwner)}
+                    </Table.Cell>
+                    <Table.Cell fontSize="xs" whiteSpace="nowrap">{r.email ?? ""}</Table.Cell>
+                    <Table.Cell fontSize="xs" whiteSpace="nowrap" textAlign="right">{r.hours.toFixed(2)}</Table.Cell>
+                    <Table.Cell fontSize="xs" whiteSpace="nowrap" textAlign="right">{r.hourlyWage.toFixed(2)}</Table.Cell>
+                    <Table.Cell fontSize="xs" whiteSpace="nowrap" textAlign="right">{r.regularWages.toFixed(2)}</Table.Cell>
+                    <Table.Cell fontSize="xs" whiteSpace="nowrap" textAlign="right">{r.additionalEarnings.toFixed(2)}</Table.Cell>
+                    <Table.Cell fontSize="xs" whiteSpace="nowrap" textAlign="right">{r.totalGross.toFixed(2)}</Table.Cell>
+                    <Table.Cell fontSize="xs" whiteSpace="nowrap" textAlign="right">
+                      {r.equivalentHourlyRate == null ? "" : r.equivalentHourlyRate.toFixed(2)}
+                    </Table.Cell>
+                  </Table.Row>
+                );
+              })}
+              <Table.Row bg="gray.50" fontWeight="semibold">
+                <Table.Cell px={2}></Table.Cell>
+                <Table.Cell fontSize="xs">TOTALS</Table.Cell>
+                <Table.Cell fontSize="xs"></Table.Cell>
+                <Table.Cell fontSize="xs"></Table.Cell>
+                <Table.Cell fontSize="xs" whiteSpace="nowrap" textAlign="right">{totalHours.toFixed(2)}</Table.Cell>
+                <Table.Cell fontSize="xs"></Table.Cell>
+                <Table.Cell fontSize="xs"></Table.Cell>
+                <Table.Cell fontSize="xs"></Table.Cell>
+                <Table.Cell fontSize="xs" whiteSpace="nowrap" textAlign="right">{totalGross.toFixed(2)}</Table.Cell>
+                <Table.Cell fontSize="xs"></Table.Cell>
+              </Table.Row>
+            </Table.Body>
+          </Table.Root>
+        )}
+      </Box>
+    </Box>
+  );
+}
+
+/** Minimal RFC-4180-ish CSV parser — handles quoted cells (which the
+ *  server uses for values containing commas, quotes, or newlines).
+ *  Doubled quotes inside a quoted cell become a literal quote. Returns
+ *  a rows-of-cells matrix; empty trailing rows are dropped so the
+ *  preview count matches what the operator would count by eye. */
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        // Escaped quote?
+        if (text[i + 1] === '"') { cell += '"'; i++; }
+        else inQuotes = false;
+      } else {
+        cell += ch;
+      }
+    } else {
+      if (ch === '"') inQuotes = true;
+      else if (ch === ",") { row.push(cell); cell = ""; }
+      else if (ch === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; }
+      else if (ch === "\r") { /* skip — handled with the \n */ }
+      else cell += ch;
+    }
+  }
+  // Flush final cell / row if the input didn't end with a newline.
+  if (cell.length > 0 || row.length > 0) { row.push(cell); rows.push(row); }
+  // Drop trailing empty rows (blank lines at EOF).
+  while (rows.length > 0 && rows[rows.length - 1].every((c) => c === "")) rows.pop();
+  return rows;
+}
+
 function fmtUSD(n: number): string {
   // Accounting / P&L convention: negatives render as `($30.45)`
   // rather than `−$30.45`. Easier to spot at a glance in a column of
@@ -403,9 +589,42 @@ export default function ReconcileTab() {
   const [downloadAllProgress, setDownloadAllProgress] = useState<{ done: number; total: number } | null>(null);
   // Active selection in the download-type dropdown. Drives both the
   // Download button and the informational description below it.
-  // Default to "payroll" since it's the freshest export — operator
-  // can switch to any other type without leaving the section.
-  const [downloadKind, setDownloadKind] = useState<"capital" | "income" | "expenses" | "workdays" | "payroll">("payroll");
+  // Starts unset — operator opts into a preview + download by
+  // picking a type. Keeps the section quiet on tab-open (no auto
+  // network fetch) and matches "when nothing is selected, don't
+  // show a preview".
+  const [downloadKind, setDownloadKind] = useState<
+    "capital" | "income" | "expenses" | "workdays" | "payroll" | null
+  >(null);
+  // Preview state — rows parsed from the CSV. First row = header.
+  // Bounded to PREVIEW_MAX_ROWS entries to keep the rendered table
+  // cheap regardless of underlying file size.
+  const [previewRows, setPreviewRows] = useState<string[][] | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewTruncated, setPreviewTruncated] = useState(false);
+  const [previewTotalRows, setPreviewTotalRows] = useState(0);
+  // Payroll-only worker narrowing. Explicit selection semantic:
+  //   • `null`   — picker hasn't been initialized yet (no period
+  //     data OR non-payroll type). Frontend omits the query param
+  //     → backend returns all workers (backward compat).
+  //   • `[]`     — operator unchecked everyone. Frontend sends
+  //     `?userIds=` → backend returns 0 rows.
+  //   • `[...]`  — selected subset.
+  // Initialized to ALL worker IDs whenever payroll is picked (so
+  // the default UI state is "everyone checked"). Reset when the
+  // type changes away or the date range shifts (workers available
+  // may differ for a new period).
+  const [payrollUserIds, setPayrollUserIds] = useState<string[] | null>(null);
+  useEffect(() => {
+    setPayrollUserIds(null);
+  }, [downloadKind, start, end]);
+  useEffect(() => {
+    if (downloadKind !== "payroll") return;
+    if (!period) return;
+    if (payrollUserIds !== null) return;
+    setPayrollUserIds(period.workers.map((w) => w.userId));
+  }, [downloadKind, period, payrollUserIds]);
   // Active preset key + dropdown visibility for the green-chip preset
   // picker (matching PaymentsTab + Ledger). `null` means the operator
   // typed the dates by hand — the chip reads "Custom dates".
@@ -499,6 +718,60 @@ export default function ReconcileTab() {
     setDetails({});
   }, [pnlMode]);
 
+  // Inline CSV preview — refetches when the export type or the date
+  // range changes so the operator always sees the current window's
+  // data. Stale-guard via a cancelled flag prevents a slow response
+  // for a previous type/range from overwriting a newer one. Truncates
+  // to a bounded number of rows so a 10K-row workday CSV doesn't
+  // choke the DOM.
+  //
+  // Skips entirely when no type is selected (`downloadKind` null) —
+  // the section shows a "pick a type" hint instead of an empty table.
+  const PREVIEW_MAX_ROWS = 20;
+  useEffect(() => {
+    // Payroll uses its own inline table (built from period.payroll +
+    // the checkbox selection) so we skip the CSV fetch entirely for
+    // that kind — the CSV would just be re-rendered from data the
+    // client already has.
+    if (!downloadKind || downloadKind === "payroll" || !start || !end) {
+      setPreviewRows(null);
+      setPreviewError(null);
+      setPreviewTruncated(false);
+      setPreviewTotalRows(0);
+      return;
+    }
+    let cancelled = false;
+    setPreviewLoading(true);
+    setPreviewError(null);
+    (async () => {
+      try {
+        // Payroll is short-circuited above (uses its own inline table
+        // fed from period.payroll), so downloadKind here is one of
+        // the CSV-preview kinds — no userIds param applies to any
+        // of them.
+        const text = await apiGetText(
+          `/api/admin/exports/${downloadKind}.csv?start=${start}&end=${end}`,
+        );
+        if (cancelled) return;
+        const parsed = parseCsv(text);
+        // First row is the header; data rows are the rest. Only the
+        // data rows count toward the "N rows" summary + truncation.
+        const header = parsed[0] ?? [];
+        const dataRows = parsed.slice(1);
+        setPreviewTotalRows(dataRows.length);
+        setPreviewTruncated(dataRows.length > PREVIEW_MAX_ROWS);
+        setPreviewRows([header, ...dataRows.slice(0, PREVIEW_MAX_ROWS)]);
+      } catch (err: any) {
+        if (cancelled) return;
+        setPreviewError(err?.message ?? "Failed to load preview.");
+        setPreviewRows(null);
+      } finally {
+        if (!cancelled) setPreviewLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [downloadKind, start, end, payrollUserIds]);
+
   async function toggleAccount(qbAccount: string) {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -545,8 +818,18 @@ export default function ReconcileTab() {
     if (downloading) return;
     setDownloading(kind);
     try {
+      // Only the payroll export honors per-worker narrowing today —
+      // the other CSVs don't have a workers dimension. Always send
+      // `userIds` when the picker is initialized (even if empty) so
+      // "unchecked everyone" produces an empty CSV instead of
+      // silently reverting to the all-workers default. `null` means
+      // the picker hasn't loaded yet → omit the param entirely.
+      const qs =
+        kind === "payroll" && payrollUserIds !== null
+          ? `&userIds=${encodeURIComponent(payrollUserIds.join(","))}`
+          : "";
       await apiDownload(
-        `/api/admin/exports/${kind}.csv?start=${start}&end=${end}`,
+        `/api/admin/exports/${kind}.csv?start=${start}&end=${end}${qs}`,
         `${kind}-${start}_${end}.csv`,
       );
     } catch (err) {
@@ -626,7 +909,7 @@ export default function ReconcileTab() {
       }),
     [],
   );
-  const downloadDescriptions: Record<typeof downloadKind, { title: string; body: string }> = {
+  const downloadDescriptions: Record<Exclude<typeof downloadKind, null>, { title: string; body: string }> = {
     capital: {
       title: "Capital",
       body:
@@ -653,7 +936,8 @@ export default function ReconcileTab() {
         "One row per worker shaped for Gusto: hours, hourly wage, regular wages, additional earnings, total gross, and equivalent hourly rate. Type the hours and additional earnings into Gusto for each worker.",
     },
   };
-  const selectedDescription = downloadDescriptions[downloadKind];
+  // Null-safe — nothing selected means no description panel renders.
+  const selectedDescription = downloadKind ? downloadDescriptions[downloadKind] : null;
 
   const presets = useMemo(
     () => [
@@ -1274,18 +1558,18 @@ export default function ReconcileTab() {
             <HStack gap={2} wrap="wrap" align="center">
               <Select.Root
                 collection={downloadKindCollection}
-                value={[downloadKind]}
+                value={downloadKind ? [downloadKind] : []}
                 onValueChange={(e) => {
-                  const v = e.value[0] as typeof downloadKind | undefined;
-                  if (v) setDownloadKind(v);
+                  const v = e.value[0] as Exclude<typeof downloadKind, null> | undefined;
+                  setDownloadKind(v ?? null);
                 }}
                 size="sm"
                 positioning={{ strategy: "fixed", hideWhenDetached: true }}
                 css={{ width: "auto", flex: "0 0 auto" }}
               >
                 <Select.Control>
-                  <Select.Trigger w="auto" minW="160px" px="2" title="Select download type">
-                    <Select.ValueText />
+                  <Select.Trigger w="auto" minW="180px" px="2" title="Select download type">
+                    <Select.ValueText placeholder="Select a type…" />
                   </Select.Trigger>
                 </Select.Control>
                 <Select.Positioner>
@@ -1301,10 +1585,10 @@ export default function ReconcileTab() {
               <Button
                 size="sm"
                 colorPalette="blue"
-                onClick={() => void downloadCsv(downloadKind)}
-                disabled={downloading !== null || loading}
+                onClick={() => downloadKind && void downloadCsv(downloadKind)}
+                disabled={!downloadKind || downloading !== null || loading}
               >
-                {downloading === downloadKind ? <Spinner size="xs" /> : <FiDownload />}
+                {downloadKind && downloading === downloadKind ? <Spinner size="xs" /> : <FiDownload />}
                 <Text ml={2}>Download</Text>
               </Button>
               {/* "Download All" — sequentially fetches every CSV type
@@ -1332,20 +1616,110 @@ export default function ReconcileTab() {
                 operator sees only the relevant explanation. Styled as
                 a light gray info panel to read as informational, not
                 actionable. */}
-            <Box
-              p={3}
-              bg="gray.50"
-              borderLeftWidth="3px"
-              borderColor="gray.300"
-              borderRadius="md"
-            >
-              <Text fontSize="sm" fontWeight="semibold" mb={1}>
-                {selectedDescription.title}
-              </Text>
-              <Text fontSize="xs" color="fg.muted">
-                {selectedDescription.body}
-              </Text>
-            </Box>
+            {selectedDescription && (
+              <Box
+                p={3}
+                bg="gray.50"
+                borderLeftWidth="3px"
+                borderColor="gray.300"
+                borderRadius="md"
+              >
+                <Text fontSize="sm" fontWeight="semibold" mb={1}>
+                  {selectedDescription.title}
+                </Text>
+                <Text fontSize="xs" color="fg.muted">
+                  {selectedDescription.body}
+                </Text>
+              </Box>
+            )}
+            {/* Preview — only renders once the operator has picked a
+                type. Two variants:
+                  • payroll → inline table built from period.payroll
+                    with a checkbox as the first column (default all
+                    checked). Totals reflect the checked subset. Same
+                    checkbox state feeds the download.
+                  • everything else → CSV fetch + parsed generic table. */}
+            {downloadKind === "payroll" && period && payrollUserIds !== null ? (
+              <PayrollPreviewTable
+                rows={period.payroll}
+                selectedIds={payrollUserIds}
+                onToggle={(userId) => {
+                  setPayrollUserIds((prev) => {
+                    if (prev === null) return prev;
+                    return prev.includes(userId)
+                      ? prev.filter((id) => id !== userId)
+                      : [...prev, userId];
+                  });
+                }}
+                onToggleAll={(checked) => {
+                  setPayrollUserIds(checked ? period.payroll.map((r) => r.userId) : []);
+                }}
+              />
+            ) : downloadKind && downloadKind !== "payroll" ? (
+              <Box
+                borderWidth="1px"
+                borderColor="gray.200"
+                borderRadius="md"
+                overflow="hidden"
+              >
+                <HStack
+                  px={3}
+                  py={2}
+                  bg="gray.100"
+                  borderBottomWidth="1px"
+                  borderColor="gray.200"
+                  justify="space-between"
+                >
+                  <Text fontSize="xs" fontWeight="semibold" color="fg.muted">
+                    Preview
+                  </Text>
+                  {previewLoading && <Spinner size="xs" />}
+                  {!previewLoading && !previewError && previewRows && previewRows.length > 1 && (
+                    <Text fontSize="xs" color="fg.muted">
+                      {previewTruncated
+                        ? `Showing first ${PREVIEW_MAX_ROWS} of ${previewTotalRows} rows`
+                        : `${previewTotalRows} row${previewTotalRows === 1 ? "" : "s"}`}
+                    </Text>
+                  )}
+                </HStack>
+                <Box maxH="360px" overflow="auto">
+                  {previewError ? (
+                    <Box p={3}>
+                      <Text fontSize="xs" color="red.600">{previewError}</Text>
+                    </Box>
+                  ) : !previewRows || previewRows.length <= 1 ? (
+                    <Box p={3}>
+                      <Text fontSize="xs" color="fg.muted" fontStyle="italic">
+                        {previewLoading ? "Loading…" : "No data for the selected range."}
+                      </Text>
+                    </Box>
+                  ) : (
+                    <Table.Root size="sm" variant="line" striped>
+                      <Table.Header position="sticky" top={0} bg="white" zIndex={1}>
+                        <Table.Row>
+                          {previewRows[0].map((h, i) => (
+                            <Table.ColumnHeader key={i} fontSize="2xs" whiteSpace="nowrap">
+                              {h}
+                            </Table.ColumnHeader>
+                          ))}
+                        </Table.Row>
+                      </Table.Header>
+                      <Table.Body>
+                        {previewRows.slice(1).map((r, ri) => (
+                          <Table.Row key={ri}>
+                            {r.map((cell, ci) => (
+                              <Table.Cell key={ci} fontSize="xs" whiteSpace="nowrap">
+                                {cell}
+                              </Table.Cell>
+                            ))}
+                          </Table.Row>
+                        ))}
+                      </Table.Body>
+                    </Table.Root>
+                  )}
+                </Box>
+              </Box>
+            ) : null}
           </VStack>
         </Card.Body>
         )}
