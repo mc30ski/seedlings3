@@ -1161,6 +1161,13 @@ export const payments: ServicesPayments = {
             // payout on pending approvals (employees are made whole
             // regardless; only contractors are contingent on collection).
             promisedPayouts: true,
+            // Reconciliation hint — the method the client tapped on
+            // the pay page. Feeds the "Tapped X" chip on the pending-
+            // approval card so the admin can spot mismatches (client
+            // tapped Zelle but the recorded payment says Venmo, or
+            // similar). Never a payment claim on its own.
+            paymentIntentMethod: true,
+            paymentIntentAt: true,
             job: {
               select: {
                 id: true,

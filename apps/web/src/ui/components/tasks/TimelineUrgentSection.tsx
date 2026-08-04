@@ -11,7 +11,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Badge, Box, Button, HStack, Spinner, Text, VStack } from "@chakra-ui/react";
 import { CheckCircle2 } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
-import { fmtDateOpts } from "@/src/lib/lib";
+import { fmtDate, fmtDateOpts } from "@/src/lib/lib";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -87,9 +87,19 @@ export default function TimelineUrgentSection({ isSuper }: Props) {
     if (row.kind === "document_expiration" || !row.id) return;
     setBusyId(row.id);
     try {
-      await apiPost(`/api/super/timeline/${row.id}/complete`, {});
+      // Mirror the Timeline tab's toast — surface the rolled-forward
+      // next-entry date on recurring rows so the operator sees when
+      // it'll reappear without having to open the row.
+      const updated = await apiPost<{ nextDueDate: string | null }>(
+        `/api/super/timeline/${row.id}/complete`,
+        {},
+      );
       window.dispatchEvent(new Event("seedlings3:timeline-changed"));
-      publishInlineMessage({ type: "SUCCESS", text: "Marked complete." });
+      const next = updated?.nextDueDate ?? null;
+      const text = next
+        ? `Marked "${row.title}" complete. Next entry: ${fmtDate(next)}.`
+        : `Marked "${row.title}" complete.`;
+      publishInlineMessage({ type: "SUCCESS", text });
       await load();
     } catch (err) {
       publishInlineMessage({

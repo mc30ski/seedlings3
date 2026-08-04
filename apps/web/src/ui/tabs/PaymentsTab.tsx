@@ -23,7 +23,7 @@ import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/li
 import DateInput from "@/src/ui/components/DateInput";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import { apiGet, apiPatch, apiDelete, apiPost } from "@/src/lib/api";
-import { determineRoles, prettyStatus, clientLabel, fmtDate, bizDateKey, bizToday, bizAddDays, bizAddYears } from "@/src/lib/lib";
+import { determineRoles, prettyStatus, clientLabel, fmtDate, fmtDateTime, bizDateKey, bizToday, bizAddDays, bizAddYears } from "@/src/lib/lib";
 import { composePaymentMessage } from "@/src/lib/paymentMessages";
 import { resolveBillingMode, shortBillingChip } from "@/src/lib/equipmentBilling";
 import { useEquipmentBillingEnabled } from "@/src/lib/useEquipmentBillingEnabled";
@@ -2584,6 +2584,33 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                                 Pending approval
                               </Badge>
                             )}
+                            {/* Reconciliation hint — the method the
+                                client tapped on the pay page. Soft
+                                signal to help track down the actual
+                                payment (Venmo/Zelle app, bank feed).
+                                Yellow ⚠ variant when the recorded
+                                method differs from the tap — worth
+                                a second look before approving. */}
+                            {(p.occurrence as any)?.paymentIntentMethod && (p.occurrence as any)?.paymentIntentAt && (() => {
+                              const intentKey = (p.occurrence as any).paymentIntentMethod as string;
+                              const intentAt = (p.occurrence as any).paymentIntentAt as string;
+                              const intentLabel = methodLabel(intentKey);
+                              const mismatch = p.method !== intentKey;
+                              return (
+                                <Badge
+                                  size="sm"
+                                  colorPalette={mismatch ? "yellow" : "gray"}
+                                  variant="subtle"
+                                  title={
+                                    mismatch
+                                      ? `Client tapped ${intentLabel} on ${fmtDateTime(intentAt)}, but the payment was reported as ${methodLabel(p.method)} — worth verifying before approving.`
+                                      : `Client tapped ${intentLabel} on ${fmtDateTime(intentAt)}. Not a payment confirmation — just a hint for reconciliation.`
+                                  }
+                                >
+                                  {mismatch ? "⚠ " : ""}Tapped {intentLabel}
+                                </Badge>
+                              );
+                            })()}
                             {writtenOff && (
                               <Badge size="sm" colorPalette="red" variant="solid">Written off</Badge>
                             )}

@@ -991,6 +991,25 @@ model JobOccurrence {
   // recordClaimerHandoff whenever paymentRequestFirstSentAt is already
   // set. Reset to 0 by cancelPaymentRequest.
   paymentRequestResendCount Int      @default(0)
+
+  // Reconciliation hint — the last method the client TAPPED on the
+  // public /pay/[token] page (Venmo "Open" button or Zelle "Pay
+  // with" modal). Recorded via /public/pay/:token/record-intent
+  // fire-and-forget on button click.
+  //
+  // NOT a payment claim — the client may have tapped and never
+  // actually paid, or tapped one method and paid via another. Used
+  // as a soft hint on the operator's "Awaiting payment" / "Approve
+  // payment" cards so they know where to look when reconciling
+  // client payments back to the app. Latest tap wins (bumped on
+  // every button press).
+  //
+  // Method key is the PAYMENT_METHODS taxonomy key (e.g. "VENMO",
+  // "ZELLE"). Nullable — null means the client never tapped a
+  // button (or they used a method with no button, e.g. Cash/Check).
+  paymentIntentMethod String?
+  paymentIntentAt     DateTime?
+
   // Per-worker percentage allocation locked in by the claimer at completion
   // time. Stored as JSON: [{ userId: "...", percent: 50 }, ...]. Drives the
   // PaymentSplit math; survives overpayments (extras distribute pro-rata).

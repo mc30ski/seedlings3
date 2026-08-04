@@ -30,6 +30,8 @@ import { formatNextOccurrenceOutcome, type PaymentActionResult } from "@/src/lib
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import PaymentCommsButtons from "@/src/ui/components/PaymentCommsButtons";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
+import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
+import { fmtDateTime } from "@/src/lib/lib";
 
 type PaymentMethodConfig = {
   key: string;
@@ -68,6 +70,11 @@ type OutstandingRow = {
    *  to know the base or the token. Null only in edge cases (no token). */
   invoiceUrl: string | null;
   claimer: { id: string; displayName: string | null; email: string | null } | null;
+  /** Reconciliation hint — the payment method the client last tapped
+   *  on the /pay/[token] page (Venmo "Open" or Zelle "Pay with"
+   *  modal). Not a payment claim. Feeds the "Tapped X" chip. */
+  paymentIntentMethod: string | null;
+  paymentIntentAt: string | null;
 };
 
 function agoLabel(days: number): string {
@@ -94,6 +101,7 @@ function lastResendFragment(days: number): string {
 }
 
 export default function OutstandingRequestsSection() {
+  const { labelFor: methodLabel } = usePaymentMethodLabels();
   const [rows, setRows] = useState<OutstandingRow[]>([]);
   const [loading, setLoading] = useState(false);
   // Mark Paid dialog state — null when closed, holds the row when open.
@@ -420,6 +428,23 @@ export default function OutstandingRequestsSection() {
                     )}
                     {r.linkExpired && (
                       <Badge size="sm" colorPalette="red">Pay link expired</Badge>
+                    )}
+                    {/* Reconciliation hint — the payment method the
+                        client last TAPPED on the /pay/[token] page.
+                        Not a payment claim; helps the operator know
+                        where to look (Venmo/Zelle app, bank feed)
+                        when tracking down whether the client actually
+                        paid. Absent when the client never tapped a
+                        method (or used one with no button, e.g. Cash). */}
+                    {r.paymentIntentMethod && r.paymentIntentAt && (
+                      <Badge
+                        size="sm"
+                        colorPalette="gray"
+                        variant="subtle"
+                        title={`Client tapped ${methodLabel(r.paymentIntentMethod)} on ${fmtDateTime(r.paymentIntentAt)}. Not a payment confirmation — just a hint for reconciliation.`}
+                      >
+                        Tapped {methodLabel(r.paymentIntentMethod)}
+                      </Badge>
                     )}
                     <Text fontSize="xs" color="fg.muted">${r.amount.toFixed(2)}</Text>
                   </HStack>

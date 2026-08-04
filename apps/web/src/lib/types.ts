@@ -734,6 +734,13 @@ export type WorkerOccurrence = {
    *  the "either-or" workflow on the job card — once set, Accept
    *  Payment is hidden and the worker either re-sends or cancels. */
   paymentRequestSentAt?: string | null;
+  /** Reconciliation hint — the payment method key the client last
+   *  TAPPED on the public /pay/[token] page (Venmo "Open" button or
+   *  Zelle "Pay with" modal). NOT a payment claim; operator uses
+   *  this to know where to look when reconciling actual payments.
+   *  See JobOccurrence.paymentIntentMethod docstring. */
+  paymentIntentMethod?: string | null;
+  paymentIntentAt?: string | null;
   payment?: PaymentInfo | null;
   expenses?: ExpenseItem[];
   _count?: { photos: number; comments?: number };

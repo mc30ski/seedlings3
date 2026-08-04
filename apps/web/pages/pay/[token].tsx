@@ -541,6 +541,30 @@ function PaymentPageInner() {
                     cardRef={selectedMethod === m.key ? selectedCardRef : undefined}
                     submitting={submitting}
                     onSent={() => setConfirmOpen(true)}
+                    onIntent={(methodKey) => {
+                      // Fire-and-forget reconciliation hint. sendBeacon
+                      // is designed for this "record something during
+                      // page navigation" case — guaranteed by the spec
+                      // to be delivered even if a deep-link redirect
+                      // starts immediately after. Silently no-ops in
+                      // environments without navigator.sendBeacon (very
+                      // old browsers) — the hint is optional.
+                      if (!token || typeof navigator === "undefined" || !navigator.sendBeacon) return;
+                      try {
+                        const blob = new Blob(
+                          [JSON.stringify({ method: methodKey })],
+                          { type: "application/json" },
+                        );
+                        navigator.sendBeacon(
+                          `${API_BASE}/api/public/pay/${token}/record-intent`,
+                          blob,
+                        );
+                      } catch {
+                        // sendBeacon can throw QuotaExceededError under
+                        // rare conditions — swallow so the deep-link
+                        // redirect isn't blocked by a hint failure.
+                      }
+                    }}
                   />
                 ))
               )}
@@ -843,6 +867,7 @@ function PaymentMethodCard({
   cardRef,
   submitting,
   onSent,
+  onIntent,
 }: {
   config: ResolvedPaymentMethod;
   /** Business-flagged preferred method — shows the "Preferred" badge. */
@@ -864,6 +889,10 @@ function PaymentMethodCard({
   /** Fires when the client taps the "I've sent the …" button — opens the
    *  parent's confirm modal. */
   onSent: () => void;
+  /** Fires when the client taps the primary "Open / Pay with" action
+   *  button on THIS method's card — parent records a reconciliation
+   *  hint via sendBeacon. Called with the method's taxonomy key. */
+  onIntent: (methodKey: string) => void;
 }) {
   // Manual-pay modal state. Only meaningful for methods that have
   // `payToTarget` but no `deepLink` (e.g. Zelle, where there's no
@@ -953,6 +982,11 @@ function PaymentMethodCard({
               onClick={(e) => {
                 e.stopPropagation();
                 if (!selected) onSelect();
+                // Record the reconciliation hint BEFORE the redirect —
+                // sendBeacon in the parent handles the async delivery
+                // guarantees, but we still want to fire before nav so
+                // the beacon has time to queue.
+                onIntent(config.key);
                 if (hasDeepLink) {
                   window.location.href = config.deepLink!;
                 } else {

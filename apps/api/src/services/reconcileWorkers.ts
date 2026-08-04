@@ -1071,10 +1071,24 @@ function payrollTypeLabel(t: string | null | undefined, isOwner: boolean): strin
 export async function payrollCsv(
   start: Date,
   end: Date,
+  /** Optional narrowing tri-state:
+   *    • `undefined`  — no filter, every worker in the period
+   *      (backward-compat: matches the pre-subset-picker behavior for
+   *      any external caller that omits the arg).
+   *    • `[]`         — explicit empty filter, zero rows. Distinct
+   *      from undefined so the frontend can express "operator
+   *      unchecked everyone" without collapsing back to "all".
+   *    • `[...ids]`   — restrict rows AND totals to those userIds. */
+  userIds?: string[],
 ): Promise<{ csv: string; rowCount: number; total: number }> {
   const fromKey = etFormatDate(start);
   const toKey = etFormatDate(end);
   const period = await buildReconcileWorkers(start, end, { fromKey, toKey });
+
+  const filterSet = userIds !== undefined ? new Set(userIds) : null;
+  const filteredPayroll = filterSet
+    ? period.payroll.filter((p) => filterSet.has(p.userId))
+    : period.payroll;
 
   const header = [
     "Worker",
@@ -1087,7 +1101,7 @@ export async function payrollCsv(
     "Total Gross",
     "Equivalent Hourly Rate",
   ];
-  const rows = period.payroll.map((p) => [
+  const rows = filteredPayroll.map((p) => [
     p.displayName ?? "(unnamed)",
     payrollTypeLabel(p.workerType, p.isOwner),
     p.email ?? "",
@@ -1098,8 +1112,8 @@ export async function payrollCsv(
     p.totalGross.toFixed(2),
     p.equivalentHourlyRate == null ? "" : p.equivalentHourlyRate.toFixed(2),
   ]);
-  const totalGross = period.payroll.reduce((s, p) => s + p.totalGross, 0);
-  const totalHours = period.payroll.reduce((s, p) => s + p.hours, 0);
+  const totalGross = filteredPayroll.reduce((s, p) => s + p.totalGross, 0);
+  const totalHours = filteredPayroll.reduce((s, p) => s + p.hours, 0);
   const totalsRow = [
     "TOTALS",
     "",
