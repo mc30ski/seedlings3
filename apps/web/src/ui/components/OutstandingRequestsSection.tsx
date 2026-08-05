@@ -33,6 +33,7 @@ import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
 import { bizToday, fmtDateTime, type EtDateKey } from "@/src/lib/lib";
 import DateInput from "@/src/ui/components/DateInput";
+import { PaymentContactsLine as ContactsLine } from "@/src/ui/components/PaymentContactsLine";
 
 type PaymentMethodConfig = {
   key: string;
@@ -76,6 +77,18 @@ type OutstandingRow = {
    *  modal). Not a payment claim. Feeds the "Tapped X" chip. */
   paymentIntentMethod: string | null;
   paymentIntentAt: string | null;
+  /** Every active contact on the payment's client — feeds the
+   *  "Contacts" line so the operator can match a spouse / roommate /
+   *  different-last-name payer when reconciling. Primary first. */
+  contacts: Array<{
+    id: string;
+    firstName: string | null;
+    lastName: string | null;
+    nickname: string | null;
+    phone: string | null;
+    email: string | null;
+    isPrimary: boolean;
+  }>;
 };
 
 function agoLabel(days: number): string {
@@ -464,6 +477,9 @@ export default function OutstandingRequestsSection() {
                     <Text fontSize="xs" color="fg.muted">
                       Claimer: {r.claimer.displayName ?? r.claimer.email ?? r.claimer.id.slice(-6)}
                     </Text>
+                  )}
+                  {r.contacts && r.contacts.length > 0 && (
+                    <ContactsLine contacts={r.contacts} />
                   )}
                 </VStack>
               </HStack>
