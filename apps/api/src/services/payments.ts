@@ -2419,7 +2419,31 @@ export const payments: ServicesPayments = {
                 property: {
                   select: {
                     displayName: true, street1: true, city: true, state: true,
-                    client: { select: { displayName: true } },
+                    client: {
+                      select: {
+                        displayName: true,
+                        // Every active contact on the client — feeds the
+                        // "Contacts" line on the Pending Approvals card
+                        // so the operator can spot a spouse / roommate /
+                        // different-last-name payer when reconciling a
+                        // Zelle/Venmo/bank record against the property.
+                        // Primary first so the main contact is most
+                        // prominent.
+                        contacts: {
+                          where: { status: "ACTIVE" },
+                          orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+                          select: {
+                            id: true,
+                            firstName: true,
+                            lastName: true,
+                            nickname: true,
+                            phone: true,
+                            email: true,
+                            isPrimary: true,
+                          },
+                        },
+                      },
+                    },
                   },
                 },
               },

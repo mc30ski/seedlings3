@@ -33,6 +33,7 @@ import {
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import ApprovePaymentDialog from "@/src/ui/dialogs/ApprovePaymentDialog";
 import AdjustPaymentDialog from "@/src/ui/dialogs/AdjustPaymentDialog";
+import { PaymentContactsLine } from "@/src/ui/components/PaymentContactsLine";
 import { bumpAdminPayments } from "@/src/lib/bus";
 
 type PendingRow = {
@@ -63,7 +64,21 @@ type PendingRow = {
         street1: string | null;
         city: string | null;
         state: string | null;
-        client: { displayName: string | null } | null;
+        client: {
+          displayName: string | null;
+          /** Every active contact — feeds the "Contacts" line on the
+           *  card so the operator can match a spouse / roommate /
+           *  different-last-name payer when reconciling. Primary first. */
+          contacts: Array<{
+            id: string;
+            firstName: string | null;
+            lastName: string | null;
+            nickname: string | null;
+            phone: string | null;
+            email: string | null;
+            isPrimary: boolean;
+          }>;
+        } | null;
       } | null;
     } | null;
     assignees: { userId: string; user: { displayName: string | null; email: string | null } | null }[];
@@ -305,6 +320,9 @@ export default function PendingApprovalsSection() {
                     <Text fontSize="xs" color="fg.muted" lineClamp={2}>
                       {propName}{clientName ? ` — ${clientName}` : ""}
                     </Text>
+                    {r.occurrence.job?.property?.client?.contacts && r.occurrence.job.property.client.contacts.length > 0 && (
+                      <PaymentContactsLine contacts={r.occurrence.job.property.client.contacts} />
+                    )}
                     <Text fontSize="xs" color="fg.subtle">
                       Reported by {reporterLabel} · {fmtDate(r.createdAt)}
                       {r.note ? ` · "${r.note}"` : ""}

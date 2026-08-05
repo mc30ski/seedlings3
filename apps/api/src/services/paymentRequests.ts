@@ -661,7 +661,30 @@ export const paymentRequests = {
             property: {
               select: {
                 displayName: true,
-                client: { select: { displayName: true } },
+                client: {
+                  select: {
+                    displayName: true,
+                    // Every active contact on the client — surfaced on
+                    // the card so the operator can match a spouse /
+                    // roommate / different-last-name payer to this
+                    // property when reconciling a Zelle/Venmo/bank
+                    // record. Primary first so the "main" contact is
+                    // most prominent.
+                    contacts: {
+                      where: { status: "ACTIVE" },
+                      orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+                      select: {
+                        id: true,
+                        firstName: true,
+                        lastName: true,
+                        nickname: true,
+                        phone: true,
+                        email: true,
+                        isPrimary: true,
+                      },
+                    },
+                  },
+                },
               },
             },
           },
@@ -722,6 +745,15 @@ export const paymentRequests = {
         jobId: o.job?.id ?? null,
         property: o.job?.property?.displayName ?? null,
         client: o.job?.property?.client?.displayName ?? null,
+        contacts: (o.job?.property?.client?.contacts ?? []).map((c) => ({
+          id: c.id,
+          firstName: c.firstName,
+          lastName: c.lastName,
+          nickname: c.nickname,
+          phone: c.phone,
+          email: c.email,
+          isPrimary: c.isPrimary,
+        })),
         // Fully-resolved public invoice page URL. Null when the token
         // is missing entirely (shouldn't happen for rows in this list —
         // they all have paymentRequestSentAt — but we keep the type
