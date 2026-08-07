@@ -809,28 +809,36 @@ export default function ClientMyJobsTab() {
                                 {job.payment.receiptNumber}
                               </Text>
                             )}
-                            <Button
-                              size="xs"
-                              variant="outline"
-                              colorPalette="teal"
-                              px="2"
-                              onClick={() => handleViewReceipt(job)}
-                              title="View receipt in a new tab"
-                            >
-                              <Eye size={12} />
-                              View
-                            </Button>
-                            <Button
-                              size="xs"
-                              variant="outline"
-                              colorPalette="teal"
-                              px="2"
-                              onClick={() => handleDownloadReceipt(job)}
-                              title="Download receipt PDF"
-                            >
-                              <Download size={12} />
-                              Download
-                            </Button>
+                            {/* View + Download stay glued together on the
+                                same line — the outer HStack still wraps,
+                                but this inner HStack (flexShrink={0}, no
+                                wrap) treats the pair as one unit, so
+                                Download can't drop to a new line on its
+                                own on narrow screens. */}
+                            <HStack gap={2} flexShrink={0}>
+                              <Button
+                                size="xs"
+                                variant="outline"
+                                colorPalette="teal"
+                                px="2"
+                                onClick={() => handleViewReceipt(job)}
+                                title="View receipt in a new tab"
+                              >
+                                <Eye size={12} />
+                                View
+                              </Button>
+                              <Button
+                                size="xs"
+                                variant="outline"
+                                colorPalette="teal"
+                                px="2"
+                                onClick={() => handleDownloadReceipt(job)}
+                                title="Download receipt PDF"
+                              >
+                                <Download size={12} />
+                                Download
+                              </Button>
+                            </HStack>
                           </HStack>
                         )}
                         {job.payment && !job.paid && job.paymentPending && (

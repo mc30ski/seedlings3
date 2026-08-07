@@ -247,51 +247,37 @@ export default function ClientStatementsTab() {
 
   return (
     <VStack align="stretch" gap={4} pb={6}>
-      <VStack align="stretch" gap={1}>
-        <HStack gap={2}>
-          <FileText size={20} />
-          <Text fontSize="lg" fontWeight="bold">
-            Statements
-          </Text>
-        </HStack>
-        <Text fontSize="sm" color="fg.muted">
-          Download a record of your payments for any date range. Useful for
-          taxes, expense tracking, or your own records.
-        </Text>
-      </VStack>
+      {/* "Statements" title removed — the tab pill above already labels
+          this page; a second title read as redundant. Keep the descriptive
+          subtitle so first-time visitors know what the page does. */}
+      <Text fontSize="sm" color="fg.muted">
+        Download a record of your payments for any date range. Useful for
+        taxes, expense tracking, or your own records.
+      </Text>
 
-      {/* Blue informational panel — makes what's included absolutely
-          explicit so a client's accountant knows what the numbers
-          mean and what's NOT on the statement. */}
-      <Box
-        p={3}
+      {/* Compact one-liner — the full "what's on the statement" detail
+          was accountant-thorough but ate the top of the page. Trimmed to
+          the two facts that actually matter for a client scanning: cash
+          basis (grouped by payment date), and unpaid amounts aren't
+          included. Everything else is self-evident from the preview
+          table below. */}
+      <HStack
+        gap={2}
+        align="center"
+        px={2.5}
+        py={1.5}
         bg="blue.50"
         borderWidth="1px"
         borderColor="blue.200"
         borderRadius="md"
       >
-        <HStack gap={2} align="start">
-          <Box color="blue.600" mt={0.5} flexShrink={0}>
-            <Info size={14} />
-          </Box>
-          <VStack align="start" gap={1} flex="1">
-            <Text fontSize="xs" fontWeight="semibold" color="blue.900">
-              What's on the statement
-            </Text>
-            <Text fontSize="xs" color="blue.900">
-              For each confirmed payment in your selected date range: the
-              date the service was performed, the date the payment was
-              confirmed, a short service description, the payment method,
-              and the amount you paid. Plus a total for the period.
-            </Text>
-            <Text fontSize="xs" color="blue.900">
-              Payments are grouped by the date they were confirmed (cash
-              basis). Skipped services and unpaid balances are not
-              included.
-            </Text>
-          </VStack>
-        </HStack>
-      </Box>
+        <Box color="blue.600" flexShrink={0}>
+          <Info size={12} />
+        </Box>
+        <Text fontSize="xs" color="blue.900" lineHeight="1.3">
+          Shows payments by the date we received them. Anything unpaid or skipped isn't included.
+        </Text>
+      </HStack>
 
       {/* Controls: property, shortcut, custom date range */}
       <Card.Root variant="outline">
@@ -317,6 +303,11 @@ export default function ClientStatementsTab() {
                           : "Choose a property…"
                       }
                     />
+                    {/* Explicit chevron so the field reads as a dropdown,
+                        not a text input. Chakra v3 doesn't render one by
+                        default; without this the trigger looks identical
+                        to a plain Input. */}
+                    <Select.Indicator />
                   </Select.Trigger>
                 </Select.Control>
                 <Select.Positioner>
@@ -345,6 +336,7 @@ export default function ClientStatementsTab() {
                 <Select.Control>
                   <Select.Trigger>
                     <Select.ValueText />
+                    <Select.Indicator />
                   </Select.Trigger>
                 </Select.Control>
                 <Select.Positioner>
@@ -471,36 +463,44 @@ export default function ClientStatementsTab() {
         </Card.Body>
       </Card.Root>
 
-      {/* View / Download row */}
-      <HStack gap={2} justify="flex-end" wrap="wrap">
+      {/* View / Download row — shortened labels + tighter padding so all
+          three fit on one line at typical mobile widths. On very narrow
+          viewports they wrap left-aligned as a group rather than the
+          previous right-justified stagger. */}
+      <HStack gap={2} justify="flex-end" wrap="wrap" rowGap={2}>
         <Button
           size="sm"
           variant="outline"
           colorPalette="blue"
+          px="3"
           disabled={!canDownload}
           onClick={handleViewPDF}
-          title="Open the statement in a new tab"
+          title="Open the statement PDF in a new tab"
         >
           <Eye size={14} /> View
         </Button>
         <Button
           size="sm"
           colorPalette="blue"
+          px="3"
           disabled={!canDownload}
           loading={downloading === "pdf"}
           onClick={handleDownloadPDF}
+          title="Download the statement as a PDF"
         >
-          <Download size={14} /> Download PDF
+          <Download size={14} /> PDF
         </Button>
         <Button
           size="sm"
           variant="outline"
           colorPalette="blue"
+          px="3"
           disabled={!canDownload}
           loading={downloading === "csv"}
           onClick={() => void handleDownloadCSV()}
+          title="Download the statement as a CSV"
         >
-          <Download size={14} /> Download CSV
+          <Download size={14} /> CSV
         </Button>
       </HStack>
     </VStack>

@@ -1,4 +1,10 @@
 // apps/web/pages/_app.tsx
+// Dev-only suppression for the "callback ref should not return a function"
+// warning that fires under React 18 + Chakra v3 (Chakra targets React 19's
+// cleanup-return contract; React 18 warns about it). One-time boot notice
+// is printed so the suppression stays visible. Delete this import (and
+// the file) after upgrading to React 19. See the file for full context.
+import "../src/lib/chakraRefWarningSuppression";
 import type { AppProps } from "next/app";
 import {
   ClerkProvider,

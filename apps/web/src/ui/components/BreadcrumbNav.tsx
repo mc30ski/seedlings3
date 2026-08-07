@@ -37,6 +37,11 @@ type Props = {
   headerLeft?: React.ReactNode;
   /** Content rendered at the right edge of the row (e.g., share-link icon) */
   headerRight?: React.ReactNode;
+  /** Hide the outer (role) tab pill and its cross-role jump chips. Role
+   *  selection lives outside the breadcrumb now (see RoleChip in the
+   *  header). Keep the outer tabs prop to drive innerTabs lookup and the
+   *  header-slot render — only the pill UI is suppressed. */
+  hideOuterTab?: boolean;
 };
 
 function isVisible(v?: boolean | (() => boolean)): boolean {
@@ -54,6 +59,7 @@ export default function BreadcrumbNav({
   onCategoryChange,
   headerLeft,
   headerRight,
+  hideOuterTab,
 }: Props) {
   const [outerOpen, setOuterOpen] = useState(false);
   const [catOpen, setCatOpen] = useState(false);
@@ -314,32 +320,37 @@ export default function BreadcrumbNav({
     <Box>
       <HStack gap={1} pt={1} pb={2} pl={0} pr={1} align="center" flexWrap="nowrap" overflowX="auto" css={{ "&::-webkit-scrollbar": { display: "none" }, scrollbarWidth: "none" }}>
         {headerLeft}
-        {/* Level 1: Outer (Client/Worker/Admin/Super) */}
-        <Box position="relative" ref={outerRef}>
-          <HStack
-            as="button"
-            gap={1}
-            px={2}
-            py={1}
-            rounded="full"
-            bg={outerOpen ? "gray.200" : "gray.100"}
-            _hover={{ bg: "gray.200" }}
-            cursor="pointer"
-            onClick={() => { setOuterOpen(!outerOpen); setCatOpen(false); setInnerOpen(false); }}
-            transition="all 0.1s"
-            flexShrink={0}
-          >
-            {activeOuter?.icon && <Icon as={activeOuter.icon} boxSize={3.5} />}
-            <Text fontSize="sm" fontWeight="semibold" lineHeight="1">{activeOuter?.label ?? "—"}</Text>
-            <ChevronDown size={14} />
-          </HStack>
-          {outerOpen && renderDropdown(
-            outerRef,
-            visibleOuter.map((t) => ({ value: t.value, label: t.label, icon: t.icon })),
-            outerValue,
-            (v) => { onOuterChange(v); setOuterOpen(false); },
-          )}
-        </Box>
+        {/* Level 1: Outer (Client/Worker/Admin/Super) — hidden when the
+            parent provides an out-of-breadcrumb role selector (see
+            RoleChip in the app header). Suppressed via hideOuterTab so
+            the pill doesn't duplicate the header chip. */}
+        {!hideOuterTab && (
+          <Box position="relative" ref={outerRef}>
+            <HStack
+              as="button"
+              gap={1}
+              px={2}
+              py={1}
+              rounded="full"
+              bg={outerOpen ? "gray.200" : "gray.100"}
+              _hover={{ bg: "gray.200" }}
+              cursor="pointer"
+              onClick={() => { setOuterOpen(!outerOpen); setCatOpen(false); setInnerOpen(false); }}
+              transition="all 0.1s"
+              flexShrink={0}
+            >
+              {activeOuter?.icon && <Icon as={activeOuter.icon} boxSize={3.5} />}
+              <Text fontSize="sm" fontWeight="semibold" lineHeight="1">{activeOuter?.label ?? "—"}</Text>
+              <ChevronDown size={14} />
+            </HStack>
+            {outerOpen && renderDropdown(
+              outerRef,
+              visibleOuter.map((t) => ({ value: t.value, label: t.label, icon: t.icon })),
+              outerValue,
+              (v) => { onOuterChange(v); setOuterOpen(false); },
+            )}
+          </Box>
+        )}
 
 
         {hasCategories ? (
@@ -408,7 +419,7 @@ export default function BreadcrumbNav({
                       label: t.label,
                       icon: t.icon,
                       chip: t.chip,
-                      crossRoleTargets: computeCrossRoleTargets(t.value),
+                      crossRoleTargets: hideOuterTab ? [] : computeCrossRoleTargets(t.value),
                     })),
                     innerValue,
                     (v) => { onInnerChange(v); setInnerOpen(false); },
@@ -443,7 +454,7 @@ export default function BreadcrumbNav({
                 label: t.label,
                 icon: t.icon,
                 chip: t.chip,
-                crossRoleTargets: computeCrossRoleTargets(t.value),
+                crossRoleTargets: hideOuterTab ? [] : computeCrossRoleTargets(t.value),
               })),
               innerValue,
               (v) => { onInnerChange(v); setInnerOpen(false); },

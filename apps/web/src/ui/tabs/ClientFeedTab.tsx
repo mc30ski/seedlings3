@@ -169,6 +169,28 @@ export default function ClientFeedTab() {
 
   return (
     <Box w="full" pb={8}>
+      {/* Welcome banner — anchors the Community tab so anonymous visitors
+          and signed-in clients alike get an at-a-glance "you're in the
+          right place" moment before the feed. Uses the same green tones
+          as the app header for brand cohesion. */}
+      <Box
+        mb={4}
+        px={4}
+        py={4}
+        borderRadius="lg"
+        bgGradient="linear(to-br, #dce5d0, #e8eedf)"
+        borderWidth="1px"
+        borderColor="#8a9e72"
+      >
+        <VStack align="start" gap={1}>
+          <Text fontSize="lg" fontWeight="bold" color="green.800" lineHeight="1.2">
+            Welcome to Seedlings Lawn Care
+          </Text>
+          <Text fontSize="sm" color="green.900">
+            See what our crews have been up to around your neighborhood.
+          </Text>
+        </VStack>
+      </Box>
       {error && (
         <Text textAlign="center" color="red.500" py={4} fontSize="sm">{error}</Text>
       )}
