@@ -34,6 +34,7 @@ import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import ApprovePaymentDialog from "@/src/ui/dialogs/ApprovePaymentDialog";
 import AdjustPaymentDialog from "@/src/ui/dialogs/AdjustPaymentDialog";
 import { PaymentContactsLine } from "@/src/ui/components/PaymentContactsLine";
+import { PaymentPropertyLine } from "@/src/ui/components/PaymentPropertyLine";
 import { bumpAdminPayments } from "@/src/lib/bus";
 
 type PendingRow = {
@@ -323,6 +324,7 @@ export default function PendingApprovalsSection() {
                     {r.occurrence.job?.property?.client?.contacts && r.occurrence.job.property.client.contacts.length > 0 && (
                       <PaymentContactsLine contacts={r.occurrence.job.property.client.contacts} />
                     )}
+                    <PaymentPropertyLine property={r.occurrence.job?.property ?? null} />
                     <Text fontSize="xs" color="fg.subtle">
                       Reported by {reporterLabel} · {fmtDate(r.createdAt)}
                       {r.note ? ` · "${r.note}"` : ""}

@@ -661,6 +661,12 @@ export const paymentRequests = {
             property: {
               select: {
                 displayName: true,
+                // Street address surfaced on the card so the operator
+                // can identify WHICH property when displayName is a
+                // nickname like "Home".
+                street1: true,
+                city: true,
+                state: true,
                 client: {
                   select: {
                     displayName: true,
@@ -744,6 +750,14 @@ export const paymentRequests = {
         amount,
         jobId: o.job?.id ?? null,
         property: o.job?.property?.displayName ?? null,
+        propertyAddress: o.job?.property
+          ? {
+              displayName: o.job.property.displayName,
+              street1: o.job.property.street1,
+              city: o.job.property.city,
+              state: o.job.property.state,
+            }
+          : null,
         client: o.job?.property?.client?.displayName ?? null,
         contacts: (o.job?.property?.client?.contacts ?? []).map((c) => ({
           id: c.id,

@@ -317,16 +317,17 @@ export default function DocumentsTab({ isSuper = false }: Props) {
     void loadTypes();
   }, []);
 
-  // Default: multi-instance collections start collapsed so the list reads as
-  // a tidy index. Tracked separately so user-driven toggles (after this seed)
-  // are preserved. Runs once when types are first known.
+  // Default: every collection — singleton or multi-instance — starts collapsed
+  // so the tab opens to a tidy header-only index. Tracked separately so
+  // user-driven toggles (after this seed) are preserved. Runs once when
+  // types are first known.
   const [collapseSeeded, setCollapseSeeded] = useState(false);
   useEffect(() => {
     if (collapseSeeded) return;
     if (!types || types.length === 0) return;
     const seed = new Set<string>();
     for (const t of types) {
-      if (!t.singleton) seed.add(t.key);
+      seed.add(t.key);
     }
     setCollapsedTypes(seed);
     setCollapseSeeded(true);
@@ -383,11 +384,9 @@ export default function DocumentsTab({ isSuper = false }: Props) {
   function toggleAllExpanded(filteredDocs: CompanyDocument[]) {
     const filteredIds = filteredDocs.map((d) => d.id);
     const visibleTypeKeys = new Set(filteredDocs.map((d) => d.type));
-    const multiInstanceTypes = types.filter(
-      (t) => !t.singleton && visibleTypeKeys.has(t.key),
-    );
+    const allGroupTypes = types.filter((t) => visibleTypeKeys.has(t.key));
     const anyCardExpanded = filteredIds.some((id) => expanded.has(id));
-    const anyGroupOpen = multiInstanceTypes.some((t) => !collapsedTypes.has(t.key));
+    const anyGroupOpen = allGroupTypes.some((t) => !collapsedTypes.has(t.key));
     const anythingOpen = anyCardExpanded || anyGroupOpen;
 
     if (anythingOpen) {
@@ -398,7 +397,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
       });
       setCollapsedTypes((prev) => {
         const next = new Set(prev);
-        for (const t of multiInstanceTypes) next.add(t.key);
+        for (const t of allGroupTypes) next.add(t.key);
         return next;
       });
     } else {
@@ -409,7 +408,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
       });
       setCollapsedTypes((prev) => {
         const next = new Set(prev);
-        for (const t of multiInstanceTypes) next.delete(t.key);
+        for (const t of allGroupTypes) next.delete(t.key);
         return next;
       });
       for (const id of filteredIds) {
@@ -735,11 +734,9 @@ export default function DocumentsTab({ isSuper = false }: Props) {
           // "Anything open" combines both visual axes (cards + groups) so
           // the icon mirrors what the click will actually do.
           const visibleTypeKeys = new Set(filtered.map((d) => d.type));
-          const multiInstanceTypes = types.filter(
-            (t) => !t.singleton && visibleTypeKeys.has(t.key),
-          );
+          const allGroupTypes = types.filter((t) => visibleTypeKeys.has(t.key));
           const anyCardExpanded = filtered.some((d) => expanded.has(d.id));
-          const anyGroupOpen = multiInstanceTypes.some((t) => !collapsedTypes.has(t.key));
+          const anyGroupOpen = allGroupTypes.some((t) => !collapsedTypes.has(t.key));
           const anythingOpen = anyCardExpanded || anyGroupOpen;
           return (
             <Button
@@ -1005,18 +1002,10 @@ export default function DocumentsTab({ isSuper = false }: Props) {
           docs: CompanyDocument[],
           opts: { headerLabel: string; headerDescription: string | null; singleton: boolean },
         ) => {
-          // Singleton groups: render the single doc card directly — no wrapping
-          // collection card needed since there's exactly one item per type.
-          if (opts.singleton) {
-            return (
-              <Box key={typeKey}>
-                {docs.map((d) => renderDocCard(d, true))}
-              </Box>
-            );
-          }
-
-          // Multi-instance groups: render a "collection card" that visually
-          // matches a doc card. When expanded, member doc cards nest inside.
+          // Both singleton and multi-instance groups render as a collection
+          // card so the tab reads as a tidy header-only index by default.
+          // Singletons show "1 document" and expand to reveal their single
+          // doc card; multi-instance groups show their count.
           const collapsed = collapsedTypes.has(typeKey);
           const toggleCollapsed = () =>
             setCollapsedTypes((prev) => {
@@ -1112,7 +1101,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
                     <Box pl={3} borderLeftWidth="2px" borderColor="gray.200" mt={1}>
                       <VStack align="stretch" gap={2}>
                         {docs.map((d) => renderDocCard(d, true))}
-                        {isSuper && (
+                        {isSuper && !opts.singleton && (
                           <Button
                             size="xs"
                             variant="outline"
