@@ -34,6 +34,7 @@ import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
 import { bizToday, fmtDateTime, type EtDateKey } from "@/src/lib/lib";
 import DateInput from "@/src/ui/components/DateInput";
 import { PaymentContactsLine as ContactsLine } from "@/src/ui/components/PaymentContactsLine";
+import { PaymentPropertyLine } from "@/src/ui/components/PaymentPropertyLine";
 
 type PaymentMethodConfig = {
   key: string;
@@ -67,6 +68,14 @@ type OutstandingRow = {
   linkExpired: boolean;
   amount: number;
   property: string | null;
+  /** Full property details for the secondary address line. Null when
+   *  the occurrence has no property. */
+  propertyAddress: {
+    displayName: string | null;
+    street1: string | null;
+    city: string | null;
+    state: string | null;
+  } | null;
   client: string | null;
   /** Resolved public invoice URL — server-built so the UI doesn't have
    *  to know the base or the token. Null only in edge cases (no token). */
@@ -481,6 +490,7 @@ export default function OutstandingRequestsSection() {
                   {r.contacts && r.contacts.length > 0 && (
                     <ContactsLine contacts={r.contacts} />
                   )}
+                  <PaymentPropertyLine property={r.propertyAddress} />
                 </VStack>
               </HStack>
               <HStack gap={2} mt={2} flexWrap="wrap">

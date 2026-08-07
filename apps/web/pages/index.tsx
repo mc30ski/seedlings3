@@ -117,6 +117,7 @@ import ScrollableUnderlineTabs, {
   TabItem,
 } from "../src/ui/components/ScrollableUnderlineTabs";
 import BreadcrumbNav from "@/src/ui/components/BreadcrumbNav";
+import RoleChip, { type RoleValue } from "@/src/ui/components/RoleChip";
 import TasksPage from "@/src/ui/pages/TasksPage";
 
 const hasRole = (roles: Me["roles"] | undefined, role: Role) =>
@@ -525,8 +526,11 @@ export default function HomePage() {
   // PHOTO_MAX_EDGE_PX / PHOTO_JPEG_QUALITY drive every photo upload path
   // (occurrences, equipment, properties, receipts). New photos use whatever
   // is configured at upload time — already-stored photos are untouched.
+  // Staff-only: /api/settings is worker/admin/super-gated and 403s for
+  // pure client accounts (clients don't upload photos anyway, so they
+  // don't need the compression defaults).
   useEffect(() => {
-    if (!authLoaded || !isSignedIn) return;
+    if (!authLoaded || !isSignedIn || !hasAnyRole) return;
     void (async () => {
       try {
         const list = await apiGet<Array<{ key: string; value: string }>>("/api/settings");
@@ -541,7 +545,7 @@ export default function HomePage() {
         // Silent — defaults stay in effect.
       }
     })();
-  }, [authLoaded, isSignedIn]);
+  }, [authLoaded, isSignedIn, hasAnyRole]);
 
   useEffect(() => {
     // Don't reset tabs until we know the user's roles
@@ -1343,6 +1347,42 @@ export default function HomePage() {
     },
   ];
 
+  // Header-mounted role switcher — replaces the outer role pill that used
+  // to lead the BreadcrumbNav. Roles are computed from navTabs' visibility
+  // functions so a single source of truth (the tab-tree) drives BOTH the
+  // rendered chrome and the switcher options. Client is always present
+  // (visible: true above); the others gate on isWorker/isAdmin/isSuper.
+  const availableRoles = navTabs
+    .filter((t) => (typeof t.visible === "function" ? t.visible() : t.visible !== false))
+    .map((t) => ({ value: t.value as RoleValue, label: t.label, icon: t.icon }));
+
+  // Switch role while preserving the current inner tab when the same tab
+  // value exists in the target role. When it doesn't, we leave the target
+  // role's persisted inner tab alone — that's normally the role's own
+  // last-viewed tab or its default landing. Also pushes nav history so the
+  // back button retraces the role switch.
+  function switchRole(newRole: RoleValue) {
+    if (newRole === topTab) return;
+    const currentInner =
+      topTab === "client" ? clientInnerTab
+      : topTab === "worker" ? workerInnerTab
+      : topTab === "admin" ? adminInnerTab
+      : superInnerTab;
+    const targetRoleTabs = navTabs.find((n) => n.value === newRole)?.innerTabs ?? [];
+    const equivalent = targetRoleTabs.find(
+      (t) => t.value === currentInner
+        && (typeof t.visible === "function" ? t.visible() : t.visible !== false),
+    );
+    pushNavHistory(getCurrentNavState());
+    if (equivalent) {
+      if (newRole === "client") setClientInnerTab(equivalent.value as ClientTabs);
+      else if (newRole === "worker") setWorkerInnerTab(equivalent.value as WorkerTabs);
+      else if (newRole === "admin") setAdminInnerTab(equivalent.value as AdminTabs);
+      else if (newRole === "super") setSuperInnerTab(equivalent.value as SuperTabs);
+    }
+    setTopTab(newRole);
+  }
+
   const setupSearchEvent = (
     eventName: EventTypes,
     tabName: AdminTabs & WorkerTabs
@@ -1636,6 +1676,9 @@ export default function HomePage() {
     // client preview. The pill also has no place in a client view;
     // real clients aren't authorized on the underlying endpoint.
     if (me.isClientImpersonating) return;
+    // Skip for pure client accounts (no worker/admin/super role) — the
+    // endpoint is staff-only and would just 403 in a loop.
+    if (!hasAnyRole) return;
     // Dedicated endpoint for the title-bar money chip — NOT the same one
     // ProfileTab uses (/api/payments/earnings-summary). Keeping them
     // separate so changes to ProfileTab's stats or admin Payments-tab
@@ -1667,7 +1710,7 @@ export default function HomePage() {
       window.removeEventListener("seedlings:earnings-changed", onEarningsChanged);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [isSignedIn, me?.id]);
+  }, [isSignedIn, me?.id, hasAnyRole]);
   function fmtEarnings(n: number): string {
     if (n >= 100000) return `${Math.round(n / 1000)}k`;
     if (n >= 10000) return `${(n / 1000).toFixed(1)}k`;
@@ -1681,6 +1724,12 @@ export default function HomePage() {
   const headerBtnRef = useRef<HTMLDivElement | null>(null);
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
+
+  // On-the-clock UI swap: when the workday is IN_PROGRESS or PAUSED, the
+  // on-clock bubble takes the brand text's spot (leaf icon stays for the
+  // navigate-home tap target). Frees the right side of the header from
+  // an extra chip. See OnClockBubble.onActiveChange.
+  const [onClockActive, setOnClockActive] = useState(false);
 
   // ---- Pending approvals badge (super only) ----
   // User-management is a Super activity now — admins see the directory
@@ -1851,8 +1900,9 @@ export default function HomePage() {
   const loadPolicyWorkerCount = useCallback(async () => {
     // Every signed-in worker (including admins with a workerType) sees
     // this. Admin-only supers with workerType=null get 0 back from the
-    // server and the alert simply doesn't render.
-    if (!isSignedIn) {
+    // server and the alert simply doesn't render. Skip entirely for
+    // pure client accounts — the endpoint is staff-only and 403s.
+    if (!isSignedIn || !hasAnyRole) {
       setPolicyWorkerPendingCount(0);
       markAlertLoaded("policyWorker");
       return;
@@ -1864,7 +1914,7 @@ export default function HomePage() {
       setPolicyWorkerPendingCount(0);
     }
     markAlertLoaded("policyWorker");
-  }, [isSignedIn]);
+  }, [isSignedIn, hasAnyRole]);
 
   // Keep the ref in sync so the tab's onApprovalsChanged callback,
   // which was bound up at the top of the component body, can call
@@ -2185,7 +2235,9 @@ export default function HomePage() {
   const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.planning && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests && alertsLoaded.estimateFollowups && alertsLoaded.unapprovedHours && alertsLoaded.guaranteedPayout && alertsLoaded.pendingWorkdays && alertsLoaded.ledgerFollowups && alertsLoaded.dueToRecord && alertsLoaded.streamPauseReminders && alertsLoaded.policyAdmin && alertsLoaded.policyWorker);
   const markAlertLoaded = useCallback((key: string) => setAlertsLoaded((prev) => prev[key] ? prev : { ...prev, [key]: true }), []);
   const loadAnnouncementCount = useCallback(async () => {
-    if (!me?.isApproved) { setAnnouncementCount(0); if (me) markAlertLoaded("announcements"); return; }
+    // Staff-only: /api/occurrences requires a worker/admin/super role.
+    // Client-only accounts would just 403 in a loop.
+    if (!me?.isApproved || !hasAnyRole) { setAnnouncementCount(0); if (me) markAlertLoaded("announcements"); return; }
     // Check if user already dismissed announcements today
     try {
       const dismissedDate = localStorage.getItem("seedlings_announcements_dismissed");
@@ -2202,7 +2254,7 @@ export default function HomePage() {
       setAnnouncementCount(0);
     }
     markAlertLoaded("announcements");
-  }, [me?.isApproved]);
+  }, [me?.isApproved, hasAnyRole]);
 
   useEffect(() => {
     void loadAnnouncementCount();
@@ -2274,7 +2326,9 @@ export default function HomePage() {
   const [planningCount, setPlanningCount] = useState(0);
   // Single dashboard summary replaces multiple separate API calls for badge counts
   const loadDashboardSummary = useCallback(async () => {
-    if (!me?.id) { setPlanningCount(0); if (me) markAlertLoaded("planning"); return; }
+    // Staff-only: /api/occurrences requires a worker/admin/super role.
+    // Client-only accounts would just 403 in a loop.
+    if (!me?.id || !hasAnyRole) { setPlanningCount(0); if (me) markAlertLoaded("planning"); return; }
     try {
       const list = await apiGet<any[]>("/api/occurrences");
       if (!Array.isArray(list)) { setPlanningCount(0); markAlertLoaded("planning"); return; }
@@ -2300,7 +2354,7 @@ export default function HomePage() {
       setPlanningCount(0);
     }
     markAlertLoaded("planning");
-  }, [me?.id]);
+  }, [me?.id, hasAnyRole]);
 
   useEffect(() => {
     void loadDashboardSummary();
@@ -3257,106 +3311,99 @@ export default function HomePage() {
             minW="0"
             style={{ transform: "translateY(1px)" }}
           >
-            <HStack
-              gap="2"
-              align="center"
-            >
-              <style>{`
-                @keyframes pulse-dot {
-                  0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 0 0 rgba(234,179,8,0.4); }
-                  50% { opacity: 0.6; transform: scale(1.5); box-shadow: 0 0 6px 3px rgba(234,179,8,0.25); }
-                }
-              `}</style>
-              {/* Online/offline indicator is now an overlay dot on the top-right
-               *  corner of the Seedlings icon (staff only — clients have no
-               *  offline-queued actions and shouldn't see network state in the
-               *  chrome). The queue badge stays separate when count > 0 because
-               *  it shows the count number, which needs more space than a dot. */}
-              <Box
-                position="relative"
-                cursor="pointer"
-                onClick={() => {
-                  // Record current location before navigating, so the back button works.
-                  const current = getCurrentNavState();
-                  if (isWorker || isAdmin) {
-                    if (current.outer !== "worker" || current.inner !== "jobs") pushNavHistory(current);
-                    setTopTab("worker");
-                    setWorkerInnerTab("jobs" as any);
-                    // Reset JobsTab filters to the default "Now (3 days)" view.
-                    setTimeout(() => {
-                      window.dispatchEvent(new CustomEvent("jobs:applyFilter", { detail: { datePreset: "now" } }));
-                    }, 300);
-                  } else {
-                    if (current.outer !== "client") pushNavHistory(current);
-                    setTopTab("client");
-                  }
-                }}
-                _hover={{ opacity: 0.8 }}
-              >
-                <BrandLabel size={BRAND_ICON_H} showText showUserControls={false} />
-                {hasAnyRole && (
-                  <Box
-                    position="absolute"
-                    top="-2px"
-                    left={`${BRAND_ICON_H - 8}px`}
-                    w="10px"
-                    h="10px"
-                    borderRadius="full"
-                    bg={isOffline ? (isForceOffline ? "orange.400" : "red.400") : queueCount > 0 ? "yellow.400" : "green.400"}
-                    borderWidth="2px"
-                    borderColor="white"
-                    cursor="pointer"
-                    _hover={{ transform: "scale(1.3)" }}
-                    transition="transform 0.1s"
-                    onClick={(e: any) => { e.stopPropagation(); setNetworkInfoOpen(true); }}
-                    style={!isOffline && queueCount > 0 ? { animation: "pulse-dot 1.2s ease-in-out infinite" } : undefined}
-                    aria-label={isOffline ? (isForceOffline ? "Forced offline" : "Offline") : queueCount > 0 ? "Online — actions syncing" : "Online"}
-                    title={isOffline ? (isForceOffline ? "Forced offline" : "Offline") : queueCount > 0 ? "Online — actions syncing" : "Online"}
-                  />
-                )}
-              </Box>
-              {hasAnyRole && queueCount > 0 && (
+            <style>{`
+              @keyframes pulse-dot {
+                0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 0 0 rgba(234,179,8,0.4); }
+                50% { opacity: 0.6; transform: scale(1.5); box-shadow: 0 0 6px 3px rgba(234,179,8,0.25); }
+              }
+            `}</style>
+            {/* Brand cluster (leaf icon + "Seedlings" text + online-status
+                dot + queued-actions count). Entire cluster is REPLACED by
+                the on-clock bubble when the workday is IN_PROGRESS or
+                PAUSED — the leaf, text, status dot, and queue chip all
+                give up their slot to the running-clock pill until the
+                worker completes their day. */}
+            {!onClockActive && (
+              <HStack gap="2" align="center">
+                {/* Online/offline indicator is now an overlay dot on the top-right
+                 *  corner of the Seedlings icon (staff only — clients have no
+                 *  offline-queued actions and shouldn't see network state in the
+                 *  chrome). The queue badge stays separate when count > 0 because
+                 *  it shows the count number, which needs more space than a dot. */}
                 <Box
-                  as="button"
-                  aria-label={`${queueCount} pending offline action${queueCount !== 1 ? "s" : ""}`}
-                  title={`${queueCount} pending offline action${queueCount !== 1 ? "s" : ""}`}
-                  onClick={(e: any) => { e.stopPropagation(); setQueueDialogOpen(true); }}
-                  width="18px"
-                  height="18px"
-                  minW="18px"
-                  borderRadius="9999px"
-                  bg="purple.500"
-                  color="white"
-                  fontSize="10px"
-                  fontWeight="bold"
-                  display="flex"
-                  alignItems="center"
-                  justifyContent="center"
-                  _hover={{ bg: "purple.600" }}
-                  _active={{ transform: "translateY(1px)" }}
+                  position="relative"
+                  cursor="pointer"
+                  onClick={() => {
+                    // Route to the CURRENT role's Home tab. Every role tree
+                    // ships a `home` inner tab (Worker Home, Admin Home,
+                    // Super Home; Client's default landing serves the same
+                    // purpose). Preserves the current role — this is a
+                    // "reset to home within where I am", not a role switch.
+                    const current = getCurrentNavState();
+                    const targetInner = topTab === "client" ? clientInnerTab : "home";
+                    if (current.inner !== targetInner) pushNavHistory(current);
+                    if (topTab === "worker") setWorkerInnerTab("home" as any);
+                    else if (topTab === "admin") setAdminInnerTab("home" as any);
+                    else if (topTab === "super") setSuperInnerTab("home" as any);
+                    // Client tab tree has no "home" value — the tab stays
+                    // where it is (no-op).
+                  }}
+                  _hover={{ opacity: 0.8 }}
                 >
-                  {queueCount}
+                  {/* Show "Seedlings" text only when the user actually IS a
+                      client — either not signed in, or signed in with no
+                      staff role. A staff user (worker/admin/super) who
+                      switches to the Client tab is a preview, not an
+                      actual client; keep the leaf-only look. */}
+                  <BrandLabel
+                    size={BRAND_ICON_H}
+                    showText={!hasAnyRole}
+                    showUserControls={false}
+                  />
                 </Box>
-              )}
-            </HStack>
-          </Box>
-
-          {/* Right: badges + worker type + Clerk */}
-          <div
-            ref={headerBtnRef as any}
-            style={{
-              justifySelf: "end",
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              lineHeight: 0,
-              minHeight: `${BRAND_ICON_H}px`,
-            }}
-          >
-            {/* Weather chip — small current-temp + icon in the title bar.
-                Click cycles the bar below through hidden → collapsed →
-                expanded → hidden. Renders whenever weather data is known
-                regardless of role (clients can use it too). */}
+                {hasAnyRole && queueCount > 0 && (
+                  <Box
+                    as="button"
+                    aria-label={`${queueCount} pending offline action${queueCount !== 1 ? "s" : ""}`}
+                    title={`${queueCount} pending offline action${queueCount !== 1 ? "s" : ""}`}
+                    onClick={(e: any) => { e.stopPropagation(); setQueueDialogOpen(true); }}
+                    width="18px"
+                    height="18px"
+                    minW="18px"
+                    borderRadius="9999px"
+                    bg="purple.500"
+                    color="white"
+                    fontSize="10px"
+                    fontWeight="bold"
+                    display="flex"
+                    alignItems="center"
+                    justifyContent="center"
+                    _hover={{ bg: "purple.600" }}
+                    _active={{ transform: "translateY(1px)" }}
+                  >
+                    {queueCount}
+                  </Box>
+                )}
+              </HStack>
+            )}
+            {/* On-the-clock bubble — mounted only for staff (worker/admin/
+                super) since /api/me/workday/today is staff-only and would
+                403 in a loop for pure client accounts. Renders visible pill
+                only when IN_PROGRESS or PAUSED; when it does, it sits
+                where the brand cluster would (brand cluster is hidden). */}
+            {hasAnyRole && (
+              <OnClockBubble
+                isSignedIn={!!isSignedIn}
+                isClientImpersonating={!!me?.isClientImpersonating}
+                meId={me?.id}
+                onActiveChange={setOnClockActive}
+              />
+            )}
+            {/* Weather chip — small current-temp + icon. Lives on the LEFT
+                to the right of the brand (or on-clock bubble). Click cycles
+                the forecast bar below through hidden → collapsed → expanded
+                → hidden. Renders whenever weather data is known regardless
+                of role (clients can use it too). */}
             {titleWeather != null && (
               <Box
                 as="button"
@@ -3387,6 +3434,20 @@ export default function HomePage() {
                 </Text>
               </Box>
             )}
+          </Box>
+
+          {/* Right: badges + worker type + Clerk */}
+          <div
+            ref={headerBtnRef as any}
+            style={{
+              justifySelf: "end",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              lineHeight: 0,
+              minHeight: `${BRAND_ICON_H}px`,
+            }}
+          >
             {/* Earnings pill — DISABLED (may return). Previously a green
                 cycle-through-period money chip (Today / Wk / Mo). Was
                 pulled in favor of the "on the clock" duration bubble
@@ -3418,20 +3479,18 @@ export default function HomePage() {
             )}
             */}
 
-            {/* On-the-clock bubble — replaces the earnings pill. Its
-                state (workdayPayload, tick) is INSIDE the component
-                deliberately so the 1-Hz ticker doesn't force the whole
-                app shell to re-render every second. Prior version
-                inlined the state here; that cascaded into
-                refreshAllAlerts re-firing every tick while the Tasks
-                page was open (~17 count endpoints polling forever).
-                Component self-hides when NOT_STARTED / COMPLETED /
-                client-impersonating / not signed in. */}
-            <OnClockBubble
-              isSignedIn={!!isSignedIn}
-              isClientImpersonating={!!me?.isClientImpersonating}
-              meId={me?.id}
-            />
+            {/* Role selector — renders BEFORE the alerts badge so the
+                order reads: role → alerts → avatar. Hidden when the user
+                has zero or one role; multi-role users get a compact chip
+                + dropdown. Switching preserves the current inner tab
+                when the same tab exists in the target role. */}
+            {mounted && isSignedIn && hasAnyRole && availableRoles.length > 1 && (
+              <RoleChip
+                activeRole={topTab as RoleValue}
+                availableRoles={availableRoles}
+                onSwitch={switchRole}
+              />
+            )}
             {/* Combined alert badge — staff only. Clients have no alerts
              *  (no Pending Users / Pending Payments / Unclaimed jobs /
              *  Planning / Timeline). Without this gate, clients see a
@@ -3674,47 +3733,69 @@ export default function HomePage() {
             {/* Staff get a custom avatar that navigates to the in-app
                 Profile tab (where Manage Account + Sign Out live). Clients
                 still see Clerk's UserButton because they don't have an
-                in-app Profile page to land on. */}
+                in-app Profile page to land on. Online/offline status dot
+                overlays the avatar's top-right corner (the leaf-icon
+                overlay it used to sit on is hidden while on-clock; the
+                avatar is always present, so this is the stable spot). */}
             {mounted && isSignedIn && hasAnyRole ? (
-              <Box
-                as="button"
-                aria-label="Open profile"
-                title="Profile"
-                onClick={() => {
-                  const current = getCurrentNavState();
-                  if (current.outer !== "worker" || current.inner !== "profile") {
-                    pushNavHistory(current);
-                  }
-                  setTopTab("worker");
-                  setWorkerInnerTab("profile" as any);
-                }}
-                width="28px"
-                height="28px"
-                borderRadius="full"
-                overflow="hidden"
-                bg="gray.200"
-                color="gray.700"
-                display="flex"
-                alignItems="center"
-                justifyContent="center"
-                cursor="pointer"
-                _hover={{ opacity: 0.85 }}
-                flexShrink={0}
-              >
-                {clerkUser?.imageUrl ? (
-                  <img
-                    src={clerkUser.imageUrl}
-                    alt=""
-                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                  />
-                ) : (
-                  <Text fontSize="xs" fontWeight="semibold">
-                    {(
-                      (clerkUser?.firstName?.[0] ?? "") +
-                      (clerkUser?.lastName?.[0] ?? "")
-                    ).toUpperCase() || "?"}
-                  </Text>
-                )}
+              <Box position="relative" flexShrink={0} display="inline-flex">
+                <Box
+                  as="button"
+                  aria-label="Open profile"
+                  title="Profile"
+                  onClick={() => {
+                    const current = getCurrentNavState();
+                    if (current.outer !== "worker" || current.inner !== "profile") {
+                      pushNavHistory(current);
+                    }
+                    setTopTab("worker");
+                    setWorkerInnerTab("profile" as any);
+                  }}
+                  width="28px"
+                  height="28px"
+                  borderRadius="full"
+                  overflow="hidden"
+                  bg="gray.200"
+                  color="gray.700"
+                  display="flex"
+                  alignItems="center"
+                  justifyContent="center"
+                  cursor="pointer"
+                  _hover={{ opacity: 0.85 }}
+                >
+                  {clerkUser?.imageUrl ? (
+                    <img
+                      src={clerkUser.imageUrl}
+                      alt=""
+                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                    />
+                  ) : (
+                    <Text fontSize="xs" fontWeight="semibold">
+                      {(
+                        (clerkUser?.firstName?.[0] ?? "") +
+                        (clerkUser?.lastName?.[0] ?? "")
+                      ).toUpperCase() || "?"}
+                    </Text>
+                  )}
+                </Box>
+                <Box
+                  position="absolute"
+                  top="-2px"
+                  right="-2px"
+                  w="10px"
+                  h="10px"
+                  borderRadius="full"
+                  bg={isOffline ? (isForceOffline ? "orange.400" : "red.400") : queueCount > 0 ? "yellow.400" : "green.400"}
+                  borderWidth="2px"
+                  borderColor="white"
+                  cursor="pointer"
+                  _hover={{ transform: "scale(1.3)" }}
+                  transition="transform 0.1s"
+                  onClick={(e: any) => { e.stopPropagation(); setNetworkInfoOpen(true); }}
+                  style={!isOffline && queueCount > 0 ? { animation: "pulse-dot 1.2s ease-in-out infinite" } : undefined}
+                  aria-label={isOffline ? (isForceOffline ? "Forced offline" : "Offline") : queueCount > 0 ? "Online — actions syncing" : "Online"}
+                  title={isOffline ? (isForceOffline ? "Forced offline" : "Offline") : queueCount > 0 ? "Online — actions syncing" : "Online"}
+                />
               </Box>
             ) : mounted && isSignedIn ? (
               <UserButton
@@ -3754,13 +3835,23 @@ export default function HomePage() {
         </Box>
       </Box>
       {/* Only ask for geolocation when the signed-in user is an approved
-          worker/admin/super. Logged-out visitors and signed-in clients still
-          see weather (via IP-based fallback) without a permission prompt. */}
-      <WeatherBar
-        allowGeolocation={!!(me?.isApproved && hasAnyRole)}
-        mode={weatherMode}
-        onModeChange={setWeatherMode}
-      />
+          worker/admin/super. Also skipped entirely for pure client
+          accounts — the /api/weather/* endpoints are staff-only and would
+          403 in a loop; weather in the client-shell was aspirational
+          rather than actually supported by the API.
+          Gated behind `mounted` because WeatherBar's visibility depends on
+          `weatherMode` (usePersistedState) — server renders the default
+          "hidden" (returns null), client's first render reads the persisted
+          value from localStorage which may not be "hidden" (returns a
+          div). The mount gate defers WeatherBar to after hydration so
+          server and client emit identical HTML on the first pass. */}
+      {mounted && hasAnyRole && (
+        <WeatherBar
+          allowGeolocation={!!(me?.isApproved && hasAnyRole)}
+          mode={weatherMode}
+          onModeChange={setWeatherMode}
+        />
+      )}
       {!meLoading && me && !me.isApproved && <AwaitingApprovalNotice />}
       {!meLoading && me?.isApproved && !hasAnyRole && topTab !== "client" && <NoRoleNotice />}
       {/* Tasks page — orthogonal worklist surface. Takes over the
@@ -3818,6 +3909,7 @@ export default function HomePage() {
         <BreadcrumbNav
           outerTabs={navTabs}
           outerValue={topTab}
+          hideOuterTab
           onOuterChange={(v: string) => {
             if (v !== topTab) pushNavHistory(getCurrentNavState());
             setTopTab(v as typeof topTab);

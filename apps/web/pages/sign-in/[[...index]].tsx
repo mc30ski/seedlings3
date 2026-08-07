@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useSignIn, useSignUp } from "@clerk/clerk-react";
 import {
   Box,
@@ -11,6 +12,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
+import { ArrowLeft } from "lucide-react";
 
 /**
  * Unified passwordless sign-in / sign-up page.
@@ -42,6 +44,25 @@ export default function SignInPage() {
       <VStack gap={4} maxW="md" w="full">
         <Heading size="lg" textAlign="center">Welcome to Seedlings</Heading>
         {mounted ? <SignInForm /> : <SignInPlaceholder />}
+        {/* Bail-out link — visible on every step so someone who lands
+            here and changes their mind (or hit sign-in by accident from
+            the header link) can back out to the public dashboard without
+            completing the auth flow. Uses a full-page navigation so any
+            in-flight Clerk state is cleanly dropped. */}
+        <Link href="/" legacyBehavior>
+          <Text
+            as="a"
+            fontSize="sm"
+            color="fg.muted"
+            cursor="pointer"
+            display="inline-flex"
+            alignItems="center"
+            gap={1}
+            _hover={{ color: "blue.600", textDecoration: "underline" }}
+          >
+            <ArrowLeft size={14} /> Cancel and go back
+          </Text>
+        </Link>
       </VStack>
     </Box>
   );
