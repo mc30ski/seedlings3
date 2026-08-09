@@ -447,6 +447,16 @@ async function seedDatabase() {
   const martinezHome = await prisma.property.create({
     data: { clientId: martinezFamily.id, displayName: "Home", street1: "3322 Elm St", city: "Austin", state: "TX", postalCode: "78702", country: "US", kind: "SINGLE", pointOfContactId: martinezPrimary.id, lotSize: 5500, lotSizeUnit: "sqft" },
   });
+  // Two extra Martinez properties dedicated to the "awaiting payment"
+  // placeholder card on the client My Properties tab (see /client/upcoming
+  // → awaitingPayment). Kept OFF the main Home pipeline so existing
+  // Martinez-based tests continue to work.
+  const martinezRental = await prisma.property.create({
+    data: { clientId: martinezFamily.id, displayName: "Rental House", street1: "4488 Cedar Ln", city: "Austin", state: "TX", postalCode: "78702", country: "US", kind: "SINGLE", pointOfContactId: martinezPrimary.id, lotSize: 4200, lotSizeUnit: "sqft" },
+  });
+  const martinezCabin = await prisma.property.create({
+    data: { clientId: martinezFamily.id, displayName: "Weekend Cabin", street1: "77 Ridge Loop", city: "Wimberley", state: "TX", postalCode: "78676", country: "US", kind: "SINGLE", pointOfContactId: martinezPrimary.id, lotSize: 12000, lotSizeUnit: "sqft" },
+  });
   const willowbrookCommon = await prisma.property.create({
     data: { clientId: willowbrookHoa.id, displayName: "Common Areas", street1: "100 Willowbrook Blvd", city: "Round Rock", state: "TX", postalCode: "78664", country: "US", kind: "AGGREGATE_SITE", pointOfContactId: willowbrookManager.id, lotSize: 5, lotSizeUnit: "acres", accessNotes: "HOA maintenance shed has supplies" },
   });
@@ -833,6 +843,16 @@ async function seedDatabase() {
   const martinezBiweekly = await prisma.job.create({
     data: { propertyId: martinezHome.id, kind: "SINGLE_ADDRESS", status: "ACCEPTED", frequencyDays: 14, defaultPrice: 55.0, estimatedMinutes: 40, notes: "Full service biweekly" },
   });
+  // Two "awaiting payment demo" jobs on Sofia's extra properties. Kept
+  // separate from the Home biweekly so completed occurrences here can
+  // sit in the awaiting/pending-confirmation state without knocking the
+  // main pipeline out of shape. See occurrences created below.
+  const martinezRentalBiweekly = await prisma.job.create({
+    data: { propertyId: martinezRental.id, kind: "SINGLE_ADDRESS", status: "ACCEPTED", frequencyDays: 14, defaultPrice: 65.0, estimatedMinutes: 45, notes: "Rental — biweekly mow, trim, blow" },
+  });
+  const martinezCabinMonthly = await prisma.job.create({
+    data: { propertyId: martinezCabin.id, kind: "SINGLE_ADDRESS", status: "ACCEPTED", frequencyDays: 30, defaultPrice: 120.0, estimatedMinutes: 90, notes: "Cabin — monthly full service" },
+  });
 
   // Willowbrook HOA - 2 recurring
   const willowbrookWeekly = await prisma.job.create({
@@ -1103,6 +1123,48 @@ async function seedDatabase() {
     { jobId: martinezBiweekly.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(14, 9), endAt: addMinutes(daysAgo(14, 9), 40), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 55.0, estimatedMinutes: 40, startedAt: daysAgo(14, 9), completedAt: addMinutes(daysAgo(14, 9), 38) },
     [{ userId: EMPLOYEE_ID, role: "primary" }],
   );
+
+  // ── Awaiting-payment demo occurrences for Sofia Martinez ───────────
+  //
+  // Two completed-but-unpaid occurrences on the two extra Martinez
+  // properties. These drive the "Awaiting payment" and "Confirming
+  // payment" placeholder cards on the client My Properties tab (see
+  // /client/upcoming → awaitingPayment).
+  //
+  // Neither of these properties has any SCHEDULED / IN_PROGRESS
+  // occurrence, so the client's Upcoming section only shows the
+  // placeholders for them (Home continues to show the normal pipeline).
+  //
+  // Rental: status COMPLETED, NO Payment row → "Awaiting payment"
+  // variant. The Pay-invoice button on the card links to the seeded
+  // paymentRequestToken.
+  // paymentRequestTokenCreatedAt is stamped as "today" — the default
+  // PAYMENT_REQUEST_TOKEN_EXPIRY_HOURS is 72, so an old token would
+  // just 404 on the /pay/[token] page. In production the token is
+  // refreshed each time the invoice is re-sent, so a recent token on an
+  // older service is a realistic state. paymentRequestFirstSentAt
+  // still points to the ORIGINAL send (matches real re-send behavior).
+  const cMartinezRental = await occ(
+    { jobId: martinezRentalBiweekly.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(10, 9), endAt: addMinutes(daysAgo(10, 9), 45), status: "COMPLETED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 65.0, estimatedMinutes: 45, startedAt: daysAgo(10, 9), completedAt: addMinutes(daysAgo(10, 9), 42), paymentRequestToken: "demo-token-martinez-rental-awaiting", paymentRequestTokenCreatedAt: daysAgo(0, 9), paymentRequestSentAt: daysAgo(0, 9), paymentRequestFirstSentAt: daysAgo(10, 9) },
+    [{ userId: EMPLOYEE_ID, role: "primary" }],
+  );
+  // Cabin: status COMPLETED, self-reported unconfirmed Payment →
+  // "Confirming payment" variant (client already tapped Pay via
+  // /pay/[token]; admin hasn't approved yet).
+  const cMartinezCabin = await occ(
+    { jobId: martinezCabinMonthly.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(20, 8), endAt: addMinutes(daysAgo(20, 8), 90), status: "COMPLETED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 120.0, estimatedMinutes: 90, startedAt: daysAgo(20, 8), completedAt: addMinutes(daysAgo(20, 8), 85), paymentRequestToken: "demo-token-martinez-cabin-pending", paymentRequestTokenCreatedAt: daysAgo(0, 8), paymentRequestSentAt: daysAgo(0, 8), paymentRequestFirstSentAt: daysAgo(20, 8) },
+    [{ userId: EMPLOYEE_ID, role: "primary" }],
+  );
+  await prisma.payment.create({
+    data: {
+      occurrenceId: cMartinezCabin.id,
+      amountPaid: 120.0,
+      method: "zelle",
+      confirmed: false,
+      selfReported: true,
+      receiptNumber: "SL-DEMOCBN1",
+    },
+  });
   const cWillowbrook14 = await occ(
     { jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(14, 7), endAt: addMinutes(daysAgo(14, 7), 120), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 250.0, estimatedMinutes: 120, startedAt: daysAgo(14, 7), completedAt: addMinutes(daysAgo(14, 7), 110) },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: CONTRACTOR_ID, role: "helper" }],

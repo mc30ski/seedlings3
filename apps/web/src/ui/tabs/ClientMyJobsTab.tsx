@@ -52,6 +52,22 @@ type CompletedJob = {
   } | null;
 };
 
+/** Placeholder card shown in the Upcoming section when a property's next
+ *  visit is blocked because the client hasn't paid for the last one.
+ *  Server-computed alongside the real upcoming list; explains WHY the
+ *  pipeline is paused and gives the client a way to unstick it. */
+type AwaitingPayment = {
+  property: { id: string; displayName: string | null; street1: string | null; city: string | null; state: string | null };
+  lastServiceDate: string;
+  amountDue: number;
+  /** true = client already tapped "Pay" via /pay/[token] but admin
+   *  hasn't marked it received yet. Copy shifts to "we got your note". */
+  paymentPending: boolean;
+  invoiceUrl: string | null;
+  projectedNextDate: string | null;
+  frequencyDays: number | null;
+};
+
 type UpcomingJob = {
   id: string;
   kind: string;
@@ -139,7 +155,7 @@ function cadenceLabel(job: { isOneOff?: boolean | null; frequencyDays?: number |
 }
 
 export default function ClientMyJobsTab() {
-  const { businessName } = useBranding();
+  const { businessName, businessEmail, businessPhone } = useBranding();
   const logoDataUrl = useLogoDataUrl();
   const [profile, setProfile] = useState<ClientProfile | null>(null);
   const [completed, setCompleted] = useState<CompletedJob[]>([]);
@@ -154,6 +170,7 @@ export default function ClientMyJobsTab() {
   const [completedMaxMonths, setCompletedMaxMonths] = useState(12);
   const [completedLoadingMore, setCompletedLoadingMore] = useState(false);
   const [upcoming, setUpcoming] = useState<UpcomingJob[]>([]);
+  const [awaitingPayment, setAwaitingPayment] = useState<AwaitingPayment[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewerPhoto, setViewerPhoto] = useState<string | null>(null);
   const [viewerPhotos, setViewerPhotos] = useState<Photo[]>([]);
@@ -189,8 +206,9 @@ export default function ClientMyJobsTab() {
 
   async function reloadUpcoming() {
     try {
-      const upcomingRes = await apiGet<{ items: UpcomingJob[] }>("/api/client/upcoming");
+      const upcomingRes = await apiGet<{ items: UpcomingJob[]; awaitingPayment?: AwaitingPayment[] }>("/api/client/upcoming");
       setUpcoming(upcomingRes.items);
+      setAwaitingPayment(upcomingRes.awaitingPayment ?? []);
     } catch (err) {
       console.error("Reload upcoming failed:", err);
     }
@@ -235,12 +253,13 @@ export default function ClientMyJobsTab() {
           apiGet<{ items: CompletedJob[]; monthsBack?: number; maxMonthsBack?: number; hasMore?: boolean }>(
             `/api/client/jobs?monthsBack=${completedMonthsBack}`,
           ),
-          apiGet<{ items: UpcomingJob[] }>("/api/client/upcoming"),
+          apiGet<{ items: UpcomingJob[]; awaitingPayment?: AwaitingPayment[] }>("/api/client/upcoming"),
         ]);
         setCompleted(jobsRes.items);
         setCompletedHasMore(!!jobsRes.hasMore);
         if (typeof jobsRes.maxMonthsBack === "number") setCompletedMaxMonths(jobsRes.maxMonthsBack);
         setUpcoming(upcomingRes.items);
+        setAwaitingPayment(upcomingRes.awaitingPayment ?? []);
       }
     } catch (err) {
       console.error("Client load failed:", err);
@@ -605,13 +624,91 @@ export default function ClientMyJobsTab() {
         </Box>
       )}
 
-      {/* Upcoming / In Progress */}
-      {upcoming.length > 0 && (
+      {/* Upcoming / In Progress — also renders "awaiting payment"
+          placeholder cards for properties whose next visit is blocked
+          because the previous service isn't paid yet. Section shows if
+          EITHER list has entries. */}
+      {(upcoming.length > 0 || awaitingPayment.length > 0) && (
         <Box mb={5}>
           <Text fontSize="xs" fontWeight="semibold" color="blue.500" mb={2} px={1} textTransform="uppercase" letterSpacing="wide">
             {upcoming.some((j) => j.status === "IN_PROGRESS") ? "Happening Now & Upcoming" : "Upcoming"}
           </Text>
           <VStack align="stretch" gap={2}>
+            {/* Awaiting-payment placeholders first — they explain WHY the
+                next real card isn't scheduled yet, so leading with them
+                answers the client's "when's my next visit?" question
+                up-front rather than making them hunt in the empty state. */}
+            {awaitingPayment.map((ap) => {
+              const addr = [ap.property.street1, ap.property.city, ap.property.state].filter(Boolean).join(", ");
+              return (
+                <Card.Root key={`ap-${ap.property.id}`} variant="outline" borderColor="orange.300" bg="orange.50">
+                  <Card.Body py="2.5" px="3">
+                    <VStack align="stretch" gap={1.5}>
+                      <HStack justify="space-between" align="start">
+                        <VStack align="start" gap={0.5} flex="1" minW={0}>
+                          <Text fontSize="sm" fontWeight="semibold">{ap.property.displayName ?? "Property"}</Text>
+                          {addr && <Box fontSize="xs"><MapLink address={addr} /></Box>}
+                        </VStack>
+                        <Badge colorPalette="orange" variant="solid" fontSize="xs" borderRadius="full" px="2" flexShrink={0}>
+                          {ap.paymentPending ? "Confirming payment" : "Awaiting payment"}
+                        </Badge>
+                      </HStack>
+                      <Text fontSize="xs" color="orange.900">
+                        {ap.paymentPending
+                          ? `We got your note that you sent $${ap.amountDue.toFixed(2)} for the service on ${fmtDate(ap.lastServiceDate)}. Once it lands on our end we'll confirm here and schedule your next visit.`
+                          : `Payment of $${ap.amountDue.toFixed(2)} for the service on ${fmtDate(ap.lastServiceDate)} is still outstanding. Your next visit will be scheduled once payment is received.`}
+                      </Text>
+                      {ap.projectedNextDate && (
+                        <Text fontSize="xs" color="orange.900">
+                          <b>Projected next visit:</b> {fmtDate(ap.projectedNextDate)} (once payment is confirmed).
+                        </Text>
+                      )}
+                      <HStack gap={2} wrap="wrap" mt={1}>
+                        {ap.invoiceUrl && !ap.paymentPending && (
+                          <Button
+                            size="xs"
+                            colorPalette="orange"
+                            onClick={() => window.open(ap.invoiceUrl!, "_blank", "noopener,noreferrer")}
+                          >
+                            <FileText size={12} /> Pay invoice
+                          </Button>
+                        )}
+                        {/* Contact affordance — prefers the configured
+                            BUSINESS_EMAIL, falls back to tel: on
+                            BUSINESS_PHONE if only phone is set. Hidden
+                            entirely when neither is configured so the
+                            button doesn't dangle broken. */}
+                        {businessEmail ? (
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            colorPalette="orange"
+                            onClick={() =>
+                              window.location.assign(
+                                `mailto:${businessEmail}?subject=${encodeURIComponent(
+                                  `Question about payment for ${ap.property.displayName ?? "my property"}`,
+                                )}`,
+                              )
+                            }
+                          >
+                            Contact us
+                          </Button>
+                        ) : businessPhone ? (
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            colorPalette="orange"
+                            onClick={() => window.location.assign(`tel:${businessPhone.replace(/[^\d+]/g, "")}`)}
+                          >
+                            Call us
+                          </Button>
+                        ) : null}
+                      </HStack>
+                    </VStack>
+                  </Card.Body>
+                </Card.Root>
+              );
+            })}
             {upcoming.map((job) => {
               const isActive = job.status === "IN_PROGRESS";
               // Estimates are never shown to clients — filtered out
@@ -885,7 +982,7 @@ export default function ClientMyJobsTab() {
         </Box>
       )}
 
-      {completed.length === 0 && upcoming.length === 0 && (
+      {completed.length === 0 && upcoming.length === 0 && awaitingPayment.length === 0 && (
         <Box p={4} bg="gray.50" rounded="lg" textAlign="center">
           <Text fontSize="md" fontWeight="semibold" color="fg.muted">No services scheduled yet</Text>
           <Text fontSize="sm" color="fg.muted" mt={1}>When your lawn care services are scheduled, you'll see them here along with photos and status updates.</Text>

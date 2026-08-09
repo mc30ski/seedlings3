@@ -213,11 +213,19 @@ export default async function publicRoutes(app: FastifyInstance) {
   // gets a consistent business name without needing to be on a
   // privileged settings endpoint.
   app.get("/public/branding", async () => {
-    const businessNameSetting = await prisma.setting.findUnique({
-      where: { key: "BUSINESS_NAME" },
-    });
+    const [businessNameSetting, businessEmailSetting, businessPhoneSetting] = await Promise.all([
+      prisma.setting.findUnique({ where: { key: "BUSINESS_NAME" } }),
+      prisma.setting.findUnique({ where: { key: "BUSINESS_EMAIL" } }),
+      prisma.setting.findUnique({ where: { key: "BUSINESS_PHONE" } }),
+    ]);
     return {
       businessName: businessNameSetting?.value || "Seedlings Lawn Care",
+      // Contact fields — used by client-facing surfaces that need a
+      // "Contact us" affordance (My Properties awaiting-payment card,
+      // etc.). Empty strings when unset so callers can fall through
+      // without null-checks.
+      businessEmail: businessEmailSetting?.value ?? "",
+      businessPhone: businessPhoneSetting?.value ?? "",
     };
   });
 

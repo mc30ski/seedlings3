@@ -17,6 +17,12 @@ const FALLBACK_BUSINESS_NAME = "Seedlings Lawn Care";
 
 type Branding = {
   businessName: string;
+  /** Public contact email (from BUSINESS_EMAIL setting). Empty string
+   *  when unset — callers should treat empty as "no email to link to." */
+  businessEmail: string;
+  /** Public contact phone (from BUSINESS_PHONE setting). Empty string
+   *  when unset. */
+  businessPhone: string;
 };
 
 let cached: Branding | null = null;
@@ -37,10 +43,14 @@ function loadOnce(): Promise<Branding> {
           typeof json?.businessName === "string" && json.businessName.trim()
             ? json.businessName.trim()
             : FALLBACK_BUSINESS_NAME,
+        businessEmail:
+          typeof json?.businessEmail === "string" ? json.businessEmail.trim() : "",
+        businessPhone:
+          typeof json?.businessPhone === "string" ? json.businessPhone.trim() : "",
       };
       return cached;
     } catch {
-      cached = { businessName: FALLBACK_BUSINESS_NAME };
+      cached = { businessName: FALLBACK_BUSINESS_NAME, businessEmail: "", businessPhone: "" };
       return cached;
     } finally {
       inflight = null;
@@ -51,7 +61,7 @@ function loadOnce(): Promise<Branding> {
 
 export function useBranding(): Branding {
   const [branding, setBranding] = useState<Branding>(
-    () => cached ?? { businessName: FALLBACK_BUSINESS_NAME },
+    () => cached ?? { businessName: FALLBACK_BUSINESS_NAME, businessEmail: "", businessPhone: "" },
   );
   useEffect(() => {
     let cancelled = false;

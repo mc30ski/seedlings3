@@ -571,6 +571,12 @@ function PaymentPageInner() {
             </VStack>
           </Box>
         )}
+        {/* App link — invites the client to sign in and see their history,
+            upcoming visits, photos, and receipts (or just browse the
+            public community feed without an account). Same nudge shown on
+            the post-payment states; adding it here means the invite is
+            present regardless of whether they pay from this page or not. */}
+        <AccountNudge token={typeof window !== "undefined" ? new URL(window.location.href).pathname.split("/").pop() ?? "" : ""} />
       </VStack>
       {confirmOpen && selectedMethod && (
         <SentConfirmModal
@@ -1417,6 +1423,21 @@ function AccountNudge({ token }: { token: string }) {
       <Text fontSize="2xs" color="fg.muted" textAlign="center" mt={1.5}>
         Just enter your email — new or returning, it's the same step.
       </Text>
+      {/* Secondary link — no login required. Lands on the Client tab
+          tree's Community section (public feed) so a curious visitor can
+          browse recent visits + photos without committing to an account. */}
+      <Box textAlign="center" mt={2.5}>
+        <Text
+          as="a"
+          fontSize="xs"
+          color="teal.700"
+          cursor="pointer"
+          textDecoration="underline"
+          onClick={() => { window.location.href = "/?tab=client-public"; }}
+        >
+          Or browse recent community photos →
+        </Text>
+      </Box>
     </Box>
   );
 }
