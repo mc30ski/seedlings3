@@ -141,6 +141,17 @@ export default function HomePage() {
 
   const [topTab, setTopTab] = usePersistedState<"client" | "worker" | "admin" | "super">("topTab", "client");
 
+  // Captured synchronously at first render — was there a `?tab=` deep-link
+  // in the URL when this page mounted? The deep-link resolver strips the
+  // param AFTER it routes, which means downstream effects that check
+  // `router.query.tab` see an empty query and can't tell the difference
+  // between "no deep-link" and "deep-link already consumed." This ref
+  // preserves that fact for the lifetime of the mount so the
+  // client-default-tab reset effect knows to yield.
+  const hadInitialTabDeepLinkRef = useRef(
+    typeof window !== "undefined" && new URLSearchParams(window.location.search).has("tab"),
+  );
+
   // "Tasks" page open-state. Intentionally NOT persisted across page
   // loads — Tasks is a transient worklist surface; a reload always
   // returns the operator to their underlying tab tree. Toggled from the
@@ -563,7 +574,11 @@ export default function HomePage() {
   // just the first session. Fires once per mount via the ref so the
   // client can still switch to Community / Services mid-session and stay
   // there for the rest of THIS visit; the next load reseeds on My
-  // Properties. Skipped when they're already on my-jobs (no-op nudge).
+  // Properties. Skipped when they're already on my-jobs (no-op nudge)
+  // OR when a `?tab=` deep-link is present in the URL (the deep-link
+  // resolver's target must win over the default landing, otherwise
+  // links from /pay/[token] et al can't route the client anywhere but
+  // My Properties).
   const clientDefaultFlippedRef = useRef(false);
   useEffect(() => {
     if (!me?.isApproved) return;
@@ -571,6 +586,11 @@ export default function HomePage() {
     if (topTab !== "client") return;
     if (clientInnerTab === "my-jobs") return;
     if (clientDefaultFlippedRef.current) return;
+    // Yield when a `?tab=` deep-link was present on load — the deep-link
+    // resolver strips the param before running, so a live check on
+    // router.query.tab always misses. hadInitialTabDeepLinkRef is
+    // captured synchronously at mount and preserves the fact.
+    if (hadInitialTabDeepLinkRef.current) return;
     clientDefaultFlippedRef.current = true;
     setClientInnerTab("my-jobs");
   }, [me?.isApproved, isWorker, isAdmin, topTab, clientInnerTab, setClientInnerTab]);

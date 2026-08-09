@@ -3,6 +3,7 @@ import { prisma } from "../db/prisma";
 import { getDownloadUrl } from "../lib/r2";
 import { etMidnight, etEndOfDay, etToday, etStartOfMonth, etAddDays, etFormatDate, etFormatDateOpts, type EtDateKey } from "../lib/dates";
 import { effectiveClerkUserId } from "../plugins/clientImpersonation";
+import { buildPaymentUrl } from "../services/paymentRequests";
 
 /**
  * Client-facing routes. Require Clerk auth but NOT worker/admin roles.
@@ -872,7 +873,108 @@ export default async function clientRoutes(app: FastifyInstance) {
       })
     );
 
-    return { items };
+    // ── Awaiting-payment placeholders ────────────────────────────────────
+    //
+    // When the client hasn't paid for their last completed service, the
+    // next recurring occurrence isn't auto-scheduled (that's tied to
+    // payment confirmation on the previous job). Without any Upcoming
+    // rows, the client's dashboard would go silent — no signal that the
+    // pipeline is paused OR why.
+    //
+    // For each property that has NO upcoming occurrence in `items`, look
+    // up the most recent COMPLETED occurrence. If that occurrence isn't
+    // paid (no confirmed payment), emit a placeholder card so the client
+    // sees: "your last service is awaiting payment; here's the invoice
+    // link; here's when the next visit will land after we receive it."
+    const propertyIdsWithUpcoming = new Set(items.map((i) => i.property?.id).filter(Boolean) as string[]);
+    const propertiesNeedingCheck = propertyIds.filter((p) => !propertyIdsWithUpcoming.has(p));
+    const awaitingPayment: Array<{
+      property: { id: string; displayName: string | null; street1: string | null; city: string | null; state: string | null };
+      lastServiceDate: string;
+      amountDue: number;
+      paymentPending: boolean;
+      invoiceUrl: string | null;
+      projectedNextDate: string | null;
+      frequencyDays: number | null;
+    }> = [];
+    if (propertiesNeedingCheck.length > 0) {
+      // One completed-occurrence query per property (most recent). Batch
+      // via findFirst-in-parallel — cheap since the number of properties
+      // per client is typically small (single digits).
+      const lastCompleted = await Promise.all(
+        propertiesNeedingCheck.map((pid) =>
+          prisma.jobOccurrence.findFirst({
+            where: {
+              job: { propertyId: pid },
+              // "Finished work" spans three statuses in this codebase:
+              // COMPLETED = done, awaiting payment; PENDING_PAYMENT =
+              // payment requested but not yet approved; CLOSED = done
+              // and paid. Matches equipment/exports/pnlReport usage.
+              status: { in: ["COMPLETED", "PENDING_PAYMENT", "CLOSED"] as any },
+              workflow: { in: ["STANDARD", "ONE_OFF"] },
+              isEstimate: false,
+              completedAt: { not: null },
+            },
+            orderBy: { completedAt: "desc" },
+            select: {
+              id: true,
+              completedAt: true,
+              price: true,
+              paymentRequestToken: true,
+              frequencyDays: true,
+              addons: { select: { price: true } },
+              payment: {
+                select: { confirmed: true, selfReported: true, amountPaid: true },
+              },
+              job: {
+                select: {
+                  frequencyDays: true,
+                  status: true,
+                  property: { select: { id: true, displayName: true, street1: true, city: true, state: true } },
+                },
+              },
+            },
+          }),
+        ),
+      );
+      for (const occ of lastCompleted) {
+        if (!occ || !occ.completedAt || !occ.job?.property) continue;
+        // If the payment is confirmed, this property is caught up — no
+        // placeholder needed (and no next-occurrence blocker to explain).
+        const paid = !!occ.payment?.confirmed;
+        if (paid) continue;
+        // paymentPending = client already tapped Pay via /pay/[token]
+        // but admin hasn't marked it received yet. Different copy on the
+        // client side ("we got your note; confirming shortly").
+        const paymentPending = !!occ.payment && !occ.payment.confirmed;
+        // Project the next visit only for recurring pipelines (occurrence-
+        // level frequency wins, else the job's default). One-offs get
+        // null and the UI simply omits the "next visit will be" line.
+        const freq = occ.frequencyDays ?? occ.job.frequencyDays ?? null;
+        const projectedNextDate =
+          freq && freq > 0 && occ.completedAt
+            // date-handling-allow: elapsed-time — coarse day arithmetic
+            // for a display projection; not a scheduling anchor.
+            ? new Date(occ.completedAt.getTime() + freq * 24 * 60 * 60 * 1000).toISOString()
+            : null;
+        const invoiceUrl = occ.paymentRequestToken
+          ? await buildPaymentUrl(occ.paymentRequestToken)
+          : null;
+        const amountDue =
+          (occ.price ?? 0) + (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
+        awaitingPayment.push({
+          property: occ.job.property,
+          lastServiceDate: occ.completedAt.toISOString(),
+          amountDue,
+          paymentPending,
+          invoiceUrl,
+          projectedNextDate,
+          frequencyDays: freq,
+        });
+      }
+    }
+
+    return { items, awaitingPayment };
   });
 
   // ── Change Requests (reschedule / skip) ─────────────────────────────────

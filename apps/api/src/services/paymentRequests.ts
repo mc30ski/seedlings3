@@ -33,7 +33,7 @@ async function getSetting(key: string): Promise<string | null> {
  * snapshot (which has the prod URL seeded) can still get a localhost
  * link in their SMS/email previews without having to mutate the DB.
  */
-async function buildPaymentUrl(token: string): Promise<string> {
+export async function buildPaymentUrl(token: string): Promise<string> {
   const envBase = process.env.PAYMENT_REQUEST_BASE_URL;
   const settingBase = await getSetting("PAYMENT_REQUEST_BASE_URL");
   const isProd = process.env.NODE_ENV === "production";
