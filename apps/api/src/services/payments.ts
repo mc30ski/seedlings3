@@ -311,13 +311,35 @@ export function computeBreakdown(
     };
   });
 
-  // Penny-residual fix on net (rounding can leave a 1-cent gap vs. the
-  // distributable pool). Apply to the first row.
+  // Penny-residual fix on net — spread across rows one cent at a time.
+  //
+  // Independent rounding of gross/fee/net per row can leave a small gap
+  // vs. the distributable pool (e.g. a 50/50 W-2 split on a $35 pool
+  // rounds both fees UP 0.005 and both nets UP 0.005, producing a $0.02
+  // over-distribution). The previous implementation dumped the entire
+  // residual on row 0, which:
+  //   1. Systematically shortchanged the claimer (usually row 0)
+  //      cumulatively across jobs, and
+  //   2. Produced 2-cent+ spreads between workers on identical splits.
+  //
+  // Fair allocation instead: distribute one cent per row, wrapping
+  // around if the residual magnitude exceeds the row count. Guarantees
+  // the max spread between any two workers on the same split% stays
+  // within 1 cent. Conservation invariant (sum(net + fee) == N) still
+  // holds — that's what payments-build-gate.test.ts locks in.
   if (rows.length > 0) {
     const distributedNet = rows.reduce((s, r) => s + r.net + r.fee, 0);
-    const residual = round2(N - distributedNet);
-    if (Math.abs(residual) >= 0.01) {
-      rows[0].net = round2(rows[0].net + residual);
+    const residualCents = Math.round((N - distributedNet) * 100);
+    if (residualCents !== 0) {
+      const sign = residualCents < 0 ? -1 : 1;
+      let remaining = Math.abs(residualCents);
+      let i = 0;
+      while (remaining > 0) {
+        const idx = i % rows.length;
+        rows[idx].net = round2(rows[idx].net + sign * 0.01);
+        remaining -= 1;
+        i += 1;
+      }
     }
   }
 

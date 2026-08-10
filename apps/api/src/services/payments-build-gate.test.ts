@@ -135,10 +135,12 @@ function randomWorkers(
 // ──────────────────────────────────────────────────────────────────────────
 describe("[build-gate] computeBreakdown conservation laws", () => {
   it("residual-fix conserves the pool exactly (sum(net + fee) === N)", () => {
-    // The residual-fix pass at the bottom of computeBreakdown adjusts the
-    // first row's net so penny rounding doesn't leak. After that pass,
-    // sum(net + fee) MUST equal N exactly. If this breaks, every
-    // downstream Gusto/QB total starts drifting.
+    // The residual-fix pass at the bottom of computeBreakdown spreads
+    // penny rounding excess across rows (one cent per row, wrapping if
+    // needed) so no single row eats the full drift. After that pass,
+    // sum(net + fee) MUST equal N exactly regardless of how the
+    // residual was distributed. If this breaks, every downstream
+    // Gusto/QB total starts drifting.
     const rand = makePrng(42);
     for (let trial = 0; trial < 50; trial++) {
       const N = Math.round(rand() * 100000) / 100; // up to $1000 to the nearest cent
