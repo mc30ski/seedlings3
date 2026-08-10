@@ -1867,6 +1867,26 @@ export default async function workerRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
+  // Worker-callable server-send for a payment request. Used by the email
+  // path of PaymentCommsButtons in CLAIMER mode: opening a mailto: link
+  // routes through iOS Mail, which composes with inline `color:` styles
+  // that Gmail's dark-mode logic can flip to white-on-white on the
+  // recipient side. Server-sending via Resend emits proper plain text
+  // that no mail client can misrender.
+  //
+  // SMS still fires the device sms: intent (unchanged) — Messages doesn't
+  // have the HTML-composition problem.
+  //
+  // Reuses the same sendForOccurrence path admins hit via
+  // /admin/occurrences/:id/resend-payment-request. Any assigned worker
+  // can call this; the underlying service also stamps the request-sent
+  // audit + rotates counters like the admin resend does.
+  app.post("/occurrences/:id/send-payment-request-email", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    return services.paymentRequests.sendForOccurrence(uid, occurrenceId);
+  });
+
   // Persist per-worker percent splits onto the occurrence + re-snapshot
   // promisedPayouts. Used by Take Payment in SERVER mode (where the comms
   // already fired automatically at completion, so we just need to save the

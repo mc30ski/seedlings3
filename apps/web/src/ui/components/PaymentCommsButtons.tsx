@@ -21,7 +21,7 @@ import { useEffect, useState } from "react";
 import { Button, HStack, Text } from "@chakra-ui/react";
 import { MessageCircle, RotateCw, Send, X } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
-import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
+import { buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
@@ -126,20 +126,41 @@ export default function PaymentCommsButtons({
   const useSms = !!phoneContact?.phone;
 
   async function commitRequest() {
-    // Fetch the OUTGOING_COMMS_CC setting fresh at click time so the URL
-    // can't be stale relative to whatever the admin most recently saved.
-    const cc = await fetchCommsCc();
-    const href = useSms
-      ? buildSmsHref({ to: phoneContact!.phone!, body: data!.smsBody, ccPhones: cc.phones })
-      : buildMailtoHref({ to: emailContact!.email!, subject: data!.emailSubject, body: data!.emailBody, ccEmails: cc.emails });
-    window.location.href = href;
-    apiPost(`/api/occurrences/${occurrenceId}/comms-handoff`, {
-      channel: useSms ? "sms" : "email",
-    })
-      .then(() => onRequestCanceled?.())
-      .catch((err) => {
-        console.warn("Failed to record comms handoff:", err);
-      });
+    // Two paths, both audit-tracked:
+    //
+    // SMS — open the device sms: intent (unchanged). Messages composes
+    // plain text; no rendering issues on the recipient side.
+    //
+    // Email — POST to the server-send endpoint (Resend) instead of
+    // opening a mailto: link. iOS Mail's compose window inserts inline
+    // `color:` styles into the mailto body; Gmail's dark-mode logic can
+    // flip those colors and leave the recipient staring at white text
+    // on a white background. Server-send emits proper plain text that
+    // no mail client can misrender.
+    if (useSms) {
+      const cc = await fetchCommsCc();
+      const href = buildSmsHref({ to: phoneContact!.phone!, body: data!.smsBody, ccPhones: cc.phones });
+      window.location.href = href;
+      apiPost(`/api/occurrences/${occurrenceId}/comms-handoff`, { channel: "sms" })
+        .then(() => onRequestCanceled?.())
+        .catch((err) => {
+          console.warn("Failed to record comms handoff:", err);
+        });
+    } else {
+      try {
+        await apiPost(`/api/occurrences/${occurrenceId}/send-payment-request-email`, {});
+        publishInlineMessage({
+          type: "SUCCESS",
+          text: `Invoice emailed to ${emailContact!.email!}.`,
+        });
+        onRequestCanceled?.();
+      } catch (err) {
+        publishInlineMessage({
+          type: "ERROR",
+          text: getErrorMessage("Couldn't email the invoice.", err),
+        });
+      }
+    }
   }
 
   async function handleCancel() {
