@@ -27,12 +27,15 @@ import { apiGet } from "@/src/lib/api";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import {
   ADMIN_PERIODS,
-  DEFAULT_DAYS,
+  DEFAULT_PERIOD,
   buttonPeriodLabel,
   fmtHours,
   fmtUSD,
+  periodKey,
+  periodQueryParams,
   tierFor,
   type HourlyPay,
+  type Period,
 } from "@/src/ui/components/WorkerHourlyPayCard";
 
 type WorkerListItem = {
@@ -59,13 +62,13 @@ type Props = {
   /** When set, the outer surface controls the period and the internal
    *  cycle button is hidden. Used by SuperWorkHomeTab so a single
    *  dashboard-wide period button drives every section at once. */
-  daysOverride?: number;
+  periodOverride?: Period;
 };
 
-export default function AllWorkersHourlyPayCards({ daysOverride }: Props = {}) {
-  const [internalDays, setInternalDays] = useState<number>(DEFAULT_DAYS);
-  const days = daysOverride ?? internalDays;
-  const externallyControlled = daysOverride != null;
+export default function AllWorkersHourlyPayCards({ periodOverride }: Props = {}) {
+  const [internalPeriod, setInternalPeriod] = useState<Period>(DEFAULT_PERIOD);
+  const period = periodOverride ?? internalPeriod;
+  const externallyControlled = periodOverride != null;
   const [workers, setWorkers] = useState<WorkerListItem[] | null>(null);
   // Per-worker HourlyPay results keyed by userId. Held separately from
   // the workers array so the workers list load isn't tied to N per-user
@@ -113,8 +116,10 @@ export default function AllWorkersHourlyPayCards({ daysOverride }: Props = {}) {
       await Promise.all(
         workers.map(async (w) => {
           try {
+            const qs = new URLSearchParams(periodQueryParams(period));
+            qs.set("viewAsUserId", w.id);
             const d = await apiGet<HourlyPay>(
-              `/api/me/hourly-pay?days=${days}&viewAsUserId=${encodeURIComponent(w.id)}`,
+              `/api/me/hourly-pay?${qs.toString()}`,
             );
             setPayByUser((prev) => ({ ...prev, [w.id]: d }));
           } catch {
@@ -125,19 +130,14 @@ export default function AllWorkersHourlyPayCards({ daysOverride }: Props = {}) {
     } finally {
       setPayLoading(false);
     }
-  }, [workers, days]);
+  }, [workers, periodKey(period)]);
 
   useEffect(() => { void loadPay(); }, [loadPay]);
 
-  const period =
-    ADMIN_PERIODS.find((p) => p.days === days) ??
-    ADMIN_PERIODS.find((p) => p.days === DEFAULT_DAYS) ??
-    ADMIN_PERIODS[0];
-
   function cyclePeriod() {
-    const idx = ADMIN_PERIODS.findIndex((p) => p.days === days);
+    const idx = ADMIN_PERIODS.findIndex((p) => periodKey(p) === periodKey(period));
     const next = ADMIN_PERIODS[(idx + 1) % ADMIN_PERIODS.length];
-    setInternalDays(next.days);
+    setInternalPeriod(next);
   }
 
   const periodDisplay = buttonPeriodLabel(period.label);

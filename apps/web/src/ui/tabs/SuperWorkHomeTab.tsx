@@ -54,19 +54,17 @@ import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/Inlin
 import {
   ADMIN_PERIODS,
   buttonPeriodLabel,
+  periodKey,
+  type Period,
 } from "@/src/ui/components/WorkerHourlyPayCard";
 
-// SuperWorkHome-specific period list. Same day counts as the pay-per-
-// hour card's ADMIN_PERIODS, but the day-1 slot is relabeled "today" —
-// the dashboard's from/to range is a calendar-day span (from=to=today
-// when days=1), which matches the operator's mental model of "what
-// happened today". The pay-per-hour card still passes through days=1
-// to /me/hourly-pay (a rolling 24h window), which is close enough to
-// "today's earnings" for someone working a normal shift today.
-const SUPER_PERIODS: Array<{ days: number; label: string }> = [
-  { days: 1, label: "today" },
-  ...ADMIN_PERIODS.slice(1),
-];
+// The dashboard shares ADMIN_PERIODS with the pay-per-hour card so the
+// whole tab stays in one visual family. Historically we had a separate
+// SUPER_PERIODS list that mislabeled the day-1 slot as "today" while
+// the underlying fetch was a rolling 24h window — that's exactly the
+// bug fixed here. Now "today" is a real calendar-anchored preset (see
+// ADMIN_PERIODS), and this component just uses it directly.
+const SUPER_PERIODS: Period[] = ADMIN_PERIODS;
 import AllWorkersHourlyPayCards from "@/src/ui/components/AllWorkersHourlyPayCards";
 import MiniStatCard, { type MiniStatColor } from "@/src/ui/components/MiniStatCard";
 
@@ -142,16 +140,23 @@ function fmtInt(n: number): string {
   return n.toLocaleString("en-US", { maximumFractionDigits: 0 });
 }
 
-// Rolling window helpers.
-//   to   = today (ET)
-//   from = today − (days − 1)
-// Matches the "past N days ending today" model the pay-per-hour card
-// uses so the dashboard's window and the AllWorkersHourlyPayCards
-// grid stay in sync. `days = 1` collapses to a single-day range
-// (today itself).
-function computeRange(days: number): { from: string; to: string } {
+// Resolve a Period into the from/to ET-date-key range /admin/operations
+// expects. Calendar-anchored presets ("today", "yesterday") produce a
+// single-day range on their respective calendar day. Rolling windows
+// produce the "past N days ending today" range the operator has always
+// seen.
+function periodToRange(p: Period): { from: string; to: string } {
+  if (p.preset === "today") {
+    const today = bizToday();
+    return { from: today, to: today };
+  }
+  if (p.preset === "yesterday") {
+    const y = bizAddDays(bizToday(), -1);
+    return { from: y, to: y };
+  }
+  const days = Math.max(1, p.days ?? 1);
   const to = bizToday();
-  const from = bizAddDays(to, -(Math.max(1, days) - 1));
+  const from = bizAddDays(to, -(days - 1));
   return { from, to };
 }
 
@@ -160,14 +165,14 @@ function computeRange(days: number): { from: string; to: string } {
 // rolling windows for longer-arc context. Distinct from the pay-per-
 // hour card's DEFAULT_DAYS (30) which is a "how am I doing lately"
 // default appropriate for a single-worker earnings view.
-const DEFAULT_SUPER_DAYS = 1;
+const DEFAULT_SUPER_PERIOD: Period = { preset: "today", label: "today" };
 
 export default function SuperWorkHomeTab() {
-  const [days, setDays] = useState<number>(DEFAULT_SUPER_DAYS);
+  const [period, setPeriod] = useState<Period>(DEFAULT_SUPER_PERIOD);
   const [data, setData] = useState<OperationsResponse | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const range = useMemo(() => computeRange(days), [days]);
+  const range = useMemo(() => periodToRange(period), [period]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -187,17 +192,12 @@ export default function SuperWorkHomeTab() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const period =
-    SUPER_PERIODS.find((p) => p.days === days) ??
-    SUPER_PERIODS.find((p) => p.days === DEFAULT_SUPER_DAYS) ??
-    SUPER_PERIODS[0];
-  // "today" reads standalone; every other label reads as "last {label}".
-  const periodDisplay = period.label === "today" ? "today" : buttonPeriodLabel(period.label);
+  const periodDisplay = buttonPeriodLabel(period.label);
 
   function cyclePeriod() {
-    const idx = SUPER_PERIODS.findIndex((p) => p.days === days);
+    const idx = SUPER_PERIODS.findIndex((p) => periodKey(p) === periodKey(period));
     const next = SUPER_PERIODS[(idx + 1) % SUPER_PERIODS.length];
-    setDays(next.days);
+    setPeriod(next);
   }
 
   return (
@@ -379,7 +379,7 @@ export default function SuperWorkHomeTab() {
           Reuses the same grid as Admin Work Home; the outer period
           button drives it via daysOverride so the whole tab shares
           one window. */}
-      <AllWorkersHourlyPayCards daysOverride={days} />
+      <AllWorkersHourlyPayCards periodOverride={period} />
 
       {/* Section 4 — Equipment.
           "Now" snapshot (BSD-independent) plus the window-scoped

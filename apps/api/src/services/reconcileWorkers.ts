@@ -277,10 +277,18 @@ export async function buildReconcileWorkers(
     }),
     // Occurrences whose work happened in window — anchored on completedAt
     // so payment-side reconciliation matches PaymentSplit anchoring.
+    // ESTIMATE workflow is intentionally excluded: estimates don't pay
+    // out (no PaymentSplit, no promisedPayouts) so they'd surface here
+    // as $0 rows with warnings, cluttering the Worker Payroll surface
+    // without any actionable payroll data. The isEstimate: false clause
+    // is belt-and-suspenders — catches legacy occurrences flagged as
+    // estimates via the boolean without carrying the ESTIMATE workflow.
+    // Matches the same filter used by P&L and QB exports.
     prisma.jobOccurrence.findMany({
       where: {
         completedAt: { gte: start, lte: end },
-        workflow: { in: ["STANDARD", "ONE_OFF", "ESTIMATE"] as any },
+        workflow: { in: ["STANDARD", "ONE_OFF"] as any },
+        isEstimate: false,
       },
       select: {
         id: true,

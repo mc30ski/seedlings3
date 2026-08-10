@@ -4596,10 +4596,24 @@ async function computePromisedPayoutsForSeed(
       net: Math.round((gross - fee) * 100) / 100,
     };
   });
+  // Fair penny-residual distribution — MUST mirror
+  // services/payments.ts → computeBreakdown. Distributes one cent per
+  // row, wrapping if the residual magnitude exceeds row count. Keeps
+  // max spread between workers on the same split% to 1 cent. If the
+  // logic here drifts from payments.ts, seed data won't match what
+  // production produces.
   const distributed = rows.reduce((s, r) => s + r.net + r.fee, 0);
-  const residual = Math.round((N - distributed) * 100) / 100;
-  if (Math.abs(residual) >= 0.01 && rows.length > 0) {
-    rows[0].net = Math.round((rows[0].net + residual) * 100) / 100;
+  const residualCents = Math.round((N - distributed) * 100);
+  if (residualCents !== 0 && rows.length > 0) {
+    const sign = residualCents < 0 ? -1 : 1;
+    let remaining = Math.abs(residualCents);
+    let i = 0;
+    while (remaining > 0) {
+      const idx = i % rows.length;
+      rows[idx].net = Math.round((rows[idx].net + sign * 0.01) * 100) / 100;
+      remaining -= 1;
+      i += 1;
+    }
   }
   return rows;
 }

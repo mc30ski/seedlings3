@@ -155,6 +155,44 @@ describe("[build-gate] computeBreakdown conservation laws", () => {
     }
   });
 
+  it("fair penny distribution: max spread between same-split% workers is 1¢", () => {
+    // When rounding leaves a residual, computeBreakdown must spread the
+    // pennies across rows (one per row, wrapping) — NOT dump the entire
+    // residual on row 0. This test locks in that no two workers with
+    // identical split% and worker type get nets that differ by more
+    // than 1 cent, even in the compound-rounding case ($35 pool, 50/50
+    // W-2, 35% margin — the historical failure that produced $11.36
+    // vs $11.38 on row 0 vs row 1).
+    //
+    // Sample the canonical failure case explicitly.
+    {
+      const rows = computeBreakdown(
+        35,
+        0,
+        [W("a", "EMPLOYEE", 50), W("b", "EMPLOYEE", 50)],
+        PRODUCTION_RATES,
+      );
+      const nets = rows.map((r) => r.net).sort();
+      expect(nets[nets.length - 1] - nets[0]).toBeLessThanOrEqual(0.01 + 1e-9);
+    }
+    // Property test: any random N/2-4 same-type same-split workers →
+    // max spread ≤ 1 cent.
+    const rand = makePrng(31);
+    for (let trial = 0; trial < 100; trial++) {
+      const N = Math.round(rand() * 100000) / 100;
+      const workerCount = 2 + Math.floor(rand() * 3); // 2-4 workers
+      const type = rand() < 0.5 ? "EMPLOYEE" : "CONTRACTOR";
+      const perPct = Math.round((100 / workerCount) * 100) / 100;
+      const workers = Array.from({ length: workerCount }, (_, i) =>
+        W(`w${i}`, type as any, perPct),
+      );
+      const rows = computeBreakdown(N, 0, workers, PRODUCTION_RATES);
+      const nets = rows.map((r) => r.net).sort();
+      const spread = nets[nets.length - 1] - nets[0];
+      expect(spread).toBeLessThanOrEqual(0.01 + 1e-9);
+    }
+  });
+
   it("worker payouts are never negative under any input", () => {
     // The reconciler floors at 0 for write-offs; computeBreakdown alone
     // also can't go negative because gross is N * (percent/100) ≥ 0 and
