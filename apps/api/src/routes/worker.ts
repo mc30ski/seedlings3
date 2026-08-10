@@ -3727,15 +3727,39 @@ export default async function workerRoutes(app: FastifyInstance) {
       uid = viewAsUserId;
     }
 
-    const daysParam = req.query?.days ? Number(req.query.days) : 30;
-    const days = daysParam > 0 ? Math.min(3650, Math.max(1, Math.floor(daysParam))) : 0;
+    // Two ways to specify the window:
+    //   • preset=today       → ET midnight today → now (partial day)
+    //   • preset=yesterday   → yesterday's full ET calendar day (midnight to
+    //                          midnight, exclusive of today)
+    //   • days=N             → rolling N × 24h window ending "now"
+    // The rolling-window flow is unchanged; the presets are calendar-day
+    // anchored so the labels match what the operator sees on their
+    // physical calendar (which is what they mean when they say
+    // "yesterday" or "today"). Without the presets, days=1 was labeled
+    // "yesterday" but actually spanned "now - 24h → now", which
+    // includes today's jobs — hence the mislabel.
+    const preset = String(req.query?.preset ?? "").toLowerCase();
     const now = new Date();
-    const start = days > 0
-      ? new Date(now.getTime() - days * 24 * 60 * 60 * 1000) // date-handling-allow: rolling window
-      : new Date(0);
+    let start: Date;
+    let end: Date = now;
+    if (preset === "today") {
+      start = etMidnight(etToday());
+      // end stays "now" — today is inherently a partial window.
+    } else if (preset === "yesterday") {
+      const y = etAddDays(etToday(), -1);
+      start = etMidnight(y);
+      end = etMidnight(etToday()); // strict boundary: excludes today
+    } else {
+      const daysParam = req.query?.days ? Number(req.query.days) : 30;
+      const days = daysParam > 0 ? Math.min(3650, Math.max(1, Math.floor(daysParam))) : 0;
+      start = days > 0
+        ? new Date(now.getTime() - days * 24 * 60 * 60 * 1000) // date-handling-allow: rolling window
+        : new Date(0);
+    }
 
     const cutoff = await resolveCutoff(req);
     const effectiveStart = cutoff && cutoff > start ? cutoff : start;
+    const effectiveEnd = end;
 
     const me = await prisma.user.findUnique({
       where: { id: uid },
@@ -3762,7 +3786,7 @@ export default async function workerRoutes(app: FastifyInstance) {
     const workdays = await prisma.workerWorkday.findMany({
       where: {
         userId: uid,
-        endedAt: { not: null, gte: effectiveStart, lte: now },
+        endedAt: { not: null, gte: effectiveStart, lte: effectiveEnd },
       },
       select: { startedAt: true, endedAt: true, totalPausedMs: true },
     });
@@ -3788,7 +3812,7 @@ export default async function workerRoutes(app: FastifyInstance) {
         },
         workflow: { in: ["STANDARD", "ONE_OFF"] as any },
         status: { notIn: ["CANCELED", "ARCHIVED"] as any },
-        completedAt: { gte: effectiveStart, lte: now },
+        completedAt: { gte: effectiveStart, lte: effectiveEnd },
         // Exclude Super-skipped payments — they don't count anywhere.
         OR: [{ payment: null }, { payment: { skippedAt: null } }],
       },
@@ -3946,12 +3970,20 @@ export default async function workerRoutes(app: FastifyInstance) {
     }
 
     const ratePerHour = hours > 0 ? dollars / hours : 0;
+    // Report the effective window in days (rounded up) so legacy
+    // consumers of the `days` field still get a sensible number.
+    // Preset presets → 1 day (they're calendar-day-scoped).
+    const effectiveDays = preset === "today" || preset === "yesterday"
+      ? 1
+      // date-handling-allow: elapsed-time — coarse day count for a
+      // display field; DST-shift precision doesn't matter.
+      : Math.max(1, Math.ceil((effectiveEnd.getTime() - effectiveStart.getTime()) / (24 * 60 * 60 * 1000)));
     return {
       dollars: Math.round(dollars * 100) / 100,
       hours: Math.round(hours * 100) / 100,
       jobs,
       ratePerHour: Math.round(ratePerHour * 100) / 100,
-      days,
+      days: effectiveDays,
       ...(wantDetails
         ? {
             details: {

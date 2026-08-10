@@ -74,37 +74,68 @@ type Props = {
   viewAsDisplayName?: string | null;
 };
 
+// Two kinds of periods:
+//   • Rolling windows — "last N days" ending at "now". Anchored on
+//     absolute time, so completing a job at 11 PM still counts against
+//     the same window a job at 6 AM does. Good for "how am I doing
+//     lately" trend context.
+//   • Calendar-anchored presets — "today" and "yesterday". Anchored on
+//     ET midnight boundaries so the labels mean what the operator
+//     actually thinks they mean (yesterday = yesterday's physical
+//     calendar day, not "last 24 hours"). Required by the operator so
+//     the label + numbers agree with their day-end payroll checks.
+//
 // Workers see the short list — the intent is "how am I doing lately",
 // not year-over-year trend analysis. Admins viewing a specific worker
 // via the "View as" picker get the extended list so they can spot
 // longer-arc performance context that the worker themselves doesn't.
-// Labels are lowercase because the button renders them alongside a
-// "Showing …" tooltip prefix ("last 3 days", "last week", etc.). The
-// yesterday-case reads standalone since "last yesterday" is broken
-// English — see buttonPeriodLabel below.
-export const WORKER_PERIODS: Array<{ days: number; label: string }> = [
-  { days: 1, label: "yesterday" },
-  { days: 3, label: "3 days" },
-  { days: 7, label: "week" },
-  { days: 14, label: "2 weeks" },
-  { days: 21, label: "3 weeks" },
-  { days: 30, label: "month" },
+export type Period = {
+  /** UI label. Rendered verbatim by buttonPeriodLabel below. */
+  label: string;
+  /** Rolling-window size in days. Ignored when `preset` is set. */
+  days?: number;
+  /** Calendar-anchored preset — server resolves boundaries in ET. */
+  preset?: "today" | "yesterday";
+};
+
+export const WORKER_PERIODS: Period[] = [
+  { preset: "today", label: "today" },
+  { preset: "yesterday", label: "yesterday" },
+  { days: 3, label: "last 3 days" },
+  { days: 7, label: "last week" },
+  { days: 14, label: "last 2 weeks" },
+  { days: 21, label: "last 3 weeks" },
+  { days: 30, label: "last month" },
 ];
-export const ADMIN_EXTRA_PERIODS: Array<{ days: number; label: string }> = [
-  { days: 60, label: "2 months" },
-  { days: 90, label: "3 months" },
-  { days: 180, label: "6 months" },
-  { days: 365, label: "year" },
+export const ADMIN_EXTRA_PERIODS: Period[] = [
+  { days: 60, label: "last 2 months" },
+  { days: 90, label: "last 3 months" },
+  { days: 180, label: "last 6 months" },
+  { days: 365, label: "last year" },
 ];
 export const ADMIN_PERIODS = [...WORKER_PERIODS, ...ADMIN_EXTRA_PERIODS];
 export const DEFAULT_DAYS = 30;
+/** Default period used by pickers that only accept days-based state.
+ *  Matches the "last month" entry above. */
+export const DEFAULT_PERIOD: Period = { days: DEFAULT_DAYS, label: "last month" };
 
-// Buttons render as "last {label}" for periods like "3 days", "week",
-// "month", "year". The special case is "yesterday" — reads by itself
-// because "last yesterday" is broken English. Same helper is used by
-// the tooltip so the two never drift.
+/** Stable string ID for a period — used as React key / persisted state
+ *  and to look up the current period in the array. */
+export function periodKey(p: Period): string {
+  if (p.preset) return `preset:${p.preset}`;
+  return `days:${p.days ?? 0}`;
+}
+
+/** Build the query-param fragment the server understands. */
+export function periodQueryParams(p: Period): string {
+  return p.preset ? `preset=${p.preset}` : `days=${p.days ?? 0}`;
+}
+
+/** Labels are already in their display form (e.g. "last week", "today").
+ *  Helper kept for API compatibility with callers that used to format
+ *  the raw label. */
 export function buttonPeriodLabel(label: string): string {
-  return label === "yesterday" ? "yesterday" : `last ${label}`;
+  return label;
 }
 
 export type Tier = {
@@ -249,12 +280,12 @@ function shareSourceLabel(s: BreakdownJob["shareSource"]): string {
 
 export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName }: Props = {}) {
   // Period is session-only (plain useState, no persistence). Every fresh
-  // page load resets to DEFAULT_DAYS so the card always starts at the
+  // page load resets to the default so the card always starts at the
   // "how am I doing lately" default instead of remembering whatever the
   // user last cycled to. Deliberate — the previous persisted-state
   // version confused users who came back the next day expecting the
   // default and saw a stale window.
-  const [days, setDays] = useState<number>(DEFAULT_DAYS);
+  const [periodKeyState, setPeriodKeyState] = useState<string>(periodKey(DEFAULT_PERIOD));
   const [data, setData] = useState<HourlyPay | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -275,18 +306,19 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName }:
   const periods = isAdminView ? ADMIN_PERIODS : WORKER_PERIODS;
 
   // Clamp stale persisted values that fall outside the current allowed
-  // list — e.g. a worker previously saw 365 and later got locked to
-  // the short list. Snap to DEFAULT_DAYS in that case.
-  const currentPeriod = periods.find((p) => p.days === days);
-  const effectiveDays = currentPeriod ? days : DEFAULT_DAYS;
+  // list — e.g. a worker previously saw a longer period and later got
+  // locked to the short list. Snap to the default.
+  const currentPeriod = periods.find((p) => periodKey(p) === periodKeyState);
+  const effectivePeriod = currentPeriod ?? periods.find((p) => periodKey(p) === periodKey(DEFAULT_PERIOD)) ?? periods[0];
+  const effectiveKey = periodKey(effectivePeriod);
   useEffect(() => {
-    if (!currentPeriod) setDays(DEFAULT_DAYS);
-  }, [currentPeriod, setDays]);
+    if (!currentPeriod) setPeriodKeyState(effectiveKey);
+  }, [currentPeriod, effectiveKey]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const qs = new URLSearchParams({ days: String(effectiveDays) });
+      const qs = new URLSearchParams(periodQueryParams(effectivePeriod));
       if (viewAsUserId) qs.set("viewAsUserId", viewAsUserId);
       const d = await apiGet<HourlyPay>(`/api/me/hourly-pay?${qs.toString()}`);
       setData(d);
@@ -298,7 +330,7 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName }:
     } finally {
       setLoading(false);
     }
-  }, [effectiveDays, viewAsUserId]);
+  }, [effectiveKey, viewAsUserId]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -309,13 +341,14 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName }:
   useEffect(() => {
     setDetails(null);
     setDetailsError(false);
-  }, [effectiveDays, viewAsUserId]);
+  }, [effectiveKey, viewAsUserId]);
 
   const loadDetails = useCallback(async () => {
     setDetailsLoading(true);
     setDetailsError(false);
     try {
-      const qs = new URLSearchParams({ days: String(effectiveDays), details: "1" });
+      const qs = new URLSearchParams(periodQueryParams(effectivePeriod));
+      qs.set("details", "1");
       if (viewAsUserId) qs.set("viewAsUserId", viewAsUserId);
       const d = await apiGet<HourlyPay>(`/api/me/hourly-pay?${qs.toString()}`);
       // Rewrite summary too — the details fetch is authoritative for
@@ -332,7 +365,7 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName }:
     } finally {
       setDetailsLoading(false);
     }
-  }, [effectiveDays, viewAsUserId]);
+  }, [effectiveKey, viewAsUserId]);
 
   // Single source of truth for "when the panel is open and we don't
   // have data, fetch it". Handles the initial expand AND the case
@@ -358,18 +391,15 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName }:
     }
   }
 
-  const period =
-    periods.find((p) => p.days === effectiveDays) ??
-    periods.find((p) => p.days === DEFAULT_DAYS) ??
-    periods[0];
+  const period = effectivePeriod;
 
   // Cycle-forward on click of the label chip — dead simple UI, no
   // dropdown mechanics. Long-press or the refresh icon handle the
   // rare "wait, I meant to go back" case (they can just click again).
   function cyclePeriod() {
-    const idx = periods.findIndex((p) => p.days === effectiveDays);
+    const idx = periods.findIndex((p) => periodKey(p) === effectiveKey);
     const next = periods[(idx + 1) % periods.length];
-    setDays(next.days);
+    setPeriodKeyState(periodKey(next));
   }
 
   if (!data) {
@@ -578,7 +608,7 @@ function BreakdownPanel({
 }: {
   data: HourlyPay;
   details: HourlyPayDetails;
-  period: { days: number; label: string };
+  period: Period;
   fg: string;
   isAdminContext: boolean;
 }) {
@@ -612,8 +642,7 @@ function BreakdownPanel({
           overflowX="auto"
         >
           <Text>
-            For each completed job you worked on (as a non-observer)
-            {period.label === "yesterday" ? " yesterday" : ` in the last ${period.label}`}:
+            For each completed job you worked on (as a non-observer) {period.label}:
           </Text>
           <Text mt={1}>
             &nbsp;&nbsp;projected = (price − expenses) × your_share × (1 − rate%)
