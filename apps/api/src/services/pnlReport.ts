@@ -840,10 +840,25 @@ function round2(n: number): number {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type PnLDetailRow = {
-  date: string;       // YYYY-MM-DD, ET-anchored
+  date: string;       // YYYY-MM-DD, ET-anchored — the anchor used for sorting (mode-dependent).
   primary: string;    // main description (vendor, client, etc.)
   secondary?: string; // optional second line (category, property, source, etc.)
   amount: number;
+  // Extra display fields for Wages drill rows (may also be useful for
+  // other drills that want to surface the same data). Optional so
+  // non-wage drills don't have to populate them.
+  /** Worker's percent of the job (from JobOccurrence.completionSplits).
+   *  Undefined for one-worker jobs or non-wage rows. */
+  splitPercent?: number;
+  /** Date the service was performed (JobOccurrence.completedAt).
+   *  YYYY-MM-DD, ET. Undefined for rows not tied to an occurrence. */
+  serviceDate?: string;
+  /** Date the payment was received/confirmed (Payment.confirmedAt).
+   *  YYYY-MM-DD, ET. Undefined for non-payment-linked rows. */
+  paymentDate?: string;
+  /** JobOccurrence.id for occurrence-linked rows (wages drill). Lets
+   *  the client make the row a link to the job. */
+  occurrenceId?: string;
 };
 
 export type PnLDetail = {
@@ -1076,7 +1091,7 @@ export async function pnlReportDetails(
       const events = await loadCashBasisWageEvents(start, end);
       const userIds = Array.from(new Set(events.map((e) => e.userId)));
       const occIds = Array.from(new Set(events.map((e) => e.occurrenceId)));
-      const [users, occs] = await Promise.all([
+      const [users, occs, paymentRows] = await Promise.all([
         prisma.user.findMany({
           where: { id: { in: userIds } },
           select: { id: true, displayName: true, email: true },
@@ -1085,6 +1100,7 @@ export async function pnlReportDetails(
           where: { id: { in: occIds } },
           select: {
             id: true,
+            completionSplits: true,
             job: {
               select: {
                 property: {
@@ -1094,19 +1110,41 @@ export async function pnlReportDetails(
             },
           },
         }),
+        // paymentConfirmedAt per occurrence — for the display-only
+        // "paymentDate" field so cash-mode rows can show BOTH
+        // dates side-by-side just like accrual mode.
+        prisma.payment.findMany({
+          where: { occurrenceId: { in: occIds }, confirmed: true },
+          select: { occurrenceId: true, confirmedAt: true },
+        }),
       ]);
       const userById = new Map(users.map((u) => [u.id, u]));
       const occById = new Map(occs.map((o) => [o.id, o]));
+      const paymentDateByOcc = new Map(
+        paymentRows.map((p) => [p.occurrenceId, p.confirmedAt ? etFormatDate(p.confirmedAt) : undefined] as const),
+      );
       const rows: PnLDetailRow[] = events.map((e) => {
         const u = userById.get(e.userId);
         const occ = occById.get(e.occurrenceId);
         const property = occ?.job?.property?.displayName;
         const client = occ?.job?.property?.client?.displayName;
+        const csRaw = (occ as any)?.completionSplits as
+          | Array<{ userId: string; percent: number }>
+          | null
+          | undefined;
+        const pct = Array.isArray(csRaw)
+          ? Number(csRaw.find((s) => s.userId === e.userId)?.percent) || undefined
+          : undefined;
+        const serviceDateStr = etFormatDate(e.completedAt);
         return {
-          date: etFormatDate(e.completedAt),
+          date: serviceDateStr,
           primary: u?.displayName ?? u?.email ?? "(unknown worker)",
           secondary: [client, property].filter(Boolean).join(" · ") || undefined,
           amount: round2(e.net),
+          splitPercent: pct,
+          serviceDate: serviceDateStr,
+          paymentDate: paymentDateByOcc.get(e.occurrenceId),
+          occurrenceId: e.occurrenceId,
         };
       });
       rows.sort((a, b) => a.date.localeCompare(b.date));
@@ -1125,6 +1163,21 @@ export async function pnlReportDetails(
         confirmedAt: true,
         occurrence: {
           select: {
+            // Needed by the client so wage rows can link back to the
+            // exact occurrence (via the existing "highlight occ" flow
+            // Payments uses).
+            id: true,
+            // startAt anchors the JobsTab date range so the linked
+            // occurrence isn't hidden by the default 60-day clamp.
+            startAt: true,
+            // completedAt drives the serviceDate display column so the
+            // operator can see the gap between "work done" and "money
+            // in" for each wage row.
+            completedAt: true,
+            // completionSplits carries the per-worker percent set at
+            // completion time. Used to render the split% column on the
+            // drill row. Nullable (legacy rows / single-worker jobs).
+            completionSplits: true,
             job: {
               select: {
                 property: {
@@ -1137,7 +1190,9 @@ export async function pnlReportDetails(
         splits: {
           where: { ownerEarnings: false },
           select: {
+            userId: true,
             amount: true,
+            grossAmount: true,
             user: { select: { displayName: true, email: true, workerType: true } },
           },
         },
@@ -1146,16 +1201,59 @@ export async function pnlReportDetails(
     });
     const rows: PnLDetailRow[] = [];
     for (const p of payments) {
+      // Split% source priority:
+      //   1. JobOccurrence.completionSplits — the exact percent set at
+      //      completion time. Not populated on all historical rows or
+      //      on dev seed data.
+      //   2. Fallback: derived from PaymentSplit.grossAmount / totalGross.
+      //      Every split has grossAmount populated post-migration, so
+      //      this always works for rows the reconcile actually renders.
+      const csRaw = (p.occurrence as any)?.completionSplits as
+        | Array<{ userId: string; percent: number }>
+        | null
+        | undefined;
+      const splitPctById = new Map<string, number>(
+        Array.isArray(csRaw)
+          ? csRaw.map((s) => [s.userId, Number(s.percent) || 0])
+          : [],
+      );
+      // Compute the derived-percent fallback map. Prefer grossAmount
+      // (pre-fee, matches the split% the operator set). On legacy /
+      // dev-seed rows where grossAmount is null across the board, fall
+      // back to `amount` (post-fee net) — same ratio for same-rate
+      // workers, close approximation for mixed rates, and always
+      // populated. Decision is per-payment: if ANY split has null
+      // grossAmount, use amount for all splits on that payment so the
+      // basis is consistent (mixing basis mid-payment would corrupt
+      // the ratio).
+      const useGrossBasis = p.splits.every((x) => x.grossAmount != null);
+      const basisFor = (x: { grossAmount: number | null; amount: number }) =>
+        useGrossBasis ? (x.grossAmount ?? 0) : (x.amount ?? 0);
+      const totalBasis = p.splits.reduce((s, x) => s + basisFor(x), 0);
+      const serviceDateStr = p.occurrence?.completedAt
+        ? etFormatDate(p.occurrence.completedAt)
+        : undefined;
+      const paymentDateStr = p.confirmedAt ? etFormatDate(p.confirmedAt) : undefined;
       for (const sp of p.splits) {
         if (!isEmployeeClass(sp.user.workerType)) continue;
         const workerName = sp.user.displayName ?? sp.user.email ?? "(unknown worker)";
         const property = p.occurrence?.job?.property?.displayName;
         const client = p.occurrence?.job?.property?.client?.displayName;
+        const primaryPct = splitPctById.get(sp.userId);
+        const basis = basisFor(sp);
+        const derivedPct =
+          totalBasis > 0 && basis > 0
+            ? Math.round(((basis / totalBasis) * 100) * 10) / 10
+            : undefined;
         rows.push({
-          date: p.confirmedAt ? etFormatDate(p.confirmedAt) : "",
+          date: paymentDateStr ?? "",
           primary: workerName,
           secondary: [client, property].filter(Boolean).join(" · ") || undefined,
           amount: round2(sp.amount ?? 0),
+          splitPercent: primaryPct != null ? primaryPct : derivedPct,
+          serviceDate: serviceDateStr,
+          paymentDate: paymentDateStr,
+          occurrenceId: p.occurrence?.id,
         });
       }
     }

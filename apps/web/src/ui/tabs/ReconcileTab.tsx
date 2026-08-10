@@ -108,6 +108,16 @@ type PnLDetailRow = {
   primary: string;
   secondary?: string;
   amount: number;
+  // Wages-drill extras — surfaced under the row so it's obvious HOW
+  // the money was paid out (split%) and BOTH date anchors (when the
+  // work was done vs when the payment came in) side-by-side.
+  splitPercent?: number;
+  serviceDate?: string;
+  paymentDate?: string;
+  /** JobOccurrence.id for occurrence-linked drill rows. When set the
+   *  row becomes a clickable link that jumps to the job in the Jobs
+   *  tab with the occurrence highlighted. */
+  occurrenceId?: string;
 };
 type PnLDetail = {
   qbAccount: string;
@@ -449,9 +459,18 @@ function fmtPercent(n: number): string {
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
 }
 
-function leafName(qbAccount: string): string {
+function leafName(qbAccount: string, mode?: PnLMode): string {
   const colon = qbAccount.indexOf(":");
-  return colon < 0 ? qbAccount : qbAccount.slice(colon + 1).trim();
+  const raw = colon < 0 ? qbAccount : qbAccount.slice(colon + 1).trim();
+  // Mode-aware relabel for the Wages account. Server keeps the account
+  // key stable as "Wages (accrued)" (used for drilldown lookups + QB
+  // account mapping), but the "(accrued)" wording is misleading when
+  // the operator has switched to cash mode — cash mode anchors the row
+  // on JobOccurrence.completedAt (work-in-window) rather than
+  // Payment.confirmedAt (payment-in-window). Swap the display label
+  // when we know the current mode.
+  if (mode === "cash" && raw === "Wages (accrued)") return "Wages (paid)";
+  return raw;
 }
 
 // Short badge label for a specific anomaly string. Backend produces
@@ -1218,7 +1237,7 @@ export default function ReconcileTab() {
               {(report.cogs.flat.length > 0 || report.cogs.groups.length > 0) && (
                 <>
                   <SectionHeader label="Cost of Goods Sold" />
-                  <BucketRows bucket={report.cogs} expanded={expanded} details={details} onToggle={toggleAccount} />
+                  <BucketRows bucket={report.cogs} expanded={expanded} details={details} onToggle={toggleAccount} mode={pnlMode} />
                   <TotalRow label="Total Cost of Goods Sold" amount={report.cogs.total} />
                 </>
               )}
@@ -1247,7 +1266,7 @@ export default function ReconcileTab() {
               {(report.expenses.flat.length > 0 || report.expenses.groups.length > 0) && (
                 <>
                   <SectionHeader label="Expenses" />
-                  <BucketRows bucket={report.expenses} expanded={expanded} details={details} onToggle={toggleAccount} />
+                  <BucketRows bucket={report.expenses} expanded={expanded} details={details} onToggle={toggleAccount} mode={pnlMode} />
                   <TotalRow label="Total Expenses" amount={report.expenses.total} />
                 </>
               )}
@@ -1391,7 +1410,7 @@ export default function ReconcileTab() {
                       Categories opted out via Settings. Not counted toward Net Operating Income — shown for visibility so every Ledger entry is accounted for somewhere.
                     </Text>
                   </Box>
-                  <BucketRows bucket={report.excluded} expanded={expanded} details={details} onToggle={toggleAccount} />
+                  <BucketRows bucket={report.excluded} expanded={expanded} details={details} onToggle={toggleAccount} mode={pnlMode} />
                   <HStack
                     justify="space-between"
                     px={3}
@@ -1933,11 +1952,15 @@ function BucketRows({
   expanded,
   details,
   onToggle,
+  mode,
 }: {
   bucket: PnLBucket;
   expanded: Set<string>;
   details: Record<string, DetailState>;
   onToggle: (qbAccount: string) => void;
+  /** Current P&L mode — used by leafName to relabel mode-sensitive
+   *  account names (e.g. Wages "accrued" vs "paid"). */
+  mode: PnLMode;
 }) {
   return (
     <>
@@ -1945,7 +1968,7 @@ function BucketRows({
         entry.kind === "flat" ? (
           <ExpandableRow
             key={`flat:${entry.row.qbAccount}`}
-            label={entry.row.qbAccount}
+            label={leafName(entry.row.qbAccount, mode)}
             amount={entry.row.total}
             indent={1}
             expanded={expanded.has(entry.row.qbAccount)}
@@ -1978,7 +2001,7 @@ function BucketRows({
             {entry.group.children.map((c) => (
               <ExpandableRow
                 key={c.qbAccount}
-                label={leafName(c.qbAccount)}
+                label={leafName(c.qbAccount, mode)}
                 amount={c.total}
                 indent={2}
                 expanded={expanded.has(c.qbAccount)}
@@ -2117,33 +2140,100 @@ function DetailRows({ state }: { state: DetailState | undefined }) {
       borderColor="gray.200"
       pl={3}
     >
-      {state.rows.map((r, i) => (
-        <HStack
-          key={i}
-          justify="space-between"
-          gap={2}
-          py={0.5}
-          borderBottomWidth="1px"
-          borderColor="gray.100"
-        >
-          <HStack gap={2} flex="1" minW={0}>
-            {r.date && (
-              <Text color="fg.muted" fontFamily="mono" flexShrink={0} minW="78px">
-                {r.date}
-              </Text>
-            )}
-            <VStack align="start" gap={0} flex="1" minW={0}>
-              <Text>{r.primary}</Text>
-              {r.secondary && (
-                <Text color="fg.muted" fontSize="2xs">{r.secondary}</Text>
+      {state.rows.map((r, i) => {
+        // Wages rows carry serviceDate + paymentDate + splitPercent
+        // extras. Render them as a subtle metadata line so the row
+        // shows: worker · property (top), then service/payment/split
+        // (metadata) — makes it obvious HOW money was paid and when
+        // the work vs. the payment happened. Non-wage drills stay
+        // compact (no metadata line).
+        const hasWageMeta =
+          r.serviceDate != null || r.paymentDate != null || r.splitPercent != null;
+        const metaParts: string[] = [];
+        if (r.splitPercent != null) metaParts.push(`Split: ${r.splitPercent}%`);
+        if (r.serviceDate) metaParts.push(`Service: ${r.serviceDate}`);
+        if (r.paymentDate && r.paymentDate !== r.serviceDate) {
+          metaParts.push(`Paid: ${r.paymentDate}`);
+        }
+        // Clickable when the row has an occurrenceId — jumps to the
+        // Admin Jobs tab with that occurrence highlighted, same event
+        // the Payments tab uses for its "Job" link. Falls back to a
+        // plain HStack for non-linkable rows.
+        const clickable = !!r.occurrenceId;
+        const rowContent = (
+          <>
+            <HStack gap={2} flex="1" minW={0} align="start">
+              {r.date && (
+                <Text color="fg.muted" fontFamily="mono" flexShrink={0} minW="78px">
+                  {r.date}
+                </Text>
               )}
-            </VStack>
+              <VStack align="start" gap={0} flex="1" minW={0}>
+                <Text>{r.primary}</Text>
+                {/* Link styling lives on `secondary` (client · property)
+                    when the row is clickable — the target is the JOB,
+                    not the worker. Underlining the worker's name read
+                    as "click the worker" which isn't the action. */}
+                {r.secondary && (
+                  <Text
+                    fontSize="2xs"
+                    color={clickable ? "blue.600" : "fg.muted"}
+                    textDecoration={clickable ? "underline" : undefined}
+                  >
+                    {r.secondary}
+                  </Text>
+                )}
+                {hasWageMeta && metaParts.length > 0 && (
+                  <Text color="fg.muted" fontSize="2xs">{metaParts.join(" · ")}</Text>
+                )}
+              </VStack>
+            </HStack>
+            <Text fontWeight="medium" flexShrink={0}>
+              {fmtUSD(r.amount)}
+            </Text>
+          </>
+        );
+        return clickable ? (
+          <HStack
+            key={i}
+            as="button"
+            w="full"
+            justify="space-between"
+            gap={2}
+            py={0.5}
+            borderBottomWidth="1px"
+            borderColor="gray.100"
+            cursor="pointer"
+            _hover={{ bg: "gray.50" }}
+            textAlign="left"
+            onClick={() => {
+              window.dispatchEvent(
+                new CustomEvent("open:paymentsTabToServicesTabSearch", {
+                  detail: {
+                    forAdmin: true,
+                    entityId: r.occurrenceId,
+                    anchorAt: r.serviceDate ?? null,
+                  },
+                }),
+              );
+            }}
+            title="Open the job for this wage row"
+          >
+            {rowContent}
           </HStack>
-          <Text fontWeight="medium" flexShrink={0}>
-            {fmtUSD(r.amount)}
-          </Text>
-        </HStack>
-      ))}
+        ) : (
+          <HStack
+            key={i}
+            justify="space-between"
+            gap={2}
+            py={0.5}
+            borderBottomWidth="1px"
+            borderColor="gray.100"
+          >
+            {rowContent}
+          </HStack>
+        );
+      })}
     </VStack>
   );
 }

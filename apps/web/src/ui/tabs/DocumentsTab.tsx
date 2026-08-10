@@ -319,19 +319,32 @@ export default function DocumentsTab({ isSuper = false }: Props) {
 
   // Default: every collection — singleton or multi-instance — starts collapsed
   // so the tab opens to a tidy header-only index. Tracked separately so
-  // user-driven toggles (after this seed) are preserved. Runs once when
-  // types are first known.
+  // user-driven toggles (after this seed) are preserved.
+  //
+  // Seed keys come from BOTH the DOCUMENT_TYPES taxonomy AND the actual
+  // items list. Two reasons:
+  //   1. `types` starts as DEFAULT_DOCUMENT_TYPES on first render
+  //      (non-empty), so a seed keyed only off `types` fires before
+  //      loadTypes()/load() complete and misses any real config-only
+  //      types added later.
+  //   2. Orphan doc types — docs whose type key isn't in DOCUMENT_TYPES
+  //      — render via the orphanKeys path with `singleton: false`. Those
+  //      MUST also be seeded or they open expanded on tab load.
+  // Seeds ONCE, when items have arrived (items.length > 0). Subsequent
+  // types/items changes don't re-seed so the operator's toggles stick.
   const [collapseSeeded, setCollapseSeeded] = useState(false);
   useEffect(() => {
     if (collapseSeeded) return;
-    if (!types || types.length === 0) return;
+    // Wait for the actual doc list — types alone (which starts as
+    // DEFAULT_DOCUMENT_TYPES) isn't enough to know the full set of
+    // rendered collections.
+    if (items.length === 0) return;
     const seed = new Set<string>();
-    for (const t of types) {
-      seed.add(t.key);
-    }
+    for (const t of types) seed.add(t.key);
+    for (const d of items) seed.add(d.type);
     setCollapsedTypes(seed);
     setCollapseSeeded(true);
-  }, [types, collapseSeeded]);
+  }, [types, items, collapseSeeded]);
 
   // Deep-linked collection should be visible — pull it out of the collapsed
   // set when a deep link targets it.
