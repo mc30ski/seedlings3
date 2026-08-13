@@ -13,6 +13,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { ArrowLeft } from "lucide-react";
+import { isSatelliteHost, PRIMARY_SIGN_IN_URL } from "@/src/lib/clerkDomains";
 
 /**
  * Unified passwordless sign-in / sign-up page.
@@ -38,12 +39,53 @@ import { ArrowLeft } from "lucide-react";
  */
 export default function SignInPage() {
   const [mounted, setMounted] = useState(false);
+  // Satellite gate — set once during the client-side satellite detection
+  // effect. When true, the page renders a "Redirecting to sign in…"
+  // placeholder while window.location.replace is in flight instead of
+  // mounting <SignInForm/>, whose useSignIn() call would fail with
+  // "operation not allowed" on a satellite domain.
+  //
+  // Clerk requires sign-in operations (signIn.create, prepareFirstFactor,
+  // attemptFirstFactor) to happen on the PRIMARY domain — satellite
+  // domains only receive the resulting session via the __clerk_synced
+  // handoff. So on the satellite we bounce to https://<primary>/sign-in
+  // and let the primary handle the whole flow; Clerk sends the user
+  // back to the satellite's origin URL after authentication.
+  const [isRedirectingToPrimary, setIsRedirectingToPrimary] = useState(false);
   useEffect(() => setMounted(true), []);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!isSatelliteHost(window.location.hostname)) return;
+    setIsRedirectingToPrimary(true);
+    // Preserve whatever the user was trying to reach so the primary can
+    // send them back to the right place. `redirect_url` is Clerk's
+    // canonical param name. When there's no explicit redirect_url in the
+    // current query string, fall back to the satellite's root — the
+    // most common case is a fresh visit to seedlings.pro that got
+    // funneled to the sign-in page.
+    const params = new URLSearchParams(window.location.search);
+    const explicitRedirect = params.get("redirect_url");
+    const fallbackRedirect = `${window.location.origin}/`;
+    const redirectUrl = explicitRedirect || fallbackRedirect;
+    const target = `${PRIMARY_SIGN_IN_URL}?redirect_url=${encodeURIComponent(redirectUrl)}`;
+    // window.location.replace so the satellite /sign-in URL isn't left
+    // in the back-button history — user hitting Back should go to
+    // wherever they came from, not bounce them into the redirect loop.
+    window.location.replace(target);
+  }, []);
   return (
     <Box minH="100vh" display="flex" alignItems="center" justifyContent="center" bg="gray.50" p={4}>
       <VStack gap={4} maxW="md" w="full">
         <Heading size="lg" textAlign="center">Welcome to Seedlings</Heading>
-        {mounted ? <SignInForm /> : <SignInPlaceholder />}
+        {isRedirectingToPrimary ? (
+          <Text fontSize="sm" color="fg.muted" textAlign="center">
+            Redirecting you to sign in…
+          </Text>
+        ) : mounted ? (
+          <SignInForm />
+        ) : (
+          <SignInPlaceholder />
+        )}
         {/* Bail-out link — visible on every step so someone who lands
             here and changes their mind (or hit sign-in by accident from
             the header link) can back out to the public dashboard without
