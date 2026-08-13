@@ -31,6 +31,27 @@ if (!PUBLISHABLE_KEY) {
   throw new Error("Missing NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY");
 }
 
+// Clerk multi-domain (primary + satellites). Auth state lives on the primary
+// domain's cookies; satellite domains render the app but redirect to the
+// primary for sign-in, then bounce back with __clerk_synced=true so the
+// session is shared. See: https://clerk.com/docs/deployments/set-up-satellite-application
+//
+// PRIMARY_HOSTNAME: hostname of the domain where Clerk's Primary is
+// configured (matches Clerk dashboard → Configure → Domains → Primary).
+// SATELLITE_HOSTNAMES: every other hostname that should render the app
+// under satellite semantics — these MUST be added as Satellites in the
+// Clerk dashboard first, with the required CNAME record on their DNS.
+//
+// Function-form props are used on ClerkProvider so the SDK evaluates the
+// current URL at the right time (works with SSR + hydration without a
+// mismatch). Localhost + preview deployments fall through to primary
+// behavior, which is what we want in dev.
+const PRIMARY_HOSTNAME = "seedlings.team";
+const SATELLITE_HOSTNAMES = new Set(["seedlings.pro"]);
+function isSatelliteHost(hostname: string): boolean {
+  return SATELLITE_HOSTNAMES.has(hostname);
+}
+
 function AppInner({ Component, pageProps }: AppProps) {
   const { getToken, userId } = useAuth();
 
@@ -205,7 +226,21 @@ export default function MyApp(props: AppProps) {
         <link rel="apple-touch-icon" href="/seedlings-icon.png" />
       </Head>
 
-      <ClerkProvider publishableKey={PUBLISHABLE_KEY}>
+      <ClerkProvider
+        publishableKey={PUBLISHABLE_KEY}
+        // Function forms so Clerk evaluates the request URL each time
+        // (works cleanly during SSR + hydration; a static "isSatellite: true"
+        // would create a hydration mismatch when the initial HTML was
+        // rendered without knowledge of the current host).
+        isSatellite={(url) => isSatelliteHost(url.hostname)}
+        domain={(url) => (isSatelliteHost(url.hostname) ? url.hostname : "")}
+        // On satellite domains, Clerk needs to know where authentication
+        // happens (the primary). On the primary itself this URL still
+        // resolves to the same-domain /sign-in page — Clerk's own routing
+        // treats it as a no-op redirect. On localhost the isSatellite check
+        // is false so Clerk uses its default /sign-in route unaffected.
+        signInUrl={`https://${PRIMARY_HOSTNAME}/sign-in`}
+      >
         <OfflineProvider>
           {/* Business Start Date cutoff — fetches the effective cutoff from
               /me/business-start once Clerk auth resolves, and exposes the
