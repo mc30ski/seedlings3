@@ -100,13 +100,6 @@ type ResolveResponse = {
   // Promotion display for the invoice page. Empty array when the primary
   // contact is opted out of all dispatch channels OR no promo is running.
   promos?: InvoicePagePromo[];
-  // Self-serve opt-in tokens. Populated per-channel only when the
-  // primary contact is currently opted out AND has an address on file.
-  // Client uses these to POST /public/promo/opt-in.
-  // Which channels the "Opt in to promotion offers" affordance should
-  // surface. True only when the primary contact is currently opted out
-  // AND has an address on file for that channel.
-  promoOptInAvailable?: { email: boolean; sms: boolean };
 };
 
 // MethodKey is now any string — the taxonomy decides the universe. We keep
@@ -600,12 +593,12 @@ function PaymentPageInner() {
         {data.promos && data.promos.length > 0 && (
           <PromoDisplaySection promos={data.promos} />
         )}
-        {data.promoOptInAvailable && (data.promoOptInAvailable.email || data.promoOptInAvailable.sms) && (
-          <PromoOptInAffordance
-            available={data.promoOptInAvailable}
-            payToken={typeof window !== "undefined" ? new URL(window.location.href).pathname.split("/").pop() ?? "" : ""}
-          />
-        )}
+        {/* Promo re-opt-in affordance intentionally removed — the
+            /public/pay/:token/promo-opt-in endpoint is retired for
+            TCPA/CAN-SPAM compliance (pay tokens can be forwarded,
+            silent opt-in from a shared token creates unauthorized
+            marketing-consent flips). Clients who want back in contact
+            the business, which uses the typed-APPROVE Super flow. */}
         {/* App link — invites the client to sign in and see their history,
             upcoming visits, photos, and receipts (or just browse the
             public community feed without an account). Same nudge shown on
@@ -696,86 +689,6 @@ function PromoDisplaySection({ promos }: { promos: InvoicePagePromo[] }) {
         </Box>
       ))}
     </VStack>
-  );
-}
-
-/** Small opt-in affordance shown when the primary contact has opted out
- *  of one or both promotional channels. Per-channel — separate buttons
- *  for email and SMS. Uses the pay-token to identify the contact
- *  (server-side lookup) so no per-recipient signed tokens are needed.
- *  Success flips a local flag so the affordance hides after successful
- *  re-opt-in without needing a page reload. */
-function PromoOptInAffordance({
-  available,
-  payToken,
-}: {
-  available: { email: boolean; sms: boolean };
-  payToken: string;
-}) {
-  const [emailDone, setEmailDone] = useState(false);
-  const [smsDone, setSmsDone] = useState(false);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  async function optIn(channel: "email" | "sms") {
-    setBusy(channel);
-    setErr(null);
-    try {
-      const res = await fetch(`${API_BASE}/api/public/pay/${payToken}/promo-opt-in`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ channel }),
-      });
-      if (!res.ok) throw new Error(`opt-in failed (${res.status})`);
-      if (channel === "email") setEmailDone(true);
-      else setSmsDone(true);
-    } catch (e: any) {
-      setErr(String(e?.message ?? e));
-    } finally {
-      setBusy(null);
-    }
-  }
-  const showEmail = available.email && !emailDone;
-  const showSms = available.sms && !smsDone;
-  if (!showEmail && !showSms && !emailDone && !smsDone) return null;
-  return (
-    <Box
-      p={3}
-      bg="gray.50"
-      borderWidth="1px"
-      borderColor="gray.200"
-      rounded="md"
-    >
-      <Text fontSize="sm" color="fg.muted" mb={2}>
-        Opt in to promotion offers
-      </Text>
-      <HStack gap={2} wrap="wrap">
-        {showEmail && (
-          <Button
-            size="xs"
-            variant="outline"
-            colorPalette="blue"
-            loading={busy === "email"}
-            onClick={() => void optIn("email")}
-          >
-            Turn on email offers
-          </Button>
-        )}
-        {showSms && (
-          <Button
-            size="xs"
-            variant="outline"
-            colorPalette="blue"
-            loading={busy === "sms"}
-            onClick={() => void optIn("sms")}
-          >
-            Turn on text offers
-          </Button>
-        )}
-        {emailDone && <Text fontSize="xs" color="green.700">Email offers turned on ✓</Text>}
-        {smsDone && <Text fontSize="xs" color="green.700">Text offers turned on ✓</Text>}
-      </HStack>
-      {err && <Text fontSize="xs" color="red.600" mt={2}>{err}</Text>}
-    </Box>
   );
 }
 

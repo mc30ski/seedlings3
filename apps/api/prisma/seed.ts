@@ -206,6 +206,14 @@ const SETTING_SECTIONS: Record<string, string> = {
   // Compliance
   POLICY_STRICT_TWO_EYES: "compliance",
   POLICY_DEFAULT_GRACE_HOURS: "compliance",
+  // Promotions — CAN-SPAM/TCPA footer copy + the HMAC click-tracking
+  // secret. Footers are freely editable; PROMOTION_HMAC_SECRET is in
+  // PROTECTED_SETTING_KEYS (services/settings.ts) so it renders as a
+  // read-only card with a dedicated "Rotate" button instead of a
+  // free-text input.
+  PROMOTION_OPT_OUT_FOOTER_EMAIL: "promotions",
+  PROMOTION_OPT_OUT_FOOTER_SMS: "promotions",
+  PROMOTION_HMAC_SECRET: "promotions",
   // Integrations
   WEATHER_API_KEY: "integrations",
   DOCUMENT_SYNC_ENABLED: "integrations",
@@ -2361,18 +2369,24 @@ async function seedDatabase() {
     // Promotion opt-out footers — appended to promo piggyback content on
     // outbound email/SMS. Email footer MUST include {{businessAddress}}
     // (or a literal address) per CAN-SPAM. {{unsubscribeLink}} is
-    // interpolated with a per-recipient signed URL at send time. SMS is
-    // exempt from the postal-address rule so the SMS footer just needs
-    // the opt-out link. Both footers are only appended when the outbound
-    // message actually includes a promo — plain transactional messages
-    // stay unadorned.
-    { key: "PROMOTION_OPT_OUT_FOOTER_EMAIL", value: "You're receiving this because you're a customer of Seedlings Lawn Care.\n{{businessAddress}}\nTo stop promotional emails: {{unsubscribeLink}}", description: "Footer appended to promotional emails. Must include {{businessAddress}} (or literal address) for CAN-SPAM compliance. {{unsubscribeLink}} is replaced with the /opt-out page URL — a plain static link where the client enters their email/phone to unsubscribe." },
-    { key: "PROMOTION_OPT_OUT_FOOTER_SMS", value: "Opt out: {{unsubscribeLink}}", description: "Footer appended to promotional SMS messages. {{unsubscribeLink}} is replaced with the /opt-out page URL — a plain static link where the client enters their phone to unsubscribe. Keep short — every character counts against the 160-char SMS segment." },
-    // Shared secret for HMAC-signing unsubscribe URLs. Random 64-char
-    // value seeded here for dev; production should rotate to a strong
-    // random string via the settings UI. If empty, promotion send is
-    // blocked at the dispatcher so we never ship an insecure link.
-    { key: "PROMOTION_HMAC_SECRET", value: "dev-only-promo-hmac-secret-please-rotate-in-production-64chars-min", description: "HMAC secret used to sign per-recipient promotion opt-out URLs. Rotate on suspicion of leak. Empty value blocks promotion sends." },
+    // interpolated with the /opt-out page URL at send time (static, no
+    // per-recipient token). SMS is exempt from the postal-address rule
+    // so the SMS footer just needs the opt-out link. Both footers are
+    // only appended when the outbound message actually includes a promo
+    // — plain transactional messages stay unadorned.
+    //
+    // Defaults below are legally-compliant starting copy. Operator can
+    // edit either in the Settings tab under "Promotions".
+    { key: "PROMOTION_OPT_OUT_FOOTER_EMAIL", value: "You're receiving this because you're a customer of Seedlings Lawn Care.\n{{businessAddress}}\nTo stop promotional emails: {{unsubscribeLink}}", description: "Footer appended to promotional emails. Must include {{businessAddress}} (or a literal address) for CAN-SPAM compliance. {{unsubscribeLink}} resolves to the static /opt-out page — clients enter their email/phone there to unsubscribe (no per-recipient token in the URL)." },
+    { key: "PROMOTION_OPT_OUT_FOOTER_SMS", value: "Reply STOP or opt out: {{unsubscribeLink}}", description: "Footer appended to promotional SMS messages. {{unsubscribeLink}} resolves to the static /opt-out page. Keep short — every character counts against the 160-char SMS segment." },
+    // Shared secret for HMAC-signing click-tracking URLs. Auto-generated
+    // on first use if missing — see loadPromotionSettings(). Seeded here
+    // with a deterministic dev value so tests are reproducible; the
+    // service-side generator only fires when the row is missing OR
+    // empty, so the seed still wins on reseeds. Prod never touches this
+    // — first call to loadPromotionSettings() persists a random 32-byte
+    // secret automatically.
+    { key: "PROMOTION_HMAC_SECRET", value: "dev-only-promo-hmac-secret-please-rotate-in-production-64chars-min", description: "HMAC secret used to sign promotion click-tracking URLs (server-only — never leaves this DB). Auto-generated on first use in production if this row is missing or empty; you should NOT need to set it manually. Rotate here if you have specific reason to (leak suspicion, key-hygiene rotation) — a rotation invalidates every in-flight promo link." },
   ];
   for (const s of paymentSettings) {
     await prisma.setting.upsert({

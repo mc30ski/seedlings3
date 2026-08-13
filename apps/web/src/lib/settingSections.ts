@@ -51,6 +51,11 @@ export const SETTING_SECTIONS: SettingSection[] = [
     description: "Policy-system controls: 2-eyes enforcement on Approve + Publish, default grace hours after a new version publishes. See docs/features/compliance.md.",
   },
   {
+    key: "promotions",
+    title: "Promotions",
+    description: "Copy for the CAN-SPAM/TCPA footer appended to every outbound promo email/SMS. {{unsubscribeLink}} is replaced with the /opt-out page URL; {{businessAddress}} pulls from the Client Payment Requests section.",
+  },
+  {
     key: "integrations",
     title: "Integrations",
     description: "API keys and credentials for external services.",

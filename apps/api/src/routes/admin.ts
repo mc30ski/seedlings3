@@ -4388,6 +4388,18 @@ Respond ONLY with valid JSON in this exact format:
     const body = req.body || {};
     if (body.value === undefined) throw app.httpErrors.badRequest("value is required");
     const value = String(body.value);
+    // Reject writes to protected settings via the generic PATCH. These
+    // have dedicated mutation endpoints in their feature (e.g.
+    // PROMOTION_HMAC_SECRET → /super/promotions/rotate-hmac-secret)
+    // that carry the right audit + user-warning flow. The Settings tab
+    // renders these with a specialized card + dedicated action button
+    // — no free-text input to misclick.
+    const { PROTECTED_SETTING_KEYS } = await import("../services/settings");
+    if (PROTECTED_SETTING_KEYS.has(key)) {
+      throw app.httpErrors.forbidden(
+        `${key} is auto-managed and can't be edited through this endpoint. Use its dedicated action button in the Settings tab.`,
+      );
+    }
     // Cross-check setting-driven taxonomies before persisting. Today we only
     // guard DOCUMENT_TYPES (singleton flips with conflicting active docs);
     // other settings have no such cross-table constraint.

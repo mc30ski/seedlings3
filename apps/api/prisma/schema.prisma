@@ -113,6 +113,11 @@ enum AuditVerb {
   PROMOTION_DUPLICATED
   PROMOTION_DISPATCHED
   PROMOTION_TEST_SENT
+  // Rotation of the auto-managed PROMOTION_HMAC_SECRET (Super-only).
+  // Metadata carries { previousSecretPreviewHash, rotatedAt }. Rotating
+  // invalidates every in-flight promo click URL's attribution (still
+  // redirects, logs as anonymous).
+  PROMOTION_HMAC_ROTATED
   // Opt-out / opt-in for promotional messages. Scope: PROMO_OPT. The
   // metadata JSON always includes { source, channel, [reason] } — see
   // services/promotions.ts for canonical shape.
@@ -1765,7 +1770,14 @@ model Promotion {
   linkKind      PromotionLinkKind @default(EXTERNAL)
   link          String?
   landingPageId String?           @unique
-  landingPage   PromotionLandingPage? @relation(fields: [landingPageId], references: [id], onDelete: SetNull)
+  // Restrict (not SetNull) so a Promotion referencing a LandingPage
+  // can't have its FK silently nulled while linkKind stays LANDING_PAGE
+  // (ghost state → resolveDestinationUrl returns null → click 302s to
+  // bare baseUrl). Any code that wants to delete a landing page MUST
+  // first flip the parent promotion's linkKind back to EXTERNAL (and
+  // clear landingPageId) inside the same transaction, or the DELETE
+  // fails loudly rather than corrupting audit-observable state.
+  landingPage   PromotionLandingPage? @relation(fields: [landingPageId], references: [id], onDelete: Restrict)
 
   // Audience selector — MVP: { kind: "all" }. Future: segments, explicit
   // clientId lists, etc.

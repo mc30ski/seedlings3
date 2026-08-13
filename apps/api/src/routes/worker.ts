@@ -1876,7 +1876,16 @@ export default async function workerRoutes(app: FastifyInstance) {
       select: { userId: true },
     });
     const mode = await services.paymentRequests.resolveCommsMode(claimerAssignee?.userId ?? null);
-    const prepared = await services.paymentRequests.generateTokenForOccurrence(occurrenceId);
+    // CLAIMER path: worker's device is about to open sms:/mailto: with the
+    // returned body. Persist promo piggyback deliveries NOW as
+    // claimer_pending so the wrapper URL embedded in that body resolves
+    // to a real DB row on click. recordClaimerHandoff (POST below) flips
+    // them to delivered when the worker acknowledges the handoff.
+    // SERVER path doesn't need this flag — sendForOccurrence re-runs
+    // piggyback selection per-contact during fanout.
+    const prepared = await services.paymentRequests.generateTokenForOccurrence(occurrenceId, {
+      writePendingPromoDeliveries: mode === "CLAIMER",
+    });
     // Strip down the contacts to what the icons actually need. The service
     // layer already filtered to the primary contact only — anything that
     // shows up here is the primary.
