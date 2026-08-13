@@ -125,7 +125,10 @@ export default function PromotionsTab() {
       {/* Cross-cutting audit lives in Engagement → History (mirrors every
           other auditable event in the app). Per-campaign state timeline
           lives in each campaign's detail panel above. Per-contact opt
-          history lives on the Contacts tab's "View" button. */}
+          history lives on the Contacts tab's "View" button. Rotate-
+          HMAC-secret lives in Settings → Promotions (auto-managed
+          value with a dedicated action button, sits next to the footer
+          templates). */}
     </VStack>
   );
 }
@@ -935,7 +938,7 @@ function ChannelPanelSms({
         <VStack align="stretch" gap={2}>
           <Textarea size="sm" rows={3} placeholder="Body of the SMS…" value={body}
             onChange={(e) => onChange({ ...content, body: e.target.value })} />
-          <Input size="sm" placeholder="CTA text (e.g. Check it out →)" value={cta}
+          <Input size="sm" placeholder="Call-to-action label (e.g. Book now, Learn more)" value={cta}
             onChange={(e) => onChange({ ...content, ctaText: e.target.value })} />
           <Box p={2} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">
             <Text fontSize="2xs" color="fg.muted" mb={1}>Preview (with placeholder opt-out URL)</Text>
@@ -967,7 +970,7 @@ function ChannelPanelEmail({
             onChange={(e) => onChange({ ...content, subject: e.target.value })} />
           <Textarea size="sm" rows={5} placeholder="Body (Markdown supported)" value={content.body}
             onChange={(e) => onChange({ ...content, body: e.target.value })} />
-          <Input size="sm" placeholder="CTA button text" value={content.ctaText ?? ""}
+          <Input size="sm" placeholder="Call-to-action button label (e.g. Book now, Learn more)" value={content.ctaText ?? ""}
             onChange={(e) => onChange({ ...content, ctaText: e.target.value })} />
           <Box p={2} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">
             <Text fontSize="2xs" color="fg.muted" mb={1}>Preview</Text>
@@ -1005,7 +1008,7 @@ function ChannelPanelInvoicePage({
             onChange={(e) => onChange({ ...content, headline: e.target.value })} />
           <Textarea size="sm" rows={4} placeholder="Body (Markdown supported)" value={content.body}
             onChange={(e) => onChange({ ...content, body: e.target.value })} />
-          <Input size="sm" placeholder="Button text" value={content.ctaText ?? ""}
+          <Input size="sm" placeholder="Call-to-action button label (e.g. Book now, Learn more)" value={content.ctaText ?? ""}
             onChange={(e) => onChange({ ...content, ctaText: e.target.value })} />
           <Box p={3} bg="blue.50" borderWidth="1px" borderColor="blue.200" borderLeftWidth="4px" borderLeftColor="blue.500" rounded="md">
             <Text fontSize="2xs" color="fg.muted" mb={1}>Preview (as shown on /pay/[token])</Text>

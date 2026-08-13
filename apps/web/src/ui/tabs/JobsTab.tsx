@@ -342,6 +342,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   };
   const [cardOverrides, setCardOverrides] = useState<Map<string, CardDensity>>(new Map());
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  // Per-occurrence collapse state for the estimate "Notes" disclosure on
+  // the expanded card. Default is OPEN — an occ is only in this set when
+  // the user has explicitly collapsed it. Keeps notes visible without
+  // needing to open the Edit dialog.
+  const [collapsedEstimateNotes, setCollapsedEstimateNotes] = useState<Set<string>>(new Set());
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [kind, setKind] = usePersistedState<string[]>(`${pfx}_kind`, ["ALL"]);
 
@@ -6330,9 +6335,70 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       const acceptLines = lines.filter((l) => l.startsWith("Accepted:"));
                       const otherLines = lines.filter((l) => !l.startsWith("Accepted:")).join("\n").trim();
                       const acceptComment = acceptLines.map((l) => l.replace(/^Accepted:\s*/, "")).join("\n").trim();
+                      // Estimates: show notes in a labeled collapsible box so
+                      // the details are inspectable on the expanded card
+                      // without needing to open the Edit dialog. Default open.
+                      const notesOpen = !collapsedEstimateNotes.has(occ.id);
                       return (
                         <>
-                          {otherLines && (
+                          {otherLines && isEstimateOcc && (
+                            <Box w="full" borderWidth="1px" borderColor="pink.200" bg="pink.50" rounded="md" overflow="hidden">
+                              <Box
+                                as="button"
+                                w="full"
+                                px={2}
+                                py={1}
+                                display="flex"
+                                alignItems="center"
+                                justifyContent="space-between"
+                                gap={2}
+                                cursor="pointer"
+                                _hover={{ bg: "pink.100" }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setCollapsedEstimateNotes((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(occ.id)) next.delete(occ.id);
+                                    else next.add(occ.id);
+                                    return next;
+                                  });
+                                }}
+                              >
+                                <Text fontSize="xs" fontWeight="semibold" color="pink.800" textAlign="left">
+                                  Notes
+                                </Text>
+                                <HStack gap={1} flexShrink={0}>
+                                  <Box
+                                    as="span"
+                                    display="inline-flex"
+                                    alignItems="center"
+                                    p={1}
+                                    borderRadius="sm"
+                                    _hover={{ bg: "pink.200" }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      navigator.clipboard.writeText(otherLines);
+                                      publishInlineMessage({ type: "SUCCESS", text: "Copied!" });
+                                    }}
+                                    title="Copy notes"
+                                  >
+                                    <Copy size={12} />
+                                  </Box>
+                                  {notesOpen
+                                    ? <ChevronUp size={14} color="var(--chakra-colors-pink-700)" />
+                                    : <ChevronDown size={14} color="var(--chakra-colors-pink-700)" />}
+                                </HStack>
+                              </Box>
+                              {notesOpen && (
+                                <Box px={2} pb={2} pt={0}>
+                                  <Text fontSize="xs" color="pink.900" whiteSpace="pre-wrap">
+                                    {otherLines}
+                                  </Text>
+                                </Box>
+                              )}
+                            </Box>
+                          )}
+                          {otherLines && !isEstimateOcc && (
                             <HStack gap={1} align="center">
                               <TruncatedText color="fg.muted">{otherLines}</TruncatedText>
                               {isTaskOrReminder && (

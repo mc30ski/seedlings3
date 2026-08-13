@@ -227,6 +227,11 @@ export const AUDIT = {
     DUPLICATED: [AuditScope.PROMOTION, AuditVerb.PROMOTION_DUPLICATED] as const,
     DISPATCHED: [AuditScope.PROMOTION, AuditVerb.PROMOTION_DISPATCHED] as const,
     TEST_SENT: [AuditScope.PROMOTION, AuditVerb.PROMOTION_TEST_SENT] as const,
+    // Rotation of the auto-managed PROMOTION_HMAC_SECRET. Rare admin
+    // action; metadata carries { previousSecretPreviewHash, rotatedAt }
+    // so the audit trail can prove a rotation happened without exposing
+    // the secret itself.
+    HMAC_ROTATED: [AuditScope.PROMOTION, AuditVerb.PROMOTION_HMAC_ROTATED] as const,
   },
   PROMO_OPT: {
     // Per-contact promotional-message opt-out / opt-in events. Metadata

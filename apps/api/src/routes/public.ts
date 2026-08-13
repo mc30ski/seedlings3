@@ -13,9 +13,19 @@ import {
 
 // Simple in-memory sliding-window rate limiter for the unsubscribe
 // endpoints — 30 requests per minute per IP. Sufficient for a small SMB
-// scale and keeps the surface from being noisy. Not clustered (each
-// serverless instance has its own bucket) but that's acceptable for a
-// non-critical endpoint. Buckets self-clean.
+// scale and keeps the surface from being noisy. Buckets self-clean.
+//
+// Per-serverless-instance state: each Vercel function instance holds
+// its own bucket map. Attackers who spread requests across cold-started
+// instances can exceed the intended cap in aggregate. Acceptable trade
+// while promotion volume is low (measured, not assumed); revisit with
+// Redis/Neon backing when we regularly see enough concurrent traffic
+// to matter. The per-identifier limiter below is the real defense for
+// the mass-opt-out attack — this IP limiter is a first-line filter.
+//
+// Requires trustProxy in server.ts (already set) so req.ip resolves the
+// real client IP through the Vercel edge instead of the loopback socket
+// peer that would collapse every request into the same bucket key.
 const optOutRateBuckets = new Map<string, number[]>();
 function optOutRateLimit(ip: string): boolean {
   const now = Date.now();
@@ -31,6 +41,35 @@ function optOutRateLimit(ip: string): boolean {
   if (optOutRateBuckets.size > 5000) {
     for (const [k, v] of optOutRateBuckets) {
       if (v.every((t) => t < windowStart)) optOutRateBuckets.delete(k);
+    }
+  }
+  return true;
+}
+
+// Per-normalized-identifier throttle for /public/promo/opt-out. The IP
+// bucket above doesn't stop the mass-opt-out attack (attacker rotates
+// IPs). This bucket caps how many DB flips can happen for one identifier
+// in a window — an attacker who spams "victim@example.com" from 1000 IPs
+// still only lands ONE opt-out attempt per hour.
+//
+// In-memory only; per-serverless-instance. Under Vercel scale this
+// still forces the attacker to hit many instances, and even the
+// pathological worst case (an instance per request) caps the actual
+// DB flips at the first hit — subsequent hits find the row already
+// opted out and no-op (see setContactOptOut idempotency guard).
+const identifierOptOutBuckets = new Map<string, number>();
+const IDENTIFIER_OPTOUT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+function identifierOptOutAllowed(normalizedIdentifier: string): boolean {
+  const now = Date.now();
+  const last = identifierOptOutBuckets.get(normalizedIdentifier);
+  if (last && now - last < IDENTIFIER_OPTOUT_WINDOW_MS) {
+    return false;
+  }
+  identifierOptOutBuckets.set(normalizedIdentifier, now);
+  // GC pass when the map grows large.
+  if (identifierOptOutBuckets.size > 10000) {
+    for (const [k, v] of identifierOptOutBuckets) {
+      if (now - v > IDENTIFIER_OPTOUT_WINDOW_MS) identifierOptOutBuckets.delete(k);
     }
   }
   return true;
@@ -704,21 +743,17 @@ export default async function publicRoutes(app: FastifyInstance) {
       },
     });
 
-    // Promotions block — active promos targeting invoice_page + opt-in
-    // affordance state. Suppressed on expired-token views (this branch
-    // only runs when the token IS resolvable, so we're fine).
+    // Promotions block — active promos targeting invoice_page.
+    // Suppressed on expired-token views (this branch only runs when
+    // the token IS resolvable).
     //
-    // The opt-in affordance no longer ships signed per-channel tokens
-    // — the pay-token itself already identifies the contact. Client
-    // just POSTs to /public/pay/:token/promo-opt-in with `{ channel }`
-    // and the server flips the flag on the token's primary contact.
-    // Much simpler than the prior HMAC dance.
+    // The self-serve promo opt-IN affordance was removed for TCPA/
+    // CAN-SPAM compliance — pay tokens are commonly forwarded and
+    // single-click opt-IN from a shared token would flip a customer's
+    // marketing consent without their actual say-so. Re-opt-in now
+    // requires the Super typed-APPROVE flow.
     const { loadInvoicePagePromos } = await import("../services/promotions");
     const promos = await loadInvoicePagePromos({ contactId: primaryContact?.id ?? null });
-    const promoOptInAvailable = {
-      email: !!(primaryContact?.promoEmailOptedOut && primaryContact.email),
-      sms: !!(primaryContact?.promoSmsOptedOut && primaryContact.phone),
-    };
 
     return {
       occurrenceId: resolved.occurrenceId,
@@ -741,14 +776,9 @@ export default async function publicRoutes(app: FastifyInstance) {
       socialLinks,
       expiresAt: resolved.expiresAt,
       // Currently-active promotions targeting the invoice_page surface.
-      // Empty array when the primary contact is opted out of all
-      // dispatch channels, or when no eligible promo is running.
+      // Empty array when the primary contact has actively opted out of
+      // all dispatch channels, or when no eligible promo is running.
       promos,
-      // Which channels the "Opt in to promotion offers" affordance
-      // should surface. True only when the primary contact is currently
-      // opted out of that channel AND has an address on file. Client
-      // POSTs to /pay/:token/promo-opt-in with { channel } to flip.
-      promoOptInAvailable,
     };
   });
 
@@ -936,48 +966,45 @@ export default async function publicRoutes(app: FastifyInstance) {
     if (!optOutRateLimit(ip)) return reply.code(429).send({ error: "rate_limited" });
     const identifier = String((req.body ?? {}).identifier ?? "").trim();
     if (!identifier) return reply.code(400).send({ error: "identifier_required" });
+    // Per-identifier throttle: cap DB flips for one identifier to once
+    // per hour. Prevents mass-opt-out attacks where a hostile actor
+    // rotates IPs to unsubscribe a competitor's customers. Silent-success
+    // is preserved (client sees the same "ok" regardless).
+    const normalizedForBucket = identifier.toLowerCase();
+    if (!identifierOptOutAllowed(normalizedForBucket)) {
+      // Return ok:true (same as success) to preserve the silent-success
+      // semantic — an attacker learns nothing about whether the identifier
+      // matched. A real user hitting the throttle sees the same success
+      // and their prior opt-out is already in effect.
+      return { ok: true };
+    }
     const { optOutByIdentifier } = await import("../services/promotions");
     await optOutByIdentifier({ identifier });
     return { ok: true };
   });
 
-  // ── Invoice-page opt-in shortcut ──────────────────────────────────
+  // ── Invoice-page opt-in shortcut (DISABLED) ───────────────────────
   // POST /public/pay/:token/promo-opt-in
-  //   body: { channel: "email" | "sms" }
-  //   Uses the pay-token to identify the primary contact (no separate
-  //   signed opt-in token needed) and flips the requested channel from
-  //   opted-out → opted-in. Source: "client_self_invoice_page".
-  app.post("/public/pay/:token/promo-opt-in", async (req: any, reply: any) => {
-    const ip = req.ip ?? "";
-    if (!optOutRateLimit(ip)) return reply.code(429).send({ error: "rate_limited" });
-    const token = String(req.params.token || "");
-    const body = (req.body ?? {}) as { channel?: string };
-    if (body.channel !== "email" && body.channel !== "sms") {
-      return reply.code(400).send({ error: "invalid_channel" });
-    }
-    const resolved = await services.paymentRequests.resolveToken(token);
-    if (!resolved) return reply.code(404).send({ error: "not_found" });
-    // Find the primary contact on the client this token belongs to.
-    // Same lookup shape the pay-page resolve endpoint uses.
-    const primary = await prisma.clientContact.findFirst({
-      where: {
-        status: "ACTIVE",
-        isPrimary: true,
-        client: {
-          properties: { some: { jobs: { some: { occurrences: { some: { id: resolved.occurrenceId } } } } } },
-        },
-      },
-      select: { id: true },
+  //
+  // REMOVED for TCPA/CAN-SPAM compliance: pay tokens are commonly
+  // forwarded (screenshots, family sharing) — allowing single-click
+  // opt-IN from a shared token flips a customer's marketing consent
+  // without their actual say-so, and the audit log would misleadingly
+  // record "client_self_invoice_page" as the source.
+  //
+  // The safe re-opt-in path is Super-manual with typed APPROVE + reason
+  // (see /super/promotions/contacts/:contactId/opt in routes/promotions.ts).
+  // A proper double-opt-in flow (confirmation link via the channel being
+  // opted into) can be built later; until then, no automatic opt-in.
+  //
+  // 410 Gone tells any lingering client — including stale bookmarks and
+  // the (now-removed) affordance on the pay page — that the endpoint is
+  // intentionally retired. 410 is idempotent, cacheable, and correct.
+  app.post("/public/pay/:token/promo-opt-in", async (_req: any, reply: any) => {
+    return reply.code(410).send({
+      error: "opt_in_removed",
+      detail: "Promotional opt-in from the invoice page is disabled. Contact the business directly to re-subscribe.",
     });
-    if (!primary) return reply.code(404).send({ error: "no_primary_contact" });
-    await setContactOptOut({
-      contactId: primary.id,
-      channel: body.channel,
-      optedOut: false,
-      source: "client_self_invoice_page",
-      actorUserId: null,
-    });
-    return { ok: true };
   });
 
   // ── Click wrapper — logs then 302s to the resolved destination ─────
@@ -999,10 +1026,11 @@ export default async function publicRoutes(app: FastifyInstance) {
     const token = String(req.query?.t ?? "");
     const contactId = req.query?.c ? String(req.query.c) : null;
     const ua = req.headers?.["user-agent"] ? String(req.headers["user-agent"]).slice(0, 500) : null;
-    const ip =
-      typeof req.headers?.["x-forwarded-for"] === "string"
-        ? String(req.headers["x-forwarded-for"]).split(",")[0].trim()
-        : (req.ip ?? null);
+    // Use req.ip (Fastify trustProxy-aware) instead of raw X-Forwarded-For
+    // — the raw header is attacker-controlled and lets anyone poison
+    // audit rows with a fake source IP. trustProxy:1 in server.ts
+    // resolves req.ip through exactly one hop (Vercel edge).
+    const ip = req.ip ?? null;
     const result = await recordClickAndResolve({
       flavor,
       primaryId,
@@ -1029,17 +1057,24 @@ export default async function publicRoutes(app: FastifyInstance) {
 
   // ── Public landing page render ─────────────────────────────────────
   // Consumed by /promotion/<slug> Next.js page. Bumps viewCount on every
-  // hit (matches the spec's "how many people actually looked at the
-  // page" semantic — separate from click tracking).
+  // ACTIVE-promo hit (matches the spec's "how many people actually
+  // looked at the page" semantic — separate from click tracking).
+  //
+  // Rate-limited (same per-IP bucket as click/opt-out) to prevent
+  // slug-guess enumeration from inflating viewCount and creating DB
+  // write amplification.
   app.get("/public/promotion/:slug", async (req: any, reply: any) => {
+    if (!optOutRateLimit(String(req.ip ?? ""))) return reply.code(429).send({ error: "rate_limited" });
     const slug = String(req.params.slug ?? "");
     if (!slug) return reply.code(400).send({ error: "missing_slug" });
     const page = await loadLandingPageForPublic(slug);
     if (!page) return reply.code(404).send({ error: "not_found" });
-    // Bump view count fire-and-forget so the render isn't blocked by
-    // the increment. If it errors we swallow — analytics is
-    // non-critical relative to serving the page.
-    void incrementLandingPageViewCount(slug).catch(() => {});
+    // Only bump viewCount for ACTIVE promotions — non-ACTIVE pages
+    // return an empty shell (see loadLandingPageForPublic short-circuit)
+    // so their view counters would otherwise inflate on enumeration.
+    if (page.promotionActive) {
+      void incrementLandingPageViewCount(slug).catch(() => {});
+    }
     return page;
   });
 }

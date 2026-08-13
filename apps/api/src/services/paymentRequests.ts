@@ -185,6 +185,29 @@ function buildEmailBody(firstName: string, propLabel: string, dateStr: string, d
   ].join("\n");
 }
 
+// HTML version — shipped as the `html` half of the multipart email so
+// modern clients render "View invoice & pay" as a proper clickable
+// button instead of the raw pay URL. Text version above is still shipped
+// as the `text` half for text-only clients / spam scanners.
+//
+// Escaping: firstName/propLabel come from ClientContact + Property rows
+// entered by staff; we escape defensively regardless.
+function buildEmailBodyHtml(firstName: string, propLabel: string, dateStr: string, dollarAmount: string, url: string): string {
+  const esc = (s: string) => s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+  return `<!doctype html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1a1a1a;max-width:600px;margin:0 auto;padding:16px;line-height:1.5;">
+<p>Hi ${esc(firstName)},</p>
+<p>Your Seedlings Lawn Care service on ${esc(dateStr)} at ${esc(propLabel)} is complete.</p>
+<p><strong>Total due: ${esc(dollarAmount)}</strong></p>
+<p style="margin:24px 0;"><a href="${esc(url)}" style="display:inline-block;background:#0a7cff;color:#fff;text-decoration:none;padding:12px 24px;border-radius:6px;font-weight:600;">View invoice &amp; pay</a></p>
+<p>Thanks!<br>Seedlings Lawn Care</p>
+</body></html>`;
+}
+
 export const paymentRequests = {
   /**
    * Resolve the effective comms mode for a given claimer (or null when no
@@ -214,7 +237,18 @@ export const paymentRequests = {
    */
   async generateTokenForOccurrence(
     occurrenceId: string,
-    opts?: { regenerateToken?: boolean },
+    opts?: {
+      regenerateToken?: boolean;
+      // When true, persist promo piggyback deliveries immediately as
+      // claimer_pending so the wrapper URL embedded in the returned
+      // smsBody/emailBody resolves to a real DB row when the recipient
+      // taps it. recordClaimerHandoff later flips those rows to
+      // delivered. Without this, the SERVER path (which re-runs
+      // per-contact piggyback selection during fanout) still writes
+      // deliveries correctly, but the CLAIMER path relies on this
+      // early write for click attribution to work.
+      writePendingPromoDeliveries?: boolean;
+    },
   ): Promise<{
     token: string;
     url: string;
@@ -292,17 +326,20 @@ export const paymentRequests = {
         });
         if (contactRow) {
           const { selectPromotionsForPiggyback } = await import("./promotions");
+          const mode = opts?.writePendingPromoDeliveries ? "claimer_immediate" : "deferred";
           const smsPiggy = await selectPromotionsForPiggyback({
             contactId: greetingTarget.id,
             clientId: contactRow.clientId,
             channel: "sms",
             triggeredBy: token,
+            mode,
           });
           const emailPiggy = await selectPromotionsForPiggyback({
             contactId: greetingTarget.id,
             clientId: contactRow.clientId,
             channel: "email",
             triggeredBy: token,
+            mode,
           });
           smsBody += smsPiggy.bodyAppend;
           emailBody += emailPiggy.bodyAppend;
@@ -422,11 +459,18 @@ export const paymentRequests = {
               channel: "email",
               triggeredBy: token,
             })
-          : { bodyAppend: "", emailFooter: null, smsFooter: null, writeDeliveries: async () => {} };
+          : { bodyAppend: "", bodyAppendHtml: "", emailFooter: null, smsFooter: null, writeDeliveries: async () => {} };
+        // Ship both plain-text + HTML halves. HTML renders the invoice
+        // CTA as a proper "View invoice & pay" button (hiding the pay
+        // URL) and any promo piggyback CTA the same way. Text version
+        // is the multipart fallback for text-only clients.
+        const textBody = buildEmailBody(firstName, propLabel, dateStr, dollarAmount, url) + piggyback.bodyAppend;
+        const htmlBody = buildEmailBodyHtml(firstName, propLabel, dateStr, dollarAmount, url) + (piggyback.bodyAppendHtml ?? "");
         const result = await sendEmail(
           c.email,
           buildEmailSubject(dollarAmount),
-          buildEmailBody(firstName, propLabel, dateStr, dollarAmount, url) + piggyback.bodyAppend,
+          textBody,
+          { html: htmlBody },
         );
         if (result.ok) {
           emailSent++;
@@ -531,51 +575,31 @@ export const paymentRequests = {
         splitsSet: !!(completionSplits && completionSplits.length > 0),
       });
 
-      // Promo piggyback delivery record — the promo body was already
-      // appended to the outbound message body by generateTokenForOccurrence,
-      // so we know the worker's phone opened its intent with the promo
-      // included. Recording deliveries here matches the strongest signal
-      // we can observe on the claimer path (there's no server-side send
-      // callback to trigger from). Loaded lazily to avoid cost when the
-      // org has no active promos.
-      const contactRow = await tx.jobOccurrence.findUnique({
-        where: { id: occurrenceId },
-        select: {
-          job: {
-            select: {
-              property: {
-                select: {
-                  clientId: true,
-                  client: {
-                    select: {
-                      contacts: {
-                        where: { isPrimary: true, status: "ACTIVE" },
-                        select: { id: true },
-                        take: 1,
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      });
-      const primary = contactRow?.job?.property?.client?.contacts?.[0];
-      const clientId = contactRow?.job?.property?.clientId ?? null;
-      if (primary && clientId) {
-        try {
-          const { selectPromotionsForPiggyback } = await import("./promotions");
-          const piggy = await selectPromotionsForPiggyback({
-            contactId: primary.id,
-            clientId,
-            channel,
+      // Promo piggyback: flip pre-persisted claimer_pending rows for the
+      // primary contact + this channel to delivered. The rows were
+      // written by generateTokenForOccurrence(writePendingPromoDeliveries:true)
+      // at /comms-handoff fetch time, using the same deliveryIds that
+      // were embedded in the outbound SMS/email wrapper URLs.
+      //
+      // Do NOT re-run selectPromotionsForPiggyback here — that would
+      // generate fresh deliveryIds that don't match the URL the
+      // recipient actually has, breaking click attribution. (This was
+      // the shipped-bug pattern before this fix.)
+      try {
+        await tx.promotionDelivery.updateMany({
+          where: {
             triggeredBy: occ.paymentRequestToken,
-          });
-          await piggy.writeDeliveries();
-        } catch {
-          // Piggyback failures must never block the invoice audit.
-        }
+            channel,
+            skippedReason: "claimer_pending",
+            deliveredAt: null,
+          },
+          data: {
+            deliveredAt: new Date(),
+            skippedReason: null,
+          },
+        });
+      } catch {
+        // Attribution flip failures must never block the invoice audit.
       }
     });
   },

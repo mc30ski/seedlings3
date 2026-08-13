@@ -546,15 +546,20 @@ describe("signPromoClickToken / verifyPromoClickToken", () => {
 });
 
 describe("buildClickWrapperUrl / buildInvoicePageClickUrl", () => {
-  it("delivery wrapper URL matches the /d/ route shape", () => {
+  // NOTE: wrapper URLs are prefixed with /api/public/ so Vercel's
+  // /api/(.*) rewrite forwards to the API server. Without the /api/
+  // prefix, Next.js sees /promotion/click/... and 404s (the only
+  // /promotion/* page is [slug].tsx — single-segment). This class of
+  // bug shipped once; the prefix is now load-bearing.
+  it("delivery wrapper URL matches the /api/public/.../d/ route shape", () => {
     const url = buildClickWrapperUrl("https://s.example.com", SECRET2, "delivery_a");
-    expect(url).toMatch(/^https:\/\/s\.example\.com\/promotion\/click\/d\/delivery_a\?t=/);
+    expect(url).toMatch(/^https:\/\/s\.example\.com\/api\/public\/promotion\/click\/d\/delivery_a\?t=/);
   });
 
-  it("invoice-page URL matches the /p/ route shape with c= param", () => {
+  it("invoice-page URL matches the /api/public/.../p/ route shape with c= param", () => {
     const url = buildInvoicePageClickUrl("https://s.example.com", SECRET2, "promo_a", "contact_a");
     const parsed = new URL(url);
-    expect(parsed.pathname).toBe("/promotion/click/p/promo_a");
+    expect(parsed.pathname).toBe("/api/public/promotion/click/p/promo_a");
     expect(parsed.searchParams.get("c")).toBe("contact_a");
     expect(parsed.searchParams.get("t")).toBeTruthy();
   });
@@ -578,7 +583,7 @@ describe("buildClickWrapperUrl / buildInvoicePageClickUrl", () => {
 
   it("strips trailing slash on base URL", () => {
     const url = buildClickWrapperUrl("https://s.example.com/", SECRET2, "delivery_a");
-    expect(url).toMatch(/^https:\/\/s\.example\.com\/promotion\/click\/d\//);
+    expect(url).toMatch(/^https:\/\/s\.example\.com\/api\/public\/promotion\/click\/d\//);
   });
 });
 

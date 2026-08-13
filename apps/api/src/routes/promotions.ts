@@ -18,6 +18,7 @@ import {
   reorderLandingPageItems,
   getLandingPageImageUploadUrl,
   confirmLandingPageImageUpload,
+  rotatePromotionHmacSecret,
 } from "../services/promotions";
 
 // Super-only Promotions endpoints. All CRUD, lifecycle actions, manual
@@ -210,6 +211,40 @@ export default async function promotionsRoutes(app: FastifyInstance) {
 
   app.post("/super/promotions/:id/start", superGuard, async (req: any, reply: any) => {
     const uid = await currentUserId(req);
+    // Fail-closed on CAN-SPAM prerequisites BEFORE flipping to ACTIVE.
+    // If footer template or business address is missing, promo emails
+    // ship with no unsubscribe link + no address = per-message FTC
+    // penalty. Better to block the operator here than silently violate.
+    const existing = await prisma.promotion.findUnique({
+      where: { id: String(req.params.id) },
+      select: { dispatchChannels: true },
+    });
+    if (!existing) return reply.code(404).send({ error: "not_found" });
+    const dispatchChannels = Array.isArray(existing.dispatchChannels)
+      ? (existing.dispatchChannels as unknown[]).filter((c): c is string => typeof c === "string")
+      : [];
+    if (dispatchChannels.length > 0) {
+      const { loadPromotionSettings } = await import("../services/promotions");
+      // Side-effect: loadPromotionSettings auto-generates + persists a
+      // fresh PROMOTION_HMAC_SECRET when the row is missing/empty, so
+      // the secret is guaranteed present by the time this returns.
+      const settings = await loadPromotionSettings();
+      const missing: string[] = [];
+      if (dispatchChannels.includes("email")) {
+        if (!settings.emailFooter) missing.push("PROMOTION_OPT_OUT_FOOTER_EMAIL");
+        if (!settings.businessAddress) missing.push("BUSINESS_ADDRESS");
+      }
+      if (dispatchChannels.includes("sms")) {
+        if (!settings.smsFooter) missing.push("PROMOTION_OPT_OUT_FOOTER_SMS");
+      }
+      if (missing.length > 0) {
+        return reply.code(409).send({
+          error: "missing_settings",
+          detail: `Cannot start — the following settings must be configured before an ACTIVE promotion with dispatch channels can ship: ${missing.join(", ")}. Edit them in the Settings tab under Promotions (or Neon UI for prod), then retry.`,
+          missing,
+        });
+      }
+    }
     const res = await transition(String(req.params.id), ["DRAFT", "PAUSED"], "ACTIVE",
       AUDIT.PROMOTION.STARTED, uid, { startedAt: new Date(), startedById: uid });
     if (!res.ok) return reply.code(res.code).send({ error: res.error, detail: (res as any).detail });
@@ -250,12 +285,25 @@ export default async function promotionsRoutes(app: FastifyInstance) {
     const src = await prisma.promotion.findUnique({ where: { id: String(req.params.id) } });
     if (!src) return reply.code(404).send({ error: "not_found" });
     const uid = await currentUserId(req);
+    // Duplicate strategy:
+    //   • For EXTERNAL promos: copy link + linkKind verbatim.
+    //   • For LANDING_PAGE promos: reset to EXTERNAL with null link so
+    //     the operator picks a fresh destination (either an external URL
+    //     or Enable-landing-page again — which clones the landing page
+    //     into a separate row). Previously the endpoint copied only
+    //     src.link (null for LANDING_PAGE) and dropped linkKind, so the
+    //     duplicate landed as EXTERNAL with null link and failed Zod
+    //     validation on the next edit.
+    const isSrcLanding = src.linkKind === "LANDING_PAGE";
     const copy = await prisma.$transaction(async (tx) => {
       const p = await tx.promotion.create({
         data: {
           title: `${src.title} (copy)`,
           description: src.description,
-          link: src.link,
+          linkKind: isSrcLanding ? "EXTERNAL" : src.linkKind,
+          link: isSrcLanding ? null : src.link,
+          // landingPageId intentionally omitted — landing pages are 1:1
+          // with a promotion, so we don't share the FK with the source.
           audienceSpec: src.audienceSpec as any,
           dispatchChannels: src.dispatchChannels as any,
           displaySurfaces: src.displaySurfaces as any,
@@ -273,6 +321,7 @@ export default async function promotionsRoutes(app: FastifyInstance) {
       await writeAudit(tx, AUDIT.PROMOTION.DUPLICATED, uid, {
         promotionId: p.id,
         sourcePromotionId: src.id,
+        sourceLinkKind: src.linkKind,
       });
       return p;
     });
@@ -290,6 +339,22 @@ export default async function promotionsRoutes(app: FastifyInstance) {
       return res;
     } catch (err: any) {
       return reply.code(400).send({ error: "send_failed", detail: String(err?.message ?? err) });
+    }
+  });
+
+  // ── Rotate the HMAC click-tracking secret ──────────────────────────
+  // Super-only maintenance action. The secret is normally auto-managed
+  // (auto-generated on first use, invisible in Settings) — rotation is
+  // rare (leak suspicion, key-hygiene rotation). Every in-flight promo
+  // click URL becomes anonymous after rotation (still redirects; the
+  // HMAC no longer verifies, so attribution logs as null).
+  app.post("/super/promotions/rotate-hmac-secret", superGuard, async (req: any, reply: any) => {
+    const uid = await currentUserId(req);
+    try {
+      const res = await rotatePromotionHmacSecret({ actorUserId: uid });
+      return res;
+    } catch (err: any) {
+      return reply.code(500).send({ error: "rotate_failed", detail: String(err?.message ?? err) });
     }
   });
 

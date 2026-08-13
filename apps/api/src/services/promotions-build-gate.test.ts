@@ -416,14 +416,17 @@ describe("Invariant I — Click token HMAC namespace isolation", () => {
 // ── J. Click wrapper URL shape ────────────────────────────────────────────
 
 describe("Invariant J — Click wrapper URL shape", () => {
-  it("J1: delivery wrapper URL always includes /promotion/click/d/ prefix", () => {
+  // The /api/public/ prefix is load-bearing — without it, Vercel's
+  // /api/(.*) rewrite doesn't fire and Next.js 404s on the wrapper URL.
+  // This class of bug shipped once (every wrapper click 404'd in prod).
+  it("J1: delivery wrapper URL always includes /api/public/promotion/click/d/ prefix", () => {
     const url = buildClickWrapperUrl("https://s.example.com", SECRET, "delivery_a");
-    expect(url.startsWith("https://s.example.com/promotion/click/d/delivery_a?t=")).toBe(true);
+    expect(url.startsWith("https://s.example.com/api/public/promotion/click/d/delivery_a?t=")).toBe(true);
   });
 
-  it("J2: invoice-page URL always includes /promotion/click/p/ prefix", () => {
+  it("J2: invoice-page URL always includes /api/public/promotion/click/p/ prefix", () => {
     const url = buildInvoicePageClickUrl("https://s.example.com", SECRET, "promo_a", "contact_a");
-    expect(url.startsWith("https://s.example.com/promotion/click/p/promo_a?")).toBe(true);
+    expect(url.startsWith("https://s.example.com/api/public/promotion/click/p/promo_a?")).toBe(true);
   });
 
   it("J3: invoice-page URL omits c= when contactId is null", () => {
@@ -470,5 +473,96 @@ describe("Invariant K — Slug generator", () => {
 
   it("K4: is deterministic — same title → same slug (before uniqueness suffix)", () => {
     expect(slugifyTitle("Fall Offers")).toBe(slugifyTitle("Fall Offers"));
+  });
+});
+
+// ── L. Verify tokens never throw ─────────────────────────────────────
+// verifyDeliveryClickToken and verifyPromoClickToken must return false
+// (not throw) on unset / short / rotated secrets so the click endpoint
+// falls through to anonymous-log + best-effort redirect instead of
+// returning 500 on every hit. Sign paths DO throw (loud misconfig
+// signal at message-build time when the operator can still fix it).
+describe("Invariant L — verify* never throws (500-safety on click endpoint)", () => {
+  it("L1: verifyDeliveryClickToken returns false when secret is empty", () => {
+    expect(() => verifyDeliveryClickToken("", "any", "any")).not.toThrow();
+    expect(verifyDeliveryClickToken("", "any", "any")).toBe(false);
+  });
+
+  it("L2: verifyDeliveryClickToken returns false when secret is too short", () => {
+    expect(() => verifyDeliveryClickToken("short", "any", "any")).not.toThrow();
+    expect(verifyDeliveryClickToken("short", "any", "any")).toBe(false);
+  });
+
+  it("L3: verifyPromoClickToken returns false when secret is empty", () => {
+    expect(() => verifyPromoClickToken("", "p", null, "t")).not.toThrow();
+    expect(verifyPromoClickToken("", "p", null, "t")).toBe(false);
+  });
+
+  it("L4: verifyPromoClickToken returns false when secret is too short", () => {
+    expect(() => verifyPromoClickToken("short", "p", null, "t")).not.toThrow();
+    expect(verifyPromoClickToken("short", "p", null, "t")).toBe(false);
+  });
+
+  it("L5: sign* still throws on invalid secret (loud misconfig at build time)", () => {
+    // The message-build path (buildClickWrapperUrl) is the right place
+    // to surface a bad secret — throws while the operator can still fix
+    // it before shipping. Verify is silent-fail because it runs on
+    // customer traffic after the fact.
+    expect(() => signDeliveryClickToken("", "delivery_a")).toThrow(/at least 32 characters/);
+    expect(() => signDeliveryClickToken("short", "delivery_a")).toThrow(/at least 32 characters/);
+    expect(() => signPromoClickToken("", "p", null)).toThrow(/at least 32 characters/);
+  });
+});
+
+// ── M. HMAC flavor discriminators — cross-flavor replay is impossible ──
+// Delivery tokens (d:) and promo tokens (p:) both sign with the same
+// secret. If the payload string prefix collided, an attacker could
+// forward a d-token as a p-token and get a p-flavor click accepted.
+describe("Invariant M — HMAC flavors don't cross-replay", () => {
+  it("M1: a token that verifies as delivery does NOT verify as promo (same string)", () => {
+    // Same string used as deliveryId and as promotionId; the flavor
+    // discriminator prefixed to the HMAC input prevents the collision.
+    const same = "collision-candidate-id";
+    const dtok = signDeliveryClickToken(SECRET, same);
+    expect(verifyDeliveryClickToken(SECRET, same, dtok)).toBe(true);
+    // Same token, tried against promo-flavor verify with same id — MUST fail.
+    expect(verifyPromoClickToken(SECRET, same, null, dtok)).toBe(false);
+  });
+
+  it("M2: a token that verifies as promo does NOT verify as delivery (same string)", () => {
+    const same = "collision-candidate-id";
+    const ptok = signPromoClickToken(SECRET, same, null);
+    expect(verifyPromoClickToken(SECRET, same, null, ptok)).toBe(true);
+    expect(verifyDeliveryClickToken(SECRET, same, ptok)).toBe(false);
+  });
+});
+
+// ── N. Wrapper URL prefix is /api/public/ (Vercel-rewrite requirement) ──
+// Documented at length in the wrapper builder — dropping the prefix
+// makes every promo click 404 in prod. This class of bug shipped once
+// and every recipient's CTA silently failed until it was rolled back.
+describe("Invariant N — Wrapper URL prefix", () => {
+  it("N1: delivery wrapper URL starts with baseUrl + /api/public/", () => {
+    const url = buildClickWrapperUrl("https://s.example.com", SECRET, "delivery_a");
+    expect(url).toContain("/api/public/promotion/click/d/");
+    // Belt-and-suspenders: check the FULL prefix so any regression
+    // (e.g., accidental double slash, wrong prefix) fails loudly.
+    expect(url.startsWith("https://s.example.com/api/public/")).toBe(true);
+  });
+
+  it("N2: invoice-page wrapper URL starts with baseUrl + /api/public/", () => {
+    const url = buildInvoicePageClickUrl("https://s.example.com", SECRET, "promo_a", null);
+    expect(url).toContain("/api/public/promotion/click/p/");
+    expect(url.startsWith("https://s.example.com/api/public/")).toBe(true);
+  });
+
+  it("N3: wrapper URL never starts with baseUrl + /promotion/ (bare, sans /api/public/)", () => {
+    // The bare shape is what triggered the shipped 404 — Next.js
+    // /promotion/[slug].tsx accepts a single segment and 404s on
+    // /promotion/click/d/anything. This is the negative-form guard.
+    const durl = buildClickWrapperUrl("https://s.example.com", SECRET, "d1");
+    const purl = buildInvoicePageClickUrl("https://s.example.com", SECRET, "p1", null);
+    expect(durl.startsWith("https://s.example.com/promotion/")).toBe(false);
+    expect(purl.startsWith("https://s.example.com/promotion/")).toBe(false);
   });
 });

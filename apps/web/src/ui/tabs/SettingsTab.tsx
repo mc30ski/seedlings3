@@ -1551,6 +1551,202 @@ function JsonArrayEditor({ value, onChange, onSave, onCancel, saving, originalVa
  * See lib/businessStartCutoff.tsx (client) and
  * apps/api/src/lib/businessStartCutoff.ts (server).
  */
+/**
+ * Read-only settings card for PROMOTION_HMAC_SECRET.
+ *
+ * The secret is auto-managed (generated on first use, never seen by the
+ * operator). Rendering it as a normal editable field is a footgun —
+ * misclicked edits break every in-flight promo click URL's HMAC
+ * verification, silently dropping attribution.
+ *
+ * Instead we render:
+ *   • an "Auto-managed" indicator
+ *   • the last-updated timestamp (whoever most recently rotated, or
+ *     "auto-generated" when updatedBy is null)
+ *   • a "Rotate" button that opens a confirm dialog explaining the
+ *     rotation's impact on already-sent promos
+ *
+ * The dedicated /super/promotions/rotate-hmac-secret endpoint is the
+ * only way to change the value — the generic PATCH /admin/settings/:key
+ * refuses this key (see PROTECTED_SETTING_KEYS on the server).
+ */
+function PromoHmacSecretCard({
+  setting,
+  isSuper,
+}: {
+  setting: Setting;
+  isSuper: boolean;
+}) {
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [rotatedAt, setRotatedAt] = useState<string | null>(null);
+  // Hidden by default. Super can click the eye to reveal the actual
+  // secret (useful for cross-checking against an off-app record, or
+  // pasting into a rotation-tracker tool). Value stays in the DOM only
+  // while shown — hides again on next toggle. There's no auto-hide
+  // timer because the tab itself already unmounts when Super navigates
+  // away.
+  const [showValue, setShowValue] = useState(false);
+  // Track the freshly-rotated secret so the reveal reflects reality
+  // immediately after rotation (the parent hasn't re-fetched /admin/settings
+  // yet). Falls back to setting.value on regular render.
+  const [freshValue, setFreshValue] = useState<string | null>(null);
+  const displayValue = freshValue ?? setting.value ?? "";
+
+  const lastUpdatedAt = rotatedAt ?? setting.updatedAt;
+  const lastUpdatedBy = setting.updatedBy?.displayName ?? null;
+
+  async function doRotate() {
+    setBusy(true);
+    try {
+      const res = await apiPost<{ rotatedAt: string; secret?: string }>(
+        "/api/super/promotions/rotate-hmac-secret",
+        {},
+      );
+      setRotatedAt(res.rotatedAt);
+      if (res.secret) setFreshValue(res.secret);
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: `Rotated. New secret active as of ${fmtDateTime(res.rotatedAt)}.`,
+      });
+    } catch (e: any) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Rotation failed.", e),
+      });
+    } finally {
+      setBusy(false);
+      setConfirmOpen(false);
+    }
+  }
+
+  async function copyToClipboard() {
+    try {
+      await navigator.clipboard.writeText(displayValue);
+      publishInlineMessage({ type: "SUCCESS", text: "Secret copied to clipboard." });
+    } catch {
+      publishInlineMessage({ type: "ERROR", text: "Couldn't copy — clipboard access denied." });
+    }
+  }
+
+  return (
+    <Card.Root variant="outline">
+      <Card.Body py="2" px="3">
+        <VStack align="start" gap={1}>
+          <HStack justify="space-between" w="full" align="start">
+            <VStack align="start" gap={0}>
+              <Text fontSize="sm" fontWeight="semibold">
+                {prettySettingName(setting.key)}
+              </Text>
+              <Text fontSize="xs" color="fg.muted">
+                Server-only secret used to sign promotion click-tracking URLs.
+                Auto-generated on first use — you shouldn't normally need to
+                rotate. Do so only if you suspect the current secret is
+                compromised or as part of a scheduled key-hygiene rotation.
+              </Text>
+            </VStack>
+            {isSuper && (
+              <Button
+                size="xs"
+                variant="outline"
+                colorPalette="orange"
+                loading={busy}
+                onClick={() => setConfirmOpen(true)}
+              >
+                Rotate
+              </Button>
+            )}
+          </HStack>
+          {/* Value display — masked by default, revealable via eye icon.
+              Only rendered when we actually have a value (empty on first
+              load if auto-gen hasn't fired yet). Only Super sees the
+              reveal control since the value is a live secret. */}
+          {isSuper && displayValue && (
+            <HStack gap={2} align="center" mt={1} w="full">
+              <Text
+                fontSize="xs"
+                fontFamily="mono"
+                color="fg.muted"
+                flex="1"
+                overflow="hidden"
+                textOverflow="ellipsis"
+                whiteSpace="nowrap"
+                // Small select-none nudge when masked so a click-drag
+                // "select all" doesn't reveal the count of characters.
+                userSelect={showValue ? "text" : "none"}
+              >
+                {showValue ? displayValue : "•".repeat(Math.min(displayValue.length, 40))}
+              </Text>
+              <Button
+                size="xs"
+                variant="ghost"
+                px="1"
+                minW="0"
+                onClick={() => setShowValue((v) => !v)}
+                title={showValue ? "Hide secret" : "Reveal secret"}
+                aria-label={showValue ? "Hide secret" : "Reveal secret"}
+              >
+                {showValue ? <EyeOff size={14} /> : <Eye size={14} />}
+              </Button>
+              {showValue && (
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  px="2"
+                  onClick={() => void copyToClipboard()}
+                  title="Copy to clipboard"
+                >
+                  Copy
+                </Button>
+              )}
+            </HStack>
+          )}
+          <HStack gap={2} align="center" mt={1}>
+            <Badge size="sm" colorPalette="gray" variant="subtle" px="2" borderRadius="full">
+              Auto-managed
+            </Badge>
+            <Text fontSize="xs" color="fg.muted">
+              {lastUpdatedBy
+                ? `Last rotated by ${lastUpdatedBy} on ${fmtDateTime(lastUpdatedAt)}`
+                : `Auto-generated on ${fmtDateTime(lastUpdatedAt)}`}
+            </Text>
+          </HStack>
+        </VStack>
+      </Card.Body>
+      <ConfirmDialog
+        open={confirmOpen}
+        title="Rotate promotion HMAC secret?"
+        confirmLabel="Rotate"
+        confirmColorPalette="orange"
+        message=""
+        messageNode={
+          <Box fontSize="sm">
+            <Text mb={2}>
+              This regenerates the secret used to sign every promo
+              click-tracking URL. Do this only if you suspect the current
+              secret is compromised, or as part of a scheduled key-hygiene
+              rotation.
+            </Text>
+            <Text mb={2}>
+              <b>Impact on already-sent promos:</b> every click URL that
+              shipped before this moment still redirects the recipient to
+              the correct destination, but its HMAC no longer verifies —
+              those clicks will log as anonymous instead of being
+              attributed to their delivery.
+            </Text>
+            <Text color="fg.muted">
+              New promo sends after rotation use the new secret and log
+              normally. The action is audited.
+            </Text>
+          </Box>
+        }
+        onConfirm={doRotate}
+        onCancel={() => setConfirmOpen(false)}
+      />
+    </Card.Root>
+  );
+}
+
 function BusinessStartStatusPanel({ isSuper }: { isSuper: boolean }) {
   const { cutoff, reveal, setReveal } = useBusinessStartCutoff();
   const filterActive = cutoff !== null;
@@ -1976,7 +2172,17 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                       {section.key === "fresh_start" && (
                         <BusinessStartStatusPanel isSuper={isSuper} />
                       )}
-                      {items.map((s) => (
+                      {items.map((s) => {
+                        // Auto-managed secret with a dedicated Rotate button —
+                        // rendered as a read-only card (no free-text input to
+                        // misclick into a broken state). Server-side PATCH is
+                        // also blocked for this key; rotation goes through
+                        // POST /super/promotions/rotate-hmac-secret. See
+                        // services/settings.ts PROTECTED_SETTING_KEYS.
+                        if (s.key === "PROMOTION_HMAC_SECRET") {
+                          return <PromoHmacSecretCard key={s.id} setting={s} isSuper={isSuper} />;
+                        }
+                        return (
               <Card.Root key={s.id} variant="outline">
                 <Card.Body py="2" px="3">
                   <VStack align="start" gap={1}>
@@ -2387,7 +2593,8 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                   </VStack>
                 </Card.Body>
               </Card.Root>
-                      ))}
+                        );
+                      })}
                       {/* Session-only Super reveal. Rendered AFTER the
                           persisted-setting cards with a dashed/purple
                           treatment so it can't be visually confused with

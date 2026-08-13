@@ -1,6 +1,6 @@
 import { prisma } from "../db/prisma";
 import { z } from "zod";
-import { randomUUID, createHash } from "crypto";
+import { randomUUID, createHash, randomBytes } from "crypto";
 import { type PromoChannel } from "../lib/promotionsHmac";
 import { sendEmail, sendSMS } from "../lib/notifications";
 import { writeAudit } from "../lib/auditLogger";
@@ -154,8 +154,36 @@ export async function loadPromotionSettings(): Promise<{
     select: { key: true, value: true },
   });
   const map = new Map(rows.map((r) => [r.key, r.value]));
+  // Auto-generate PROMOTION_HMAC_SECRET on first use in an environment
+  // that doesn't have it. The secret is an internal implementation
+  // detail (server-only, never leaves this DB) — no reason to put the
+  // burden on the operator. Uses cryptographically-random 32 bytes
+  // (base64url-encoded ~= 43 chars, comfortably above the 32-char
+  // requireSecret() gate). Upsert-then-return-the-fresh-value keeps
+  // subsequent calls fast (they find the row on the next lookup).
+  //
+  // Race note: if two API instances hit this branch simultaneously on
+  // a fresh prod DB, both generate and one upsert loses. That's fine
+  // — both values are ≥32 chars and cryptographically random; whichever
+  // lands second is the persistent one; the loser only affected its
+  // own in-flight call (which returned a valid, verifiable value at
+  // that moment). No pending click URLs exist to invalidate.
+  let hmacSecret = map.get(SETTING_HMAC_SECRET) ?? "";
+  if (!hmacSecret || hmacSecret.length < 32) {
+    hmacSecret = randomBytes(32).toString("base64url");
+    await prisma.setting.upsert({
+      where: { key: SETTING_HMAC_SECRET },
+      create: {
+        key: SETTING_HMAC_SECRET,
+        value: hmacSecret,
+        section: "promotions",
+        description: "HMAC secret used to sign promotion click-tracking URLs (server-only). Auto-generated on first use.",
+      },
+      update: { value: hmacSecret },
+    });
+  }
   return {
-    hmacSecret: map.get(SETTING_HMAC_SECRET) ?? "",
+    hmacSecret,
     emailFooter: map.get(SETTING_EMAIL_FOOTER) ?? "",
     smsFooter: map.get(SETTING_SMS_FOOTER) ?? "",
     businessAddress: map.get(SETTING_BUSINESS_ADDRESS) ?? "",
@@ -218,10 +246,17 @@ import { createHmac, timingSafeEqual } from "crypto";
 //
 // Both are refused under weak secrets. Both use base64url for URL safety.
 
+// Enforced at sign time (fails loudly at message-send / URL-build so
+// the operator sees the misconfig immediately). Verify path uses
+// isSecretValid + return-false so click routes don't 500 on missing
+// or rotated secrets — anonymous-click fallback still runs.
 function requireSecret(secret: string) {
   if (!secret || secret.length < 32) {
     throw new Error("PROMOTION_HMAC_SECRET must be at least 32 characters");
   }
+}
+function isSecretValid(secret: string): boolean {
+  return !!secret && secret.length >= 32;
 }
 
 export function signDeliveryClickToken(secret: string, deliveryId: string): string {
@@ -234,8 +269,11 @@ export function verifyDeliveryClickToken(
   deliveryId: string,
   token: string,
 ): boolean {
-  if (!secret || !deliveryId || !token) return false;
-  const expected = signDeliveryClickToken(secret, deliveryId);
+  // Verify never throws — an unset/short/rotated secret returns false
+  // (falls through to anonymous-click log + best-effort redirect) so
+  // the click endpoint doesn't 500 on every hit while ops investigates.
+  if (!isSecretValid(secret) || !deliveryId || !token) return false;
+  const expected = createHmac("sha256", secret).update(`d:${deliveryId}`).digest("base64url");
   const a = Buffer.from(token, "utf8");
   const b = Buffer.from(expected, "utf8");
   if (a.length !== b.length) return false;
@@ -258,8 +296,11 @@ export function verifyPromoClickToken(
   contactId: string | null,
   token: string,
 ): boolean {
-  if (!secret || !promotionId || !token) return false;
-  const expected = signPromoClickToken(secret, promotionId, contactId);
+  // See verifyDeliveryClickToken — verify never throws for the same
+  // 500-safety reason.
+  if (!isSecretValid(secret) || !promotionId || !token) return false;
+  const payload = `p:${promotionId}:${contactId ?? ""}`;
+  const expected = createHmac("sha256", secret).update(payload).digest("base64url");
   const a = Buffer.from(token, "utf8");
   const b = Buffer.from(expected, "utf8");
   if (a.length !== b.length) return false;
@@ -267,6 +308,11 @@ export function verifyPromoClickToken(
 }
 
 // URL embedded in outbound SMS/email + manual-burst messages.
+//
+// Path is `/api/public/promotion/click/d/<id>` — the `/api/` prefix hits
+// Vercel's rewrite rule (`/api/(.*)` → `/api/_proxy/$1`), which forwards
+// to the API server. Without the prefix, Next.js sees `/promotion/click/...`
+// and 404s (the only /promotion/* Next page is `[slug].tsx`, single-segment).
 export function buildClickWrapperUrl(
   baseUrl: string,
   hmacSecret: string,
@@ -274,11 +320,13 @@ export function buildClickWrapperUrl(
 ): string {
   const token = signDeliveryClickToken(hmacSecret, deliveryId);
   const trimmed = baseUrl.replace(/\/$/, "");
-  return `${trimmed}/promotion/click/d/${deliveryId}?t=${encodeURIComponent(token)}`;
+  return `${trimmed}/api/public/promotion/click/d/${deliveryId}?t=${encodeURIComponent(token)}`;
 }
 
 // URL embedded in the invoice-page promo section's CTA button. No
 // delivery row exists — click lands with (promotionId, contactId) only.
+// Same `/api/public/` prefix as the d-flavor wrapper for the same
+// Vercel-rewrite reason.
 export function buildInvoicePageClickUrl(
   baseUrl: string,
   hmacSecret: string,
@@ -289,7 +337,7 @@ export function buildInvoicePageClickUrl(
   const trimmed = baseUrl.replace(/\/$/, "");
   const qs = new URLSearchParams({ t: token });
   if (contactId) qs.set("c", contactId);
-  return `${trimmed}/promotion/click/p/${promotionId}?${qs.toString()}`;
+  return `${trimmed}/api/public/promotion/click/p/${promotionId}?${qs.toString()}`;
 }
 
 // ── Destination resolver ─────────────────────────────────────────────────
@@ -462,8 +510,11 @@ export async function optOutByIdentifier(params: {
     : {
         normalizedPhone: normalizePhoneForLookup(raw),
       };
+  // Opt-out is orthogonal to contact status — a PAUSED or ARCHIVED
+  // contact whose identifier matches still gets the flag flipped so a
+  // future re-activation doesn't accidentally resume promo sends.
   const contacts = await prisma.clientContact.findMany({
-    where: { ...where, status: "ACTIVE" },
+    where,
     select: {
       id: true,
       promoEmailOptedOut: true,
@@ -604,6 +655,60 @@ export function renderSmsPromoBody(snapshot: {
   return parts.join("\n");
 }
 
+// ── Email body renderers (plain text + HTML) ────────────────────────────
+
+// Plain-text body — always shipped as the `text` half of the multipart
+// email so text-only clients + spam scanners see the content. Same
+// content as the HTML render, minus the button chrome.
+export function renderEmailPromoBodyText(snapshot: {
+  body: string;
+  ctaText: string;
+  ctaUrl: string | null;
+  footer?: string;
+}): string {
+  const parts: string[] = [snapshot.body];
+  if (snapshot.ctaText && snapshot.ctaUrl) {
+    parts.push(`${snapshot.ctaText}: ${snapshot.ctaUrl}`);
+  } else if (snapshot.ctaUrl) {
+    parts.push(snapshot.ctaUrl);
+  }
+  if (snapshot.footer) parts.push(snapshot.footer);
+  return parts.filter(Boolean).join("\n\n");
+}
+
+// HTML body — shipped as the `html` half of the multipart email so
+// modern clients render a proper clickable button instead of the raw
+// wrapper URL. The CTA button hides the long tracking URL behind the
+// operator's chosen label; hover reveals the destination as normal.
+//
+// Escaping: all snapshot values are HTML-escaped before interpolation
+// (belt-and-suspenders — the Zod schema already caps content lengths
+// and the Super-only editor is trusted, but escaping keeps the
+// rendered mail immune to any accidental HTML in body text).
+export function renderEmailPromoBodyHtml(snapshot: {
+  body: string;
+  ctaText: string;
+  ctaUrl: string | null;
+  footer?: string;
+}): string {
+  const esc = (s: string) => s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+  const bodyHtml = esc(snapshot.body).replace(/\n/g, "<br>");
+  const cta = snapshot.ctaText && snapshot.ctaUrl
+    ? `<p style="margin:24px 0;"><a href="${esc(snapshot.ctaUrl)}" style="display:inline-block;background:#0a7cff;color:#fff;text-decoration:none;padding:12px 24px;border-radius:6px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">${esc(snapshot.ctaText)}</a></p>`
+    : snapshot.ctaUrl
+    ? `<p style="margin:16px 0;"><a href="${esc(snapshot.ctaUrl)}" style="color:#0a7cff;word-break:break-all;">${esc(snapshot.ctaUrl)}</a></p>`
+    : "";
+  const footerHtml = snapshot.footer
+    ? `<hr style="border:none;border-top:1px solid #e5e5e5;margin:24px 0;"><p style="font-size:12px;color:#666;line-height:1.5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;white-space:pre-wrap;">${esc(snapshot.footer)}</p>`
+    : "";
+  return `<!doctype html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1a1a1a;max-width:600px;margin:0 auto;padding:16px;line-height:1.5;"><div>${bodyHtml}</div>${cta}${footerHtml}</body></html>`;
+}
+
 // ── Piggyback dispatcher ────────────────────────────────────────────────
 
 // Called from inside the invoice-send success path (services/paymentRequests.ts)
@@ -636,16 +741,49 @@ export async function selectPromotionsForPiggyback(params: {
   clientId: string;
   channel: PromoChannel;
   triggeredBy: string | null;
+  // Persistence mode:
+  //   "deferred"           — default. Compute bodyAppend, return writeDeliveries
+  //                           thunk. Caller decides when to persist (server path
+  //                           only writes after a successful send).
+  //   "claimer_immediate" — persist BEFORE returning, using skippedReason=
+  //                           "claimer_pending" for rows that will ship (they
+  //                           get flipped to delivered by recordClaimerHandoff
+  //                           when the worker taps the ack). Same deliveryIds
+  //                           get embedded in the wrapper URLs AND persisted,
+  //                           so a later click resolves cleanly.
+  //                           Idempotent per (triggeredBy, contactId, channel):
+  //                           if pending rows already exist, their IDs are
+  //                           reused so the wrapper URL from the first call
+  //                           still resolves.
+  mode?: "deferred" | "claimer_immediate";
 }): Promise<{
   bodyAppend: string;
+  // HTML variant of bodyAppend for email channel. Empty string when the
+  // channel is SMS or no promos survive. Callers sending via HTML-capable
+  // transport (Resend) pass this as the `html` option so the CTA renders
+  // as a proper button instead of a raw wrapper URL. The plain-text
+  // `bodyAppend` is still shipped as the `text` half of the multipart.
+  bodyAppendHtml: string;
   emailFooter: string | null;
   smsFooter: string | null;
   writeDeliveries: () => Promise<void>;
 }> {
+  const mode = params.mode ?? "deferred";
   const settings = await loadPromotionSettings();
   if (!settings.hmacSecret) {
     // Refuse to ship promos without a signed opt-out URL — fail closed.
-    return { bodyAppend: "", emailFooter: null, smsFooter: null, writeDeliveries: async () => {} };
+    return { bodyAppend: "", bodyAppendHtml: "", emailFooter: null, smsFooter: null, writeDeliveries: async () => {} };
+  }
+  // Fail-closed on CAN-SPAM footer settings — refuse to compose ANY
+  // promo append if the channel's footer template or business address
+  // is missing (email requires both, SMS requires the footer template).
+  // See services/promotions.ts note: outbound promos without an opt-out
+  // mechanism are a per-message FTC violation.
+  if (params.channel === "email" && (!settings.emailFooter || !settings.businessAddress)) {
+    return { bodyAppend: "", bodyAppendHtml: "", emailFooter: null, smsFooter: null, writeDeliveries: async () => {} };
+  }
+  if (params.channel === "sms" && !settings.smsFooter) {
+    return { bodyAppend: "", bodyAppendHtml: "", emailFooter: null, smsFooter: null, writeDeliveries: async () => {} };
   }
   const contact = await prisma.clientContact.findUnique({
     where: { id: params.contactId },
@@ -657,7 +795,28 @@ export async function selectPromotionsForPiggyback(params: {
     },
   });
   if (!contact) {
-    return { bodyAppend: "", emailFooter: null, smsFooter: null, writeDeliveries: async () => {} };
+    return { bodyAppend: "", bodyAppendHtml: "", emailFooter: null, smsFooter: null, writeDeliveries: async () => {} };
+  }
+
+  // Idempotency map for "claimer_immediate": look up any existing pending
+  // rows keyed by (triggeredBy, contactId, channel) and reuse their IDs
+  // per-promotion. Without this, a repeat /comms-handoff fetch would
+  // insert duplicate pending rows and the URL from the first call would
+  // still resolve to the first pending row (fine) — but multiple pending
+  // rows would linger and reconciliation-by-token would be ambiguous.
+  const existingPendingByPromo = new Map<string, string>();
+  if (mode === "claimer_immediate" && params.triggeredBy) {
+    const existing = await prisma.promotionDelivery.findMany({
+      where: {
+        triggeredBy: params.triggeredBy,
+        contactId: contact.id,
+        channel: params.channel,
+        skippedReason: "claimer_pending",
+        deliveredAt: null,
+      },
+      select: { id: true, promotionId: true },
+    });
+    for (const e of existing) existingPendingByPromo.set(e.promotionId, e.id);
   }
   const now = new Date();
   const activePromos = await prisma.promotion.findMany({
@@ -711,7 +870,10 @@ export async function selectPromotionsForPiggyback(params: {
     // Skip if no content for this channel (should have been caught at save).
     if (!content[params.channel]) continue;
 
-    const deliveryId = randomUUID();
+    // Reuse the existing pending row's ID when idempotency map has a hit
+    // so the wrapper URL that shipped in the earlier /comms-handoff body
+    // still resolves to the same delivery. Fresh UUID otherwise.
+    const deliveryId = existingPendingByPromo.get(p.id) ?? randomUUID();
     const unsubscribeLink = buildUnsubscribeUrl(
       settings.baseUrl,
       settings.hmacSecret,
@@ -801,7 +963,9 @@ export async function selectPromotionsForPiggyback(params: {
     if (params.channel === "sms") {
       return renderSmsPromoBody(snapshot);
     }
-    // Email: subject is handled elsewhere; body includes CTA line.
+    // Email plain-text piece: body + `CTA: URL` line. HTML version
+    // (below) turns the CTA into a proper button so the recipient
+    // doesn't see the raw wrapper URL.
     const parts: string[] = [];
     if (snapshot.body) parts.push(snapshot.body);
     if (snapshot.ctaText && snapshot.ctaUrl) {
@@ -812,10 +976,32 @@ export async function selectPromotionsForPiggyback(params: {
     return parts.join("\n");
   });
 
+  // Email-only: HTML pieces for the multipart `html` body. SMS never
+  // uses HTML. Escaping matches renderEmailPromoBodyHtml (same rules).
+  const bodyPiecesHtml =
+    params.channel === "email"
+      ? surviving.map(({ snapshot }) => {
+          const esc = (s: string) => s
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+          const bodyHtml = snapshot.body ? esc(snapshot.body).replace(/\n/g, "<br>") : "";
+          const cta = snapshot.ctaText && snapshot.ctaUrl
+            ? `<p style="margin:16px 0;"><a href="${esc(snapshot.ctaUrl)}" style="display:inline-block;background:#0a7cff;color:#fff;text-decoration:none;padding:10px 20px;border-radius:6px;font-weight:600;">${esc(snapshot.ctaText)}</a></p>`
+            : snapshot.ctaUrl
+            ? `<p style="margin:12px 0;"><a href="${esc(snapshot.ctaUrl)}" style="color:#0a7cff;word-break:break-all;">${esc(snapshot.ctaUrl)}</a></p>`
+            : "";
+          return `<div>${bodyHtml}</div>${cta}`;
+        })
+      : [];
+
   // Compose the append blob including opt-out footer as the LAST line.
   // Multiple concurrent promos concatenate; a single opt-out footer at
   // the very end applies to all of them (per-channel opt-out semantics).
   let bodyAppend = "";
+  let bodyAppendHtml = ""; // populated only for email; caller passes as `html` option
   let emailFooterOut: string | null = null;
   let smsFooterOut: string | null = null;
   if (surviving.length > 0) {
@@ -835,6 +1021,17 @@ export async function selectPromotionsForPiggyback(params: {
         unsubscribeLink: firstUnsubscribeLink,
       });
       bodyAppend = separator + bodyPieces.join(separator) + "\n\n" + emailFooterOut;
+      // HTML variant — <hr> separator, joined promo pieces, then the
+      // footer with the unsubscribe link as a proper <a>. Escaped
+      // footer text; the unsubscribe URL is a plain baseUrl+/opt-out
+      // so it's safe to render as an anchor without extra parsing.
+      const escFooter = emailFooterOut
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(new RegExp(firstUnsubscribeLink.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"),
+          `<a href="${firstUnsubscribeLink}" style="color:#666;">${firstUnsubscribeLink}</a>`);
+      bodyAppendHtml = `<hr style="border:none;border-top:1px solid #e5e5e5;margin:24px 0;">${bodyPiecesHtml.join('<hr style="border:none;border-top:1px solid #e5e5e5;margin:16px 0;">')}<hr style="border:none;border-top:1px solid #e5e5e5;margin:16px 0;"><p style="font-size:12px;color:#666;line-height:1.5;white-space:pre-wrap;">${escFooter}</p>`;
     } else {
       smsFooterOut = assembleSmsFooter({
         footerTemplate: settings.smsFooter,
@@ -854,8 +1051,71 @@ export async function selectPromotionsForPiggyback(params: {
     }
   }
 
+  // In "claimer_immediate" mode we persist NOW so the wrapper URL that
+  // ships in the outbound body resolves to a real DB row when the
+  // recipient taps it — even if the worker never comes back to
+  // acknowledge the handoff. Deliverable rows are stamped
+  // skippedReason="claimer_pending" (with deliveredAt=null) so
+  // recordClaimerHandoff can flip them to delivered without a re-lookup.
+  //
+  // Skipped rows (opted_out / cooldown / sms_multi_promo_limit) are
+  // persisted with their normal reason.
+  //
+  // Idempotency: rows whose deliveryId came from existingPendingByPromo
+  // are UPDATED in place (contentSnapshot may have drifted between
+  // /comms-handoff fetches); rows with fresh IDs are inserted with
+  // createMany({ skipDuplicates: true }) so a race between two
+  // concurrent /comms-handoff fetches lands cleanly.
+  if (mode === "claimer_immediate" && pending.length > 0) {
+    const reused = pending.filter((p) => existingPendingByPromo.has(p.promotionId));
+    const fresh = pending.filter((p) => !existingPendingByPromo.has(p.promotionId));
+    // Update in-place for reused rows so contentSnapshot reflects the
+    // current promo body (in case the operator edited between fetches).
+    for (const r of reused) {
+      await prisma.promotionDelivery.update({
+        where: { id: r.deliveryId },
+        data: {
+          contentSnapshot: r.snapshot as any,
+          // Deliverable rows stay pending; skipped rows carry their
+          // real reason. Never regress a delivered row (guard by only
+          // touching rows already at skippedReason=claimer_pending —
+          // enforced by the idempotency query filter above).
+          skippedReason: r.deliver ? "claimer_pending" : r.skippedReason,
+        },
+      });
+    }
+    if (fresh.length > 0) {
+      await prisma.promotionDelivery.createMany({
+        skipDuplicates: true,
+        data: fresh.map((p) => ({
+          id: p.deliveryId,
+          promotionId: p.promotionId,
+          clientId: contact.clientId,
+          contactId: contact.id,
+          channel: p.channel,
+          triggeredBy: params.triggeredBy,
+          contentSnapshot: p.snapshot as any,
+          // Deliverable rows land as claimer_pending; skipped rows
+          // carry their real reason. deliveredAt stays null in both
+          // cases — recordClaimerHandoff will stamp deliverable rows.
+          deliveredAt: null,
+          skippedReason: p.deliver ? "claimer_pending" : p.skippedReason,
+        })),
+      });
+    }
+    // No-op thunk since persistence already happened.
+    return {
+      bodyAppend,
+      bodyAppendHtml,
+      emailFooter: emailFooterOut,
+      smsFooter: smsFooterOut,
+      writeDeliveries: async () => {},
+    };
+  }
+
   return {
     bodyAppend,
+    bodyAppendHtml,
     emailFooter: emailFooterOut,
     smsFooter: smsFooterOut,
     writeDeliveries: async () => {
@@ -896,18 +1156,49 @@ export async function runManualSendBurst(params: {
   if (promo.triggerKind !== "manual_send") {
     throw new Error("Promotion is not a manual_send trigger");
   }
-  // Overlap guard — reject if a burst started within the last 5 minutes.
-  if (promo.lastDispatchStartedAt) {
-    const ageMs = Date.now() - promo.lastDispatchStartedAt.getTime();
-    if (ageMs < 5 * 60 * 1000) {
-      throw new Error("A send burst is already in progress");
-    }
+  // Fail-closed on CAN-SPAM footer settings — same defense as the
+  // /start lifecycle gate. Prevents shipping a promo email/SMS with no
+  // unsubscribe link + no business address (per-message FTC penalty).
+  const dispatchChannelsCheck = Array.isArray(promo.dispatchChannels)
+    ? (promo.dispatchChannels as unknown[]).filter((c): c is string => typeof c === "string")
+    : [];
+  if (dispatchChannelsCheck.includes("email")) {
+    if (!settings.emailFooter) throw new Error("Cannot send: PROMOTION_OPT_OUT_FOOTER_EMAIL is not configured");
+    if (!settings.businessAddress) throw new Error("Cannot send: BUSINESS_ADDRESS is not configured");
   }
+  if (dispatchChannelsCheck.includes("sms") && !settings.smsFooter) {
+    throw new Error("Cannot send: PROMOTION_OPT_OUT_FOOTER_SMS is not configured");
+  }
+  // Fail-closed on the promotion window — if now is outside [startAt,
+  // endAt], the operator either forgot to Retire the campaign or is
+  // firing it before it should ship. Piggyback and invoice-page display
+  // both honor the window; manual burst must too.
+  const nowGate = new Date();
+  if (promo.startAt && promo.startAt > nowGate) {
+    throw new Error(`Cannot send: promotion starts at ${promo.startAt.toISOString()}`);
+  }
+  if (promo.endAt && promo.endAt < nowGate) {
+    throw new Error(`Cannot send: promotion ended at ${promo.endAt.toISOString()}`);
+  }
+  // Overlap guard — reject if a burst started within the last 5 minutes.
+  // Atomic acquire: updateMany with a WHERE clause matching "no
+  // in-flight burst" is a single SQL statement, so two concurrent
+  // /send-now calls can't both pass the check.
   const dispatchId = randomUUID();
-  await prisma.promotion.update({
-    where: { id: params.promotionId },
+  const staleCutoff = new Date(Date.now() - 5 * 60 * 1000);
+  const acquired = await prisma.promotion.updateMany({
+    where: {
+      id: params.promotionId,
+      OR: [
+        { lastDispatchStartedAt: null },
+        { lastDispatchStartedAt: { lt: staleCutoff } },
+      ],
+    },
     data: { lastDispatchStartedAt: new Date() },
   });
+  if (acquired.count === 0) {
+    throw new Error("A send burst is already in progress");
+  }
 
   const dispatchChannels = Array.isArray(promo.dispatchChannels)
     ? (promo.dispatchChannels as unknown[]).filter((c): c is PromoChannel =>
@@ -943,6 +1234,43 @@ export async function runManualSendBurst(params: {
     for (const channel of dispatchChannels) {
       const hasChannelContent = !!content[channel];
       if (!hasChannelContent) continue;
+      // Cooldown / idempotency: skip if this (promotion, contact, channel)
+      // has a successful delivery within cooldownDays. Same rule the
+      // piggyback path applies — protects against
+      //   (a) intentional re-run: operator taps Send Now twice
+      //   (b) crash-during-burst retry: lastDispatchStartedAt gets
+      //       cleared after 5min, retry loops all contacts again.
+      // Without this check, both cases result in duplicate sends.
+      // Elapsed-time arithmetic on the instant axis (not a business
+      // date) so this is a documented exception to the ET-day rule.
+      // date-handling-allow: elapsed-time window on the instant axis
+      const cooldownCutoff = new Date(Date.now() - promo.cooldownDays * 24 * 3600 * 1000);
+      const priorDelivery = await prisma.promotionDelivery.findFirst({
+        where: {
+          promotionId: promo.id,
+          contactId: contact.id,
+          channel,
+          deliveredAt: { gte: cooldownCutoff, not: null },
+        },
+        select: { id: true },
+      });
+      if (priorDelivery) {
+        // Record the skip so audit reflects the dedup and the operator
+        // can see WHY a given contact was skipped in the delivery log.
+        await prisma.promotionDelivery.create({
+          data: {
+            promotionId: promo.id,
+            clientId: contact.clientId,
+            contactId: contact.id,
+            channel,
+            dispatchId,
+            contentSnapshot: {} as any,
+            skippedReason: "cooldown",
+          },
+        });
+        skipped++;
+        continue;
+      }
       const optedOut =
         channel === "email" ? contact.promoEmailOptedOut : contact.promoSmsOptedOut;
       const target = channel === "email" ? contact.email : contact.normalizedPhone ?? contact.phone;
@@ -1003,17 +1331,22 @@ export async function runManualSendBurst(params: {
       }
       try {
         if (channel === "email") {
-          const emailBody = [
-            snapshot.body,
-            snapshot.ctaText && snapshot.ctaUrl
-              ? `${snapshot.ctaText}: ${snapshot.ctaUrl}`
-              : snapshot.ctaUrl ?? "",
-            "",
-            snapshot.footer ?? "",
-          ]
-            .filter(Boolean)
-            .join("\n\n");
-          const res = await sendEmail(target, snapshot.subject ?? promo.title, emailBody);
+          // Ship BOTH text and HTML so modern clients render a proper
+          // clickable CTA button (hiding the long tracking URL) while
+          // plain-text clients / spam scanners still see the content.
+          const emailBody = renderEmailPromoBodyText({
+            body: snapshot.body,
+            ctaText: snapshot.ctaText,
+            ctaUrl: snapshot.ctaUrl,
+            footer: snapshot.footer,
+          });
+          const emailHtml = renderEmailPromoBodyHtml({
+            body: snapshot.body,
+            ctaText: snapshot.ctaText,
+            ctaUrl: snapshot.ctaUrl,
+            footer: snapshot.footer,
+          });
+          const res = await sendEmail(target, snapshot.subject ?? promo.title, emailBody, { html: emailHtml });
           if (!res.ok) throw new Error(res.error ?? "email send failed");
         } else {
           const smsBody = renderSmsPromoBody(snapshot);
@@ -1129,8 +1462,23 @@ export async function sendPromotionTest(params: {
     "unused",
     params.channel,
   );
+  // Build a wrapper URL with a sentinel deliveryId so the test message
+  // exercises the SAME URL shape a real recipient would see (including
+  // the /api/public/ prefix and HMAC). Without this, Super's test view
+  // shows the raw destination and any wrapper-shape bug (e.g. missing
+  // /api/ prefix that 404s in prod) doesn't surface until a real
+  // customer clicks. The sentinel id won't resolve to a delivery row
+  // — recordClickAndResolve falls through to anonymous + redirect,
+  // which is exactly the forwarded-URL behavior; also fine here.
+  //
+  // For LANDING_PAGE promos, promo.link is null but the wrapper still
+  // resolves correctly (recordClickAndResolve consults linkKind +
+  // landingPageId server-side).
+  const wrapperUrl = isSecretValid(settings.hmacSecret)
+    ? buildClickWrapperUrl(settings.baseUrl, settings.hmacSecret, "test-send-sentinel")
+    : promo.link;
   const snapshot = buildContentSnapshot({
-    promotion: { link: promo.link, content },
+    promotion: { link: wrapperUrl, content },
     channel: params.channel,
     unsubscribeLink,
     emailFooterTemplate: settings.emailFooter,
@@ -1140,19 +1488,25 @@ export async function sendPromotionTest(params: {
 
   let subject: string | undefined;
   let body: string;
+  let html: string | undefined;
   if (params.channel === "email") {
     subject = `[TEST] ${snapshot.subject ?? promo.title}`;
-    body = [
-      "[TEST] This is a test send of a promotional message.\n",
-      snapshot.body,
-      snapshot.ctaText && snapshot.ctaUrl
-        ? `${snapshot.ctaText}: ${snapshot.ctaUrl}`
-        : snapshot.ctaUrl ?? "",
-      "",
-      snapshot.footer ?? "",
-    ]
-      .filter(Boolean)
-      .join("\n\n");
+    // Prepend a [TEST] marker to the body so Super sees at a glance
+    // that this is a preview, not a real send. Everything else is
+    // byte-for-byte identical to what recipients will see.
+    const bodyWithTestMarker = `[TEST] This is a test send of a promotional message.\n\n${snapshot.body}`;
+    body = renderEmailPromoBodyText({
+      body: bodyWithTestMarker,
+      ctaText: snapshot.ctaText,
+      ctaUrl: snapshot.ctaUrl,
+      footer: snapshot.footer,
+    });
+    html = renderEmailPromoBodyHtml({
+      body: bodyWithTestMarker,
+      ctaText: snapshot.ctaText,
+      ctaUrl: snapshot.ctaUrl,
+      footer: snapshot.footer,
+    });
   } else {
     body = "[TEST] " + renderSmsPromoBody(snapshot);
   }
@@ -1162,7 +1516,7 @@ export async function sendPromotionTest(params: {
     // provider is misconfigured (e.g. Twilio disabled), surface the
     // real error text — much more useful than a generic "check your X".
     if (params.channel === "email") {
-      const res = await sendEmail(target, subject!, body);
+      const res = await sendEmail(target, subject!, body, html ? { html } : undefined);
       if (!res.ok) {
         return { ok: false, target, mode, error: res.error ?? "send_failed" };
       }
@@ -1213,16 +1567,22 @@ export async function loadInvoicePagePromos(params: {
     ctaUrl: string | null;
   }[]
 > {
-  // Suppress the promo display entirely if the viewing contact is opted
-  // out of ALL dispatch channels — per the spec, that surface then
-  // shows only the "Opt in to promotion offers" affordance instead.
+  // Load the viewing contact's opt-out state (if any) so we can apply
+  // per-promo, per-dispatch-channel suppression below. The old logic
+  // suppressed ALL invoice-page promos when the contact was opted out of
+  // BOTH email and SMS, which incorrectly killed display-only promos
+  // (no dispatch channels, purely passive display) — the schema comment
+  // explicitly documents that invoice-page display is NOT opt-out gated.
+  let optedOutEmail = false;
+  let optedOutSms = false;
   if (params.contactId) {
     const contact = await prisma.clientContact.findUnique({
       where: { id: params.contactId },
       select: { promoEmailOptedOut: true, promoSmsOptedOut: true },
     });
-    if (contact && contact.promoEmailOptedOut && contact.promoSmsOptedOut) {
-      return [];
+    if (contact) {
+      optedOutEmail = contact.promoEmailOptedOut;
+      optedOutSms = contact.promoSmsOptedOut;
     }
   }
   const settings = await loadPromotionSettings();
@@ -1251,6 +1611,23 @@ export async function loadInvoicePagePromos(params: {
     if (!surfaces.includes("invoice_page")) continue;
     const content = (p.content ?? {}) as PromotionContent;
     if (!content.invoice_page) continue;
+    // Per-promo suppression: only hide THIS promo if the viewing contact
+    // is opted out of ALL of THIS promo's dispatch channels AND this
+    // promo actually has dispatch channels. Display-only promos (empty
+    // dispatchChannels) always show — invoice-page display is a passive
+    // surface, not a dispatch, and is not opt-out gated per the schema
+    // comment on PromotionDelivery.
+    const dispatchChannels = Array.isArray(p.dispatchChannels)
+      ? (p.dispatchChannels as unknown[]).filter((c): c is string => typeof c === "string")
+      : [];
+    if (dispatchChannels.length > 0) {
+      const allSuppressed = dispatchChannels.every((ch) => {
+        if (ch === "email") return optedOutEmail;
+        if (ch === "sms") return optedOutSms;
+        return false;
+      });
+      if (allSuppressed) continue;
+    }
     // Build a wrapper URL for the CTA — logs the click before 302 to the
     // resolved destination. Skipped when HMAC secret isn't configured
     // (fail-closed on send-side; same on display-side).
@@ -1597,11 +1974,33 @@ export async function recordClickAndResolve(params: {
         clientId = contact?.clientId ?? null;
       }
     } else {
-      // Fall back to logging with just the raw promotionId — the URL
-      // shape includes the promoId in the path even without a valid
-      // token, so we can still credit the click to the campaign.
-      promotionId = params.primaryId;
-      anonymousReason = "forwarded_or_manual_share";
+      // SECURITY: on HMAC failure we do NOT trust the URL-supplied
+      // promotionId — otherwise an attacker who guesses any promo id
+      // could inflate its click counters from anywhere (the URL path
+      // is not signed). We STILL redirect the browser (best-effort UX
+      // on a forwarded/shared link) BUT we do NOT write a
+      // PromotionClick row so aggregate counters stay honest.
+      //
+      // Compare with the d-flavor path: there, the token signs the
+      // deliveryId itself, so an unverified token means we can't even
+      // resolve which delivery this was — we naturally can't inflate
+      // per-delivery counts. p-flavor URLs put the promoId in the path,
+      // which is what the attacker can guess, hence this defense.
+      const claimedPromo = await prisma.promotion.findUnique({
+        where: { id: params.primaryId },
+        select: { id: true, linkKind: true, link: true, landingPageId: true },
+      });
+      if (!claimedPromo) {
+        // Unknown promo id AND bad token — no signal at all. Return
+        // null so caller sends the browser to the base URL.
+        return { destinationUrl: null, destination: null };
+      }
+      // Redirect but don't attribute.
+      const resolvedAnon = await resolveDestinationUrl(settings.baseUrl, claimedPromo);
+      return {
+        destinationUrl: resolvedAnon?.url ?? null,
+        destination: resolvedAnon?.destination ?? null,
+      };
     }
   }
 
@@ -1690,6 +2089,27 @@ export async function loadLandingPageForPublic(slug: string): Promise<{
     page.promotion.status === "ACTIVE" &&
     (!page.promotion.startAt || page.promotion.startAt <= now) &&
     (!page.promotion.endAt || page.promotion.endAt >= now);
+
+  // PRIVACY: when the parent promotion isn't ACTIVE (or the window has
+  // closed / hasn't opened), short-circuit and return an empty shell
+  // with promotionActive=false. Otherwise slugs — which are auto-derived
+  // kebab-case of the campaign title, easy to guess — would leak in-
+  // progress copy, item images, and business contact info to anyone who
+  // fetches by name.
+  //
+  // The frontend renders "This offer has ended" for promotionActive=false
+  // and never reads the other fields, so returning empty values here
+  // matches what the client actually needs while denying enumeration.
+  if (!promotionActive) {
+    return {
+      headline: null,
+      intro: null,
+      items: [],
+      promotionActive: false,
+      business: { name: "", phone: "", email: "", address: "", socialLinks: [] },
+    };
+  }
+
   const items = await Promise.all(
     page.items.map(async (i) => ({
       id: i.id,
@@ -1726,6 +2146,54 @@ export async function loadLandingPageForPublic(slug: string): Promise<{
   };
 }
 
+// ── HMAC secret rotation ────────────────────────────────────────────
+//
+// Rotates PROMOTION_HMAC_SECRET to a freshly-generated cryptographically-
+// random 32-byte base64url string. All in-flight promo click URLs
+// (signed under the old secret) still redirect but their HMAC no longer
+// verifies — the click handler falls through to anonymous logging.
+//
+// Audits the rotation with the old secret's SHA-256 preview hash (first
+// 8 hex chars) so the audit trail can prove a rotation happened without
+// exposing either secret. Never logs the secret itself.
+export async function rotatePromotionHmacSecret(params: {
+  actorUserId: string;
+}): Promise<{ rotatedAt: string; secret: string }> {
+  const previous = await prisma.setting.findUnique({
+    where: { key: SETTING_HMAC_SECRET },
+    select: { value: true },
+  });
+  const previousPreviewHash = previous?.value
+    ? createHash("sha256").update(previous.value).digest("hex").slice(0, 8)
+    : null;
+  const newSecret = randomBytes(32).toString("base64url");
+  const rotatedAt = new Date();
+  await prisma.$transaction(async (tx) => {
+    await tx.setting.upsert({
+      where: { key: SETTING_HMAC_SECRET },
+      create: {
+        key: SETTING_HMAC_SECRET,
+        value: newSecret,
+        section: "promotions",
+        description: "HMAC secret used to sign promotion click-tracking URLs (server-only). Auto-generated on first use; rotated via the Promotions tab.",
+        updatedById: params.actorUserId,
+      },
+      update: {
+        value: newSecret,
+        updatedById: params.actorUserId,
+      },
+    });
+    await writeAudit(tx, AUDIT.PROMOTION.HMAC_ROTATED, params.actorUserId, {
+      previousSecretPreviewHash: previousPreviewHash,
+      rotatedAt: rotatedAt.toISOString(),
+    });
+  });
+  // Return the fresh secret so Super can reveal it immediately in the
+  // Settings card without a page reload. Same trust boundary — Super
+  // sees the current secret via /admin/settings anyway.
+  return { rotatedAt: rotatedAt.toISOString(), secret: newSecret };
+}
+
 export const promotionsService = {
   loadPromotionSettings,
   buildUnsubscribeUrl,
@@ -1736,6 +2204,8 @@ export const promotionsService = {
   setContactOptOut,
   buildContentSnapshot,
   renderSmsPromoBody,
+  renderEmailPromoBodyText,
+  renderEmailPromoBodyHtml,
   selectPromotionsForPiggyback,
   runManualSendBurst,
   sendPromotionTest,
@@ -1752,4 +2222,5 @@ export const promotionsService = {
   confirmLandingPageImageUpload,
   recordClickAndResolve,
   incrementLandingPageViewCount,
+  rotatePromotionHmacSecret,
 };
