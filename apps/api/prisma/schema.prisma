@@ -40,6 +40,8 @@ enum AuditScope {
   LEDGER_FOLLOWUP
   POLICY_DOCUMENT
   POLICY_SIGNATURE
+  PROMOTION
+  PROMO_OPT
   // add more scopes as you expand the schema
 }
 
@@ -101,6 +103,21 @@ enum AuditVerb {
   POLICY_ARCHIVED
   POLICY_UNARCHIVED
   POLICY_ADMIN_UPLOADED_ON_BEHALF
+  // Promotion lifecycle verbs. Scope: PROMOTION. See models Promotion /
+  // PromotionDelivery below.
+  PROMOTION_STARTED
+  PROMOTION_PAUSED
+  PROMOTION_RESUMED
+  PROMOTION_RETIRED
+  PROMOTION_EDITED
+  PROMOTION_DUPLICATED
+  PROMOTION_DISPATCHED
+  PROMOTION_TEST_SENT
+  // Opt-out / opt-in for promotional messages. Scope: PROMO_OPT. The
+  // metadata JSON always includes { source, channel, [reason] } — see
+  // services/promotions.ts for canonical shape.
+  PROMO_OPTED_OUT
+  PROMO_OPTED_IN
   // add new verbs as needed
 }
 
@@ -366,6 +383,17 @@ model User {
   policyExceptionsGranted        PolicyException[]       @relation("PolicyExceptionGranter")
   policyExceptionsRevoked        PolicyException[]       @relation("PolicyExceptionRevoker")
   policyReadingProgress          PolicyReadingProgress[]
+
+  // Promotion audit-actor back-relations. All use onDelete:SetNull on
+  // the forward side so hard-deleting a Super doesn't destroy audit
+  // history — the row lingers with a null actor and the UI renders
+  // "unknown" instead of a dangling FK.
+  promotionsCreated Promotion[] @relation("PromotionCreator")
+  promotionsUpdated Promotion[] @relation("PromotionUpdater")
+  promotionsStarted Promotion[] @relation("PromotionStarter")
+  promotionsClosed  Promotion[] @relation("PromotionCloser")
+  promotionLandingPagesCreated PromotionLandingPage[] @relation("PromotionLandingCreator")
+  promotionLandingPagesUpdated PromotionLandingPage[] @relation("PromotionLandingUpdater")
 }
 
 model NotificationTemplate {
@@ -612,6 +640,9 @@ model Client {
   jobClients JobClient[]
   followups  FollowupClient[]
 
+  promotionDeliveries PromotionDelivery[]
+  promotionClicks     PromotionClick[]
+
   @@index([status])
   @@index([displayName])
 }
@@ -663,6 +694,27 @@ model ClientContact {
   // so we can apply retroactive credits when that feature ships.
   clientAccountCreatedFromPaymentPageAt DateTime?
 
+  // Promotional-message opt-out flags — per-channel because a contact
+  // can have both email and SMS on file and opt out of one without the
+  // other. Default false = opted-in. NEVER checked for transactional
+  // messages (invoices, receipts, appointment confirms) — only promo
+  // piggybacks and manual-send blasts consult these flags.
+  //
+  // Set by:
+  //   • the client, via a signed HMAC opt-out URL in the promo footer
+  //   • the client, via the "Opt in to promotion offers" affordance on
+  //     the /pay/[token] page
+  //   • a Super, via the Promotions tab (opt-in requires typed APPROVE
+  //     and a documented reason, per CAN-SPAM defensive posture)
+  //   • the Resend hard-bounce webhook (phase 2) → auto-opt-out for
+  //     email with source="hard_bounce"
+  //
+  // Every flip writes an AuditEvent { scope: PROMO_OPT, verb: PROMO_OPTED_OUT|IN,
+  //   metadata: { source, channel, reason? } } so the reason for each
+  //   change is preserved for CAN-SPAM compliance.
+  promoEmailOptedOut Boolean @default(false)
+  promoSmsOptedOut   Boolean @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -671,6 +723,8 @@ model ClientContact {
   // Backref from Property.pointOfContactId targets this model
 
   jobContacts JobContact[]
+  promotionDeliveries PromotionDelivery[]
+  promotionClicks     PromotionClick[]
 
   // Email, normalizedPhone, and clerkUserId are intentionally NOT
   // globally unique. A single person can appear as a contact across
@@ -1661,6 +1715,285 @@ model Setting {
   updatedAt   DateTime @updatedAt
   updatedById String?
   updatedBy   User?    @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Promotions — Super-only marketing campaigns that piggyback on outgoing
+// invoice communications and/or display passively on the /pay/[token]
+// invoice page. Design goals:
+//   • Piggyback (no separate scheduler needed for MVP-1)
+//   • Extensible: audienceSpec / triggerConfig / channels are JSON so
+//     future triggers (cron, on_receipt_sent) don't force migrations.
+//   • Auditable: every state transition + every delivery attempt is
+//     preserved. contentSnapshot on the delivery row captures the exact
+//     body sent, so paused-edited-resumed campaigns can be audited
+//     accurately per recipient.
+// See services/promotions.ts for the full policy: cooldown, multi-promo
+// tie-breakers per channel, opt-out gating, CAN-SPAM footer assembly.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum PromotionStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  CLOSED
+}
+
+// EXTERNAL  → Promotion.link is a fully-qualified URL the operator typed
+// LANDING_PAGE → Promotion.landingPageId points at an in-app landing page
+//                that we render at /promotion/<slug>. The resolver picks
+//                the right destination at runtime; the rest of the
+//                pipeline just sees a URL.
+enum PromotionLinkKind {
+  EXTERNAL
+  LANDING_PAGE
+}
+
+model Promotion {
+  id          String @id @default(cuid())
+  title       String
+  description String @db.Text
+
+  // Canonical destination for the promo's CTA. Single URL, per-channel
+  // CTA text is defined inside `content`.
+  //
+  // Two modes, selected by `linkKind`:
+  //   EXTERNAL     → `link` holds the operator-typed URL.
+  //   LANDING_PAGE → `landingPageId` points at an in-app landing page,
+  //                  rendered at /promotion/<slug>. `link` is left null.
+  // Runtime resolver in services/promotions.ts picks the right destination.
+  linkKind      PromotionLinkKind @default(EXTERNAL)
+  link          String?
+  landingPageId String?           @unique
+  landingPage   PromotionLandingPage? @relation(fields: [landingPageId], references: [id], onDelete: SetNull)
+
+  // Audience selector — MVP: { kind: "all" }. Future: segments, explicit
+  // clientId lists, etc.
+  audienceSpec Json @default("{\"kind\":\"all\"}")
+
+  // Dispatch (push) channels — subset of ["email", "sms"]. Opt-out gated.
+  // Requires triggerKind non-null when non-empty.
+  dispatchChannels Json @default("[]")
+
+  // Display surfaces — subset of ["invoice_page"]. NOT opt-out gated
+  // (passive display; client is already on the page they chose to open).
+  // Always active during startAt..endAt window.
+  displaySurfaces Json @default("[]")
+
+  // Trigger for dispatch channels. MVP values: "on_invoice_sent",
+  // "manual_send". Nullable when the promotion targets only display
+  // surfaces (no dispatch → no trigger needed).
+  triggerKind   String?
+  triggerConfig Json    @default("{}")
+
+  // Reserved for phase-2 discount/offer mechanics. UI shows the field
+  // disabled with "TBD" copy today. Included from the start so the
+  // eventual migration is just data, not schema.
+  offer Json?
+
+  // Cooldown window (days) — a single (promotionId, contactId) tuple
+  // will not be attached to more than one outbound message within this
+  // many days. Applies to dispatch channels only; invoice_page always
+  // renders during the promotion window.
+  cooldownDays Int @default(7)
+
+  startAt DateTime?
+  endAt   DateTime?
+
+  status PromotionStatus @default(DRAFT)
+
+  // Per-channel content payload (validated at the service layer via Zod).
+  // Expected shape:
+  //   { sms:          { body, ctaText },
+  //     email:        { subject, body, ctaText },
+  //     invoice_page: { headline?, body, ctaText } }
+  // body is Markdown for email + invoice_page; plain text for sms.
+  content Json @default("{}")
+
+  // Lock preventing overlapping manual_send bursts. Set when the burst
+  // starts, cleared when it finishes (or times out after 5 minutes).
+  lastDispatchStartedAt DateTime?
+
+  createdAt    DateTime @default(now())
+  createdById  String?
+  createdBy    User?    @relation("PromotionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedAt    DateTime @updatedAt
+  updatedById  String?
+  updatedBy    User?    @relation("PromotionUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  startedAt    DateTime?
+  startedById  String?
+  startedBy    User?    @relation("PromotionStarter", fields: [startedById], references: [id], onDelete: SetNull)
+  closedAt     DateTime?
+  closedById   String?
+  closedBy     User?    @relation("PromotionCloser", fields: [closedById], references: [id], onDelete: SetNull)
+
+  deliveries PromotionDelivery[]
+  clicks     PromotionClick[]
+
+  @@index([status])
+  @@index([triggerKind, status])
+}
+
+model PromotionDelivery {
+  id          String @id @default(cuid())
+  promotionId String
+  promotion   Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+
+  // Both FKs are nullable + SetNull so deleting a Client or ClientContact
+  // is never blocked by promotion history. The delivery row survives
+  // with a null FK (contentSnapshot + timestamps preserved), matching
+  // the audit-first pattern used for User actor refs across the schema.
+  // Trade-off: after deletion, "who was this sent to?" reads as
+  // "(deleted contact)" in the delivery log — acceptable since the
+  // promo body is already snapshotted on the row itself.
+  clientId  String?
+  client    Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  contactId String?
+  contact   ClientContact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  // "email" | "sms" | "invoice_page"
+  channel String
+
+  // Free-form reference tag for the triggering event. Populated with
+  // paymentRequestId for on_invoice_sent; null for manual_send.
+  triggeredBy String?
+
+  // Set to a random UUID per invocation of "Send Now" so the audit log
+  // can group everyone who got a given manual burst together. Null for
+  // piggyback deliveries (each has its own triggeredBy).
+  dispatchId String?
+
+  // Snapshot of the exact body/subject/ctaText that shipped. Preserves
+  // "what did this contact actually see?" even after later edits to the
+  // parent Promotion. Shape mirrors Promotion.content[channel].
+  contentSnapshot Json
+
+  // Deferred-scheduler hook. Piggyback writes null; a future scheduler
+  // will queue rows with scheduledFor set and stamp deliveredAt when
+  // the worker picks them up. No cron reads this today.
+  scheduledFor DateTime?
+
+  // One of these is populated per row:
+  //   • deliveredAt non-null, skippedReason null   → shipped
+  //   • deliveredAt null,     skippedReason non-null → skipped (see reason)
+  //   • both null                                    → scheduled/pending
+  deliveredAt   DateTime?
+  skippedReason String?
+
+  createdAt DateTime @default(now())
+
+  // Click-back link — set when a PromotionClick row (from the wrapper
+  // redirect endpoint) can be tied to a specific delivery via its HMAC
+  // token. Purely optional; forwarded/anonymous clicks leave this null.
+  clicks PromotionClick[]
+
+  // Reporting indexes intentionally deferred until PromotionDelivery
+  // grows past ~10k rows (see MVP-1 spec). Add:
+  //   @@index([promotionId, contactId, createdAt])  ← cooldown lookup
+  //   @@index([clientId, createdAt])                ← per-client history
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PromotionLandingPage — the in-app landing page shown when a Promotion's
+// linkKind is LANDING_PAGE. Public URL is /promotion/<slug>. Auto-slugged
+// from title on create; Super can override while DRAFT; locked once ACTIVE
+// so already-shipped SMS/email links don't go dead.
+// ─────────────────────────────────────────────────────────────────────────────
+model PromotionLandingPage {
+  id       String @id @default(cuid())
+  slug     String @unique
+
+  // Optional heading + intro paragraph rendered above the item grid.
+  // Both Markdown-safe on the page but expected to be short.
+  headline String?
+  intro    String? @db.Text
+
+  // Bumped once per page render — a lightweight impression counter
+  // separate from PromotionClick (which measures "someone tapped the
+  // CTA"). Diverges when links are forwarded or the page is reloaded.
+  viewCount Int @default(0)
+
+  createdAt   DateTime @default(now())
+  createdById String?
+  createdBy   User?    @relation("PromotionLandingCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedAt   DateTime @updatedAt
+  updatedById String?
+  updatedBy   User?    @relation("PromotionLandingUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  items    PromotionLandingPageItem[]
+  // Back-relation from Promotion.landingPageId. 1:1 — a landing page
+  // belongs to exactly one Promotion, and vice versa.
+  promotion Promotion?
+}
+
+model PromotionLandingPageItem {
+  id     String @id @default(cuid())
+  pageId String
+  page   PromotionLandingPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String @db.Text  // Markdown
+
+  // R2 storage key in the promotion-images bucket. Square-cropped at
+  // render time via CSS (any aspect ratio uploads accepted). Deleting
+  // the item deletes the R2 object best-effort.
+  imageR2Key    String?
+  imageMimeType String?
+
+  // Display order — lower first. Editor drag-reorders update this.
+  ordinal Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([pageId, ordinal])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PromotionClick — one row per tap on a promotion CTA URL. Written by
+// the wrapper redirect endpoint /promotion/click/<deliveryId>?t=<hmac>.
+// Every CTA embedded in an SMS / email / invoice-page button is a
+// wrapper URL, not the raw destination — the wrapper logs then 302s.
+//
+// Anonymous rows (forwarded SMS, shared URL, invalid/missing HMAC) leave
+// deliveryId / contactId / clientId null. `reason` explains why.
+// ─────────────────────────────────────────────────────────────────────────────
+model PromotionClick {
+  id          String @id @default(cuid())
+  promotionId String
+  promotion   Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+
+  // Delivery + contact context resolved from the HMAC token, when valid.
+  // All three cleared on delete of the parent (SetNull) — click history
+  // persists indefinitely even if the recipient is later removed.
+  deliveryId String?
+  delivery   PromotionDelivery? @relation(fields: [deliveryId], references: [id], onDelete: SetNull)
+  contactId  String?
+  contact    ClientContact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  clientId   String?
+  client     Client?            @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  // "external" | "landing_page" — where the redirect went. Kept even if
+  // the promotion later flips linkKind so historical clicks stay honest.
+  destination    String
+  destinationUrl String  // Snapshot of the URL the redirect resolved to
+
+  // Why the click resolved as anonymous, when contactId is null.
+  //   "forwarded_or_manual_share" — token missing or unverifiable
+  //   "delivery_not_found"        — token verifies but delivery row was deleted
+  //   null                        — recipient was resolved
+  anonymousReason String?
+
+  // Lightweight fingerprints. ipHash is sha256(ip) for privacy — we can
+  // dedupe multi-clicks from the same person without storing the raw IP.
+  userAgent String? @db.Text
+  ipHash    String?
+
+  createdAt DateTime @default(now())
+
+  @@index([promotionId, createdAt])
+  @@index([contactId, createdAt])
+  @@index([deliveryId])
 }
 
 model PinnedOccurrence {

@@ -269,34 +269,107 @@ function payrollTypeLabelClient(t: string | null | undefined, isOwner: boolean):
   }
 }
 
+type PayrollPreviewRow = {
+  userId: string;
+  displayName: string | null;
+  email: string | null;
+  workerType: string | null;
+  isOwner: boolean;
+  hours: number;
+  hourlyWage: number;
+  regularWages: number;
+  additionalEarnings: number;
+  totalGross: number;
+  equivalentHourlyRate: number | null;
+};
+
+/** Mirrors the server-side owner-reassignment reshape in payrollCsv(). Kept
+ *  in sync so the preview totals match the downloaded CSV byte-for-byte
+ *  when the operator has flagged rows via the "Assign to Owner" toggle.
+ *  Per-column sum — every numeric column on the owner row is the owner's
+ *  own value plus the same column across all flagged rows. Regular + Add =
+ *  Total Gross stays true because the identity holds for each source row
+ *  and sums linearly. Hourly Wage is intentionally NOT summed (it's an
+ *  on-file rate, not a period aggregate). Rounding uses the same round2
+ *  semantics as reconcileWorkers.ts. */
+function applyAssignToOwner(
+  rows: PayrollPreviewRow[],
+  assignSet: Set<string>,
+): PayrollPreviewRow[] {
+  if (assignSet.size === 0) return rows;
+  const owner = rows.find((r) => r.isOwner);
+  if (!owner) return rows;
+  const out = rows.map((r) => ({ ...r }));
+  const ownerOut = out.find((r) => r.userId === owner.userId)!;
+  let addHours = 0;
+  let addRegular = 0;
+  let addAdditional = 0;
+  let addTotal = 0;
+  for (const r of out) {
+    if (r.userId === ownerOut.userId) continue;
+    if (!assignSet.has(r.userId)) continue;
+    addHours += r.hours;
+    addRegular += r.regularWages;
+    addAdditional += r.additionalEarnings;
+    addTotal += r.totalGross;
+    r.hours = 0;
+    r.regularWages = 0;
+    r.additionalEarnings = 0;
+    r.totalGross = 0;
+    r.equivalentHourlyRate = null;
+  }
+  ownerOut.hours = Math.round((ownerOut.hours + addHours) * 100) / 100;
+  ownerOut.regularWages = Math.round((ownerOut.regularWages + addRegular) * 100) / 100;
+  ownerOut.additionalEarnings =
+    Math.round((ownerOut.additionalEarnings + addAdditional) * 100) / 100;
+  ownerOut.totalGross = Math.round((ownerOut.totalGross + addTotal) * 100) / 100;
+  ownerOut.equivalentHourlyRate =
+    ownerOut.hours > 0
+      ? Math.round((ownerOut.totalGross / ownerOut.hours) * 100) / 100
+      : null;
+  return out;
+}
+
 /** Payroll preview — same column order + formatting as the CSV, plus
  *  a leading checkbox column that controls the export subset. Totals
  *  row at the bottom reflects only the checked rows so the operator
- *  sees the running total for what they're about to download. */
+ *  sees the running total for what they're about to download.
+ *
+ *  Trailing "Assign to Owner" column is a UI-only reshape: checking a
+ *  row transfers that worker's hours + totals to the ownerʼs row and
+ *  zeros the worker's own row. Backend data is untouched — the
+ *  download endpoint receives the flagged ids and mirrors the same
+ *  transform in the CSV. */
 function PayrollPreviewTable(props: {
-  rows: {
-    userId: string;
-    displayName: string | null;
-    email: string | null;
-    workerType: string | null;
-    isOwner: boolean;
-    hours: number;
-    hourlyWage: number;
-    regularWages: number;
-    additionalEarnings: number;
-    totalGross: number;
-    equivalentHourlyRate: number | null;
-  }[];
+  rows: PayrollPreviewRow[];
   selectedIds: string[];
   onToggle: (userId: string) => void;
   onToggleAll: (checked: boolean) => void;
+  assignToOwnerIds: string[];
+  onToggleAssign: (userId: string) => void;
 }) {
-  const { rows, selectedIds, onToggle, onToggleAll } = props;
+  const {
+    rows,
+    selectedIds,
+    onToggle,
+    onToggleAll,
+    assignToOwnerIds,
+    onToggleAssign,
+  } = props;
   const selectedSet = new Set(selectedIds);
+  const assignSet = new Set(assignToOwnerIds);
+  const owner = rows.find((r) => r.isOwner) ?? null;
+  const reshapedRows = applyAssignToOwner(rows, assignSet);
   const allChecked = rows.length > 0 && selectedIds.length === rows.length;
   const noneChecked = selectedIds.length === 0;
-  const totalHours = rows.reduce((s, r) => s + (selectedSet.has(r.userId) ? r.hours : 0), 0);
-  const totalGross = rows.reduce((s, r) => s + (selectedSet.has(r.userId) ? r.totalGross : 0), 0);
+  const totalHours = reshapedRows.reduce(
+    (s, r) => s + (selectedSet.has(r.userId) ? r.hours : 0),
+    0,
+  );
+  const totalGross = reshapedRows.reduce(
+    (s, r) => s + (selectedSet.has(r.userId) ? r.totalGross : 0),
+    0,
+  );
   return (
     <Box
       borderWidth="1px"
@@ -353,11 +426,21 @@ function PayrollPreviewTable(props: {
                 <Table.ColumnHeader fontSize="2xs" whiteSpace="nowrap" textAlign="right">Additional Earnings</Table.ColumnHeader>
                 <Table.ColumnHeader fontSize="2xs" whiteSpace="nowrap" textAlign="right">Total Gross</Table.ColumnHeader>
                 <Table.ColumnHeader fontSize="2xs" whiteSpace="nowrap" textAlign="right">$/hr</Table.ColumnHeader>
+                <Table.ColumnHeader
+                  fontSize="2xs"
+                  whiteSpace="nowrap"
+                  textAlign="center"
+                  title="Move this worker's hours + pay to the Owner row for the export. UI-only — data isn't changed."
+                >
+                  → Owner
+                </Table.ColumnHeader>
               </Table.Row>
             </Table.Header>
             <Table.Body>
-              {rows.map((r) => {
+              {reshapedRows.map((r) => {
                 const checked = selectedSet.has(r.userId);
+                const assigned = assignSet.has(r.userId);
+                const canAssign = !!owner && !r.isOwner;
                 return (
                   <Table.Row key={r.userId} opacity={checked ? 1 : 0.4}>
                     <Table.Cell px={2}>
@@ -385,6 +468,20 @@ function PayrollPreviewTable(props: {
                     <Table.Cell fontSize="xs" whiteSpace="nowrap" textAlign="right">
                       {r.equivalentHourlyRate == null ? "" : r.equivalentHourlyRate.toFixed(2)}
                     </Table.Cell>
+                    <Table.Cell textAlign="center" px={2}>
+                      {canAssign ? (
+                        <Checkbox.Root
+                          checked={assigned}
+                          onCheckedChange={() => onToggleAssign(r.userId)}
+                          size="sm"
+                        >
+                          <Checkbox.HiddenInput />
+                          <Checkbox.Control />
+                        </Checkbox.Root>
+                      ) : (
+                        <Text fontSize="2xs" color="fg.muted">—</Text>
+                      )}
+                    </Table.Cell>
                   </Table.Row>
                 );
               })}
@@ -398,6 +495,7 @@ function PayrollPreviewTable(props: {
                 <Table.Cell fontSize="xs"></Table.Cell>
                 <Table.Cell fontSize="xs"></Table.Cell>
                 <Table.Cell fontSize="xs" whiteSpace="nowrap" textAlign="right">{totalGross.toFixed(2)}</Table.Cell>
+                <Table.Cell fontSize="xs"></Table.Cell>
                 <Table.Cell fontSize="xs"></Table.Cell>
               </Table.Row>
             </Table.Body>
@@ -635,14 +733,23 @@ export default function ReconcileTab() {
   // type changes away or the date range shifts (workers available
   // may differ for a new period).
   const [payrollUserIds, setPayrollUserIds] = useState<string[] | null>(null);
+  // UI-only export-shape: userIds flagged here have their hours and pay
+  // transferred to the owner row for the downloaded CSV. Backend data is
+  // never changed — the server mirrors the same reshape via the
+  // `assignToOwner=` query param on the payroll endpoint.
+  const [payrollAssignToOwnerIds, setPayrollAssignToOwnerIds] = useState<string[]>([]);
   useEffect(() => {
     setPayrollUserIds(null);
+    setPayrollAssignToOwnerIds([]);
   }, [downloadKind, start, end]);
   useEffect(() => {
     if (downloadKind !== "payroll") return;
     if (!period) return;
     if (payrollUserIds !== null) return;
-    setPayrollUserIds(period.workers.map((w) => w.userId));
+    // Seed from period.payroll (which now includes zero-row entries for
+    // every approved worker + owner). Every row starts checked; operator
+    // can uncheck anyone they don't need in the export.
+    setPayrollUserIds(period.payroll.map((p) => p.userId));
   }, [downloadKind, period, payrollUserIds]);
   // Active preset key + dropdown visibility for the green-chip preset
   // picker (matching PaymentsTab + Ledger). `null` means the operator
@@ -843,10 +950,17 @@ export default function ReconcileTab() {
       // "unchecked everyone" produces an empty CSV instead of
       // silently reverting to the all-workers default. `null` means
       // the picker hasn't loaded yet → omit the param entirely.
-      const qs =
-        kind === "payroll" && payrollUserIds !== null
-          ? `&userIds=${encodeURIComponent(payrollUserIds.join(","))}`
-          : "";
+      // `assignToOwner` is a UI-only export-shape flag list — server
+      // mirrors the preview reshape when it's non-empty. Omitting it
+      // when empty keeps CSVs from earlier "Download All" calls
+      // untouched by this feature.
+      let qs = "";
+      if (kind === "payroll" && payrollUserIds !== null) {
+        qs += `&userIds=${encodeURIComponent(payrollUserIds.join(","))}`;
+      }
+      if (kind === "payroll" && payrollAssignToOwnerIds.length > 0) {
+        qs += `&assignToOwner=${encodeURIComponent(payrollAssignToOwnerIds.join(","))}`;
+      }
       await apiDownload(
         `/api/admin/exports/${kind}.csv?start=${start}&end=${end}${qs}`,
         `${kind}-${start}_${end}.csv`,
@@ -882,8 +996,18 @@ export default function ReconcileTab() {
     for (let i = 0; i < kinds.length; i++) {
       const kind = kinds[i];
       try {
+        // Same payroll-only shaping the single-CSV path applies:
+        // narrow to selected workers and mirror the owner-reassign
+        // transform. Every other CSV kind gets no extra qs.
+        let batchQs = "";
+        if (kind === "payroll" && payrollUserIds !== null) {
+          batchQs += `&userIds=${encodeURIComponent(payrollUserIds.join(","))}`;
+        }
+        if (kind === "payroll" && payrollAssignToOwnerIds.length > 0) {
+          batchQs += `&assignToOwner=${encodeURIComponent(payrollAssignToOwnerIds.join(","))}`;
+        }
         await apiDownload(
-          `/api/admin/exports/${kind}.csv?start=${start}&end=${end}`,
+          `/api/admin/exports/${kind}.csv?start=${start}&end=${end}${batchQs}`,
           `${kind}-${start}_${end}.csv`,
         );
       } catch (err) {
@@ -1672,6 +1796,14 @@ export default function ReconcileTab() {
                 }}
                 onToggleAll={(checked) => {
                   setPayrollUserIds(checked ? period.payroll.map((r) => r.userId) : []);
+                }}
+                assignToOwnerIds={payrollAssignToOwnerIds}
+                onToggleAssign={(userId) => {
+                  setPayrollAssignToOwnerIds((prev) =>
+                    prev.includes(userId)
+                      ? prev.filter((id) => id !== userId)
+                      : [...prev, userId],
+                  );
                 }}
               />
             ) : downloadKind && downloadKind !== "payroll" ? (

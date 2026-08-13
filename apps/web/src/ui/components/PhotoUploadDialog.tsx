@@ -54,6 +54,17 @@ export default function PhotoUploadDialog({ files, onUpload, onClose, isOffline 
   const [redactingId, setRedactingId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const canceledRef = useRef(0);
+  // Hidden inputs for the in-dialog "Take another" / "Add more from
+  // library" actions. Two separate inputs so we can route directly to
+  // the OS camera (capture="environment") or to the picker (no
+  // capture). iOS Safari respects capture="environment" as a hint to
+  // open the camera app rather than the photo library selector.
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const libraryInputRef = useRef<HTMLInputElement | null>(null);
+  // Auto-upload trigger — set when we've just appended new files via
+  // the continue-capture buttons. useEffect below fires startUpload
+  // after items settle so we don't race the setItems.
+  const [pendingAutoUpload, setPendingAutoUpload] = useState(false);
 
   // Seed items when a new batch is handed in. Cleans up object URLs on
   // close / replace so we don't leak memory.
@@ -118,6 +129,31 @@ export default function PhotoUploadDialog({ files, onUpload, onClose, isOffline 
     }
     setBusy(false);
   }, [busy, items, onUpload]);
+
+  // Continue-capture helpers — append fresh files onto the current
+  // items list (as new pending rows) and flag auto-upload. Effect
+  // below fires startUpload once the append settles.
+  const appendFiles = useCallback((newFiles: FileList | null) => {
+    if (!newFiles || newFiles.length === 0) return;
+    const seeded: UploadItem[] = Array.from(newFiles).map((file) => ({
+      id: newId(),
+      file,
+      thumbUrl: URL.createObjectURL(file),
+      status: "pending",
+      redacted: false,
+    }));
+    setItems((prev) => [...prev, ...seeded]);
+    setPendingAutoUpload(true);
+  }, []);
+
+  useEffect(() => {
+    if (!pendingAutoUpload) return;
+    if (busy) return;
+    // Fire off the upload of any pending items. Guard against re-firing
+    // by clearing the flag first.
+    setPendingAutoUpload(false);
+    void startUpload();
+  }, [pendingAutoUpload, busy, startUpload]);
 
   const handleRemove = useCallback((id: string) => {
     setItems((prev) => {
@@ -254,6 +290,33 @@ export default function PhotoUploadDialog({ files, onUpload, onClose, isOffline 
                           : `Upload all (${counts.pending})`}
                     </Button>
                   )}
+                  {/* Continue-capture actions — visible once the current
+                      batch is uploaded. Lets the worker take another
+                      photo (routes to the OS camera directly) or add
+                      more from the library without dismissing the
+                      dialog and re-opening it from the job card. Native
+                      "Take Photo" only captures one at a time; this is
+                      the multi-shot loop that works around that. */}
+                  {allDone && !busy && (
+                    <HStack w="full" gap={2}>
+                      <Button
+                        flex="1"
+                        colorPalette="blue"
+                        variant="outline"
+                        onClick={() => cameraInputRef.current?.click()}
+                      >
+                        📷 Take another
+                      </Button>
+                      <Button
+                        flex="1"
+                        colorPalette="blue"
+                        variant="outline"
+                        onClick={() => libraryInputRef.current?.click()}
+                      >
+                        + From library
+                      </Button>
+                    </HStack>
+                  )}
                   <Button
                     w="full"
                     variant={allDone ? "solid" : "ghost"}
@@ -275,6 +338,38 @@ export default function PhotoUploadDialog({ files, onUpload, onClose, isOffline 
         file={redactingFile}
         onCommit={handleRedactCommit}
         onCancel={() => setRedactingId(null)}
+      />
+
+      {/* Hidden inputs backing the "Take another" / "From library"
+          buttons. Two inputs, not one, because capture="environment"
+          routes iOS Safari directly to the camera app, whereas no
+          capture attribute keeps the standard picker menu behavior
+          (Take Photo / Photo Library / Choose File). Both live at the
+          root so a dialog-parent re-render can't tear them down mid-
+          click. Both accept single files at a time — capture-mode is
+          always single anyway (native limit); library-mode allows
+          multi-select. */}
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          appendFiles(e.target.files);
+          e.target.value = "";
+        }}
+      />
+      <input
+        ref={libraryInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        style={{ display: "none" }}
+        onChange={(e) => {
+          appendFiles(e.target.files);
+          e.target.value = "";
+        }}
       />
     </>
   );

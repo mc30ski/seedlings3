@@ -333,13 +333,18 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
     const prop = occ.job?.property;
     const dateStr = occ.startAt ? fmtDate(occ.startAt) : "the scheduled date";
 
-    // Get client's first name from displayName (take first word)
-    const clientDisplay = prop?.client?.displayName ?? "";
-    const firstName = clientDisplay.split(" ")[0];
+    // Greet the primary CONTACT by first name — never derive from
+    // client.displayName. Client displayNames are often household-y
+    // ("Martinez Family", "Strickland Estate") whose first word is the
+    // surname, so splitting to "get the first name" produces a formal
+    // "Hi Martinez!" that reads like a debt collector. contactMap already
+    // holds the primary contact's real ClientContact.firstName; use it.
+    const clientId = prop?.client?.id;
+    const contact = clientId ? contactMap.get(clientId) : null;
+    const firstName = contact?.firstName?.trim();
     const greeting = firstName ? `Hi ${firstName}!` : "Hi!";
 
     // Check if this client has multiple properties in the current occurrence list
-    const clientId = prop?.client?.id;
     const clientPropertyCount = clientId
       ? occurrences.filter((o) => o.job?.property?.client?.id === clientId).length
       : 0;

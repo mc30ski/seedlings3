@@ -318,7 +318,7 @@ export default function BreadcrumbNav({
 
   return (
     <Box>
-      <HStack gap={1} pt={1} pb={2} pl={0} pr={1} align="center" flexWrap="nowrap" overflowX="auto" css={{ "&::-webkit-scrollbar": { display: "none" }, scrollbarWidth: "none" }}>
+      <HStack gap={1} pt={1} pb={2} pl={2} pr={1} align="center" flexWrap="nowrap" overflowX="auto" css={{ "&::-webkit-scrollbar": { display: "none" }, scrollbarWidth: "none" }}>
         {headerLeft}
         {/* Level 1: Outer (Client/Worker/Admin/Super) — hidden when the
             parent provides an out-of-breadcrumb role selector (see

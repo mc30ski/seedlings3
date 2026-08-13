@@ -65,6 +65,17 @@ type SocialLink = {
   iconDataUrl: string;
 };
 
+// One active promotion targeting the invoice_page display surface. Shown
+// in a dedicated section below the pay button. Server-side render decides
+// whether to include this — the client just paints what it's given.
+type InvoicePagePromo = {
+  id: string;
+  headline?: string;
+  body: string;
+  ctaText: string;
+  ctaUrl: string | null;
+};
+
 type ResolveResponse = {
   occurrenceId: string;
   amountDue: number;
@@ -86,6 +97,16 @@ type ResolveResponse = {
   paymentMethods?: ResolvedPaymentMethod[];
   socialLinks?: SocialLink[];
   expiresAt: string | null;
+  // Promotion display for the invoice page. Empty array when the primary
+  // contact is opted out of all dispatch channels OR no promo is running.
+  promos?: InvoicePagePromo[];
+  // Self-serve opt-in tokens. Populated per-channel only when the
+  // primary contact is currently opted out AND has an address on file.
+  // Client uses these to POST /public/promo/opt-in.
+  // Which channels the "Opt in to promotion offers" affordance should
+  // surface. True only when the primary contact is currently opted out
+  // AND has an address on file for that channel.
+  promoOptInAvailable?: { email: boolean; sms: boolean };
 };
 
 // MethodKey is now any string — the taxonomy decides the universe. We keep
@@ -571,6 +592,20 @@ function PaymentPageInner() {
             </VStack>
           </Box>
         )}
+        {/* Promotions section — below the pay button on purpose so it
+            doesn't push the payment action off-screen on mobile. Only
+            renders when the primary contact isn't opted out AND a promo
+            is active. When they ARE opted out, the OptInAffordance below
+            shows the "Turn back on" affordance instead. */}
+        {data.promos && data.promos.length > 0 && (
+          <PromoDisplaySection promos={data.promos} />
+        )}
+        {data.promoOptInAvailable && (data.promoOptInAvailable.email || data.promoOptInAvailable.sms) && (
+          <PromoOptInAffordance
+            available={data.promoOptInAvailable}
+            payToken={typeof window !== "undefined" ? new URL(window.location.href).pathname.split("/").pop() ?? "" : ""}
+          />
+        )}
         {/* App link — invites the client to sign in and see their history,
             upcoming visits, photos, and receipts (or just browse the
             public community feed without an account). Same nudge shown on
@@ -619,6 +654,131 @@ function PaymentPageInner() {
  *  for", "What was done", "Follow us", "How do you intend to pay?").
  *  Defining it once keeps the four headers visually identical without
  *  repeating fontSize/fontWeight/color/mb everywhere. */
+/** Promotion display section — one or more active promos targeting the
+ *  invoice_page surface. Rendered under the payment methods, styled as
+ *  soft-blue cards so they clearly read as "additional offer" content
+ *  distinct from the payment flow above. Multiple promos stack. */
+function PromoDisplaySection({ promos }: { promos: InvoicePagePromo[] }) {
+  return (
+    <VStack align="stretch" gap={3}>
+      <SectionHeader>Special offers</SectionHeader>
+      {promos.map((p) => (
+        <Box
+          key={p.id}
+          p={4}
+          bg="blue.50"
+          borderWidth="1px"
+          borderColor="blue.200"
+          borderLeftWidth="4px"
+          borderLeftColor="blue.500"
+          rounded="lg"
+        >
+          {p.headline && (
+            <Text fontSize="md" fontWeight="bold" color="blue.900" mb={2}>
+              {p.headline}
+            </Text>
+          )}
+          <Text fontSize="sm" color="fg.default" whiteSpace="pre-wrap">
+            {p.body}
+          </Text>
+          {p.ctaUrl && (
+            <Button
+              as="a"
+              // Chakra v3 as="a" accepts HTMLAnchor props; cast keeps TS happy.
+              {...({ href: p.ctaUrl, target: "_blank", rel: "noopener noreferrer" } as any)}
+              size="sm"
+              colorPalette="blue"
+              mt={3}
+            >
+              {p.ctaText || "Learn more →"}
+            </Button>
+          )}
+        </Box>
+      ))}
+    </VStack>
+  );
+}
+
+/** Small opt-in affordance shown when the primary contact has opted out
+ *  of one or both promotional channels. Per-channel — separate buttons
+ *  for email and SMS. Uses the pay-token to identify the contact
+ *  (server-side lookup) so no per-recipient signed tokens are needed.
+ *  Success flips a local flag so the affordance hides after successful
+ *  re-opt-in without needing a page reload. */
+function PromoOptInAffordance({
+  available,
+  payToken,
+}: {
+  available: { email: boolean; sms: boolean };
+  payToken: string;
+}) {
+  const [emailDone, setEmailDone] = useState(false);
+  const [smsDone, setSmsDone] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  async function optIn(channel: "email" | "sms") {
+    setBusy(channel);
+    setErr(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/public/pay/${payToken}/promo-opt-in`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ channel }),
+      });
+      if (!res.ok) throw new Error(`opt-in failed (${res.status})`);
+      if (channel === "email") setEmailDone(true);
+      else setSmsDone(true);
+    } catch (e: any) {
+      setErr(String(e?.message ?? e));
+    } finally {
+      setBusy(null);
+    }
+  }
+  const showEmail = available.email && !emailDone;
+  const showSms = available.sms && !smsDone;
+  if (!showEmail && !showSms && !emailDone && !smsDone) return null;
+  return (
+    <Box
+      p={3}
+      bg="gray.50"
+      borderWidth="1px"
+      borderColor="gray.200"
+      rounded="md"
+    >
+      <Text fontSize="sm" color="fg.muted" mb={2}>
+        Opt in to promotion offers
+      </Text>
+      <HStack gap={2} wrap="wrap">
+        {showEmail && (
+          <Button
+            size="xs"
+            variant="outline"
+            colorPalette="blue"
+            loading={busy === "email"}
+            onClick={() => void optIn("email")}
+          >
+            Turn on email offers
+          </Button>
+        )}
+        {showSms && (
+          <Button
+            size="xs"
+            variant="outline"
+            colorPalette="blue"
+            loading={busy === "sms"}
+            onClick={() => void optIn("sms")}
+          >
+            Turn on text offers
+          </Button>
+        )}
+        {emailDone && <Text fontSize="xs" color="green.700">Email offers turned on ✓</Text>}
+        {smsDone && <Text fontSize="xs" color="green.700">Text offers turned on ✓</Text>}
+      </HStack>
+      {err && <Text fontSize="xs" color="red.600" mt={2}>{err}</Text>}
+    </Box>
+  );
+}
+
 function SectionHeader({ children }: { children: React.ReactNode }) {
   return (
     <Text

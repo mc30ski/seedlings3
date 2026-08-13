@@ -33,6 +33,8 @@ import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { projectViewerPayout, projectTeamPayoutsForOcc, perWorkerShare, rateForViewer } from "@/src/lib/paymentMath";
 import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
 import { getLocation } from "@/src/lib/geo";
+import { useOnSiteHint } from "@/src/lib/onSiteHint";
+import OnSiteHintBanner from "@/src/ui/components/OnSiteHintBanner";
 import { determineRoles, occurrenceStatusColor, prettyStatus, clientLabel, fmtDate, fmtDateTime, fmtDateWeekday, fmtDateOpts, fmtTimeOpts, bizDateKey, bizToday, bizYesterday, bizAddDays, bizAddYears, bizYearOf, bizDaysBetween, bizHourMinute, bizInstantFromEtParts, bizToLocalInputValue, bizParseLocalInputValue, jobTypeLabel , type EtDateKey } from "@/src/lib/lib";
 import { isOccurrenceOverdue, loadPaymentRequestExpiryHours, DEFAULT_PAYMENT_REQUEST_EXPIRY_HOURS } from "@/src/lib/overdueRule";
 import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
@@ -677,6 +679,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   // Reschedule state
   const [startJobOcc, setStartJobOcc] = useState<WorkerOccurrence | null>(null);
   const [startJobTime, setStartJobTime] = useState("");
+  // Live proximity hint for the "start with location?" dialog. Drives the
+  // default button + info banner while the dialog is open.
+  const startJobHint = useOnSiteHint(!!startJobOcc, startJobOcc?.id ?? null);
   const [rescheduleOcc, setRescheduleOcc] = useState<WorkerOccurrence | null>(null);
   const [rescheduleNotify, setRescheduleNotify] = useState<{ message: string; phone?: string | null; email?: string | null } | null>(null);
   const [receiptData, setReceiptData] = useState<ReceiptData | null>(null);
@@ -8306,87 +8311,102 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       </Text>
                     </Box>
                   )}
+                  <OnSiteHintBanner hint={startJobHint} />
                   <Text fontSize="sm" color="fg.muted">Are you currently on-site at the job location?</Text>
                 </VStack>
               </Dialog.Body>
               <Dialog.Footer>
                 <VStack w="full" gap={2}>
-                  <Button
-                    colorPalette="blue"
-                    w="full"
-                    disabled={!startJobTime}
-                    onClick={async () => {
-                      if (!startJobOcc) return;
-                      setBusyOccId(startJobOcc.id);
-                      setStartJobOcc(null);
-                      try {
-                        // ET-anchored parse — see bizParseLocalInputValue.
-                        const startedAt = bizParseLocalInputValue(startJobTime);
-                        const occDate = startJobOcc.startAt ? bizDateKey(startJobOcc.startAt) : "";
-                        const todayDate = bizDateKey(new Date());
-                        // Strictly future-dated only. Past-dated (catch-up
-                        // starts where the work was actually done before
-                        // today) must NOT rewrite startAt — that would
-                        // erase the scheduled date and break per-day
-                        // filtering, earnings bucketing, and next-occurrence
-                        // cadence anchoring.
-                        const isEarly = occDate && occDate > todayDate;
-                        const body: Record<string, unknown> = { startedAt };
-                        if (isEarly) body.updateStartAt = true;
-                        try {
-                          const loc = await getLocation();
-                          if (loc) { body.lat = loc.lat; body.lng = loc.lng; }
-                        } catch {}
-                        await apiPost(`/api/occurrences/${startJobOcc.id}/start`, body);
-                        publishInlineMessage({ type: "SUCCESS", text: "Job started with location recorded." });
-                        bumpTitleBarEarnings();
-                        await load(false);
-                      } catch (err) {
-                        if (!handleTeamWorkdayError(err)) {
-                          publishInlineMessage({ type: "ERROR", text: getErrorMessage("Start failed.", err) });
-                        }
-                      }
-                      setBusyOccId(null);
-                    }}
-                  >
-                    Yes — record location & start
-                  </Button>
-                  <Button
-                    variant="outline"
-                    w="full"
-                    disabled={!startJobTime}
-                    onClick={async () => {
-                      if (!startJobOcc) return;
-                      setBusyOccId(startJobOcc.id);
-                      setStartJobOcc(null);
-                      try {
-                        // ET-anchored parse — see bizParseLocalInputValue.
-                        const startedAt = bizParseLocalInputValue(startJobTime);
-                        const occDate = startJobOcc.startAt ? bizDateKey(startJobOcc.startAt) : "";
-                        const todayDate = bizDateKey(new Date());
-                        // Strictly future-dated only. Past-dated (catch-up
-                        // starts where the work was actually done before
-                        // today) must NOT rewrite startAt — that would
-                        // erase the scheduled date and break per-day
-                        // filtering, earnings bucketing, and next-occurrence
-                        // cadence anchoring.
-                        const isEarly = occDate && occDate > todayDate;
-                        const body: Record<string, unknown> = { startedAt };
-                        if (isEarly) body.updateStartAt = true;
-                        await apiPost(`/api/occurrences/${startJobOcc.id}/start`, body);
-                        publishInlineMessage({ type: "SUCCESS", text: "Job started." });
-                        bumpTitleBarEarnings();
-                        await load(false);
-                      } catch (err) {
-                        if (!handleTeamWorkdayError(err)) {
-                          publishInlineMessage({ type: "ERROR", text: getErrorMessage("Start failed.", err) });
-                        }
-                      }
-                      setBusyOccId(null);
-                    }}
-                  >
-                    No — start without location
-                  </Button>
+                  {(() => {
+                    const withLocButton = (
+                      <Button
+                        key="with-loc"
+                        colorPalette="blue"
+                        variant={startJobHint.defaultToWithLocation ? "solid" : "outline"}
+                        w="full"
+                        disabled={!startJobTime || startJobHint.withLocationDisabled}
+                        onClick={async () => {
+                          if (!startJobOcc) return;
+                          const occId = startJobOcc.id;
+                          const preferGpsFromHint =
+                            startJobHint.userLat != null && startJobHint.userLng != null
+                              ? { lat: startJobHint.userLat, lng: startJobHint.userLng }
+                              : null;
+                          setBusyOccId(occId);
+                          setStartJobOcc(null);
+                          try {
+                            // ET-anchored parse — see bizParseLocalInputValue.
+                            const startedAt = bizParseLocalInputValue(startJobTime);
+                            const occDate = startJobOcc.startAt ? bizDateKey(startJobOcc.startAt) : "";
+                            const todayDate = bizDateKey(new Date());
+                            // Strictly future-dated only. Past-dated (catch-up
+                            // starts where the work was actually done before
+                            // today) must NOT rewrite startAt — that would
+                            // erase the scheduled date and break per-day
+                            // filtering, earnings bucketing, and next-occurrence
+                            // cadence anchoring.
+                            const isEarly = occDate && occDate > todayDate;
+                            const body: Record<string, unknown> = { startedAt };
+                            if (isEarly) body.updateStartAt = true;
+                            // Reuse the hint's already-resolved fix when
+                            // available so we don't re-prompt for GPS. Fall
+                            // back to a fresh getLocation() if the hint didn't
+                            // capture one (rare — only when the dialog was
+                            // dismissed and reopened before the hint resolved).
+                            const loc = preferGpsFromHint ?? (await getLocation().catch(() => null));
+                            if (loc) { body.lat = loc.lat; body.lng = loc.lng; }
+                            await apiPost(`/api/occurrences/${occId}/start`, body);
+                            publishInlineMessage({ type: "SUCCESS", text: "Job started with location recorded." });
+                            bumpTitleBarEarnings();
+                            await load(false);
+                          } catch (err) {
+                            if (!handleTeamWorkdayError(err)) {
+                              publishInlineMessage({ type: "ERROR", text: getErrorMessage("Start failed.", err) });
+                            }
+                          }
+                          setBusyOccId(null);
+                        }}
+                      >
+                        Yes — record location & start
+                      </Button>
+                    );
+                    const withoutLocButton = (
+                      <Button
+                        key="without-loc"
+                        colorPalette={startJobHint.defaultToWithLocation ? undefined : "blue"}
+                        variant={startJobHint.defaultToWithLocation ? "outline" : "solid"}
+                        w="full"
+                        disabled={!startJobTime}
+                        onClick={async () => {
+                          if (!startJobOcc) return;
+                          setBusyOccId(startJobOcc.id);
+                          setStartJobOcc(null);
+                          try {
+                            const startedAt = bizParseLocalInputValue(startJobTime);
+                            const occDate = startJobOcc.startAt ? bizDateKey(startJobOcc.startAt) : "";
+                            const todayDate = bizDateKey(new Date());
+                            const isEarly = occDate && occDate > todayDate;
+                            const body: Record<string, unknown> = { startedAt };
+                            if (isEarly) body.updateStartAt = true;
+                            await apiPost(`/api/occurrences/${startJobOcc.id}/start`, body);
+                            publishInlineMessage({ type: "SUCCESS", text: "Job started." });
+                            bumpTitleBarEarnings();
+                            await load(false);
+                          } catch (err) {
+                            if (!handleTeamWorkdayError(err)) {
+                              publishInlineMessage({ type: "ERROR", text: getErrorMessage("Start failed.", err) });
+                            }
+                          }
+                          setBusyOccId(null);
+                        }}
+                      >
+                        No — start without location
+                      </Button>
+                    );
+                    return startJobHint.defaultToWithLocation
+                      ? [withLocButton, withoutLocButton]
+                      : [withoutLocButton, withLocButton];
+                  })()}
                   <Button variant="ghost" w="full" onClick={() => setStartJobOcc(null)}>Cancel</Button>
                 </VStack>
               </Dialog.Footer>

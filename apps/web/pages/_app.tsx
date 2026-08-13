@@ -18,7 +18,7 @@ import { setAuthTokenFetcher } from "../src/lib/api";
 import PWAPullToRefresh from "../src/ui/helpers/PWAPullToRefresh";
 import { OfflineProvider, useOffline, registerServiceWorker } from "../src/lib/offline";
 import { clearAllPersistedState } from "../src/lib/usePersistedState";
-import { publishInlineMessage } from "../src/ui/components/InlineMessage";
+import InlineMessage, { publishInlineMessage } from "../src/ui/components/InlineMessage";
 import { initOfflineExecutor } from "../src/lib/offlineExecutor";
 import { getSeasonIcons } from "../src/lib/season";
 import { refreshPushSubscription } from "../src/lib/usePushNotifications";
@@ -139,6 +139,15 @@ function AppInner({ Component, pageProps }: AppProps) {
 
   return (
     <ChakraProvider value={system}>
+      {/* Global toast host — ONE mount at the app root, always attached
+          to the same DOM location, always Portal'd to document.body.
+          Previously mounted per-tab via wrapWithInlineMessage, which
+          created a narrow window during tab switches / dialog animations
+          where the Portal's target wasn't yet body — and the fixed
+          positioning would cascade to the nearest transformed ancestor,
+          making the toast visually "float" with page scroll. Rendering
+          once here at root eliminates that entire class of race. */}
+      <InlineMessage />
       {/* Apply minimal, mode-aware padding so the brand/header never sits under the status bar */}
       <Box pt={TOP_PAD}>
         {/* Global Super "Reveal pre-cutoff history" indicator. Sticks to the

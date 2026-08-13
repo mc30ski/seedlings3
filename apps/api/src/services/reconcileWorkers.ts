@@ -1,5 +1,6 @@
 import { prisma } from "../db/prisma";
 import { etFormatDate } from "../lib/dates";
+import { Role as RoleVal } from "@prisma/client";
 import {
   computeBreakdown,
   loadRates,
@@ -939,6 +940,56 @@ export async function buildReconcileWorkers(
     return b.netPaid - a.netPaid;
   });
 
+  // Pad the payroll list with zero-rows for every approved worker (and
+  // the owner, if configured) who didn't show up in `acc` — i.e. had no
+  // hours and no payment splits in the window. The operator wants every
+  // person on the roster in the export preview so they can uncheck the
+  // ones they don't need instead of missing someone who happened not to
+  // work this period. The `workers` list (Worker Payroll Summary card) is
+  // intentionally left untouched — it still shows only active participants.
+  const alreadyIncluded = new Set(payroll.map((p) => p.userId));
+  const rosterUsers = await prisma.user.findMany({
+    where: {
+      isApproved: true,
+      OR: [{ roles: { some: { role: RoleVal.WORKER } } }, { isOwner: true }],
+    },
+    select: {
+      id: true,
+      displayName: true,
+      email: true,
+      workerType: true,
+      hourlyWage: true,
+      isOwner: true,
+    },
+  });
+  for (const u of rosterUsers) {
+    if (alreadyIncluded.has(u.id)) continue;
+    const rawWage = u.hourlyWage as unknown;
+    const wageNum =
+      rawWage == null
+        ? 0
+        : typeof rawWage === "number"
+          ? rawWage
+          : typeof rawWage === "string"
+            ? Number(rawWage)
+            : typeof (rawWage as any).toNumber === "function"
+              ? (rawWage as any).toNumber()
+              : Number(rawWage);
+    payroll.push({
+      userId: u.id,
+      displayName: u.displayName,
+      email: u.email,
+      workerType: u.workerType,
+      isOwner: u.isOwner,
+      hours: 0,
+      hourlyWage: round2(Number.isFinite(wageNum) ? wageNum : 0),
+      regularWages: 0,
+      additionalEarnings: 0,
+      totalGross: 0,
+      equivalentHourlyRate: null,
+    });
+  }
+
   // Payroll order: W-2 (employee+trainee) first, then contractors,
   // alphabetical by display name within each group. Matches how the
   // operator scans Gusto: salaried/hourly W-2 entry, then 1099
@@ -1088,15 +1139,68 @@ export async function payrollCsv(
    *      unchecked everyone" without collapsing back to "all".
    *    • `[...ids]`   — restrict rows AND totals to those userIds. */
   userIds?: string[],
+  /** UI-only export shaping: for each user id in this set, their hours
+   *  and totals are transferred to the owner row and their own row is
+   *  emitted with zeros. Never touches stored data — this only reshapes
+   *  the CSV output. If no owner exists in the roster the reassignment
+   *  is silently dropped so the operator can still export cleanly. */
+  assignToOwnerIds?: string[],
 ): Promise<{ csv: string; rowCount: number; total: number }> {
   const fromKey = etFormatDate(start);
   const toKey = etFormatDate(end);
   const period = await buildReconcileWorkers(start, end, { fromKey, toKey });
 
+  // Owner-reassignment reshape runs BEFORE the userIds filter — the
+  // operator's common workflow is "assign Employee X to Owner, then
+  // uncheck Employee X so only the Owner row ships in the CSV." If we
+  // filtered first, an unchecked X would be dropped before their totals
+  // could transfer, and the Owner row would silently miss the reassigned
+  // amount. Kept out of buildReconcileWorkers so the stored/reconcile
+  // view of the data is untouched — the CSV/export is the only surface
+  // that sees the transferred totals. Straight per-column sum: each
+  // numeric column on the owner row becomes the owner's value plus the
+  // same column across every flagged row. Hourly Wage is intentionally
+  // NOT summed (it's an on-file rate, not a period aggregate). Regular +
+  // Additional = Total Gross holds because the identity holds for every
+  // source row and sums linearly.
+  const assignSet = new Set(assignToOwnerIds ?? []);
+  const ownerRow = period.payroll.find((p) => p.isOwner);
+  const reshapedPayroll = period.payroll.map((p) => ({ ...p }));
+  if (ownerRow && assignSet.size > 0) {
+    const ownerOut = reshapedPayroll.find((p) => p.userId === ownerRow.userId)!;
+    let transferHours = 0;
+    let transferRegularWages = 0;
+    let transferAdditional = 0;
+    let transferTotalGross = 0;
+    for (const r of reshapedPayroll) {
+      if (r.userId === ownerOut.userId) continue;
+      if (!assignSet.has(r.userId)) continue;
+      transferHours += r.hours;
+      transferRegularWages += r.regularWages;
+      transferAdditional += r.additionalEarnings;
+      transferTotalGross += r.totalGross;
+      r.hours = 0;
+      r.regularWages = 0;
+      r.additionalEarnings = 0;
+      r.totalGross = 0;
+      r.equivalentHourlyRate = null;
+    }
+    ownerOut.hours = round2(ownerOut.hours + transferHours);
+    ownerOut.regularWages = round2(ownerOut.regularWages + transferRegularWages);
+    ownerOut.additionalEarnings = round2(ownerOut.additionalEarnings + transferAdditional);
+    ownerOut.totalGross = round2(ownerOut.totalGross + transferTotalGross);
+    ownerOut.equivalentHourlyRate =
+      ownerOut.hours > 0 ? round2(ownerOut.totalGross / ownerOut.hours) : null;
+  }
+
+  // NOW apply the per-worker inclusion filter — the reshape above has
+  // already moved any flagged rows' numbers onto the Owner row, so
+  // dropping an unchecked worker here is safe: their now-zeroed row
+  // disappears from the CSV while the Owner row retains the transfer.
   const filterSet = userIds !== undefined ? new Set(userIds) : null;
   const filteredPayroll = filterSet
-    ? period.payroll.filter((p) => filterSet.has(p.userId))
-    : period.payroll;
+    ? reshapedPayroll.filter((p) => filterSet.has(p.userId))
+    : reshapedPayroll;
 
   const header = [
     "Worker",

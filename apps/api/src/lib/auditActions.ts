@@ -214,6 +214,28 @@ export const AUDIT = {
     // routine for NONE-type docs.
     ADMIN_UPLOADED_ON_BEHALF: [AuditScope.POLICY_SIGNATURE, AuditVerb.POLICY_ADMIN_UPLOADED_ON_BEHALF] as const,
   },
+  PROMOTION: {
+    // Lifecycle + edit + burst events for the Promotions feature. Metadata
+    // always includes promotionId; state-transition rows also include
+    // fromStatus/toStatus. See services/promotions.ts + routes/promotions.ts.
+    CREATED: [AuditScope.PROMOTION, AuditVerb.CREATED] as const,
+    STARTED: [AuditScope.PROMOTION, AuditVerb.PROMOTION_STARTED] as const,
+    PAUSED: [AuditScope.PROMOTION, AuditVerb.PROMOTION_PAUSED] as const,
+    RESUMED: [AuditScope.PROMOTION, AuditVerb.PROMOTION_RESUMED] as const,
+    RETIRED: [AuditScope.PROMOTION, AuditVerb.PROMOTION_RETIRED] as const,
+    EDITED: [AuditScope.PROMOTION, AuditVerb.PROMOTION_EDITED] as const,
+    DUPLICATED: [AuditScope.PROMOTION, AuditVerb.PROMOTION_DUPLICATED] as const,
+    DISPATCHED: [AuditScope.PROMOTION, AuditVerb.PROMOTION_DISPATCHED] as const,
+    TEST_SENT: [AuditScope.PROMOTION, AuditVerb.PROMOTION_TEST_SENT] as const,
+  },
+  PROMO_OPT: {
+    // Per-contact promotional-message opt-out / opt-in events. Metadata
+    // always includes { contactId, clientId, channel, source, reason? }.
+    // source ∈ client_self_email_link | client_self_sms_link |
+    //          client_self_invoice_page | super_manual | hard_bounce
+    OPTED_OUT: [AuditScope.PROMO_OPT, AuditVerb.PROMO_OPTED_OUT] as const,
+    OPTED_IN: [AuditScope.PROMO_OPT, AuditVerb.PROMO_OPTED_IN] as const,
+  },
 } as const;
 
 // Useful types

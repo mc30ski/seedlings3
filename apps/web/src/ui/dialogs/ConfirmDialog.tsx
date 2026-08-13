@@ -7,6 +7,8 @@ import { apiGet } from "@/src/lib/api";
 import { jobTagLabel, pricingJobTags } from "@/src/ui/components/JobTagPicker";
 import PricingGuideDialog from "@/src/ui/dialogs/PricingGuideDialog";
 import ImpersonationWarning from "@/src/ui/components/ImpersonationWarning";
+import { useOnSiteHint } from "@/src/lib/onSiteHint";
+import OnSiteHintBanner from "@/src/ui/components/OnSiteHintBanner";
 
 type Props = {
   open: boolean;
@@ -67,6 +69,18 @@ type Props = {
    *  caller is acting on their own behalf — the X-Impersonate-As role
    *  banner still fires inside ImpersonationWarning if applicable. */
   viewAsName?: string | null;
+  /** When set, the dialog fetches the caller's live GPS + the property's
+   *  known site coords and renders a blue info banner explaining whether
+   *  the caller appears to be on-site. Also overrides the button layout:
+   *   - near/unknown-site → primary confirm (record location) on top,
+   *     secondary (no location) beneath
+   *   - far → secondary (no location) recommended on top, primary confirm
+   *     de-emphasized beneath
+   *   - unknown-user → primary confirm is disabled (nothing to record);
+   *     secondary (no location) is on top
+   *  Requires `onCancelAction` — the secondary path is the "start/complete
+   *  without location" branch. */
+  locationHintOccurrenceId?: string | null;
 };
 
 type PricingHint = {
@@ -99,6 +113,7 @@ export default function ConfirmDialog({
   secondaryActionFirst,
   keepOpenOnCancelAction,
   viewAsName,
+  locationHintOccurrenceId,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [inputValue, setInputValue] = useState("");
@@ -127,6 +142,17 @@ export default function ConfirmDialog({
       .then((list) => setPricingHints(Array.isArray(list) ? list : []))
       .catch(() => setPricingHints([]));
   }, [open, amountLabel, pricingReferenceTags, pricingEndpoint]);
+
+  const hint = useOnSiteHint(open && !!locationHintOccurrenceId, locationHintOccurrenceId ?? null);
+  const hintActive = !!locationHintOccurrenceId;
+  // When the hint decides the caller is far / has no GPS, put the
+  // "cancel-action" branch (record-without-location) on top and de-emphasize
+  // the primary. Passes through user-supplied `secondaryActionFirst` when the
+  // hint is inactive.
+  const resolvedSecondaryActionFirst = hintActive
+    ? !hint.defaultToWithLocation
+    : secondaryActionFirst;
+  const primaryConfirmDisabled = hintActive && hint.withLocationDisabled;
 
   const referenceMatches = useMemo(() => {
     if (!pricingReferenceTags || pricingReferenceTags.length === 0) return [];
@@ -178,6 +204,11 @@ export default function ConfirmDialog({
             <Dialog.Body>
               <ImpersonationWarning viewAsName={viewAsName} />
               {messageNode ? messageNode : (message && <Text>{message}</Text>)}
+              {hintActive && (
+                <Box mt={3}>
+                  <OnSiteHintBanner hint={hint} />
+                </Box>
+              )}
               {warning && (
                 <Box
                   mt={3}
@@ -314,11 +345,11 @@ export default function ConfirmDialog({
             <Dialog.Footer>
               {onCancelAction ? (
                 <VStack w="full" gap={2}>
-                  {secondaryActionFirst && (
+                  {resolvedSecondaryActionFirst && (
                     <Button
                       w="full"
-                      variant="outline"
-                      colorPalette="gray"
+                      variant={hintActive && !hint.defaultToWithLocation ? "solid" : "outline"}
+                      colorPalette={hintActive && !hint.defaultToWithLocation ? "blue" : "gray"}
                       onClick={() => { onCancelAction(); if (!keepOpenOnCancelAction) onCancel(); }}
                     >
                       {cancelLabel}
@@ -326,14 +357,14 @@ export default function ConfirmDialog({
                   )}
                   <Button
                     w="full"
-                    variant="solid"
+                    variant={hintActive && !hint.defaultToWithLocation ? "outline" : "solid"}
                     colorPalette={confirmColorPalette}
                     onClick={handleConfirm}
-                    disabled={!canConfirm}
+                    disabled={!canConfirm || primaryConfirmDisabled}
                   >
                     {confirmLabel}
                   </Button>
-                  {!secondaryActionFirst && (
+                  {!resolvedSecondaryActionFirst && (
                     <Button
                       w="full"
                       variant="outline"

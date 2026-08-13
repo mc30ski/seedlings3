@@ -43,7 +43,7 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
-import { bizInstantFromEtParts, bizToday , type EtDateKey } from "@/src/lib/lib";
+import { bizInstantFromEtParts, bizToday, fmtDateTime , type EtDateKey } from "@/src/lib/lib";
 import { useOffline } from "@/src/lib/offline";
 import { enqueueAction, type QueuedActionType } from "@/src/lib/offlineQueue";
 import ImpersonationWarning from "@/src/ui/components/ImpersonationWarning";
@@ -1488,13 +1488,22 @@ function EndWorkdayDialog({
   );
 
   const canCloseMileage = !isViewingAs && visibleOpen.length > 0;
-  const mileageValid = !canCloseMileage
-    ? true
-    : visibleOpen.every((e) => {
-        const raw = mileageInputs[e.id]?.endOdometer ?? "";
-        if (!/^\d+$/.test(raw.trim())) return false;
-        return Number(raw) >= e.startOdometer;
-      });
+  // Per-entry validity: the entry has a valid end-odometer input.
+  // Used to decide which entries to close on submit — entries left
+  // blank are LEFT OPEN and can be closed later from the Vehicles tab.
+  // Rows with a partial/invalid entry still block the submit so the
+  // worker gets feedback instead of a silent no-op.
+  function isMileageInputValid(entryId: string, startOdometer: number): boolean {
+    const raw = mileageInputs[entryId]?.endOdometer ?? "";
+    if (!raw.trim()) return true; // empty = "leave open"
+    if (!/^\d+$/.test(raw.trim())) return false;
+    return Number(raw) >= startOdometer;
+  }
+  const anyMileageInvalid = canCloseMileage &&
+    visibleOpen.some((e) => !isMileageInputValid(e.id, e.startOdometer));
+  const entriesToClose = canCloseMileage
+    ? visibleOpen.filter((e) => (mileageInputs[e.id]?.endOdometer ?? "").trim().length > 0)
+    : [];
 
   const liveActive = useMemo(() => {
     const startMs = Date.parse(localToIso(startedAt) ?? workday.startedAt);
@@ -1507,11 +1516,15 @@ function EndWorkdayDialog({
     setError(null);
     setSaving(true);
     try {
-      // Close every open mileage session first. If any fail, bail out
-      // before ending the workday so the worker can retry.
-      if (canCloseMileage) {
+      // Only close mileage sessions the worker explicitly provided an
+      // end odometer for. Sessions left blank stay open — the worker
+      // can close them later from the Vehicles tab. This avoids the
+      // "I can't end my workday because the system thinks a mileage
+      // session I already closed is still open" trap (typically caused
+      // by smart-merge continuation reopening an entry silently).
+      if (entriesToClose.length > 0) {
         const stopCalls = await Promise.allSettled(
-          visibleOpen.map((e) =>
+          entriesToClose.map((e) =>
             apiPost(`/api/me/mileage/${e.id}/stop`, {
               endOdometer: Number(mileageInputs[e.id]?.endOdometer),
               notes: mileageInputs[e.id]?.notes || null,
@@ -1551,18 +1564,18 @@ function EndWorkdayDialog({
           <Button
             colorPalette="blue"
             onClick={() => void submit()}
-            disabled={saving || !mileageValid}
+            disabled={saving || anyMileageInvalid}
             title={
-              !mileageValid
-                ? "Enter valid ending odometer for every open mileage session"
+              anyMileageInvalid
+                ? "Fix the invalid ending odometer, or clear the field to leave that session open"
                 : undefined
             }
           >
             {saving
               ? <Spinner size="xs" />
-              : canCloseMileage
-                ? "Stop mileage & end workday"
-                : "End anyway"}
+              : entriesToClose.length > 0
+                ? `Stop ${entriesToClose.length} mileage session${entriesToClose.length === 1 ? "" : "s"} & end workday`
+                : "End workday"}
           </Button>
         </HStack>
       }
@@ -1658,10 +1671,10 @@ function EndWorkdayDialog({
         {visibleOpen.length > 0 && !isViewingAs && (
           <Box p={2} bg="teal.50" borderWidth="1px" borderColor="teal.300" borderRadius="md">
             <Text fontSize="xs" color="teal.900" mb={2} fontWeight="semibold">
-              Record ending odometer{visibleOpen.length === 1 ? "" : "s"}:
+              Open mileage session{visibleOpen.length === 1 ? "" : "s"} — optional to close now:
             </Text>
             <Text fontSize="2xs" color="teal.800" mb={2} fontStyle="italic">
-              Picked the wrong vehicle? Tap "Cancel session" below to delete it — you can then end the workday and start a new mileage session with the right vehicle.
+              Enter the ending odometer to close a session here, or leave blank and the workday ends without touching it — you can close it later from the Vehicles tab. Picked the wrong vehicle? Tap "Cancel session" to remove the row entirely.
             </Text>
             <VStack align="stretch" gap={2}>
               {visibleOpen.map((e) => {
@@ -1683,7 +1696,7 @@ function EndWorkdayDialog({
                       {e.vehicleName}
                     </Text>
                     <Text fontSize="2xs" color="fg.muted" mb={1}>
-                      Started at {e.startOdometer.toLocaleString()} mi
+                      Started at {e.startOdometer.toLocaleString()} mi · {fmtDateTime(e.startedAt)}
                     </Text>
                     <input
                       type="text"

@@ -16,6 +16,7 @@ import previewRoutes from "./routes/preview";
 import cronRoutes from "./routes/cron";
 import notifyRoutes from "./routes/notify";
 import equipmentCollectionsRoutes from "./routes/equipmentCollections";
+import promotionsRoutes from "./routes/promotions";
 
 // ---------- CORS Helpers
 
@@ -173,6 +174,7 @@ export async function registerRoutes(app: FastifyInstance) {
       await api.register(adminRoutes);
       await api.register(notifyRoutes);
       await api.register(equipmentCollectionsRoutes);
+      await api.register(promotionsRoutes);
       await app.register(workerRoutes);
     },
     { prefix: "/api" }
