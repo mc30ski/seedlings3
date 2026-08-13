@@ -452,6 +452,10 @@ export default function ServicesTab({
     inputDefaultValue?: string;
     cancelLabel?: string;
     onCancelAction?: () => void;
+    /** When set, ConfirmDialog turns on its live GPS-proximity banner and
+     *  reorders the primary/secondary buttons based on whether the caller
+     *  is near the property. Used by Start / Complete flows. */
+    locationHintOccurrenceId?: string;
   } | null>(null);
 
   const [acceptPaymentOpen, setAcceptPaymentOpen] = useState(false);
@@ -2667,6 +2671,7 @@ export default function ServicesTab({
                                   onConfirm: () => void patchOccurrenceStatus(occ.id, job.id, "IN_PROGRESS", undefined, true),
                                   cancelLabel: "No — start without location",
                                   onCancelAction: () => void patchOccurrenceStatus(occ.id, job.id, "IN_PROGRESS", undefined, false),
+                                  locationHintOccurrenceId: occ.id,
                                 })}
                                 variant="outline"
                                 busyId={statusButtonBusyId}
@@ -2698,6 +2703,7 @@ export default function ServicesTab({
                                       onConfirm: () => void patchOccurrenceStatus(occ.id, job.id, "PENDING_PAYMENT", undefined, true),
                                       cancelLabel: "No — complete without location",
                                       onCancelAction: () => void patchOccurrenceStatus(occ.id, job.id, "PENDING_PAYMENT", undefined, false),
+                                      locationHintOccurrenceId: occ.id,
                                     });
                                   }
                                 }}
@@ -3093,6 +3099,7 @@ export default function ServicesTab({
         inputDefaultValue={confirmAction?.inputDefaultValue}
         cancelLabel={confirmAction?.cancelLabel}
         onCancelAction={confirmAction?.onCancelAction}
+        locationHintOccurrenceId={confirmAction?.locationHintOccurrenceId}
         onConfirm={(inputValue: string) => {
           if (confirmAction?.inputPlaceholder) {
             (confirmAction.onConfirm as (v: string) => void)(inputValue);

@@ -9,6 +9,12 @@ const R2_DOCS_BUCKET = process.env.R2_DOCS_BUCKET_NAME!;
 const R2_PROPERTY_PHOTOS_BUCKET = process.env.R2_PROPERTY_PHOTOS_BUCKET_NAME!;
 const R2_EQUIPMENT_PHOTOS_BUCKET = process.env.R2_EQUIPMENT_PHOTOS_BUCKET_NAME!;
 const R2_RECEIPTS_BUCKET = process.env.R2_RECEIPTS_BUCKET_NAME!;
+// Dedicated bucket for Promotion landing-page item images. Kept separate
+// from `photos` and `property-photos` because promo images MUST NOT
+// expire — closed promotions preserve their images indefinitely so the
+// audit story ("what did clients actually see?") stays truthful.
+// Configure Cloudflare with NO lifecycle rules on this bucket.
+const R2_PROMOTION_IMAGES_BUCKET = process.env.R2_PROMOTION_IMAGES_BUCKET_NAME!;
 
 const s3 = new S3Client({
   region: "auto",
@@ -22,13 +28,14 @@ const s3 = new S3Client({
   responseChecksumValidation: "WHEN_REQUIRED",
 });
 
-type BucketType = "photos" | "docs" | "property-photos" | "equipment-photos" | "receipts";
+type BucketType = "photos" | "docs" | "property-photos" | "equipment-photos" | "receipts" | "promotion-images";
 
 function bucketName(type: BucketType): string {
   if (type === "docs") return R2_DOCS_BUCKET;
   if (type === "property-photos") return R2_PROPERTY_PHOTOS_BUCKET;
   if (type === "equipment-photos") return R2_EQUIPMENT_PHOTOS_BUCKET;
   if (type === "receipts") return R2_RECEIPTS_BUCKET;
+  if (type === "promotion-images") return R2_PROMOTION_IMAGES_BUCKET;
   return R2_BUCKET;
 }
 

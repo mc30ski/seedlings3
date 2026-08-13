@@ -2358,6 +2358,21 @@ async function seedDatabase() {
     { key: "PHOTO_JPEG_QUALITY", value: "0.8", description: "JPEG quality for uploaded photos (0.1 = smaller files, lower quality; 1.0 = largest files, best quality). 0.8 is the recommended balance. Only applies to new uploads." },
     { key: "NOTIFY_PAYMENT_APPROVAL_VIA_SMS_EMAIL", value: "false", description: "When a client reports they sent a payment, push notifications to admins always fire (free). Turn this on to also send a paid SMS (Twilio) or email (Resend) on top of the push. Default is off to keep notification costs at zero." },
     { key: "OUTGOING_COMMS_CC", value: '{"emails":[],"phones":[]}', description: "Recipients automatically CC'd on client SMS/email comms opened from the app (the owner and any supervisors). Email addresses are added as visible cc=; phone numbers join the SMS as additional recipients, which on iOS/Android creates a group thread the client can see. Org policy is full transparency — no silent BCC. Only applies to templated comms (invoices, reschedules, reminders, work-day confirms). Plain contact-menu opens stay 1:1." },
+    // Promotion opt-out footers — appended to promo piggyback content on
+    // outbound email/SMS. Email footer MUST include {{businessAddress}}
+    // (or a literal address) per CAN-SPAM. {{unsubscribeLink}} is
+    // interpolated with a per-recipient signed URL at send time. SMS is
+    // exempt from the postal-address rule so the SMS footer just needs
+    // the opt-out link. Both footers are only appended when the outbound
+    // message actually includes a promo — plain transactional messages
+    // stay unadorned.
+    { key: "PROMOTION_OPT_OUT_FOOTER_EMAIL", value: "You're receiving this because you're a customer of Seedlings Lawn Care.\n{{businessAddress}}\nTo stop promotional emails: {{unsubscribeLink}}", description: "Footer appended to promotional emails. Must include {{businessAddress}} (or literal address) for CAN-SPAM compliance. {{unsubscribeLink}} is replaced with the /opt-out page URL — a plain static link where the client enters their email/phone to unsubscribe." },
+    { key: "PROMOTION_OPT_OUT_FOOTER_SMS", value: "Opt out: {{unsubscribeLink}}", description: "Footer appended to promotional SMS messages. {{unsubscribeLink}} is replaced with the /opt-out page URL — a plain static link where the client enters their phone to unsubscribe. Keep short — every character counts against the 160-char SMS segment." },
+    // Shared secret for HMAC-signing unsubscribe URLs. Random 64-char
+    // value seeded here for dev; production should rotate to a strong
+    // random string via the settings UI. If empty, promotion send is
+    // blocked at the dispatcher so we never ship an insecure link.
+    { key: "PROMOTION_HMAC_SECRET", value: "dev-only-promo-hmac-secret-please-rotate-in-production-64chars-min", description: "HMAC secret used to sign per-recipient promotion opt-out URLs. Rotate on suspicion of leak. Empty value blocks promotion sends." },
   ];
   for (const s of paymentSettings) {
     await prisma.setting.upsert({
@@ -3348,9 +3363,252 @@ async function seedDatabase() {
 
   await seedStreamPauseFixtures();
 
+  await seedPromotionFixtures();
+
   await applySettingSections();
 
   console.log("  Seed complete!");
+}
+
+/**
+ * Promotion fixtures — three campaigns to exercise every branch of the
+ * pipeline in dev:
+ *
+ *   1. "Fall Offers 2026" — ACTIVE, on_invoice_sent, targets email +
+ *      SMS + invoice_page. Piggybacks on the next invoice you send. Also
+ *      visible on the /pay/[token] page.
+ *
+ *   2. "Referral Program" — DRAFT, manual_send, targets email + SMS.
+ *      Start it to test the Send Now button.
+ *
+ *   3. "New Year Reminder 2025" — CLOSED, so the "Closed" collapsible
+ *      section in the Promotions tab has an entry to render.
+ *
+ * All three use audienceSpec: { kind: "all" } and cooldownDays: 7. The
+ * Setting rows (footer templates + HMAC secret) are seeded elsewhere in
+ * the "Payment request settings" block near the top of the file — those
+ * MUST be present or the piggyback dispatcher fail-closes with no
+ * output.
+ */
+async function seedPromotionFixtures() {
+  console.log("  Seeding Promotion fixtures...");
+
+  // Clear any prior seed data so re-running is idempotent. Real ops-created
+  // promotions would be preserved by title-based filtering below; the
+  // seed IDs are stable so re-seed doesn't accumulate duplicates.
+  await prisma.promotion.deleteMany({
+    where: {
+      id: { in: ["seed_promo_fall_2026", "seed_promo_referral", "seed_promo_ny_2025"] },
+    },
+  });
+  // Also clear the seeded landing page + items so a re-seed lands with
+  // fresh copies. Items cascade with the page.
+  await prisma.promotionLandingPage.deleteMany({
+    where: { id: "seed_landing_fall_2026" },
+  });
+
+  // Create the landing page FIRST — Promotion.landingPageId references
+  // it via FK. Items seeded via nested create so the ordering is stable.
+  await prisma.promotionLandingPage.create({
+    data: {
+      id: "seed_landing_fall_2026",
+      slug: "fall-offers-2026",
+      headline: "Fall & Winter Offers",
+      intro:
+        "We're offering a range of special services this fall and winter. Take a look at what's available below — and please share with anyone who might be interested!",
+      createdById: MICHAEL_ID,
+      updatedById: MICHAEL_ID,
+      items: {
+        create: [
+          {
+            title: "Gutter Cleaning",
+            description:
+              "Full seasonal gutter clear-out. Removes leaves, twigs, and debris. Includes downspout flushing to prevent winter ice dams.",
+            ordinal: 0,
+          },
+          {
+            title: "Garbage & Bulk Removal",
+            description:
+              "Yard waste, old furniture, construction debris — one-time haul-off. Priced by the load; we handle disposal.",
+            ordinal: 1,
+          },
+          {
+            title: "Outdoor Fireplace Installation",
+            description:
+              "Custom-built stone or brick outdoor fireplaces. Design consultation included. Fall install for cozy winter evenings.",
+            ordinal: 2,
+          },
+          {
+            title: "Mailbox Painting & Repair",
+            description:
+              "Sand, prime, and repaint any mailbox + post. Add house numbers or a custom finish. Great curb-appeal boost.",
+            ordinal: 3,
+          },
+        ],
+      },
+    },
+  });
+
+  await prisma.promotion.createMany({
+    data: [
+      {
+        id: "seed_promo_fall_2026",
+        title: "Fall Offers 2026",
+        description:
+          "Piggyback fall/winter service promo. Points at the in-app landing page /promotion/fall-offers-2026 so you can exercise the click wrapper + landing-page render.",
+        // Custom landing page destination — Promotion.link stays null;
+        // the wrapper redirect resolves to /promotion/<slug> at click time.
+        linkKind: "LANDING_PAGE",
+        link: null,
+        landingPageId: "seed_landing_fall_2026",
+        audienceSpec: { kind: "all" },
+        dispatchChannels: ["email", "sms"],
+        displaySurfaces: ["invoice_page"],
+        triggerKind: "on_invoice_sent",
+        triggerConfig: {},
+        cooldownDays: 7,
+        // Long, forgiving window so the fixture is useful today AND for
+        // reseeds a few weeks out — no absolute-date fragility.
+        startAt: new Date("2026-08-01T00:00:00Z"),
+        endAt: new Date("2027-01-31T23:59:59Z"),
+        status: "ACTIVE",
+        startedAt: new Date(),
+        startedById: MICHAEL_ID,
+        content: {
+          sms: {
+            body: "Fall Offers! Special fall/winter services incl. gutter cleaning, garbage removal, painting, and more.",
+            ctaText: "See offers",
+          },
+          email: {
+            subject: "Fall & Winter Services Just for You",
+            body: "We're offering special services for this fall and winter including gutter cleaning, garbage removal, outdoor fireplace installation, painting mailboxes, and more. Check out the offers below and please share with anyone who might be interested!",
+            ctaText: "See fall & winter offers",
+          },
+          invoice_page: {
+            headline: "Fall & Winter Offers Available!",
+            body: "We're offering special services this fall and winter — gutter cleaning, garbage removal, outdoor fireplace installation, mailbox painting, and more.",
+            ctaText: "See the offers →",
+          },
+        },
+        createdById: MICHAEL_ID,
+        updatedById: MICHAEL_ID,
+      },
+      {
+        id: "seed_promo_referral",
+        title: "Referral Program — $25 Off",
+        description: "Manual blast promo. Draft state so you can start + Send Now to test the burst path.",
+        link: "https://www.seedlings.team/promotions/referral",
+        audienceSpec: { kind: "all" },
+        dispatchChannels: ["email", "sms"],
+        displaySurfaces: [],
+        triggerKind: "manual_send",
+        triggerConfig: {},
+        cooldownDays: 30,
+        startAt: null,
+        endAt: null,
+        status: "DRAFT",
+        content: {
+          sms: {
+            body: "Refer a friend to Seedlings Lawn Care and you both get $25 off your next service.",
+            ctaText: "Refer a friend",
+          },
+          email: {
+            subject: "Refer a friend — $25 off for both of you",
+            body: "Know someone who could use lawn care help? Refer them to us and you BOTH get $25 off your next service. No cap, no expiration.",
+            ctaText: "Refer someone now",
+          },
+        },
+        createdById: MICHAEL_ID,
+        updatedById: MICHAEL_ID,
+      },
+      {
+        id: "seed_promo_ny_2025",
+        title: "New Year Reminder 2025",
+        description: "Retired campaign from last year. Shows up under Closed in the Promotions tab so the collapsible section has content.",
+        link: "https://www.seedlings.team/promotions/ny-2025",
+        audienceSpec: { kind: "all" },
+        dispatchChannels: ["email"],
+        displaySurfaces: [],
+        triggerKind: "manual_send",
+        triggerConfig: {},
+        cooldownDays: 30,
+        startAt: new Date("2025-01-01T00:00:00Z"),
+        endAt: new Date("2025-01-31T23:59:59Z"),
+        status: "CLOSED",
+        startedAt: new Date("2025-01-01T13:00:00Z"),
+        startedById: MICHAEL_ID,
+        closedAt: new Date("2025-02-01T14:00:00Z"),
+        closedById: MICHAEL_ID,
+        content: {
+          email: {
+            subject: "New Year, New Lawn — Book Your 2025 Schedule",
+            body: "Happy new year! Book your 2025 schedule now to lock in current pricing.",
+            ctaText: "Book my 2025 schedule",
+          },
+        },
+        createdById: MICHAEL_ID,
+        updatedById: MICHAEL_ID,
+      },
+    ],
+  });
+
+  // A handful of AuditEvent rows so the Promotions tab detail view has a
+  // realistic-looking timeline the moment you open a campaign. Same
+  // pattern the rest of the seed uses.
+  await prisma.auditEvent.createMany({
+    data: [
+      {
+        scope: "PROMOTION",
+        verb: "CREATED",
+        action: "PROMOTION_CREATED",
+        actorUserId: MICHAEL_ID,
+        metadata: { promotionId: "seed_promo_fall_2026" },
+        createdAt: daysAgo(5),
+      },
+      {
+        scope: "PROMOTION",
+        verb: "PROMOTION_STARTED",
+        action: "PROMOTION_PROMOTION_STARTED",
+        actorUserId: MICHAEL_ID,
+        metadata: { promotionId: "seed_promo_fall_2026", fromStatus: "DRAFT", toStatus: "ACTIVE" },
+        createdAt: daysAgo(4),
+      },
+      {
+        scope: "PROMOTION",
+        verb: "CREATED",
+        action: "PROMOTION_CREATED",
+        actorUserId: MICHAEL_ID,
+        metadata: { promotionId: "seed_promo_referral" },
+        createdAt: daysAgo(2),
+      },
+      {
+        scope: "PROMOTION",
+        verb: "CREATED",
+        action: "PROMOTION_CREATED",
+        actorUserId: MICHAEL_ID,
+        metadata: { promotionId: "seed_promo_ny_2025" },
+        createdAt: new Date("2024-12-28T12:00:00Z"),
+      },
+      {
+        scope: "PROMOTION",
+        verb: "PROMOTION_STARTED",
+        action: "PROMOTION_PROMOTION_STARTED",
+        actorUserId: MICHAEL_ID,
+        metadata: { promotionId: "seed_promo_ny_2025", fromStatus: "DRAFT", toStatus: "ACTIVE" },
+        createdAt: new Date("2025-01-01T13:00:00Z"),
+      },
+      {
+        scope: "PROMOTION",
+        verb: "PROMOTION_RETIRED",
+        action: "PROMOTION_PROMOTION_RETIRED",
+        actorUserId: MICHAEL_ID,
+        metadata: { promotionId: "seed_promo_ny_2025", fromStatus: "ACTIVE", toStatus: "CLOSED" },
+        createdAt: new Date("2025-02-01T14:00:00Z"),
+      },
+    ],
+  });
+
+  console.log("  ✓ Seeded 3 Promotion fixtures + 1 landing page (4 items) + 6 AuditEvent rows");
 }
 
 /**

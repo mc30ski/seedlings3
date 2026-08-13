@@ -34,6 +34,11 @@ type RouteJob = {
   price: number | null;
   estimatedMinutes: number | null;
   kind: string;
+  // True when the occurrence is an estimate (workflow=ESTIMATE or the
+  // per-occurrence isEstimate flag). Estimates route the same as
+  // regular jobs but the UI badges them distinctly so the operator
+  // spots them in the plan.
+  isEstimate?: boolean;
   currentDate: string | null;
 };
 
@@ -1012,6 +1017,11 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
                   >
                     {job.type === "claimed" ? "Claimed" : "Open"}
                   </Badge>
+                  {job.isEstimate && (
+                    <Badge colorPalette="purple" variant="solid" fontSize="xs" px="1.5" borderRadius="full">
+                      Estimate
+                    </Badge>
+                  )}
                   <Text fontWeight="medium" truncate>{job.property}{job.client ? ` — ${job.client}` : ""}</Text>
                   <Text color="fg.muted" truncate>{job.city}</Text>
                 </HStack>

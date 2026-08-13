@@ -30,6 +30,15 @@ import { etFormatDate, etToday, etMidnight, etEndOfDay, etInstantFromParts, etAd
 // ─────────────────────────────────────────────────────────────────────────────
 
 const CLOCK_SKEW_MS = 60 * 1000; // 1 minute — tolerates client clocks drifting slightly ahead
+// Grace window for END-workday specifically. Workers routinely round up
+// the end time to a "nice" clock number when the dialog opens (e.g. it's
+// 1:32 PM, they type 1:45 PM to bill out the last leg they're about to
+// drive home for). Blocking those with "can't be in the future" annoys
+// everyone. 30 minutes is wide enough to cover ordinary rounding + short
+// drive-time padding, tight enough that a genuinely bogus far-future end
+// still fails. Only affects endWorkday — CLOCK_SKEW_MS still gates start
+// time / workday creation / other windows.
+const END_WORKDAY_GRACE_MS = 30 * 60 * 1000;
 
 // Default cutoff hour for the worker→admin boundary. Overridden by the
 // WORKDAY_APPROVAL_CUTOFF_HOUR_ET setting; this fallback applies when
@@ -658,8 +667,12 @@ export async function endWorkday(
   if (endedAt.getTime() <= startedAt.getTime()) {
     throw new ServiceError("OUT_OF_RANGE", "End time must be after start time.", 400);
   }
-  if (endedAt.getTime() > now.getTime() + CLOCK_SKEW_MS) {
-    throw new ServiceError("OUT_OF_RANGE", "End time can't be in the future.", 400);
+  if (endedAt.getTime() > now.getTime() + END_WORKDAY_GRACE_MS) {
+    throw new ServiceError(
+      "OUT_OF_RANGE",
+      "End time exceeds the 30-minute grace period for future end times.",
+      400,
+    );
   }
 
   // Close any open pause segment first so the resulting total is

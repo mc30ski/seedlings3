@@ -266,9 +266,52 @@ export const paymentRequests = {
     const greetingTarget = contacts.find((c) => c.firstName) ?? contacts[0];
     const firstName = greetingTarget?.firstName || "there";
 
-    const smsBody = buildSmsBody(firstName, propLabel, dateStr, dollarAmount, url);
+    let smsBody = buildSmsBody(firstName, propLabel, dateStr, dollarAmount, url);
     const emailSubject = buildEmailSubject(dollarAmount);
-    const emailBody = buildEmailBody(firstName, propLabel, dateStr, dollarAmount, url);
+    let emailBody = buildEmailBody(firstName, propLabel, dateStr, dollarAmount, url);
+
+    // Promo piggyback for the CLAIMER path — the worker's device is
+    // about to open `sms:` / `mailto:` with these bodies pre-filled, so
+    // we need the promo appended HERE (the actual send happens on the
+    // worker's phone, not via Twilio/Resend, so this function is the
+    // last chance to compose the outbound message).
+    //
+    // No PromotionDelivery rows are written here — this function is
+    // called by BOTH paths (SERVER internally to mint the token, CLAIMER
+    // via /comms-handoff to fetch the body). Server path composes its
+    // own message + writes deliveries per-contact after successful
+    // Twilio/Resend send; claimer path writes deliveries later via
+    // recordClaimerHandoff (best signal we have that the intent fired).
+    // Look up the primary contact's clientId + opt-out state via the
+    // greeting target — same contact whose firstName leads the body.
+    if (greetingTarget?.id) {
+      try {
+        const contactRow = await prisma.clientContact.findUnique({
+          where: { id: greetingTarget.id },
+          select: { clientId: true },
+        });
+        if (contactRow) {
+          const { selectPromotionsForPiggyback } = await import("./promotions");
+          const smsPiggy = await selectPromotionsForPiggyback({
+            contactId: greetingTarget.id,
+            clientId: contactRow.clientId,
+            channel: "sms",
+            triggeredBy: token,
+          });
+          const emailPiggy = await selectPromotionsForPiggyback({
+            contactId: greetingTarget.id,
+            clientId: contactRow.clientId,
+            channel: "email",
+            triggeredBy: token,
+          });
+          smsBody += smsPiggy.bodyAppend;
+          emailBody += emailPiggy.bodyAppend;
+        }
+      } catch {
+        // Piggyback failures must never block the invoice flow —
+        // swallow and ship the base message.
+      }
+    }
 
     return { token, url, amountDue, propertyLabel: propLabel, smsBody, emailSubject, emailBody, contacts };
   },
@@ -332,23 +375,65 @@ export const paymentRequests = {
     let failed = 0;
     let contactsWithoutAddress = 0;
 
+    // Promo piggyback resolution: we need the clientId for the deliveries
+    // table. Every contact for a single occurrence belongs to the same
+    // client, so one lookup covers the whole loop. Dispatcher is loaded
+    // lazily so paymentRequests.ts doesn't pay import cost on every send
+    // for orgs that haven't configured a promotion.
+    const occForClient = await prisma.jobOccurrence.findUnique({
+      where: { id: occurrenceId },
+      select: { job: { select: { property: { select: { clientId: true } } } } },
+    });
+    const clientId = occForClient?.job?.property?.clientId ?? null;
+    const { selectPromotionsForPiggyback } = await import("./promotions");
+
     for (const c of contacts) {
       const firstName = c.firstName || "there";
 
       if (c.phone || c.normalizedPhone) {
-        const smsBody = buildSmsBody(firstName, propLabel, dateStr, dollarAmount, url);
+        // Promo selection BEFORE assembling the outbound body so the
+        // dispatcher's cooldown check sees the correct outgoing time.
+        // Delivery rows are persisted only if the SMS send succeeds
+        // (writeDeliveries called after the ok result) — matches spec
+        // requirement that a "delivered" stamp reflects an actual send.
+        const piggyback = clientId
+          ? await selectPromotionsForPiggyback({
+              contactId: c.id,
+              clientId,
+              channel: "sms",
+              triggeredBy: token,
+            })
+          : { bodyAppend: "", emailFooter: null, smsFooter: null, writeDeliveries: async () => {} };
+        const smsBody =
+          buildSmsBody(firstName, propLabel, dateStr, dollarAmount, url) + piggyback.bodyAppend;
         const phone = c.normalizedPhone ?? c.phone!;
         const result = await sendSMS(phone.startsWith("+") ? phone : `+1${phone.replace(/[^\d]/g, "")}`, smsBody);
-        if (result.ok) smsSent++;
-        else failed++;
+        if (result.ok) {
+          smsSent++;
+          await piggyback.writeDeliveries();
+        } else {
+          failed++;
+        }
       } else if (c.email) {
+        const piggyback = clientId
+          ? await selectPromotionsForPiggyback({
+              contactId: c.id,
+              clientId,
+              channel: "email",
+              triggeredBy: token,
+            })
+          : { bodyAppend: "", emailFooter: null, smsFooter: null, writeDeliveries: async () => {} };
         const result = await sendEmail(
           c.email,
           buildEmailSubject(dollarAmount),
-          buildEmailBody(firstName, propLabel, dateStr, dollarAmount, url),
+          buildEmailBody(firstName, propLabel, dateStr, dollarAmount, url) + piggyback.bodyAppend,
         );
-        if (result.ok) emailSent++;
-        else failed++;
+        if (result.ok) {
+          emailSent++;
+          await piggyback.writeDeliveries();
+        } else {
+          failed++;
+        }
       } else {
         contactsWithoutAddress++;
       }
@@ -445,6 +530,53 @@ export const paymentRequests = {
         channel,
         splitsSet: !!(completionSplits && completionSplits.length > 0),
       });
+
+      // Promo piggyback delivery record — the promo body was already
+      // appended to the outbound message body by generateTokenForOccurrence,
+      // so we know the worker's phone opened its intent with the promo
+      // included. Recording deliveries here matches the strongest signal
+      // we can observe on the claimer path (there's no server-side send
+      // callback to trigger from). Loaded lazily to avoid cost when the
+      // org has no active promos.
+      const contactRow = await tx.jobOccurrence.findUnique({
+        where: { id: occurrenceId },
+        select: {
+          job: {
+            select: {
+              property: {
+                select: {
+                  clientId: true,
+                  client: {
+                    select: {
+                      contacts: {
+                        where: { isPrimary: true, status: "ACTIVE" },
+                        select: { id: true },
+                        take: 1,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+      const primary = contactRow?.job?.property?.client?.contacts?.[0];
+      const clientId = contactRow?.job?.property?.clientId ?? null;
+      if (primary && clientId) {
+        try {
+          const { selectPromotionsForPiggyback } = await import("./promotions");
+          const piggy = await selectPromotionsForPiggyback({
+            contactId: primary.id,
+            clientId,
+            channel,
+            triggeredBy: occ.paymentRequestToken,
+          });
+          await piggy.writeDeliveries();
+        } catch {
+          // Piggyback failures must never block the invoice audit.
+        }
+      }
     });
   },
 

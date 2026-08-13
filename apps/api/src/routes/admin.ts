@@ -8064,8 +8064,17 @@ Respond ONLY with valid JSON in this exact format:
       typeof rawUserIds !== "string"
         ? undefined
         : rawUserIds.split(",").map((s) => s.trim()).filter(Boolean);
+    // UI-only export-shape: `?assignToOwner=<comma-list>` transfers each
+    // listed userʼs hours and totals to the owner row and zeros out
+    // their own row. Never mutates stored data — the current period's
+    // splits and workday hours stay intact.
+    const rawAssign = req.query.assignToOwner;
+    const assignToOwnerIds: string[] | undefined =
+      typeof rawAssign !== "string"
+        ? undefined
+        : rawAssign.split(",").map((s) => s.trim()).filter(Boolean);
     const { payrollCsv } = await import("../services/reconcileWorkers");
-    const result = await payrollCsv(start, end, userIds);
+    const result = await payrollCsv(start, end, userIds, assignToOwnerIds);
     return deliverPlainCsv(reply, "payroll", { startStr, endStr }, result.csv);
   });
 

@@ -299,6 +299,56 @@ export default function HistoryTab({ role = "worker" }: TabRolePropType) {
       return "";
     }
 
+    // Promotions — lifecycle + edit + burst events. Metadata always
+    // carries `promotionId`; state transitions also carry `fromStatus`
+    // + `toStatus`; dispatches carry `dispatchId` + `sent` + `skipped`;
+    // test sends carry `channel`. The action string is
+    // `PROMOTION_<VERB>` (some verbs are themselves prefixed with
+    // `PROMOTION_`, producing `PROMOTION_PROMOTION_STARTED` etc — we
+    // strip the double prefix for readability).
+    if (action?.startsWith("PROMOTION_")) {
+      const verb = action.replace(/^PROMOTION_(PROMOTION_)?/, "").toLowerCase();
+      const promoId = md.promotionId ? String(md.promotionId).slice(0, 12) + "…" : "";
+      if (verb === "created") return `Promotion created — ${promoId}`;
+      if (verb === "started") return `Promotion started — ${promoId}`;
+      if (verb === "paused") return `Promotion paused — ${promoId}`;
+      if (verb === "resumed") return `Promotion resumed — ${promoId}`;
+      if (verb === "retired") return `Promotion retired — ${promoId}`;
+      if (verb === "edited") return `Promotion edited — ${promoId}`;
+      if (verb === "duplicated") {
+        const src = md.sourcePromotionId ? String(md.sourcePromotionId).slice(0, 12) + "…" : "";
+        return src ? `Duplicated from ${src} → ${promoId}` : `Promotion duplicated — ${promoId}`;
+      }
+      if (verb === "dispatched") {
+        const sent = md.sent ?? "?";
+        const skipped = md.skipped ?? "?";
+        return `Manual send burst — ${sent} sent, ${skipped} skipped`;
+      }
+      if (verb === "test_sent") {
+        return `Test ${md.channel ?? ""} sent — ${promoId}`;
+      }
+      return `Promotion — ${promoId}`;
+    }
+
+    // Promo opt-out / opt-in — per-contact, per-channel. Metadata
+    // includes { contactId, clientId, channel, source, reason? }.
+    if (action?.startsWith("PROMO_OPT_")) {
+      const channel = md.channel === "email" ? "email"
+        : md.channel === "sms" ? "SMS"
+        : md.channel ?? "";
+      const source: Record<string, string> = {
+        client_self_email_link: "clicked email link",
+        client_self_sms_link: "clicked SMS link",
+        client_self_invoice_page: "self-served on invoice page",
+        super_manual: "Super manual",
+        hard_bounce: "email hard bounce",
+      };
+      const src = source[md.source] ?? md.source ?? "";
+      const direction = action === "PROMO_OPT_PROMO_OPTED_OUT" ? "opted OUT of" : "opted IN to";
+      const suffix = md.reason ? ` — ${md.reason}` : src ? ` — ${src}` : "";
+      return `Contact ${direction} ${channel}${suffix}`;
+    }
+
     return "";
   }
 

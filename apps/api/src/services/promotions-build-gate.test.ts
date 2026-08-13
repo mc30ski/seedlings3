@@ -1,0 +1,474 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Promotions build gate
+//
+// PURPOSE
+// Locks in the promo pipeline invariants that customer-facing behavior +
+// CAN-SPAM defensive posture depend on. Runs on every build. A failure
+// means one of: promo dispatch could send under a mis-signed URL, a
+// snapshot could go missing (audit gap), a CAN-SPAM-non-compliant email
+// footer could ship, an SMS could balloon to multi-segment cost silently,
+// or the content Zod schema could accept a shape the dispatcher can't
+// handle.
+//
+// SCOPE
+// Pure invariants — no DB, no Prisma, no external services. Every
+// invariant is one describe block. Grep the block titles below to
+// understand what's guarded.
+//
+// INVARIANTS LOCKED IN
+//
+//   A. Opt-out URL is static — no HMAC tokens leak through message
+//      bodies; landing page collects identifier from the client.
+//   B. Zod content schema requires content for every enabled channel
+//      AND every enabled display surface (dispatcher blows up otherwise).
+//   C. Zod payload rejects trigger-less dispatch and channel-less+surface-
+//      less promotions (nothing to deliver).
+//   D. Email footer template MUST include either {{businessAddress}} OR a
+//      literal address the CAN-SPAM audit will accept — the assembler
+//      leaves any placeholder that isn't provided as a literal, so we
+//      test that {{businessAddress}} is preserved unless supplied.
+//   E. SMS segment counter matches Twilio billing thresholds
+//      (160/153 GSM-7, 70/67 UCS-2) — a regression here bills the
+//      customer for 2x-3x SMS silently.
+//   F. renderSmsPromoBody assembles body → CTA+URL → footer in the
+//      documented order; missing components collapse cleanly.
+//   G. buildContentSnapshot ALWAYS returns a body field (never
+//      undefined) — PromotionDelivery.contentSnapshot is the audit
+//      record, so it must never be null-shaped.
+//   H. buildUnsubscribeUrl produces a well-formed URL with a token
+//      that verify accepts.
+//
+// HOW TO USE THIS FILE
+// If a test breaks, the fix is almost never to relax the assertion. The
+// legitimate reasons are (a) a documented policy change with a memo
+// under docs/features/, (b) refactoring a helper signature (update
+// tests + helper in the same commit).
+
+import { describe, it, expect } from "vitest";
+import {
+  promotionSavePayloadSchema,
+  buildContentSnapshot,
+  smsSegmentInfo,
+  renderSmsPromoBody,
+  assembleEmailFooter,
+  buildUnsubscribeUrl,
+  slugifyTitle,
+  signDeliveryClickToken,
+  verifyDeliveryClickToken,
+  signPromoClickToken,
+  verifyPromoClickToken,
+  buildClickWrapperUrl,
+  buildInvoicePageClickUrl,
+} from "./promotions";
+
+const SECRET = "test-secret-with-at-least-32-characters-of-length";
+
+// ── A. Opt-out URL is a static page (no HMAC token) ──────────────────
+// Opt-out no longer uses a signed URL. Client visits /opt-out and
+// enters their own email or phone; server matches + flips flags on
+// every matching ClientContact. Mirrors what real ESPs do — no
+// per-recipient tokens leaking through message forwards.
+
+describe("Invariant A — Opt-out URL is static (no tokens leak in message bodies)", () => {
+  it("A1: buildUnsubscribeUrl returns a plain /opt-out URL", () => {
+    const url = buildUnsubscribeUrl("https://s.example.com", SECRET, "c_1", "email");
+    expect(url).toBe("https://s.example.com/opt-out");
+  });
+
+  it("A2: URL is identical regardless of contactId or channel (no recipient info baked in)", () => {
+    const emailA = buildUnsubscribeUrl("https://s.example.com", SECRET, "contact_a", "email");
+    const smsB = buildUnsubscribeUrl("https://s.example.com", SECRET, "contact_b", "sms");
+    expect(emailA).toBe(smsB);
+  });
+
+  it("A3: URL has no query string (nothing to strip or leak)", () => {
+    const url = buildUnsubscribeUrl("https://s.example.com", SECRET, "c_1", "email");
+    expect(url).not.toContain("?");
+    expect(url).not.toContain("t=");
+  });
+});
+
+// ── B. Zod schema requires content per enabled channel/surface ────────
+
+describe("Invariant B — content required for every enabled channel/surface", () => {
+  const base = {
+    title: "test",
+    description: "",
+    link: null,
+    audienceSpec: { kind: "all" as const },
+    triggerConfig: {},
+    cooldownDays: 7,
+  };
+
+  it("B1: enabling sms without content.sms is rejected", () => {
+    const r = promotionSavePayloadSchema.safeParse({
+      ...base,
+      dispatchChannels: ["sms"],
+      displaySurfaces: [],
+      triggerKind: "on_invoice_sent",
+      content: {},
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const paths = r.error.issues.map((i) => i.path.join("."));
+      expect(paths).toContain("content.sms");
+    }
+  });
+
+  it("B2: enabling email without content.email is rejected", () => {
+    const r = promotionSavePayloadSchema.safeParse({
+      ...base,
+      dispatchChannels: ["email"],
+      displaySurfaces: [],
+      triggerKind: "on_invoice_sent",
+      content: {},
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("B3: enabling invoice_page without content.invoice_page is rejected", () => {
+    const r = promotionSavePayloadSchema.safeParse({
+      ...base,
+      dispatchChannels: [],
+      displaySurfaces: ["invoice_page"],
+      triggerKind: null,
+      content: {},
+    });
+    expect(r.success).toBe(false);
+  });
+});
+
+// ── C. Zod payload rejects incoherent combinations ────────────────────
+
+describe("Invariant C — save payload rejects incoherent shapes", () => {
+  const base = {
+    title: "test",
+    description: "",
+    link: null,
+    audienceSpec: { kind: "all" as const },
+    triggerConfig: {},
+    cooldownDays: 7,
+  };
+
+  it("C1: dispatch channels non-empty requires triggerKind", () => {
+    const r = promotionSavePayloadSchema.safeParse({
+      ...base,
+      dispatchChannels: ["email"],
+      displaySurfaces: [],
+      triggerKind: null,
+      content: { email: { subject: "s", body: "b" } },
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("C2: zero channels AND zero surfaces is rejected (nothing to deliver)", () => {
+    const r = promotionSavePayloadSchema.safeParse({
+      ...base,
+      dispatchChannels: [],
+      displaySurfaces: [],
+      triggerKind: null,
+      content: {},
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("C3: display-only (surfaces without dispatch) is allowed when EXTERNAL has a link", () => {
+    const r = promotionSavePayloadSchema.safeParse({
+      ...base,
+      link: "https://example.com/fall",
+      dispatchChannels: [],
+      displaySurfaces: ["invoice_page"],
+      triggerKind: null,
+      content: { invoice_page: { body: "hi" } },
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("C4: display-only + LANDING_PAGE + null link is allowed (server assigns URL from slug)", () => {
+    const r = promotionSavePayloadSchema.safeParse({
+      ...base,
+      linkKind: "LANDING_PAGE",
+      dispatchChannels: [],
+      displaySurfaces: ["invoice_page"],
+      triggerKind: null,
+      content: { invoice_page: { body: "hi" } },
+    });
+    expect(r.success).toBe(true);
+  });
+});
+
+// ── D. Email footer preserves {{businessAddress}} placeholder ─────────
+
+describe("Invariant D — email footer template placeholders", () => {
+  it("D1: {{businessAddress}} is substituted when supplied", () => {
+    const out = assembleEmailFooter({
+      footerTemplate: "{{businessAddress}}",
+      businessAddress: "123 Main St",
+      unsubscribeLink: "URL",
+    });
+    expect(out).toBe("123 Main St");
+  });
+
+  it("D2: an empty businessAddress replaces the placeholder with empty string (never leaves the raw {{}} literal in shipping mail)", () => {
+    // Rationale: shipping a literal "{{businessAddress}}" in a customer
+    // email would be an ugly bug — but our footer template is expected
+    // to always include a real address when configured. This test just
+    // confirms the substitution happens even for empty input.
+    const out = assembleEmailFooter({
+      footerTemplate: "footer: {{businessAddress}}",
+      businessAddress: "",
+      unsubscribeLink: "URL",
+    });
+    expect(out).toBe("footer: ");
+    expect(out).not.toContain("{{businessAddress}}");
+  });
+
+  it("D3: {{unsubscribeLink}} is always substituted", () => {
+    const out = assembleEmailFooter({
+      footerTemplate: "opt: {{unsubscribeLink}}",
+      businessAddress: "",
+      unsubscribeLink: "https://s/opt?t=abc",
+    });
+    expect(out).toBe("opt: https://s/opt?t=abc");
+  });
+});
+
+// ── E. SMS segment counter matches Twilio billing ─────────────────────
+
+describe("Invariant E — SMS segment counter matches Twilio billing thresholds", () => {
+  it("E1: 160-char GSM-7 = 1 segment", () => {
+    expect(smsSegmentInfo("a".repeat(160)).segments).toBe(1);
+  });
+
+  it("E2: 161-char GSM-7 = 2 segments (uses 153/segment for multi)", () => {
+    expect(smsSegmentInfo("a".repeat(161)).segments).toBe(2);
+  });
+
+  it("E3: 306-char GSM-7 (153+153) = 2 segments", () => {
+    expect(smsSegmentInfo("a".repeat(306)).segments).toBe(2);
+  });
+
+  it("E4: 307-char GSM-7 = 3 segments", () => {
+    expect(smsSegmentInfo("a".repeat(307)).segments).toBe(3);
+  });
+
+  it("E5: 70-char UCS-2 (contains emoji) = 1 segment", () => {
+    expect(smsSegmentInfo("😀" + "a".repeat(69)).segments).toBe(1);
+  });
+
+  it("E6: 71-char UCS-2 = 2 segments (uses 67/segment for multi)", () => {
+    expect(smsSegmentInfo("😀" + "a".repeat(70)).segments).toBe(2);
+  });
+
+  it("E7: 134-char UCS-2 (67+67) = 2 segments", () => {
+    expect(smsSegmentInfo("😀" + "a".repeat(133)).segments).toBe(2);
+  });
+
+  it("E8: em dash forces UCS-2 encoding (silent-segment-inflation regression guard)", () => {
+    expect(smsSegmentInfo("Hi — there").encoding).toBe("ucs2");
+  });
+
+  it("E9: curly quote forces UCS-2 encoding", () => {
+    expect(smsSegmentInfo("it’s here").encoding).toBe("ucs2");
+  });
+});
+
+// ── F. SMS body renderer order + collapse ─────────────────────────────
+
+describe("Invariant F — renderSmsPromoBody assembly order", () => {
+  it("F1: full assembly is body → CTA+URL → footer in that order", () => {
+    const out = renderSmsPromoBody({
+      body: "BODY",
+      ctaText: "CTA",
+      ctaUrl: "URL",
+      footer: "FOOT",
+    });
+    expect(out).toBe("BODY\nCTA URL\nFOOT");
+  });
+
+  it("F2: no ctaText but URL present → URL alone on its line", () => {
+    const out = renderSmsPromoBody({
+      body: "B",
+      ctaText: "",
+      ctaUrl: "URL",
+      footer: "F",
+    });
+    expect(out).toBe("B\nURL\nF");
+  });
+
+  it("F3: no URL → CTA line is omitted entirely (never emits a naked CTA)", () => {
+    const out = renderSmsPromoBody({
+      body: "B",
+      ctaText: "CTA",
+      ctaUrl: null,
+      footer: "F",
+    });
+    expect(out).toBe("B\nF");
+  });
+
+  it("F4: no footer → no trailing footer line", () => {
+    const out = renderSmsPromoBody({
+      body: "B",
+      ctaText: "CTA",
+      ctaUrl: "URL",
+      footer: undefined,
+    });
+    expect(out).toBe("B\nCTA URL");
+  });
+});
+
+// ── G. buildContentSnapshot always returns a body ─────────────────────
+
+describe("Invariant G — buildContentSnapshot always shape-safe", () => {
+  const promo = {
+    link: "https://s/link",
+    content: {
+      sms: { body: "s", ctaText: "sc" },
+      email: { subject: "sub", body: "e", ctaText: "ec" },
+      invoice_page: { headline: "h", body: "ip", ctaText: "ipc" },
+    },
+  };
+
+  it("G1: email snapshot has non-empty body", () => {
+    const s = buildContentSnapshot({ promotion: promo, channel: "email", unsubscribeLink: null });
+    expect(typeof s.body).toBe("string");
+    expect(s.body.length).toBeGreaterThan(0);
+  });
+
+  it("G2: sms snapshot has non-empty body", () => {
+    const s = buildContentSnapshot({ promotion: promo, channel: "sms", unsubscribeLink: null });
+    expect(typeof s.body).toBe("string");
+    expect(s.body.length).toBeGreaterThan(0);
+  });
+
+  it("G3: invoice_page snapshot has non-empty body", () => {
+    const s = buildContentSnapshot({ promotion: promo, channel: "invoice_page", unsubscribeLink: null });
+    expect(typeof s.body).toBe("string");
+    expect(s.body.length).toBeGreaterThan(0);
+  });
+
+  it("G4: throws (never returns malformed snapshot) when channel content is missing", () => {
+    expect(() =>
+      buildContentSnapshot({
+        promotion: { link: null, content: {} },
+        channel: "email",
+        unsubscribeLink: null,
+      }),
+    ).toThrow();
+  });
+});
+
+// ── H. buildUnsubscribeUrl determinism ─────────────────────────────────
+
+describe("Invariant H — buildUnsubscribeUrl determinism", () => {
+  it("H1: URL always resolves to /opt-out (matches the Next.js page path)", () => {
+    const url = buildUnsubscribeUrl("https://s.example.com", SECRET, "c_1", "sms");
+    const parsed = new URL(url);
+    expect(parsed.pathname).toBe("/opt-out");
+  });
+
+  it("H2: identical base URL produces identical output (deterministic + stateless)", () => {
+    const url1 = buildUnsubscribeUrl("https://s.example.com", SECRET, "c_1", "email");
+    const url2 = buildUnsubscribeUrl("https://s.example.com", SECRET, "c_1", "email");
+    expect(url1).toBe(url2);
+  });
+});
+
+// ── I. Click-token HMAC — namespace isolation + tamper resistance ────────
+
+describe("Invariant I — Click token HMAC namespace isolation", () => {
+  it("I1: delivery-flavor token does not verify as promo-flavor (namespace safe)", () => {
+    // A leaked delivery-token must NEVER succeed against the p-flavor
+    // verifier. Discriminator prefix in the HMAC input prevents this
+    // — regression would let an attacker log clicks against arbitrary
+    // (promo, contact) tuples using a delivery-only token.
+    const t = signDeliveryClickToken(SECRET, "shared_id");
+    expect(verifyPromoClickToken(SECRET, "shared_id", null, t)).toBe(false);
+  });
+
+  it("I2: promo-flavor token with different contactId is rejected", () => {
+    const t = signPromoClickToken(SECRET, "promo_a", "contact_a");
+    expect(verifyPromoClickToken(SECRET, "promo_a", "contact_b", t)).toBe(false);
+  });
+
+  it("I3: promo-flavor token with null vs non-null contactId is rejected each way", () => {
+    // Common leak vector: URL stripped of `c=` param but token was
+    // signed with a contact. Must fail-closed.
+    const tWith = signPromoClickToken(SECRET, "promo_a", "contact_a");
+    expect(verifyPromoClickToken(SECRET, "promo_a", null, tWith)).toBe(false);
+    const tWithout = signPromoClickToken(SECRET, "promo_a", null);
+    expect(verifyPromoClickToken(SECRET, "promo_a", "contact_a", tWithout)).toBe(false);
+  });
+
+  it("I4: both signers refuse under a weak secret", () => {
+    expect(() => signDeliveryClickToken("short", "d")).toThrow();
+    expect(() => signPromoClickToken("short", "p", null)).toThrow();
+  });
+
+  it("I5: delivery + promo tokens round-trip via their own verifiers", () => {
+    const d = signDeliveryClickToken(SECRET, "delivery_x");
+    expect(verifyDeliveryClickToken(SECRET, "delivery_x", d)).toBe(true);
+    const p = signPromoClickToken(SECRET, "promo_x", "contact_x");
+    expect(verifyPromoClickToken(SECRET, "promo_x", "contact_x", p)).toBe(true);
+  });
+});
+
+// ── J. Click wrapper URL shape ────────────────────────────────────────────
+
+describe("Invariant J — Click wrapper URL shape", () => {
+  it("J1: delivery wrapper URL always includes /promotion/click/d/ prefix", () => {
+    const url = buildClickWrapperUrl("https://s.example.com", SECRET, "delivery_a");
+    expect(url.startsWith("https://s.example.com/promotion/click/d/delivery_a?t=")).toBe(true);
+  });
+
+  it("J2: invoice-page URL always includes /promotion/click/p/ prefix", () => {
+    const url = buildInvoicePageClickUrl("https://s.example.com", SECRET, "promo_a", "contact_a");
+    expect(url.startsWith("https://s.example.com/promotion/click/p/promo_a?")).toBe(true);
+  });
+
+  it("J3: invoice-page URL omits c= when contactId is null", () => {
+    // If we ever regress and always emit c=, the token would need to be
+    // re-signed against "" as the contactId to verify — this test
+    // catches that class of drift.
+    const url = buildInvoicePageClickUrl("https://s.example.com", SECRET, "promo_a", null);
+    const parsed = new URL(url);
+    expect(parsed.searchParams.has("c")).toBe(false);
+  });
+
+  it("J4: wrapper URLs verify against their own tokens", () => {
+    const d = buildClickWrapperUrl("https://s.example.com", SECRET, "delivery_z");
+    const dt = new URL(d).searchParams.get("t")!;
+    expect(verifyDeliveryClickToken(SECRET, "delivery_z", dt)).toBe(true);
+    const p = buildInvoicePageClickUrl("https://s.example.com", SECRET, "promo_z", "contact_z");
+    const pt = new URL(p).searchParams.get("t")!;
+    expect(verifyPromoClickToken(SECRET, "promo_z", "contact_z", pt)).toBe(true);
+  });
+});
+
+// ── K. Slug generator invariants ──────────────────────────────────────────
+
+describe("Invariant K — Slug generator", () => {
+  it("K1: never returns an empty string (fallback to 'promotion')", () => {
+    // Empty slugs would collide catastrophically at the DB unique
+    // constraint AND leave the /promotion/<slug> route ambiguous.
+    expect(slugifyTitle("")).toBe("promotion");
+    expect(slugifyTitle("   ")).toBe("promotion");
+    expect(slugifyTitle("!!!")).toBe("promotion");
+    expect(slugifyTitle("🎃🎃")).toBe("promotion");
+  });
+
+  it("K2: cap length at 64 chars — URL sanity", () => {
+    // Postgres text has no meaningful limit, but URLs longer than ~64
+    // chars in the slug get truncated in link previews and read as noise.
+    expect(slugifyTitle("a".repeat(500)).length).toBeLessThanOrEqual(64);
+  });
+
+  it("K3: output is URL-safe (lowercase kebab, ASCII, no leading/trailing dashes)", () => {
+    const s = slugifyTitle("  Fall! & Winter — Specials!!  ");
+    expect(s).toMatch(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/);
+  });
+
+  it("K4: is deterministic — same title → same slug (before uniqueness suffix)", () => {
+    expect(slugifyTitle("Fall Offers")).toBe(slugifyTitle("Fall Offers"));
+  });
+});

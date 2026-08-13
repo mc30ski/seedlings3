@@ -3,6 +3,38 @@ import { prisma } from "../db/prisma";
 import { getDownloadUrl } from "../lib/r2";
 import { services } from "../services";
 import { etFormatDate, etFormatDateOpts, etIcalLocalDateTime, etHourMinute, etMidnight, etToday, etAddDays } from "../lib/dates";
+import {
+  setContactOptOut,
+  recordClickAndResolve,
+  loadLandingPageForPublic,
+  incrementLandingPageViewCount,
+  loadPromotionSettings,
+} from "../services/promotions";
+
+// Simple in-memory sliding-window rate limiter for the unsubscribe
+// endpoints — 30 requests per minute per IP. Sufficient for a small SMB
+// scale and keeps the surface from being noisy. Not clustered (each
+// serverless instance has its own bucket) but that's acceptable for a
+// non-critical endpoint. Buckets self-clean.
+const optOutRateBuckets = new Map<string, number[]>();
+function optOutRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const windowStart = now - 60_000;
+  const stamps = (optOutRateBuckets.get(ip) ?? []).filter((t) => t >= windowStart);
+  if (stamps.length >= 30) {
+    optOutRateBuckets.set(ip, stamps);
+    return false;
+  }
+  stamps.push(now);
+  optOutRateBuckets.set(ip, stamps);
+  // Cheap GC — every ~1000 calls trim any bucket with no recent hits.
+  if (optOutRateBuckets.size > 5000) {
+    for (const [k, v] of optOutRateBuckets) {
+      if (v.every((t) => t < windowStart)) optOutRateBuckets.delete(k);
+    }
+  }
+  return true;
+}
 
 export default async function publicRoutes(app: FastifyInstance) {
   // Public activity feed — no auth required
@@ -650,6 +682,44 @@ export default async function publicRoutes(app: FastifyInstance) {
       select: { preferredPaymentMethod: true },
     });
 
+    // Grab the client's primary contact to drive promo display + opt-in
+    // affordance. The token doesn't identify a specific contact (any
+    // contact for the client can open the page), so we treat the primary
+    // as the "viewing identity" for opt-out semantics — that's who the
+    // invoice was addressed to.
+    const primaryContact = await prisma.clientContact.findFirst({
+      where: {
+        status: "ACTIVE",
+        isPrimary: true,
+        client: {
+          properties: { some: { jobs: { some: { occurrences: { some: { id: resolved.occurrenceId } } } } } },
+        },
+      },
+      select: {
+        id: true,
+        promoEmailOptedOut: true,
+        promoSmsOptedOut: true,
+        email: true,
+        phone: true,
+      },
+    });
+
+    // Promotions block — active promos targeting invoice_page + opt-in
+    // affordance state. Suppressed on expired-token views (this branch
+    // only runs when the token IS resolvable, so we're fine).
+    //
+    // The opt-in affordance no longer ships signed per-channel tokens
+    // — the pay-token itself already identifies the contact. Client
+    // just POSTs to /public/pay/:token/promo-opt-in with `{ channel }`
+    // and the server flips the flag on the token's primary contact.
+    // Much simpler than the prior HMAC dance.
+    const { loadInvoicePagePromos } = await import("../services/promotions");
+    const promos = await loadInvoicePagePromos({ contactId: primaryContact?.id ?? null });
+    const promoOptInAvailable = {
+      email: !!(primaryContact?.promoEmailOptedOut && primaryContact.email),
+      sms: !!(primaryContact?.promoSmsOptedOut && primaryContact.phone),
+    };
+
     return {
       occurrenceId: resolved.occurrenceId,
       amountDue: resolved.amountDue,
@@ -670,6 +740,15 @@ export default async function publicRoutes(app: FastifyInstance) {
       paymentMethods: resolvedMethods,
       socialLinks,
       expiresAt: resolved.expiresAt,
+      // Currently-active promotions targeting the invoice_page surface.
+      // Empty array when the primary contact is opted out of all
+      // dispatch channels, or when no eligible promo is running.
+      promos,
+      // Which channels the "Opt in to promotion offers" affordance
+      // should surface. True only when the primary contact is currently
+      // opted out of that channel AND has an address on file. Client
+      // POSTs to /pay/:token/promo-opt-in with { channel } to flip.
+      promoOptInAvailable,
     };
   });
 
@@ -843,5 +922,124 @@ export default async function publicRoutes(app: FastifyInstance) {
     });
 
     return { ok: true };
+  });
+
+  // ── Promotion opt-out ─────────────────────────────────────────────
+  // POST /public/promo/opt-out
+  //   body: { identifier: string }  — email or phone the client typed
+  //   Looks up matching ClientContacts by email (case-insensitive) or
+  //   normalized phone; flips BOTH channel flags on every match.
+  //   Silent-success semantic — same "ok" response whether we matched
+  //   anyone or not (don't leak customer-status). Rate limited.
+  app.post("/public/promo/opt-out", async (req: any, reply: any) => {
+    const ip = req.ip ?? "";
+    if (!optOutRateLimit(ip)) return reply.code(429).send({ error: "rate_limited" });
+    const identifier = String((req.body ?? {}).identifier ?? "").trim();
+    if (!identifier) return reply.code(400).send({ error: "identifier_required" });
+    const { optOutByIdentifier } = await import("../services/promotions");
+    await optOutByIdentifier({ identifier });
+    return { ok: true };
+  });
+
+  // ── Invoice-page opt-in shortcut ──────────────────────────────────
+  // POST /public/pay/:token/promo-opt-in
+  //   body: { channel: "email" | "sms" }
+  //   Uses the pay-token to identify the primary contact (no separate
+  //   signed opt-in token needed) and flips the requested channel from
+  //   opted-out → opted-in. Source: "client_self_invoice_page".
+  app.post("/public/pay/:token/promo-opt-in", async (req: any, reply: any) => {
+    const ip = req.ip ?? "";
+    if (!optOutRateLimit(ip)) return reply.code(429).send({ error: "rate_limited" });
+    const token = String(req.params.token || "");
+    const body = (req.body ?? {}) as { channel?: string };
+    if (body.channel !== "email" && body.channel !== "sms") {
+      return reply.code(400).send({ error: "invalid_channel" });
+    }
+    const resolved = await services.paymentRequests.resolveToken(token);
+    if (!resolved) return reply.code(404).send({ error: "not_found" });
+    // Find the primary contact on the client this token belongs to.
+    // Same lookup shape the pay-page resolve endpoint uses.
+    const primary = await prisma.clientContact.findFirst({
+      where: {
+        status: "ACTIVE",
+        isPrimary: true,
+        client: {
+          properties: { some: { jobs: { some: { occurrences: { some: { id: resolved.occurrenceId } } } } } },
+        },
+      },
+      select: { id: true },
+    });
+    if (!primary) return reply.code(404).send({ error: "no_primary_contact" });
+    await setContactOptOut({
+      contactId: primary.id,
+      channel: body.channel,
+      optedOut: false,
+      source: "client_self_invoice_page",
+      actorUserId: null,
+    });
+    return { ok: true };
+  });
+
+  // ── Click wrapper — logs then 302s to the resolved destination ─────
+  // Every CTA URL in outbound messages + the invoice-page CTA button
+  // is a wrapper URL of this shape. Two flavors:
+  //   /promotion/click/d/<deliveryId>?t=<hmac>       — piggyback path
+  //   /promotion/click/p/<promotionId>?c=<contactId>&t=<hmac>  — invoice-page path
+  // Anonymous fallback: forwarded/shared URLs whose HMAC doesn't verify
+  // still 302 to the destination, but the click log records an
+  // anonymousReason so the audit stays honest.
+  async function handleClick(
+    req: any,
+    reply: any,
+    flavor: "d" | "p",
+  ) {
+    if (!optOutRateLimit(String(req.ip ?? ""))) return reply.code(429).send({ error: "rate_limited" });
+    const primaryId = String(req.params.id ?? "");
+    if (!primaryId) return reply.code(400).send({ error: "missing_id" });
+    const token = String(req.query?.t ?? "");
+    const contactId = req.query?.c ? String(req.query.c) : null;
+    const ua = req.headers?.["user-agent"] ? String(req.headers["user-agent"]).slice(0, 500) : null;
+    const ip =
+      typeof req.headers?.["x-forwarded-for"] === "string"
+        ? String(req.headers["x-forwarded-for"]).split(",")[0].trim()
+        : (req.ip ?? null);
+    const result = await recordClickAndResolve({
+      flavor,
+      primaryId,
+      contactId,
+      token,
+      userAgent: ua,
+      ipAddress: ip,
+    });
+    if (!result.destinationUrl) {
+      // Misconfigured promotion — fall back to the base URL so the client
+      // doesn't land on a dead page. Never blocks the redirect.
+      const { baseUrl } = await loadPromotionSettings();
+      return reply.code(302).redirect(baseUrl);
+    }
+    return reply.code(302).redirect(result.destinationUrl);
+  }
+
+  app.get("/public/promotion/click/d/:id", async (req: any, reply: any) => {
+    return handleClick(req, reply, "d");
+  });
+  app.get("/public/promotion/click/p/:id", async (req: any, reply: any) => {
+    return handleClick(req, reply, "p");
+  });
+
+  // ── Public landing page render ─────────────────────────────────────
+  // Consumed by /promotion/<slug> Next.js page. Bumps viewCount on every
+  // hit (matches the spec's "how many people actually looked at the
+  // page" semantic — separate from click tracking).
+  app.get("/public/promotion/:slug", async (req: any, reply: any) => {
+    const slug = String(req.params.slug ?? "");
+    if (!slug) return reply.code(400).send({ error: "missing_slug" });
+    const page = await loadLandingPageForPublic(slug);
+    if (!page) return reply.code(404).send({ error: "not_found" });
+    // Bump view count fire-and-forget so the render isn't blocked by
+    // the increment. If it errors we swallow — analytics is
+    // non-critical relative to serving the page.
+    void incrementLandingPageViewCount(slug).catch(() => {});
+    return page;
   });
 }

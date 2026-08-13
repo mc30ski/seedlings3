@@ -45,9 +45,15 @@ export default async function previewRoutes(app: FastifyInstance) {
     const startStr = rangeStartStr < todayStr ? todayStr : rangeStartStr;
     const endStr = etAddDays(targetStr as EtDateKey, lookAhead + 1);
 
-    // Fetch claimable occurrences only in "suggest" mode
-    // When admin is running routes (userId param set), include estimates in suggestions
-    // When worker is running their own routes, exclude estimates (must be admin-assigned)
+    // Fetch claimable occurrences only in "suggest" mode.
+    // Estimates ARE included for both admin- and worker-mode planning —
+    // workers may need to visit an estimate on their route the same as
+    // any regular job. Light estimates (jobId null) carry their own
+    // estimateAddress / contactName fields; formatOcc below falls back
+    // to those when there's no linked Property. Estimates without any
+    // resolvable address get skipped from route optimization via the
+    // "No address" filter (dataIssues) — same treatment as jobs with
+    // missing property data.
     const isAdminRoute = !!targetUserIdParam;
     const claimable = mode === "suggest" ? await prisma.jobOccurrence.findMany({
       where: {
@@ -55,7 +61,6 @@ export default async function previewRoutes(app: FastifyInstance) {
         assignees: { none: {} },
         ...(isAdminRoute ? {} : { isAdminOnly: false }),
         isTentative: false,
-        ...(isAdminRoute ? {} : { workflow: { not: "ESTIMATE" } }),
         OR: [
           { startAt: { gte: etMidnight(startStr), lt: etMidnight(endStr) } },
           { startAt: null },
@@ -137,22 +142,49 @@ export default async function previewRoutes(app: FastifyInstance) {
 
     const formatOcc = (occ: any, type: "claimable" | "claimed") => {
       const prop = occ.job?.property;
-      const address = [prop?.street1, prop?.city, prop?.state].filter(Boolean).join(", ");
-      const clientName = prop?.client?.displayName ?? null;
+      // Estimate flag — true for both LIGHT estimates (jobId null,
+      // workflow=ESTIMATE) and FULL estimates (jobId set, but the
+      // occurrence itself is marked as an estimate). Both types get
+      // routed the same way — a stop is a stop — but the response tags
+      // them so the UI can badge them distinctly.
+      const isEstimate = occ.workflow === "ESTIMATE" || occ.isEstimate === true;
+      // Light-estimate fallback: no linked Property, so read address /
+      // display name from the occurrence's own estimateAddress /
+      // contactName fields. These are populated when a light estimate
+      // is created via the "quick estimate" flow (no full Property
+      // record yet).
+      const address = prop
+        ? [prop.street1, prop.city, prop.state].filter(Boolean).join(", ")
+        : (occ.estimateAddress ?? "");
+      const displayName = prop?.displayName
+        ?? (occ.contactName ? `Estimate — ${occ.contactName}` : (isEstimate ? "Estimate" : "Unknown"));
+      const cityFallback = prop?.city ?? extractCityFromAddress(occ.estimateAddress) ?? "Unknown";
+      const clientName = prop?.client?.displayName ?? occ.contactName ?? null;
       return {
         id: occ.id,
         jobId: occ.jobId,
         type,
-        property: prop?.displayName ?? "Unknown",
+        property: displayName,
         client: clientName,
         address: address || "No address",
-        city: prop?.city ?? "Unknown",
+        city: cityFallback,
         price: occ.price ?? occ.job?.defaultPrice ?? null,
         estimatedMinutes: occ.estimatedMinutes ?? occ.job?.estimatedMinutes ?? null,
         kind: occ.kind,
+        isEstimate,
         currentDate: occ.startAt ? etFormatDate(occ.startAt) : null,
       };
     };
+
+    // Cheap parse: "1234 Main St, Austin, TX 78701" → "Austin". Best-effort;
+    // returns null if the string isn't shaped like a US comma-separated address.
+    function extractCityFromAddress(addr: string | null | undefined): string | null {
+      if (!addr) return null;
+      const parts = addr.split(",").map((s) => s.trim()).filter(Boolean);
+      // Standard shape: [street, city, "STATE ZIP"] → city is at index 1.
+      if (parts.length >= 2) return parts[1];
+      return null;
+    }
 
     const allJobs = [
       ...claimed.map((o) => formatOcc(o, "claimed")),

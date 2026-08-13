@@ -1629,6 +1629,59 @@ export default async function workerRoutes(app: FastifyInstance) {
     return { notReady };
   });
 
+  // Property GPS hint — returns the most-recent known on-site GPS at the
+  // occurrence's property. Used by the "start with location?" dialog to
+  // decide whether the worker is currently near the job site (default to
+  // "record with location") or far from it (default to "record without").
+  // Falls back through startLat/completeLat across prior occurrences at
+  // the same property; returns null when the property has no history yet
+  // (new property) or the occurrence isn't tied to a property (light
+  // estimates with only an address string).
+  app.get("/occurrences/:id/site-hint", workerGuard, async (req: any) => {
+    const occurrenceId = String(req.params.id);
+    const occ = await prisma.jobOccurrence.findUnique({
+      where: { id: occurrenceId },
+      select: { job: { select: { propertyId: true } } },
+    });
+    const propertyId = occ?.job?.propertyId ?? null;
+    if (!propertyId) return { lat: null, lng: null };
+
+    // Look at recent completed occurrences for this property and pick the
+    // most recent that has any usable coordinate pair. Start coords are
+    // strictly preferred (they represent "arrival" at the site) but fall
+    // back to complete coords when no start coord was ever captured.
+    const priors = await prisma.jobOccurrence.findMany({
+      where: {
+        job: { propertyId },
+        OR: [
+          { startLat: { not: null } },
+          { completeLat: { not: null } },
+        ],
+      },
+      select: {
+        id: true,
+        startLat: true,
+        startLng: true,
+        completeLat: true,
+        completeLng: true,
+        completedAt: true,
+        startedAt: true,
+      },
+      orderBy: [{ completedAt: "desc" }, { startedAt: "desc" }],
+      take: 5,
+    });
+
+    for (const p of priors) {
+      if (p.startLat != null && p.startLng != null) {
+        return { lat: p.startLat, lng: p.startLng };
+      }
+      if (p.completeLat != null && p.completeLng != null) {
+        return { lat: p.completeLat, lng: p.completeLng };
+      }
+    }
+    return { lat: null, lng: null };
+  });
+
   app.post("/occurrences/:id/start", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const body = req.body || {};

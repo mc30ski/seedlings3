@@ -5,7 +5,10 @@ import { toActionString } from "./auditActions";
 export async function writeAudit(
   tx: PrismaClient | Prisma.TransactionClient,
   [scope, verb]: AuditTuple,
-  initiatingUserId: string, // Who invoked the action.
+  // Who invoked the action. `null` allowed for anonymous / client-self
+  // flows (e.g. clicking an unsubscribe link in an email — no signed-in
+  // Clerk session). AuditEvent.actorUserId is nullable in the schema.
+  initiatingUserId: string | null,
   info: unknown
 ) {
   return tx.auditEvent.create({

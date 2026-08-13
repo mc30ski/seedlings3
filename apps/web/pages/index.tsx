@@ -71,12 +71,13 @@ import WorkerCollectionsTab from "@/src/ui/tabs/WorkerCollectionsTab";
 import EquipmentUsageTab from "@/src/ui/tabs/EquipmentUsageTab";
 import AdminGroupsTab from "@/src/ui/tabs/AdminGroupsTab";
 import PricingTab from "@/src/ui/tabs/PricingTab";
+import PromotionsTab from "@/src/ui/tabs/PromotionsTab";
 
 import AppSplash from "@/src/ui/helpers/AppSplash";
 import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
 import NoRoleNotice from "@/src/ui/notices/NoRoleNotice";
 
-import InlineMessage, { publishInlineMessage } from "@/src/ui/components/InlineMessage";
+import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import NewJobSetupWorkflow from "@/src/ui/components/NewJobSetupWorkflow";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
@@ -108,6 +109,7 @@ import {
   FiRefreshCw,
   FiTruck,
   FiUserCheck,
+  FiSpeaker,
 } from "react-icons/fi";
 import { GrUserAdmin } from "react-icons/gr";
 import { AiOutlineTeam } from "react-icons/ai";
@@ -600,13 +602,13 @@ export default function HomePage() {
     if (!meLoading) void refreshMe();
   }, [topTab]);
 
+  // No-op wrapper — kept for backward compatibility with the 54 tab
+  // registration call sites. InlineMessage is now mounted ONCE at the
+  // app root (see _app.tsx). Rendering it here per-tab would
+  // double-toast every publish + reintroduce the fixed-positioning
+  // race that made toasts "float" during tab switches.
   function wrapWithInlineMessage(tab: ReactNode) {
-    return (
-      <>
-        <InlineMessage />
-        {tab}
-      </>
-    );
+    return tab;
   }
 
   const clientTabs: TabItem[] = [
@@ -1296,6 +1298,18 @@ export default function HomePage() {
           label: "Ledger",
           icon: FiBook,
           content: wrapWithInlineMessage(<BusinessExpensesTab />),
+          category: "Money",
+          categoryIcon: TfiMoney,
+        },
+        {
+          // Promotions — Super-only marketing campaigns. Piggyback on
+          // outgoing invoice comms (or blast manually), with full audit
+          // trail and per-contact opt-out. See PromotionsTab +
+          // services/promotions.ts.
+          value: "promotions",
+          label: "Promotions",
+          icon: FiSpeaker,
+          content: wrapWithInlineMessage(<PromotionsTab />),
           category: "Money",
           categoryIcon: TfiMoney,
         },
