@@ -3439,7 +3439,7 @@ async function seedVanityPageFixtures() {
       isDefault: false,
       title: "Properties in trusted hands",
       headline: "Properties in trusted hands",
-      body: "We manage residential and commercial properties throughout the Triangle. Weekly, biweekly, or monthly service plans. Same crew every visit — you know who's on your property.\n\nEdit this copy in the Vanity URLs tab.",
+      body: "We take care of residential and commercial properties throughout the Triangle. Whatever the job — one-time cleanup, ongoing mowing, seasonal work — we'll work around your schedule and treat your place like it's our own.\n\nWe also give local teens real work experience alongside our crew, so every visit helps train the next generation of neighborhood pros.\n\nEdit this copy in the Vanity URLs tab.",
       ctaText: "Get a free estimate",
       ctaUrl: "https://seedlings.team",
       enabled: true,

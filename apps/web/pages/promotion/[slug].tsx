@@ -331,7 +331,15 @@ function Notice({ title, children }: { title: string; children: React.ReactNode 
 // client bundle ships when the slug doesn't exist.
 export const getServerSideProps: GetServerSideProps<Props> = async (ctx) => {
   const slug = String(ctx.params?.slug ?? "");
-  const url = `${API_BASE || `http://${ctx.req.headers.host}`}/api/public/promotion/${encodeURIComponent(slug)}`;
+  // Base URL must be ABSOLUTE — server-side fetch() rejects relative
+  // URLs with a TypeError. In prod NEXT_PUBLIC_API_BASE_URL is set to
+  // "/api/_proxy" (relative) so callers on the CLIENT can hit the
+  // proxy path directly; SSR has to swap that for an absolute URL
+  // derived from the request Host + Proto.
+  const isAbsoluteApiBase = /^https?:\/\//i.test(API_BASE);
+  const proto = String(ctx.req.headers["x-forwarded-proto"] ?? "https").split(",")[0];
+  const origin = isAbsoluteApiBase ? API_BASE : `${proto}://${ctx.req.headers.host}${API_BASE}`;
+  const url = `${origin}/api/public/promotion/${encodeURIComponent(slug)}`;
   let page: LandingPageData | null = null;
   try {
     const res = await fetch(url, { headers: { accept: "application/json" } });
