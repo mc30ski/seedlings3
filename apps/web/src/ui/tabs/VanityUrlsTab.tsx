@@ -17,6 +17,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
+import { ExternalLink } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
@@ -210,9 +211,30 @@ export default function VanityUrlsTab() {
                   {p.viewCount} views
                 </Text>
               </VStack>
-              <Button size="xs" variant="outline" onClick={() => openEditor(p.id)}>
-                Edit
-              </Button>
+              <HStack gap={1} flexShrink={0}>
+                <Button
+                  size="xs"
+                  variant="outline"
+                  onClick={() => {
+                    // In dev, open on the current localhost origin so we
+                    // exercise the LOCAL server; only prod points at the
+                    // real seedlings.pro domain.
+                    const host = window.location.hostname;
+                    const isDev = host === "localhost" || host === "127.0.0.1";
+                    const target = isDev
+                      ? `${window.location.origin}/${p.slug}`
+                      : `https://${VANITY_PREVIEW_DOMAIN}/${p.slug}`;
+                    window.open(target, "_blank", "noopener,noreferrer");
+                  }}
+                  title="Open in a new tab"
+                >
+                  <ExternalLink size={12} />
+                  Open
+                </Button>
+                <Button size="xs" variant="outline" onClick={() => openEditor(p.id)}>
+                  Edit
+                </Button>
+              </HStack>
             </HStack>
           </Card.Body>
         </Card.Root>
@@ -404,20 +426,18 @@ function VanityEditor({
                   >
                     <Select.Control>
                       <Select.Trigger>
-                        <Select.ValueText />
+                        <Select.ValueText placeholder="Choose kind…" />
                       </Select.Trigger>
                     </Select.Control>
-                    <Portal>
-                      <Select.Positioner>
-                        <Select.Content>
-                          {kindCollection.items.map((item) => (
-                            <Select.Item key={item.value} item={item}>
-                              {item.label}
-                            </Select.Item>
-                          ))}
-                        </Select.Content>
-                      </Select.Positioner>
-                    </Portal>
+                    <Select.Positioner>
+                      <Select.Content>
+                        {kindCollection.items.map((item) => (
+                          <Select.Item key={item.value} item={item}>
+                            <Select.ItemText>{item.label}</Select.ItemText>
+                          </Select.Item>
+                        ))}
+                      </Select.Content>
+                    </Select.Positioner>
                   </Select.Root>
                 </Box>
 

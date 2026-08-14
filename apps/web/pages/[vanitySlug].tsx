@@ -163,14 +163,16 @@ export const getServerSideProps: GetServerSideProps<Props> = async (ctx) => {
   // to the default page — we only see a 404 when neither the requested
   // slug nor a default exists.
   //
-  // Same URL shape the promotion landing page uses:
-  //   • /api/ prefix is required (public routes are registered under
-  //     the /api prefix on the Fastify side)
-  //   • Falls back to `http://<request-host>` when NEXT_PUBLIC_API_BASE_URL
-  //     isn't set (Vercel-side SSR calls itself via the same domain the
-  //     visitor is on; the /api/ path then gets proxied through
-  //     pages/api/_proxy/[...path].ts to the real API)
-  const url = `${API_BASE || `http://${ctx.req.headers.host}`}/api/public/vanity/${encodeURIComponent(rawSlug)}`;
+  // Base URL must be ABSOLUTE — server-side fetch() rejects relative
+  // URLs with a TypeError. In prod NEXT_PUBLIC_API_BASE_URL is set to
+  // "/api/_proxy" (relative) so callers on the CLIENT can hit the proxy
+  // path directly; SSR has to swap that for an absolute URL derived
+  // from the request Host + Proto. In dev the env is a full http://
+  // URL, so we use it as-is.
+  const isAbsoluteApiBase = /^https?:\/\//i.test(API_BASE);
+  const proto = String(ctx.req.headers["x-forwarded-proto"] ?? "https").split(",")[0];
+  const origin = isAbsoluteApiBase ? API_BASE : `${proto}://${ctx.req.headers.host}${API_BASE}`;
+  const url = `${origin}/api/public/vanity/${encodeURIComponent(rawSlug)}`;
   let page: VanityPageData | null = null;
   try {
     const res = await fetch(url, {
