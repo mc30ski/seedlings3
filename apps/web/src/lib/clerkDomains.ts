@@ -35,3 +35,52 @@ export function isSatelliteHost(hostname: string): boolean {
 // when it detects it's rendering on a satellite (Clerk rejects
 // signIn.create() on satellite domains — auth MUST happen on primary).
 export const PRIMARY_SIGN_IN_URL = `https://${PRIMARY_HOSTNAME}/sign-in`;
+
+// Full list of hostnames the app is served on, including www variants.
+// Used by resolvePostSignInRedirect below to allowlist the redirect_url
+// query param — prevents an open-redirect vulnerability where a malicious
+// link like `/sign-in?redirect_url=https://evil.com` would bounce users
+// to an attacker-controlled site immediately after they authenticate.
+const ALL_APP_HOSTNAMES = new Set<string>([
+  PRIMARY_HOSTNAME,
+  `www.${PRIMARY_HOSTNAME}`,
+  ...Array.from(SATELLITE_HOSTNAMES).flatMap((h) => [h, `www.${h}`]),
+]);
+
+// Resolve where to send the user after a successful sign-in.
+//
+// Priority:
+//   1. `redirect_url` query param — used when the sign-in flow was
+//      initiated from a satellite (satellite /sign-in redirects to
+//      primary with `?redirect_url=<satellite-URL>` so we can bounce
+//      the user back to their original context).
+//   2. Fallback to "/" (the same-origin app root).
+//
+// The redirect_url is allowlisted against our own hostnames so an
+// attacker can't craft `/sign-in?redirect_url=https://evil.com` and
+// piggyback our auth flow to phish a signed-in user. Any host outside
+// ALL_APP_HOSTNAMES falls back to "/". Malformed URLs also fall back.
+//
+// Returns a same-origin relative path ("/") when the redirect target
+// is the current origin, and an absolute URL otherwise — this way the
+// browser only initiates a cross-origin navigation when we're truly
+// bouncing back to a satellite from the primary.
+export function resolvePostSignInRedirect(): string {
+  if (typeof window === "undefined") return "/";
+  const params = new URLSearchParams(window.location.search);
+  const raw = params.get("redirect_url");
+  if (!raw) return "/";
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return "/";
+    if (!ALL_APP_HOSTNAMES.has(parsed.hostname)) return "/";
+    // Same-origin → strip the origin so we do an in-app navigation
+    // (preserves any middleware / router state the SPA depends on).
+    if (parsed.origin === window.location.origin) {
+      return parsed.pathname + parsed.search + parsed.hash || "/";
+    }
+    return parsed.toString();
+  } catch {
+    return "/";
+  }
+}

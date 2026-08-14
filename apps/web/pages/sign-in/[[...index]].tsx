@@ -13,7 +13,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { ArrowLeft } from "lucide-react";
-import { isSatelliteHost, PRIMARY_SIGN_IN_URL } from "@/src/lib/clerkDomains";
+import { isSatelliteHost, PRIMARY_SIGN_IN_URL, resolvePostSignInRedirect } from "@/src/lib/clerkDomains";
 
 /**
  * Unified passwordless sign-in / sign-up page.
@@ -249,7 +249,7 @@ function SignInForm() {
         });
         if (result.status === "complete") {
           await setActiveSignIn!({ session: result.createdSessionId });
-          window.location.href = "/";
+          window.location.href = resolvePostSignInRedirect();
           return;
         }
         // Sign-in only has email_code as a factor here; anything other
@@ -265,7 +265,7 @@ function SignInForm() {
         });
         if (result.status === "complete") {
           await setActiveSignUp!({ session: result.createdSessionId });
-          window.location.href = "/";
+          window.location.href = resolvePostSignInRedirect();
           return;
         }
         // Email verified but the signup isn't complete — almost always
@@ -287,7 +287,7 @@ function SignInForm() {
             });
             if (updated.status === "complete") {
               await setActiveSignUp!({ session: updated.createdSessionId });
-              window.location.href = "/";
+              window.location.href = resolvePostSignInRedirect();
               return;
             }
             // Still incomplete — fall through to the name step in case
@@ -346,7 +346,7 @@ function SignInForm() {
       });
       if (result.status === "complete") {
         await setActiveSignIn!({ session: result.createdSessionId });
-        window.location.href = "/";
+        window.location.href = resolvePostSignInRedirect();
         return;
       }
       setError(
@@ -404,7 +404,7 @@ function SignInForm() {
       });
       if (updated.status === "complete") {
         await setActiveSignUp!({ session: updated.createdSessionId });
-        window.location.href = "/";
+        window.location.href = resolvePostSignInRedirect();
         return;
       }
       const missingFields: string[] = (updated as any).missingFields ?? [];
