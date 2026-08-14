@@ -261,18 +261,12 @@ function PaymentPageInner() {
   // available method when nothing is flagged preferred. This prevents a prior
   // "Other" self-report from sticking forever as the auto-selected choice
   // and overriding the business's actual preferred methods.
-  useEffect(() => {
-    if (selectedMethod) return;
-    const list = data?.paymentMethods ?? [];
-    if (list.length === 0) return;
-    const preferred = data?.preferredMethod;
-    const savedIsBusinessPreferred =
-      preferred && list.some((m) => m.key === preferred && m.preferred);
-    const target = savedIsBusinessPreferred
-      ? preferred
-      : (list.find((m) => m.preferred) ?? list[0]).key;
-    if (target) setSelectedMethod(target);
-  }, [data?.preferredMethod, data?.paymentMethods, selectedMethod]);
+  // No auto-selection — all payment method cards start collapsed and
+  // the client explicitly picks one. Preferred / Used-last-time badges
+  // still visually communicate which method the business or client
+  // prefers, without forcing an expansion the client has to close.
+  // Removed the previous first-load auto-select effect per operator
+  // request (accordion UX cleaner when the whole list starts collapsed).
 
   const selectedLabel = useMemo(
     () => orderedMethods.find((m) => m.key === selectedMethod)?.label ?? null,
@@ -420,25 +414,34 @@ function PaymentPageInner() {
   return (
     <PageShell>
       <VStack gap={5} align="stretch">
-        <Box>
-          <SectionHeader>Invoice for</SectionHeader>
-          <Card.Root variant="outline">
-            <Card.Body p={3}>
-              <VStack gap={1} align="stretch">
-                <Text fontSize="md" fontWeight="semibold" lineClamp={2}>{data.propertyLabel}</Text>
-                {data.propertyAddress && data.propertyAddress !== data.propertyLabel && (
-                  <Text fontSize="xs" color="fg.muted">{data.propertyAddress}</Text>
-                )}
-                {data.serviceDate && (
-                  <Text fontSize="xs" color="fg.muted">Service: {fmtInvoiceDate(data.serviceDate)}</Text>
-                )}
-                <HStack mt={2} align="baseline" justify="space-between">
-                  <Text fontSize="xs" color="fg.muted">Total due</Text>
-                  <Text fontSize="2xl" fontWeight="bold" color="teal.700">{dollar(data.amountDue)}</Text>
-                </HStack>
-              </VStack>
-            </Card.Body>
-          </Card.Root>
+        {/* pt gives a bit of breathing room at the very top of the
+            page so "Invoice" doesn't feel squeezed against whatever
+            precedes it (page shell padding, banner, etc.). */}
+        <Box pt={3}>
+          <SectionHeader>Invoice</SectionHeader>
+          <Box
+            p={4}
+            bg="gray.100"
+            borderWidth="1px"
+            borderColor="gray.300"
+            borderLeftWidth="4px"
+            borderLeftColor="gray.500"
+            rounded="lg"
+          >
+            <VStack gap={1} align="stretch">
+              <Text fontSize="md" fontWeight="semibold" lineClamp={2}>{data.propertyLabel}</Text>
+              {data.propertyAddress && data.propertyAddress !== data.propertyLabel && (
+                <Text fontSize="xs" color="fg.muted">{data.propertyAddress}</Text>
+              )}
+              {data.serviceDate && (
+                <Text fontSize="sm" color="fg.muted">{fmtInvoiceDate(data.serviceDate)}</Text>
+              )}
+              <HStack mt={2} align="baseline" justify="space-between">
+                <Text fontSize="sm" color="fg.muted">Total due</Text>
+                <Text fontSize="2xl" fontWeight="bold" color="teal.700">{dollar(data.amountDue)}</Text>
+              </HStack>
+            </VStack>
+          </Box>
         </Box>
 
         {data.photos.length > 0 && (
@@ -499,7 +502,21 @@ function PaymentPageInner() {
           </Box>
         ) : (
           <Box>
-            <SectionHeader>How do you intend to pay?</SectionHeader>
+            {/* Promotions section — placed BEFORE the payment method
+                picker so the offer is visible right where a client is
+                deciding what to do next. Moved up per operator request:
+                previously below the pay button, which buried it on
+                mobile. Only renders when a promo is active AND the
+                primary contact isn't fully opted out.
+                mb matches the outer VStack gap so the space between
+                Offers and Payment sections matches the space between
+                every other pair of top-level sections. */}
+            {data.promos && data.promos.length > 0 && (
+              <Box mb={5}>
+                <PromoDisplaySection promos={data.promos} />
+              </Box>
+            )}
+            <SectionHeader>Payment</SectionHeader>
             <Box
               mb={3}
               p={3}
@@ -510,8 +527,8 @@ function PaymentPageInner() {
               borderLeftColor="orange.500"
               borderRadius="md"
             >
-              <Text fontSize="md" fontWeight="bold" color="orange.900">
-                Selecting a payment method below does NOT pay your bill automatically. It just helps us find your payment.
+              <Text fontSize="sm" fontWeight="bold" color="orange.900">
+                Selecting a payment method does NOT pay your bill automatically. It just helps us find your payment.
               </Text>
             </Box>
             {selfReportError && (
@@ -549,7 +566,13 @@ function PaymentPageInner() {
                     preferred={m.preferred}
                     usedLastTime={data.preferredMethod === m.key}
                     selected={selectedMethod === m.key}
-                    onSelect={() => setSelectedMethod(m.key)}
+                    // Toggle behavior: tap the already-selected card
+                    // to collapse it (accordion pattern). Setting to
+                    // null won't re-fire the auto-select effect thanks
+                    // to didAutoSelectRef above.
+                    onSelect={() =>
+                      setSelectedMethod(selectedMethod === m.key ? null : m.key)
+                    }
                     amountDue={data.amountDue}
                     confirmButtonLabel={confirmButtonLabel}
                     cardRef={selectedMethod === m.key ? selectedCardRef : undefined}
@@ -585,14 +608,9 @@ function PaymentPageInner() {
             </VStack>
           </Box>
         )}
-        {/* Promotions section — below the pay button on purpose so it
-            doesn't push the payment action off-screen on mobile. Only
-            renders when the primary contact isn't opted out AND a promo
-            is active. When they ARE opted out, the OptInAffordance below
-            shows the "Turn back on" affordance instead. */}
-        {data.promos && data.promos.length > 0 && (
-          <PromoDisplaySection promos={data.promos} />
-        )}
+        {/* Promotions section moved ABOVE the payment method picker —
+            was previously here, rendered below the pay button. See the
+            new placement inside the payment-methods branch above. */}
         {/* Promo re-opt-in affordance intentionally removed — the
             /public/pay/:token/promo-opt-in endpoint is retired for
             TCPA/CAN-SPAM compliance (pay tokens can be forwarded,
@@ -653,8 +671,13 @@ function PaymentPageInner() {
  *  distinct from the payment flow above. Multiple promos stack. */
 function PromoDisplaySection({ promos }: { promos: InvoicePagePromo[] }) {
   return (
-    <VStack align="stretch" gap={3}>
-      <SectionHeader>Special offers</SectionHeader>
+    // Same shell as the Payment section: header sits on its own with
+    // SectionHeader's mb={2}, an inner VStack handles the gap between
+    // multiple promo cards. Prevents the section-header→first-card gap
+    // from being LARGER than the header→first-thing gap on Payment.
+    <Box>
+      <SectionHeader>Offers</SectionHeader>
+      <VStack align="stretch" gap={3}>
       {promos.map((p) => (
         <Box
           key={p.id}
@@ -667,7 +690,7 @@ function PromoDisplaySection({ promos }: { promos: InvoicePagePromo[] }) {
           rounded="lg"
         >
           {p.headline && (
-            <Text fontSize="md" fontWeight="bold" color="blue.900" mb={2}>
+            <Text fontSize="sm" fontWeight="bold" color="blue.900" mb={2}>
               {p.headline}
             </Text>
           )}
@@ -688,7 +711,8 @@ function PromoDisplaySection({ promos }: { promos: InvoicePagePromo[] }) {
           )}
         </Box>
       ))}
-    </VStack>
+      </VStack>
+    </Box>
   );
 }
 
@@ -1032,52 +1056,58 @@ function PaymentMethodCard({
             </HStack>
           </HStack>
 
-          {/* Instructions text — taxonomy-driven, always shown so the client
-              can compare methods before committing. Falls back to a generic
-              hint when the method has none configured. */}
-          <Text fontSize="xs" color="fg.muted">
-            {config.instructions ?? `Pay $${amountDue.toFixed(2)} via ${config.label}.`}
-          </Text>
+          {/* Accordion-style expansion — instructions + CTA button
+              only render for the SELECTED card. Collapsed cards keep
+              just the header row (radio + label + badges) so the list
+              stays compact. Client comparison happens via the labels
+              + Preferred/Used-last-time badges in the collapsed view;
+              instructions appear the moment they pick one to look at. */}
+          {selected && (
+            <>
+              <Text fontSize="xs" color="fg.muted">
+                {config.instructions ?? `Pay $${amountDue.toFixed(2)} via ${config.label}.`}
+              </Text>
 
-          {/* Big orange CTA — same button for two flavors:
-              (1) `deepLink` set → open the app (Venmo / Cash App).
-              (2) `payToTarget` set but no deep link → open the manual-pay
-                  modal (Zelle / mailing a check). Both flavors look
-                  identical to the client; the difference is what happens
-                  on tap. Methods with neither hide the button. */}
-          {(hasDeepLink || hasManualPay) && (
-            <Button
-              size="md"
-              variant={selected ? "solid" : "outline"}
-              colorPalette="teal"
-              w="full"
-              h="11"
-              fontSize="md"
-              fontWeight="bold"
-              boxShadow={selected ? "md" : undefined}
-              bg={selected ? "#F97316" : undefined}
-              color={selected ? "white" : undefined}
-              _hover={selected ? { bg: "#EA580C" } : undefined}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (!selected) onSelect();
-                // Record the reconciliation hint BEFORE the redirect —
-                // sendBeacon in the parent handles the async delivery
-                // guarantees, but we still want to fire before nav so
-                // the beacon has time to queue.
-                onIntent(config.key);
-                if (hasDeepLink) {
-                  window.location.href = config.deepLink!;
-                } else {
-                  setManualPayOpen(true);
-                }
-              }}
-            >
-              <ExternalLink size={18} />{" "}
-              {hasDeepLink
-                ? `Open ${config.label}`
-                : `Pay with ${config.label}`}
-            </Button>
+              {/* Big orange CTA — same button for two flavors:
+                  (1) `deepLink` set → open the app (Venmo / Cash App).
+                  (2) `payToTarget` set but no deep link → open the manual-pay
+                      modal (Zelle / mailing a check). Both flavors look
+                      identical to the client; the difference is what happens
+                      on tap. Methods with neither hide the button. */}
+              {(hasDeepLink || hasManualPay) && (
+                <Button
+                  size="md"
+                  variant="solid"
+                  colorPalette="teal"
+                  w="full"
+                  h="11"
+                  fontSize="md"
+                  fontWeight="bold"
+                  boxShadow="md"
+                  bg="#F97316"
+                  color="white"
+                  _hover={{ bg: "#EA580C" }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    // Record the reconciliation hint BEFORE the redirect —
+                    // sendBeacon in the parent handles the async delivery
+                    // guarantees, but we still want to fire before nav so
+                    // the beacon has time to queue.
+                    onIntent(config.key);
+                    if (hasDeepLink) {
+                      window.location.href = config.deepLink!;
+                    } else {
+                      setManualPayOpen(true);
+                    }
+                  }}
+                >
+                  <ExternalLink size={18} />{" "}
+                  {hasDeepLink
+                    ? `Open ${config.label}`
+                    : `Pay with ${config.label}`}
+                </Button>
+              )}
+            </>
           )}
 
           {/* Manual-pay modal — only mounted when this method has
@@ -1472,20 +1502,21 @@ function AccountNudge({ token }: { token: string }) {
     // Send to Clerk sign-up. The /sign-in route handles new accounts too.
     window.location.href = "/sign-in";
   };
+  // mt bumps the visual separator line down a bit so it doesn't
+  // feel too close to whatever content preceded it.
   return (
-    <Box borderTopWidth="1px" borderColor="gray.200" pt={3}>
-      <Text fontSize="sm" fontWeight="semibold" mb={1}>
-        See your full service history
-      </Text>
+    <Box borderTopWidth="1px" borderColor="gray.200" pt={3} mt={4}>
+      <SectionHeader>Account</SectionHeader>
       <Text fontSize="xs" color="fg.muted" mb={2}>
         Your free account lets you see:
       </Text>
       <VStack align="start" gap={0.5} fontSize="xs" mb={3}>
+        <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>Upcoming visits &amp; full service history</Text></HStack>
+        <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>Reschedule or skip visits</Text></HStack>
+        <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>Photos from every visit</Text></HStack>
         <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>Track payment status</Text></HStack>
-        <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>Photos from visits</Text></HStack>
-        <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>Upcoming services</Text></HStack>
-        <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>Reschedule your services</Text></HStack>
-        <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>Receipts</Text></HStack>
+        <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>View &amp; download receipts</Text></HStack>
+        <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>Statements for tax time</Text></HStack>
       </VStack>
       {/* Single CTA — passwordless auth means new and returning clients do
           the identical step (enter email → verification code), so a separate

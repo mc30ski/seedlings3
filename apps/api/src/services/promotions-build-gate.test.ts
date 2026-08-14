@@ -59,6 +59,10 @@ import {
   verifyPromoClickToken,
   buildClickWrapperUrl,
   buildInvoicePageClickUrl,
+  buildShortWrapperUrl,
+  buildAnonymousShortUrl,
+  isValidShortSlugFormat,
+  generateShortCode,
 } from "./promotions";
 
 const SECRET = "test-secret-with-at-least-32-characters-of-length";
@@ -564,5 +568,102 @@ describe("Invariant N — Wrapper URL prefix", () => {
     const purl = buildInvoicePageClickUrl("https://s.example.com", SECRET, "p1", null);
     expect(durl.startsWith("https://s.example.com/promotion/")).toBe(false);
     expect(purl.startsWith("https://s.example.com/promotion/")).toBe(false);
+  });
+});
+
+// ── O. Short URL builders — /mo/<slug>/<code> shape ─────────────────
+// The short URL scheme is the opt-in modern format:
+//   Personal:  seedlings.pro/mo/<slug>/<code>
+//   Anonymous: seedlings.pro/mo/<slug>
+// The route pattern is `/mo/:slug/:code?` — no `/api/public/` prefix
+// (routed directly from the browser to the API's public endpoint via
+// the Vercel rewrite). If a regression puts the /api/ prefix back
+// we'd double-prefix in the URL and 404 real recipients.
+
+describe("Invariant O — Short URL builders", () => {
+  it("O1: per-recipient short URL has the exact /mo/<slug>/<code> shape", () => {
+    const url = buildShortWrapperUrl("https://seedlings.pro", "fall-2026", "abcd");
+    expect(url).toBe("https://seedlings.pro/mo/fall-2026/abcd");
+  });
+
+  it("O2: anonymous short URL has the exact /mo/<slug> shape (no code)", () => {
+    const url = buildAnonymousShortUrl("https://seedlings.pro", "fall-2026");
+    expect(url).toBe("https://seedlings.pro/mo/fall-2026");
+  });
+
+  it("O3: short URLs do NOT include /api/public/ prefix (route lives at /mo/)", () => {
+    // Belt-and-suspenders: the /mo/ route is registered under /api on
+    // the Fastify side but reached via Vercel rewrite so the browser
+    // never sees /api/. Any accidental /api/ in the builder would
+    // 404 real recipients.
+    const personal = buildShortWrapperUrl("https://s.example.com", "s", "c");
+    const anon = buildAnonymousShortUrl("https://s.example.com", "s");
+    expect(personal).not.toContain("/api/");
+    expect(anon).not.toContain("/api/");
+  });
+
+  it("O4: short URLs strip a trailing slash on the base URL", () => {
+    const p = buildShortWrapperUrl("https://s.example.com/", "s", "c");
+    const a = buildAnonymousShortUrl("https://s.example.com/", "s");
+    expect(p).toBe("https://s.example.com/mo/s/c");
+    expect(a).toBe("https://s.example.com/mo/s");
+  });
+
+  it("O5: short URLs URL-encode slug + code (defensive — validation should prevent bad chars)", () => {
+    // Slug validation blocks anything but [a-z0-9-] so encoding is a
+    // no-op in practice. But if a bad row slipped in (manual DB edit,
+    // regression in validation), encoding prevents URL-injection.
+    const url = buildShortWrapperUrl("https://s.example.com", "with space", "with/slash");
+    expect(url).toContain("with%20space");
+    expect(url).toContain("with%2Fslash");
+  });
+});
+
+// ── P. Short slug format validation ─────────────────────────────────
+describe("Invariant P — isValidShortSlugFormat", () => {
+  it("P1: accepts kebab-case lowercase + digits", () => {
+    expect(isValidShortSlugFormat("perties")).toBe(true);
+    expect(isValidShortSlugFormat("fall-offer-2026")).toBe(true);
+    expect(isValidShortSlugFormat("book2")).toBe(true);
+  });
+
+  it("P2: rejects uppercase / leading dash / trailing dash / double dash", () => {
+    expect(isValidShortSlugFormat("Perties")).toBe(false);
+    expect(isValidShortSlugFormat("-perties")).toBe(false);
+    expect(isValidShortSlugFormat("perties-")).toBe(false);
+    expect(isValidShortSlugFormat("fall--offer")).toBe(false);
+  });
+
+  it("P3: caps length at 40 chars", () => {
+    expect(isValidShortSlugFormat("a".repeat(40))).toBe(true);
+    expect(isValidShortSlugFormat("a".repeat(41))).toBe(false);
+  });
+
+  it("P4: rejects empty + special chars + non-ASCII", () => {
+    expect(isValidShortSlugFormat("")).toBe(false);
+    expect(isValidShortSlugFormat("perties!")).toBe(false);
+    expect(isValidShortSlugFormat("naïve")).toBe(false);
+  });
+});
+
+// ── Q. Short code alphabet ──────────────────────────────────────────
+describe("Invariant Q — generateShortCode alphabet + length", () => {
+  it("Q1: emits exactly 4 chars", () => {
+    for (let i = 0; i < 20; i++) {
+      expect(generateShortCode()).toHaveLength(4);
+    }
+  });
+
+  it("Q2: uses only unambiguous lowercase alphanumeric (excludes 0/o/1/l/i)", () => {
+    // Confusable chars would burn operator brain cycles reading a
+    // delivery log ("was that a zero or an oh?"). Locked in the
+    // alphabet constant.
+    const forbidden = new Set(["0", "o", "1", "l", "i"]);
+    const allowed = /^[a-z0-9]+$/;
+    for (let i = 0; i < 200; i++) {
+      const code = generateShortCode();
+      expect(code).toMatch(allowed);
+      for (const ch of code) expect(forbidden.has(ch)).toBe(false);
+    }
   });
 });

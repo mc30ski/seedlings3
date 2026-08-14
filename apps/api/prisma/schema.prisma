@@ -42,6 +42,7 @@ enum AuditScope {
   POLICY_SIGNATURE
   PROMOTION
   PROMO_OPT
+  VANITY
   // add more scopes as you expand the schema
 }
 
@@ -399,6 +400,11 @@ model User {
   promotionsClosed  Promotion[] @relation("PromotionCloser")
   promotionLandingPagesCreated PromotionLandingPage[] @relation("PromotionLandingCreator")
   promotionLandingPagesUpdated PromotionLandingPage[] @relation("PromotionLandingUpdater")
+  // Vanity URL audit-actor back-relations — SetNull on the forward
+  // side (see VanityPage) so hard-deleting a Super doesn't destroy
+  // audit history.
+  vanityPagesCreated VanityPage[] @relation("VanityPageCreator")
+  vanityPagesUpdated VanityPage[] @relation("VanityPageUpdater")
 }
 
 model NotificationTemplate {
@@ -1826,6 +1832,25 @@ model Promotion {
   // starts, cleared when it finishes (or times out after 5 minutes).
   lastDispatchStartedAt DateTime?
 
+  // Short URL slug — the branded segment of the promo click wrapper URL.
+  // When set: outbound URLs are `<baseDomain>/mo/<shortSlug>/<code>` for
+  // per-recipient tracking and `<baseDomain>/mo/<shortSlug>` for
+  // anonymous sharing (lawn signs / social). When null: the older long
+  // wrapper (`/api/public/promotion/click/d/<id>?t=<hmac>`) is used
+  // instead. This gives operators an opt-in migration path — existing
+  // campaigns keep working, new ones can adopt the branded shape.
+  //
+  // Locked once status transitions out of DRAFT (same lock semantics
+  // as PromotionLandingPage.slug). Kebab-case + digits, ≤40 chars,
+  // enforced at the service layer.
+  shortSlug String? @unique
+
+  // Per-campaign domain override for outbound URLs. When set, must be
+  // a member of the ALLOWED_DOMAINS setting. When null, falls through
+  // to the PAYMENT_REQUEST_BASE_URL primary. Feeds both the short URL
+  // builder and the (existing) long wrapper URL builder.
+  baseDomain String?
+
   createdAt    DateTime @default(now())
   createdById  String?
   createdBy    User?    @relation("PromotionCreator", fields: [createdById], references: [id], onDelete: SetNull)
@@ -1899,10 +1924,25 @@ model PromotionDelivery {
   // token. Purely optional; forwarded/anonymous clicks leave this null.
   clicks PromotionClick[]
 
+  // Short URL per-recipient code — the last segment of the branded
+  // wrapper URL `<baseDomain>/mo/<shortSlug>/<code>`. 4 lowercase
+  // alphanumeric chars, generated per delivery with collision retry.
+  // Unique per promotion (a code can be reused across promotions
+  // — the URL prefix disambiguates). Nullable so existing deliveries
+  // without a shortCode fall back to the long-form wrapper.
+  shortCode String?
+
   // Reporting indexes intentionally deferred until PromotionDelivery
   // grows past ~10k rows (see MVP-1 spec). Add:
   //   @@index([promotionId, contactId, createdAt])  ← cooldown lookup
   //   @@index([clientId, createdAt])                ← per-client history
+
+  // Enforces "code unique within a campaign" — a click to
+  // /mo/<slug>/<code> resolves to exactly one delivery. Compound so
+  // different campaigns can share the same code (e.g. "abcd") without
+  // collision, keeping the code space per-promotion at ~1.7M
+  // combinations rather than a shared global namespace.
+  @@unique([promotionId, shortCode])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3211,4 +3251,76 @@ model PolicyReadingProgress {
 
   @@index([userId, policyDocumentVersionId])
   @@index([policySignatureId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Vanity URLs — configurable branded shortcuts served ONLY on satellite
+// marketing domains (currently seedlings.pro; hardcoded in the route layer
+// today, moves to an ALLOWED_DOMAINS setting when Phase 2 of the promo
+// multi-domain work lands). Two kinds:
+//
+//   LANDING  — renders a marketing page in-app with headline, body,
+//              optional image, and a CTA button. Same shape as the
+//              promotion landing page items but standalone (not tied to
+//              a Promotion).
+//   REDIRECT — 302s to a configured URL. Effectively a per-slug URL
+//              shortener owned by the operator (Calendly booking, phone
+//              tel: link, external form, etc.).
+//
+// isDefault flag marks ONE landing page as the fallback rendered when a
+// visitor hits a slug that doesn't exist. Only kind=LANDING can be
+// default (redirect-as-default would loop the visitor into a bounce for
+// every 404). Enforced in the service, not by DB constraint.
+//
+// Reserved slugs (blocked at editor + defense at route): sign-in, opt-out,
+// pay, promotion, api, mo, _next, favicon.ico, robots.txt, sitemap.xml,
+// vanity, admin, super. See services/vanityPages.ts RESERVED_SLUGS.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum VanityPageKind {
+  LANDING
+  REDIRECT
+}
+
+model VanityPage {
+  id   String @id @default(cuid())
+  slug String @unique // "perties", "book", "fessional" — kebab-case, ≤40 chars
+
+  kind      VanityPageKind @default(LANDING)
+  isDefault Boolean        @default(false) // fallback for unknown-slug visitors
+
+  // Landing fields (used when kind=LANDING; ignored for REDIRECT). Empty
+  // strings when the operator hasn't filled a value — the frontend
+  // handles empty gracefully.
+  title    String @default("") // browser tab
+  headline String @default("") // hero h1
+  body     String @default("") @db.Text // markdown, main content
+
+  ctaText    String? // button label, e.g. "Get a free estimate"
+  ctaUrl     String? // button destination — external URL or in-app path
+  imageR2Key String? // hero image; served via presigned R2 URL
+
+  // Redirect field (used when kind=REDIRECT). Required at save time when
+  // kind=REDIRECT (service-layer validation).
+  redirectUrl String?
+
+  // Enabled toggle — flip false to hide without deleting. Disabled rows
+  // are treated as "not found" by the public route (falls through to the
+  // default page).
+  enabled Boolean @default(true)
+
+  // View analytics — fire-and-forget increment on every public render.
+  // No per-day breakdown yet; add if needed.
+  viewCount Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  createdById String?
+  updatedById String?
+  createdBy   User?   @relation("VanityPageCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy   User?   @relation("VanityPageUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@index([enabled, slug])
+  @@index([isDefault])
 }

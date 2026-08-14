@@ -214,6 +214,7 @@ const SETTING_SECTIONS: Record<string, string> = {
   PROMOTION_OPT_OUT_FOOTER_EMAIL: "promotions",
   PROMOTION_OPT_OUT_FOOTER_SMS: "promotions",
   PROMOTION_HMAC_SECRET: "promotions",
+  ALLOWED_DOMAINS: "promotions",
   // Integrations
   WEATHER_API_KEY: "integrations",
   DOCUMENT_SYNC_ENABLED: "integrations",
@@ -2387,6 +2388,20 @@ async function seedDatabase() {
     // — first call to loadPromotionSettings() persists a random 32-byte
     // secret automatically.
     { key: "PROMOTION_HMAC_SECRET", value: "dev-only-promo-hmac-secret-please-rotate-in-production-64chars-min", description: "HMAC secret used to sign promotion click-tracking URLs (server-only — never leaves this DB). Auto-generated on first use in production if this row is missing or empty; you should NOT need to set it manually. Rotate here if you have specific reason to (leak suspicion, key-hygiene rotation) — a rotation invalidates every in-flight promo link." },
+    // Full list of domains this Vercel project serves. Two roles:
+    //   1. Feeds the Promotion editor's per-campaign domain dropdown
+    //      so operators pick from a known-good list instead of typing
+    //      free-text (which could get out of sync with Vercel).
+    //   2. Feeds the Host-header allowlist on public endpoints so an
+    //      attacker sending a spoofed Host can't trick the server into
+    //      generating redirects pointing at their domain.
+    //
+    // JSON array of https origins (no trailing slash). PAYMENT_REQUEST_BASE_URL
+    // must be a member of this list — enforced at the settings edit
+    // layer. To add a new satellite domain: add it here + also add it
+    // in Vercel Domains + add it to Clerk Satellites (see the
+    // multi-domain doc for the checklist).
+    { key: "ALLOWED_DOMAINS", value: '["https://seedlings.team","https://seedlings.pro"]', description: "JSON array of all domains this app serves. Used by the Promotion editor's domain picker and by public-route Host-header validation. Primary (PAYMENT_REQUEST_BASE_URL) must be one of these." },
   ];
   for (const s of paymentSettings) {
     await prisma.setting.upsert({
@@ -3379,9 +3394,61 @@ async function seedDatabase() {
 
   await seedPromotionFixtures();
 
+  await seedVanityPageFixtures();
+
   await applySettingSections();
 
   console.log("  Seed complete!");
+}
+
+// Vanity URL fixtures — the default fallback page + one example landing
+// (perties). Idempotent via upsert on slug. Operator can edit the copy
+// in the Vanity URLs tab; the seed exists so a fresh dev DB has
+// something useful on seedlings.pro/perties and any unknown slug
+// (seedlings.pro/xyz) without the operator having to create rows first.
+async function seedVanityPageFixtures() {
+  console.log("  Seeding Vanity URL fixtures...");
+  // The default page — flagged isDefault=true so it renders as the
+  // fallback when a visitor hits an unknown slug on seedlings.pro.
+  // Also loosely doubles as the marketing home concept if the operator
+  // ever decides to point seedlings.pro/ at it.
+  await prisma.vanityPage.upsert({
+    where: { slug: "home" },
+    create: {
+      slug: "home",
+      kind: "LANDING",
+      isDefault: true,
+      title: "Seedlings Lawn Care",
+      headline: "Neighborhood lawn care, done right",
+      body: "We're a small, family-run crew serving the Triangle. Mowing, cleanups, seasonal work — all handled by people who actually live nearby and care about your yard looking sharp.\n\nEdit this copy in the Vanity URLs tab of the app.",
+      ctaText: "Get in touch",
+      ctaUrl: "https://seedlings.team",
+      enabled: true,
+      createdById: MICHAEL_ID,
+      updatedById: MICHAEL_ID,
+    },
+    update: {},
+  });
+  // Example landing page — visitors hit seedlings.pro/perties. Copy is
+  // placeholder; operator edits in the tab.
+  await prisma.vanityPage.upsert({
+    where: { slug: "perties" },
+    create: {
+      slug: "perties",
+      kind: "LANDING",
+      isDefault: false,
+      title: "Properties in trusted hands",
+      headline: "Properties in trusted hands",
+      body: "We manage residential and commercial properties throughout the Triangle. Weekly, biweekly, or monthly service plans. Same crew every visit — you know who's on your property.\n\nEdit this copy in the Vanity URLs tab.",
+      ctaText: "Get a free estimate",
+      ctaUrl: "https://seedlings.team",
+      enabled: true,
+      createdById: MICHAEL_ID,
+      updatedById: MICHAEL_ID,
+    },
+    update: {},
+  });
+  console.log("  ✓ Seeded 2 Vanity URL fixtures (default home + perties)");
 }
 
 /**
@@ -3488,6 +3555,12 @@ async function seedPromotionFixtures() {
         status: "ACTIVE",
         startedAt: new Date(),
         startedById: MICHAEL_ID,
+        // Short URL slug so `/mo/fall-offer-2026` immediately works in
+        // dev without the operator needing to open the editor first.
+        // Anonymous URL: http://localhost:3000/mo/fall-offer-2026
+        // Per-recipient: http://localhost:3000/mo/fall-offer-2026/<code>
+        // (a code is generated on the next dispatch/send)
+        shortSlug: "fall-offer-2026",
         content: {
           sms: {
             body: "Fall Offers! Special fall/winter services incl. gutter cleaning, garbage removal, painting, and more.",

@@ -66,6 +66,14 @@ type Promotion = {
   endAt: string | null;
   status: PromotionStatus;
   content: PromoContent;
+  // Short URL slug — kebab-case, appears in wrapper URLs as
+  // <baseDomain>/mo/<shortSlug>/<code>. Null means the campaign uses
+  // the legacy long-form wrapper. Locked once startedAt is set.
+  shortSlug: string | null;
+  // Per-campaign domain override. Full origin ("https://seedlings.pro").
+  // Must be a member of the server's ALLOWED_DOMAINS. Null falls
+  // through to PAYMENT_REQUEST_BASE_URL (the primary).
+  baseDomain: string | null;
   createdAt: string;
   updatedAt: string;
   startedAt: string | null;
@@ -678,9 +686,44 @@ function PromotionEditor({
   const [startAt, setStartAt] = useState(initial?.startAt ? initial.startAt.slice(0, 10) : "");
   const [endAt, setEndAt] = useState(initial?.endAt ? initial.endAt.slice(0, 10) : "");
   const [content, setContent] = useState<PromoContent>(initial?.content ?? {});
+  const [shortSlug, setShortSlug] = useState(initial?.shortSlug ?? "");
+  const [baseDomain, setBaseDomain] = useState<string>(initial?.baseDomain ?? "");
   const [busy, setBusy] = useState(false);
   const [savedPromoId, setSavedPromoId] = useState<string | null>(initial?.id ?? null);
   const promoIsDraft = !initial || initial.status === "DRAFT";
+  // Slug is locked once the promotion has ever been started — changing
+  // it would 404 every already-sent short URL. Matches the server-side
+  // check in routes/promotions.ts.
+  const slugLocked = !!initial?.startedAt;
+
+  // Allowed domains for the per-campaign domain picker. Fetched lazily
+  // when the editor opens so the dropdown is populated from the same
+  // ALLOWED_DOMAINS setting the click handler validates against.
+  const [allowedDomains, setAllowedDomains] = useState<{ origins: string[]; primaryHostname: string } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    apiGet<{ origins: string[]; primaryHostname: string }>("/api/super/promotions/allowed-domains")
+      .then((r) => { if (!cancelled) setAllowedDomains(r); })
+      .catch(() => { if (!cancelled) setAllowedDomains({ origins: [], primaryHostname: "" }); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Live URL preview — updates as operator types the slug. Uses the
+  // per-campaign domain when set, else the primary. Placeholder "abcd"
+  // stands in for the real per-recipient shortCode.
+  const previewBase = (baseDomain.trim() || `https://${allowedDomains?.primaryHostname ?? "seedlings.pro"}`).replace(/\/$/, "");
+  const previewSlug = shortSlug.trim().toLowerCase();
+  const previewPersonalUrl = previewSlug
+    ? `${previewBase}/mo/${previewSlug}/abcd`
+    : null;
+  const previewAnonymousUrl = previewSlug
+    ? `${previewBase}/mo/${previewSlug}`
+    : null;
+  // Client-side slug validation mirrors the server-side Zod rule so
+  // operators see errors before hitting Save. Same regex.
+  const slugValidationError = previewSlug && !/^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,39}$/.test(previewSlug)
+    ? "Lowercase letters, digits, and single hyphens only (1–40 chars, no leading/trailing hyphen, no double hyphens)."
+    : null;
 
   function toggleChannel(c: DispatchChannel) {
     setDispatchChannels((prev) => prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]);
@@ -723,6 +766,10 @@ function PromotionEditor({
         startAt: startAt ? bizInstantFromEtParts(startAt as EtDateKey, "00:00") : null,
         endAt: endAt ? bizInstantFromEtParts(endAt as EtDateKey, "23:59") : null,
         content,
+        // Short URL fields. Empty → null (fall back to legacy long URLs
+        // for shortSlug; fall back to primary domain for baseDomain).
+        shortSlug: shortSlug.trim() ? shortSlug.trim().toLowerCase() : null,
+        baseDomain: baseDomain.trim() || null,
       };
       let id = savedPromoId;
       if (initial) {
@@ -805,6 +852,71 @@ function PromotionEditor({
                     will be generated from the title (you can customize it).
                   </Box>
                 )}
+
+                {/* Short URL (optional) — branded per-recipient URL for
+                    outbound messages. Leaving both fields blank keeps the
+                    campaign on the legacy long-form wrapper URL. */}
+                <Box borderTopWidth="1px" borderColor="gray.200" pt={4}>
+                  <Text fontSize="xs" fontWeight="semibold" mb={1}>Short URL (optional)</Text>
+                  <Text fontSize="2xs" color="fg.muted" mb={2}>
+                    Set a slug to use short branded URLs like <b>{previewBase}/mo/&lt;slug&gt;/abcd</b> in outbound messages. Leave blank to use the older long-form tracker URL.
+                    {slugLocked && (
+                      <> The slug is <b>locked</b> because this campaign has been started — changing it would 404 every URL already sent.</>
+                    )}
+                  </Text>
+                  <VStack align="stretch" gap={3}>
+                    <Box>
+                      <Text fontSize="2xs" fontWeight="semibold" mb={1}>Slug</Text>
+                      <Input
+                        size="sm"
+                        placeholder="fall-offer-2026"
+                        value={shortSlug}
+                        onChange={(e) => setShortSlug(e.target.value)}
+                        disabled={slugLocked}
+                        fontFamily="mono"
+                      />
+                      {slugValidationError && (
+                        <Text fontSize="2xs" color="red.600" mt={1}>{slugValidationError}</Text>
+                      )}
+                    </Box>
+                    {allowedDomains && allowedDomains.origins.length > 1 && (
+                      <Box>
+                        <Text fontSize="2xs" fontWeight="semibold" mb={1}>Domain</Text>
+                        <select
+                          value={baseDomain}
+                          onChange={(e) => setBaseDomain(e.target.value)}
+                          style={{
+                            fontSize: "13px",
+                            padding: "6px 8px",
+                            borderRadius: "6px",
+                            borderWidth: "1px",
+                            borderColor: "#e2e8f0",
+                            width: "100%",
+                            fontFamily: "monospace",
+                          }}
+                        >
+                          <option value="">Default ({allowedDomains.primaryHostname})</option>
+                          {allowedDomains.origins.map((o) => (
+                            <option key={o} value={o}>{o}</option>
+                          ))}
+                        </select>
+                      </Box>
+                    )}
+                    {previewSlug && !slugValidationError && (
+                      <Box p={3} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">
+                        <Text fontSize="2xs" color="fg.muted" mb={1}>Preview URLs</Text>
+                        <Text fontSize="xs" fontFamily="mono" wordBreak="break-all">
+                          <b>Per-recipient</b> (sent in messages, tracks who clicked):
+                          <br />{previewPersonalUrl}
+                        </Text>
+                        <Text fontSize="xs" fontFamily="mono" wordBreak="break-all" mt={2}>
+                          <b>Anonymous</b> (share on lawn signs / social — same destination, no per-person tracking):
+                          <br />{previewAnonymousUrl}
+                        </Text>
+                      </Box>
+                    )}
+                  </VStack>
+                </Box>
 
                 <HStack gap={4} align="start" wrap="wrap">
                   <Box>
