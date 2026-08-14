@@ -79,6 +79,23 @@ export const promotionSavePayloadSchema = z
     startAt: z.string().datetime().nullable().optional(),
     endAt: z.string().datetime().nullable().optional(),
     content: promotionContentSchema,
+    // Short URL slug — kebab-case + digits, ≤40 chars, unique across
+    // promotions. Locked once campaign leaves DRAFT (enforced service-
+    // side by the update handler). Null means the campaign uses the
+    // older long-form wrapper URL.
+    shortSlug: z
+      .string()
+      .max(40)
+      .regex(/^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,39}$/, {
+        message: "Slug must be lowercase letters, digits, and single hyphens (1-40 chars, no leading/trailing hyphen, no double hyphens).",
+      })
+      .nullable()
+      .optional(),
+    // Per-campaign domain override. Full origin ("https://seedlings.pro").
+    // Must be a member of ALLOWED_DOMAINS — validated at the write path
+    // (not in this schema — that'd require a DB fetch here). Null means
+    // the campaign uses the primary from PAYMENT_REQUEST_BASE_URL.
+    baseDomain: z.string().url().nullable().optional(),
   })
   .superRefine((val, ctx) => {
     if (val.dispatchChannels.length === 0 && val.displaySurfaces.length === 0) {
@@ -131,6 +148,7 @@ const SETTING_EMAIL_FOOTER = "PROMOTION_OPT_OUT_FOOTER_EMAIL";
 const SETTING_SMS_FOOTER = "PROMOTION_OPT_OUT_FOOTER_SMS";
 const SETTING_BUSINESS_ADDRESS = "BUSINESS_ADDRESS";
 const SETTING_PAY_BASE_URL = "PAYMENT_REQUEST_BASE_URL";
+const SETTING_ALLOWED_DOMAINS = "ALLOWED_DOMAINS";
 
 export async function loadPromotionSettings(): Promise<{
   hmacSecret: string;
@@ -189,6 +207,168 @@ export async function loadPromotionSettings(): Promise<{
     businessAddress: map.get(SETTING_BUSINESS_ADDRESS) ?? "",
     baseUrl: map.get(SETTING_PAY_BASE_URL) ?? "https://www.seedlings.team",
   };
+}
+
+// ── Allowed domains ──────────────────────────────────────────────────────
+//
+// Single source of truth for the "which hostnames does this app serve"
+// question. Feeds:
+//   • Promotion editor's per-campaign domain dropdown (operator picks
+//     from known-good options, no free-text typos)
+//   • Public-route Host-header allowlist (defense against Host-header
+//     injection — attacker can't trick us into generating redirects to
+//     an origin we don't own)
+//   • Vanity URL public route's hostname check (same allowlist as
+//     everywhere else; previously hardcoded)
+//
+// Reads the ALLOWED_DOMAINS setting (JSON array of "https://host"
+// strings). Returns normalized bare hostnames (without protocol or
+// port) so consumers can compare against `req.headers.host` after
+// stripping the port.
+//
+// Falls back to the PAYMENT_REQUEST_BASE_URL hostname when the setting
+// is missing/malformed — never returns an empty list so a broken
+// setting can't accidentally lock every domain out at once. Logs the
+// fallback so ops sees it in the API logs.
+export async function loadAllowedDomains(): Promise<{
+  origins: string[];   // full "https://host" values for URL building
+  hostnames: string[]; // bare "host" values for Host-header comparisons
+  primaryHostname: string; // matches PAYMENT_REQUEST_BASE_URL's hostname
+}> {
+  const rows = await prisma.setting.findMany({
+    where: { key: { in: [SETTING_ALLOWED_DOMAINS, SETTING_PAY_BASE_URL] } },
+    select: { key: true, value: true },
+  });
+  const map = new Map(rows.map((r) => [r.key, r.value]));
+  const rawList = map.get(SETTING_ALLOWED_DOMAINS) ?? "";
+  const primaryUrl = map.get(SETTING_PAY_BASE_URL) ?? "https://www.seedlings.team";
+  let origins: string[] = [];
+  try {
+    const parsed = JSON.parse(rawList || "[]");
+    if (Array.isArray(parsed)) {
+      origins = parsed
+        .filter((s): s is string => typeof s === "string")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+  } catch {
+    // Malformed JSON — swallow and fall through to the primary-only
+    // fallback below so a bad setting never bricks routing.
+  }
+  // Always include the primary as a safety net — even if the operator
+  // saved an ALLOWED_DOMAINS list that accidentally omitted it, we
+  // can't have the primary be un-recognized (invoices would 404).
+  if (!origins.includes(primaryUrl)) {
+    origins = origins.length === 0 ? [primaryUrl] : [primaryUrl, ...origins];
+  }
+  const hostnames = origins
+    .map((o) => {
+      try {
+        return new URL(o).hostname.toLowerCase();
+      } catch {
+        return null;
+      }
+    })
+    .filter((h): h is string => !!h);
+  let primaryHostname = "";
+  try {
+    primaryHostname = new URL(primaryUrl).hostname.toLowerCase();
+  } catch {
+    primaryHostname = hostnames[0] ?? "";
+  }
+  return { origins, hostnames, primaryHostname };
+}
+
+// True when the given request hostname (already stripped of port) is
+// one of the app's known domains. Consumers that need a dev-mode
+// escape hatch (allowing localhost during `npm run dev`) should
+// combine this with their own NODE_ENV check.
+export async function isHostAllowed(hostname: string): Promise<boolean> {
+  const lower = hostname.toLowerCase();
+  const { hostnames } = await loadAllowedDomains();
+  return hostnames.includes(lower);
+}
+
+// ── Short URL builder ────────────────────────────────────────────────────
+//
+// Emits the branded per-recipient URL used when a Promotion has
+// shortSlug set: `<baseDomain>/mo/<slug>/<code>`.
+//
+// baseDomain comes from the promo's per-campaign override when set,
+// otherwise from the primary (PAYMENT_REQUEST_BASE_URL). Callers
+// should pass the origin form ("https://seedlings.pro") — this helper
+// just concatenates the path.
+//
+// The anonymous variant (`<baseDomain>/mo/<slug>`) is not built by a
+// dedicated helper — it's simply the short URL with the code stripped,
+// so callers that need it (e.g. the editor preview or an ops UI)
+// build it inline.
+export function buildShortWrapperUrl(
+  baseUrl: string,
+  slug: string,
+  code: string,
+): string {
+  const trimmed = baseUrl.replace(/\/$/, "");
+  return `${trimmed}/mo/${encodeURIComponent(slug)}/${encodeURIComponent(code)}`;
+}
+
+// Anonymous shareable variant — the "share on a lawn sign / social /
+// word-of-mouth" URL. Same as buildShortWrapperUrl minus the recipient
+// code. Clicks are logged with anonymousReason="anonymous_slug_only"
+// and no attribution to a specific delivery.
+export function buildAnonymousShortUrl(baseUrl: string, slug: string): string {
+  const trimmed = baseUrl.replace(/\/$/, "");
+  return `${trimmed}/mo/${encodeURIComponent(slug)}`;
+}
+
+// ── Short URL slug + code format ─────────────────────────────────────────
+
+// Promo short-URL slug: kebab-case + digits, 1–40 chars. Same rules as
+// vanity URL slugs so operators don't have to context-switch. Enforced
+// both at the save-payload Zod schema and at slug-lock-check time.
+const PROMO_SHORT_SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,39}$/;
+
+export function isValidShortSlugFormat(slug: string): boolean {
+  return PROMO_SHORT_SLUG_PATTERN.test(slug);
+}
+
+// Per-recipient short code: 4 chars, lowercase alphanumeric. ~1.7M
+// combinations per campaign. Deliberately excludes visually confusable
+// chars (0/o, 1/l/i) so operators reading a delivery log at a glance
+// can distinguish similar codes.
+const SHORT_CODE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"; // no 0/o/1/l/i
+const SHORT_CODE_LENGTH = 4;
+
+export function generateShortCode(): string {
+  let out = "";
+  for (let i = 0; i < SHORT_CODE_LENGTH; i++) {
+    out += SHORT_CODE_ALPHABET.charAt(
+      Math.floor(Math.random() * SHORT_CODE_ALPHABET.length),
+    );
+  }
+  return out;
+}
+
+// Pull a fresh code that isn't already used within a promotion. Retries
+// up to N times on collision (astronomically unlikely below ~10k
+// deliveries — birthday collision math). If we can't find one after
+// the retry budget, throw — the campaign has exhausted the 4-char
+// space, which means it's time to bump SHORT_CODE_LENGTH to 5.
+export async function generateUniqueShortCode(
+  promotionId: string,
+  maxAttempts = 8,
+): Promise<string> {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const candidate = generateShortCode();
+    const exists = await prisma.promotionDelivery.findUnique({
+      where: { promotionId_shortCode: { promotionId, shortCode: candidate } },
+      select: { id: true },
+    });
+    if (!exists) return candidate;
+  }
+  throw new Error(
+    `Could not find a unique short code for promotion ${promotionId} after ${maxAttempts} attempts — code space may be exhausted, consider bumping SHORT_CODE_LENGTH.`,
+  );
 }
 
 // ── Slug util ─────────────────────────────────────────────────────────────
@@ -804,7 +984,12 @@ export async function selectPromotionsForPiggyback(params: {
   // insert duplicate pending rows and the URL from the first call would
   // still resolve to the first pending row (fine) — but multiple pending
   // rows would linger and reconciliation-by-token would be ambiguous.
-  const existingPendingByPromo = new Map<string, string>();
+  // Map from promotionId → { deliveryId, shortCode } of the reusable
+  // pending row. Both fields must be preserved on reuse so the URL
+  // that shipped in the earlier /comms-handoff body still resolves —
+  // either the deliveryId (long URL) or the shortCode (short URL)
+  // was baked into the outbound message.
+  const existingPendingByPromo = new Map<string, { deliveryId: string; shortCode: string | null }>();
   if (mode === "claimer_immediate" && params.triggeredBy) {
     const existing = await prisma.promotionDelivery.findMany({
       where: {
@@ -814,9 +999,11 @@ export async function selectPromotionsForPiggyback(params: {
         skippedReason: "claimer_pending",
         deliveredAt: null,
       },
-      select: { id: true, promotionId: true },
+      select: { id: true, promotionId: true, shortCode: true },
     });
-    for (const e of existing) existingPendingByPromo.set(e.promotionId, e.id);
+    for (const e of existing) {
+      existingPendingByPromo.set(e.promotionId, { deliveryId: e.id, shortCode: e.shortCode });
+    }
   }
   const now = new Date();
   const activePromos = await prisma.promotion.findMany({
@@ -857,12 +1044,18 @@ export async function selectPromotionsForPiggyback(params: {
     deliver: boolean;
     skippedReason: string | null;
     snapshot: ReturnType<typeof buildContentSnapshot>;
+    // Present when the promo has shortSlug set — the per-recipient
+    // short code that gets embedded in the short URL AND persisted on
+    // the PromotionDelivery row so the click handler can resolve it.
+    // Null for long-form (legacy) URLs which use deliveryId directly.
+    shortCode: string | null;
   };
   const pending: PendingDelivery[] = [];
   const surviving: {
     promotion: (typeof candidates)[number];
     deliveryId: string;
     snapshot: ReturnType<typeof buildContentSnapshot>;
+    shortCode: string | null;
   }[] = [];
 
   for (const p of candidates) {
@@ -870,10 +1063,11 @@ export async function selectPromotionsForPiggyback(params: {
     // Skip if no content for this channel (should have been caught at save).
     if (!content[params.channel]) continue;
 
-    // Reuse the existing pending row's ID when idempotency map has a hit
-    // so the wrapper URL that shipped in the earlier /comms-handoff body
-    // still resolves to the same delivery. Fresh UUID otherwise.
-    const deliveryId = existingPendingByPromo.get(p.id) ?? randomUUID();
+    // Reuse the existing pending row's IDs when idempotency map has a
+    // hit so the wrapper URL that shipped in the earlier /comms-handoff
+    // body still resolves to the same delivery. Fresh values otherwise.
+    const reused = existingPendingByPromo.get(p.id);
+    const deliveryId = reused?.deliveryId ?? randomUUID();
     const unsubscribeLink = buildUnsubscribeUrl(
       settings.baseUrl,
       settings.hmacSecret,
@@ -881,13 +1075,31 @@ export async function selectPromotionsForPiggyback(params: {
       params.channel,
     );
     // Every CTA URL shipped to a recipient is a wrapper — never the raw
-    // destination. The wrapper endpoint verifies the HMAC, writes a
-    // PromotionClick row, then 302s to `resolveDestinationUrl(promo)`.
-    const wrapperUrl = buildClickWrapperUrl(
-      settings.baseUrl,
-      settings.hmacSecret,
-      deliveryId,
-    );
+    // destination.
+    //
+    // Two URL shapes:
+    //   SHORT: promo has shortSlug set. Generates a per-recipient
+    //          shortCode + embeds it in /mo/<slug>/<code>. Uses
+    //          per-campaign baseDomain when set, else settings.baseUrl.
+    //   LONG:  promo has no shortSlug. Uses the legacy HMAC-signed
+    //          wrapper /api/public/promotion/click/d/<id>?t=<hmac>.
+    //          Backward compat — existing campaigns keep working.
+    const outboundBase = p.baseDomain ?? settings.baseUrl;
+    let wrapperUrl: string;
+    let shortCode: string | null = null;
+    if (p.shortSlug) {
+      // Reuse the code the earlier /comms-handoff call already baked
+      // into the outbound message when we hit the idempotency path —
+      // generating a fresh one would leave the earlier URL orphaned.
+      shortCode = reused?.shortCode ?? (await generateUniqueShortCode(p.id));
+      wrapperUrl = buildShortWrapperUrl(outboundBase, p.shortSlug, shortCode);
+    } else {
+      wrapperUrl = buildClickWrapperUrl(
+        outboundBase,
+        settings.hmacSecret,
+        deliveryId,
+      );
+    }
     const snapshot = buildContentSnapshot({
       // Feed the wrapper URL as the promo's link so the snapshot's
       // ctaUrl (what actually ships + what audit shows) is the wrapper.
@@ -907,6 +1119,7 @@ export async function selectPromotionsForPiggyback(params: {
         deliver: false,
         skippedReason: "opted_out",
         snapshot,
+        shortCode,
       });
       continue;
     }
@@ -933,11 +1146,12 @@ export async function selectPromotionsForPiggyback(params: {
         deliver: false,
         skippedReason: "cooldown",
         snapshot,
+        shortCode,
       });
       continue;
     }
 
-    surviving.push({ promotion: p, deliveryId, snapshot });
+    surviving.push({ promotion: p, deliveryId, snapshot, shortCode });
   }
 
   // Multi-promo per-channel policy.
@@ -952,6 +1166,7 @@ export async function selectPromotionsForPiggyback(params: {
         deliver: false,
         skippedReason: "sms_multi_promo_limit",
         snapshot: runnerUp.snapshot,
+        shortCode: runnerUp.shortCode,
       });
     }
     surviving.length = 1;
@@ -1033,13 +1248,21 @@ export async function selectPromotionsForPiggyback(params: {
           `<a href="${firstUnsubscribeLink}" style="color:#666;">${firstUnsubscribeLink}</a>`);
       bodyAppendHtml = `<hr style="border:none;border-top:1px solid #e5e5e5;margin:24px 0;">${bodyPiecesHtml.join('<hr style="border:none;border-top:1px solid #e5e5e5;margin:16px 0;">')}<hr style="border:none;border-top:1px solid #e5e5e5;margin:16px 0;"><p style="font-size:12px;color:#666;line-height:1.5;white-space:pre-wrap;">${escFooter}</p>`;
     } else {
+      // SMS: `renderSmsPromoBody` already appends `snapshot.footer`
+      // (which was assembled by `buildContentSnapshot` from
+      // settings.smsFooter + unsubscribeLink) — see how bodyPieces is
+      // built above. Concatenating smsFooterOut here would double the
+      // footer in the outbound message (shipped bug — showed "Opt out:
+      // <url>" twice). We still populate smsFooterOut so callers that
+      // need the assembled footer for other purposes (audit, tests)
+      // get it, but do NOT re-append it to the body.
       smsFooterOut = assembleSmsFooter({
         footerTemplate: settings.smsFooter,
         unsubscribeLink: firstUnsubscribeLink,
       });
-      bodyAppend = separator + bodyPieces.join(separator) + "\n" + smsFooterOut;
+      bodyAppend = separator + bodyPieces.join(separator);
     }
-    for (const { promotion, deliveryId, snapshot } of surviving) {
+    for (const { promotion, deliveryId, snapshot, shortCode } of surviving) {
       pending.push({
         deliveryId,
         promotionId: promotion.id,
@@ -1047,6 +1270,7 @@ export async function selectPromotionsForPiggyback(params: {
         deliver: true,
         skippedReason: null,
         snapshot,
+        shortCode,
       });
     }
   }
@@ -1081,6 +1305,10 @@ export async function selectPromotionsForPiggyback(params: {
           // touching rows already at skippedReason=claimer_pending —
           // enforced by the idempotency query filter above).
           skippedReason: r.deliver ? "claimer_pending" : r.skippedReason,
+          // Preserve the shortCode when we generated one (reused rows
+          // already have it, but be explicit — sets to null if the
+          // promo dropped its shortSlug between fetches).
+          shortCode: r.shortCode,
         },
       });
     }
@@ -1100,6 +1328,7 @@ export async function selectPromotionsForPiggyback(params: {
           // cases — recordClaimerHandoff will stamp deliverable rows.
           deliveredAt: null,
           skippedReason: p.deliver ? "claimer_pending" : p.skippedReason,
+          shortCode: p.shortCode,
         })),
       });
     }
@@ -1131,6 +1360,7 @@ export async function selectPromotionsForPiggyback(params: {
           contentSnapshot: p.snapshot as any,
           deliveredAt: p.deliver ? new Date() : null,
           skippedReason: p.skippedReason,
+          shortCode: p.shortCode,
         })),
       });
     },
@@ -1298,11 +1528,21 @@ export async function runManualSendBurst(params: {
         contact.id,
         channel,
       );
-      const wrapperUrl = buildClickWrapperUrl(
-        settings.baseUrl,
-        settings.hmacSecret,
-        deliveryId,
-      );
+      // Same short-URL branching as the piggyback path — see comments
+      // in selectPromotionsForPiggyback for the rationale.
+      const outboundBase = promo.baseDomain ?? settings.baseUrl;
+      let wrapperUrl: string;
+      let shortCode: string | null = null;
+      if (promo.shortSlug) {
+        shortCode = await generateUniqueShortCode(promo.id);
+        wrapperUrl = buildShortWrapperUrl(outboundBase, promo.shortSlug, shortCode);
+      } else {
+        wrapperUrl = buildClickWrapperUrl(
+          outboundBase,
+          settings.hmacSecret,
+          deliveryId,
+        );
+      }
       const snapshot = buildContentSnapshot({
         // Feed the wrapper as the promo's link so ctaUrl in the shipped
         // body + snapshot both point at the tracker.
@@ -1324,6 +1564,7 @@ export async function runManualSendBurst(params: {
             dispatchId,
             contentSnapshot: snapshot as any,
             skippedReason: "opted_out",
+            shortCode,
           },
         });
         skipped++;
@@ -1363,6 +1604,7 @@ export async function runManualSendBurst(params: {
             dispatchId,
             contentSnapshot: snapshot as any,
             deliveredAt: new Date(),
+            shortCode,
           },
         });
         sent++;
@@ -1377,6 +1619,7 @@ export async function runManualSendBurst(params: {
             dispatchId,
             contentSnapshot: snapshot as any,
             skippedReason: `send_failed:${(err?.message ?? "unknown").slice(0, 80)}`,
+            shortCode,
           },
         });
         skipped++;
@@ -1918,6 +2161,14 @@ export async function recordClickAndResolve(params: {
   // Signed token that came with the request. If verify fails we log
   // anonymously and still 302.
   token: string;
+  // Optional sticky-domain inputs — when present, landing-page
+  // destinations are built with this host+protocol instead of the
+  // primary from PAYMENT_REQUEST_BASE_URL. Prevents dev clicks from
+  // 302ing to the prod domain (which fails to load) — same fix the
+  // short-URL flow uses. Callers that don't pass these get the legacy
+  // primary-baseUrl behavior.
+  requestHost?: string | null;
+  requestProtocol?: string | null;
   userAgent: string | null;
   ipAddress: string | null;
 }): Promise<{ destinationUrl: string | null; destination: "external" | "landing_page" | null }> {
@@ -1995,8 +2246,12 @@ export async function recordClickAndResolve(params: {
         // null so caller sends the browser to the base URL.
         return { destinationUrl: null, destination: null };
       }
-      // Redirect but don't attribute.
-      const resolvedAnon = await resolveDestinationUrl(settings.baseUrl, claimedPromo);
+      // Redirect but don't attribute. Sticky-domain same as the
+      // verified path below.
+      const anonBase = params.requestHost && params.requestProtocol
+        ? `${params.requestProtocol}://${params.requestHost}`
+        : settings.baseUrl;
+      const resolvedAnon = await resolveDestinationUrl(anonBase, claimedPromo);
       return {
         destinationUrl: resolvedAnon?.url ?? null,
         destination: resolvedAnon?.destination ?? null,
@@ -2016,7 +2271,14 @@ export async function recordClickAndResolve(params: {
     select: { linkKind: true, link: true, landingPageId: true, status: true },
   });
   if (!promo) return { destinationUrl: null, destination: null };
-  const resolved = await resolveDestinationUrl(settings.baseUrl, promo);
+  // Sticky-domain base — use the visitor's actual host+protocol when
+  // available so a click landing on localhost dev routes back to
+  // localhost, not the prod PAYMENT_REQUEST_BASE_URL. Falls back to
+  // the primary baseUrl for existing callsites that don't pass these.
+  const destBase = params.requestHost && params.requestProtocol
+    ? `${params.requestProtocol}://${params.requestHost}`
+    : settings.baseUrl;
+  const resolved = await resolveDestinationUrl(destBase, promo);
 
   await prisma.promotionClick.create({
     data: {
@@ -2046,6 +2308,137 @@ export async function incrementLandingPageViewCount(slug: string): Promise<void>
     where: { slug },
     data: { viewCount: { increment: 1 } },
   });
+}
+
+// ── Short URL click resolver ─────────────────────────────────────────────
+//
+// Handles clicks to `/mo/<slug>/<code>` (per-recipient) and `/mo/<slug>`
+// (anonymous shareable). Unlike the older /d/ and /p/ flavors, this
+// flow doesn't use HMAC — the shortCode itself is the auth (unique per
+// promotion, ~1.7M combinations, rate-limited). The tradeoff is that
+// per-recipient attribution CAN be poisoned by an attacker enumerating
+// codes, but at 30 req/min per IP the code space takes ~40 days to
+// exhaust — acceptable for a small business with no targeted-attack
+// motive against click stats.
+//
+// Behavior:
+//   1. Look up promotion by shortSlug. Not found → 404 (null destination).
+//   2. Reject if status !== ACTIVE or outside startAt/endAt window.
+//   3. If code provided: look up delivery in this promotion. Found →
+//      attribute click to it. Not found → log anonymous with
+//      reason="short_code_not_found".
+//   4. If code omitted: log anonymous with reason="anonymous_slug_only".
+//   5. Resolve destination URL. Use requestHost for landing-page
+//      destinations (sticky domain — visitor stays on whichever
+//      domain they clicked from). External URLs are returned verbatim.
+//
+// Non-ACTIVE / out-of-window returns null destination — the caller
+// handles the 404 response.
+export async function recordShortClickAndResolve(params: {
+  slug: string;
+  code: string | null;
+  requestHost: string;
+  // Fastify's request.protocol — respects trustProxy so it's "https"
+  // behind Vercel edge, "http" on localhost dev. Used to build the
+  // sticky-domain destination URL for landing-page destinations so
+  // dev + prod both hit the correct scheme.
+  requestProtocol: string;
+  userAgent: string | null;
+  ipAddress: string | null;
+}): Promise<{ destinationUrl: string | null; destination: "external" | "landing_page" | null }> {
+  const ipHash = params.ipAddress
+    ? createHash("sha256").update(params.ipAddress).digest("hex")
+    : null;
+
+  const promo = await prisma.promotion.findUnique({
+    where: { shortSlug: params.slug.toLowerCase() },
+    select: {
+      id: true,
+      status: true,
+      startAt: true,
+      endAt: true,
+      linkKind: true,
+      link: true,
+      landingPageId: true,
+    },
+  });
+  if (!promo) return { destinationUrl: null, destination: null };
+
+  // Status + window gate. Matches piggyback / manual-send / invoice-page
+  // behavior — only ACTIVE campaigns within their window are clickable.
+  const now = new Date();
+  const active =
+    promo.status === "ACTIVE" &&
+    (!promo.startAt || promo.startAt <= now) &&
+    (!promo.endAt || promo.endAt >= now);
+  if (!active) return { destinationUrl: null, destination: null };
+
+  // Attribution: look up delivery by code within this promotion.
+  let deliveryId: string | null = null;
+  let contactId: string | null = null;
+  let clientId: string | null = null;
+  let anonymousReason: string | null = null;
+  if (params.code) {
+    const delivery = await prisma.promotionDelivery.findUnique({
+      where: {
+        promotionId_shortCode: {
+          promotionId: promo.id,
+          shortCode: params.code.toLowerCase(),
+        },
+      },
+      select: { id: true, contactId: true, clientId: true },
+    });
+    if (delivery) {
+      deliveryId = delivery.id;
+      contactId = delivery.contactId;
+      clientId = delivery.clientId;
+    } else {
+      // Valid slug + unknown code = someone guessed or the delivery
+      // was purged. Log as anonymous with a distinct reason so
+      // attribution reports can distinguish this from the intentional
+      // slug-only shareable flow.
+      anonymousReason = "short_code_not_found";
+    }
+  } else {
+    anonymousReason = "anonymous_slug_only";
+  }
+
+  // Destination — use the request Host + Protocol for landing-page
+  // URLs (sticky domain: visitor came in on seedlings.pro, stays on
+  // seedlings.pro; localhost:3000 stays on localhost:3000). External
+  // URLs are returned verbatim regardless of host.
+  //
+  // Preserve the port (don't strip it) — localhost dev is on :3000,
+  // stripping the port produces an unreachable `http://localhost/`.
+  // The protocol comes from Fastify's req.protocol which is
+  // trustProxy-aware (https behind Vercel, http on localhost).
+  const destBase = params.requestHost
+    ? `${params.requestProtocol}://${params.requestHost}`
+    : "";
+  const resolved = await resolveDestinationUrl(destBase, {
+    linkKind: promo.linkKind,
+    link: promo.link,
+    landingPageId: promo.landingPageId,
+  });
+
+  await prisma.promotionClick.create({
+    data: {
+      promotionId: promo.id,
+      deliveryId,
+      contactId,
+      clientId,
+      destination: resolved?.destination ?? "external",
+      destinationUrl: resolved?.url ?? "",
+      anonymousReason,
+      userAgent: params.userAgent ?? undefined,
+      ipHash: ipHash ?? undefined,
+    },
+  });
+
+  return {
+    destinationUrl: resolved?.url ?? null,
+    destination: resolved?.destination ?? null,
+  };
 }
 
 // Public loader for a landing page by slug. Only returns the page when
@@ -2221,6 +2614,14 @@ export const promotionsService = {
   getLandingPageImageUploadUrl,
   confirmLandingPageImageUpload,
   recordClickAndResolve,
+  recordShortClickAndResolve,
   incrementLandingPageViewCount,
   rotatePromotionHmacSecret,
+  loadAllowedDomains,
+  isHostAllowed,
+  buildShortWrapperUrl,
+  buildAnonymousShortUrl,
+  isValidShortSlugFormat,
+  generateShortCode,
+  generateUniqueShortCode,
 };

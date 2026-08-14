@@ -72,6 +72,7 @@ import EquipmentUsageTab from "@/src/ui/tabs/EquipmentUsageTab";
 import AdminGroupsTab from "@/src/ui/tabs/AdminGroupsTab";
 import PricingTab from "@/src/ui/tabs/PricingTab";
 import PromotionsTab from "@/src/ui/tabs/PromotionsTab";
+import VanityUrlsTab from "@/src/ui/tabs/VanityUrlsTab";
 
 import AppSplash from "@/src/ui/helpers/AppSplash";
 import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
@@ -110,6 +111,7 @@ import {
   FiTruck,
   FiUserCheck,
   FiSpeaker,
+  FiLink,
 } from "react-icons/fi";
 import { GrUserAdmin } from "react-icons/gr";
 import { AiOutlineTeam } from "react-icons/ai";
@@ -1366,6 +1368,19 @@ export default function HomePage() {
           label: "Settings",
           icon: FiSettings,
           content: wrapWithInlineMessage(<SettingsTab me={me} purpose="SUPER" />),
+          category: "System",
+          categoryIcon: FiSettings,
+        },
+        {
+          // Vanity — Super-only editor for branded shortcuts on
+          // seedlings.pro. Each row is either a landing page (renders
+          // in-app) or a redirect (302 to a configured URL). One row
+          // is flagged as default and serves as the fallback for
+          // unknown slugs. See VanityUrlsTab + services/vanityPages.ts.
+          value: "vanity",
+          label: "Vanity",
+          icon: FiLink,
+          content: wrapWithInlineMessage(<VanityUrlsTab />),
           category: "System",
           categoryIcon: FiSettings,
         },

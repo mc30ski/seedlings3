@@ -152,6 +152,30 @@ export default async function handler(
     fwd.set(k, Array.isArray(v) ? v.join(",") : v);
   }
 
+  // Preserve the ORIGINAL visitor host + protocol under custom header
+  // names that no framework auto-acts on (unlike x-forwarded-host,
+  // which the API framework or downstream libs might interpret as a
+  // canonical-redirect hint — that's why the drop list above nukes it).
+  //
+  // Used by endpoints that need to know which of our multi-domain
+  // hostnames the visitor actually typed — the promo short URL
+  // route (`/mo/:slug/:code?`) uses this to build a sticky-domain
+  // 302 destination so a visitor who clicked seedlings.pro/mo/… lands
+  // back on seedlings.pro rather than the API's internal vercel.app URL.
+  //
+  // The incoming Host header on THIS proxy handler is the visitor's
+  // domain (Vercel edge sets it that way when routing to our function),
+  // so we can safely mirror it. x-forwarded-proto has already been set
+  // by Vercel edge for us.
+  const originalHost = req.headers["host"];
+  if (originalHost) {
+    fwd.set("x-original-host", Array.isArray(originalHost) ? originalHost[0] : originalHost);
+  }
+  const originalProto = req.headers["x-forwarded-proto"];
+  if (originalProto) {
+    fwd.set("x-original-proto", Array.isArray(originalProto) ? originalProto[0] : originalProto);
+  }
+
   // Add bypass header for preview-protected API deployments (safe to send always;
   // in Production you can just not define API_BYPASS_SECRET)
   if (bypass) fwd.set("x-vercel-protection-bypass", bypass);

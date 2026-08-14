@@ -26,7 +26,7 @@ export type AdminTabs =
   | "documents"
   | "timeline";
 
-export type SuperTabs = "home" | "unclaimed" | "audit" | "settings" | "profile" | "ledger" | "supplies" | "pricing" | "documents" | "timeline" | "payments" | "users" | "reconcile" | "workdays" | "compliance";
+export type SuperTabs = "home" | "unclaimed" | "audit" | "settings" | "profile" | "ledger" | "supplies" | "pricing" | "documents" | "timeline" | "payments" | "users" | "reconcile" | "workdays" | "compliance" | "vanity";
 
 // Client "Services" uses `client-services` (not just `services`) so
 // BreadcrumbNav's cross-role chip logic (matches inner-tab values

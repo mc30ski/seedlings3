@@ -19,6 +19,7 @@ import {
   getLandingPageImageUploadUrl,
   confirmLandingPageImageUpload,
   rotatePromotionHmacSecret,
+  loadAllowedDomains,
 } from "../services/promotions";
 
 // Super-only Promotions endpoints. All CRUD, lifecycle actions, manual
@@ -33,6 +34,15 @@ export default async function promotionsRoutes(app: FastifyInstance) {
     preHandler: (req: FastifyRequest, reply: FastifyReply) =>
       app.requireRole(req, reply, RoleVal.SUPER),
   };
+
+  // ── Allowed domains for the editor's per-campaign domain picker ────
+  // Returns the same list the click-handler Host allowlist uses; the
+  // editor renders a dropdown so operators can only pick a domain the
+  // server will actually accept.
+  app.get("/super/promotions/allowed-domains", superGuard, async () => {
+    const { origins, primaryHostname } = await loadAllowedDomains();
+    return { origins, primaryHostname };
+  });
 
   // ── LIST ────────────────────────────────────────────────────────────
   app.get("/super/promotions", superGuard, async () => {
@@ -94,34 +104,59 @@ export default async function promotionsRoutes(app: FastifyInstance) {
     }
     const uid = await currentUserId(req);
     const data = parsed.data;
-    const created = await prisma.$transaction(async (tx) => {
-      const p = await tx.promotion.create({
-        data: {
-          title: data.title,
-          description: data.description,
-          linkKind: data.linkKind,
-          // link is only populated for EXTERNAL. LANDING_PAGE promotions
-          // resolve their URL at click time from the associated
-          // PromotionLandingPage.slug — the field is left null here.
-          link: data.linkKind === "EXTERNAL" ? (data.link ?? null) : null,
-          audienceSpec: data.audienceSpec,
-          dispatchChannels: data.dispatchChannels,
-          displaySurfaces: data.displaySurfaces,
-          triggerKind: data.triggerKind ?? null,
-          triggerConfig: data.triggerConfig as any,
-          cooldownDays: data.cooldownDays,
-          startAt: data.startAt ? new Date(data.startAt) : null,
-          endAt: data.endAt ? new Date(data.endAt) : null,
-          content: data.content as any,
-          createdById: uid,
-          updatedById: uid,
-          status: "DRAFT",
-        },
+    // Per-campaign domain must be a member of ALLOWED_DOMAINS when set.
+    // Enforced at the write path because the Zod schema can't reach the
+    // DB. Same allowlist the click handler uses — one source of truth.
+    if (data.baseDomain) {
+      const { loadAllowedDomains } = await import("../services/promotions");
+      const { origins } = await loadAllowedDomains();
+      if (!origins.includes(data.baseDomain)) {
+        return reply.code(400).send({
+          error: "domain_not_allowed",
+          detail: `baseDomain must be one of: ${origins.join(", ")}`,
+        });
+      }
+    }
+    try {
+      const created = await prisma.$transaction(async (tx) => {
+        const p = await tx.promotion.create({
+          data: {
+            title: data.title,
+            description: data.description,
+            linkKind: data.linkKind,
+            // link is only populated for EXTERNAL. LANDING_PAGE promotions
+            // resolve their URL at click time from the associated
+            // PromotionLandingPage.slug — the field is left null here.
+            link: data.linkKind === "EXTERNAL" ? (data.link ?? null) : null,
+            audienceSpec: data.audienceSpec,
+            dispatchChannels: data.dispatchChannels,
+            displaySurfaces: data.displaySurfaces,
+            triggerKind: data.triggerKind ?? null,
+            triggerConfig: data.triggerConfig as any,
+            cooldownDays: data.cooldownDays,
+            startAt: data.startAt ? new Date(data.startAt) : null,
+            endAt: data.endAt ? new Date(data.endAt) : null,
+            content: data.content as any,
+            shortSlug: data.shortSlug?.toLowerCase() ?? null,
+            baseDomain: data.baseDomain ?? null,
+            createdById: uid,
+            updatedById: uid,
+            status: "DRAFT",
+          },
+        });
+        await writeAudit(tx, AUDIT.PROMOTION.CREATED, uid, { promotionId: p.id });
+        return p;
       });
-      await writeAudit(tx, AUDIT.PROMOTION.CREATED, uid, { promotionId: p.id });
-      return p;
-    });
-    return created;
+      return created;
+    } catch (err: any) {
+      if (err?.code === "P2002" && err?.meta?.target?.includes?.("shortSlug")) {
+        return reply.code(409).send({
+          error: "slug_taken",
+          detail: `The short URL slug "${data.shortSlug}" is already used by another promotion.`,
+        });
+      }
+      throw err;
+    }
   });
 
   // ── UPDATE (edit) ───────────────────────────────────────────────────
@@ -140,33 +175,69 @@ export default async function promotionsRoutes(app: FastifyInstance) {
     }
     const uid = await currentUserId(req);
     const data = parsed.data;
-    const updated = await prisma.$transaction(async (tx) => {
-      const p = await tx.promotion.update({
-        where: { id },
-        data: {
-          title: data.title,
-          description: data.description,
-          linkKind: data.linkKind,
-          // link is only populated for EXTERNAL. LANDING_PAGE promotions
-          // resolve their URL at click time from the associated
-          // PromotionLandingPage.slug — the field is left null here.
-          link: data.linkKind === "EXTERNAL" ? (data.link ?? null) : null,
-          audienceSpec: data.audienceSpec,
-          dispatchChannels: data.dispatchChannels,
-          displaySurfaces: data.displaySurfaces,
-          triggerKind: data.triggerKind ?? null,
-          triggerConfig: data.triggerConfig as any,
-          cooldownDays: data.cooldownDays,
-          startAt: data.startAt ? new Date(data.startAt) : null,
-          endAt: data.endAt ? new Date(data.endAt) : null,
-          content: data.content as any,
-          updatedById: uid,
-        },
+    // Slug lock — shortSlug is locked once the promotion has EVER been
+    // ACTIVE (i.e., startedAt is set). Reason: URLs bearing the old
+    // slug may already be in the wild; changing the slug would 404
+    // every recipient's link. Even if the campaign is currently in
+    // PAUSED, the fact that it's been ACTIVE at least once means old
+    // URLs exist. Match the same lock semantics as landing page slug.
+    const newSlug = data.shortSlug?.toLowerCase() ?? null;
+    if (existing.startedAt && newSlug !== existing.shortSlug) {
+      return reply.code(409).send({
+        error: "slug_locked",
+        detail: "Short URL slug can't change once the promotion has been started (would 404 every recipient's link).",
       });
-      await writeAudit(tx, AUDIT.PROMOTION.EDITED, uid, { promotionId: p.id });
-      return p;
-    });
-    return updated;
+    }
+    // Per-campaign domain must be a member of ALLOWED_DOMAINS when set.
+    if (data.baseDomain) {
+      const { loadAllowedDomains } = await import("../services/promotions");
+      const { origins } = await loadAllowedDomains();
+      if (!origins.includes(data.baseDomain)) {
+        return reply.code(400).send({
+          error: "domain_not_allowed",
+          detail: `baseDomain must be one of: ${origins.join(", ")}`,
+        });
+      }
+    }
+    try {
+      const updated = await prisma.$transaction(async (tx) => {
+        const p = await tx.promotion.update({
+          where: { id },
+          data: {
+            title: data.title,
+            description: data.description,
+            linkKind: data.linkKind,
+            // link is only populated for EXTERNAL. LANDING_PAGE promotions
+            // resolve their URL at click time from the associated
+            // PromotionLandingPage.slug — the field is left null here.
+            link: data.linkKind === "EXTERNAL" ? (data.link ?? null) : null,
+            audienceSpec: data.audienceSpec,
+            dispatchChannels: data.dispatchChannels,
+            displaySurfaces: data.displaySurfaces,
+            triggerKind: data.triggerKind ?? null,
+            triggerConfig: data.triggerConfig as any,
+            cooldownDays: data.cooldownDays,
+            startAt: data.startAt ? new Date(data.startAt) : null,
+            endAt: data.endAt ? new Date(data.endAt) : null,
+            content: data.content as any,
+            shortSlug: newSlug,
+            baseDomain: data.baseDomain ?? null,
+            updatedById: uid,
+          },
+        });
+        await writeAudit(tx, AUDIT.PROMOTION.EDITED, uid, { promotionId: p.id });
+        return p;
+      });
+      return updated;
+    } catch (err: any) {
+      if (err?.code === "P2002" && err?.meta?.target?.includes?.("shortSlug")) {
+        return reply.code(409).send({
+          error: "slug_taken",
+          detail: `The short URL slug "${newSlug}" is already used by another promotion.`,
+        });
+      }
+      throw err;
+    }
   });
 
   // ── LIFECYCLE actions ───────────────────────────────────────────────

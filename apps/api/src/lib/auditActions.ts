@@ -233,6 +233,13 @@ export const AUDIT = {
     // the secret itself.
     HMAC_ROTATED: [AuditScope.PROMOTION, AuditVerb.PROMOTION_HMAC_ROTATED] as const,
   },
+  VANITY: {
+    // Vanity URL CRUD verbs. Scope: VANITY. See models VanityPage below.
+    // Metadata carries { slug, kind, isDefault }.
+    CREATED: [AuditScope.VANITY, AuditVerb.CREATED] as const,
+    UPDATED: [AuditScope.VANITY, AuditVerb.UPDATED] as const,
+    DELETED: [AuditScope.VANITY, AuditVerb.DELETED] as const,
+  },
   PROMO_OPT: {
     // Per-contact promotional-message opt-out / opt-in events. Metadata
     // always includes { contactId, clientId, channel, source, reason? }.

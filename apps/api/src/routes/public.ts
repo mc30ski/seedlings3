@@ -6,9 +6,11 @@ import { etFormatDate, etFormatDateOpts, etIcalLocalDateTime, etHourMinute, etMi
 import {
   setContactOptOut,
   recordClickAndResolve,
+  recordShortClickAndResolve,
   loadLandingPageForPublic,
   incrementLandingPageViewCount,
   loadPromotionSettings,
+  loadAllowedDomains,
 } from "../services/promotions";
 
 // Simple in-memory sliding-window rate limiter for the unsubscribe
@@ -1031,11 +1033,23 @@ export default async function publicRoutes(app: FastifyInstance) {
     // audit rows with a fake source IP. trustProxy:1 in server.ts
     // resolves req.ip through exactly one hop (Vercel edge).
     const ip = req.ip ?? null;
+    // Sticky-domain host + protocol — same three-layer preference chain
+    // the /mo/ handler uses. Prevents dev clicks from 302ing to the
+    // prod domain when PAYMENT_REQUEST_BASE_URL still points at prod.
+    const originalHost = String(req.headers?.["x-original-host"] ?? "").toLowerCase();
+    const forwardedHost = String(req.headers?.["x-forwarded-host"] ?? "").toLowerCase();
+    const rawHost = String(req.headers?.host ?? "").toLowerCase();
+    const requestHost = originalHost || forwardedHost || rawHost;
+    const originalProto = String(req.headers?.["x-original-proto"] ?? "").toLowerCase();
+    const forwardedProto = String(req.headers?.["x-forwarded-proto"] ?? "").toLowerCase();
+    const requestProtocol = originalProto || forwardedProto || String(req.protocol ?? "https");
     const result = await recordClickAndResolve({
       flavor,
       primaryId,
       contactId,
       token,
+      requestHost,
+      requestProtocol,
       userAgent: ua,
       ipAddress: ip,
     });
@@ -1076,5 +1090,150 @@ export default async function publicRoutes(app: FastifyInstance) {
       void incrementLandingPageViewCount(slug).catch(() => {});
     }
     return page;
+  });
+
+  // ── Vanity URLs — configurable branded shortcuts on .pro ─────────────
+  //
+  // Reads a VanityPage row by slug and returns its rendered shape (or
+  // the default page if the slug doesn't match anything, or 404 if no
+  // default is configured either). Consumed by the Next.js dynamic
+  // route apps/web/pages/[vanitySlug].tsx via SSR.
+  //
+  // Hostname enforcement: currently hardcoded to seedlings.pro. Moves
+  // to an ALLOWED_DOMAINS Setting when Phase 2 of the promo multi-
+  // domain work lands (see project_clerk_satellite_hardcoded_hostnames
+  // in memory — same "code-time for security/first-render, DB Setting
+  // for operator taxonomy" split).
+  //
+  // Rate-limited via the same per-IP bucket as click/opt-out — a
+  // hostile actor spamming random slugs would otherwise wake up the DB
+  // for each miss and inflate the default page's viewCount arbitrarily.
+  // Host allowlist for vanity URLs — now reads from the ALLOWED_DOMAINS
+  // setting (was previously hardcoded to ["seedlings.pro"]). Single
+  // source of truth: same allowlist the promo short URL route uses.
+  // Adding a satellite domain = one setting edit, no code change.
+  app.get("/public/vanity/:slug", async (req: any, reply: any) => {
+    if (!optOutRateLimit(String(req.ip ?? ""))) {
+      return reply.code(429).send({ error: "rate_limited" });
+    }
+    // Host allowlist — reject the request cleanly instead of leaking
+    // vanity content on the primary transactional domain. In dev
+    // (NODE_ENV !== "production") we also accept localhost / 127.0.0.1
+    // so `npm run dev` "just works" — same escape hatch the CORS
+    // check uses.
+    const host = String(req.headers?.host ?? "").toLowerCase();
+    // Strip port if present (dev/preview environments include :3000 etc)
+    const bareHost = host.split(":")[0];
+    const isDevHost = process.env.NODE_ENV !== "production" && (bareHost === "localhost" || bareHost === "127.0.0.1");
+    const { hostnames } = await loadAllowedDomains();
+    if (!hostnames.includes(bareHost) && !isDevHost) {
+      return reply.code(404).send({ error: "not_found" });
+    }
+    const slug = String(req.params.slug ?? "").toLowerCase();
+    if (!slug) return reply.code(400).send({ error: "missing_slug" });
+    // Reserved slugs should never be found in the DB (editor blocks
+    // creation) but defense in depth — 404 if someone somehow lands
+    // here with a reserved slug.
+    const { isReservedSlug, resolvePublicVanityPage } = await import(
+      "../services/vanityPages"
+    );
+    if (isReservedSlug(slug)) return reply.code(404).send({ error: "not_found" });
+    const page = await resolvePublicVanityPage(slug);
+    if (!page) return reply.code(404).send({ error: "not_found" });
+    // Return the shape the Next.js SSR page needs. Keep the payload
+    // minimal — anything the operator marks as internal (viewCount,
+    // createdById, etc.) is stripped so no admin metadata leaks to
+    // public renderers.
+    return {
+      slug: page.slug,
+      kind: page.kind,
+      title: page.title,
+      headline: page.headline,
+      body: page.body,
+      ctaText: page.ctaText,
+      ctaUrl: page.ctaUrl,
+      imageUrl: page.imageUrl,
+      redirectUrl: page.redirectUrl,
+      isDefault: page.isDefault,
+    };
+  });
+
+  // ── Promo short URLs ────────────────────────────────────────────────
+  //
+  // Two request shapes handled by the same handler:
+  //   GET /public/mo/:slug           — anonymous shareable (no code)
+  //   GET /public/mo/:slug/:code     — per-recipient (with attribution)
+  //
+  // Handler behavior in recordShortClickAndResolve — see promotions.ts.
+  // This route layer just does the Host allowlist check (same as
+  // vanity + click endpoints) and the rate limit, then delegates.
+  //
+  // 302 → resolved destination on match. 404 when the slug doesn't
+  // resolve to an ACTIVE campaign within its window.
+  async function handleShortClick(req: any, reply: any, code: string | null) {
+    if (!optOutRateLimit(String(req.ip ?? ""))) {
+      return reply.code(429).send({ error: "rate_limited" });
+    }
+    // The ORIGINAL host the visitor typed — not the API socket host.
+    //
+    // Three layers of proxying are possible:
+    //   1. Prod: Vercel edge → /api/_proxy Next.js handler → API. The
+    //      _proxy handler sets x-original-host/x-original-proto with
+    //      the visitor's domain because x-forwarded-host is stripped
+    //      (framework compatibility). Prefer these.
+    //   2. Local dev: Next.js dev's rewrite proxies to the API. Sets
+    //      standard x-forwarded-host / x-forwarded-proto. Prefer these
+    //      when the custom ones aren't present.
+    //   3. Direct curl to the API: only raw Host. Falls back to raw.
+    //
+    // Wrong host here 302s to the wrong URL (visitor lands on the
+    // API's internal vercel.app URL instead of seedlings.pro) — this
+    // fallback chain is load-bearing.
+    const originalHost = String(req.headers?.["x-original-host"] ?? "").toLowerCase();
+    const forwardedHost = String(req.headers?.["x-forwarded-host"] ?? "").toLowerCase();
+    const rawHost = String(req.headers?.host ?? "").toLowerCase();
+    const host = originalHost || forwardedHost || rawHost;
+    const originalProto = String(req.headers?.["x-original-proto"] ?? "").toLowerCase();
+    const forwardedProto = String(req.headers?.["x-forwarded-proto"] ?? "").toLowerCase();
+    const protocol = originalProto || forwardedProto || String(req.protocol ?? "https");
+    const bareHost = host.split(":")[0];
+    const isDevHost =
+      process.env.NODE_ENV !== "production" &&
+      (bareHost === "localhost" || bareHost === "127.0.0.1");
+    const { hostnames } = await loadAllowedDomains();
+    if (!hostnames.includes(bareHost) && !isDevHost) {
+      return reply.code(404).send({ error: "not_found" });
+    }
+    const slug = String(req.params.slug ?? "").toLowerCase();
+    if (!slug) return reply.code(400).send({ error: "missing_slug" });
+    const ua = req.headers?.["user-agent"]
+      ? String(req.headers["user-agent"]).slice(0, 500)
+      : null;
+    // req.ip is trustProxy-resolved (see server.ts). Same rationale
+    // as the existing click handler — don't trust X-Forwarded-For
+    // directly since it's spoofable without trustProxy.
+    const ip = req.ip ?? null;
+    const result = await recordShortClickAndResolve({
+      slug,
+      code,
+      requestHost: host,
+      requestProtocol: protocol,
+      userAgent: ua,
+      ipAddress: ip,
+    });
+    if (!result.destinationUrl) {
+      // No such active campaign / outside window / misconfigured
+      // destination. 404 rather than redirecting to a fallback URL —
+      // if the operator's link is dead, we surface it, not paper over
+      // it with a redirect to bare baseUrl.
+      return reply.code(404).send({ error: "not_found" });
+    }
+    return reply.code(302).redirect(result.destinationUrl);
+  }
+  app.get("/public/mo/:slug", async (req: any, reply: any) => {
+    return handleShortClick(req, reply, null);
+  });
+  app.get("/public/mo/:slug/:code", async (req: any, reply: any) => {
+    return handleShortClick(req, reply, String(req.params.code ?? "") || null);
   });
 }
