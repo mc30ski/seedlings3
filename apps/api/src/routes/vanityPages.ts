@@ -12,6 +12,7 @@ import {
   reorderVanityPages,
   getVanityPageImageUploadUrl,
   confirmVanityPageImageUpload,
+  clearVanityPageImage,
 } from "../services/vanityPages";
 
 // Super-only Vanity URL endpoints. All CRUD + image-upload URL flow
@@ -208,6 +209,28 @@ export default async function vanityPagesRoutes(app: FastifyInstance) {
         contentType,
       });
       return { ...res, contentType };
+    },
+  );
+
+  // Remove the hero image from a vanity page (operator action).
+  // Row's imageR2Key is nulled; R2 object is best-effort deleted.
+  app.delete(
+    "/super/vanity/:id/image",
+    superGuard,
+    async (req: any, reply: any) => {
+      const uid = await currentUserId(req);
+      const id = String(req.params.id);
+      try {
+        await clearVanityPageImage({ vanityPageId: id, actorUserId: uid });
+        return { cleared: true };
+      } catch (err: any) {
+        if (err?.code === "NOT_FOUND") {
+          return reply.code(404).send({ error: "not_found" });
+        }
+        return reply
+          .code(500)
+          .send({ error: "clear_image_failed", detail: String(err?.message ?? err) });
+      }
     },
   );
 

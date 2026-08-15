@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { getSeasonIcons } from "@/src/lib/season";
+import { apiGet } from "@/src/lib/api";
 
 // Full-viewport splash shown while the app is initializing. Static
 // centered logo → fade + expand together when the app is ready.
@@ -67,19 +68,22 @@ export default function AppSplash({ show }: { show: boolean }) {
   // Fetch the animation slug list once at mount. Empty list → no
   // typed text renders. Fetch is intentionally silent — if the API
   // is unreachable, splash just shows the logo, no error.
+  //
+  // Uses apiGet so the URL is built via NEXT_PUBLIC_API_BASE_URL — in
+  // prod that's `/api/_proxy`, which makes the final URL
+  // `/api/_proxy/api/public/vanity/animation`. A bare "/api/public/…"
+  // fetch would get mangled by the vercel.json `/api/(.*)` rewrite
+  // and hit the API without its `/api/` prefix → 404.
   useEffect(() => {
     if (!animate) return;
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/public/vanity/animation", {
-          headers: { accept: "application/json" },
-          cache: "no-store",
-        });
-        if (!res.ok) return;
-        const data = (await res.json()) as { slugs?: string[] };
+        const data = await apiGet<{ slugs?: string[] }>(
+          "/api/public/vanity/animation",
+        );
         if (cancelled) return;
-        if (Array.isArray(data.slugs)) setSlugs(data.slugs);
+        if (Array.isArray(data?.slugs)) setSlugs(data.slugs);
       } catch {
         // Silent — no animation is fine
       }
