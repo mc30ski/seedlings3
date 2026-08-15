@@ -13,6 +13,7 @@ import {
   Portal,
   Select,
   Spinner,
+  Stack,
   Text,
   Textarea,
   VStack,
@@ -359,7 +360,15 @@ export default function VanityUrlsTab() {
             borderColor={p.isDefault ? "teal.300" : "gray.200"}
           >
             <Card.Body>
-              <HStack justify="space-between" align="start" gap={3}>
+              {/* Mobile: stacks column (reorder → content → actions,
+                  each on its own row). Desktop: horizontal row like
+                  before. */}
+              <Stack
+                direction={{ base: "column", md: "row" }}
+                justify="space-between"
+                align="start"
+                gap={3}
+              >
                 {/* Left rail: reorder controls in a 2×2 grid so they
                     don't stretch the row vertically. Left column is
                     "up-direction" (top / up one), right column is
@@ -412,7 +421,7 @@ export default function VanityUrlsTab() {
                   </IconButton>
                 </Box>
 
-                <VStack align="start" gap={1} flex="1" minW="0">
+                <VStack align="start" gap={1} flex="1" minW="0" w={{ base: "100%", md: "auto" }}>
                   <HStack gap={2} wrap="wrap">
                     <Text fontFamily="mono" fontSize="sm" fontWeight="semibold">
                       {VANITY_PREVIEW_DOMAIN}/{p.slug}
@@ -456,12 +465,12 @@ export default function VanityUrlsTab() {
                         const isExpanded = expandedBodyIds.has(p.id);
                         const isLong = p.body.length > 120;
                         return (
-                          <Box>
+                          <Box w="100%">
                             <Text
                               fontSize="xs"
                               color="fg.muted"
                               whiteSpace={isExpanded ? "pre-wrap" : "normal"}
-                              truncate={!isExpanded}
+                              wordBreak="break-word"
                             >
                               {isExpanded || !isLong ? p.body : `${p.body.slice(0, 120)}…`}
                             </Text>
@@ -572,7 +581,7 @@ export default function VanityUrlsTab() {
                     <Trash2 size={12} />
                   </IconButton>
                 </HStack>
-              </HStack>
+              </Stack>
             </Card.Body>
           </Card.Root>
         );
