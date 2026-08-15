@@ -122,13 +122,31 @@ export default function ClientFeedTab() {
   async function loadFeed(days: number, showLoading = true): Promise<FeedItem[]> {
     if (showLoading) setLoadingMore(true);
     let result: FeedItem[] = [];
+    // Hard client-side timeout — if the API doesn't respond in 12s,
+    // the fetch is rejected and we show the error UI instead of
+    // spinning forever. Protects against a hung upstream (Neon idle,
+    // Vercel↔Neon network hiccup, etc.) that would otherwise leave
+    // the tab in a permanent loading state with no user recourse.
+    const REQUEST_TIMEOUT_MS = 12000;
     try {
-      const feed = await apiGet<{ items: FeedItem[] }>(`/api/public/feed?limit=50&days=${days}`);
+      const feed = await Promise.race([
+        apiGet<{ items: FeedItem[] }>(`/api/public/feed?limit=50&days=${days}`),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error("The server took too long to respond. Please try again.")),
+            REQUEST_TIMEOUT_MS,
+          ),
+        ),
+      ]);
       result = feed.items;
       setItems(feed.items);
       setDaysShown(days);
+      setError(null);
     } catch (err: any) {
-      if (days === 3) setError(err?.message || "Failed to load feed");
+      // Always surface the error — even on the initial load, days=7.
+      // Prior version only set error when days=3, so failures on the
+      // first load left the spinner up with no explanation.
+      setError(err?.message || "Failed to load feed");
     }
     setLoading(false);
     setLoadingMore(false);
