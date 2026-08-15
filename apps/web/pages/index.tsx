@@ -138,6 +138,16 @@ export default function HomePage() {
 
   const [me, setMe] = useState<Me | null>(null);
   const [meLoading, setMeLoading] = useState(true);
+  // Splash-done flag: gates browser-permission prompts (geolocation,
+  // notifications, etc.) so the OS/browser dialog doesn't pop up over
+  // the splash animation and obscure the logo. Flips true after a
+  // fixed delay that exceeds the splash's max on-screen time
+  // (~8s min duration + 1s fade) — see AppSplash.tsx.
+  const [splashDone, setSplashDone] = useState(false);
+  useEffect(() => {
+    const t = window.setTimeout(() => setSplashDone(true), 9500);
+    return () => window.clearTimeout(t);
+  }, []);
   const isAdmin = hasRole(me?.roles, "ADMIN");
   const isWorker = hasRole(me?.roles, "WORKER");
   const isSuper = hasRole(me?.roles, "SUPER");
@@ -3896,7 +3906,11 @@ export default function HomePage() {
           server and client emit identical HTML on the first pass. */}
       {mounted && hasAnyRole && (
         <WeatherBar
-          allowGeolocation={!!(me?.isApproved && hasAnyRole)}
+          // Gate the geolocation permission prompt on splashDone so
+          // the browser dialog doesn't cover the splash animation.
+          // Same on .team and .pro — the flag is time-based, not
+          // domain-based, so both domains benefit.
+          allowGeolocation={splashDone && !!(me?.isApproved && hasAnyRole)}
           mode={weatherMode}
           onModeChange={setWeatherMode}
         />

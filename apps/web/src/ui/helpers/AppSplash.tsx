@@ -204,6 +204,7 @@ function TypingAnimation({
   paused: boolean;
 }) {
   const [text, setText] = useState("");
+  const [history, setHistory] = useState<string[]>([]);
   const currentRef = useRef("");
   const write = (next: string) => {
     currentRef.current = next;
@@ -223,11 +224,6 @@ function TypingAnimation({
         }, ms);
       });
 
-    // Speed scales per slug cycle — each successive slug types faster
-    // than the previous, giving an "accelerating" feel without ever
-    // going below the minimum floor (below which characters blur into
-    // an unreadable flicker). Domain typing (idx = -1) uses the base
-    // speed unmodified so the opening beat has a deliberate feel.
     const speedFactorFor = (idx: number) => Math.max(0.28, Math.pow(0.78, idx));
     const typeMsFor = (idx: number) =>
       idx < 0 ? TYPE_CHAR_MS : Math.max(15, Math.round(SLUG_TYPE_CHAR_MS * speedFactorFor(idx)));
@@ -239,8 +235,6 @@ function TypingAnimation({
       Math.max(80, Math.round(HOLD_BETWEEN_MS * speedFactorFor(idx)));
 
     async function typeString(target: string, charMs: number) {
-      // Reads currentRef so multiple sequential typeString calls
-      // continue from where the previous left off, not from mount.
       while (currentRef.current.length < target.length && !cancelled) {
         await wait(charMs);
         if (cancelled) return;
@@ -257,11 +251,6 @@ function TypingAnimation({
     }
 
     async function run() {
-      // Ensure the domain is fully typed. If it's already there (or
-      // extends beyond, e.g. a partial "/slug" from a prior run),
-      // skip — do NOT re-type. If it's partially typed, typeString
-      // resumes from currentRef.current.length so we never see the
-      // domain animate a second time.
       if (currentRef.current.length < DOMAIN_TEXT.length) {
         await typeString(DOMAIN_TEXT, typeMsFor(-1));
         if (cancelled) return;
@@ -270,36 +259,34 @@ function TypingAnimation({
 
       if (slugs.length === 0) return;
 
-      // If we resumed with a slug still showing (rare — cancellation
-      // during a hold), erase back to the domain first.
       if (currentRef.current.length > DOMAIN_TEXT.length) {
         await eraseTo(DOMAIN_TEXT, eraseMsFor(0));
         if (cancelled) return;
         await wait(holdBetweenMsFor(0));
       }
 
-      // ONE pass through the slug list — no looping. After the last
-      // slug erases back to the domain, the text just holds at
-      // "seedlings.pro|" until the splash fades. Prior versions
-      // looped and users saw the first few slugs repeat before the
-      // splash faded, which read as a bug.
+      // ONE pass through the slug list. After each slug is typed and
+      // held, it's captured into `history` (rendered below) BEFORE the
+      // erase — so the list of previously-shown slugs stays visible
+      // as the live line cycles. The last slug is captured too, then
+      // NOT erased so the live line lands on it with the cursor.
       for (let idx = 0; idx < slugs.length && !cancelled; idx++) {
         const slug = slugs[idx];
         await typeString(`${DOMAIN_TEXT}/${slug}`, typeMsFor(idx));
         if (cancelled) return;
+        // Push to history the instant the slug finishes typing, BEFORE
+        // the hold — otherwise the history line lags the live line's
+        // completion by the full hold duration (~700ms) and reads as
+        // an unexplained delay.
+        setHistory((prev) => [...prev, slug]);
         await wait(holdFullMsFor(idx));
         if (cancelled) return;
-        // Skip the trailing erase on the very last slug so the splash
-        // fades with the final slug still on screen — reads as a
-        // deliberate landing, not a mid-cycle cut.
         if (idx < slugs.length - 1) {
           await eraseTo(DOMAIN_TEXT, eraseMsFor(idx));
           if (cancelled) return;
           await wait(holdBetweenMsFor(idx));
         }
       }
-      // Settle pause after the last slug so the animation doesn't
-      // cut straight from typing → splash fade. Feels more finished.
       if (!cancelled) await wait(HOLD_END_MS);
     }
 
@@ -311,48 +298,82 @@ function TypingAnimation({
     };
   }, [slugs, paused]);
 
-  // Style segments: "seedlings" bold, ".pro" normal, "/" muted, slug
-  // normal. Slicing by fixed offsets works because the domain part
-  // is a constant — chars 0..9 are always "seedlings", 9..13 are
-  // always ".pro", 13 is the "/", and everything from 14+ is the
-  // vanity slug. Partial states (mid-typing the domain) just show
-  // shorter prefixes; every slice is naturally clipped to what's
-  // been typed so far.
+  // Style segments on the LIVE line: "seedlings" bold, ".pro" normal,
+  // "/" muted, slug normal. Fixed offsets since the domain part is
+  // a constant length.
   const bolded = text.slice(0, 9);
   const domainTail = text.slice(9, 13);
   const slash = text.slice(13, 14);
   const slug = text.slice(14);
   return (
+    // The wrapper is `position: relative` so the absolutely-positioned
+    // history stack anchors to its bottom without being part of the
+    // flex layout. That way the wrapper's own height stays constant
+    // (= one live line) and the parent flex (logo + this) doesn't
+    // grow — logo stays viewport-centered even as history extends.
     <div
       style={{
         fontFamily:
           "ui-monospace, SFMono-Regular, Menlo, Consolas, 'Roboto Mono', monospace",
-        // Fluid font — grows on wide screens for punch, shrinks on
-        // narrow ones so long slugs stay on a single line. Cap at
-        // 22px so it doesn't get absurdly large on ultrawide displays.
         fontSize: "clamp(15px, 4.5vw, 22px)",
         color: "#4a5568",
         letterSpacing: "0.5px",
-        minHeight: "1.4em",
         maxWidth: "92vw",
-        whiteSpace: "nowrap",
-        overflow: "hidden",
         userSelect: "none",
+        position: "relative",
       }}
     >
-      <span style={{ fontWeight: 700 }}>{bolded}</span>
-      {domainTail}
-      <span style={{ color: "#cbd5e0" }}>{slash}</span>
-      {slug}
-      <span
-        style={{
-          display: "inline-block",
-          width: "0.6em",
-          marginLeft: "1px",
-          borderRight: "2px solid #4a5568",
-          animation: "seedlings-splash-cursor-blink 1s step-end infinite",
-        }}
-      />
+      {/* LIVE line — the original animation: types domain, then each
+          /slug, then erases and types the next. Cursor always here. */}
+      <div style={{ minHeight: "1.4em", whiteSpace: "nowrap", overflow: "hidden", textAlign: "center" }}>
+        <span style={{ fontWeight: 700 }}>{bolded}</span>
+        {domainTail}
+        <span style={{ color: "#cbd5e0" }}>{slash}</span>
+        {slug}
+        <span
+          style={{
+            display: "inline-block",
+            width: "0.6em",
+            marginLeft: "1px",
+            borderRight: "2px solid #4a5568",
+            animation: "seedlings-splash-cursor-blink 1s step-end infinite",
+          }}
+        />
+      </div>
+      {/* HISTORY — absolutely positioned BELOW the live line so it
+          doesn't push the logo up as it grows. Each already-shown
+          slug renders as the full word the vanity spells out: the
+          domain's ".pro" glues to the slug at the URL boundary, so
+          "seedlings.pro/perty" reads as "property". History displays
+          that full word (pro + slug), muted gray. */}
+      {history.length > 0 && (
+        <div
+          style={{
+            position: "absolute",
+            top: "100%",
+            left: "50%",
+            transform: "translateX(-50%)",
+            marginTop: "6px",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            color: "#cbd5e0",
+          }}
+        >
+          {history.map((s, i) => (
+            <div
+              key={`${i}-${s}`}
+              style={{
+                minHeight: "1.4em",
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+              }}
+            >
+              pro{s}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
