@@ -14,6 +14,7 @@ import {
   Select,
   Spinner,
   Stack,
+  Switch,
   Text,
   Textarea,
   VStack,
@@ -184,6 +185,42 @@ export default function VanityUrlsTab() {
     void load();
   }, [load]);
 
+  // Animation settings — one flag today (show history stack in the
+  // splash typing animation). `null` while loading so the toggle
+  // doesn't briefly render in the wrong state.
+  const [animationShowHistory, setAnimationShowHistory] = useState<boolean | null>(null);
+  const [animationSettingBusy, setAnimationSettingBusy] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const s = await apiGet<{ showHistory: boolean }>(
+          "/api/super/vanity/animation-settings",
+        );
+        if (!cancelled) setAnimationShowHistory(!!s?.showHistory);
+      } catch {
+        // Silent — keep null; toggle just won't render.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  const toggleAnimationHistory = useCallback(async () => {
+    if (animationShowHistory === null) return;
+    const next = !animationShowHistory;
+    setAnimationSettingBusy(true);
+    try {
+      await apiPatch("/api/super/vanity/animation-settings", { showHistory: next });
+      setAnimationShowHistory(next);
+    } catch (e: any) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: `Couldn't update setting: ${e?.message ?? "unknown"}`,
+      });
+    } finally {
+      setAnimationSettingBusy(false);
+    }
+  }, [animationShowHistory]);
+
   const openEditor = (id: string | "new") => setEditingId(id);
   const closeEditor = () => setEditingId(null);
 
@@ -335,6 +372,36 @@ export default function VanityUrlsTab() {
         </Button>
       </HStack>
 
+      {/* Animation settings — one toggle. Skipped while the setting is
+          still loading so the switch doesn't flash the wrong state. */}
+      {animationShowHistory !== null && (
+        <Card.Root variant="outline">
+          <Card.Body>
+            <HStack gap={3} justify="space-between">
+              <VStack align="start" gap={0}>
+                <Text fontSize="sm" fontWeight="medium">
+                  Show history in startup animation
+                </Text>
+                <Text fontSize="xs" color="fg.muted">
+                  When on, previously-shown vanity slugs stack in muted
+                  gray below the current typing line. When off, only the
+                  current line renders.
+                </Text>
+              </VStack>
+              <Switch.Root
+                checked={animationShowHistory}
+                disabled={animationSettingBusy}
+                onCheckedChange={() => void toggleAnimationHistory()}
+                colorPalette="teal"
+              >
+                <Switch.HiddenInput />
+                <Switch.Control />
+              </Switch.Root>
+            </HStack>
+          </Card.Body>
+        </Card.Root>
+      )}
+
       {pages.length === 0 && (
         <Card.Root variant="outline">
           <Card.Body>
@@ -360,23 +427,24 @@ export default function VanityUrlsTab() {
             borderColor={p.isDefault ? "teal.300" : "gray.200"}
           >
             <Card.Body>
-              {/* Mobile: stacks column (reorder → content → actions,
-                  each on its own row). Desktop: horizontal row like
-                  before. */}
+              {/* Mobile: stacks column (reorder row → content →
+                  actions row). Desktop: horizontal row so reorder
+                  lives on the LEFT rail beside the content. */}
               <Stack
                 direction={{ base: "column", md: "row" }}
                 justify="space-between"
                 align="start"
                 gap={3}
               >
-                {/* Left rail: reorder controls in a 2×2 grid so they
-                    don't stretch the row vertically. Left column is
-                    "up-direction" (top / up one), right column is
-                    "down-direction" (bottom / down one). */}
-                <Box
+                {/* Reorder controls: horizontal on mobile (a row on
+                    top of the content), vertical on desktop (stacked
+                    on the left rail beside the content). Order is
+                    always top / up / down / bottom, reading
+                    top-to-bottom on desktop and left-to-right on
+                    mobile. */}
+                <Stack
+                  direction={{ base: "row", md: "column" }}
                   flexShrink={0}
-                  display="grid"
-                  gridTemplateColumns="repeat(2, 1fr)"
                   gap={0.5}
                 >
                   <IconButton
@@ -388,16 +456,6 @@ export default function VanityUrlsTab() {
                     title="Send to top"
                   >
                     <ChevronsUp size={14} />
-                  </IconButton>
-                  <IconButton
-                    size="xs"
-                    variant="ghost"
-                    aria-label="Send to bottom"
-                    disabled={isLast}
-                    onClick={() => void moveRow(p.id, "bottom")}
-                    title="Send to bottom"
-                  >
-                    <ChevronsDown size={14} />
                   </IconButton>
                   <IconButton
                     size="xs"
@@ -419,7 +477,17 @@ export default function VanityUrlsTab() {
                   >
                     <ArrowDown size={14} />
                   </IconButton>
-                </Box>
+                  <IconButton
+                    size="xs"
+                    variant="ghost"
+                    aria-label="Send to bottom"
+                    disabled={isLast}
+                    onClick={() => void moveRow(p.id, "bottom")}
+                    title="Send to bottom"
+                  >
+                    <ChevronsDown size={14} />
+                  </IconButton>
+                </Stack>
 
                 <VStack align="start" gap={1} flex="1" minW="0" w={{ base: "100%", md: "auto" }}>
                   <HStack gap={2} wrap="wrap">

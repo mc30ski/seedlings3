@@ -78,6 +78,9 @@ export default function AppSplash({ show }: { show: boolean }) {
     setMounted(true);
   }, []);
   const [slugs, setSlugs] = useState<string[]>([]);
+  // Operator toggle from the Vanity tab. Defaults true — history
+  // renders unless the flag is explicitly disabled.
+  const [showHistory, setShowHistory] = useState(true);
   // Animation trigger. Starts `false` so SSR and initial client paint
   // produce IDENTICAL DOM structure (no <TypingAnimation> in either)
   // — flips to `true` in useEffect after mount if the gate below
@@ -127,11 +130,13 @@ export default function AppSplash({ show }: { show: boolean }) {
     let cancelled = false;
     (async () => {
       try {
-        const data = await apiGet<{ slugs?: string[] }>(
-          "/api/public/vanity/animation",
-        );
+        const data = await apiGet<{
+          slugs?: string[];
+          showHistory?: boolean;
+        }>("/api/public/vanity/animation");
         if (cancelled) return;
         if (Array.isArray(data?.slugs)) setSlugs(data.slugs);
+        if (typeof data?.showHistory === "boolean") setShowHistory(data.showHistory);
       } catch {
         // Silent — no animation is fine
       }
@@ -241,8 +246,28 @@ export default function AppSplash({ show }: { show: boolean }) {
           animation: fading ? `seedlings-splash-logo-expand ${FADE_MS}ms ease forwards` : undefined,
         }}
       />
+      {/* TypingAnimation is absolutely positioned BELOW the logo
+          instead of a flex sibling. On iOS PWA, the monospace font
+          often loads a beat after first paint — its line-height
+          shifts the animation's height, which (as a flex sibling)
+          would nudge the logo up/down mid-typing. Anchoring to a
+          fixed offset from viewport center pins the animation
+          without affecting the logo's flex position. */}
       {animate && (
-        <TypingAnimation slugs={slugs} paused={fading} />
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(50% + 76px)",
+            left: "50%",
+            transform: "translateX(-50%)",
+            width: "100%",
+            display: "flex",
+            justifyContent: "center",
+            pointerEvents: "none",
+          }}
+        >
+          <TypingAnimation slugs={slugs} paused={fading} showHistory={showHistory} />
+        </div>
       )}
     </div>,
     document.body,
@@ -271,9 +296,11 @@ export default function AppSplash({ show }: { show: boolean }) {
 function TypingAnimation({
   slugs,
   paused,
+  showHistory,
 }: {
   slugs: string[];
   paused: boolean;
+  showHistory: boolean;
 }) {
   const [text, setText] = useState("");
   const [history, setHistory] = useState<string[]>([]);
@@ -418,7 +445,7 @@ function TypingAnimation({
           domain's ".pro" glues to the slug at the URL boundary, so
           "seedlings.pro/perty" reads as "property". History displays
           that full word (pro + slug), muted gray. */}
-      {history.length > 0 && (
+      {showHistory && history.length > 0 && (
         <div
           style={{
             position: "absolute",
