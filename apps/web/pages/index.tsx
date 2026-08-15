@@ -518,13 +518,33 @@ export default function HomePage() {
     },
   ];
 
+  // Separate error state from `me === null` (the latter is a valid
+  // signed-out state). `meError` is set only when the /api/me fetch
+  // actually failed or timed out — used to render a retryable error
+  // banner instead of a blank tabless page.
+  const [meError, setMeError] = useState<string | null>(null);
   const loadMe = useCallback(async () => {
     setMeLoading(true);
+    setMeError(null);
+    // Hard client-side timeout — without this, a hung upstream
+    // (Neon idle / Vercel↔Neon hiccup) leaves the app in an
+    // indefinite loading state and the tabs render with no data,
+    // showing a blank page under the header.
+    const REQUEST_TIMEOUT_MS = 12000;
     try {
-      const data = await apiGet<Me>("/api/me");
+      const data = await Promise.race([
+        apiGet<Me>("/api/me"),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error("The server took too long to respond.")),
+            REQUEST_TIMEOUT_MS,
+          ),
+        ),
+      ]);
       setMe(data);
-    } catch {
+    } catch (e: any) {
       setMe(null);
+      setMeError(e?.message ?? "Couldn't load your profile.");
     } finally {
       setMeLoading(false);
     }
@@ -3914,6 +3934,36 @@ export default function HomePage() {
           mode={weatherMode}
           onModeChange={setWeatherMode}
         />
+      )}
+      {/* Error banner when /api/me failed or timed out. Signed-in
+          user with no profile = something is broken upstream (Neon
+          cold, network hiccup). Renders a retryable banner in the
+          content area so the app is never a blank green header. */}
+      {!meLoading && isSignedIn && meError && !me && (
+        <Box mx={3} mt={3}>
+          <Box
+            borderWidth="1px"
+            borderColor="red.300"
+            bg="red.50"
+            borderRadius="md"
+            p={4}
+          >
+            <VStack align="start" gap={3}>
+              <VStack align="start" gap={1}>
+                <Text fontSize="sm" fontWeight="semibold" color="red.900">
+                  Couldn&apos;t load your profile
+                </Text>
+                <Text fontSize="xs" color="red.800">
+                  {meError} If this keeps happening the server may be waking up
+                  from idle — try again in a few seconds.
+                </Text>
+              </VStack>
+              <Button size="sm" colorPalette="red" onClick={() => void loadMe()}>
+                Try again
+              </Button>
+            </VStack>
+          </Box>
+        </Box>
       )}
       {!meLoading && me && !me.isApproved && <AwaitingApprovalNotice />}
       {!meLoading && me?.isApproved && !hasAnyRole && topTab !== "client" && <NoRoleNotice />}
