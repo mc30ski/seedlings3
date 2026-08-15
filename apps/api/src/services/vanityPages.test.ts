@@ -44,10 +44,20 @@ describe("isValidSlugFormat — URL-safe kebab-case", () => {
     expect(isValidSlugFormat("perties-")).toBe(false);
   });
 
-  it("rejects double hyphens", () => {
-    // A slug like "fall--offers" would create URLs that look broken
-    // (and some URL parsers normalize double dashes differently).
-    expect(isValidSlugFormat("fall--offers")).toBe(false);
+  it("accepts double hyphens and underscores in the middle", () => {
+    // URL-safe characters — allowed anywhere between the first and
+    // last character. The only positional restriction is on the
+    // leading/trailing character (must be alphanumeric).
+    expect(isValidSlugFormat("fall--offers")).toBe(true);
+    expect(isValidSlugFormat("fall_offers")).toBe(true);
+    expect(isValidSlugFormat("vide_feedback")).toBe(true);
+    expect(isValidSlugFormat("fall__offers")).toBe(true);
+    expect(isValidSlugFormat("fall-_-offers")).toBe(true);
+  });
+
+  it("rejects leading/trailing underscore", () => {
+    expect(isValidSlugFormat("_perties")).toBe(false);
+    expect(isValidSlugFormat("perties_")).toBe(false);
   });
 
   it("rejects empty string", () => {
@@ -61,7 +71,6 @@ describe("isValidSlugFormat — URL-safe kebab-case", () => {
 
   it("rejects spaces and special chars", () => {
     expect(isValidSlugFormat("fall offers")).toBe(false);
-    expect(isValidSlugFormat("fall_offers")).toBe(false);
     expect(isValidSlugFormat("fall.offers")).toBe(false);
     expect(isValidSlugFormat("fall/offers")).toBe(false);
     expect(isValidSlugFormat("fall?offers")).toBe(false);

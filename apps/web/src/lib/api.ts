@@ -182,9 +182,14 @@ export async function request<T>(
     let message = `HTTP ${res.status}`;
     let code: string | undefined;
     let details: unknown;
+    let body: unknown;
     try {
       const data = await res.clone().json();
-      message = data?.message || message;
+      body = data;
+      // Prefer an explicit `message`, fall back to `detail` (Fastify /
+      // this codebase's 409 convention) so the thrown Error's `message`
+      // isn't a bare `HTTP 409`.
+      message = data?.message || data?.detail || message;
       code = data?.code;
       details = data?.details;
     } catch {
@@ -196,10 +201,12 @@ export async function request<T>(
       status?: number;
       code?: string;
       details?: unknown;
+      body?: unknown;
     };
     err.status = res.status;
     if (code) err.code = code;
     if (details !== undefined) err.details = details;
+    if (body !== undefined) err.body = body;
 
     // Compliance-policy gate — the server throws POLICIES_REQUIRED with
     // { pendingPolicyIds: string[] } in details when the worker tries any

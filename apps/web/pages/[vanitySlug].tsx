@@ -58,14 +58,20 @@ const RESERVED_SLUGS = new Set<string>([
   "super",
 ]);
 
+type VanityButton = {
+  kind: "URL" | "PHONE" | "EMAIL";
+  label: string;
+  target: string;
+  href: string;
+};
+
 type VanityPageData = {
   slug: string;
   kind: "LANDING" | "REDIRECT";
   title: string;
   headline: string;
   body: string;
-  ctaText: string | null;
-  ctaUrl: string | null;
+  buttons: VanityButton[];
   imageUrl: string | null;
   redirectUrl: string | null;
   isDefault: boolean;
@@ -121,20 +127,23 @@ export default function VanityLandingPage({ page, ogTitle, ogDescription, ogImag
                   {page.body}
                 </Text>
               )}
-              {page.ctaText && page.ctaUrl && (
-                <Box pt={2}>
-                  <Button
-                    as="a"
-                    // Chakra's <Button as="a"> passes props through; href isn't in the type
-                    // signature Chakra ships for the anchor variant.
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    {...({ href: page.ctaUrl } as any)}
-                    colorPalette="teal"
-                    size="lg"
-                  >
-                    {page.ctaText}
-                  </Button>
-                </Box>
+              {page.buttons.length > 0 && (
+                <VStack align="stretch" gap={3} pt={2}>
+                  {page.buttons.map((btn, idx) => (
+                    <Button
+                      key={idx}
+                      as="a"
+                      // Chakra's <Button as="a"> passes props through; href isn't in the type
+                      // signature Chakra ships for the anchor variant.
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      {...({ href: btn.href } as any)}
+                      colorPalette="teal"
+                      size="lg"
+                    >
+                      {btn.label}
+                    </Button>
+                  ))}
+                </VStack>
               )}
             </VStack>
           </VStack>

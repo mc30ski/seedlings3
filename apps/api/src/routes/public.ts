@@ -1121,7 +1121,19 @@ export default async function publicRoutes(app: FastifyInstance) {
     // (NODE_ENV !== "production") we also accept localhost / 127.0.0.1
     // so `npm run dev` "just works" — same escape hatch the CORS
     // check uses.
-    const host = String(req.headers?.host ?? "").toLowerCase();
+    //
+    // Three-layer Host preference (matches /mo/ handler):
+    //   1. Prod: Vercel edge → /api/_proxy Next.js handler → API.
+    //      The proxy strips `host` and sets `x-original-host` with the
+    //      visitor's actual domain.
+    //   2. Local dev: Next.js dev rewrite sets `x-forwarded-host`.
+    //   3. Direct curl: only raw Host.
+    // Without this chain, the API sees the internal vercel.app host
+    // (not seedlings.pro) and every allowlist check fails.
+    const originalHost = String(req.headers?.["x-original-host"] ?? "").toLowerCase();
+    const forwardedHost = String(req.headers?.["x-forwarded-host"] ?? "").toLowerCase();
+    const rawHost = String(req.headers?.host ?? "").toLowerCase();
+    const host = originalHost || forwardedHost || rawHost;
     // Strip port if present (dev/preview environments include :3000 etc)
     const bareHost = host.split(":")[0];
     const isDevHost = process.env.NODE_ENV !== "production" && (bareHost === "localhost" || bareHost === "127.0.0.1");
@@ -1134,7 +1146,7 @@ export default async function publicRoutes(app: FastifyInstance) {
     // Reserved slugs should never be found in the DB (editor blocks
     // creation) but defense in depth — 404 if someone somehow lands
     // here with a reserved slug.
-    const { isReservedSlug, resolvePublicVanityPage } = await import(
+    const { isReservedSlug, resolvePublicVanityPage, resolveVanityButtons } = await import(
       "../services/vanityPages"
     );
     if (isReservedSlug(slug)) return reply.code(404).send({ error: "not_found" });
@@ -1143,15 +1155,16 @@ export default async function publicRoutes(app: FastifyInstance) {
     // Return the shape the Next.js SSR page needs. Keep the payload
     // minimal — anything the operator marks as internal (viewCount,
     // createdById, etc.) is stripped so no admin metadata leaks to
-    // public renderers.
+    // public renderers. `buttons` is normalized here (legacy ctaText/
+    // ctaUrl auto-synthesized into a single-URL entry) so SSR just
+    // loops and renders — no protocol decisions in the view layer.
     return {
       slug: page.slug,
       kind: page.kind,
       title: page.title,
       headline: page.headline,
       body: page.body,
-      ctaText: page.ctaText,
-      ctaUrl: page.ctaUrl,
+      buttons: resolveVanityButtons(page),
       imageUrl: page.imageUrl,
       redirectUrl: page.redirectUrl,
       isDefault: page.isDefault,
