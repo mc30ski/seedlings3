@@ -35,6 +35,47 @@ export default async function vanityPagesRoutes(app: FastifyInstance) {
     return listVanityPages();
   });
 
+  // Animation settings — one flag today (show history stack under the
+  // typing line). Persisted as a Setting row so the value survives
+  // deploys and is shared org-wide.
+  //
+  // Setting key: VANITY_STARTUP_ANIMATION_SHOW_HISTORY (string "true" /
+  // "false"). Default treated as true when the row is missing.
+  app.get("/super/vanity/animation-settings", superGuard, async () => {
+    const { prisma } = await import("../db/prisma");
+    const row = await prisma.setting.findUnique({
+      where: { key: "VANITY_STARTUP_ANIMATION_SHOW_HISTORY" },
+    });
+    return { showHistory: row?.value !== "false" };
+  });
+
+  app.patch(
+    "/super/vanity/animation-settings",
+    superGuard,
+    async (req: any, reply: any) => {
+      const uid = await currentUserId(req);
+      const body = (req.body ?? {}) as { showHistory?: unknown };
+      const value = body.showHistory === false ? "false" : "true";
+      const { prisma } = await import("../db/prisma");
+      // Setting.updatedById records who made the change; Setting.updatedAt
+      // is Prisma-auto-managed. Together these give a full audit trail
+      // visible in the generic Settings tab.
+      await prisma.setting.upsert({
+        where: { key: "VANITY_STARTUP_ANIMATION_SHOW_HISTORY" },
+        create: {
+          key: "VANITY_STARTUP_ANIMATION_SHOW_HISTORY",
+          value,
+          section: "vanity",
+          description:
+            "When true, the app's startup typing animation stacks previously-shown vanity slugs as a muted history below the current line. When false, the history is hidden and only the current line renders.",
+          updatedById: uid,
+        },
+        update: { value, updatedById: uid },
+      });
+      return { showHistory: value === "true" };
+    },
+  );
+
   // Single fetch for the edit form.
   app.get("/super/vanity/:id", superGuard, async (req: any, reply: any) => {
     const row = await getVanityPageById(String(req.params.id));

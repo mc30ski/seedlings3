@@ -1183,16 +1183,20 @@ export default async function publicRoutes(app: FastifyInstance) {
   });
 
   // Ordered list of vanity slugs opted into the app's startup typing
-  // animation. Rate-limited (shared bucket) so an attacker can't scrape
-  // this on repeat. Returns { slugs: string[] } — empty array is a
-  // valid "no animation configured" response.
+  // animation, plus display settings. Rate-limited (shared bucket).
+  // Returns { slugs: string[], showHistory: boolean }.
   app.get("/public/vanity/animation", async (req: any, reply: any) => {
     if (!optOutRateLimit(String(req.ip ?? ""))) {
       return reply.code(429).send({ error: "rate_limited" });
     }
     const { listAnimationSlugs } = await import("../services/vanityPages");
-    const slugs = await listAnimationSlugs();
-    return { slugs };
+    const [slugs, historySetting] = await Promise.all([
+      listAnimationSlugs(),
+      prisma.setting.findUnique({
+        where: { key: "VANITY_STARTUP_ANIMATION_SHOW_HISTORY" },
+      }),
+    ]);
+    return { slugs, showHistory: historySetting?.value !== "false" };
   });
 
   // ── Promo short URLs ────────────────────────────────────────────────

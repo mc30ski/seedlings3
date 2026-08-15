@@ -215,6 +215,7 @@ const SETTING_SECTIONS: Record<string, string> = {
   PROMOTION_OPT_OUT_FOOTER_SMS: "promotions",
   PROMOTION_HMAC_SECRET: "promotions",
   ALLOWED_DOMAINS: "promotions",
+  VANITY_STARTUP_ANIMATION_SHOW_HISTORY: "vanity",
   // Integrations
   WEATHER_API_KEY: "integrations",
   DOCUMENT_SYNC_ENABLED: "integrations",
@@ -2402,6 +2403,7 @@ async function seedDatabase() {
     // in Vercel Domains + add it to Clerk Satellites (see the
     // multi-domain doc for the checklist).
     { key: "ALLOWED_DOMAINS", value: '["https://seedlings.team","https://seedlings.pro"]', description: "JSON array of all domains this app serves. Used by the Promotion editor's domain picker and by public-route Host-header validation. Primary (PAYMENT_REQUEST_BASE_URL) must be one of these." },
+    { key: "VANITY_STARTUP_ANIMATION_SHOW_HISTORY", value: "true", description: "When true, the app's startup typing animation stacks previously-shown vanity slugs as a muted history below the current line. When false, the history is hidden and only the current line renders." },
   ];
   for (const s of paymentSettings) {
     await prisma.setting.upsert({
