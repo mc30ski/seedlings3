@@ -211,10 +211,17 @@ export default function AppSplash({ show }: { show: boolean }) {
       onClick={() => setForceHide(true)}
       style={{
         position: "fixed",
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
+        // Extend the overlay 400px past every viewport edge. iOS PWA's
+        // safe-area env variables return 0 in some contexts, and
+        // during status-bar / home-indicator animations the visual
+        // viewport briefly shifts by more than a token safe-area
+        // amount. Anchoring far off-screen guarantees the splash
+        // covers everything the visual viewport could ever reveal,
+        // no matter what iOS is doing with its chrome.
+        top: "-400px",
+        left: "-400px",
+        right: "-400px",
+        bottom: "-400px",
         zIndex: 20000,
         background: "white",
         cursor: "pointer",
