@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Badge,
   Box,
@@ -24,10 +24,12 @@ import {
   ChevronsDown,
   ChevronsUp,
   ExternalLink,
+  ImagePlus,
   Plus,
   Sparkles,
   Star,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
@@ -82,6 +84,7 @@ type VanityPage = {
   ctaUrl: string | null;
   buttons: VanityButton[] | null;
   imageR2Key: string | null;
+  imageUrl: string | null;
   redirectUrl: string | null;
   aliasTargetId: string | null;
   enabled: boolean;
@@ -708,6 +711,65 @@ function VanityEditor({
   const [redirectUrl, setRedirectUrl] = useState(existing?.redirectUrl ?? "");
   const [aliasTargetId, setAliasTargetId] = useState<string>(existing?.aliasTargetId ?? "");
   const [enabled, setEnabled] = useState(existing?.enabled ?? true);
+  // Local mirror of the hero image so upload/remove can reflect
+  // immediately in the editor without waiting on a full parent reload.
+  const [imageUrl, setImageUrl] = useState<string | null>(existing?.imageUrl ?? null);
+  const [imageBusy, setImageBusy] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  async function refreshImage(id: string) {
+    try {
+      const fresh = await apiGet<VanityPage>(`/api/super/vanity/${id}`);
+      setImageUrl(fresh?.imageUrl ?? null);
+    } catch {
+      // Silent — the upload succeeded; only the local preview lags.
+    }
+  }
+
+  async function handleUpload(file: File) {
+    if (!existing) return;
+    setImageBusy(true);
+    try {
+      const contentType = file.type || "image/jpeg";
+      const { uploadUrl, key } = await apiPost<{ uploadUrl: string; key: string }>(
+        `/api/super/vanity/${existing.id}/image-upload-url`,
+        { contentType },
+      );
+      const put = await fetch(uploadUrl, {
+        method: "PUT",
+        headers: { "content-type": contentType },
+        body: file,
+      });
+      if (!put.ok) throw new Error(`Upload to storage failed (${put.status})`);
+      await apiPost(`/api/super/vanity/${existing.id}/confirm-image`, { key });
+      await refreshImage(existing.id);
+      publishInlineMessage({ type: "SUCCESS", text: "Image uploaded." });
+    } catch (e: any) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: `Upload failed: ${e?.message ?? "unknown"}`,
+      });
+    } finally {
+      setImageBusy(false);
+    }
+  }
+
+  async function handleRemoveImage() {
+    if (!existing) return;
+    setImageBusy(true);
+    try {
+      await apiDelete(`/api/super/vanity/${existing.id}/image`);
+      setImageUrl(null);
+      publishInlineMessage({ type: "SUCCESS", text: "Image removed." });
+    } catch (e: any) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: `Remove failed: ${e?.message ?? "unknown"}`,
+      });
+    } finally {
+      setImageBusy(false);
+    }
+  }
   const [busy, setBusy] = useState(false);
 
   // Live slug validation — surface issues before Save. Same rules as
@@ -939,6 +1001,99 @@ function VanityEditor({
                 {/* Landing fields */}
                 {kind === "LANDING" && (
                   <>
+                    {/* Hero image — rendered at the top of the public
+                        landing page. Optional. Upload flow uses a
+                        presigned R2 URL (same pattern as promotion
+                        landing images). New rows can't upload until
+                        the row exists — we surface a hint. */}
+                    <Box>
+                      <Text fontSize="sm" fontWeight="medium" mb={1}>
+                        Hero image (optional)
+                      </Text>
+                      {imageUrl ? (
+                        <Box
+                          borderWidth="1px"
+                          borderColor="gray.200"
+                          borderRadius="md"
+                          overflow="hidden"
+                          bg="gray.50"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={imageUrl}
+                            alt="Hero preview"
+                            style={{
+                              width: "100%",
+                              maxHeight: "220px",
+                              objectFit: "cover",
+                              display: "block",
+                            }}
+                          />
+                          <HStack gap={2} p={2} borderTopWidth="1px" borderColor="gray.200">
+                            <Button
+                              size="xs"
+                              variant="outline"
+                              disabled={imageBusy || isNew}
+                              onClick={() => fileInputRef.current?.click()}
+                            >
+                              <Upload size={12} /> Replace
+                            </Button>
+                            <Button
+                              size="xs"
+                              variant="outline"
+                              colorPalette="red"
+                              disabled={imageBusy || isNew}
+                              onClick={() => void handleRemoveImage()}
+                            >
+                              <X size={12} /> Remove
+                            </Button>
+                          </HStack>
+                        </Box>
+                      ) : (
+                        <Box
+                          borderWidth="1px"
+                          borderColor="gray.200"
+                          borderRadius="md"
+                          bg="gray.50"
+                          p={4}
+                          textAlign="center"
+                        >
+                          <VStack gap={2}>
+                            <Box color="fg.muted">
+                              <ImagePlus size={28} />
+                            </Box>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              colorPalette="teal"
+                              loading={imageBusy}
+                              disabled={imageBusy || isNew}
+                              onClick={() => fileInputRef.current?.click()}
+                            >
+                              <Upload size={14} /> Choose image
+                            </Button>
+                            {isNew && (
+                              <Text fontSize="xs" color="fg.muted">
+                                Save this vanity URL first, then upload an image.
+                              </Text>
+                            )}
+                          </VStack>
+                        </Box>
+                      )}
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/*"
+                        style={{ display: "none" }}
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) void handleUpload(f);
+                          // Reset so choosing the same file twice fires
+                          // the onChange event again.
+                          e.target.value = "";
+                        }}
+                      />
+                    </Box>
                     <Box>
                       <Text fontSize="sm" fontWeight="medium" mb={1}>
                         Page title (browser tab)

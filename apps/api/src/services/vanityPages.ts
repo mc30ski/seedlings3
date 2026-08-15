@@ -229,18 +229,38 @@ export type VanitySavePayload = z.infer<typeof vanitySaveSchema>;
 
 // ── Reads ─────────────────────────────────────────────────────────────
 
-export async function listVanityPages(): Promise<VanityPage[]> {
+export async function listVanityPages(): Promise<(VanityPage & { imageUrl: string | null })[]> {
   // Order by operator-defined sortOrder first (used by upcoming
   // navigation-list features), with slug as a stable tiebreaker.
   // The default page's isDefault flag is orthogonal to sort order —
   // the row displays with a badge but stays in its ordered slot.
-  return prisma.vanityPage.findMany({
+  //
+  // Each row gets a presigned imageUrl so the editor can render the
+  // hero image inline without a second round-trip. Presigning is
+  // per-row (parallel) so total time stays under one round-trip's
+  // worth even for a large list.
+  const rows = await prisma.vanityPage.findMany({
     orderBy: [{ sortOrder: "asc" }, { slug: "asc" }],
   });
+  return Promise.all(
+    rows.map(async (r) => ({
+      ...r,
+      imageUrl: r.imageR2Key
+        ? await getDownloadUrl(r.imageR2Key, 6 * 3600, "promotion-images").catch(() => null)
+        : null,
+    })),
+  );
 }
 
-export async function getVanityPageById(id: string): Promise<VanityPage | null> {
-  return prisma.vanityPage.findUnique({ where: { id } });
+export async function getVanityPageById(id: string): Promise<
+  (VanityPage & { imageUrl: string | null }) | null
+> {
+  const row = await prisma.vanityPage.findUnique({ where: { id } });
+  if (!row) return null;
+  const imageUrl = row.imageR2Key
+    ? await getDownloadUrl(row.imageR2Key, 6 * 3600, "promotion-images").catch(() => null)
+    : null;
+  return { ...row, imageUrl };
 }
 
 // Public read used by the Next.js dynamic route. Only returns enabled
@@ -721,6 +741,31 @@ export async function getVanityPageImageUploadUrl(params: {
   return { uploadUrl, key };
 }
 
+// Clear the hero image (operator's "remove image" action). Deletes
+// the underlying R2 object best-effort — image storage is cheap so
+// the row update is what actually matters. Silent no-op when the row
+// has no image (idempotent).
+export async function clearVanityPageImage(params: {
+  vanityPageId: string;
+  actorUserId: string;
+}): Promise<void> {
+  const prev = await prisma.vanityPage.findUnique({
+    where: { id: params.vanityPageId },
+    select: { imageR2Key: true },
+  });
+  if (!prev) {
+    const err: any = new Error("Vanity page not found");
+    err.code = "NOT_FOUND";
+    throw err;
+  }
+  if (!prev.imageR2Key) return;
+  await prisma.vanityPage.update({
+    where: { id: params.vanityPageId },
+    data: { imageR2Key: null, updatedById: params.actorUserId },
+  });
+  void deleteObject(prev.imageR2Key, "promotion-images").catch(() => {});
+}
+
 export async function confirmVanityPageImageUpload(params: {
   vanityPageId: string;
   key: string;
@@ -756,6 +801,7 @@ export const vanityPages = {
   reorderVanityPages,
   getVanityPageImageUploadUrl,
   confirmVanityPageImageUpload,
+  clearVanityPageImage,
   isValidSlugFormat,
   isReservedSlug,
   RESERVED_SLUGS,
