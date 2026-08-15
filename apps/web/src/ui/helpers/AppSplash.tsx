@@ -372,7 +372,7 @@ function TypingAnimation({
       <div style={{ minHeight: "1.4em", whiteSpace: "nowrap", overflow: "hidden", textAlign: "center" }}>
         <span style={{ fontWeight: 700 }}>{bolded}</span>
         {domainTail}
-        <span style={{ color: "#cbd5e0" }}>{slash}</span>
+        <span style={{ color: "#a0aec0" }}>{slash}</span>
         {slug}
         <span
           style={{
