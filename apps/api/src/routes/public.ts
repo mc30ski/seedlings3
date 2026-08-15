@@ -1152,23 +1152,47 @@ export default async function publicRoutes(app: FastifyInstance) {
     if (isReservedSlug(slug)) return reply.code(404).send({ error: "not_found" });
     const page = await resolvePublicVanityPage(slug);
     if (!page) return reply.code(404).send({ error: "not_found" });
+    // Load the two settings that vanity buttons can reference. The
+    // resolver swaps them into buttons whose `source` != "literal" so
+    // the operator's Settings edits flow through immediately to every
+    // button that points at BUSINESS_PHONE or BUSINESS_EMAIL.
+    const [phoneSetting, emailSetting] = await Promise.all([
+      prisma.setting.findUnique({ where: { key: "BUSINESS_PHONE" } }),
+      prisma.setting.findUnique({ where: { key: "BUSINESS_EMAIL" } }),
+    ]);
     // Return the shape the Next.js SSR page needs. Keep the payload
     // minimal — anything the operator marks as internal (viewCount,
     // createdById, etc.) is stripped so no admin metadata leaks to
     // public renderers. `buttons` is normalized here (legacy ctaText/
-    // ctaUrl auto-synthesized into a single-URL entry) so SSR just
-    // loops and renders — no protocol decisions in the view layer.
+    // ctaUrl auto-synthesized into a single-URL entry, settings-bound
+    // buttons swapped with live values) so SSR just loops and renders.
     return {
       slug: page.slug,
       kind: page.kind,
       title: page.title,
       headline: page.headline,
       body: page.body,
-      buttons: resolveVanityButtons(page),
+      buttons: resolveVanityButtons(page, {
+        businessPhone: phoneSetting?.value ?? "",
+        businessEmail: emailSetting?.value ?? "",
+      }),
       imageUrl: page.imageUrl,
       redirectUrl: page.redirectUrl,
       isDefault: page.isDefault,
     };
+  });
+
+  // Ordered list of vanity slugs opted into the app's startup typing
+  // animation. Rate-limited (shared bucket) so an attacker can't scrape
+  // this on repeat. Returns { slugs: string[] } — empty array is a
+  // valid "no animation configured" response.
+  app.get("/public/vanity/animation", async (req: any, reply: any) => {
+    if (!optOutRateLimit(String(req.ip ?? ""))) {
+      return reply.code(429).send({ error: "rate_limited" });
+    }
+    const { listAnimationSlugs } = await import("../services/vanityPages");
+    const slugs = await listAnimationSlugs();
+    return { slugs };
   });
 
   // ── Promo short URLs ────────────────────────────────────────────────

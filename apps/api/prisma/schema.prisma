@@ -3329,6 +3329,13 @@ model VanityPage {
   // default page).
   enabled Boolean @default(true)
 
+  // Per-row opt-in for the app's startup typing animation. When the app
+  // cold-starts (new tab / PWA launch / browser restart) it shows the
+  // logo plus a typing animation that cycles through vanity URL slugs;
+  // this flag controls which rows are included. When no row is checked
+  // the app just shows the logo (no animation).
+  showInStartupAnimation Boolean @default(false)
+
   // Operator-defined display order for the Vanity URLs tab. Lower
   // numbers first. Used by upcoming features that surface the list
   // in a specific sequence (e.g. an in-app navigation menu).

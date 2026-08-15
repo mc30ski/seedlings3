@@ -8,6 +8,7 @@ import {
   updateVanityPage,
   deleteVanityPage,
   setDefaultVanityPage,
+  setVanityStartupAnimation,
   reorderVanityPages,
   getVanityPageImageUploadUrl,
   confirmVanityPageImageUpload,
@@ -132,6 +133,31 @@ export default async function vanityPagesRoutes(app: FastifyInstance) {
           return reply.code(409).send({ error: "not_landing", detail: err.message });
         }
         return reply.code(500).send({ error: "set_default_failed", detail: String(err?.message ?? err) });
+      }
+    },
+  );
+
+  // Toggle the per-row startup-animation flag. Called by the
+  // sparkles button on the Vanity URLs tab. Payload: { enabled: bool }.
+  app.patch(
+    "/super/vanity/:id/startup-animation",
+    superGuard,
+    async (req: any, reply: any) => {
+      const uid = await currentUserId(req);
+      const body = (req.body ?? {}) as { enabled?: unknown };
+      const enabled = body.enabled === true;
+      try {
+        const row = await setVanityStartupAnimation({
+          id: String(req.params.id),
+          enabled,
+          actorUserId: uid,
+        });
+        return row;
+      } catch (err: any) {
+        if (err?.code === "NOT_FOUND") {
+          return reply.code(404).send({ error: "not_found" });
+        }
+        return reply.code(500).send({ error: "update_failed", detail: String(err?.message ?? err) });
       }
     },
   );
