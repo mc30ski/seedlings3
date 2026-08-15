@@ -879,29 +879,45 @@ function PromotionEditor({
                         <Text fontSize="2xs" color="red.600" mt={1}>{slugValidationError}</Text>
                       )}
                     </Box>
-                    {allowedDomains && allowedDomains.origins.length > 1 && (
-                      <Box>
-                        <Text fontSize="2xs" fontWeight="semibold" mb={1}>Domain</Text>
-                        <select
-                          value={baseDomain}
-                          onChange={(e) => setBaseDomain(e.target.value)}
-                          style={{
-                            fontSize: "13px",
-                            padding: "6px 8px",
-                            borderRadius: "6px",
-                            borderWidth: "1px",
-                            borderColor: "#e2e8f0",
-                            width: "100%",
-                            fontFamily: "monospace",
-                          }}
-                        >
-                          <option value="">Default ({allowedDomains.primaryHostname})</option>
-                          {allowedDomains.origins.map((o) => (
-                            <option key={o} value={o}>{o}</option>
-                          ))}
-                        </select>
-                      </Box>
-                    )}
+                    {allowedDomains && allowedDomains.origins.length > 1 && (() => {
+                      // Build the Chakra collection each render — cheap
+                      // (max ~5 items) and keeps the dependency on the
+                      // async-loaded allowedDomains simple.
+                      const domainCollection = createListCollection({
+                        items: [
+                          { label: `Default (${allowedDomains.primaryHostname})`, value: "" },
+                          ...allowedDomains.origins.map((o) => ({ label: o, value: o })),
+                        ],
+                      });
+                      return (
+                        <Box>
+                          <Text fontSize="2xs" fontWeight="semibold" mb={1}>Domain</Text>
+                          <Select.Root
+                            collection={domainCollection}
+                            size="sm"
+                            value={[baseDomain]}
+                            onValueChange={(e) => setBaseDomain(e.value?.[0] ?? "")}
+                            positioning={{ strategy: "fixed", hideWhenDetached: true }}
+                          >
+                            <Select.Control>
+                              <Select.Trigger>
+                                <Select.ValueText />
+                                <Select.Indicator />
+                              </Select.Trigger>
+                            </Select.Control>
+                            <Select.Positioner>
+                              <Select.Content>
+                                {domainCollection.items.map((it) => (
+                                  <Select.Item key={it.value} item={it}>
+                                    <Select.ItemText>{it.label}</Select.ItemText>
+                                  </Select.Item>
+                                ))}
+                              </Select.Content>
+                            </Select.Positioner>
+                          </Select.Root>
+                        </Box>
+                      );
+                    })()}
                     {previewSlug && !slugValidationError && (
                       <Box p={3} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">
                         <Text fontSize="2xs" color="fg.muted" mb={1}>Preview URLs</Text>
