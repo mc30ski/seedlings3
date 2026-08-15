@@ -4,7 +4,7 @@ import { randomUUID } from "crypto";
 import { writeAudit } from "../lib/auditLogger";
 import { AUDIT } from "../lib/auditActions";
 import { getUploadUrl, getDownloadUrl, deleteObject } from "../lib/r2";
-import type { VanityPage } from "@prisma/client";
+import { Prisma, type VanityPage } from "@prisma/client";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Vanity URLs service — configurable branded shortcuts.
@@ -45,10 +45,11 @@ export const RESERVED_SLUGS = new Set<string>([
   "super",
 ]);
 
-// Slug format: lowercase kebab-case + digits, 1–40 chars, no leading/
-// trailing hyphens, no consecutive hyphens. Matches typical URL-safe
-// vanity patterns without allowing anything weird.
-const SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,39}$/;
+// Slug format: lowercase letters, digits, hyphens, and underscores.
+// 1–40 chars. Leading/trailing hyphen or underscore not allowed — those
+// read as awkward URLs. Everything else (double underscores, single
+// char, etc.) is permitted since it's all URL-safe.
+const SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9_-]{0,38}[a-z0-9])?$/;
 
 export function isValidSlugFormat(slug: string): boolean {
   return SLUG_PATTERN.test(slug);
@@ -58,6 +59,62 @@ export function isReservedSlug(slug: string): boolean {
   return RESERVED_SLUGS.has(slug.toLowerCase());
 }
 
+// Vanity button — one entry in the LANDING page's buttons array.
+//   URL   — target is a full https URL
+//   PHONE — target is a phone number (E.164 or free-form); renderer
+//           prefixes tel:
+//   EMAIL — target is an email address; renderer prefixes mailto:
+export const vanityButtonSchema = z
+  .object({
+    kind: z.enum(["URL", "PHONE", "EMAIL"]),
+    label: z.string().min(1).max(200),
+    target: z.string().min(1).max(500),
+  })
+  .superRefine((val, ctx) => {
+    if (val.kind === "URL") {
+      try {
+        new URL(val.target);
+      } catch {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["target"],
+          message: "URL buttons need a valid https:// destination.",
+        });
+      }
+    }
+    if (val.kind === "EMAIL" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val.target)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["target"],
+        message: "Email buttons need a valid email address.",
+      });
+    }
+    if (val.kind === "PHONE" && !/[\d]/.test(val.target)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["target"],
+        message: "Phone buttons need a phone number.",
+      });
+    }
+  });
+export type VanityButton = z.infer<typeof vanityButtonSchema>;
+
+// Resolve a button's raw target to the href a browser can navigate to:
+// URL → target, PHONE → tel:<digits>, EMAIL → mailto:<addr>.
+export function resolveButtonHref(btn: {
+  kind: "URL" | "PHONE" | "EMAIL";
+  target: string;
+}): string {
+  if (btn.kind === "PHONE") {
+    // Strip everything but digits + a leading + so `tel:` gets a clean
+    // dialable value. Preserves the raw text stored on the row.
+    const cleaned = btn.target.replace(/[^\d+]/g, "");
+    return `tel:${cleaned}`;
+  }
+  if (btn.kind === "EMAIL") return `mailto:${btn.target.trim()}`;
+  return btn.target.trim();
+}
+
 // Validation payload shared by create + update. Kind-conditional
 // required fields:
 //   LANDING  — headline required (that's the h1); everything else optional
@@ -65,15 +122,22 @@ export function isReservedSlug(slug: string): boolean {
 const vanitySaveSchema = z
   .object({
     slug: z.string().min(1).max(40),
-    kind: z.enum(["LANDING", "REDIRECT"]),
+    kind: z.enum(["LANDING", "REDIRECT", "ALIAS"]),
     isDefault: z.boolean().default(false),
     title: z.string().max(200).default(""),
     headline: z.string().max(300).default(""),
     body: z.string().max(20000).default(""),
+    // Legacy single-button fields — accepted for API back-compat but
+    // new writes should use `buttons` instead.
     ctaText: z.string().max(200).nullable().optional(),
     ctaUrl: z.string().url().nullable().optional(),
+    // Multi-button array. Capped at 6 — enough for realistic vanity
+    // pages ("Call", "Email", "Book online", "Instagram", ...); beyond
+    // that the page becomes noise.
+    buttons: z.array(vanityButtonSchema).max(6).nullable().optional(),
     imageR2Key: z.string().max(500).nullable().optional(),
     redirectUrl: z.string().url().nullable().optional(),
+    aliasTargetId: z.string().min(1).nullable().optional(),
     enabled: z.boolean().default(true),
   })
   .superRefine((val, ctx) => {
@@ -82,7 +146,7 @@ const vanitySaveSchema = z
         code: z.ZodIssueCode.custom,
         path: ["slug"],
         message:
-          "Slug must be lowercase letters, digits, and single hyphens (1–40 chars, no leading/trailing hyphen, no double hyphens).",
+          "Slug must be lowercase letters, digits, hyphens, or underscores (1–40 chars, no leading/trailing hyphen or underscore).",
       });
     }
     if (isReservedSlug(val.slug)) {
@@ -106,12 +170,19 @@ const vanitySaveSchema = z
         message: "Redirect URLs need a destination.",
       });
     }
+    if (val.kind === "ALIAS" && !val.aliasTargetId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["aliasTargetId"],
+        message: "Aliases need a target vanity URL to mirror.",
+      });
+    }
     if (val.isDefault && val.kind !== "LANDING") {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["isDefault"],
         message:
-          "Only landing pages can be marked as default (bouncing every unknown slug to a redirect would loop bad UX).",
+          "Only landing pages can be marked as default (bouncing every unknown slug to a redirect or alias would be surprising).",
       });
     }
   });
@@ -121,8 +192,12 @@ export type VanitySavePayload = z.infer<typeof vanitySaveSchema>;
 // ── Reads ─────────────────────────────────────────────────────────────
 
 export async function listVanityPages(): Promise<VanityPage[]> {
+  // Order by operator-defined sortOrder first (used by upcoming
+  // navigation-list features), with slug as a stable tiebreaker.
+  // The default page's isDefault flag is orthogonal to sort order —
+  // the row displays with a badge but stays in its ordered slot.
   return prisma.vanityPage.findMany({
-    orderBy: [{ isDefault: "desc" }, { slug: "asc" }],
+    orderBy: [{ sortOrder: "asc" }, { slug: "asc" }],
   });
 }
 
@@ -163,8 +238,37 @@ export async function resolvePublicVanityPage(slug: string): Promise<
 > {
   const explicit = await getPublicVanityPageBySlug(slug);
   const fallback = explicit ? null : await getDefaultVanityPage();
-  const chosen = explicit ?? fallback;
+  let chosen = explicit ?? fallback;
   if (!chosen) return null;
+  // ALIAS resolution — follow to the target's content. Chains are NOT
+  // allowed (validation prevents alias→alias); we still hard-cap
+  // traversal at one hop as defense in depth. If the target is missing
+  // or disabled or the alias link has been broken (target deleted →
+  // FK nulled), we fall through to null → caller shows the default.
+  if (chosen.kind === "ALIAS" && chosen.aliasTargetId) {
+    const target = await prisma.vanityPage.findFirst({
+      where: { id: chosen.aliasTargetId, enabled: true, kind: "LANDING" },
+    });
+    if (!target) return null;
+    // Fire view against the ALIAS row (the URL the visitor typed) so
+    // metrics reflect which shortcut got the traffic, not the shared
+    // content page it resolves to.
+    void incrementVanityPageViewCount(chosen.id).catch(() => {});
+    const imageUrl = target.imageR2Key
+      ? await getDownloadUrl(target.imageR2Key, 6 * 3600, "promotion-images").catch(() => null)
+      : null;
+    // Return the ALIAS's slug + kind (so URLs stay branded) but the
+    // TARGET's content. Downstream renderers don't need to know an
+    // alias was involved.
+    return {
+      ...target,
+      id: chosen.id,
+      slug: chosen.slug,
+      isDefault: chosen.isDefault,
+      sortOrder: chosen.sortOrder,
+      imageUrl,
+    };
+  }
   const imageUrl = chosen.imageR2Key
     ? await getDownloadUrl(chosen.imageR2Key, 6 * 3600, "promotion-images").catch(() => null)
     : null;
@@ -176,11 +280,70 @@ export async function resolvePublicVanityPage(slug: string): Promise<
   return { ...chosen, imageUrl };
 }
 
+// Read-side normalizer — turns whatever a VanityPage row carries
+// (new `buttons` JSON or legacy `ctaText`/`ctaUrl` pair) into a single
+// canonical list the public renderer can iterate. Each entry has a
+// pre-resolved `href` so the SSR page just renders — no protocol
+// decisions in the view layer.
+export function resolveVanityButtons(page: {
+  buttons: unknown;
+  ctaText: string | null;
+  ctaUrl: string | null;
+}): { kind: "URL" | "PHONE" | "EMAIL"; label: string; target: string; href: string }[] {
+  const parsed: VanityButton[] = [];
+  if (Array.isArray(page.buttons)) {
+    for (const raw of page.buttons) {
+      const check = vanityButtonSchema.safeParse(raw);
+      if (check.success) parsed.push(check.data);
+    }
+  }
+  if (parsed.length > 0) {
+    return parsed.map((b) => ({ ...b, href: resolveButtonHref(b) }));
+  }
+  // Legacy fallback — single URL button synthesized from ctaText/ctaUrl.
+  // Rows created before the buttons column existed continue to render;
+  // the editor migrates them into the new shape on next save.
+  if (page.ctaText && page.ctaUrl) {
+    const legacy = { kind: "URL" as const, label: page.ctaText, target: page.ctaUrl };
+    return [{ ...legacy, href: resolveButtonHref(legacy) }];
+  }
+  return [];
+}
+
 async function incrementVanityPageViewCount(id: string): Promise<void> {
   await prisma.vanityPage.update({
     where: { id },
     data: { viewCount: { increment: 1 } },
   });
+}
+
+// Validate an alias target: must exist, must be a LANDING page (no
+// aliasing a redirect or another alias — would either loop or defeat
+// the point), and must not be the alias row itself (self-alias would
+// resolve to nothing at runtime). Called before save.
+async function assertValidAliasTarget(
+  targetId: string,
+  editingSelfId: string | null,
+): Promise<void> {
+  if (targetId === editingSelfId) {
+    const err: any = new Error("An alias can't point at itself.");
+    err.code = "VALIDATION";
+    throw err;
+  }
+  const target = await prisma.vanityPage.findUnique({
+    where: { id: targetId },
+    select: { id: true, kind: true },
+  });
+  if (!target) {
+    const err: any = new Error("Alias target vanity URL doesn't exist.");
+    err.code = "VALIDATION";
+    throw err;
+  }
+  if (target.kind !== "LANDING") {
+    const err: any = new Error("Alias targets must be a LANDING page (can't alias a redirect or another alias).");
+    err.code = "VALIDATION";
+    throw err;
+  }
 }
 
 // ── Writes (Super only — auth enforced at route layer) ────────────────
@@ -199,6 +362,12 @@ export async function createVanityPage(params: {
     throw err;
   }
   const data = parsed.data;
+  // Alias target existence / kind check — has to be an existing
+  // LANDING page. Runs OUTSIDE the tx so a bad target fails fast
+  // without holding a lock.
+  if (data.kind === "ALIAS" && data.aliasTargetId) {
+    await assertValidAliasTarget(data.aliasTargetId, null);
+  }
   return prisma.$transaction(async (tx) => {
     // Enforce single-default: if this row is being marked default,
     // clear the flag on every other row first. Same tx so we never
@@ -219,6 +388,8 @@ export async function createVanityPage(params: {
         body: data.body,
         ctaText: data.ctaText ?? null,
         ctaUrl: data.ctaUrl ?? null,
+        buttons: data.buttons ?? Prisma.JsonNull,
+        aliasTargetId: data.kind === "ALIAS" ? (data.aliasTargetId ?? null) : null,
         imageR2Key: data.imageR2Key ?? null,
         redirectUrl: data.redirectUrl ?? null,
         enabled: data.enabled,
@@ -257,6 +428,9 @@ export async function updateVanityPage(params: {
     throw err;
   }
   const data = parsed.data;
+  if (data.kind === "ALIAS" && data.aliasTargetId) {
+    await assertValidAliasTarget(data.aliasTargetId, params.id);
+  }
   return prisma.$transaction(async (tx) => {
     if (data.isDefault && !existing.isDefault) {
       await tx.vanityPage.updateMany({
@@ -275,6 +449,8 @@ export async function updateVanityPage(params: {
         body: data.body,
         ctaText: data.ctaText ?? null,
         ctaUrl: data.ctaUrl ?? null,
+        buttons: data.buttons ?? Prisma.JsonNull,
+        aliasTargetId: data.kind === "ALIAS" ? (data.aliasTargetId ?? null) : null,
         imageR2Key: data.imageR2Key ?? null,
         redirectUrl: data.redirectUrl ?? null,
         enabled: data.enabled,
@@ -301,14 +477,24 @@ export async function deleteVanityPage(params: {
     err.code = "NOT_FOUND";
     throw err;
   }
-  // Refuse to delete the default — operator should reassign default
-  // first, then delete. Prevents a moment where no default exists and
-  // unknown slugs 404 instead of gracefully falling back.
-  if (existing.isDefault) {
+  // NOTE: deleting the default IS allowed — the UI warns extra loudly
+  // in the confirm dialog. After a default deletion the site simply
+  // has no fallback until the operator marks another row as default;
+  // unknown slugs 404 in the meantime.
+  // Refuse to delete when other vanity URLs alias this one — dropping
+  // the target would silently break the aliases. Force the operator
+  // to fix or delete the aliases first. Error carries the list of
+  // dependents so the UI can name them in the dialog.
+  const dependents = await prisma.vanityPage.findMany({
+    where: { aliasTargetId: params.id },
+    select: { id: true, slug: true },
+  });
+  if (dependents.length > 0) {
     const err: any = new Error(
-      "Cannot delete the default vanity page. Mark another page as default first, then delete this one.",
+      `Cannot delete: ${dependents.length} vanity URL${dependents.length === 1 ? "" : "s"} alias this page (${dependents.map((d) => d.slug).join(", ")}). Delete or reassign them first.`,
     );
-    err.code = "CANNOT_DELETE_DEFAULT";
+    err.code = "ALIASED_BY_OTHERS";
+    err.dependents = dependents;
     throw err;
   }
   await prisma.$transaction(async (tx) => {
@@ -323,6 +509,78 @@ export async function deleteVanityPage(params: {
   if (existing.imageR2Key) {
     void deleteObject(existing.imageR2Key, "promotion-images").catch(() => {});
   }
+}
+
+// Set the default flag on ONE vanity page, clearing it on every other
+// row in the same tx. Only landing pages can be default (redirects and
+// aliases don't make sense as unknown-slug fallbacks). Returns the
+// updated row so callers can render the fresh state without a re-fetch.
+export async function setDefaultVanityPage(params: {
+  id: string;
+  actorUserId: string;
+}): Promise<VanityPage> {
+  const existing = await prisma.vanityPage.findUnique({ where: { id: params.id } });
+  if (!existing) {
+    const err: any = new Error("Vanity page not found");
+    err.code = "NOT_FOUND";
+    throw err;
+  }
+  if (existing.kind !== "LANDING") {
+    const err: any = new Error("Only landing pages can be set as default.");
+    err.code = "NOT_LANDING";
+    throw err;
+  }
+  return prisma.$transaction(async (tx) => {
+    await tx.vanityPage.updateMany({
+      where: { isDefault: true, id: { not: params.id } },
+      data: { isDefault: false },
+    });
+    const updated = await tx.vanityPage.update({
+      where: { id: params.id },
+      data: { isDefault: true, updatedById: params.actorUserId },
+    });
+    await writeAudit(tx, AUDIT.VANITY.UPDATED, params.actorUserId, {
+      vanityPageId: updated.id,
+      slug: updated.slug,
+      change: "set_default",
+    });
+    return updated;
+  });
+}
+
+// Bulk reorder — accept a full ordered list of vanity IDs and stamp
+// each with sortOrder = 10, 20, 30, … The gap-of-10 gives room to
+// splice in future rows without renumbering everything.
+export async function reorderVanityPages(params: {
+  actorUserId: string;
+  orderedIds: string[];
+}): Promise<void> {
+  const ids = params.orderedIds.map((s) => String(s ?? "")).filter(Boolean);
+  if (ids.length === 0) return;
+  // Sanity check — payload must include exactly the current rows.
+  // Refuse a partial reorder (drops rows out of the ordering).
+  const existing = await prisma.vanityPage.findMany({
+    select: { id: true },
+  });
+  const existingIds = new Set(existing.map((r) => r.id));
+  const payloadIds = new Set(ids);
+  if (existingIds.size !== payloadIds.size || [...existingIds].some((id) => !payloadIds.has(id))) {
+    const err: any = new Error("Reorder payload must contain every current vanity page id exactly once.");
+    err.code = "INCOMPLETE_ORDER";
+    throw err;
+  }
+  await prisma.$transaction(async (tx) => {
+    for (let i = 0; i < ids.length; i++) {
+      await tx.vanityPage.update({
+        where: { id: ids[i] },
+        data: { sortOrder: (i + 1) * 10 },
+      });
+    }
+    await writeAudit(tx, AUDIT.VANITY.UPDATED, params.actorUserId, {
+      change: "reorder",
+      count: ids.length,
+    });
+  });
 }
 
 // ── R2 image upload ──────────────────────────────────────────────────
@@ -368,9 +626,12 @@ export const vanityPages = {
   getPublicVanityPageBySlug,
   getDefaultVanityPage,
   resolvePublicVanityPage,
+  resolveVanityButtons,
   createVanityPage,
   updateVanityPage,
   deleteVanityPage,
+  setDefaultVanityPage,
+  reorderVanityPages,
   getVanityPageImageUploadUrl,
   confirmVanityPageImageUpload,
   isValidSlugFormat,

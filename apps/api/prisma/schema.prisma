@@ -3280,6 +3280,7 @@ model PolicyReadingProgress {
 enum VanityPageKind {
   LANDING
   REDIRECT
+  ALIAS
 }
 
 model VanityPage {
@@ -3296,18 +3297,42 @@ model VanityPage {
   headline String @default("") // hero h1
   body     String @default("") @db.Text // markdown, main content
 
-  ctaText    String? // button label, e.g. "Get a free estimate"
-  ctaUrl     String? // button destination — external URL or in-app path
+  // Legacy single-button fields — retained for backward compat with
+  // rows created before the buttons column existed. New rows write to
+  // buttons and leave these NULL. Reads prefer buttons when set; the
+  // public API synthesizes a single-URL buttons array from these when
+  // buttons is missing.
+  ctaText    String?
+  ctaUrl     String?
+  // Multi-button JSON array. Each entry:
+  //   { kind: "URL" | "PHONE" | "EMAIL", label: string, target: string }
+  // target is stored raw — the renderer prefixes tel: / mailto: from
+  // kind at request time so the raw phone/email stays easy to edit.
+  buttons    Json?
   imageR2Key String? // hero image; served via presigned R2 URL
 
   // Redirect field (used when kind=REDIRECT). Required at save time when
   // kind=REDIRECT (service-layer validation).
   redirectUrl String?
 
+  // Alias target (used when kind=ALIAS). Points at another VanityPage
+  // whose LANDING content this row mirrors — same headline, body,
+  // buttons, image — but rendered under this row's slug. On target
+  // delete the FK is nulled (row still exists; renders blank until
+  // fixed) rather than cascade-deleting the alias.
+  aliasTargetId String?
+  aliasTarget   VanityPage?  @relation("VanityAliasTarget", fields: [aliasTargetId], references: [id], onDelete: SetNull)
+  aliasedBy     VanityPage[] @relation("VanityAliasTarget")
+
   // Enabled toggle — flip false to hide without deleting. Disabled rows
   // are treated as "not found" by the public route (falls through to the
   // default page).
   enabled Boolean @default(true)
+
+  // Operator-defined display order for the Vanity URLs tab. Lower
+  // numbers first. Used by upcoming features that surface the list
+  // in a specific sequence (e.g. an in-app navigation menu).
+  sortOrder Int @default(0)
 
   // View analytics — fire-and-forget increment on every public render.
   // No per-day breakdown yet; add if needed.
@@ -3323,4 +3348,6 @@ model VanityPage {
 
   @@index([enabled, slug])
   @@index([isDefault])
+  @@index([sortOrder])
+  @@index([aliasTargetId])
 }

@@ -7,6 +7,8 @@ import {
   createVanityPage,
   updateVanityPage,
   deleteVanityPage,
+  setDefaultVanityPage,
+  reorderVanityPages,
   getVanityPageImageUploadUrl,
   confirmVanityPageImageUpload,
 } from "../services/vanityPages";
@@ -85,7 +87,9 @@ export default async function vanityPagesRoutes(app: FastifyInstance) {
     }
   });
 
-  // Delete.
+  // Delete. Refuses when other rows alias this one — the response
+  // carries the dependent slugs so the UI can name them in the block
+  // dialog.
   app.delete("/super/vanity/:id", superGuard, async (req: any, reply: any) => {
     const uid = await currentUserId(req);
     try {
@@ -98,12 +102,63 @@ export default async function vanityPagesRoutes(app: FastifyInstance) {
       if (err?.code === "NOT_FOUND") {
         return reply.code(404).send({ error: "not_found" });
       }
-      if (err?.code === "CANNOT_DELETE_DEFAULT") {
-        return reply.code(409).send({ error: "cannot_delete_default", detail: err.message });
+      if (err?.code === "ALIASED_BY_OTHERS") {
+        return reply.code(409).send({
+          error: "aliased_by_others",
+          detail: err.message,
+          dependents: err.dependents ?? [],
+        });
       }
       return reply.code(500).send({ error: "delete_failed", detail: String(err?.message ?? err) });
     }
   });
+
+  // Set the default flag on a specific row (clears every other row's
+  // flag in the same tx). Called by the per-row default toggle on the
+  // Vanity URLs tab.
+  app.patch(
+    "/super/vanity/:id/default",
+    superGuard,
+    async (req: any, reply: any) => {
+      const uid = await currentUserId(req);
+      try {
+        const row = await setDefaultVanityPage({ id: String(req.params.id), actorUserId: uid });
+        return row;
+      } catch (err: any) {
+        if (err?.code === "NOT_FOUND") {
+          return reply.code(404).send({ error: "not_found" });
+        }
+        if (err?.code === "NOT_LANDING") {
+          return reply.code(409).send({ error: "not_landing", detail: err.message });
+        }
+        return reply.code(500).send({ error: "set_default_failed", detail: String(err?.message ?? err) });
+      }
+    },
+  );
+
+  // Bulk reorder — payload = { orderedIds: [id1, id2, …] } listing
+  // every current row in the desired display order. Stamps each with
+  // sortOrder = 10, 20, 30… so future inserts have room between rows.
+  app.patch(
+    "/super/vanity/reorder",
+    superGuard,
+    async (req: any, reply: any) => {
+      const uid = await currentUserId(req);
+      const body = (req.body ?? {}) as { orderedIds?: unknown };
+      const ids = Array.isArray(body.orderedIds)
+        ? body.orderedIds.filter((s): s is string => typeof s === "string")
+        : [];
+      try {
+        await reorderVanityPages({ actorUserId: uid, orderedIds: ids });
+        return { reordered: true };
+      } catch (err: any) {
+        if (err?.code === "INCOMPLETE_ORDER") {
+          return reply.code(400).send({ error: "incomplete_order", detail: err.message });
+        }
+        return reply.code(500).send({ error: "reorder_failed", detail: String(err?.message ?? err) });
+      }
+    },
+  );
 
   // ── R2 image upload flow ─────────────────────────────────────────────
   // Same pattern as PromotionLandingPage image upload — presigned URL
