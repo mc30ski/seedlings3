@@ -78,15 +78,36 @@ export default function AppSplash({ show }: { show: boolean }) {
     setMounted(true);
   }, []);
   const [slugs, setSlugs] = useState<string[]>([]);
-  // Animation trigger: fires on every fresh page load (mount of this
-  // component), including refresh. Starts `false` so SSR and initial
-  // client paint produce IDENTICAL DOM structure (no <TypingAnimation>
-  // in either) — flips to `true` in useEffect after mount to add it.
-  // Prevents hydration mismatch that reading storage during initial
-  // render caused.
+  // Animation trigger. Starts `false` so SSR and initial client paint
+  // produce IDENTICAL DOM structure (no <TypingAnimation> in either)
+  // — flips to `true` in useEffect after mount if the gate below
+  // says this render should play the animation.
+  //
+  // Gate rules (checked post-mount so it's hydration-safe):
+  //   • Browser refresh (nav type "reload") → always play.
+  //     Clears the session flag first so a re-refresh still plays.
+  //   • Cold start (new tab / new browser, session flag missing) →
+  //     play. Set the session flag so subsequent mounts skip.
+  //   • Sign-out → causes AppSplash to remount with session flag
+  //     still set → skip animation.
+  //   • Any other in-app navigation → session flag set → skip.
   const [animate, setAnimate] = useState(false);
   useEffect(() => {
-    setAnimate(true);
+    try {
+      const nav = performance.getEntriesByType?.("navigation") as
+        | { type?: string }[]
+        | undefined;
+      const navType = nav?.[0]?.type ?? "";
+      const FLAG = "seedlings_splash_animated";
+      if (navType === "reload") window.sessionStorage.removeItem(FLAG);
+      if (window.sessionStorage.getItem(FLAG)) return;
+      window.sessionStorage.setItem(FLAG, "1");
+      setAnimate(true);
+    } catch {
+      // sessionStorage/perf can throw in exotic contexts — fail OPEN
+      // (play the animation) so users get the intended experience.
+      setAnimate(true);
+    }
   }, []);
   const shownAtRef = useRef<number | null>(show ? Date.now() : null);
   const hideTimerRef = useRef<number | null>(null);
@@ -135,10 +156,17 @@ export default function AppSplash({ show }: { show: boolean }) {
       // leave dead air after the last slug. Using a shorter average
       // per slug and a tiny tail buffer keeps the splash tight to
       // the animation's real duration.
-      const minDuration =
-        animate && slugs.length > 0
-          ? Math.min(8000, DOMAIN_PHASE_MS + slugs.length * 900 + HOLD_END_MS + 150)
-          : MIN_DURATION_MS;
+      // Min duration when the typing animation will play at all —
+      // covers both signed-in (slugs came back) and signed-out /
+      // slugs-empty cases. Without this, a fast-resolving auth
+      // (signed-out or already-cached signed-in) makes `show` flip
+      // false in under a second and the splash fades before the
+      // animation gets a chance to type even the domain. Even with
+      // 0 slugs the formula gives ~2.6s (domain phase + tail), which
+      // is enough for the "seedlings.pro" type-out to be visible.
+      const minDuration = animate
+        ? Math.min(8000, DOMAIN_PHASE_MS + slugs.length * 900 + HOLD_END_MS + 150)
+        : MIN_DURATION_MS;
       const remaining = Math.max(minDuration - elapsed, 0);
       if (hideTimerRef.current) window.clearTimeout(hideTimerRef.current);
       if (unmountTimerRef.current) window.clearTimeout(unmountTimerRef.current);
