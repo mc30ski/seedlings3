@@ -47,9 +47,23 @@ const SLUG_CYCLE_MS =
   10 * SLUG_TYPE_CHAR_MS + HOLD_FULL_MS + 10 * ERASE_CHAR_MS + HOLD_BETWEEN_MS;
 const DOMAIN_PHASE_MS = DOMAIN_TEXT.length * TYPE_CHAR_MS + HOLD_DOMAIN_MS;
 
+// Hard cap: splash MUST fully disappear this many ms after mount,
+// no matter what `show` is doing. Protects against Clerk auth or the
+// /api/me call hanging — without this, `show` never flips false and
+// the splash stays over the whole app forever. 15s is well past any
+// reasonable animation + auth+me round-trip.
+const HARD_MAX_MS = 15000;
+
 export default function AppSplash({ show }: { show: boolean }) {
   const [shouldRender, setShouldRender] = useState(show);
   const [fading, setFading] = useState(false);
+  // Escape hatch — flips true after HARD_MAX_MS and forces the
+  // splash to unmount even if `show` is stuck true.
+  const [forceHide, setForceHide] = useState(false);
+  useEffect(() => {
+    const t = window.setTimeout(() => setForceHide(true), HARD_MAX_MS);
+    return () => window.clearTimeout(t);
+  }, []);
   const [slugs, setSlugs] = useState<string[]>([]);
   // Animation trigger: fires on every fresh page load (mount of this
   // component), including refresh. Starts `false` so SSR and initial
@@ -130,7 +144,7 @@ export default function AppSplash({ show }: { show: boolean }) {
     };
   }, [show, shouldRender, animate, slugs.length]);
 
-  if (!shouldRender) return null;
+  if (!shouldRender || forceHide) return null;
 
   return (
     <div
