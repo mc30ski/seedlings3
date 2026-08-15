@@ -355,7 +355,7 @@ export function resolveVanityButtons(
     ctaUrl: string | null;
   },
   settings?: { businessPhone?: string; businessEmail?: string },
-): { kind: "URL" | "PHONE" | "EMAIL"; label: string; target: string; href: string; source: "literal" | "business_phone" | "business_email" }[] {
+): { kind: "URL" | "PHONE" | "SMS" | "EMAIL"; label: string; target: string; href: string; source: "literal" | "business_phone" | "business_email" }[] {
   const businessPhone = (settings?.businessPhone ?? "").trim();
   const businessEmail = (settings?.businessEmail ?? "").trim();
   const parsed: VanityButton[] = [];
@@ -370,7 +370,7 @@ export function resolveVanityButtons(
     // If the setting is empty, the button drops out — better than
     // rendering a "Call us" button that links to nothing.
     const resolved: {
-      kind: "URL" | "PHONE" | "EMAIL";
+      kind: "URL" | "PHONE" | "SMS" | "EMAIL";
       label: string;
       target: string;
       href: string;

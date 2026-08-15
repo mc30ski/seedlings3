@@ -760,8 +760,16 @@ function VanityEditor({
       return;
     }
     let uploadHost = "";
+    let uploadBucket = "";
     try {
-      uploadHost = new URL(uploadUrl).host;
+      const u = new URL(uploadUrl);
+      uploadHost = u.host;
+      // With forcePathStyle, R2 URLs look like
+      //   https://<account>.r2.cloudflarestorage.com/<bucket>/<key>
+      // The first path segment IS the bucket name — surfacing it in
+      // the toast so operator knows exactly which bucket's CORS to
+      // check when the PUT is rejected.
+      uploadBucket = u.pathname.split("/").filter(Boolean)[0] ?? "";
     } catch {
       uploadHost = "(invalid URL)";
     }
@@ -774,15 +782,30 @@ function VanityEditor({
       if (!put.ok) {
         publishInlineMessage({
           type: "ERROR",
-          text: `Storage PUT rejected: ${put.status} ${put.statusText} (host: ${uploadHost})`,
+          text: `Storage PUT rejected: ${put.status} ${put.statusText} (bucket: ${uploadBucket || "?"})`,
         });
         setImageBusy(false);
         return;
       }
     } catch (e: any) {
+      // Log full details to console so we can inspect the presigned
+      // URL, network error stack, and any Response object attached to
+      // the error. The toast only carries the summary.
+      // eslint-disable-next-line no-console
+      console.error("[vanity upload] PUT failed", {
+        error: e,
+        message: e?.message,
+        name: e?.name,
+        stack: e?.stack,
+        uploadUrl,
+        contentType,
+        fileType: file.type,
+        fileSize: file.size,
+        origin: window.location.origin,
+      });
       publishInlineMessage({
         type: "ERROR",
-        text: `Storage PUT network error (host: ${uploadHost}): ${e?.message ?? String(e)}. Usually a CORS block — check the bucket's CORS Policy in Cloudflare allows ${window.location.origin} for PUT.`,
+        text: `Storage PUT network error (bucket: ${uploadBucket || "?"}, host: ${uploadHost}): ${e?.message ?? String(e)}. Full details in browser console.`,
       });
       setImageBusy(false);
       return;

@@ -39,7 +39,25 @@ function bucketName(type: BucketType): string {
   return R2_BUCKET;
 }
 
-/** Generate a presigned PUT URL for direct client upload. */
+/** Generate a presigned PUT URL for direct client upload.
+ *
+ * The AWS SDK v3 (as of the 3.7xx.x line) auto-computes a crc32
+ * checksum on PutObject and bakes it into the signed URL as a
+ * REQUIRED header (`x-amz-checksum-crc32`). Browsers can't send that
+ * header via fetch() — the request comes back as a CORS-ish "Load
+ * failed" TypeError. The fix has two parts:
+ *
+ *   1. `signableHeaders: new Set(["content-type"])` — restrict the
+ *      signed header set to just content-type, so the presigner
+ *      doesn't sign any checksum header. If it's not signed, R2 won't
+ *      require the client to send it.
+ *
+ *   2. NOT listing `x-amz-checksum-crc32` in `unhoistableHeaders`.
+ *      The prior version did, which explicitly told the presigner to
+ *      keep that header out of the query string — meaning the client
+ *      HAD to send it. Dropping the entry lets the SDK either hoist
+ *      it into the query string or skip it entirely.
+ */
 export async function getUploadUrl(key: string, contentType: string, expiresIn = 300, bucket: BucketType = "photos"): Promise<string> {
   const command = new PutObjectCommand({
     Bucket: bucketName(bucket),
@@ -49,7 +67,6 @@ export async function getUploadUrl(key: string, contentType: string, expiresIn =
   return getSignedUrl(s3, command, {
     expiresIn,
     signableHeaders: new Set(["content-type"]),
-    unhoistableHeaders: new Set(["x-amz-checksum-crc32"]),
   });
 }
 
