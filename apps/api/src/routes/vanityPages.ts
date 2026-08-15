@@ -35,18 +35,31 @@ export default async function vanityPagesRoutes(app: FastifyInstance) {
     return listVanityPages();
   });
 
-  // Animation settings — one flag today (show history stack under the
-  // typing line). Persisted as a Setting row so the value survives
-  // deploys and is shared org-wide.
+  // Animation settings — two flags:
+  //   VANITY_STARTUP_ANIMATION_ENABLED — master kill switch. When
+  //     false, the splash renders logo-only (no fetch, no typing).
+  //     Also readable via Neon SQL Editor as an escape hatch.
+  //   VANITY_STARTUP_ANIMATION_SHOW_HISTORY — controls whether the
+  //     history stack renders below the current typing line.
   //
-  // Setting key: VANITY_STARTUP_ANIMATION_SHOW_HISTORY (string "true" /
-  // "false"). Default treated as true when the row is missing.
+  // Both persist as Setting rows (survive deploys, shared org-wide,
+  // audited via updatedById + updatedAt). Missing rows default to
+  // true (both features on) so the UX out-of-the-box shows the full
+  // animation.
   app.get("/super/vanity/animation-settings", superGuard, async () => {
     const { prisma } = await import("../db/prisma");
-    const row = await prisma.setting.findUnique({
-      where: { key: "VANITY_STARTUP_ANIMATION_SHOW_HISTORY" },
-    });
-    return { showHistory: row?.value !== "false" };
+    const [enabledRow, historyRow] = await Promise.all([
+      prisma.setting.findUnique({
+        where: { key: "VANITY_STARTUP_ANIMATION_ENABLED" },
+      }),
+      prisma.setting.findUnique({
+        where: { key: "VANITY_STARTUP_ANIMATION_SHOW_HISTORY" },
+      }),
+    ]);
+    return {
+      enabled: enabledRow?.value !== "false",
+      showHistory: historyRow?.value !== "false",
+    };
   });
 
   app.patch(
@@ -54,25 +67,62 @@ export default async function vanityPagesRoutes(app: FastifyInstance) {
     superGuard,
     async (req: any, reply: any) => {
       const uid = await currentUserId(req);
-      const body = (req.body ?? {}) as { showHistory?: unknown };
-      const value = body.showHistory === false ? "false" : "true";
+      const body = (req.body ?? {}) as {
+        enabled?: unknown;
+        showHistory?: unknown;
+      };
       const { prisma } = await import("../db/prisma");
-      // Setting.updatedById records who made the change; Setting.updatedAt
-      // is Prisma-auto-managed. Together these give a full audit trail
-      // visible in the generic Settings tab.
-      await prisma.setting.upsert({
-        where: { key: "VANITY_STARTUP_ANIMATION_SHOW_HISTORY" },
-        create: {
-          key: "VANITY_STARTUP_ANIMATION_SHOW_HISTORY",
-          value,
-          section: "vanity",
-          description:
-            "When true, the app's startup typing animation stacks previously-shown vanity slugs as a muted history below the current line. When false, the history is hidden and only the current line renders.",
-          updatedById: uid,
-        },
-        update: { value, updatedById: uid },
-      });
-      return { showHistory: value === "true" };
+      const writes: Promise<unknown>[] = [];
+      if (typeof body.enabled === "boolean") {
+        writes.push(
+          prisma.setting.upsert({
+            where: { key: "VANITY_STARTUP_ANIMATION_ENABLED" },
+            create: {
+              key: "VANITY_STARTUP_ANIMATION_ENABLED",
+              value: body.enabled ? "true" : "false",
+              section: "vanity",
+              description:
+                "Master kill switch for the app's startup typing animation. When false the splash renders just the logo and fades (no fetch, no typing). Toggle from the Vanity tab or via the Neon SQL Editor as an escape hatch.",
+              updatedById: uid,
+            },
+            update: { value: body.enabled ? "true" : "false", updatedById: uid },
+          }),
+        );
+      }
+      if (typeof body.showHistory === "boolean") {
+        writes.push(
+          prisma.setting.upsert({
+            where: { key: "VANITY_STARTUP_ANIMATION_SHOW_HISTORY" },
+            create: {
+              key: "VANITY_STARTUP_ANIMATION_SHOW_HISTORY",
+              value: body.showHistory ? "true" : "false",
+              section: "vanity",
+              description:
+                "When true, the app's startup typing animation stacks previously-shown vanity slugs as a muted history below the current line. When false, the history is hidden and only the current line renders.",
+              updatedById: uid,
+            },
+            update: {
+              value: body.showHistory ? "true" : "false",
+              updatedById: uid,
+            },
+          }),
+        );
+      }
+      await Promise.all(writes);
+      // Return current state (post-write) so the client doesn't need a
+      // second GET after a save.
+      const [enabledRow, historyRow] = await Promise.all([
+        prisma.setting.findUnique({
+          where: { key: "VANITY_STARTUP_ANIMATION_ENABLED" },
+        }),
+        prisma.setting.findUnique({
+          where: { key: "VANITY_STARTUP_ANIMATION_SHOW_HISTORY" },
+        }),
+      ]);
+      return {
+        enabled: enabledRow?.value !== "false",
+        showHistory: historyRow?.value !== "false",
+      };
     },
   );
 

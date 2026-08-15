@@ -1184,19 +1184,27 @@ export default async function publicRoutes(app: FastifyInstance) {
 
   // Ordered list of vanity slugs opted into the app's startup typing
   // animation, plus display settings. Rate-limited (shared bucket).
-  // Returns { slugs: string[], showHistory: boolean }.
+  // Returns { enabled, slugs, showHistory }. Client uses `enabled` as
+  // a kill switch — when false, the splash renders logo-only.
   app.get("/public/vanity/animation", async (req: any, reply: any) => {
     if (!optOutRateLimit(String(req.ip ?? ""))) {
       return reply.code(429).send({ error: "rate_limited" });
     }
     const { listAnimationSlugs } = await import("../services/vanityPages");
-    const [slugs, historySetting] = await Promise.all([
+    const [slugs, enabledSetting, historySetting] = await Promise.all([
       listAnimationSlugs(),
+      prisma.setting.findUnique({
+        where: { key: "VANITY_STARTUP_ANIMATION_ENABLED" },
+      }),
       prisma.setting.findUnique({
         where: { key: "VANITY_STARTUP_ANIMATION_SHOW_HISTORY" },
       }),
     ]);
-    return { slugs, showHistory: historySetting?.value !== "false" };
+    return {
+      enabled: enabledSetting?.value !== "false",
+      slugs,
+      showHistory: historySetting?.value !== "false",
+    };
   });
 
   // ── Promo short URLs ────────────────────────────────────────────────

@@ -185,41 +185,48 @@ export default function VanityUrlsTab() {
     void load();
   }, [load]);
 
-  // Animation settings — one flag today (show history stack in the
-  // splash typing animation). `null` while loading so the toggle
-  // doesn't briefly render in the wrong state.
+  // Animation settings — two flags. `null` while loading so the
+  // toggles don't briefly render in the wrong state.
+  const [animationEnabled, setAnimationEnabled] = useState<boolean | null>(null);
   const [animationShowHistory, setAnimationShowHistory] = useState<boolean | null>(null);
   const [animationSettingBusy, setAnimationSettingBusy] = useState(false);
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const s = await apiGet<{ showHistory: boolean }>(
+        const s = await apiGet<{ enabled: boolean; showHistory: boolean }>(
           "/api/super/vanity/animation-settings",
         );
-        if (!cancelled) setAnimationShowHistory(!!s?.showHistory);
+        if (cancelled) return;
+        setAnimationEnabled(!!s?.enabled);
+        setAnimationShowHistory(!!s?.showHistory);
       } catch {
-        // Silent — keep null; toggle just won't render.
+        // Silent — keep null; toggles just won't render.
       }
     })();
     return () => { cancelled = true; };
   }, []);
-  const toggleAnimationHistory = useCallback(async () => {
-    if (animationShowHistory === null) return;
-    const next = !animationShowHistory;
-    setAnimationSettingBusy(true);
-    try {
-      await apiPatch("/api/super/vanity/animation-settings", { showHistory: next });
-      setAnimationShowHistory(next);
-    } catch (e: any) {
-      publishInlineMessage({
-        type: "ERROR",
-        text: `Couldn't update setting: ${e?.message ?? "unknown"}`,
-      });
-    } finally {
-      setAnimationSettingBusy(false);
-    }
-  }, [animationShowHistory]);
+  const patchAnimationSetting = useCallback(
+    async (patch: { enabled?: boolean; showHistory?: boolean }) => {
+      setAnimationSettingBusy(true);
+      try {
+        const s = await apiPatch<{ enabled: boolean; showHistory: boolean }>(
+          "/api/super/vanity/animation-settings",
+          patch,
+        );
+        setAnimationEnabled(!!s?.enabled);
+        setAnimationShowHistory(!!s?.showHistory);
+      } catch (e: any) {
+        publishInlineMessage({
+          type: "ERROR",
+          text: `Couldn't update setting: ${e?.message ?? "unknown"}`,
+        });
+      } finally {
+        setAnimationSettingBusy(false);
+      }
+    },
+    [],
+  );
 
   const openEditor = (id: string | "new") => setEditingId(id);
   const closeEditor = () => setEditingId(null);
@@ -372,32 +379,63 @@ export default function VanityUrlsTab() {
         </Button>
       </HStack>
 
-      {/* Animation settings — one toggle. Skipped while the setting is
-          still loading so the switch doesn't flash the wrong state. */}
-      {animationShowHistory !== null && (
+      {/* Animation settings — two toggles. Skipped while values are
+          still loading so the switches don't flash the wrong state. */}
+      {animationEnabled !== null && animationShowHistory !== null && (
         <Card.Root variant="outline">
           <Card.Body>
-            <HStack gap={3} justify="space-between">
-              <VStack align="start" gap={0}>
-                <Text fontSize="sm" fontWeight="medium">
-                  Show history in startup animation
-                </Text>
-                <Text fontSize="xs" color="fg.muted">
-                  When on, previously-shown vanity slugs stack in muted
-                  gray below the current typing line. When off, only the
-                  current line renders.
-                </Text>
-              </VStack>
-              <Switch.Root
-                checked={animationShowHistory}
-                disabled={animationSettingBusy}
-                onCheckedChange={() => void toggleAnimationHistory()}
-                colorPalette="teal"
+            <VStack align="stretch" gap={4}>
+              <HStack gap={3} justify="space-between" align="start">
+                <VStack align="start" gap={0}>
+                  <Text fontSize="sm" fontWeight="medium">
+                    Startup animation
+                  </Text>
+                  <Text fontSize="xs" color="fg.muted">
+                    Turn the whole startup animation on or off. When off,
+                    the app just shows the logo and moves on — no typing.
+                  </Text>
+                </VStack>
+                <Switch.Root
+                  checked={animationEnabled}
+                  disabled={animationSettingBusy}
+                  onCheckedChange={(d: { checked: boolean }) =>
+                    void patchAnimationSetting({ enabled: !!d.checked })
+                  }
+                  colorPalette="teal"
+                >
+                  <Switch.HiddenInput />
+                  <Switch.Control />
+                </Switch.Root>
+              </HStack>
+              <HStack
+                gap={3}
+                justify="space-between"
+                align="start"
+                opacity={animationEnabled ? 1 : 0.5}
               >
-                <Switch.HiddenInput />
-                <Switch.Control />
-              </Switch.Root>
-            </HStack>
+                <VStack align="start" gap={0}>
+                  <Text fontSize="sm" fontWeight="medium">
+                    Show history in startup animation
+                  </Text>
+                  <Text fontSize="xs" color="fg.muted">
+                    When on, previously-shown vanity slugs stack in
+                    muted gray below the current typing line. When off,
+                    only the current line renders.
+                  </Text>
+                </VStack>
+                <Switch.Root
+                  checked={animationShowHistory}
+                  disabled={animationSettingBusy || !animationEnabled}
+                  onCheckedChange={(d: { checked: boolean }) =>
+                    void patchAnimationSetting({ showHistory: !!d.checked })
+                  }
+                  colorPalette="teal"
+                >
+                  <Switch.HiddenInput />
+                  <Switch.Control />
+                </Switch.Root>
+              </HStack>
+            </VStack>
           </Card.Body>
         </Card.Root>
       )}

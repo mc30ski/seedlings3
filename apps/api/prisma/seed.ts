@@ -2404,6 +2404,7 @@ async function seedDatabase() {
     // multi-domain doc for the checklist).
     { key: "ALLOWED_DOMAINS", value: '["https://seedlings.team","https://seedlings.pro"]', description: "JSON array of all domains this app serves. Used by the Promotion editor's domain picker and by public-route Host-header validation. Primary (PAYMENT_REQUEST_BASE_URL) must be one of these." },
     { key: "VANITY_STARTUP_ANIMATION_SHOW_HISTORY", value: "true", description: "When true, the app's startup typing animation stacks previously-shown vanity slugs as a muted history below the current line. When false, the history is hidden and only the current line renders." },
+    { key: "VANITY_STARTUP_ANIMATION_ENABLED", value: "true", description: "Master kill switch for the app's startup typing animation. When false the splash renders just the logo and fades (no fetch, no typing). Toggle here or from the Vanity tab; the DB is authoritative so you can flip this via the Neon SQL Editor if the app itself is broken." },
   ];
   for (const s of paymentSettings) {
     await prisma.setting.upsert({
