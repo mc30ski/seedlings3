@@ -21,8 +21,11 @@ import {
 import {
   ArrowDown,
   ArrowUp,
+  ChevronsDown,
+  ChevronsUp,
   ExternalLink,
   Plus,
+  Sparkles,
   Star,
   Trash2,
   X,
@@ -30,6 +33,7 @@ import {
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
+import { useBranding } from "@/src/lib/useBranding";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Vanity URLs — Super-only editor.
@@ -53,11 +57,15 @@ import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
 type VanityKind = "LANDING" | "REDIRECT" | "ALIAS";
 type VanityButtonKind = "URL" | "PHONE" | "EMAIL";
+type VanityButtonSource = "literal" | "business_phone" | "business_email";
 
 type VanityButton = {
   kind: VanityButtonKind;
   label: string;
+  // Ignored when source != "literal" — the API swaps in the live
+  // Settings value at render time so operator edits flow through.
   target: string;
+  source: VanityButtonSource;
 };
 
 type VanityPage = {
@@ -77,6 +85,7 @@ type VanityPage = {
   redirectUrl: string | null;
   aliasTargetId: string | null;
   enabled: boolean;
+  showInStartupAnimation: boolean;
   sortOrder: number;
   viewCount: number;
   createdAt: string;
@@ -116,9 +125,18 @@ const VANITY_PREVIEW_DOMAIN = "seedlings.pro";
 // they migrate on save.
 function normalizeButtons(p: VanityPage | null): VanityButton[] {
   if (!p) return [];
-  if (Array.isArray(p.buttons) && p.buttons.length > 0) return p.buttons;
+  if (Array.isArray(p.buttons) && p.buttons.length > 0) {
+    // Default source to "literal" for rows saved before the source
+    // column existed — they're by definition custom values.
+    return p.buttons.map((b: any) => ({
+      kind: b.kind,
+      label: b.label ?? "",
+      target: b.target ?? "",
+      source: (b.source as VanityButtonSource) ?? "literal",
+    }));
+  }
   if (p.ctaText && p.ctaUrl) {
-    return [{ kind: "URL", label: p.ctaText, target: p.ctaUrl }];
+    return [{ kind: "URL", label: p.ctaText, target: p.ctaUrl, source: "literal" }];
   }
   return [];
 }
@@ -194,15 +212,21 @@ export default function VanityUrlsTab() {
     [load],
   );
 
-  // Move a row up or down in the sort order. Sends a full ordered id
-  // list (server rejects partial payloads) so the persisted order
-  // stays consistent even if new rows landed since the last load.
+  // Move a row up / down one slot, or send to the top / bottom.
+  // Sends the FULL ordered id list to the server (partial payloads
+  // are rejected) so the persisted order stays consistent even if
+  // new rows landed since the last load.
   const moveRow = useCallback(
-    async (id: string, direction: "up" | "down") => {
+    async (id: string, direction: "up" | "down" | "top" | "bottom") => {
       if (!pages) return;
       const idx = pages.findIndex((p) => p.id === id);
       if (idx < 0) return;
-      const targetIdx = direction === "up" ? idx - 1 : idx + 1;
+      let targetIdx: number;
+      if (direction === "up") targetIdx = idx - 1;
+      else if (direction === "down") targetIdx = idx + 1;
+      else if (direction === "top") targetIdx = 0;
+      else targetIdx = pages.length - 1;
+      if (targetIdx === idx) return;
       if (targetIdx < 0 || targetIdx >= pages.length) return;
       const next = pages.slice();
       const [row] = next.splice(idx, 1);
@@ -224,6 +248,25 @@ export default function VanityUrlsTab() {
       }
     },
     [pages, load],
+  );
+
+  // Per-row startup-animation toggle — flips the flag and reloads so
+  // the star/sparkle indicator reflects the fresh state. Silent success
+  // (the toggled icon is enough visual feedback); errors surface as an
+  // inline message.
+  const toggleStartupAnimation = useCallback(
+    async (id: string, enabled: boolean) => {
+      try {
+        await apiPatch(`/api/super/vanity/${id}/startup-animation`, { enabled });
+        await load();
+      } catch (e: any) {
+        publishInlineMessage({
+          type: "ERROR",
+          text: `Couldn't toggle animation: ${e?.message ?? "unknown"}`,
+        });
+      }
+    },
+    [load],
   );
 
   // Delete flow: click × → confirm dialog → server call. On success,
@@ -314,16 +357,43 @@ export default function VanityUrlsTab() {
           >
             <Card.Body>
               <HStack justify="space-between" align="start" gap={3}>
-                {/* Left rail: up/down reorder arrows, stacked. Grouped
-                    away from the content and separate from the action
-                    cluster on the right. */}
-                <VStack gap={0.5} flexShrink={0}>
+                {/* Left rail: reorder controls in a 2×2 grid so they
+                    don't stretch the row vertically. Left column is
+                    "up-direction" (top / up one), right column is
+                    "down-direction" (bottom / down one). */}
+                <Box
+                  flexShrink={0}
+                  display="grid"
+                  gridTemplateColumns="repeat(2, 1fr)"
+                  gap={0.5}
+                >
+                  <IconButton
+                    size="xs"
+                    variant="ghost"
+                    aria-label="Send to top"
+                    disabled={isFirst}
+                    onClick={() => void moveRow(p.id, "top")}
+                    title="Send to top"
+                  >
+                    <ChevronsUp size={14} />
+                  </IconButton>
+                  <IconButton
+                    size="xs"
+                    variant="ghost"
+                    aria-label="Send to bottom"
+                    disabled={isLast}
+                    onClick={() => void moveRow(p.id, "bottom")}
+                    title="Send to bottom"
+                  >
+                    <ChevronsDown size={14} />
+                  </IconButton>
                   <IconButton
                     size="xs"
                     variant="ghost"
                     aria-label="Move up"
                     disabled={isFirst}
                     onClick={() => void moveRow(p.id, "up")}
+                    title="Move up"
                   >
                     <ArrowUp size={14} />
                   </IconButton>
@@ -333,10 +403,11 @@ export default function VanityUrlsTab() {
                     aria-label="Move down"
                     disabled={isLast}
                     onClick={() => void moveRow(p.id, "down")}
+                    title="Move down"
                   >
                     <ArrowDown size={14} />
                   </IconButton>
-                </VStack>
+                </Box>
 
                 <VStack align="start" gap={1} flex="1" minW="0">
                   <HStack gap={2} wrap="wrap">
@@ -446,6 +517,24 @@ export default function VanityUrlsTab() {
                     }
                   >
                     <Star size={12} fill={p.isDefault ? "currentColor" : "none"} />
+                  </IconButton>
+                  <IconButton
+                    size="xs"
+                    variant={p.showInStartupAnimation ? "solid" : "outline"}
+                    colorPalette={p.showInStartupAnimation ? "purple" : "gray"}
+                    aria-label={
+                      p.showInStartupAnimation
+                        ? "In startup animation — click to remove"
+                        : "Add to startup animation"
+                    }
+                    onClick={() => void toggleStartupAnimation(p.id, !p.showInStartupAnimation)}
+                    title={
+                      p.showInStartupAnimation
+                        ? "In the app startup animation — click to remove"
+                        : "Include in the app startup animation"
+                    }
+                  >
+                    <Sparkles size={12} />
                   </IconButton>
                   <Button
                     size="xs"
@@ -605,6 +694,11 @@ function VanityEditor({
   onSaved: () => void;
   allPages: VanityPage[];
 }) {
+  // Pull business phone / email from Settings so the button editor can
+  // one-click populate a call/email button target with the configured
+  // default. Empty string when the setting isn't set — the "Use
+  // default" button is hidden in that case.
+  const { businessPhone, businessEmail } = useBranding();
   const [slug, setSlug] = useState(existing?.slug ?? "");
   const [kind, setKind] = useState<VanityKind>(existing?.kind ?? "LANDING");
   const [title, setTitle] = useState(existing?.title ?? "");
@@ -645,20 +739,30 @@ function VanityEditor({
   const buttonsError = useMemo(() => {
     if (kind !== "LANDING") return null;
     for (const b of buttons) {
-      if (!b.label.trim()) return "Every button needs a label.";
-      if (!b.target.trim()) return "Every button needs a destination.";
+      if (!b.label.trim()) return "Button label required.";
+      // Settings-bound buttons don't validate target — the API swaps
+      // it in at render time and drops the button if the setting is
+      // empty. Still worth warning if BOTH the setting AND the source
+      // are empty, but the picker only offers settings-bound options
+      // when a value exists.
+      if (b.source !== "literal") continue;
+      if (!b.target.trim()) {
+        if (b.kind === "PHONE") return "Phone number required.";
+        if (b.kind === "EMAIL") return "Email address required.";
+        return "Web address required.";
+      }
       if (b.kind === "URL") {
         try {
           new URL(b.target);
         } catch {
-          return `Button "${b.label}" needs a valid https:// URL.`;
+          return "Web address must be a valid https:// URL.";
         }
       }
       if (b.kind === "EMAIL" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(b.target)) {
-        return `Button "${b.label}" needs a valid email address.`;
+        return "Email address is not valid.";
       }
       if (b.kind === "PHONE" && !/\d/.test(b.target)) {
-        return `Button "${b.label}" needs a phone number.`;
+        return "Phone number must contain digits.";
       }
     }
     return null;
@@ -688,6 +792,9 @@ function VanityEditor({
         redirectUrl: kind === "REDIRECT" ? redirectUrl.trim() : null,
         aliasTargetId: kind === "ALIAS" ? aliasTargetId : null,
         enabled,
+        // Preserve the existing value on save — this flag is toggled
+        // per-row from the tab (Sparkles icon), not from this form.
+        showInStartupAnimation: existing?.showInStartupAnimation ?? false,
       };
       if (isNew) {
         await apiPost("/api/super/vanity", payload);
@@ -745,7 +852,7 @@ function VanityEditor({
 
   const addButton = () => {
     if (buttons.length >= 6) return;
-    setButtons((prev) => [...prev, { kind: "URL", label: "", target: "" }]);
+    setButtons((prev) => [...prev, { kind: "URL", label: "", target: "", source: "literal" }]);
   };
   const removeButton = (idx: number) => {
     setButtons((prev) => prev.filter((_, i) => i !== idx));
@@ -910,11 +1017,20 @@ function VanityEditor({
                                     <Select.Root
                                       collection={buttonKindCollection}
                                       value={[b.kind]}
-                                      onValueChange={(e) =>
+                                      onValueChange={(e) => {
+                                        const nextKind = (e.value?.[0] ?? "URL") as VanityButtonKind;
+                                        // Reset source to literal if the new kind can't
+                                        // hold the old source (e.g. switching a phone
+                                        // button bound to business_phone → email).
+                                        const keepSource =
+                                          (nextKind === "PHONE" && b.source === "business_phone") ||
+                                          (nextKind === "EMAIL" && b.source === "business_email") ||
+                                          b.source === "literal";
                                         updateButton(idx, {
-                                          kind: (e.value?.[0] ?? "URL") as VanityButtonKind,
-                                        })
-                                      }
+                                          kind: nextKind,
+                                          source: keepSource ? b.source : "literal",
+                                        });
+                                      }}
                                       size="sm"
                                       positioning={{ strategy: "fixed", hideWhenDetached: true }}
                                     >
@@ -954,6 +1070,59 @@ function VanityEditor({
                                   </Box>
                                 </HStack>
                                 <Box>
+                                  {/* Source picker: literal (typed value) OR
+                                      "use the setting" (live-bound so
+                                      Settings edits flow through). Only
+                                      shown for phone/email kinds where a
+                                      matching business Setting exists. */}
+                                  {(b.kind === "PHONE" || b.kind === "EMAIL") &&
+                                    ((b.kind === "PHONE" && businessPhone) ||
+                                      (b.kind === "EMAIL" && businessEmail)) && (
+                                      <Box mb={2}>
+                                        <VStack align="start" gap={1}>
+                                          <HStack gap={2}>
+                                            <input
+                                              type="radio"
+                                              id={`src-lit-${idx}`}
+                                              checked={b.source === "literal"}
+                                              onChange={() => updateButton(idx, { source: "literal" })}
+                                            />
+                                            <label htmlFor={`src-lit-${idx}`}>
+                                              <Text fontSize="xs">Custom {b.kind === "PHONE" ? "phone" : "email"}</Text>
+                                            </label>
+                                          </HStack>
+                                          <HStack gap={2}>
+                                            <input
+                                              type="radio"
+                                              id={`src-biz-${idx}`}
+                                              checked={
+                                                b.source ===
+                                                (b.kind === "PHONE" ? "business_phone" : "business_email")
+                                              }
+                                              onChange={() =>
+                                                updateButton(idx, {
+                                                  source:
+                                                    b.kind === "PHONE"
+                                                      ? "business_phone"
+                                                      : "business_email",
+                                                })
+                                              }
+                                            />
+                                            <label htmlFor={`src-biz-${idx}`}>
+                                              <Text fontSize="xs">
+                                                Business {b.kind === "PHONE" ? "phone" : "email"}{" "}
+                                                <Text as="span" color="fg.muted" fontFamily="mono">
+                                                  ({b.kind === "PHONE" ? businessPhone : businessEmail})
+                                                </Text>
+                                              </Text>
+                                            </label>
+                                          </HStack>
+                                        </VStack>
+                                        <Text fontSize="2xs" color="fg.muted" mt={1}>
+                                          Business option stays in sync with the value in Settings.
+                                        </Text>
+                                      </Box>
+                                    )}
                                   <Text fontSize="xs" color="fg.muted" mb={1}>
                                     {b.kind === "PHONE"
                                       ? "Phone number"
@@ -964,8 +1133,17 @@ function VanityEditor({
                                   <Input
                                     size="sm"
                                     placeholder={buttonKindPlaceholder(b.kind)}
-                                    value={b.target}
+                                    value={
+                                      b.source === "literal"
+                                        ? b.target
+                                        : b.source === "business_phone"
+                                          ? businessPhone
+                                          : b.source === "business_email"
+                                            ? businessEmail
+                                            : ""
+                                    }
                                     onChange={(e) => updateButton(idx, { target: e.target.value })}
+                                    disabled={b.source !== "literal"}
                                   />
                                 </Box>
                               </VStack>
@@ -1080,7 +1258,8 @@ function VanityEditor({
                   </Text>
                 )}
 
-                {/* Enabled toggle — default toggle moved to the tab */}
+                {/* Enabled toggle — default and startup-animation
+                    flags are set per-row from the tab, not here. */}
                 <HStack gap={2}>
                   <input
                     type="checkbox"

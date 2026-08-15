@@ -68,9 +68,46 @@ export const vanityButtonSchema = z
   .object({
     kind: z.enum(["URL", "PHONE", "EMAIL"]),
     label: z.string().min(1).max(200),
-    target: z.string().min(1).max(500),
+    // `target` is only meaningful when source === "literal". When
+    // source is business_phone / business_email, target is ignored
+    // and the value is looked up from Settings at render time (so
+    // changing the BUSINESS_PHONE / BUSINESS_EMAIL setting flows
+    // through to every button that references it).
+    target: z.string().max(500).default(""),
+    source: z
+      .enum(["literal", "business_phone", "business_email"])
+      .default("literal"),
   })
   .superRefine((val, ctx) => {
+    if (val.source !== "literal") {
+      // Server-side sanity: only phone/email kinds can bind to a
+      // settings source. URL buttons must always be literal (nothing
+      // in Settings represents "the website" as of today).
+      if (val.source === "business_phone" && val.kind !== "PHONE") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["source"],
+          message: "business_phone source only applies to phone buttons.",
+        });
+      }
+      if (val.source === "business_email" && val.kind !== "EMAIL") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["source"],
+          message: "business_email source only applies to email buttons.",
+        });
+      }
+      // Settings-bound buttons don't validate target — it's ignored.
+      return;
+    }
+    if (!val.target.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["target"],
+        message: "Button destination required.",
+      });
+      return;
+    }
     if (val.kind === "URL") {
       try {
         new URL(val.target);
@@ -139,6 +176,7 @@ const vanitySaveSchema = z
     redirectUrl: z.string().url().nullable().optional(),
     aliasTargetId: z.string().min(1).nullable().optional(),
     enabled: z.boolean().default(true),
+    showInStartupAnimation: z.boolean().default(false),
   })
   .superRefine((val, ctx) => {
     if (!isValidSlugFormat(val.slug)) {
@@ -285,11 +323,16 @@ export async function resolvePublicVanityPage(slug: string): Promise<
 // canonical list the public renderer can iterate. Each entry has a
 // pre-resolved `href` so the SSR page just renders — no protocol
 // decisions in the view layer.
-export function resolveVanityButtons(page: {
-  buttons: unknown;
-  ctaText: string | null;
-  ctaUrl: string | null;
-}): { kind: "URL" | "PHONE" | "EMAIL"; label: string; target: string; href: string }[] {
+export function resolveVanityButtons(
+  page: {
+    buttons: unknown;
+    ctaText: string | null;
+    ctaUrl: string | null;
+  },
+  settings?: { businessPhone?: string; businessEmail?: string },
+): { kind: "URL" | "PHONE" | "EMAIL"; label: string; target: string; href: string; source: "literal" | "business_phone" | "business_email" }[] {
+  const businessPhone = (settings?.businessPhone ?? "").trim();
+  const businessEmail = (settings?.businessEmail ?? "").trim();
   const parsed: VanityButton[] = [];
   if (Array.isArray(page.buttons)) {
     for (const raw of page.buttons) {
@@ -298,16 +341,51 @@ export function resolveVanityButtons(page: {
     }
   }
   if (parsed.length > 0) {
-    return parsed.map((b) => ({ ...b, href: resolveButtonHref(b) }));
+    // Swap settings-bound buttons' target with the live setting value.
+    // If the setting is empty, the button drops out — better than
+    // rendering a "Call us" button that links to nothing.
+    const resolved: {
+      kind: "URL" | "PHONE" | "EMAIL";
+      label: string;
+      target: string;
+      href: string;
+      source: "literal" | "business_phone" | "business_email";
+    }[] = [];
+    for (const b of parsed) {
+      let target = b.target;
+      if (b.source === "business_phone") target = businessPhone;
+      else if (b.source === "business_email") target = businessEmail;
+      if (!target.trim()) continue;
+      const materialized = { kind: b.kind, label: b.label, target };
+      resolved.push({
+        ...materialized,
+        href: resolveButtonHref(materialized),
+        source: b.source,
+      });
+    }
+    return resolved;
   }
   // Legacy fallback — single URL button synthesized from ctaText/ctaUrl.
   // Rows created before the buttons column existed continue to render;
   // the editor migrates them into the new shape on next save.
   if (page.ctaText && page.ctaUrl) {
     const legacy = { kind: "URL" as const, label: page.ctaText, target: page.ctaUrl };
-    return [{ ...legacy, href: resolveButtonHref(legacy) }];
+    return [{ ...legacy, href: resolveButtonHref(legacy), source: "literal" as const }];
   }
   return [];
+}
+
+// Ordered list of vanity slugs opted into the app's startup typing
+// animation. Reads showInStartupAnimation flag AND enabled=true so
+// hidden rows never surface in the animation. Ordered by sortOrder
+// (operator-defined) with slug as a stable tiebreaker.
+export async function listAnimationSlugs(): Promise<string[]> {
+  const rows = await prisma.vanityPage.findMany({
+    where: { enabled: true, showInStartupAnimation: true },
+    orderBy: [{ sortOrder: "asc" }, { slug: "asc" }],
+    select: { slug: true },
+  });
+  return rows.map((r) => r.slug);
 }
 
 async function incrementVanityPageViewCount(id: string): Promise<void> {
@@ -378,6 +456,14 @@ export async function createVanityPage(params: {
         data: { isDefault: false },
       });
     }
+    // New rows go at the bottom of the display order. Reserve enough
+    // headroom (max + 10) so the operator can splice new rows above
+    // this one without renumbering the whole set. reorderVanityPages
+    // resequences to 10, 20, 30… when the operator explicitly drags.
+    const maxRow = await tx.vanityPage.aggregate({
+      _max: { sortOrder: true },
+    });
+    const newSortOrder = (maxRow._max.sortOrder ?? 0) + 10;
     const created = await tx.vanityPage.create({
       data: {
         slug: data.slug.toLowerCase(),
@@ -393,6 +479,8 @@ export async function createVanityPage(params: {
         imageR2Key: data.imageR2Key ?? null,
         redirectUrl: data.redirectUrl ?? null,
         enabled: data.enabled,
+        showInStartupAnimation: data.showInStartupAnimation,
+        sortOrder: newSortOrder,
         createdById: params.actorUserId,
         updatedById: params.actorUserId,
       },
@@ -454,6 +542,7 @@ export async function updateVanityPage(params: {
         imageR2Key: data.imageR2Key ?? null,
         redirectUrl: data.redirectUrl ?? null,
         enabled: data.enabled,
+        showInStartupAnimation: data.showInStartupAnimation,
         updatedById: params.actorUserId,
       },
     });
@@ -548,6 +637,37 @@ export async function setDefaultVanityPage(params: {
   });
 }
 
+// Toggle the per-row startup-animation flag. Simple boolean flip
+// (isolated endpoint so the tab's row-level toggle button doesn't
+// have to round-trip the whole save payload).
+export async function setVanityStartupAnimation(params: {
+  id: string;
+  enabled: boolean;
+  actorUserId: string;
+}): Promise<VanityPage> {
+  const existing = await prisma.vanityPage.findUnique({ where: { id: params.id } });
+  if (!existing) {
+    const err: any = new Error("Vanity page not found");
+    err.code = "NOT_FOUND";
+    throw err;
+  }
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.vanityPage.update({
+      where: { id: params.id },
+      data: {
+        showInStartupAnimation: params.enabled,
+        updatedById: params.actorUserId,
+      },
+    });
+    await writeAudit(tx, AUDIT.VANITY.UPDATED, params.actorUserId, {
+      vanityPageId: updated.id,
+      slug: updated.slug,
+      change: params.enabled ? "startup_animation_on" : "startup_animation_off",
+    });
+    return updated;
+  });
+}
+
 // Bulk reorder — accept a full ordered list of vanity IDs and stamp
 // each with sortOrder = 10, 20, 30, … The gap-of-10 gives room to
 // splice in future rows without renumbering everything.
@@ -622,6 +742,7 @@ export async function confirmVanityPageImageUpload(params: {
 
 export const vanityPages = {
   listVanityPages,
+  listAnimationSlugs,
   getVanityPageById,
   getPublicVanityPageBySlug,
   getDefaultVanityPage,
@@ -631,6 +752,7 @@ export const vanityPages = {
   updateVanityPage,
   deleteVanityPage,
   setDefaultVanityPage,
+  setVanityStartupAnimation,
   reorderVanityPages,
   getVanityPageImageUploadUrl,
   confirmVanityPageImageUpload,

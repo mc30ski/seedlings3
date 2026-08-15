@@ -3418,11 +3418,17 @@ async function seedVanityPageFixtures() {
       slug: "home",
       kind: "LANDING",
       isDefault: true,
-      title: "Seedlings Lawn Care",
-      headline: "Neighborhood lawn care, done right",
-      body: "We're a small, family-run crew serving the Triangle. Mowing, cleanups, seasonal work — all handled by people who actually live nearby and care about your yard looking sharp.\n\nEdit this copy in the Vanity URLs tab of the app.",
+      title: "Seedlings Lawn Care — Family-owned, trust-earned",
+      headline: "Family-owned lawn care that earns your trust",
+      body:
+        "Hi, I'm Jacob — the middle of three brothers and the one who runs Seedlings Lawn Care. Together with my dad and brothers, we've been serving our local community with quality lawn care and landscaping.\n\n" +
+        "Our goal is bigger than just mowing lawns. We want to give young people like us a chance to earn money, learn real-life skills, and understand the value of hard work. It's about building something from the ground up — literally and professionally.\n\n" +
+        "My dad, a licensed general contractor in North Carolina, brings years of hands-on experience and guides us on every project. He's built two homes, and he makes sure every lawn care job is done right.\n\n" +
+        "We're a growing team, and we care about every yard we touch. Choosing us means supporting a local family business that's here to work hard and earn your trust.",
       buttons: [
-        { kind: "URL", label: "Get in touch", target: "https://seedlings.team" },
+        { kind: "URL", label: "Get a free estimate", target: "https://seedlings.team", source: "literal" },
+        { kind: "PHONE", label: "Call us", target: "", source: "business_phone" },
+        { kind: "EMAIL", label: "Email us", target: "", source: "business_email" },
       ],
       enabled: true,
       createdById: MICHAEL_ID,
@@ -3446,6 +3452,7 @@ async function seedVanityPageFixtures() {
         { kind: "PHONE", label: "Call us", target: "919-928-4192" },
         { kind: "EMAIL", label: "Email us", target: "admin@seedlingslawncare.com" },
       ],
+      showInStartupAnimation: true,
       enabled: true,
       createdById: MICHAEL_ID,
       updatedById: MICHAEL_ID,
