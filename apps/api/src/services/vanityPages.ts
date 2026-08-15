@@ -61,12 +61,12 @@ export function isReservedSlug(slug: string): boolean {
 
 // Vanity button — one entry in the LANDING page's buttons array.
 //   URL   — target is a full https URL
-//   PHONE — target is a phone number (E.164 or free-form); renderer
-//           prefixes tel:
+//   PHONE — target is a phone number; renderer prefixes tel:
+//   SMS   — target is a phone number; renderer prefixes sms:
 //   EMAIL — target is an email address; renderer prefixes mailto:
 export const vanityButtonSchema = z
   .object({
-    kind: z.enum(["URL", "PHONE", "EMAIL"]),
+    kind: z.enum(["URL", "PHONE", "SMS", "EMAIL"]),
     label: z.string().min(1).max(200),
     // `target` is only meaningful when source === "literal". When
     // source is business_phone / business_email, target is ignored
@@ -80,14 +80,18 @@ export const vanityButtonSchema = z
   })
   .superRefine((val, ctx) => {
     if (val.source !== "literal") {
-      // Server-side sanity: only phone/email kinds can bind to a
+      // Server-side sanity: only phone/sms/email kinds can bind to a
       // settings source. URL buttons must always be literal (nothing
       // in Settings represents "the website" as of today).
-      if (val.source === "business_phone" && val.kind !== "PHONE") {
+      if (
+        val.source === "business_phone" &&
+        val.kind !== "PHONE" &&
+        val.kind !== "SMS"
+      ) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["source"],
-          message: "business_phone source only applies to phone buttons.",
+          message: "business_phone source only applies to phone/SMS buttons.",
         });
       }
       if (val.source === "business_email" && val.kind !== "EMAIL") {
@@ -126,27 +130,28 @@ export const vanityButtonSchema = z
         message: "Email buttons need a valid email address.",
       });
     }
-    if (val.kind === "PHONE" && !/[\d]/.test(val.target)) {
+    if ((val.kind === "PHONE" || val.kind === "SMS") && !/[\d]/.test(val.target)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["target"],
-        message: "Phone buttons need a phone number.",
+        message: "Phone/SMS buttons need a phone number.",
       });
     }
   });
 export type VanityButton = z.infer<typeof vanityButtonSchema>;
 
 // Resolve a button's raw target to the href a browser can navigate to:
-// URL → target, PHONE → tel:<digits>, EMAIL → mailto:<addr>.
+// URL → target, PHONE → tel:<digits>, SMS → sms:<digits>,
+// EMAIL → mailto:<addr>.
 export function resolveButtonHref(btn: {
-  kind: "URL" | "PHONE" | "EMAIL";
+  kind: "URL" | "PHONE" | "SMS" | "EMAIL";
   target: string;
 }): string {
-  if (btn.kind === "PHONE") {
-    // Strip everything but digits + a leading + so `tel:` gets a clean
-    // dialable value. Preserves the raw text stored on the row.
+  if (btn.kind === "PHONE" || btn.kind === "SMS") {
+    // Strip everything but digits + a leading + so tel:/sms: get a
+    // clean dialable value. Preserves the raw text stored on the row.
     const cleaned = btn.target.replace(/[^\d+]/g, "");
-    return `tel:${cleaned}`;
+    return `${btn.kind === "SMS" ? "sms" : "tel"}:${cleaned}`;
   }
   if (btn.kind === "EMAIL") return `mailto:${btn.target.trim()}`;
   return btn.target.trim();
@@ -396,9 +401,8 @@ export function resolveVanityButtons(
 }
 
 // Ordered list of vanity slugs opted into the app's startup typing
-// animation. Reads showInStartupAnimation flag AND enabled=true so
-// hidden rows never surface in the animation. Ordered by sortOrder
-// (operator-defined) with slug as a stable tiebreaker.
+// animation. Reads showInStartupAnimation AND enabled=true so hidden
+// rows never surface. Ordered by sortOrder with slug as tiebreaker.
 export async function listAnimationSlugs(): Promise<string[]> {
   const rows = await prisma.vanityPage.findMany({
     where: { enabled: true, showInStartupAnimation: true },

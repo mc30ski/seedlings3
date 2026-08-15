@@ -729,25 +729,72 @@ function VanityEditor({
   async function handleUpload(file: File) {
     if (!existing) return;
     setImageBusy(true);
+    const contentType = file.type || "image/jpeg";
+    // Three stages, each with its own try/catch so the toast message
+    // pinpoints exactly which step failed. Without this, every failure
+    // just said "Load failed" and there was no way to tell CORS from
+    // presign from confirm.
+    let uploadUrl = "";
+    let key = "";
     try {
-      const contentType = file.type || "image/jpeg";
-      const { uploadUrl, key } = await apiPost<{ uploadUrl: string; key: string }>(
+      const presigned = await apiPost<{ uploadUrl: string; key: string }>(
         `/api/super/vanity/${existing.id}/image-upload-url`,
         { contentType },
       );
+      uploadUrl = presigned.uploadUrl;
+      key = presigned.key;
+    } catch (e: any) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: `Presign failed: ${e?.message ?? String(e)}`,
+      });
+      setImageBusy(false);
+      return;
+    }
+    if (!uploadUrl) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: "Presign returned empty upload URL.",
+      });
+      setImageBusy(false);
+      return;
+    }
+    let uploadHost = "";
+    try {
+      uploadHost = new URL(uploadUrl).host;
+    } catch {
+      uploadHost = "(invalid URL)";
+    }
+    try {
       const put = await fetch(uploadUrl, {
         method: "PUT",
         headers: { "content-type": contentType },
         body: file,
       });
-      if (!put.ok) throw new Error(`Upload to storage failed (${put.status})`);
+      if (!put.ok) {
+        publishInlineMessage({
+          type: "ERROR",
+          text: `Storage PUT rejected: ${put.status} ${put.statusText} (host: ${uploadHost})`,
+        });
+        setImageBusy(false);
+        return;
+      }
+    } catch (e: any) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: `Storage PUT network error (host: ${uploadHost}): ${e?.message ?? String(e)}. Usually a CORS block — check the bucket's CORS Policy in Cloudflare allows ${window.location.origin} for PUT.`,
+      });
+      setImageBusy(false);
+      return;
+    }
+    try {
       await apiPost(`/api/super/vanity/${existing.id}/confirm-image`, { key });
       await refreshImage(existing.id);
       publishInlineMessage({ type: "SUCCESS", text: "Image uploaded." });
     } catch (e: any) {
       publishInlineMessage({
         type: "ERROR",
-        text: `Upload failed: ${e?.message ?? "unknown"}`,
+        text: `Confirm failed: ${e?.message ?? String(e)}`,
       });
     } finally {
       setImageBusy(false);
