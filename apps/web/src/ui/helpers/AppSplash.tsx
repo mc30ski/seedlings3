@@ -1,4 +1,10 @@
 import { useEffect, useRef, useState } from "react";
+// @types/react-dom isn't installed in this workspace; import is
+// runtime-safe (react-dom ships with React) — one-line type shim
+// avoids adding a new devDependency just for a single call.
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-expect-error missing types for react-dom in this workspace
+import { createPortal } from "react-dom";
 import { getSeasonIcons } from "@/src/lib/season";
 import { apiGet } from "@/src/lib/api";
 
@@ -63,6 +69,13 @@ export default function AppSplash({ show }: { show: boolean }) {
   useEffect(() => {
     const t = window.setTimeout(() => setForceHide(true), HARD_MAX_MS);
     return () => window.clearTimeout(t);
+  }, []);
+  // Portal-render gate — starts false so SSR + initial client render
+  // return the same nothing; useEffect flips it after the first
+  // commit and the portal appears. Prevents hydration mismatch.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
   }, []);
   const [slugs, setSlugs] = useState<string[]>([]);
   // Animation trigger: fires on every fresh page load (mount of this
@@ -145,10 +158,24 @@ export default function AppSplash({ show }: { show: boolean }) {
   }, [show, shouldRender, animate, slugs.length]);
 
   if (!shouldRender || forceHide) return null;
+  // Portal to document.body — escapes any ancestor with `transform`,
+  // `filter`, `perspective`, `contain: paint`, `will-change: transform`,
+  // etc. Any of those on an ancestor would establish a containing
+  // block for position:fixed and make our splash coordinates relative
+  // to that ancestor instead of the viewport.
+  //
+  // SSR/hydration: `mounted` starts false → both server AND initial
+  // client render return null (no mismatch). After first client
+  // commit, `mounted` flips true and the portal is added. Prevents
+  // "hydration failed" errors from the portal existing on client but
+  // not on server.
+  if (!mounted || typeof document === "undefined") return null;
 
-  return (
+  return createPortal(
     <div
       aria-hidden
+      // Click/tap anywhere → skip straight to the app.
+      onClick={() => setForceHide(true)}
       style={{
         position: "fixed",
         top: 0,
@@ -157,37 +184,40 @@ export default function AppSplash({ show }: { show: boolean }) {
         bottom: 0,
         zIndex: 20000,
         background: "white",
-        pointerEvents: "none",
+        cursor: "pointer",
+        // Flex-center: logo + typing animation stack as flex children;
+        // the OVERLAY itself centers the group both axes. Simple, no
+        // absolute positioning, no transform gymnastics — the visual
+        // center of the whole content (logo + animation) sits at
+        // viewport center. Since history is INSIDE TypingAnimation as
+        // an absolutely-positioned child, adding history lines doesn't
+        // change the flex item's height and the logo stays put.
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: "12px",
         animation: fading ? `seedlings-splash-overlay-fade ${FADE_MS}ms ease forwards` : undefined,
       }}
     >
-      <div
+      <img
+        src={typeof window !== "undefined" ? getSeasonIcons().icon : "/seedlings-icon.png"}
+        alt="Seedlings"
+        width={120}
+        height={120}
         style={{
-          position: "absolute",
-          top: "50%",
-          left: "50%",
-          transform: "translate(-50%, -50%)",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          gap: "16px",
+          display: "block",
+          // Fade keyframe only applies `opacity + scale` — no more
+          // translate needed since flex positioning centers the img
+          // and the keyframe was rewritten to match.
+          animation: fading ? `seedlings-splash-logo-expand ${FADE_MS}ms ease forwards` : undefined,
         }}
-      >
-        <img
-          src={typeof window !== "undefined" ? getSeasonIcons().icon : "/seedlings-icon.png"}
-          alt="Seedlings"
-          width={120}
-          height={120}
-          style={{
-            display: "block",
-            animation: fading ? `seedlings-splash-logo-expand ${FADE_MS}ms ease forwards` : undefined,
-          }}
-        />
-        {animate && (
-          <TypingAnimation slugs={slugs} paused={fading} />
-        )}
-      </div>
-    </div>
+      />
+      {animate && (
+        <TypingAnimation slugs={slugs} paused={fading} />
+      )}
+    </div>,
+    document.body,
   );
 }
 
@@ -371,7 +401,7 @@ function TypingAnimation({
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
-            color: "#cbd5e0",
+            color: "#718096",
           }}
         >
           {history.map((s, i) => (

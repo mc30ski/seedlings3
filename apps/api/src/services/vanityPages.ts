@@ -500,7 +500,13 @@ export async function createVanityPage(params: {
         ctaUrl: data.ctaUrl ?? null,
         buttons: data.buttons ?? Prisma.JsonNull,
         aliasTargetId: data.kind === "ALIAS" ? (data.aliasTargetId ?? null) : null,
-        imageR2Key: data.imageR2Key ?? null,
+        // NOTE: imageR2Key is INTENTIONALLY omitted from the save
+        // payload. The image is managed by the dedicated
+        // /image-upload-url + /confirm-image + DELETE /image
+        // endpoints — a general save should never touch it. Prior
+        // versions had `imageR2Key: data.imageR2Key ?? null` here,
+        // which nulled the image link on every save (client's payload
+        // never includes it).
         redirectUrl: data.redirectUrl ?? null,
         enabled: data.enabled,
         showInStartupAnimation: data.showInStartupAnimation,
@@ -563,7 +569,7 @@ export async function updateVanityPage(params: {
         ctaUrl: data.ctaUrl ?? null,
         buttons: data.buttons ?? Prisma.JsonNull,
         aliasTargetId: data.kind === "ALIAS" ? (data.aliasTargetId ?? null) : null,
-        imageR2Key: data.imageR2Key ?? null,
+        // imageR2Key intentionally NOT touched — see createVanityPage.
         redirectUrl: data.redirectUrl ?? null,
         enabled: data.enabled,
         showInStartupAnimation: data.showInStartupAnimation,
