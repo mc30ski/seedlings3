@@ -6,18 +6,24 @@ export default async function systemRoutes(app: FastifyInstance) {
 
   app.get("/healthz", async (req, reply) => {
     try {
+      const timings = ((reply as any).serverTimings ??= [] as string[]);
+      const time = async (name: string, fn: () => Promise<any>) => {
+        const s = Date.now();
+        try { return await fn(); }
+        finally { timings.push(`${name};dur=${Date.now() - s}`); }
+      };
       // Cast 'name' -> text to keep Prisma happy
-      const [{ db, now_utc, user }] = await prisma.$queryRaw<
+      const [{ db, now_utc, user }] = await time("dbBasic", () => prisma.$queryRaw<
         { db: string; now_utc: Date; user: string }[]
       >`
         select
           current_database()::text as db,
           now() at time zone 'utc'      as now_utc,
           current_user::text            as user
-      `;
+      `);
 
       // Neon metadata (returns text already; 'true' makes it missing_ok)
-      const [neon] = await prisma.$queryRaw<
+      const [neon] = await time("dbNeon", () => prisma.$queryRaw<
         {
           branch: string | null;
           branch_id: string | null; // ⬅️ added
@@ -30,7 +36,7 @@ export default async function systemRoutes(app: FastifyInstance) {
           current_setting('neon.branch_id', true)   as branch_id,
           current_setting('neon.project_id', true)  as project_id,
           current_setting('neon.timeline_id', true) as timeline_id
-      `;
+      `);
 
       const parsedHost = (() => {
         try {

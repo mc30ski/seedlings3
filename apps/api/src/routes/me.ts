@@ -42,19 +42,19 @@ export default async function meRoutes(app: FastifyInstance) {
       // Super-only impersonation headers — services.users.me ignores both
       // unless the underlying user is actually SUPER (silent fallback), so
       // no extra gating is needed here.
-      //
-      // The client-impersonation contact ID is read from `req.impersonatedContact.id`
-      // rather than the raw header. That field is set by
-      // plugins/clientImpersonation.ts AFTER it verifies the caller is real
-      // SUPER, the target exists, and the target has a Clerk account. If any
-      // of those checks fail the plugin either 400s (invalid target) or
-      // silently no-ops (non-Super) before this route runs, so we can trust
-      // the presence of impersonatedContact here.
-      return services.users.me(
+      const t = Date.now();
+      const result = await services.users.me(
         token,
         req.headers[IMPERSONATE_HEADER],
         req.impersonatedContact?.id ?? null,
       );
+      // TEMP diagnostic (part of the hang-hunt): report how long
+      // services.users.me took. Combined with the global "total"
+      // timing hook, we can distinguish hangs inside the /me
+      // service from hangs in the auth plugin or Vercel edge.
+      const t2 = ((reply as any).serverTimings ??= [] as string[]);
+      t2.push(`meservice;dur=${Date.now() - t}`);
+      return result;
     }
   });
 

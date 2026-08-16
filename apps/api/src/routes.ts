@@ -150,6 +150,29 @@ export async function registerRoutes(app: FastifyInstance) {
     done();
   });
 
+  // ---------- Server-Timing: total request duration.
+  //
+  // The intermittent-hang investigation needs to distinguish server
+  // hangs from client/network/proxy hangs. This hook stamps the
+  // total server-observed duration on every response as a
+  // Server-Timing header (standard), plus x-vercel-region so we can
+  // see which Vercel region/AZ handled each hit. Route handlers may
+  // ALSO append sub-step timings by pushing to `reply.serverTimings`
+  // (an array of "name;dur=ms" strings) before the response is sent.
+  app.addHook("onRequest", (req, _reply, done) => {
+    (req as any)._t0 = Date.now();
+    done();
+  });
+  app.addHook("onSend", (req, reply, payload, done) => {
+    const t0 = (req as any)._t0 as number | undefined;
+    const total = t0 ? Date.now() - t0 : -1;
+    const sub = ((reply as any).serverTimings as string[] | undefined) ?? [];
+    const value = [...sub, `total;dur=${total}`].join(", ");
+    reply.header("Server-Timing", value);
+    reply.header("x-vercel-region", process.env.VERCEL_REGION ?? "unknown");
+    done();
+  });
+
   // ---------- Cron routes — registered at BOTH `/cron/*` and `/api/cron/*` so
   // local testing can hit either path and Vercel Cron's expected `/api/cron/*`
   // path (per vercel.json) actually resolves. cronRoutes registers child routes
