@@ -542,7 +542,16 @@ export default function HomePage() {
   const loadMe = useCallback(async () => {
     setMeLoading(true);
     setMeError(null);
-    const REQUEST_TIMEOUT_MS = 12000;
+    // Timeout must be LONG. The earlier 12s value was way too aggressive —
+    // it fired during legitimate Neon cold-starts and Clerk verification
+    // latency, killing requests the server would have completed if given
+    // another few seconds. That aborted-by-client failure showed up in the
+    // UI as "the server never responded," which was misleading — the
+    // request never got a chance TO respond. Vercel Serverless Functions
+    // have their own upstream timeout (60s+ on Pro plans) which is the
+    // real ceiling; the client-side timeout only exists as a last-resort
+    // guard against a truly stuck fetch.
+    const REQUEST_TIMEOUT_MS = 60_000;
     const startedAt = Date.now();
     const startedIso = new Date(startedAt).toISOString();
     let timedOut = false;
