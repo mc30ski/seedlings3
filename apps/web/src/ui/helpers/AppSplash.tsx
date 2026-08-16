@@ -46,13 +46,13 @@ const FADE_MS = 800;
 const MIN_LOGO_ONLY_MS = 900;
 
 const DOMAIN_TEXT = "seedlings.pro";
-const DOMAIN_TYPE_MS = 50;
-const SLUG_TYPE_MS = 32;
-const ERASE_MS = 15;
-const HOLD_DOMAIN_MS = 650;
-const HOLD_SLUG_MS = 700;
-const HOLD_BETWEEN_MS = 160;
-const HOLD_END_MS = 800;
+const DOMAIN_TYPE_MS = 40;
+const SLUG_TYPE_MS = 26;
+const ERASE_MS = 12;
+const HOLD_DOMAIN_MS = 500;
+const HOLD_SLUG_MS = 550;
+const HOLD_BETWEEN_MS = 130;
+const HOLD_END_MS = 650;
 
 const SESSION_FLAG = "seedlings_splash_animated";
 
@@ -258,13 +258,29 @@ export default function AppSplash({ show }: { show: boolean }) {
             : undefined,
         }}
       />
-      {willAnimate && (
-        <TypingAnimation
-          slugs={config.slugs}
-          showHistory={config.showHistory}
-          paused={fading}
-        />
-      )}
+      {/* Reserved slot for the TypingAnimation. The min-height keeps the
+          flex container's total height stable from the first render, so
+          when the animation mounts (after the config fetch resolves)
+          the logo doesn't shift upward to accommodate the new sibling.
+          font-size here mirrors what TypingAnimation uses internally so
+          the em-based min-height matches the actual text row. */}
+      <div
+        style={{
+          minHeight: "1.4em",
+          fontSize: "clamp(15px, 4.5vw, 22px)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        {willAnimate && (
+          <TypingAnimation
+            slugs={config.slugs}
+            showHistory={config.showHistory}
+            paused={fading}
+          />
+        )}
+      </div>
     </div>,
     document.body,
   );
