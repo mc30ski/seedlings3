@@ -18,6 +18,9 @@ yarn.lock
 # TypeScript incremental build cache — regenerated on every build
 *.tsbuildinfo
 
+# Diagnostic script output (apps/api/scripts/prod-hang-hunter.mjs etc)
+prod-hang-*.jsonl
+
 # Playwright — test artifacts + Clerk storage-state files. Regenerated per run;
 # never check in. The `.auth/` files contain real session cookies.
 test-results

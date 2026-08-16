@@ -60,7 +60,7 @@ async function recordSignInIfNew(
 
 export default fp(async function auth(app: FastifyInstance) {
   // Registers an onRequest hook (via fastify-plugin) that runs on every request.
-  app.addHook("onRequest", async (req, _reply) => {
+  app.addHook("onRequest", async (req, reply) => {
     // Skips auth for OPTIONS (CORS preflight).
     if (req.method === "OPTIONS") return;
 
@@ -73,11 +73,21 @@ export default fp(async function auth(app: FastifyInstance) {
 
     const token = authz.slice(7);
 
+    // TEMP diagnostic (part of the hang-hunt): sub-step timings for
+    // the auth plugin. Pushed onto reply.serverTimings; emitted by
+    // the global Server-Timing hook in routes.ts.
+    const timings = ((reply as any).serverTimings ??= [] as string[]);
+    const time = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
+      const s = Date.now();
+      try { return await fn(); }
+      finally { timings.push(`${name};dur=${Date.now() - s}`); }
+    };
+
     try {
       // Verifies the JWT with Clerk using your CLERK_SECRET_KEY (verifyToken), and reads claims directly (not .payload).
-      const claims = (await verifyToken(token, {
+      const claims = (await time("verifyToken", () => verifyToken(token, {
         secretKey: CLERK_SECRET_KEY,
-      })) as Claims;
+      }))) as Claims;
 
       // Extracts sub (the Clerk user id). If missing, logs a warning and continues.
       const rawClerkUserId =
@@ -97,14 +107,16 @@ export default fp(async function auth(app: FastifyInstance) {
 
       // Ensures a corresponding user exists in your DB
       // If not found, fetches the Clerk user (server-side SDK), derives information, and creates a new row with isApproved: false.
-      const existing = await prisma.user.findUnique({ where: { clerkUserId } });
+      const existing = await time("authFind", () =>
+        prisma.user.findUnique({ where: { clerkUserId } })
+      );
 
       // Helper to fetch Clerk user data
       let clerkUser: any = null;
       async function fetchClerkUser() {
         if (clerkUser) return clerkUser;
         try {
-          clerkUser = await clerk.users.getUser(clerkUserId);
+          clerkUser = await time("clerkGet", () => clerk.users.getUser(clerkUserId));
         } catch (e) {
           app.log.warn({ where: "auth", reason: "clerk-users.getUser failed", err: (e as Error).message });
         }
@@ -161,10 +173,10 @@ export default fp(async function auth(app: FastifyInstance) {
             if (lastName && existing.lastName !== lastName) updates.lastName = lastName;
             if (displayName && existing.displayName !== displayName) updates.displayName = displayName;
             // Touch updatedAt even if no field changes, to reset the sync timer
-            await prisma.user.update({
+            await time("authUpdate", () => prisma.user.update({
               where: { id: existing.id },
               data: { ...updates, updatedAt: new Date() },
-            });
+            }));
           }
         }
         // Fire-and-forget so the per-session sign-in record never blocks

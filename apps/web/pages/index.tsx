@@ -522,29 +522,68 @@ export default function HomePage() {
   // signed-out state). `meError` is set only when the /api/me fetch
   // actually failed or timed out — used to render a retryable error
   // banner instead of a blank tabless page.
-  const [meError, setMeError] = useState<string | null>(null);
+  //
+  // We capture FULL error diagnostics (elapsed ms, HTTP status if any,
+  // raw error message, timestamp, endpoint) so the banner can show
+  // exactly what went wrong. Without this the user gets a generic
+  // "Couldn't load your profile" and no way to distinguish a
+  // timeout from a 500 from a network reset — every intermittent
+  // failure looks identical.
+  type MeErrorDetails = {
+    message: string;
+    status?: number;
+    kind: "timeout" | "http" | "network" | "unknown";
+    elapsedMs: number;
+    timestamp: string;
+    endpoint: string;
+    responseBody?: string;
+  };
+  const [meError, setMeError] = useState<MeErrorDetails | null>(null);
   const loadMe = useCallback(async () => {
     setMeLoading(true);
     setMeError(null);
-    // Hard client-side timeout — without this, a hung upstream
-    // (Neon idle / Vercel↔Neon hiccup) leaves the app in an
-    // indefinite loading state and the tabs render with no data,
-    // showing a blank page under the header.
     const REQUEST_TIMEOUT_MS = 12000;
+    const startedAt = Date.now();
+    const startedIso = new Date(startedAt).toISOString();
+    let timedOut = false;
     try {
       const data = await Promise.race([
         apiGet<Me>("/api/me"),
         new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error("timeout")),
-            REQUEST_TIMEOUT_MS,
-          ),
+          setTimeout(() => {
+            timedOut = true;
+            reject(new Error(`Client-side timeout after ${REQUEST_TIMEOUT_MS}ms — the request never returned.`));
+          }, REQUEST_TIMEOUT_MS),
         ),
       ]);
       setMe(data);
-    } catch {
+    } catch (err: any) {
       setMe(null);
-      setMeError("Couldn't load your profile.");
+      const elapsedMs = Date.now() - startedAt;
+      const status: number | undefined = typeof err?.status === "number" ? err.status : undefined;
+      let kind: MeErrorDetails["kind"] = "unknown";
+      if (timedOut) kind = "timeout";
+      else if (status !== undefined) kind = "http";
+      else if (err?.name === "TypeError" || /fetch|network|failed/i.test(String(err?.message))) kind = "network";
+      let responseBody: string | undefined;
+      if (err?.body !== undefined) {
+        try { responseBody = typeof err.body === "string" ? err.body : JSON.stringify(err.body, null, 2); }
+        catch { /* ignore */ }
+      }
+      const details: MeErrorDetails = {
+        message: String(err?.message ?? err ?? "Unknown error"),
+        status,
+        kind,
+        elapsedMs,
+        timestamp: startedIso,
+        endpoint: "GET /api/me",
+        responseBody,
+      };
+      // Always log full details to console so it's visible in DevTools
+      // regardless of the banner layout.
+      // eslint-disable-next-line no-console
+      console.error("[loadMe] request failed", details, "raw error:", err);
+      setMeError(details);
     } finally {
       setMeLoading(false);
     }
@@ -3958,12 +3997,49 @@ export default function HomePage() {
                   Couldn&apos;t load your profile
                 </Text>
                 <Text fontSize="xs" color="red.800">
-                  Please check your connection and try again.
+                  {meError.kind === "timeout" && `The request took longer than ${Math.round(meError.elapsedMs / 1000)}s and was aborted client-side. The server never responded.`}
+                  {meError.kind === "http" && `The server returned HTTP ${meError.status}: ${meError.message}`}
+                  {meError.kind === "network" && `Network error: ${meError.message}`}
+                  {meError.kind === "unknown" && meError.message}
                 </Text>
               </VStack>
-              <Button size="sm" colorPalette="red" onClick={() => void loadMe()}>
-                Try again
-              </Button>
+              <Box
+                bg="white"
+                borderWidth="1px"
+                borderColor="red.200"
+                borderRadius="sm"
+                p={2}
+                w="full"
+                fontSize="10px"
+                fontFamily="mono"
+                color="red.900"
+                whiteSpace="pre-wrap"
+                overflowX="auto"
+              >
+{`kind:      ${meError.kind}
+endpoint:  ${meError.endpoint}
+status:    ${meError.status ?? "(no response)"}
+elapsed:   ${meError.elapsedMs}ms
+started:   ${meError.timestamp}
+message:   ${meError.message}${meError.responseBody ? `
+body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}` : ""}`}
+              </Box>
+              <HStack gap={2}>
+                <Button size="sm" colorPalette="red" onClick={() => void loadMe()}>
+                  Try again
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  colorPalette="red"
+                  onClick={() => {
+                    const payload = JSON.stringify(meError, null, 2);
+                    void navigator.clipboard?.writeText(payload).catch(() => {});
+                  }}
+                >
+                  Copy details
+                </Button>
+              </HStack>
             </VStack>
           </Box>
         </Box>
