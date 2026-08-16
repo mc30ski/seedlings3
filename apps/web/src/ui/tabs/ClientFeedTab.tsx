@@ -129,7 +129,10 @@ export default function ClientFeedTab() {
     // spinning forever. Protects against a hung upstream (Neon idle,
     // Vercel↔Neon network hiccup, etc.) that would otherwise leave
     // the tab in a permanent loading state with no user recourse.
-    const REQUEST_TIMEOUT_MS = 12000;
+    // Long client-side timeout: 12s was killing legitimate cold-start
+    // requests before the server could respond. See the matching note
+    // in pages/index.tsx loadMe.
+    const REQUEST_TIMEOUT_MS = 60_000;
     try {
       const feed = await Promise.race([
         apiGet<{ items: FeedItem[] }>(`/api/public/feed?limit=50&days=${days}`),
