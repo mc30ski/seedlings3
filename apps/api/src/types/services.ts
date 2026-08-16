@@ -801,6 +801,28 @@ export type ServicesJobs = {
     },
   ): Promise<JobOccurrence>;
 
+  // Assignee-or-admin: update a light estimate (ESTIMATE workflow).
+  updateLightEstimate(
+    actorUserId: string,
+    occurrenceId: string,
+    input: {
+      title?: string;
+      notes?: string | null;
+      startAt?: string;
+      contactName?: string | null;
+      contactPhone?: string | null;
+      contactEmail?: string | null;
+      estimateAddress?: string | null;
+      proposalAmount?: number | null;
+      proposalNotes?: string | null;
+      jobTags?: string | string[] | null;
+      jobType?: string | null;
+      assigneeUserIds?: string[];
+      jobId?: string | null;
+    },
+    options?: { isAdmin?: boolean },
+  ): Promise<any>;
+
   // Worker/admin: standalone reminder (no parent job/occurrence).
   createStandaloneReminder(
     currentUserId: string,

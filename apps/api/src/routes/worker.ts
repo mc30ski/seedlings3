@@ -3080,6 +3080,23 @@ export default async function workerRoutes(app: FastifyInstance) {
     return { deleted: true };
   });
 
+  // ── Light Estimate edit (any active assignee or admin) ──
+
+  app.patch("/light-estimates/:id", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const id = String(req.params.id);
+    const occ = await prisma.jobOccurrence.findUnique({ where: { id }, include: { assignees: true } });
+    if (!occ) throw app.httpErrors.notFound("Estimate not found");
+    if (occ.workflow !== "ESTIMATE" || occ.jobId) throw app.httpErrors.badRequest("Not a stand-alone estimate");
+    const isActiveAssignee = occ.assignees.some((a: any) => a.userId === uid && a.role !== "observer");
+    const user = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
+    const isAdmin = !!user?.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+    if (!isActiveAssignee && !isAdmin) {
+      throw app.httpErrors.forbidden("Only assignees or an admin can edit this estimate");
+    }
+    return services.jobs.updateLightEstimate(uid, id, req.body ?? {}, { isAdmin });
+  });
+
   // ── Light Estimate delete (claimer or admin) ──
 
   app.delete("/light-estimates/:id", workerGuard, async (req: any) => {

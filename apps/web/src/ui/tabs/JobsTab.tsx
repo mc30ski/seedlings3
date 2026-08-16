@@ -7554,7 +7554,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         </Button>
                       </>)}
                       {/* Light estimate edit/delete */}
-                      {isLightEstimate && (isClaimer || isAdmin || isSuper) && (
+                      {isLightEstimate && (isActiveAssignee || isAdmin || isSuper) && (
                         <Button
                           size="sm"
                           variant="outline"
