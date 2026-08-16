@@ -196,7 +196,7 @@ export default function FollowupDialog({ open, onOpenChange, onCreated, editFoll
       };
 
       if (isEdit) {
-        await apiPatch(`/api/admin/followups/${editFollowup!.id}`, body);
+        await apiPatch(`/api/followups/${editFollowup!.id}`, body);
         publishInlineMessage({ type: "SUCCESS", text: "Followup updated." });
       } else {
         await apiPost("/api/admin/followups", body);
