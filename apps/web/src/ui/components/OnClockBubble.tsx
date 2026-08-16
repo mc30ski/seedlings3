@@ -12,7 +12,11 @@
 // when PAUSED. Nothing when NOT_STARTED, COMPLETED, or when the caller
 // isn't a worker (unsigned, client-impersonating, etc.). Clicking the
 // pill opens a small dropdown with the state-appropriate workday actions
-// (Pause / Resume / End Workday / Open workday controls).
+// (Pause / Resume / Complete workday / Open workday controls). Cancel
+// is intentionally left OUT of the dropdown — it stays in the expanded
+// WorkdayStrip only, so a stray tap on this shortcut can't destroy a
+// workday. Labels + coloring mirror WorkdayStrip's buttons so operators
+// recognize "Complete" here as the same action.
 //
 // Data:
 //   - Fetches /api/me/workday/today on mount, on visibilitychange
@@ -22,8 +26,13 @@
 //     component re-renders each second, not the whole app shell.
 
 import { useEffect, useRef, useState } from "react";
+// @types/react-dom isn't installed in this workspace — one-line type
+// shim, same pattern AppSplash uses to avoid adding a devDependency.
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-expect-error missing types for react-dom in this workspace
+import { createPortal } from "react-dom";
 import { Box, HStack, Spinner, Text } from "@chakra-ui/react";
-import { Clock, Pause as PauseIcon, Play, StopCircle, ExternalLink } from "lucide-react";
+import { Clock, Pause as PauseIcon, Play, Check, ExternalLink } from "lucide-react";
 import {
   endWorkday,
   fetchWorkdayToday,
@@ -103,6 +112,12 @@ export default function OnClockBubble({ isSignedIn, isClientImpersonating, meId,
   const [busy, setBusy] = useState<"pause" | "resume" | "end" | null>(null);
   const [confirmEnd, setConfirmEnd] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const chipRef = useRef<HTMLButtonElement | null>(null);
+  // Dropdown position (viewport-fixed) — recomputed each time the menu
+  // opens. Using position:fixed + a portal to document.body is what
+  // escapes the header's overflow:hidden. Position:absolute (nested
+  // under the chip) was being clipped by pages/index.tsx line ~3437.
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
 
   // Fetch on mount + on the workday-changed event + on tab focus.
   useEffect(() => {
@@ -154,16 +169,40 @@ export default function OnClockBubble({ isSignedIn, isClientImpersonating, meId,
     onActiveChange?.(isActive);
   }, [isActive, onActiveChange]);
 
-  // Close the menu on outside click.
+  // Close the menu on outside click. The menu is portaled to
+  // document.body (to escape the header's overflow:hidden), so we
+  // check against BOTH the chip wrapper AND a data-attribute on the
+  // portaled menu — a plain wrapRef.contains would never catch the
+  // portaled menu since it's not a DOM descendant.
   useEffect(() => {
     if (!open) return;
     function onDoc(e: MouseEvent) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      const target = e.target as Node;
+      if (wrapRef.current && wrapRef.current.contains(target)) return;
+      const menuEl = document.querySelector<HTMLElement>("[data-onclock-menu='1']");
+      if (menuEl && menuEl.contains(target)) return;
+      setOpen(false);
     }
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  // Recompute the menu's viewport position when it opens, and on
+  // window scroll/resize while it's open so it stays anchored to the
+  // chip if the page shifts under it.
+  useEffect(() => {
+    if (!open) return;
+    function recompute() {
+      const r = chipRef.current?.getBoundingClientRect();
+      if (r) setMenuPos({ top: r.bottom + 4, left: r.left });
+    }
+    recompute();
+    window.addEventListener("scroll", recompute, true);
+    window.addEventListener("resize", recompute);
+    return () => {
+      window.removeEventListener("scroll", recompute, true);
+      window.removeEventListener("resize", recompute);
+    };
   }, [open]);
 
   if (!isActive) return null;
@@ -226,6 +265,7 @@ export default function OnClockBubble({ isSignedIn, isClientImpersonating, meId,
     <Box position="relative" ref={wrapRef} display="inline-flex">
       <Box
         as="button"
+        ref={chipRef as any}
         cursor="pointer"
         px="3"
         py="1.5"
@@ -235,7 +275,12 @@ export default function OnClockBubble({ isSignedIn, isClientImpersonating, meId,
         shadow="sm"
         _hover={{ bg: bgHover, shadow: "md" }}
         title={running ? "On the clock — tap for workday actions" : "Workday paused — tap for actions"}
-        onClick={() => setOpen((v) => !v)}
+        onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+        // touch-action: manipulation removes the 300ms tap delay AND
+        // tells iOS to treat this as a tap target rather than gesture-
+        // detect it. Without this, iOS PWA can swallow a tap that
+        // straddled a pull-to-refresh threshold.
+        style={{ touchAction: "manipulation", WebkitTapHighlightColor: "transparent" }}
         display="inline-flex"
         alignItems="center"
         gap="1.5"
@@ -247,13 +292,13 @@ export default function OnClockBubble({ isSignedIn, isClientImpersonating, meId,
           {fmtDurationClock(activeMs)}
         </Text>
       </Box>
-      {open && (
+      {open && menuPos && typeof document !== "undefined" && createPortal(
         <Box
-          position="absolute"
-          zIndex={1000}
-          left={0}
-          top="100%"
-          mt={1}
+          data-onclock-menu="1"
+          position="fixed"
+          zIndex={20000}
+          top={`${menuPos.top}px`}
+          left={`${menuPos.left}px`}
           bg="white"
           borderWidth="1px"
           borderColor="gray.200"
@@ -298,6 +343,12 @@ export default function OnClockBubble({ isSignedIn, isClientImpersonating, meId,
               <Text fontSize="sm">Resume workday</Text>
             </HStack>
           )}
+          {/* Complete workday — the same action WorkdayStrip's blue
+              "Complete" button fires. Labeled/styled to match so
+              operators recognize it as the same operation. Note: Cancel
+              is intentionally NOT surfaced here — it stays in the
+              expanded WorkdayStrip section only, so an accidental tap
+              on this shortcut can't destroy a workday. */}
           <HStack
             as="button"
             w="full"
@@ -306,12 +357,12 @@ export default function OnClockBubble({ isSignedIn, isClientImpersonating, meId,
             gap={2}
             cursor={busyAny ? "not-allowed" : "pointer"}
             opacity={busyAny ? 0.6 : 1}
-            color="red.700"
-            _hover={busyAny ? undefined : { bg: "red.50" }}
+            color="blue.700"
+            _hover={busyAny ? undefined : { bg: "blue.50" }}
             onClick={() => { if (!busyAny) { setOpen(false); setConfirmEnd(true); } }}
           >
-            <StopCircle size={14} />
-            <Text fontSize="sm" fontWeight="medium">End workday</Text>
+            {busy === "end" ? <Spinner size="xs" /> : <Check size={14} strokeWidth={3} />}
+            <Text fontSize="sm" fontWeight="medium">Complete workday</Text>
           </HStack>
           <Box h="1px" bg="gray.200" my={1} />
           <HStack
@@ -327,14 +378,15 @@ export default function OnClockBubble({ isSignedIn, isClientImpersonating, meId,
             <ExternalLink size={14} />
             <Text fontSize="sm">Open workday controls</Text>
           </HStack>
-        </Box>
+        </Box>,
+        document.body,
       )}
       <ConfirmDialog
         open={confirmEnd}
-        title="End workday?"
-        message="This closes today's workday at the current time. You can re-open it from the workday controls if you end it by mistake."
-        confirmLabel={busy === "end" ? "Ending…" : "End workday"}
-        confirmColorPalette="red"
+        title="Complete workday?"
+        message="This closes today's workday at the current time. You can re-open it from the workday controls if you complete it by mistake."
+        confirmLabel={busy === "end" ? "Completing…" : "Complete workday"}
+        confirmColorPalette="blue"
         onConfirm={() => void doEnd()}
         onCancel={() => setConfirmEnd(false)}
       />

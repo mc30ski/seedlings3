@@ -821,6 +821,18 @@ function PolicyDetailDrawer({
       {newVersionDialogOpen && detail && (
         <NewVersionDialog
           policyId={detail.id}
+          // Pre-populate from the CURRENT (published) version so the
+          // operator edits on top of what workers are currently signing
+          // rather than starting from a blank textarea. Falls back to
+          // the most recent version if there's no current one, and
+          // ultimately to empty. Only markdown is copied — the digest,
+          // versionNumber, changeNote, etc. are all recomputed on the
+          // server for the new draft.
+          initialMarkdown={
+            (detail.versions.find((v) => v.id === detail.currentVersionId)?.contentMarkdown)
+            ?? detail.versions[0]?.contentMarkdown
+            ?? ""
+          }
           onClose={() => setNewVersionDialogOpen(false)}
           onCreated={() => {
             setNewVersionDialogOpen(false);
@@ -1240,14 +1252,19 @@ function PolicyCreateDialog({
 
 function NewVersionDialog({
   policyId,
+  initialMarkdown,
   onClose,
   onCreated,
 }: {
   policyId: string;
+  /** Content of the current (published) version, seeded into the
+   *  textarea so the operator edits on top of it rather than pasting
+   *  in from scratch. Empty when no prior version exists. */
+  initialMarkdown: string;
   onClose: () => void;
   onCreated: () => void;
 }) {
-  const [contentMarkdown, setContentMarkdown] = useState("");
+  const [contentMarkdown, setContentMarkdown] = useState(initialMarkdown);
   const [changeNote, setChangeNote] = useState("");
   const [forcesResign, setForcesResign] = useState(false);
   const [busy, setBusy] = useState(false);

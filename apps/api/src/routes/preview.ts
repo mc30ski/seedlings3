@@ -394,7 +394,7 @@ IMPORTANT: Use this optimized order as the basis for your route. The driving tim
     if (!apiKey) {
       return {
         suggestions: null,
-        message: "Route suggestions are not configured. Add ANTHROPIC_API_KEY to enable.",
+        error: "Route suggestions are not configured on the server (ANTHROPIC_API_KEY is missing). Contact support.",
         jobs: allJobs,
       };
     }
@@ -486,7 +486,7 @@ For jobs that need a date change, set dateChanged=true with originalDate and sug
 
     try {
       const response = await client.messages.create({
-        model: "claude-sonnet-4-6",
+        model: "claude-sonnet-5",
         max_tokens: 3000,
         messages: [{ role: "user", content: prompt }],
       });
@@ -533,9 +533,16 @@ For jobs that need a date change, set dateChanged=true with originalDate and sug
       };
     } catch (err: any) {
       app.log.error({ where: "preview/route-suggestions", err: err.message });
+      // Explicit `error` field so the client renders this as a WARNING
+      // banner instead of silently falling back to the unorganized job
+      // list (which looks like "just numbers" to the operator and gives
+      // no clue that anything went wrong). Common failure modes: the
+      // configured Claude model has been retired (message will contain
+      // "model_not_found" or similar), Anthropic API is temporarily
+      // down, or the request timed out.
       return {
         suggestions: null,
-        message: `AI suggestion failed: ${err.message}`,
+        error: `The route planner failed to run. Deploy a fix or try again in a moment. Details: ${err.message}`,
         jobs: allJobs,
       };
     }
