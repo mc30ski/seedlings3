@@ -536,15 +536,15 @@ export default function HomePage() {
         apiGet<Me>("/api/me"),
         new Promise<never>((_, reject) =>
           setTimeout(
-            () => reject(new Error("The server took too long to respond.")),
+            () => reject(new Error("timeout")),
             REQUEST_TIMEOUT_MS,
           ),
         ),
       ]);
       setMe(data);
-    } catch (e: any) {
+    } catch {
       setMe(null);
-      setMeError(e?.message ?? "Couldn't load your profile.");
+      setMeError("Couldn't load your profile.");
     } finally {
       setMeLoading(false);
     }
@@ -3958,8 +3958,7 @@ export default function HomePage() {
                   Couldn&apos;t load your profile
                 </Text>
                 <Text fontSize="xs" color="red.800">
-                  {meError} If this keeps happening the server may be waking up
-                  from idle — try again in a few seconds.
+                  Please check your connection and try again.
                 </Text>
               </VStack>
               <Button size="sm" colorPalette="red" onClick={() => void loadMe()}>
