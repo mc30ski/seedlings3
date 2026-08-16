@@ -49,10 +49,10 @@ const DOMAIN_TEXT = "seedlings.pro";
 const DOMAIN_TYPE_MS = 50;
 const SLUG_TYPE_MS = 32;
 const ERASE_MS = 15;
-const HOLD_DOMAIN_MS = 650;
-const HOLD_SLUG_MS = 700;
-const HOLD_BETWEEN_MS = 160;
-const HOLD_END_MS = 800;
+const HOLD_DOMAIN_MS = 450;
+const HOLD_SLUG_MS = 500;
+const HOLD_BETWEEN_MS = 100;
+const HOLD_END_MS = 550;
 
 const SESSION_FLAG = "seedlings_splash_animated";
 
