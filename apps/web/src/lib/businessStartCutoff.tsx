@@ -103,7 +103,7 @@ export function BusinessStartProvider({ children }: { children: ReactNode }) {
 
   const fetchCutoff = useCallback(async () => {
     try {
-      const res = await apiGet<CutoffResponse>("/me/business-start");
+      const res = await apiGet<CutoffResponse>("/api/me/business-start");
       setCutoff(res.cutoff ? new Date(res.cutoff) : null);
     } catch {
       // On any error, default to "no filter" so the UI doesn't pretend a
