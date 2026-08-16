@@ -85,7 +85,13 @@ type DataIssue = {
 type Response = {
   suggestions: Suggestions | null;
   raw?: string;
+  /** Informational note (e.g. "no jobs on that day") — rendered muted. */
   message?: string;
+  /** Explicit failure note — rendered as a RED warning banner so the
+   *  operator can't miss that the AI didn't run (e.g. retired model,
+   *  Anthropic API down). Was previously silent; ["just shows numbers"
+   *  bug from 2026-08-16]. */
+  error?: string;
   jobs: RouteJob[];
   targetUser?: { id: string; displayName: string | null };
   routing?: RoutingInfo | null;
@@ -653,7 +659,20 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
 
       {error && <Text color="red.500" fontSize="sm" mb={4}>{error}</Text>}
 
-      {data?.message && !data.suggestions && (
+      {/* Server-side AI failure — red banner (loud, so operators
+          immediately know the route planner didn't run rather than
+          staring at raw job list wondering what's wrong). */}
+      {data?.error && (
+        <Box p={4} bg="red.50" borderWidth="1px" borderColor="red.300" rounded="md" mb={4}>
+          <Text fontSize="sm" fontWeight="semibold" color="red.900" mb={1}>
+            Route planner failed to run
+          </Text>
+          <Text fontSize="xs" color="red.800">{data.error}</Text>
+        </Box>
+      )}
+
+      {/* Informational note (e.g. "no jobs found") — muted, low-key. */}
+      {data?.message && !data.suggestions && !data.error && (
         <Box p={4} bg="gray.50" rounded="md" mb={4}>
           <Text fontSize="sm" color="fg.muted">{data.message}</Text>
         </Box>
