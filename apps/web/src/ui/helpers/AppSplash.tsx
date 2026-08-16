@@ -75,8 +75,13 @@ type AnimationConfig = {
   resolvedAt: number | null;
 };
 
+// Default enabled=false so the animation NEVER renders before the
+// fetch confirms it's on. Defaulting true here caused the animation
+// to render optimistically on every mount and only unmount once the
+// fetch returned enabled=false — the operator's kill switch was
+// effectively ignored for the duration of the fetch.
 const INITIAL_CONFIG: AnimationConfig = {
-  enabled: true,
+  enabled: false,
   slugs: [],
   showHistory: true,
   resolvedAt: null,
