@@ -157,7 +157,13 @@ export default fp(async function auth(app: FastifyInstance) {
         });
         // Brand-new user → record their first sign-in. lastSessionId is
         // null by definition, so any sid counts as new.
-        void recordSignInIfNew(app, created.id, sid, iat, null);
+        //
+        // AWAITED — see note on the existing-user branch below. Fire-
+        // and-forget here would strand a `$transaction` in "idle in
+        // transaction" state when the Vercel Fluid container recycles,
+        // holding a row lock on this User row and hanging every
+        // subsequent /api/me until Neon times out the abandoned tx.
+        await recordSignInIfNew(app, created.id, sid, iat, null);
       } else {
         // Existing user — sync fields from Clerk periodically (every ~1 hour) or when fields are missing
         const syncAge = Date.now() - (existing.updatedAt?.getTime() ?? 0);
@@ -179,11 +185,22 @@ export default fp(async function auth(app: FastifyInstance) {
             }));
           }
         }
-        // Fire-and-forget so the per-session sign-in record never blocks
-        // the request. Internally a no-op when sid hasn't changed —
-        // which is the common case, since most requests reuse an active
-        // session whose JWTs share a sid across silent refreshes.
-        void recordSignInIfNew(app, existing.id, sid, iat, existing.lastSessionId ?? null);
+        // AWAITED, not fire-and-forget — verified 2026-08-16 as root
+        // cause of the intermittent hang. When this was `void`ed, the
+        // `$transaction` inside recordSignInIfNew could be truncated
+        // when Vercel Fluid recycled the container between requests,
+        // leaving a stuck "idle in transaction" session that held a
+        // row lock on this User row. Every subsequent authenticated
+        // request tried to UPDATE the same lastSignInAt column and
+        // blocked until Neon eventually killed the abandoned session —
+        // producing the "all devices hang together, all recover
+        // together" pattern.
+        //
+        // Internally a no-op when sid hasn't changed (common case —
+        // most JWTs from a live session share a sid across silent
+        // refreshes), so the added latency is negligible except on
+        // brand-new sessions.
+        await recordSignInIfNew(app, existing.id, sid, iat, existing.lastSessionId ?? null);
       }
     } catch (e) {
       app.log.warn({
