@@ -7455,8 +7455,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           Delete
                         </Button>
                       </>)}
-                      {/* Followup complete/edit/delete buttons — admin only */}
-                      {isFollowup && occ.status === "SCHEDULED" && (isAdmin || isSuper) && (<>
+                      {/* Followup complete — active assignee or admin */}
+                      {isFollowup && occ.status === "SCHEDULED" && (isActiveAssignee || isAdmin || isSuper) && (
                         <Button
                           size="sm"
                           variant="solid"
@@ -7466,7 +7466,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           onClick={async () => {
                             setBusyOccId(occ.id);
                             try {
-                              await apiPost(`/api/admin/followups/${occ.id}/complete`);
+                              await apiPost(`/api/followups/${occ.id}/complete`);
                               publishInlineMessage({ type: "SUCCESS", text: "Followup completed." });
                               await load(false);
                             } catch (err) {
@@ -7477,6 +7477,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         >
                           Complete
                         </Button>
+                      )}
+                      {/* Followup edit — active assignee or admin */}
+                      {isFollowup && occ.status === "SCHEDULED" && (isActiveAssignee || isAdmin || isSuper) && (
                         <Button
                           size="sm"
                           variant="outline"
@@ -7488,6 +7491,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         >
                           Edit
                         </Button>
+                      )}
+                      {/* Followup delete — claimer or admin */}
+                      {isFollowup && occ.status === "SCHEDULED" && (isClaimer || isAdmin || isSuper) && (
                         <Button
                           size="sm"
                           variant="outline"
@@ -7501,7 +7507,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                               colorPalette: "red",
                               onConfirm: async () => {
                                 try {
-                                  await apiDelete(`/api/admin/followups/${occ.id}`);
+                                  await apiDelete(`/api/followups/${occ.id}`);
                                   publishInlineMessage({ type: "SUCCESS", text: "Followup deleted." });
                                   await load(false);
                                 } catch (err) {
@@ -7513,7 +7519,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         >
                           Delete
                         </Button>
-                      </>)}
+                      )}
                       {/* Announcement complete/edit/delete buttons — admin only */}
                       {isAnnouncement && forAdmin && (isAdmin || isSuper) && (<>
                         <Button

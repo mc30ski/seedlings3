@@ -3115,6 +3115,79 @@ export default async function workerRoutes(app: FastifyInstance) {
     return { deleted: true };
   });
 
+  // ── Followup edit / complete / delete (assignee or admin) ──
+
+  app.patch("/followups/:id", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const id = String(req.params.id);
+    const occ = await prisma.jobOccurrence.findUnique({ where: { id }, include: { assignees: true } });
+    if (!occ) throw app.httpErrors.notFound("Followup not found");
+    if (occ.workflow !== "FOLLOWUP") throw app.httpErrors.badRequest("Not a followup");
+    const isActiveAssignee = occ.assignees.some((a: any) => a.userId === uid && a.role !== "observer");
+    const user = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
+    const isAdmin = !!user?.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+    if (!isActiveAssignee && !isAdmin) {
+      throw app.httpErrors.forbidden("Only assignees or an admin can edit this followup");
+    }
+    const body = req.body || {};
+    const data: any = {};
+    if (body.title !== undefined) data.title = String(body.title).trim();
+    if (body.notes !== undefined) data.notes = body.notes ? String(body.notes).trim() : null;
+    if (body.startAt !== undefined) data.startAt = new Date(body.startAt);
+    if (body.frequencyDays !== undefined) data.frequencyDays = body.frequencyDays != null ? Number(body.frequencyDays) : null;
+    if (Object.keys(data).length > 0) {
+      await prisma.jobOccurrence.update({ where: { id }, data });
+    }
+    if (Array.isArray(body.clientIds)) {
+      await prisma.followupClient.deleteMany({ where: { occurrenceId: id } });
+      if (body.clientIds.length > 0) {
+        await prisma.followupClient.createMany({
+          data: body.clientIds.map((clientId: string) => ({ occurrenceId: id, clientId })),
+        });
+      }
+    }
+    if (Array.isArray(body.jobIds)) {
+      await prisma.followupJob.deleteMany({ where: { occurrenceId: id } });
+      if (body.jobIds.length > 0) {
+        await prisma.followupJob.createMany({
+          data: body.jobIds.map((jobId: string) => ({ occurrenceId: id, jobId })),
+        });
+      }
+    }
+    return prisma.jobOccurrence.findUnique({ where: { id } });
+  });
+
+  app.post("/followups/:id/complete", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const id = String(req.params.id);
+    const occ = await prisma.jobOccurrence.findUnique({ where: { id }, include: { assignees: true } });
+    if (!occ) throw app.httpErrors.notFound("Followup not found");
+    if (occ.workflow !== "FOLLOWUP") throw app.httpErrors.badRequest("Not a followup");
+    const isActiveAssignee = occ.assignees.some((a: any) => a.userId === uid && a.role !== "observer");
+    const user = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
+    const isAdmin = !!user?.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+    if (!isActiveAssignee && !isAdmin) {
+      throw app.httpErrors.forbidden("Only assignees or an admin can complete this followup");
+    }
+    return services.jobs.completeFollowup(uid, id);
+  });
+
+  app.delete("/followups/:id", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const id = String(req.params.id);
+    const occ = await prisma.jobOccurrence.findUnique({ where: { id }, include: { assignees: true } });
+    if (!occ) throw app.httpErrors.notFound("Followup not found");
+    if (occ.workflow !== "FOLLOWUP") throw app.httpErrors.badRequest("Not a followup");
+    const isClaimer = occ.assignees.some((a: any) => a.userId === uid && a.assignedById === uid);
+    if (!isClaimer) {
+      const user = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
+      const isAdmin = user?.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+      if (!isAdmin) throw app.httpErrors.forbidden("Only the claimer or an admin can delete this followup");
+    }
+    await prisma.jobOccurrence.delete({ where: { id } });
+    return { deleted: true };
+  });
+
   // ── Reminders ──
 
   app.get("/reminders", workerGuard, async (req: any) => {
