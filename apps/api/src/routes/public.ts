@@ -77,6 +77,55 @@ function identifierOptOutAllowed(normalizedIdentifier: string): boolean {
   return true;
 }
 
+// Vanity animation cache (see the /public/vanity/animation handler for
+// the incident context). Module-scope so it survives request lifecycle
+// but is reset on cold start / instance recycle.
+type VanityAnimationPayload = {
+  enabled: boolean;
+  slugs: string[];
+  showHistory: boolean;
+};
+const VANITY_ANIMATION_CACHE_MS = 60_000;
+let vanityAnimationCache: { data: VanityAnimationPayload; expiresAt: number } | null = null;
+let vanityAnimationInflight: Promise<VanityAnimationPayload> | null = null;
+
+async function loadVanityAnimationCached(): Promise<VanityAnimationPayload> {
+  const now = Date.now();
+  if (vanityAnimationCache && vanityAnimationCache.expiresAt > now) {
+    return vanityAnimationCache.data;
+  }
+  // Coalesce concurrent misses onto a single DB round-trip. Without
+  // this, a cold-instance burst (splash animation + N reloads) fires
+  // one query per request and all compete for the same Neon
+  // connection at the same time — which is exactly the race that was
+  // starving /api/me.
+  if (vanityAnimationInflight) return vanityAnimationInflight;
+  vanityAnimationInflight = (async () => {
+    try {
+      const { listAnimationSlugs } = await import("../services/vanityPages");
+      const [slugs, enabledSetting, historySetting] = await Promise.all([
+        listAnimationSlugs(),
+        prisma.setting.findUnique({
+          where: { key: "VANITY_STARTUP_ANIMATION_ENABLED" },
+        }),
+        prisma.setting.findUnique({
+          where: { key: "VANITY_STARTUP_ANIMATION_SHOW_HISTORY" },
+        }),
+      ]);
+      const data: VanityAnimationPayload = {
+        enabled: enabledSetting?.value !== "false",
+        slugs,
+        showHistory: historySetting?.value !== "false",
+      };
+      vanityAnimationCache = { data, expiresAt: Date.now() + VANITY_ANIMATION_CACHE_MS };
+      return data;
+    } finally {
+      vanityAnimationInflight = null;
+    }
+  })();
+  return vanityAnimationInflight;
+}
+
 export default async function publicRoutes(app: FastifyInstance) {
   // Public activity feed — no auth required
   app.get("/public/feed", async (req: any) => {
@@ -1186,25 +1235,22 @@ export default async function publicRoutes(app: FastifyInstance) {
   // animation, plus display settings. Rate-limited (shared bucket).
   // Returns { enabled, slugs, showHistory }. Client uses `enabled` as
   // a kill switch — when false, the splash renders logo-only.
+  //
+  // Cached at module scope. This endpoint fires on EVERY app load in
+  // parallel with /api/me — and both compete for the same cold-start
+  // Neon WebSocket. When concurrent requests both had to run three DB
+  // queries each, /me was intermittently losing the race and timing
+  // out at 12s client-side ("Couldn't load your profile"). The cache
+  // makes vanity/animation an instant no-op on warm instances, and
+  // inflight coalescing means a cold-instance burst fires ONE DB
+  // query instead of N. Trade-off: settings changes take up to
+  // VANITY_ANIMATION_CACHE_MS to propagate — acceptable for a splash
+  // animation.
   app.get("/public/vanity/animation", async (req: any, reply: any) => {
     if (!optOutRateLimit(String(req.ip ?? ""))) {
       return reply.code(429).send({ error: "rate_limited" });
     }
-    const { listAnimationSlugs } = await import("../services/vanityPages");
-    const [slugs, enabledSetting, historySetting] = await Promise.all([
-      listAnimationSlugs(),
-      prisma.setting.findUnique({
-        where: { key: "VANITY_STARTUP_ANIMATION_ENABLED" },
-      }),
-      prisma.setting.findUnique({
-        where: { key: "VANITY_STARTUP_ANIMATION_SHOW_HISTORY" },
-      }),
-    ]);
-    return {
-      enabled: enabledSetting?.value !== "false",
-      slugs,
-      showHistory: historySetting?.value !== "false",
-    };
+    return loadVanityAnimationCached();
   });
 
   // ── Promo short URLs ────────────────────────────────────────────────
