@@ -1,3 +1,17 @@
+/* Pre-splash safety background. iPhone PWA (viewport-fit=cover) extends
+   content into the safe-area / home-indicator zones. Between the first
+   browser paint and the moment AppSplash's useEffect fires to portal the
+   white overlay onto the body, iOS was briefly rendering those zones in
+   an unexpected color — visible to the user as a quick flash at the
+   bottom of the screen. Painting html/body white from the first
+   stylesheet load closes that gap without touching AppSplash's own
+   layout code (which is documented as fragile). AppSplash itself still
+   restores body background on unmount, so app-level styling that
+   targets #__next or Chakra's Box wrappers is unaffected. */
+html, body {
+  background: #ffffff;
+}
+
 /* Prevent Safari iOS from zooming on input focus — requires font-size >= 16px */
 @media screen and (max-width: 768px) {
   input,
