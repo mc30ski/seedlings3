@@ -230,7 +230,7 @@ export default function EstimateDialog({ open, onOpenChange, onCreated, myId, ed
       if (jobTagNote.trim()) body.jobType = jobTagNote.trim();
 
       if (isEdit) {
-        await apiPatch(`/api/admin/occurrences/${editEstimate!.id}`, body);
+        await apiPatch(`/api/light-estimates/${editEstimate!.id}`, body);
         publishInlineMessage({ type: "SUCCESS", text: "Estimate updated." });
       } else {
         await apiPost("/api/admin/light-estimates", body);

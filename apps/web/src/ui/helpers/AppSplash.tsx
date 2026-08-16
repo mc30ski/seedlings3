@@ -46,9 +46,9 @@ const FADE_MS = 800;
 const MIN_LOGO_ONLY_MS = 900;
 
 const DOMAIN_TEXT = "seedlings.pro";
-const DOMAIN_TYPE_MS = 65;
-const SLUG_TYPE_MS = 42;
-const ERASE_MS = 22;
+const DOMAIN_TYPE_MS = 50;
+const SLUG_TYPE_MS = 32;
+const ERASE_MS = 15;
 const HOLD_DOMAIN_MS = 650;
 const HOLD_SLUG_MS = 700;
 const HOLD_BETWEEN_MS = 160;
@@ -211,8 +211,19 @@ export default function AppSplash({ show }: { show: boolean }) {
         position: "fixed",
         top: 0,
         left: 0,
-        right: 0,
-        bottom: 0,
+        // Dynamic viewport units — track iOS's visual viewport as it
+        // changes during status-bar / URL-bar animations, so the
+        // overlay always covers what the user can see. `inset: 0`
+        // (top/left/right/bottom: 0) uses LAYOUT viewport, which on
+        // iOS PWA is often shorter or taller than what's on screen
+        // during the first paint — that mismatch let app content
+        // peek through at the bottom and made the flex-centered
+        // logo jump when the two aligned.
+        width: "100dvw",
+        height: "100dvh",
+        // Fallback dimensions for browsers that don't support dvw/dvh.
+        minWidth: "100vw",
+        minHeight: "100vh",
         zIndex: 20000,
         background: "white",
         cursor: "pointer",

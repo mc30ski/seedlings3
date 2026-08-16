@@ -1347,6 +1347,104 @@ export const jobs: ServicesJobs = {
     });
   },
 
+  async updateLightEstimate(
+    actorUserId: string,
+    occurrenceId: string,
+    input: {
+      title?: string;
+      notes?: string | null;
+      startAt?: string;
+      contactName?: string | null;
+      contactPhone?: string | null;
+      contactEmail?: string | null;
+      estimateAddress?: string | null;
+      proposalAmount?: number | null;
+      proposalNotes?: string | null;
+      jobTags?: string | string[] | null;
+      jobType?: string | null;
+      assigneeUserIds?: string[];
+      jobId?: string | null;
+    },
+    options?: { isAdmin?: boolean },
+  ) {
+    return prisma.$transaction(async (tx) => {
+      const occ = await tx.jobOccurrence.findUnique({
+        where: { id: occurrenceId },
+        include: { assignees: true },
+      });
+      if (!occ) throw new ServiceError("NOT_FOUND", "Estimate not found.", 404);
+      if ((occ as any).workflow !== OccurrenceWorkflow.ESTIMATE) {
+        throw new ServiceError("BAD_REQUEST", "Not an estimate.", 400);
+      }
+      const isActiveAssignee = occ.assignees.some(
+        (a: any) => a.userId === actorUserId && a.role !== "observer",
+      );
+      if (!isActiveAssignee && !options?.isAdmin) {
+        throw new ServiceError(
+          "FORBIDDEN",
+          "Only assignees or admins can edit this estimate.",
+          403,
+        );
+      }
+
+      const data: any = {};
+      if (input.title !== undefined) data.title = input.title;
+      if (input.notes !== undefined) data.notes = input.notes;
+      if (input.startAt !== undefined) data.startAt = toDate(input.startAt);
+      if (input.contactName !== undefined) data.contactName = input.contactName;
+      if (input.contactPhone !== undefined) data.contactPhone = input.contactPhone;
+      if (input.contactEmail !== undefined) data.contactEmail = input.contactEmail;
+      if (input.estimateAddress !== undefined) data.estimateAddress = input.estimateAddress;
+      if (input.proposalAmount !== undefined) data.proposalAmount = input.proposalAmount;
+      if (input.proposalNotes !== undefined) data.proposalNotes = input.proposalNotes;
+      if (input.jobTags !== undefined) {
+        data.jobTags = Array.isArray(input.jobTags)
+          ? input.jobTags.join(",")
+          : input.jobTags;
+      }
+      if (input.jobType !== undefined) data.jobType = input.jobType;
+      if ("jobId" in input) data.jobId = input.jobId ?? null;
+
+      if (Object.keys(data).length > 0) {
+        await tx.jobOccurrence.update({ where: { id: occurrenceId }, data });
+      }
+
+      if (input.assigneeUserIds !== undefined) {
+        const desired = input.assigneeUserIds;
+        const existingIds = new Set(occ.assignees.map((a: any) => a.userId));
+        const toRemove = occ.assignees
+          .filter((a: any) => !desired.includes(a.userId))
+          .map((a: any) => a.userId);
+        const toAdd = desired.filter((uid) => !existingIds.has(uid));
+
+        if (toRemove.length > 0) {
+          await tx.jobOccurrenceAssignee.deleteMany({
+            where: { occurrenceId, userId: { in: toRemove } },
+          });
+        }
+        if (toAdd.length > 0) {
+          await tx.jobOccurrenceAssignee.createMany({
+            data: toAdd.map((uid) => ({
+              occurrenceId,
+              userId: uid,
+              assignedById: actorUserId,
+            })),
+          });
+        }
+      }
+
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, actorUserId, {
+        occurrenceId,
+        type: "LIGHT_ESTIMATE",
+      });
+
+      return tx.jobOccurrence.findUnique({
+        where: { id: occurrenceId },
+        include: { assignees: true },
+      });
+    });
+  },
+
   async updateOccurrence(
     currentUserId: string,
     occurrenceId: string,

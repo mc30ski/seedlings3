@@ -13,6 +13,7 @@ import {
 } from "@chakra-ui/react";
 import { LayoutGrid, List as ListIcon } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
+import { useOffline } from "@/src/lib/offline";
 import { fmtDate, fmtDateWeekday } from "@/src/lib/lib";
 import SafePhoto from "@/src/ui/components/SafePhoto";
 import { usePersistedState } from "@/src/lib/usePersistedState";
@@ -91,6 +92,7 @@ const typeStyle: Record<string, { dot: string; color: string; bg?: string; borde
 };
 
 export default function ClientFeedTab() {
+  const { isOffline } = useOffline();
   const [items, setItems] = useState<FeedItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -143,10 +145,17 @@ export default function ClientFeedTab() {
       setDaysShown(days);
       setError(null);
     } catch (err: any) {
-      // Always surface the error — even on the initial load, days=7.
-      // Prior version only set error when days=3, so failures on the
-      // first load left the spinner up with no explanation.
-      setError(err?.message || "Failed to load feed");
+      // Prefer an offline-aware message when the browser is offline;
+      // the timeout wrapper's "server took too long" text is
+      // technically true but misleading when the real cause is no
+      // network. Otherwise surface whatever the underlying error
+      // says. Always set — prior version only did on days=3, which
+      // left failures on the initial load silent.
+      if (isOffline) {
+        setError("You're offline. The community feed needs a connection to load.");
+      } else {
+        setError(err?.message || "Failed to load feed");
+      }
     }
     setLoading(false);
     setLoadingMore(false);

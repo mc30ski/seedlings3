@@ -3938,8 +3938,12 @@ export default function HomePage() {
       {/* Error banner when /api/me failed or timed out. Signed-in
           user with no profile = something is broken upstream (Neon
           cold, network hiccup). Renders a retryable banner in the
-          content area so the app is never a blank green header. */}
-      {!meLoading && isSignedIn && meError && !me && (
+          content area so the app is never a blank green header.
+          Suppressed when offline — the existing offline indicator
+          (status dot + OfflineQueueDialog) already tells the user
+          why nothing is loading; a red "couldn't load profile"
+          banner would just add noise. */}
+      {!meLoading && isSignedIn && meError && !me && !isOffline && (
         <Box mx={3} mt={3}>
           <Box
             borderWidth="1px"
