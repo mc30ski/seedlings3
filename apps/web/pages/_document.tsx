@@ -54,6 +54,45 @@ const SHIELD_CSS = `
 body:has(#pre-splash-shield) {
   background: #ffffff !important;
 }
+/* AppSplash's own overlay uses width:100dvw height:100dvh, which on
+   some devices (particularly Android PWAs) doesn't cover the full
+   visible viewport during URL-bar transitions — content leaks through
+   at the bottom. Adding a huge white box-shadow expands the WHITE
+   paint area far past the overlay's actual bounds without touching
+   its width/height (so flex-centering of the logo stays put). The
+   box-shadow doesn't affect layout, so AppSplash's fragile layout
+   code isn't disturbed. */
+[data-app-splash-overlay="1"] {
+  box-shadow: 0 0 0 100vmax #ffffff !important;
+}
+/* ── App content coordination with the splash ─────────────────────────
+   Kills the flash entirely by hiding #__next while the splash is up,
+   then cross-fading it IN over the same window that the splash fades
+   OUT. Coordinated via the splash's data-app-splash-phase attribute
+   so the cross-fade timing exactly matches AppSplash's FADE_MS (800ms).
+   ────────────────────────────────────────────────────────────────── */
+/* Default: app is visible, fade transitions are set up so any
+   subsequent opacity change animates over 800ms (matches FADE_MS in
+   AppSplash.tsx — keep in sync if you change one, change the other). */
+#__next {
+  opacity: 1;
+  transition: opacity 800ms ease;
+}
+/* While the pre-hydration shield is up, the app is hidden. The shield
+   itself covers everything visually; the opacity:0 here is defense in
+   depth so no paint of app content ever escapes below the shield's
+   z-index. */
+body:has(#pre-splash-shield) #__next {
+  opacity: 0 !important;
+}
+/* While the splash overlay is up and NOT yet fading, the app is
+   hidden. The moment phase flips to "fading", this rule stops
+   matching and the default (opacity:1 with 800ms transition) kicks
+   in — so the app fades in over the exact same window the splash
+   fades out. */
+body:has([data-app-splash-overlay="1"]:not([data-app-splash-phase="fading"])) #__next {
+  opacity: 0 !important;
+}
 `;
 
 const SHIELD_REMOVER_JS = `
