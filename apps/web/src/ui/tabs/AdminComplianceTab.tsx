@@ -1266,7 +1266,11 @@ function NewVersionDialog({
 }) {
   const [contentMarkdown, setContentMarkdown] = useState(initialMarkdown);
   const [changeNote, setChangeNote] = useState("");
-  const [forcesResign, setForcesResign] = useState(false);
+  // Default ON — most new versions represent material content changes
+  // that warrant re-signature. The operator explicitly unchecks for
+  // typo fixes / whitespace / formatting-only edits (see the label
+  // wording, which mirrors this default).
+  const [forcesResign, setForcesResign] = useState(true);
   const [busy, setBusy] = useState(false);
 
   async function submit() {
