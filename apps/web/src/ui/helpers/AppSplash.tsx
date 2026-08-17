@@ -216,6 +216,11 @@ export default function AppSplash({ show }: { show: boolean }) {
       // shield removes itself, handing off from the SSR-time shield to
       // the React-rendered overlay without a paint gap. Do not remove.
       data-app-splash-overlay="1"
+      // Reflects the state machine phase so CSS in _document.tsx can
+      // coordinate #__next's fade-in with the splash's fade-out (app
+      // becomes visible EXACTLY when splash starts to fade, so they
+      // cross-fade over the same window instead of a jarring reveal).
+      data-app-splash-phase={phase}
       onClick={() => setPhase("gone")}
       style={{
         position: "fixed",

@@ -40,10 +40,41 @@ export default fp(async (app) => {
       }
     }
 
-    // 4) Fallback
+    // 4) Fallback — include real error info in the response so
+    //    intermittent 500s are actually debuggable. This app is
+    //    internal-only (staff and specific client contacts, all
+    //    authenticated) so leaking error details is worth the
+    //    debuggability. If it ever goes fully public, gate `detail`
+    //    behind a NODE_ENV === "production" check that returns the
+    //    generic message.
     app.log.error({ err }, "unhandled error");
-    return reply
-      .code(500)
-      .send({ code: "INTERNAL", message: "Internal Server Error" });
+    const detail =
+      anyErr?.message ?? (typeof anyErr === "string" ? anyErr : String(anyErr));
+    // Prisma errors carry structured info that helps localize the
+    // failure — surface both the code and any meta.target (which
+    // column/index/relation triggered it).
+    let prismaCode: string | undefined;
+    let prismaMeta: unknown;
+    if (err instanceof Prisma.PrismaClientKnownRequestError) {
+      prismaCode = err.code;
+      prismaMeta = err.meta;
+    } else if (err instanceof Prisma.PrismaClientValidationError) {
+      prismaCode = "PRISMA_VALIDATION";
+    } else if (err instanceof Prisma.PrismaClientInitializationError) {
+      prismaCode = "PRISMA_INIT";
+    } else if (err instanceof Prisma.PrismaClientRustPanicError) {
+      prismaCode = "PRISMA_PANIC";
+    }
+    return reply.code(500).send({
+      code: "INTERNAL",
+      message: "Internal Server Error",
+      // Human-readable message the operator can act on / paste back.
+      detail,
+      // Structured breadcrumbs for pattern-matching intermittent
+      // failures across requests.
+      errorName: anyErr?.name ?? undefined,
+      prismaCode,
+      prismaMeta,
+    });
   });
 });

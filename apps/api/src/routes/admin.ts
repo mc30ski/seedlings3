@@ -5671,15 +5671,28 @@ Respond ONLY with valid JSON in this exact format:
         { description: { contains: term, mode: "insensitive" } },
         { vendor: { contains: term, mode: "insensitive" } },
         { notes: { contains: term, mode: "insensitive" } },
+        // invoiceNumber wasn't in the search set — operators searching
+        // by invoice number got zero matches. Added.
+        { invoiceNumber: { contains: term, mode: "insensitive" } },
       ];
-      // Numeric match on cost — if the operator types "50" or "$50.00"
-      // or "1,250", parse it and add an exact-cost condition to the OR.
-      // Strips common formatting ($, commas, whitespace) so pasted
-      // values from receipts / bank statements work without ceremony.
+      // Numeric match on cost. Handles three shapes of operator input:
+      //   • "50"        → matches ANY cost with integer part 50
+      //                    (i.e. 50.00 through 50.99). Was exact-only
+      //                    before, which silently missed 50.42, 50.75, etc.
+      //   • "50.75"     → matches costs within ±0.005 of 50.75 — tight
+      //                    enough for "specific value" queries, wide enough
+      //                    to tolerate Float precision on the stored value.
+      //   • "$1,250.00" → same rules after stripping $ , and whitespace.
       // Non-numeric queries just skip this branch and text-search only.
-      const numeric = Number(term.replace(/[$,\s]/g, ""));
+      const cleaned = term.replace(/[$,\s]/g, "");
+      const numeric = Number(cleaned);
       if (Number.isFinite(numeric) && numeric > 0) {
-        orConditions.push({ cost: numeric });
+        const hasDecimalPoint = cleaned.includes(".");
+        if (hasDecimalPoint) {
+          orConditions.push({ cost: { gte: numeric - 0.005, lte: numeric + 0.005 } });
+        } else {
+          orConditions.push({ cost: { gte: numeric, lt: numeric + 1 } });
+        }
       }
       where.OR = orConditions;
     }
