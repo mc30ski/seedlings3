@@ -211,6 +211,11 @@ export default function AppSplash({ show }: { show: boolean }) {
   return createPortal(
     <div
       aria-hidden
+      // Data attribute is watched by the pre-hydration shield in
+      // pages/_document.tsx — when this overlay lands in the DOM, the
+      // shield removes itself, handing off from the SSR-time shield to
+      // the React-rendered overlay without a paint gap. Do not remove.
+      data-app-splash-overlay="1"
       onClick={() => setPhase("gone")}
       style={{
         position: "fixed",
@@ -345,7 +350,13 @@ function TypingAnimation({
         }, ms);
       });
 
-    const speedFactor = (idx: number) => Math.max(0.28, Math.pow(0.78, idx));
+    // Per-slug speed ramp. Each successive slug types at `base^idx` of
+    // the base timing, bounded below so it never gets illegibly fast.
+    // Bumped 0.78 → 0.72 to make the ramp noticeably steeper — first
+    // slug at full base speed, hitting the floor by ~slug 4 instead of
+    // slug 6. Floor lowered 0.28 → 0.24 to give the ramp a bit more
+    // range to breathe before it clamps.
+    const speedFactor = (idx: number) => Math.max(0.24, Math.pow(0.72, idx));
     const typeMs = (idx: number) =>
       idx < 0
         ? DOMAIN_TYPE_MS
