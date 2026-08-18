@@ -155,6 +155,26 @@ export default function HomePage() {
 
   const [topTab, setTopTab] = usePersistedState<"client" | "worker" | "admin" | "super">("topTab", "client");
 
+  // Effective role scope — reflects what the operator is currently
+  // acting AS, not just what their underlying account is allowed to
+  // do. A Super who has switched their top-tab to "Worker" is looking
+  // at the world through a Worker's lens; the alerts dropdown and
+  // TasksPage must show only what a Worker would see, otherwise
+  // admin/super items (Timeline urgent, Payments to review, etc.) leak
+  // through and mislead the operator about what they can act on from
+  // the current tab.
+  //
+  //   scopeIsWorker: active on worker/admin/super tab, requires WORKER role
+  //   scopeIsAdmin:  active on admin/super tab,        requires ADMIN role
+  //   scopeIsSuper:  active on super tab only,         requires SUPER role
+  //
+  // Roles nest upward: a Super acting on the Admin tab sees Admin-scope
+  // alerts (they can act on them); a Super acting on the Worker tab
+  // sees Worker-scope only.
+  const scopeIsWorker = (topTab === "worker" || topTab === "admin" || topTab === "super") && isWorker;
+  const scopeIsAdmin  = (topTab === "admin" || topTab === "super") && isAdmin;
+  const scopeIsSuper  = topTab === "super" && isSuper;
+
   // Captured synchronously at first render — was there a `?tab=` deep-link
   // in the URL when this page mounted? The deep-link resolver strips the
   // param AFTER it routes, which means downstream effects that check
@@ -3639,10 +3659,15 @@ export default function HomePage() {
               </Box>
             )}
             {hasAnyRole && alertsReady && (() => {
+              // Alert visibility keys off SCOPED role vars (scopeIsAdmin
+              // / scopeIsSuper) rather than the raw underlying flags —
+              // so a Super acting as Worker doesn't see admin/super
+              // alerts they can't act on from the current tab. See the
+              // scope var definitions near the top of this component.
               const alerts: { label: string; count: number; bg: string; color: string; dotColor: string; onClick: () => void }[] = [];
-              if (isAdmin && overdueCount > 0) alerts.push({ label: "Overdue", count: overdueCount, bg: "#FEE2E2", color: "#991B1B", dotColor: "#EF4444", onClick: goToOverdue });
-              if (isSuper && pending > 0) alerts.push({ label: "Pending Users", count: pending, bg: "#FFEDD5", color: "#9A3412", dotColor: "#FB923C", onClick: goToApprovals });
-              if (isSuper && guaranteedPayoutExpiringCount > 0) alerts.push({
+              if (scopeIsAdmin && overdueCount > 0) alerts.push({ label: "Overdue", count: overdueCount, bg: "#FEE2E2", color: "#991B1B", dotColor: "#EF4444", onClick: goToOverdue });
+              if (scopeIsSuper && pending > 0) alerts.push({ label: "Pending Users", count: pending, bg: "#FFEDD5", color: "#9A3412", dotColor: "#FB923C", onClick: goToApprovals });
+              if (scopeIsSuper && guaranteedPayoutExpiringCount > 0) alerts.push({
                 label: "Guaranteed payout expiring",
                 count: guaranteedPayoutExpiringCount,
                 bg: "#FEF3C7",
@@ -3659,7 +3684,7 @@ export default function HomePage() {
               // aged past the threshold, the alert switches to orange
               // tones as a visual prompt to follow up — same logic
               // the old "Awaiting payment" entry used.
-              if (isSuper) {
+              if (scopeIsSuper) {
                 const paymentsToReview = pendingPayments + awaitingClientPaymentCount;
                 if (paymentsToReview > 0) {
                   alerts.push({
@@ -3676,7 +3701,7 @@ export default function HomePage() {
               // but the label stays workday-centric because the click
               // drops onto the WorkdaysTab where each row shows both
               // categories side-by-side.
-              if (isSuper && pendingWorkdays + pendingMileage > 0) {
+              if (scopeIsSuper && pendingWorkdays + pendingMileage > 0) {
                 alerts.push({
                   // Combined count intentionally — workdays + mileage
                   // share the same drill-in (Workdays tab, with mileage
@@ -3693,19 +3718,27 @@ export default function HomePage() {
                   onClick: goToWorkdayApprovals,
                 });
               }
-              if (isSuper && ledgerFollowupCount > 0) alerts.push({ label: "Ledger followups", count: ledgerFollowupCount, bg: "#FEF3C7", color: "#92400E", dotColor: "#F59E0B", onClick: goToLedgerFollowups });
-              if (isSuper && dueToRecordCount > 0) alerts.push({ label: "Due to record", count: dueToRecordCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToDueToRecord });
-              if ((isAdmin || isSuper) && streamPauseRemindersCount > 0) alerts.push({ label: "Paused repeating to review", count: streamPauseRemindersCount, bg: "#F3E8FF", color: "#6B21A8", dotColor: "#A855F7", onClick: goToStreamPauseReminders });
-              if (isSuper && policyPendingUploadsCount > 0) alerts.push({ label: "Compliance uploads to review", count: policyPendingUploadsCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToCompliance });
-              if (isSuper && policyPendingApprovalsCount > 0) alerts.push({ label: "Policy versions awaiting approval", count: policyPendingApprovalsCount, bg: "#DBEAFE", color: "#1E3A8A", dotColor: "#3B82F6", onClick: goToCompliance });
+              if (scopeIsSuper && ledgerFollowupCount > 0) alerts.push({ label: "Ledger followups", count: ledgerFollowupCount, bg: "#FEF3C7", color: "#92400E", dotColor: "#F59E0B", onClick: goToLedgerFollowups });
+              if (scopeIsSuper && dueToRecordCount > 0) alerts.push({ label: "Due to record", count: dueToRecordCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToDueToRecord });
+              if (scopeIsAdmin && streamPauseRemindersCount > 0) alerts.push({ label: "Paused repeating to review", count: streamPauseRemindersCount, bg: "#F3E8FF", color: "#6B21A8", dotColor: "#A855F7", onClick: goToStreamPauseReminders });
+              if (scopeIsSuper && policyPendingUploadsCount > 0) alerts.push({ label: "Compliance uploads to review", count: policyPendingUploadsCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToCompliance });
+              if (scopeIsSuper && policyPendingApprovalsCount > 0) alerts.push({ label: "Policy versions awaiting approval", count: policyPendingApprovalsCount, bg: "#DBEAFE", color: "#1E3A8A", dotColor: "#3B82F6", onClick: goToCompliance });
+              // "Documents to sign" is a per-user obligation, so it
+              // surfaces on any tab where the user is authenticated as
+              // themselves — worker / admin / super all sign policies.
+              // No scope gate.
               if (policyWorkerPendingCount > 0) alerts.push({ label: "Documents to sign", count: policyWorkerPendingCount, bg: "#FEE2E2", color: "#7F1D1D", dotColor: "#DC2626", onClick: goToWorkerCompliance });
-              if (isAdmin && changeRequestCount > 0) alerts.push({ label: "Client requests", count: changeRequestCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToClientRequests });
-              if (isAdmin && estimateFollowupCount > 0) alerts.push({ label: "Estimate follow-ups", count: estimateFollowupCount, bg: "#FCE7F3", color: "#9D174D", dotColor: "#EC4899", onClick: goToEstimateFollowups });
-              if (isAdmin && unapprovedHoursCount > 0) alerts.push({ label: "Job hours awaiting review", count: unapprovedHoursCount, bg: "#FEF3C7", color: "#92400E", dotColor: "#F59E0B", onClick: goToUnapprovedHours });
-              if (isAdmin && unclaimedCount > 0) alerts.push({ label: "Unclaimed", count: unclaimedCount, bg: "#FEF9C3", color: "#713F12", dotColor: "#FACC15", onClick: goToUnclaimed });
-              if (planningCount > 0) alerts.push({ label: "Planning", count: planningCount, bg: "#CFFAFE", color: "#155E75", dotColor: "#06B6D4", onClick: goToPlanning });
-              if (announcementCount > 0) alerts.push({ label: "Announcements", count: announcementCount, bg: "#EDE9FE", color: "#4C1D95", dotColor: "#6D28D9", onClick: goToAnnouncements });
-              if (isAdmin && timelineUrgentCount > 0) alerts.push({ label: "Timeline", count: timelineUrgentCount, bg: "#E0E7FF", color: "#3730A3", dotColor: "#6366F1", onClick: goToTimeline });
+              if (scopeIsAdmin && changeRequestCount > 0) alerts.push({ label: "Client requests", count: changeRequestCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToClientRequests });
+              if (scopeIsAdmin && estimateFollowupCount > 0) alerts.push({ label: "Estimate follow-ups", count: estimateFollowupCount, bg: "#FCE7F3", color: "#9D174D", dotColor: "#EC4899", onClick: goToEstimateFollowups });
+              if (scopeIsAdmin && unapprovedHoursCount > 0) alerts.push({ label: "Job hours awaiting review", count: unapprovedHoursCount, bg: "#FEF3C7", color: "#92400E", dotColor: "#F59E0B", onClick: goToUnapprovedHours });
+              if (scopeIsAdmin && unclaimedCount > 0) alerts.push({ label: "Unclaimed", count: unclaimedCount, bg: "#FEF9C3", color: "#713F12", dotColor: "#FACC15", onClick: goToUnclaimed });
+              // Planning / Announcements are worker-visible (workers see
+              // them on the Worker Planning tab) — gate on scopeIsWorker
+              // so acting as a client hides them, but they surface for
+              // worker/admin/super scopes.
+              if (scopeIsWorker && planningCount > 0) alerts.push({ label: "Planning", count: planningCount, bg: "#CFFAFE", color: "#155E75", dotColor: "#06B6D4", onClick: goToPlanning });
+              if (scopeIsWorker && announcementCount > 0) alerts.push({ label: "Announcements", count: announcementCount, bg: "#EDE9FE", color: "#4C1D95", dotColor: "#6D28D9", onClick: goToAnnouncements });
+              if (scopeIsAdmin && timelineUrgentCount > 0) alerts.push({ label: "Timeline", count: timelineUrgentCount, bg: "#E0E7FF", color: "#3730A3", dotColor: "#6366F1", onClick: goToTimeline });
               if (alerts.length === 0) return null;
               const total = alerts.reduce((s, a) => s + a.count, 0);
               const topAlert = alerts[0]; // highest priority for badge color
@@ -4062,9 +4095,13 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
           this reads as a distinct area of the app, not a tab. */}
       {authLoaded && (!isSignedIn || me) && tasksOpen && hasAnyRole && (
         <TasksPage
-          isWorker={isWorker}
-          isAdmin={isAdmin}
-          isSuper={isSuper}
+          // Pass SCOPED role flags so TasksPage only surfaces sections
+          // the operator can act on from the currently-active top tab.
+          // Raw isWorker/isAdmin/isSuper would leak admin/super sections
+          // to a Super acting as Worker. See scopeIs* var docs above.
+          isWorker={scopeIsWorker}
+          isAdmin={scopeIsAdmin}
+          isSuper={scopeIsSuper}
           counts={{
             pendingWorkdays,
             unapprovedHoursCount,
