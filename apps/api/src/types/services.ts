@@ -573,6 +573,12 @@ export type ServicesJobs = {
     to?: string;
     cutoff?: Date | null;
   }): Promise<any[]>;
+  listNextOccurrenceGhosts(params: {
+    from?: string;
+    to?: string;
+    assigneeUserId?: string | null;
+    cutoff?: Date | null;
+  }): Promise<any[]>;
   getOccurrencesByIds(ids: string[], cutoff?: Date | null): Promise<any[]>;
   listMyOccurrences(
     userId: string,

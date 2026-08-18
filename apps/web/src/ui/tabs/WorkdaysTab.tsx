@@ -1208,7 +1208,27 @@ function ReviewDialog({
                   />
                 </Box>
                 <Box>
-                  <Text fontSize="xs" color="fg.muted" mb={1}>Ended at</Text>
+                  <HStack justify="space-between" align="center" mb={1}>
+                    <Text fontSize="xs" color="fg.muted">Ended at</Text>
+                    {/* Super-only quick-fill for the "worker forgot to
+                        end and paused instead" pattern. This dialog is
+                        already Super-guarded (POST /api/super/...), so
+                        no extra gate needed. One click fills Ended with
+                        the current wall-clock; the operator can still
+                        adjust before approving. Only shown when the
+                        row was never ended. */}
+                    {row.isOpen && (
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        colorPalette="orange"
+                        onClick={() => setEndedAt(bizToLocalInputValue(new Date()))}
+                        disabled={saving}
+                      >
+                        Force end (now)
+                      </Button>
+                    )}
+                  </HStack>
                   <input
                     type="datetime-local"
                     value={endedAt}

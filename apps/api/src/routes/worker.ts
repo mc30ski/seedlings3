@@ -1512,7 +1512,26 @@ export default async function workerRoutes(app: FastifyInstance) {
     const peekAdminBypass = effectiveIsAdmin && !isWorkerViewRequest;
     redactPeekFieldsForCaller(filtered as any[], uid, peekAdminBypass);
 
-    return filtered;
+    // Ghost cards for repeating jobs whose next occurrence hasn't been
+    // scheduled yet (usually because the prior occurrence hasn't been
+    // paid). Worker view narrows to jobs the caller was assigned to on
+    // the blocking occurrence; admin view returns all. Ghosts skip the
+    // redaction pipeline above — they're synthesized cards with no
+    // payment splits / observer status / financials to redact.
+    const ghostAssigneeUserId =
+      isWorkerViewRequest || viewAsUserId ? uid : null;
+    try {
+      const ghosts = await services.jobs.listNextOccurrenceGhosts({
+        from, to, cutoff,
+        assigneeUserId: ghostAssigneeUserId,
+      });
+      return [...filtered, ...ghosts];
+    } catch (err: any) {
+      // Ghost load failing should never break the main jobs list — log
+      // and continue with just the real occurrences.
+      req.log.warn({ where: "occurrences.ghosts", err: err?.message }, "ghost list failed");
+      return filtered;
+    }
   });
 
   app.get("/occurrences/mine", workerGuard, async (req: any) => {

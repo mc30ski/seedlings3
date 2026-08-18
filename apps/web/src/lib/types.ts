@@ -768,6 +768,19 @@ export type WorkerOccurrence = {
   reminder?: { remindAt: string; note?: string | null } | null;
   _isReminderGhost?: boolean;
   _isPinnedGhost?: boolean;
+  /** Marks a "next occurrence hasn't been scheduled yet" ghost card.
+   *  Present on repeating jobs whose most-recent occurrence hasn't
+   *  reached CLOSED yet (so the next one hasn't been auto-generated).
+   *  Renders as a distinct gray/hollow card at the wouldBeDate so the
+   *  operator/worker sees they need to chase the blocking occurrence
+   *  (usually to accept payment). Clicking the card opens the
+   *  blocking occurrence, not the ghost. */
+  _isNextOccurrenceGhost?: boolean;
+  /** Blocking occurrence — the actual (real, DB-persisted) occurrence
+   *  that's holding up creation of the next one. Present only on ghost
+   *  cards. */
+  _blockingOccurrenceId?: string;
+  _blockingOccurrenceStatus?: JobOccurrenceStatus;
   _ghostDate?: string;
   propertyPhotos?: { propertyPhoto: { id: string; r2Key: string; url?: string; fileName?: string | null; description?: string | null; sortOrder: number } }[];
   addons?: { id: string; tag?: string | null; customLabel?: string | null; price: number }[];

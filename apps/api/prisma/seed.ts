@@ -1565,6 +1565,53 @@ async function seedDatabase() {
     [{ userId: EMPLOYEE_ID, role: "primary" }],
   );
 
+  // ─── GHOST TEST FIXTURES ──────────────────────────────────────────────
+  // Repeating jobs whose MOST RECENT occurrence is still PENDING_PAYMENT
+  // (or otherwise pre-CLOSED). Because the auto-renewer only fires on
+  // payment acceptance, no next occurrence has been scheduled — so
+  // JobsTab should render a "ghost" card at the would-be next date.
+  //
+  //   Ghost 1 — assigned to Michael only        → visible on Worker Jobs (Michael) + Admin Jobs
+  //   Ghost 2 — assigned to a worker only       → NOT on Michael's Worker Jobs; visible on Admin Jobs
+  //   Ghost 3 — assigned to Michael + a worker  → visible on both, and both see it on Admin Jobs
+  //
+  // Each uses a fresh Job on an existing property so the property's
+  // OTHER jobs (with normal future occurrences) aren't disturbed.
+  console.log("  Creating ghost test fixtures...");
+
+  const ghostJob1 = await prisma.job.create({
+    data: { propertyId: harringtonMain.id, kind: "SINGLE_ADDRESS", status: "ACCEPTED", frequencyDays: 7, defaultPrice: 85.0, estimatedMinutes: 45, notes: "GHOST TEST — weekly mow; last occurrence pending payment (Michael assigned)" },
+  });
+  await prisma.jobSchedule.create({
+    data: { jobId: ghostJob1.id, cadence: "WEEKLY", interval: 1, dayOfWeek: 1, autoRenew: true, active: true, horizonDays: 21 },
+  });
+  await occ(
+    { jobId: ghostJob1.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(5, 9), endAt: addMinutes(daysAgo(5, 9), 45), status: "PENDING_PAYMENT", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 85.0, estimatedMinutes: 45, startedAt: daysAgo(5, 9), completedAt: addMinutes(daysAgo(5, 9), 40) },
+    [{ userId: MICHAEL_ID, role: "primary" }],
+  );
+
+  const ghostJob2 = await prisma.job.create({
+    data: { propertyId: martinezHome.id, kind: "SINGLE_ADDRESS", status: "ACCEPTED", frequencyDays: 14, defaultPrice: 55.0, estimatedMinutes: 40, notes: "GHOST TEST — biweekly, assigned to worker only (no Michael)" },
+  });
+  await prisma.jobSchedule.create({
+    data: { jobId: ghostJob2.id, cadence: "BIWEEKLY", interval: 2, dayOfWeek: 3, autoRenew: true, active: true, horizonDays: 21 },
+  });
+  await occ(
+    { jobId: ghostJob2.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(12, 9), endAt: addMinutes(daysAgo(12, 9), 40), status: "PENDING_PAYMENT", workflow: "STANDARD", jobTags: '["MOW"]', price: 55.0, estimatedMinutes: 40, startedAt: daysAgo(12, 9), completedAt: addMinutes(daysAgo(12, 9), 38) },
+    [{ userId: EMPLOYEE_ID, role: "primary" }],
+  );
+
+  const ghostJob3 = await prisma.job.create({
+    data: { propertyId: thompsonMain.id, kind: "SINGLE_ADDRESS", status: "ACCEPTED", frequencyDays: 7, defaultPrice: 125.0, estimatedMinutes: 60, notes: "GHOST TEST — weekly, team of two (Michael + Employee)" },
+  });
+  await prisma.jobSchedule.create({
+    data: { jobId: ghostJob3.id, cadence: "WEEKLY", interval: 1, dayOfWeek: 2, autoRenew: true, active: true, horizonDays: 21 },
+  });
+  await occ(
+    { jobId: ghostJob3.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(4, 9), endAt: addMinutes(daysAgo(4, 9), 60), status: "PENDING_PAYMENT", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 125.0, estimatedMinutes: 60, startedAt: daysAgo(4, 9), completedAt: addMinutes(daysAgo(4, 9), 55) },
+    [{ userId: MICHAEL_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
+  );
+
   // ── Payments (for completed occurrences) ──────────────────────────────────
   console.log("  Creating payments...");
 
