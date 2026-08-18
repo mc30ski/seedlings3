@@ -1128,33 +1128,22 @@ export default function BusinessExpensesTab() {
         </HStack>
       </HStack>
 
-      {/* Informational banner — explains the Ledger's narrow scope. The
-          tab is the operator's hand-logged record of the three money
-          movements that don't otherwise touch the app's flow (real-time
-          payments + payroll are tracked elsewhere; bank transactions
-          live in the accounting software). Mirrors the type filter's
-          three options: Expenses, Owner Draws (withdrawals), and
-          Capital Contributions. */}
-      <Box p={3} mb={3} bg="blue.50" borderLeftWidth="3px" borderColor="blue.400" borderRadius="md">
-        <HStack align="flex-start" gap={2}>
-          <Box pt={0.5}><Info size={14} /></Box>
-          <Text fontSize="xs" color="blue.900">
-            Ledger of Business <b>Expenses</b>, Owner <b>Withdrawals</b> (draws), and Capital <b>Contributions</b>.
-          </Text>
-        </HStack>
-      </Box>
-
-      {/* Capitalize-vs-expense reference. Collapsed by default so the tab
-          doesn't lead with rules; admin can expand once and the open state
-          persists. The dollar cutoff reads from the FIXED_ASSET_MIN_COST
-          setting; item examples come from the operator's standing tax-
-          policy notes — adjust the setting (or this list) if the rule
-          changes. NOT a substitute for CPA review on edge cases. */}
+      {/* Combined info + capitalize-vs-expense reference. The always-
+          visible label describes the Ledger's scope (Expenses, Owner
+          Withdrawals, Capital Contributions — mirrors the type
+          filter's three options); expanding reveals the capitalize-vs-
+          expense rules table. Collapsed by default so the tab doesn't
+          lead with rules; the open state persists per operator. */}
       <CollapsibleNote
         open={assetRuleOpen}
         onToggle={() => setAssetRuleOpen(!assetRuleOpen)}
         palette="blue"
-        label="When to capitalize vs expense"
+        label={
+          <>
+            Ledger of Business <b>Expenses</b>, Owner <b>Withdrawals</b> (draws), and Capital <b>Contributions</b>
+            <Text as="span" color="blue.600" fontWeight="normal"> · when to capitalize vs expense</Text>
+          </>
+        }
       >
         <Text fontSize="sm" color="blue.900" mb={2} textAlign="left">
           <Text as="span" fontWeight="semibold">Rule of thumb:</Text>{" "}
@@ -2739,7 +2728,8 @@ function CollapsibleNote(props: {
   onToggle: () => void;
   /** Chakra palette name — "red" / "blue" / etc. Drives border/bg/icon/text colors. */
   palette: string;
-  label: string;
+  /** Text (or ReactNode when the label needs inline formatting like <b>). */
+  label: React.ReactNode;
   children: React.ReactNode;
 }) {
   const { open, onToggle, palette, label, children } = props;

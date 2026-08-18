@@ -34,6 +34,7 @@ import {
   releaseHoldsForOccurrence,
   reactivateHoldsForOccurrence,
 } from "./supplies";
+import { computeNextOccurrenceStart } from "./payments";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Pause / resume side-effect helpers
@@ -2178,6 +2179,165 @@ export const jobs: ServicesJobs = {
       ...occ,
       ...(occ.jobId && medianMap[occ.jobId] != null ? { medianDurationMinutes: medianMap[occ.jobId] } : {}),
     }));
+  },
+
+  /**
+   * "Next occurrence ghost" cards for the operator/worker JobsTab.
+   *
+   * A ghost represents a repeating job whose NEXT occurrence hasn't
+   * been scheduled yet — usually because the previous occurrence
+   * hasn't reached CLOSED (payment landed) and therefore the auto-
+   * generation of the next one hasn't fired.
+   *
+   * Purpose: gives the operator/worker a visible reminder to chase
+   * the blocking occurrence (usually a payment) instead of just
+   * silently having gaps in their timeline where the next visit
+   * would have been.
+   *
+   * Selection rule:
+   *   1. Job is auto-renewing (JobSchedule.autoRenew AND active).
+   *   2. Job.status = ACCEPTED (no ghosts for paused / archived jobs).
+   *   3. There is NO future-scheduled occurrence (max(startAt) is in
+   *      the past).
+   *   4. The most-recent occurrence isn't CANCELED or ARCHIVED (both
+   *      terminate the series — no next was ever going to be created).
+   *   5. Job has a resolvable frequency (occurrence.frequencyDays or
+   *      Job.frequencyDays).
+   *
+   * The ghost's date is computed via computeNextOccurrenceStart, which
+   * snaps forward to "today" if the raw computation lands in the past —
+   * so an overdue ghost shows for today rather than in the past where
+   * it'd be invisible in the operator's default view.
+   *
+   * Range + user scoping:
+   *   - `from`/`to` restrict the ghost dates. Same window the caller
+   *     uses for real occurrences so ghosts sort naturally into the
+   *     timeline.
+   *   - `assigneeUserId` (optional) filters to ghosts where the given
+   *     user is an assignee on the blocking occurrence. Worker Jobs
+   *     tab passes their own user id; admin JobsTab omits it.
+   */
+  async listNextOccurrenceGhosts(params: {
+    from?: string;
+    to?: string;
+    assigneeUserId?: string | null;
+    cutoff?: Date | null;
+  }) {
+    const fromDate = params?.from ? etMidnight(params.from as EtDateKey) : null;
+    const toDate = params?.to ? etEndOfDay(params.to as EtDateKey) : null;
+
+    // Load all candidate jobs. Small scale (<a few hundred per business);
+    // Prisma handles the include tree without a materially large query.
+    const jobs = await prisma.job.findMany({
+      where: {
+        status: JobStatus.ACCEPTED,
+        schedule: { autoRenew: true, active: true },
+      },
+      include: {
+        schedule: true,
+        property: {
+          select: {
+            id: true, displayName: true, street1: true, city: true, state: true,
+            client: {
+              select: {
+                id: true, displayName: true, isVip: true, vipReason: true,
+              },
+            },
+            pointOfContact: {
+              select: { firstName: true, lastName: true, phone: true, email: true },
+            },
+          },
+        },
+        occurrences: {
+          orderBy: { startAt: "desc" },
+          take: 1,
+          include: {
+            assignees: {
+              include: {
+                user: { select: { id: true, displayName: true, email: true, workerType: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const now = new Date();
+    const ghosts: any[] = [];
+
+    for (const job of jobs) {
+      const [latest] = job.occurrences;
+      if (!latest) continue; // No occurrences ever → not a ghost (nothing to ghost off of)
+      // If the latest occurrence is still in the future, it IS the next
+      // scheduled — no ghost needed.
+      if (latest.startAt && new Date(latest.startAt).getTime() > now.getTime()) continue;
+      // Terminal states that end the series → no ghost.
+      if (latest.status === JobOccurrenceStatus.CANCELED) continue;
+      if (latest.status === JobOccurrenceStatus.ARCHIVED) continue;
+
+      const effectiveFreq = latest.frequencyDays ?? job.frequencyDays;
+      if (!effectiveFreq || effectiveFreq <= 0) continue;
+
+      // Compute what the next occurrence's startAt would be. Snaps
+      // forward to today when the raw value is past — so overdue ghosts
+      // land in the operator's "today" view.
+      const { startAt: wouldBeStart, endAt: wouldBeEnd } = computeNextOccurrenceStart(
+        latest.startAt,
+        latest.endAt,
+        effectiveFreq,
+        (latest as any).nextStartOverride ?? null,
+      );
+
+      // Date-range filter (matches the caller's from/to on the real
+      // occurrences query).
+      if (fromDate && wouldBeStart.getTime() < fromDate.getTime()) continue;
+      if (toDate && wouldBeStart.getTime() > toDate.getTime()) continue;
+
+      // Assignee filter for worker view — only ghost cards for jobs the
+      // caller was on. Admin caller omits `assigneeUserId` and gets all.
+      if (params.assigneeUserId) {
+        const isAssignee = latest.assignees.some(
+          (a) => a.userId === params.assigneeUserId && a.role !== "observer",
+        );
+        if (!isAssignee) continue;
+      }
+
+      // Shape mirrors WorkerOccurrence so the client's existing render
+      // pipeline can consume it. Discriminator flag + synthesized id.
+      ghosts.push({
+        // Synthesized id — never collides with a real occurrence id
+        // (real ids are cuids; ours is prefixed).
+        id: `ghost:${job.id}`,
+        jobId: job.id,
+        kind: latest.kind,
+        title: null,
+        status: JobOccurrenceStatus.SCHEDULED,
+        startAt: wouldBeStart.toISOString(),
+        endAt: wouldBeEnd ? wouldBeEnd.toISOString() : null,
+        notes: null,
+        price: latest.price ?? job.defaultPrice ?? null,
+        estimatedMinutes: latest.estimatedMinutes ?? job.estimatedMinutes ?? null,
+        frequencyDays: effectiveFreq,
+        workflow: "STANDARD",
+        isAdminOnly: !!latest.isAdminOnly,
+        job: {
+          id: job.id,
+          kind: job.kind,
+          frequencyDays: job.frequencyDays,
+          property: job.property,
+        },
+        assignees: latest.assignees,
+        // Discriminator + breadcrumbs for the UI. The blocking-
+        // occurrence link lets the ghost card open the actual occurrence
+        // that needs chasing (usually to accept payment).
+        _isNextOccurrenceGhost: true,
+        _ghostDate: wouldBeStart.toISOString(),
+        _blockingOccurrenceId: latest.id,
+        _blockingOccurrenceStatus: latest.status,
+      });
+    }
+
+    return ghosts;
   },
 
   async getOccurrencesByIds(ids: string[], cutoff?: Date | null) {

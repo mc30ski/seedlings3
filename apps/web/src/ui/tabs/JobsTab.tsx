@@ -4125,6 +4125,74 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               );
             }
 
+            // Next-occurrence ghost cards — visible reminder that a
+            // repeating job's next occurrence hasn't been scheduled yet
+            // (usually because the prior occurrence hasn't been paid).
+            // Non-clickable informational card by design; the follow-up
+            // action lives in the Services tab / pending-payment flow.
+            // Distinct look: dashed gray border, muted background,
+            // "Waiting on next scheduling" copy.
+            if ((occ as any)._isNextOccurrenceGhost) {
+              const propName = occ.job?.property?.displayName ?? "Job";
+              const clientName = occ.job?.property?.client?.displayName ?? null;
+              const wouldBeDateKey = occ.startAt ? bizDateKey(occ.startAt) : null;
+              const blockerStatus = (occ as any)._blockingOccurrenceStatus as string | undefined;
+              const blockerLabel =
+                blockerStatus === "PENDING_PAYMENT" ? "waiting on payment"
+                : blockerStatus === "COMPLETED" ? "waiting on payment"
+                : blockerStatus === "IN_PROGRESS" ? "prior visit in progress"
+                : blockerStatus === "PAUSED" ? "prior visit paused"
+                : blockerStatus === "SCHEDULED" ? "prior visit not yet complete"
+                : "prior visit not closed";
+              // Dark card with light text — deliberately high-contrast
+              // against the rest of the feed (which is all light bgs) so
+              // the operator's eye catches it as a "needs attention"
+              // marker rather than blending in as another neutral row.
+              return (
+                <Card.Root
+                  key={`ghost-next:${occ.id}`}
+                  size="sm"
+                  bg="gray.600"
+                  color="gray.50"
+                  style={{
+                    borderLeft: "4px dashed var(--chakra-colors-gray-400)",
+                    borderStyle: "dashed",
+                    borderColor: "var(--chakra-colors-gray-500)",
+                    borderWidth: "1px",
+                  }}
+                >
+                  <Card.Body p={3}>
+                    <HStack justify="space-between" align="start" gap={2}>
+                      <VStack align="start" gap={0.5} flex="1" minW={0}>
+                        <HStack gap={1.5} color="gray.300">
+                          <Clock size={13} />
+                          <Text fontSize="xs" fontWeight="medium" textTransform="uppercase" letterSpacing="wide">
+                            Next visit not scheduled
+                          </Text>
+                        </HStack>
+                        <Text fontSize="sm" fontWeight="semibold" color="white">
+                          {propName}
+                          {clientName ? ` — ${clientLabel(clientName)}` : ""}
+                        </Text>
+                        <Text fontSize="xs" color="gray.200">
+                          Would post on {wouldBeDateKey ? fmtDate(wouldBeDateKey) : "—"} · {blockerLabel}
+                        </Text>
+                      </VStack>
+                      {/* "Expiring" = this recurring client's next visit
+                          hasn't been scheduled — if the operator doesn't
+                          follow up (typically to accept payment), the
+                          service could lapse. Light-gray pill on the
+                          dark card so it stands out but stays in the
+                          monochrome palette. */}
+                      <Badge size="xs" variant="solid" colorPalette="gray" bg="gray.100" color="gray.900">
+                        Expiring
+                      </Badge>
+                    </HStack>
+                  </Card.Body>
+                </Card.Root>
+              );
+            }
+
             // Pinned ghost cards — a reference in the regular feed, same
             // color as the original card type. Mirrors the reminder-ghost
             // density model:
