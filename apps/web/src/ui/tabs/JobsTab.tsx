@@ -2898,19 +2898,17 @@ export default function JobsTab({
         {/* MY WORKDAY lives inside HomeTab as its own section — Jobs
             doesn't need its own self-view surface. */}
         {/* Client Requests — admin-only queue of reschedule / skip
-            requests submitted by clients. Wrapped in its own
-            collapsible Dashboard so the operator can hide it when
-            it's not relevant; frame glows red when any pending
-            request exists so a collapsed section still surfaces
-            attention. Count is fetched here (small poll) instead of
-            reading it out of the ClientRequestsSection child, which
-            owns its own internal fetch. */}
-        {showAdminExtras && (
+            requests submitted by clients. Only rendered when there
+            IS a pending request; otherwise the section (which would
+            just show an empty state) is hidden entirely. The count
+            useEffect keeps polling behind the scenes so a new
+            request pops the section in as soon as it lands. */}
+        {showAdminExtras && clientRequestPending > 0 && (
           <Dashboard
             storageKey="seedlings:jobsTab:clientRequestsOpen"
             title="Client requests"
             icon={Inbox}
-            forceGlow={clientRequestPending > 0 ? "red" : undefined}
+            forceGlow="red"
             count={clientRequestPending}
           >
             <ClientRequestsSection />
