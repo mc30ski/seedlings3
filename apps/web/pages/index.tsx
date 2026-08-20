@@ -23,7 +23,6 @@ import ActivityTab from "@/src/ui/tabs/ActivityTab";
 import HistoryTab from "@/src/ui/tabs/HistoryTab";
 import SettingsTab from "@/src/ui/tabs/SettingsTab";
 import SuperUnclaimedTab from "@/src/ui/tabs/SuperUnclaimedTab";
-import SuperWorkHomeTab from "@/src/ui/tabs/SuperWorkHomeTab";
 import WorkdaysTab from "@/src/ui/tabs/WorkdaysTab";
 import AuditTab from "@/src/ui/tabs/AuditTab";
 import BusinessExpensesTab from "@/src/ui/tabs/BusinessExpensesTab";
@@ -37,18 +36,17 @@ import MileageStrip from "@/src/ui/components/MileageStrip";
 import EquipmentTab from "@/src/ui/tabs/EquipmentTab";
 import VehiclesTab from "@/src/ui/tabs/VehiclesTab";
 import JobsTab from "@/src/ui/tabs/JobsTab";
+// ServicesTab: one mount serves both Admin and Super. The tab
+// derives Super-only affordances from the caller's actual role via
+// determineRoles(me, "ADMIN"), so purpose="ADMIN" is correct for both.
 import ClientsTab from "@/src/ui/tabs/ClientsTab";
 import PropertiesTab from "@/src/ui/tabs/PropertiesTab";
 import PaymentsTab from "@/src/ui/tabs/PaymentsTab";
 import ServicesTab from "@/src/ui/tabs/ServicesTab";
-import AdminJobsTab from "@/src/ui/tabs/AdminJobsTab";
 import ClientFeedTab from "@/src/ui/tabs/ClientFeedTab";
 import ClientMyJobsTab from "@/src/ui/tabs/ClientMyJobsTab";
 import ClientServicesTab from "@/src/ui/tabs/ClientServicesTab";
 import ClientStatementsTab from "@/src/ui/tabs/ClientStatementsTab";
-import RemindersTab from "@/src/ui/tabs/RemindersTab";
-import AdminRemindersTab from "@/src/ui/tabs/AdminRemindersTab";
-import AdminHomeTab from "@/src/ui/tabs/AdminHomeTab";
 import PlanWorkdayWorkflow from "@/src/ui/workflows/PlanWorkdayWorkflow";
 import BeginWorkDayWorkflow from "@/src/ui/workflows/BeginWorkDayWorkflow";
 import AdminTasksTab, { type TaskDef, FiPlus, FiDownload, FiDatabase, FiShare2 } from "@/src/ui/tabs/AdminTasksTab";
@@ -59,7 +57,6 @@ import SharePhotosWorkflow from "@/src/ui/workflows/SharePhotosWorkflow";
 // the import can be reinstated cleanly if the tab returns.
 // import StatisticsTab from "@/src/ui/tabs/StatisticsTab";
 import ProfileTab from "@/src/ui/tabs/ProfileTab";
-import AdminRoutesTab from "@/src/ui/tabs/AdminRoutesTab";
 import PreviewRoutesTab from "@/src/ui/tabs/PreviewRoutesTab";
 import HomeTab from "@/src/ui/tabs/HomeTab";
 import ImpersonationBanner from "@/src/ui/components/ImpersonationBanner";
@@ -196,7 +193,7 @@ export default function HomePage() {
 
   const [clientInnerTab, setClientInnerTab] = usePersistedState<ClientTabs>("clientTab", "public");
   const [adminInnerTab, setAdminInnerTab] = usePersistedState<AdminTabs>("adminTab", "jobs");
-  const [workerInnerTab, setWorkerInnerTab] = usePersistedState<WorkerTabs>("workerTab", "reminders");
+  const [workerInnerTab, setWorkerInnerTab] = usePersistedState<WorkerTabs>("workerTab", "home");
   const [workerCategory, setWorkerCategory] = usePersistedState<string>("workerCategory", "Work");
   const [adminCategory, setAdminCategory] = usePersistedState<string>("adminCategory", "Work");
   const [superCategory, setSuperCategory] = usePersistedState<string>("superCategory", "Work");
@@ -206,8 +203,26 @@ export default function HomePage() {
   // Redirect them to the new "home" tab once, silently — otherwise the
   // Super shell tries to render a non-existent inner tab and shows nothing.
   useEffect(() => {
+    // One-shot migration: only inspect the persisted value at mount.
+    // Deliberately not keyed on `superInnerTab` so a user navigating
+    // to Super → Home doesn't re-run this on every tab change. Empty
+    // deps are intentional here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     const stale = superInnerTab as string;
     if (stale === "operations" || stale === "unclaimed") setSuperInnerTab("home");
+  }, []);
+
+  // Migration: existing workers and admins had "reminders" persisted
+  // under workerTab / adminTab from when the Planning tab existed.
+  // Redirect them to "home" / "jobs" once so they don't land on a
+  // now-nonexistent inner tab and see a blank tab area.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const w = workerInnerTab as string;
+    if (w === "reminders") setWorkerInnerTab("home");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const a = adminInnerTab as string;
+    if (a === "reminders") setAdminInnerTab("home");
   }, []);
 
   // Workday-approval badge state — declared up here (before the tab
@@ -222,7 +237,8 @@ export default function HomePage() {
   >([]);
   // Pending closed-unapproved mileage entries. Same alert dot as
   // workdays (combined display per the "unified daily approval"
-  // model) — see the alerts-dropdown push at line ~3124.
+  // model) — see the workday/mileage push in the alerts-dropdown
+  // builder further down.
   const [pendingMileage, setPendingMileage] = useState<number>(0);
   const [pendingMileageByDate, setPendingMileageByDate] = useState<
     { entryDate: string; count: number }[]
@@ -282,13 +298,12 @@ export default function HomePage() {
   const [jobsRemountKey, setJobsRemountKey] = useState(0);
   const [equipmentRemountKey, setEquipmentRemountKey] = useState(0);
   const [paymentsRemountKey, setPaymentsRemountKey] = useState(0);
-  // Admin-side remount counters — used by AdminHomeTab (which impersonates a worker)
+  // Admin-side remount counters — used by HomeTab (which impersonates a worker)
   // when its tile click-throughs route into admin tabs that need to re-read fresh
   // localStorage filters.
   const [adminJobsRemountKey, setAdminJobsRemountKey] = useState(0);
   const [adminEquipmentRemountKey, setAdminEquipmentRemountKey] = useState(0);
   const [adminPaymentsRemountKey, setAdminPaymentsRemountKey] = useState(0);
-  const [adminRemindersRemountKey, setAdminRemindersRemountKey] = useState(0);
 
   // Auto-show worker Home tab on first open of the day (after 5am ET) or after ≥6h idle.
   // Updates `seedlings_lastAppOpenedAt` on every app load. Respects "snooze until next 5am ET".
@@ -380,14 +395,12 @@ export default function HomePage() {
     else if (prev.outer === "worker") { workerInnerTabRef.current = prev.inner as any; if (prev.category) workerCategoryRef.current = prev.category; }
     else if (prev.outer === "admin") { adminInnerTabRef.current = prev.inner as any; if (prev.category) adminCategoryRef.current = prev.category; }
     else if (prev.outer === "super") { superInnerTabRef.current = prev.inner as any; if (prev.category) superCategoryRef.current = prev.category; }
-    else if (prev.outer === "super") superInnerTabRef.current = prev.inner as any;
     // Now set React state (no skipNextPush needed — onOuterChange/onInnerChange only fire from user clicks)
     setTopTab(prev.outer as any);
     if (prev.outer === "client") setClientInnerTab(prev.inner as any);
     else if (prev.outer === "worker") { setWorkerInnerTab(prev.inner as any); if (prev.category) setWorkerCategory(prev.category); }
     else if (prev.outer === "admin") { setAdminInnerTab(prev.inner as any); if (prev.category) setAdminCategory(prev.category); }
     else if (prev.outer === "super") { setSuperInnerTab(prev.inner as any); if (prev.category) setSuperCategory(prev.category); }
-    else if (prev.outer === "super") setSuperInnerTab(prev.inner as any);
   }
 
   function handleBackButton() {
@@ -801,26 +814,35 @@ export default function HomePage() {
       value: "home",
       label: "Home",
       icon: FiHome,
-      content: wrapWithInlineMessage(<HomeTab me={me} onLaunchWorkflow={(name) => setActiveWorkflow(name)} />),
-    },
-    {
-      value: "reminders",
-      label: "Planning",
-      icon: FiBell,
-      content: wrapWithInlineMessage(<><WorkdayStrip mileageSlot={<MileageStrip embedded />} /><RemindersTab myId={me?.id} me={me} /></>),
+      content: wrapWithInlineMessage(
+        <HomeTab
+          me={me}
+          onLaunchWorkflow={(name) => setActiveWorkflow(name)}
+          scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }}
+        />
+      ),
     },
     {
       value: "jobs",
       label: "Jobs",
       icon: FiClipboard,
-      content: wrapWithInlineMessage(<JobsTab key={`wjobs-${jobsRemountKey}`} me={me} purpose="WORKER" />),
+      content: wrapWithInlineMessage(
+        <JobsTab
+          key={`wjobs-${jobsRemountKey}`}
+          me={me}
+          purpose="WORKER"
+          scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }}
+        />
+      ),
     },
     {
       value: "routes",
       label: "Routes",
       icon: FiNavigation,
       visible: () => !!me?.workerType,
-      content: wrapWithInlineMessage(<><WorkdayStrip mileageSlot={<MileageStrip embedded />} /><PreviewRoutesTab /></>),
+      content: wrapWithInlineMessage(
+        <PreviewRoutesTab scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }} />
+      ),
     },
     {
       value: "tasks",
@@ -935,25 +957,34 @@ export default function HomePage() {
       value: "home",
       label: "Home",
       icon: FiHome,
-      content: wrapWithInlineMessage(<AdminHomeTab me={me} />),
-    },
-    {
-      value: "reminders",
-      label: "Planning",
-      icon: FiBell,
-      content: wrapWithInlineMessage(<AdminRemindersTab key={`arem-${adminRemindersRemountKey}`} me={me} />),
+      content: wrapWithInlineMessage(
+        <HomeTab
+          me={me}
+          onLaunchWorkflow={() => {}}
+          scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }}
+        />
+      ),
     },
     {
       value: "jobs",
       label: "Jobs",
       icon: FiClipboard,
-      content: wrapWithInlineMessage(<AdminJobsTab key={`ajobs-${adminJobsRemountKey}`} me={me} purpose="ADMIN" />),
+      content: wrapWithInlineMessage(
+        <JobsTab
+          key={`ajobs-${adminJobsRemountKey}`}
+          me={me}
+          purpose="ADMIN"
+          scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }}
+        />
+      ),
     },
     {
       value: "routes",
       label: "Routes",
       icon: FiNavigation,
-      content: wrapWithInlineMessage(<AdminRoutesTab />),
+      content: wrapWithInlineMessage(
+        <PreviewRoutesTab scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }} />
+      ),
     },
     {
       // Was `value: "jobs"`, but Worker's Jobs tab also uses `"jobs"` —
@@ -1169,7 +1200,7 @@ export default function HomePage() {
         // to relearn the tab map. Categories: Work · Equipment · Directory ·
         // Money · Records · System.
         const catMap: Record<string, string> = {
-          home: "Work", reminders: "Work", jobs: "Work", routes: "Work", tasks: "Work",
+          home: "Work", jobs: "Work", routes: "Work", tasks: "Work",
           equipment: "Equipment", collections: "Equipment", usage: "Equipment",
           clients: "Directory", properties: "Directory",
           payments: "Money", pricing: "Money", supplies: "Money",
@@ -1179,7 +1210,7 @@ export default function HomePage() {
         const catIconMap: Record<string, React.ElementType> = {
           Work: FiClipboard, Equipment: FiTool, Directory: FiUsers, Money: TfiMoney, Records: FiBarChart2, System: FiSettings,
         };
-        return workerTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, visible: t.visible, content: t.content, category: catMap[t.value], categoryIcon: catIconMap[catMap[t.value]], chip: t.value === "tasks" }));
+        return workerTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, visible: t.visible, content: t.content, category: catMap[t.value], categoryIcon: catIconMap[catMap[t.value]], chip: t.value === "tasks", bucket: t.bucket }));
       })(),
     },
     {
@@ -1214,7 +1245,7 @@ export default function HomePage() {
       ),
       innerTabs: (() => {
         const catMap: Record<string, string> = {
-          home: "Work", reminders: "Work", jobs: "Work", routes: "Work", services: "Work", tasks: "Work",
+          home: "Work", jobs: "Work", routes: "Work", services: "Work", tasks: "Work",
           equipment: "Equipment", collections: "Equipment", usage: "Equipment",
           clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
           payments: "Money", pricing: "Money", supplies: "Money",
@@ -1224,7 +1255,7 @@ export default function HomePage() {
         const catIconMap: Record<string, React.ElementType> = {
           Work: FiClipboard, Equipment: FiTool, Directory: FiUsers, Money: TfiMoney, Records: FiBarChart2, System: FiSettings,
         };
-        return adminTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, visible: t.visible, content: t.content, category: catMap[t.value], categoryIcon: catIconMap[catMap[t.value]], chip: t.value === "tasks" }));
+        return adminTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, visible: t.visible, content: t.content, category: catMap[t.value], categoryIcon: catIconMap[catMap[t.value]], chip: t.value === "tasks", bucket: t.bucket }));
       })(),
     },
     {
@@ -1243,7 +1274,61 @@ export default function HomePage() {
           value: "home",
           label: "Home",
           icon: FiHome,
-          content: wrapWithInlineMessage(<SuperWorkHomeTab />),
+          content: wrapWithInlineMessage(
+            <HomeTab
+              me={me}
+              onLaunchWorkflow={() => {}}
+              scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }}
+            />
+          ),
+          category: "Work",
+          categoryIcon: FiHome,
+        },
+        {
+          // Jobs — same JobsTab as Admin+Worker, driven by scope so the
+          // Super sees admin+super overlays (Client Requests, Ops
+          // summary strip, cancel/reopen action row, etc.).
+          value: "jobs",
+          label: "Jobs",
+          icon: FiClipboard,
+          content: wrapWithInlineMessage(
+            <JobsTab
+              me={me}
+              purpose="ADMIN"
+              scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }}
+            />
+          ),
+          category: "Work",
+          categoryIcon: FiHome,
+        },
+        {
+          // Routes — same PreviewRoutesTab as Admin+Worker. Scope
+          // brings the Super's team-travel Operations panel to the
+          // top of the tab.
+          value: "routes",
+          label: "Routes",
+          icon: FiNavigation,
+          content: wrapWithInlineMessage(
+            <PreviewRoutesTab scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }} />
+          ),
+          category: "Work",
+          categoryIcon: FiHome,
+        },
+        {
+          // Services — the same shipped ServicesTab admins see.
+          // Super-only affordances gate on the user's actual role
+          // internally, so purpose="ADMIN" is intentional.
+          value: "services",
+          label: "Services",
+          icon: FiBriefcase,
+          content: wrapWithInlineMessage(
+            <ServicesTab
+              me={me}
+              purpose="ADMIN"
+              streamReviewOccId={streamReviewOccId}
+              streamReviewNonce={streamReviewNonce}
+            />
+          ),
           category: "Work",
           categoryIcon: FiHome,
         },
@@ -1530,18 +1615,36 @@ export default function HomePage() {
     setTopTab(newRole);
   }
 
+  // `tabName` can be:
+  //   • a string  — same target tab for admin and worker (must exist
+  //                  in BOTH AdminTabs & WorkerTabs)
+  //   • an object — separate targets, with `worker: null` marking
+  //                  "no worker-scope destination" (dispatchers must
+  //                  pass forAdmin:true; a worker dispatcher no-ops
+  //                  with a console warn). Use this for admin-only
+  //                  destinations like Services.
   const setupSearchEvent = (
     eventName: EventTypes,
-    tabName: AdminTabs & WorkerTabs
+    tabName: (AdminTabs & WorkerTabs) | { admin: AdminTabs; worker: WorkerTabs | null }
   ) => {
+    const adminTarget: AdminTabs = typeof tabName === "string" ? tabName : tabName.admin;
+    const workerTarget: WorkerTabs | null = typeof tabName === "string" ? tabName : tabName.worker;
     useEffect(() => {
       if (typeof window === "undefined") return;
       const onEvent = (e: Event) => {
         const { q, forAdmin, entityId } = (e as CustomEvent).detail || {};
         if (!q && !entityId) return;
+        if (!forAdmin && workerTarget === null) {
+          // Admin-only destination — a worker-scope dispatcher would
+          // land nowhere useful. No-op rather than silently misroute.
+          if (typeof console !== "undefined") {
+            console.warn(`[${eventName}] worker-scope dispatch ignored; this event is admin-only`);
+          }
+          return;
+        }
         pushNavHistory(getCurrentNavState());
         setTopTab(forAdmin ? "admin" : "worker");
-        forAdmin ? setAdminInnerTab(tabName) : setWorkerInnerTab(tabName);
+        forAdmin ? setAdminInnerTab(adminTarget) : setWorkerInnerTab(workerTarget as WorkerTabs);
         window.sessionStorage.setItem(
           `open:${eventName}Once`,
           JSON.stringify({ q, entityId }),
@@ -1586,13 +1689,13 @@ export default function HomePage() {
   // (see ServicesTab.tsx), so we must route to the "services" tab so
   // that handler is actually mounted when the event fires. A previous
   // change routed this to "jobs" which silently broke the button.
-  setupSearchEvent("jobsTabToServicesTabSearch", "services" as any);
+  setupSearchEvent("jobsTabToServicesTabSearch", { admin: "services", worker: null });
   // clientsTabToServicesTabSearch — "N services paused" click on the
   // ClientsTab card. Routes to Services; ServicesTab's :run listener
   // sets q to the client's displayName AND flips jobStatusFilter to
   // ["PAUSED"] so the operator lands directly on that client's paused
   // job list.
-  setupSearchEvent("clientsTabToServicesTabSearch", "services" as any);
+  setupSearchEvent("clientsTabToServicesTabSearch", { admin: "services", worker: null });
 
   // Payments "Job" link → Jobs tab, highlighted to the exact occurrence the
   // payment was recorded against. We send the OCCURRENCE id (plus its
@@ -1618,8 +1721,8 @@ export default function HomePage() {
         JSON.stringify({ occId: entityId, anchorAt: anchorAt ?? null }),
       );
     };
-    window.addEventListener("open:paymentsTabToServicesTabSearch", onEvent as EventListener);
-    return () => window.removeEventListener("open:paymentsTabToServicesTabSearch", onEvent as EventListener);
+    window.addEventListener("open:paymentsTabToJobsTabSearch", onEvent as EventListener);
+    return () => window.removeEventListener("open:paymentsTabToJobsTabSearch", onEvent as EventListener);
   }, []);
 
   // Client-portal shortcut: banner on My Properties → jump to the
@@ -1706,42 +1809,6 @@ export default function HomePage() {
     return () => clearInterval(interval);
   }, [topTab, adminInnerTab]);
 
-  // Reminders → Jobs: both admin and worker route to their own `jobs` tab
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const onEvent = (e: Event) => {
-      const { q, forAdmin, entityId } = (e as CustomEvent).detail || {};
-      if (!q && !entityId) return;
-      if (forAdmin) {
-        setTopTab("admin");
-        setAdminInnerTab("jobs");
-      } else {
-        setTopTab("worker");
-        setWorkerInnerTab("jobs");
-      }
-      window.sessionStorage.setItem(
-        "open:remindersToJobsTabSearchOnce",
-        JSON.stringify({ q: q || "", entityId }),
-      );
-    };
-    window.addEventListener("open:remindersToJobsTabSearch", onEvent as EventListener);
-    return () => window.removeEventListener("open:remindersToJobsTabSearch", onEvent as EventListener);
-  }, []);
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const key = "open:remindersToJobsTabSearchOnce";
-    const raw = window.sessionStorage.getItem(key);
-    if (!raw) return;
-    let payload: { q: string; entityId?: string };
-    try { payload = JSON.parse(raw); } catch { payload = { q: raw }; }
-    window.sessionStorage.removeItem(key);
-    const timer = setTimeout(() => {
-      window.dispatchEvent(
-        new CustomEvent("remindersToJobsTabSearch:run", { detail: payload })
-      );
-    }, 150);
-    return () => clearTimeout(timer);
-  }, [topTab, adminInnerTab, workerInnerTab]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1868,7 +1935,6 @@ export default function HomePage() {
     setEarningsPeriod(EARNINGS_PERIODS[(idx + 1) % EARNINGS_PERIODS.length]);
   }
 
-  const headerBtnRef = useRef<HTMLDivElement | null>(null);
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
 
@@ -2379,7 +2445,7 @@ export default function HomePage() {
     return () => { clearTimeout(timer); document.removeEventListener("click", close); };
   }, [alertDropdownOpen]);
   const [alertsLoaded, setAlertsLoaded] = useState<Record<string, boolean>>({});
-  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.planning && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests && alertsLoaded.estimateFollowups && alertsLoaded.unapprovedHours && alertsLoaded.guaranteedPayout && alertsLoaded.pendingWorkdays && alertsLoaded.ledgerFollowups && alertsLoaded.dueToRecord && alertsLoaded.streamPauseReminders && alertsLoaded.policyAdmin && alertsLoaded.policyWorker);
+  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests && alertsLoaded.estimateFollowups && alertsLoaded.unapprovedHours && alertsLoaded.guaranteedPayout && alertsLoaded.pendingWorkdays && alertsLoaded.ledgerFollowups && alertsLoaded.dueToRecord && alertsLoaded.streamPauseReminders && alertsLoaded.policyAdmin && alertsLoaded.policyWorker && alertsLoaded.timeline);
   const markAlertLoaded = useCallback((key: string) => setAlertsLoaded((prev) => prev[key] ? prev : { ...prev, [key]: true }), []);
   const loadAnnouncementCount = useCallback(async () => {
     // Staff-only: /api/occurrences requires a worker/admin/super role.
@@ -2469,61 +2535,6 @@ export default function HomePage() {
     setAdminInnerTab("clients");
   }, []);
 
-  // Planning badge count — items on the worker's Planning tab that haven't been dismissed
-  const [planningCount, setPlanningCount] = useState(0);
-  // Single dashboard summary replaces multiple separate API calls for badge counts
-  const loadDashboardSummary = useCallback(async () => {
-    // Staff-only: /api/occurrences requires a worker/admin/super role.
-    // Client-only accounts would just 403 in a loop.
-    if (!me?.id || !hasAnyRole) { setPlanningCount(0); if (me) markAlertLoaded("planning"); return; }
-    try {
-      const list = await apiGet<any[]>("/api/occurrences");
-      if (!Array.isArray(list)) { setPlanningCount(0); markAlertLoaded("planning"); return; }
-
-      const myId = me.id;
-      const myItems = list
-        .filter((occ: any) => !occ._isReminderGhost && !occ._isPinnedGhost)
-        .filter((occ: any) => (occ.assignees ?? []).some((a: any) => a.userId === myId));
-
-      const tomorrowKey = bizTomorrow();
-
-      // Count tomorrow's items that need client confirmation
-      const tomorrowNeedsConfirm = myItems.filter((occ: any) =>
-        (occ.status === "SCHEDULED" || occ.status === "ACCEPTED") &&
-        occ.startAt && bizDateKey(occ.startAt) === tomorrowKey &&
-        occ.workflow !== "ANNOUNCEMENT" &&
-        occ.workflow !== "EVENT" &&
-        occ.jobId && !occ.isClientConfirmed
-      ).length;
-
-      setPlanningCount(tomorrowNeedsConfirm);
-    } catch {
-      setPlanningCount(0);
-    }
-    markAlertLoaded("planning");
-  }, [me?.id, hasAnyRole]);
-
-  useEffect(() => {
-    void loadDashboardSummary();
-    const onRefresh = () => void loadDashboardSummary();
-    // Refresh on data changes
-    window.addEventListener("seedlings3:jobs-changed", onRefresh);
-    window.addEventListener("seedlings3:planning-changed", onRefresh);
-    // Refresh when app becomes visible (day change, phone wake, tab switch)
-    const onVisible = () => { if (document.visibilityState === "visible") void loadDashboardSummary(); };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      window.removeEventListener("seedlings3:jobs-changed", onRefresh);
-      window.removeEventListener("seedlings3:planning-changed", onRefresh);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [loadDashboardSummary]);
-
-  const goToPlanning = useCallback(() => {
-    setTopTab("worker");
-    setWorkerInnerTab("reminders" as any);
-  }, []);
-
   // Timeline alert — merged count of urgent timeline events + expiring
   // documents (urgent = past or ≤7 days). Super uses /super/ for the full
   // view including hidden items; admin uses /admin/ which filters hidden
@@ -2573,7 +2584,6 @@ export default function HomePage() {
         loadUnapprovedHoursCount(),
         loadUnclaimed(),
         loadAnnouncementCount(),
-        loadDashboardSummary(),
         loadTimelineCount(),
         loadLedgerFollowupCount(),
         loadDueToRecordCount(),
@@ -2593,7 +2603,7 @@ export default function HomePage() {
     loadPending, loadPendingPayments, loadPendingWorkdays, loadAwaitingClientPayment,
     loadOverdue, loadChangeRequestCount, loadEstimateFollowupCount,
     loadUnapprovedHoursCount, loadUnclaimed, loadAnnouncementCount,
-    loadDashboardSummary, loadTimelineCount, loadLedgerFollowupCount,
+    loadTimelineCount, loadLedgerFollowupCount,
     loadDueToRecordCount, loadStreamPauseRemindersCount,
     loadPolicyWorkerCount, loadPolicyAdminCounts,
   ]);
@@ -2735,7 +2745,7 @@ export default function HomePage() {
     return () => window.removeEventListener("navigate:workerTab", onNav as EventListener);
   }, []);
 
-  // Mirror handler for admin tab navigation. Used by AdminHomeTab's tile click-throughs
+  // Mirror handler for admin tab navigation. Used by HomeTab's tile click-throughs
   // (which target admin tabs filtered to the impersonated worker). Same remount-on-demand
   // pattern as the worker version — caller pre-writes localStorage, we bump the key.
   // Also updates adminCategory when the destination tab lives in a different category
@@ -2743,7 +2753,7 @@ export default function HomePage() {
   // the inner-tab bar can render the wrong set of tabs.
   useEffect(() => {
     const adminCatMap: Record<string, string> = {
-      home: "Work", reminders: "Work", jobs: "Work", routes: "Work", services: "Work", tasks: "Work",
+      home: "Work", jobs: "Work", routes: "Work", services: "Work", tasks: "Work",
       equipment: "Equipment", collections: "Equipment", usage: "Equipment",
       clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
       payments: "Money", pricing: "Money", supplies: "Money",
@@ -2765,7 +2775,6 @@ export default function HomePage() {
         if (tab === "jobs") setAdminJobsRemountKey((k) => k + 1);
         else if (tab === "equipment") setAdminEquipmentRemountKey((k) => k + 1);
         else if (tab === "payments") setAdminPaymentsRemountKey((k) => k + 1);
-        else if (tab === "reminders") setAdminRemindersRemountKey((k) => k + 1);
       }
       setTimeout(() => { programmaticNavRef.current = false; }, 50);
     };
@@ -2830,17 +2839,6 @@ export default function HomePage() {
       router.replace("/", undefined, { shallow: true });
     }
   }, [router.query.workflow, me?.isApproved, meLoading]);
-
-  // In-app workflow launcher — components dispatch `launch:workflow` with a
-  // detail.workflow string to kick off a guided flow without going through a URL.
-  useEffect(() => {
-    const onLaunch = (e: Event) => {
-      const wf = (e as CustomEvent<{ workflow?: string }>).detail?.workflow;
-      if (wf) setActiveWorkflow(wf);
-    };
-    window.addEventListener("launch:workflow", onLaunch as EventListener);
-    return () => window.removeEventListener("launch:workflow", onLaunch as EventListener);
-  }, []);
 
   // Deep-link to a specific tab via `?tab=<outer>-<category>-<inner>` (e.g.
   // `worker-work-planning`). Client tabs (no categories) use 2 segments instead:
@@ -3585,7 +3583,6 @@ export default function HomePage() {
 
           {/* Right: badges + worker type + Clerk */}
           <div
-            ref={headerBtnRef as any}
             style={{
               justifySelf: "end",
               display: "flex",
@@ -3732,11 +3729,9 @@ export default function HomePage() {
               if (scopeIsAdmin && estimateFollowupCount > 0) alerts.push({ label: "Estimate follow-ups", count: estimateFollowupCount, bg: "#FCE7F3", color: "#9D174D", dotColor: "#EC4899", onClick: goToEstimateFollowups });
               if (scopeIsAdmin && unapprovedHoursCount > 0) alerts.push({ label: "Job hours awaiting review", count: unapprovedHoursCount, bg: "#FEF3C7", color: "#92400E", dotColor: "#F59E0B", onClick: goToUnapprovedHours });
               if (scopeIsAdmin && unclaimedCount > 0) alerts.push({ label: "Unclaimed", count: unclaimedCount, bg: "#FEF9C3", color: "#713F12", dotColor: "#FACC15", onClick: goToUnclaimed });
-              // Planning / Announcements are worker-visible (workers see
-              // them on the Worker Planning tab) — gate on scopeIsWorker
+              // Announcements are worker-visible — gate on scopeIsWorker
               // so acting as a client hides them, but they surface for
               // worker/admin/super scopes.
-              if (scopeIsWorker && planningCount > 0) alerts.push({ label: "Planning", count: planningCount, bg: "#CFFAFE", color: "#155E75", dotColor: "#06B6D4", onClick: goToPlanning });
               if (scopeIsWorker && announcementCount > 0) alerts.push({ label: "Announcements", count: announcementCount, bg: "#EDE9FE", color: "#4C1D95", dotColor: "#6D28D9", onClick: goToAnnouncements });
               if (scopeIsAdmin && timelineUrgentCount > 0) alerts.push({ label: "Timeline", count: timelineUrgentCount, bg: "#E0E7FF", color: "#3730A3", dotColor: "#6366F1", onClick: goToTimeline });
               if (alerts.length === 0) return null;
@@ -4114,7 +4109,6 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
             overdueCount,
             unclaimedCount,
             timelineUrgentCount,
-            planningCount,
             announcementCount,
             policyPendingUploadsCount,
             policyPendingApprovalsCount,
@@ -4137,7 +4131,6 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
             goToPaymentApprovals,
             goToClientRequests,
             goToUnlinkedAccounts,
-            goToPlanning,
             goToAnnouncements,
           }}
           onClose={() => setTasksOpen(false)}
@@ -4207,20 +4200,21 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
             </Box>
           }
           headerRight={
-            <Box
-              as="button"
-              aria-label="Copy link to this tab"
-              title="Copy link to this tab"
-              pl="1"
-              pr="1"
-              py={1}
-              display="inline-flex"
-              alignItems="center"
-              color="gray.500"
-              cursor="pointer"
-              _hover={{ color: "blue.600" }}
-              transition="color 0.1s"
-              onClick={() => {
+            <HStack gap={3} align="center">
+              <Box
+                as="button"
+                aria-label="Copy link to this tab"
+                title="Copy link to this tab"
+                pl="1"
+                pr="1"
+                py={1}
+                display="inline-flex"
+                alignItems="center"
+                color="gray.500"
+                cursor="pointer"
+                _hover={{ color: "blue.600" }}
+                transition="color 0.1s"
+                onClick={() => {
                 // Build the deep-link URL for the current tab using the same
                 // slug convention the resolver consumes: <outer>-<category>-<inner>
                 // (with a 2-part fallback for outers that don't have categories).
@@ -4248,8 +4242,9 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
                 );
               }}
             >
-              <Link2 size={16} />
-            </Box>
+                <Link2 size={16} />
+              </Box>
+            </HStack>
           }
         />
       )}

@@ -75,10 +75,9 @@ type ShortcutCounts = {
   overdueCount: number;
   unclaimedCount: number;
   timelineUrgentCount: number;
-  // Everyone (planning + announcements are role-agnostic alerts —
-  // included so Tasks doesn't render dead-empty for a pure worker
-  // whose only pending item is an announcement).
-  planningCount: number;
+  // Everyone: announcement alerts are role-agnostic — included so
+  // Tasks doesn't render dead-empty for a pure worker whose only
+  // pending item is an announcement.
   announcementCount: number;
   // Compliance policy shortcuts (Slice 5).
   policyPendingUploadsCount: number;
@@ -110,7 +109,6 @@ type ShortcutHandlers = {
   goToPaymentApprovals: () => void;
   goToClientRequests: () => void;
   goToUnlinkedAccounts: () => void;
-  goToPlanning: () => void;
   goToAnnouncements: () => void;
 };
 
@@ -228,7 +226,6 @@ export default function TasksPage({
       n += counts.unapprovedHoursCount;
       n += counts.timelineUrgentCount;
     }
-    n += counts.planningCount;
     n += counts.announcementCount;
     // Worker-side "documents to sign" — role-agnostic since anyone with
     // a workerType may have policies to sign, including admins/supers who
@@ -467,14 +464,6 @@ export default function TasksPage({
             >
               <TimelineUrgentSection isSuper={isSuper} />
             </CollapsibleSectionCard>
-          )}
-          {counts.planningCount > 0 && (
-            <ShortcutCard
-              label="Planning"
-              count={counts.planningCount}
-              dotColor="#06B6D4"
-              onReview={wrap(handlers.goToPlanning)}
-            />
           )}
           {counts.announcementCount > 0 && (
             <ShortcutCard

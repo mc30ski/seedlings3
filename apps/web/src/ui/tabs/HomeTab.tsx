@@ -1,28 +1,49 @@
 "use client";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// HomeTab — blended-role Home tab.
+//
+// One tab serves worker/admin/super via a `scope` prop. The layout is
+// capability-additive:
+//   • Worker : self-view (HomeBanners → MyDashboard → hero card →
+//              WorkerHourlyPayCard).
+//   • Admin  : adds the AdminViewAsSelector + badges above the hero,
+//              which drive `viewAsUserId`/`subsetUserIds`/`aggregate`
+//              — the same hero and pay card re-render scoped to the
+//              picker. TodayHourlyPayPanel appears alongside.
+//   • Super  : adds the Operations rollup at the very top (money /
+//              jobs / equipment / team & clients) via the parts file.
+// Client role is walled off — HomeTab is worker-and-up only.
+// ─────────────────────────────────────────────────────────────────────────────
+
 import { useEffect, useState } from "react";
 import { Box, Button, Card, HStack, SimpleGrid, Spinner, Text, VStack } from "@chakra-ui/react";
-import { FiBell, FiClipboard, FiClock, FiInfo, FiMoon, FiNavigation, FiPlay, FiRefreshCw, FiSun, FiTool, FiX } from "react-icons/fi";
-import { TfiMoney } from "react-icons/tfi";
-import { ComposedChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, LabelList } from "recharts";
+import { FiMoon, FiPlay, FiRefreshCw, FiSun } from "react-icons/fi";
 import { computeDatesFromPreset, type DatePreset } from "@/src/lib/datePresets";
 import { apiGet } from "@/src/lib/api";
-import { bizDateKey, bizToday, bizTomorrow, bizAddDays, bizHour, fmtDateOpts, fmtTimeOpts } from "@/src/lib/lib";
-import { usePushNotifications } from "@/src/lib/usePushNotifications";
+import { bizToday, bizTomorrow, bizAddDays, bizHour, fmtDateOpts, fmtTimeOpts } from "@/src/lib/lib";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
-import TomorrowWeatherWarning from "@/src/ui/components/TomorrowWeatherWarning";
 import HomeBanners from "@/src/ui/components/HomeBanners";
-import ComplianceBanner from "@/src/ui/components/ComplianceBanner";
-import WorkdayStrip from "@/src/ui/components/WorkdayStrip";
-import MileageStrip from "@/src/ui/components/MileageStrip";
+import MyDashboard from "@/src/ui/components/MyDashboard";
 import TodayHourlyPayPanel from "@/src/ui/components/TodayHourlyPayPanel";
 import WorkerHourlyPayCard from "@/src/ui/components/WorkerHourlyPayCard";
 import AllWorkersHourlyPayCards from "@/src/ui/components/AllWorkersHourlyPayCards";
 import type { Me } from "@/src/lib/types";
+import { OperationsPanel } from "@/src/ui/tabs/HomeTab.parts";
+import {
+  AdminViewAsBadges,
+  AdminViewAsSelector,
+  type AdminWorker,
+} from "@/src/ui/tabs/JobsTab.parts";
+import { usePersistedState } from "@/src/lib/usePersistedState";
 
 type Props = {
   me: Me | null | undefined;
   onLaunchWorkflow: (name: string) => void;
+  // Blended-role scope. Worker layer is the always-on self-view; Admin
+  // adds the Team dashboard; Super adds Operations. Additive — never
+  // subtractive — so a Super sees Worker + Admin + Super sections.
+  scope: { isWorker: boolean; isAdmin: boolean; isSuper: boolean };
   // Admin-only: when set, the dashboard is computed for this worker instead of the
   // logged-in user. Hero CTAs that launch worker workflows (begin/plan workday) are
   // disabled in this mode since the actions belong to the viewed worker. Tile click-
@@ -43,13 +64,13 @@ type Props = {
   subsetUserIds?: string[];
 };
 
+// Narrowed to the fields this tab actually consumes. The API returns
+// more (equipment/notices/reminders/tasks/etc. — see
+// routes/worker.ts /dashboard-summary), but the tile grid that used
+// them was removed. Add fields back here as new UI needs them.
 type Summary = {
-  overdue: number;
   today: number;
   tomorrow: number;
-  pendingPayment: number;
-  estimatesReady: number;
-  followUps: number;
   activeWork: number;
   todayRemaining: number;
   // Subset of todayRemaining where the user is an observer (not a working
@@ -62,22 +83,6 @@ type Summary = {
   tomorrowUnclaimedCount: number;
   tomorrowUnclaimedPotential: number;
   tomorrowUnconfirmedClientCount: number;
-  equipmentCheckedOut: number;
-  equipmentReserved: number;
-  remindersPending: number;
-  notices: number;
-  noticesAnnouncements: number;
-  noticesFollowups: number;
-  noticesEvents: number;
-  tasksDue: number;
-  minutesThisWeek: number;
-  actualWeekEarnings: number;
-  weekJobCount: number;
-  // ET date strings (YYYY-MM-DD) for the earnings window — the 7 days before
-  // today, excluding today. Used so the tile's drill-down filters to exactly
-  // the range the number was computed from.
-  weekEarningsFrom?: string;
-  weekEarningsTo?: string;
   weeklyCompleted: { weekStart: string; count: number; earnings: number }[];
   // Aggregate-only: per-row breakdown of currently active work for the
   // Team Overview banner. Empty/undefined in per-worker mode.
@@ -125,7 +130,7 @@ type Summary = {
   }[];
 };
 
-type TabFilter = { status?: string; type?: string; kind?: string; datePreset?: string; dateFrom?: string; dateTo?: string; overdue?: boolean; method?: string };
+type TabFilter = { status?: string; type?: string; kind?: string; datePreset?: string; dateFrom?: string; dateTo?: string; method?: string };
 
 const PFX = "seedlings_";
 const setLS = (key: string, val: unknown) => {
@@ -157,7 +162,6 @@ function navigateWithFilter(
 ) {
   // Always clear stale session keys that could trigger highlight/jump-to-occurrence behavior.
   try {
-    sessionStorage.removeItem("open:remindersToJobsTabSearchOnce");
     sessionStorage.removeItem("servicesTabToJobsNav");
   } catch {}
 
@@ -197,7 +201,7 @@ function navigateWithFilter(
     // wrote, leaving the user with default filters and "everything" in the feed.
     try { localStorage.setItem(`${pfx}_lastUsedDate`, bizToday()); } catch {}
     if (adminMode) {
-      // Worker filter for destination AdminJobsTab: subset list, single worker, or empty.
+      // Worker filter for destination JobsTab: subset list, single worker, or empty.
       setLS(`adminjobs_workers`, destWorkerIds);
     }
   } else if (tab === "payments") {
@@ -239,139 +243,63 @@ function navigateWithFilter(
   window.dispatchEvent(new CustomEvent(eventName, { detail: { tab, remount: true } }));
 }
 
-/** Plain navigation (no filter), used when the destination tab manages its own state.
- *  Carries impersonation/aggregate mode forward — admin clicks set or clear the
- *  destination tab's worker selector accordingly. */
-function dispatchNavPlain(tab: string, opts?: NavOpts) {
-  const adminViewAsUserId = opts?.adminViewAsUserId;
-  const adminAggregate = !!opts?.adminAggregate;
-  const adminSubsetUserIds = opts?.adminSubsetUserIds;
-  const adminMode = !!adminViewAsUserId || adminAggregate || (!!adminSubsetUserIds && adminSubsetUserIds.length > 0);
-  // Same precedence as navigateWithFilter: subset > impersonation > aggregate.
-  const destWorkerIds: string[] = adminSubsetUserIds && adminSubsetUserIds.length > 0
-    ? adminSubsetUserIds
-    : adminViewAsUserId
-      ? [adminViewAsUserId]
-      : [];
-  const eventName = adminMode ? "navigate:adminTab" : "navigate:workerTab";
-  let remount = false;
-  if (adminMode) {
-    if (tab === "reminders") {
-      // AdminRemindersTab uses usePersistedState<string[]>("adminreminders_workers").
-      setLS(`adminreminders_workers`, destWorkerIds);
-      remount = true;
-    }
-  }
-  window.dispatchEvent(new CustomEvent(eventName, { detail: { tab, remount } }));
-}
-
-// Date helpers come from @/src/lib/lib (bizDateKey is imported below).
-// NEVER reinvent — see lib/lib.ts header for why.
-
-function sevenDaysAgoKey(): string {
-  // Today minus 6 days (so the range is 7 days inclusive of today), in ET.
-  return bizAddDays(bizToday(), -6);
-}
-
 function fmtMoney(n: number): string {
   return `$${n.toFixed(2)}`;
 }
 
-function Tile({
-  icon: Icon,
-  label,
-  value,
-  hint,
-  color = "blue.500",
-  bg = "blue.50",
-  dimmed = false,
-  disabled = false,
-  badge,
-  onClick,
-  hintOnClick,
-}: {
-  icon: any;
-  label: string;
-  value?: string | number | null;
-  hint?: string;
-  color?: string;
-  bg?: string;
-  dimmed?: boolean;
-  disabled?: boolean;
-  badge?: React.ReactNode;
-  onClick: () => void;
-  /** When set, the hint text becomes its own click target (separate from the
-   *  tile body) — e.g. "Earned for X jobs" linking somewhere distinct. */
-  hintOnClick?: () => void;
-}) {
-  return (
-    <Card.Root
-      variant="outline"
-      cursor={disabled ? "default" : "pointer"}
-      onClick={disabled ? undefined : onClick}
-      borderColor="gray.300"
-      _hover={disabled ? undefined : { shadow: "md", borderColor: color }}
-      transition="all 0.15s"
-      opacity={dimmed ? 0.65 : 1}
-    >
-      <Card.Body p={4}>
-        <HStack gap={3} align="center">
-          <Box bg={bg} color={color} p={2} borderRadius="lg" flexShrink={0}>
-            <Icon size={22} />
-          </Box>
-          <VStack align="start" gap={0} flex={1} minW={0}>
-            <Text fontSize="sm" fontWeight="semibold" color="fg.default" w="full" truncate>
-              {label}
-            </Text>
-            {hint && (
-              hintOnClick ? (
-                <Text
-                  fontSize="xs"
-                  color={color}
-                  truncate
-                  w="full"
-                  textDecoration="underline"
-                  textDecorationStyle="dotted"
-                  cursor="pointer"
-                  onClick={(e) => { e.stopPropagation(); hintOnClick(); }}
-                >
-                  {hint}
-                </Text>
-              ) : (
-                <Text fontSize="xs" color="fg.muted" truncate w="full">
-                  {hint}
-                </Text>
-              )
-            )}
-            {badge && <Box mt={1}>{badge}</Box>}
-          </VStack>
-          {value != null && value !== "" && (
-            <Text fontSize="lg" fontWeight="bold" color={color} flexShrink={0}>
-              {value}
-            </Text>
-          )}
-        </HStack>
-      </Card.Body>
-    </Card.Root>
-  );
-}
-
-export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisplayName, aggregate, subsetUserIds }: Props) {
+export default function HomeTab({
+  me,
+  onLaunchWorkflow,
+  scope,
+  viewAsUserId: propViewAsUserId,
+  viewAsDisplayName: propViewAsDisplayName,
+  aggregate: propAggregate,
+  subsetUserIds: propSubsetUserIds,
+}: Props) {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(true);
+  // Push-notification + compliance state is owned by MyDashboard's
+  // inner banners (NotificationOptInBanner, CompliancePromptBanner) —
+  // this file no longer needs to track any of it.
+
+  // Blended admin picker — matches the JobsTab pattern. When
+  // scope.isAdmin is on AND the caller didn't already pass explicit
+  // viewAs/aggregate/subset props, this internal state feeds the same
+  // load() / render code paths the shipped HomeTab uses. Default
+  // (empty selection) is "All Workers" = aggregate; 1 selection =
+  // single-worker view-as; N selections = subset.
+  const [adminWorkers, setAdminWorkers] = useState<AdminWorker[]>([]);
+  const [selfViewAsIds, setSelfViewAsIds] = usePersistedState<string[]>(
+    "homeTab_viewAsIds",
+    [],
+  );
+  const usingSelfViewAs =
+    scope.isAdmin && !propViewAsUserId && !propAggregate && !propSubsetUserIds?.length;
+  useEffect(() => {
+    if (!scope.isAdmin) return;
+    apiGet<AdminWorker[]>("/api/workers")
+      .then((list) => setAdminWorkers(Array.isArray(list) ? list : []))
+      .catch(() => {});
+  }, [scope.isAdmin]);
+
+  // Effective props — either what the parent passed, or what the
+  // internal picker derives. Downstream code reads these names.
+  const viewAsUserId = usingSelfViewAs
+    ? (selfViewAsIds.length === 1 ? selfViewAsIds[0] : undefined)
+    : propViewAsUserId;
+  const viewAsDisplayName = usingSelfViewAs
+    ? (selfViewAsIds.length === 1
+        ? (adminWorkers.find((w) => w.id === selfViewAsIds[0])?.displayName ?? undefined)
+        : undefined)
+    : propViewAsDisplayName;
+  const subsetUserIds = usingSelfViewAs
+    ? (selfViewAsIds.length > 1 ? selfViewAsIds : undefined)
+    : propSubsetUserIds;
+  const aggregate = usingSelfViewAs
+    ? selfViewAsIds.length === 0  // no selection → All Workers aggregate
+    : propAggregate;
+
   const isViewingOther = !!viewAsUserId;
-  const push = usePushNotifications();
-  const [pushBannerDismissed, setPushBannerDismissed] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
-    try { return localStorage.getItem("seedlings_pushBannerDismissed") === "1"; } catch { return false; }
-  });
-  // Session-only help shown right after the user enables. Component state
-  // resets when the tab unmounts, so this naturally disappears on the next
-  // return to Home — and the X button closes it manually.
-  const [showJustEnabledHelp, setShowJustEnabledHelp] = useState(false);
-  // Same pattern, but for the post-Dismiss state: a one-shot reminder that
-  // the user can still re-enable from Profile.
-  const [showJustDismissedHelp, setShowJustDismissedHelp] = useState(false);
   // Subset mode: aggregate-style view restricted to a list of workers. Treated like
   // aggregate for hero suppression and tile layout, but click-throughs scope to the subset.
   const isSubset = !!subsetUserIds && subsetUserIds.length > 0 && !viewAsUserId;
@@ -389,7 +317,6 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
         : undefined;
   const navTo = (tab: "jobs" | "equipment" | "payments", filter: TabFilter) =>
     navigateWithFilter(tab, filter, navOpts);
-  const navPlain = (tab: string) => dispatchNavPlain(tab, navOpts);
 
   async function load() {
     setLoading(true);
@@ -576,7 +503,17 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
       <Button
         size="sm"
         variant="ghost"
-        onClick={(e) => { e.stopPropagation(); void load(); }}
+        onClick={(e) => {
+          e.stopPropagation();
+          // Refresh every data-owning surface on this page:
+          //   • dashboard summary (drives hero + tiles)
+          //   • MyDashboard banners (workday, mileage, compliance)
+          //     — they already listen for seedlings:workday-changed
+          //   • WorkerHourlyPayCard — same event
+          // No full page reload; each component re-fetches its own data.
+          void load();
+          window.dispatchEvent(new CustomEvent("seedlings:workday-changed"));
+        }}
         loading={loading}
         px="2"
         flexShrink={0}
@@ -598,158 +535,63 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
       )}
       <VStack align="stretch" gap={4}>
 
-        {/* Admin-posted home banners — stack newest-first at the top until
-            the user dismisses them. Hidden while impersonating since the
-            data is always the *current* user's, which would be misleading. */}
+        {/* Admin-posted broadcasts — stay above MY DASHBOARD so
+            company-wide announcements aren't buried inside the
+            collapsible. Hidden while impersonating since the data
+            is always the *current* user's, which would be
+            misleading in that context. */}
         <HomeBanners disabled={isViewingOther} />
 
-        {/* Enable-notifications banner — about the logged-in user's own
-            device. Hidden only in impersonation (admin viewing-as worker);
-            shown in aggregate/subset because the admin still wants push for
-            themselves. Dismissible per-device.
+        {/* Super capability layer — Operations rollup (money, jobs,
+            equipment, team & clients) driven by one period control.
+            Placed ABOVE the admin picker so the highest-level lens
+            (business-wide pulse) sits at the top; the picker below
+            narrows the main hero/tile area. */}
+        {scope.isSuper && <OperationsPanel />}
 
-            After a successful enable, the pink banner is replaced by a yellow
-            help-text box (session-only, dismissible) reminding the user where
-            to look if notifications don't appear. */}
-        {!isViewingOther && showJustEnabledHelp && (
-          <Card.Root variant="outline" bg="yellow.50" borderColor="yellow.300" borderWidth="1px">
-            <Card.Body p={3}>
-              <HStack align="center" gap={3}>
-                <Text fontSize="xs" color="yellow.800" flex={1} minW={0}>
-                  If you don't see notifications, check Settings → Notifications and verify it's enabled for your browser (e.g. Chrome, Safari, etc.).
-                </Text>
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  aria-label="Dismiss notifications help"
-                  onClick={() => setShowJustEnabledHelp(false)}
-                >
-                  <FiX size={14} />
-                </Button>
+        {/* Admin picker — mirrors the shipped Admin → Work → Home
+            worker selector. Default (nothing selected) = All Workers
+            aggregate; 1 = single-worker view-as; N = subset team
+            view. The same hero / hourly-pay / weekly-chart / tile
+            grid below re-renders scoped to the picker. */}
+        {usingSelfViewAs && (
+          <VStack align="stretch" gap={1}>
+            <HStack gap={2} align="center" wrap="nowrap">
+              <AdminViewAsSelector
+                workers={adminWorkers}
+                selected={selfViewAsIds}
+                onChange={setSelfViewAsIds}
+              />
+            </HStack>
+            {/* Wrapping HStack keeps the selected-worker badges as
+                inline chips instead of full-width rows (a Badge
+                inside a VStack align="stretch" would otherwise get
+                stretched to 100% width). */}
+            {selfViewAsIds.length > 0 && (
+              <HStack gap={1} wrap="wrap">
+                <AdminViewAsBadges
+                  workers={adminWorkers}
+                  selected={selfViewAsIds}
+                />
               </HStack>
-            </Card.Body>
-          </Card.Root>
+            )}
+          </VStack>
         )}
 
-        {!isViewingOther && showJustDismissedHelp && (
-          <Card.Root variant="outline" bg="yellow.50" borderColor="yellow.300" borderWidth="1px">
-            <Card.Body p={3}>
-              <HStack align="center" gap={3}>
-                <Text fontSize="xs" color="yellow.800" flex={1} minW={0}>
-                  You can re-enable notifications anytime from your{" "}
-                  <Text
-                    as="span"
-                    color="yellow.900"
-                    fontWeight="semibold"
-                    textDecoration="underline"
-                    cursor="pointer"
-                    onClick={() => {
-                      window.dispatchEvent(new CustomEvent("navigate:profile", { detail: { userId: me?.id } }));
-                    }}
-                  >
-                    Profile
-                  </Text>
-                  .
-                </Text>
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  aria-label="Dismiss"
-                  onClick={() => setShowJustDismissedHelp(false)}
-                >
-                  <FiX size={14} />
-                </Button>
-              </HStack>
-            </Card.Body>
-          </Card.Root>
-        )}
-
-        {!isViewingOther && !showJustEnabledHelp && !pushBannerDismissed && (push.status === "default" || push.status === "needs-pwa-install" || (push.status === "granted-no-sub" && push.explicitlyDisabled)) && (
-          <Card.Root
-            variant="outline"
-            bg="pink.50"
-            borderColor="pink.400"
-            borderWidth="2px"
-            style={{ animation: "seedlings-pulse 2.5s ease-in-out infinite" }}
-          >
-            <Card.Body p={2}>
-              <HStack gap={2} align="center" wrap="wrap">
-                <Box bg="pink.200" color="pink.800" p={1.5} borderRadius="md" flexShrink={0}>
-                  <FiBell size={16} />
-                </Box>
-                <VStack align="start" gap={0} flex="1" minW="180px">
-                  <Text fontSize="sm" fontWeight="semibold" color="pink.900" lineHeight="1.2">
-                    Get a phone alert for tomorrow's plan
-                  </Text>
-                  <Text fontSize="xs" color="pink.800" lineHeight="1.3">
-                    {push.status === "needs-pwa-install"
-                      ? "Add Seedlings to your Home Screen to enable notifications."
-                      : "Tap Enable to receive a push notification each evening."}
-                  </Text>
-                </VStack>
-                <HStack gap={1} flexShrink={0}>
-                  {push.status !== "needs-pwa-install" && (
-                    <Button
-                      size="sm"
-                      colorPalette="pink"
-                      loading={push.busy}
-                      onClick={async () => {
-                        const r = await push.subscribe();
-                        if (r.ok) {
-                          publishInlineMessage({ type: "SUCCESS", text: "Notifications enabled." });
-                          setShowJustEnabledHelp(true);
-                        } else {
-                          publishInlineMessage({ type: "ERROR", text: r.error ?? "Could not enable notifications" });
-                        }
-                      }}
-                    >
-                      Enable
-                    </Button>
-                  )}
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => {
-                      try { localStorage.setItem("seedlings_pushBannerDismissed", "1"); } catch {}
-                      setPushBannerDismissed(true);
-                      setShowJustDismissedHelp(true);
-                    }}
-                  >
-                    Dismiss
-                  </Button>
-                </HStack>
-              </HStack>
-            </Card.Body>
-          </Card.Root>
-        )}
-
-        {/* Compliance banner — surfaces pending policy work below the
-            admin-posted banners AND the push-alert enablement banner. Red
-            when BLOCK-level items are pending (can't start work), orange
-            when only WARN/INFO are left, silently absent when fully
-            cleared. Sign now button dispatches the same `policies:required`
-            event PolicyGateInterceptor listens for, reusing the wizard
-            flow. Hidden while an admin is impersonating another worker. */}
-        <ComplianceBanner
-          viewAsUserId={viewAsUserId ?? null}
-          viewAsDisplayName={isViewingOther ? (viewAsDisplayName ?? null) : null}
-        />
-
-        {/* Workday — mileage is injected INSIDE the workday card via the
-            mileageSlot prop so they share ONE border, ONE background, ONE
-            collapse gesture. Not two adjacent cards. Not a wrapper around
-            two cards. Structurally one card with two zones inside. */}
-        {!isAggregate && (
-          <WorkdayStrip
+        {/* MY WORKDAY — self-view banners section. Reflects the
+            currently-scoped user: logged-in user by default, or the
+            impersonated worker when the admin picker has exactly
+            one selection (WorkdayBanner + CompliancePromptBanner
+            are view-as-aware; MileageBanner + NotificationOptInBanner
+            are inherently self-only and skip themselves in that
+            mode — see MyDashboard). Hidden in subset (N workers)
+            and aggregate (0 workers, admin scope) modes because
+            the banners are inherently single-user surfaces. */}
+        {(!scope.isAdmin || !!viewAsUserId || (!isAggregate && !isSubset)) && (
+          <MyDashboard
+            storageKey="seedlings:homeTab:myDashboardOpen"
             viewAsUserId={viewAsUserId ?? null}
-            viewAsDisplayName={isViewingOther ? (viewAsDisplayName ?? null) : null}
-            canImpersonate={!!me?.realRoles?.includes("SUPER")}
-            mileageSlot={!isViewingOther ? <MileageStrip embedded /> : null}
-            // The strip's trailing 12px margin double-counted with
-            // this VStack's gap={4}, making the space before the hero
-            // visibly larger than any other between-section gap. Let
-            // the parent VStack own all exterior spacing.
-            noBottomMargin
+            viewAsDisplayName={viewAsDisplayName ?? null}
           />
         )}
 
@@ -833,13 +675,22 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
                                 `${occ.id}|${occ.startAt ?? ""}`,
                               );
                             } catch {}
+                            // Preserve the operator's active scope on
+                            // the jump — a Super clicking a row lands
+                            // on Super → Jobs; an Admin lands on
+                            // Admin → Jobs. JobsTab renders the same
+                            // data via scope, but scope-continuity
+                            // matters for the Back button + breadcrumb.
+                            const eventName = scope.isSuper
+                              ? "navigate:superTab"
+                              : "navigate:adminTab";
                             window.dispatchEvent(
-                              new CustomEvent("navigate:adminTab", {
+                              new CustomEvent(eventName, {
                                 detail: { tab: "jobs", remount: true },
                               }),
                             );
                           }}
-                          title="Open this occurrence on the Admin Jobs tab"
+                          title="Open this occurrence on the Jobs tab"
                         >
                           {occ.status === "PAUSED" ? (
                             <Box
@@ -962,13 +813,22 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
                                 `${occ.id}|${occ.startAt ?? ""}`,
                               );
                             } catch {}
+                            // Preserve the operator's active scope on
+                            // the jump — a Super clicking a row lands
+                            // on Super → Jobs; an Admin lands on
+                            // Admin → Jobs. JobsTab renders the same
+                            // data via scope, but scope-continuity
+                            // matters for the Back button + breadcrumb.
+                            const eventName = scope.isSuper
+                              ? "navigate:superTab"
+                              : "navigate:adminTab";
                             window.dispatchEvent(
-                              new CustomEvent("navigate:adminTab", {
+                              new CustomEvent(eventName, {
                                 detail: { tab: "jobs", remount: true },
                               }),
                             );
                           }}
-                          title="Open this occurrence on the Admin Jobs tab"
+                          title="Open this occurrence on the Jobs tab"
                         >
                           <Box
                             w="8px"
@@ -1184,6 +1044,7 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
           <WorkerHourlyPayCard
             viewAsUserId={viewAsUserId ?? null}
             viewAsDisplayName={viewAsDisplayName ?? null}
+            weeklyCompleted={s.weeklyCompleted ?? []}
           />
         )}
 
@@ -1212,286 +1073,8 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
           />
         )}
 
-        {/* Weekly earnings trend over the last 2 months */}
-        {(s.weeklyCompleted ?? []).length > 0 && (() => {
-          const totalEarnings = s.weeklyCompleted.reduce((sum, w) => sum + (w.earnings ?? 0), 0);
-          const fmtWeek = (s: string) => {
-            const [, m, d] = s.split("-");
-            return `${parseInt(m, 10)}/${parseInt(d, 10)}`;
-          };
-          return (
-            <Box p={3} bg="white" borderWidth="1px" borderColor="gray.200" rounded="md">
-              <HStack justify="space-between" mb={2} wrap="wrap" gap={2}>
-                <Text fontSize="xs" fontWeight="semibold" color="fg.default" textTransform="uppercase" letterSpacing="wide">Weekly Earnings (Jobs)</Text>
-                <Text fontSize="xs" color="fg.muted">Last 2 months · {fmtMoney(totalEarnings)}</Text>
-              </HStack>
-              <Box h="160px">
-                <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart data={s.weeklyCompleted} margin={{ top: 28, right: 12, bottom: 0, left: 8 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="weekStart" tickFormatter={fmtWeek} fontSize={10} interval="preserveStartEnd" />
-                    <YAxis fontSize={10} width={56} tickFormatter={(v: number) => v >= 1000 ? `$${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}k` : `$${v}`} />
-                    <Tooltip
-                      content={({ active, payload }: any) => {
-                        if (!active || !payload || !payload.length) return null;
-                        const d = payload[0].payload as { weekStart: string; count: number; earnings: number };
-                        return (
-                          <Box bg="white" p={2} borderWidth="1px" borderColor="gray.200" rounded="md" fontSize="xs" shadow="sm">
-                            <Text fontWeight="semibold" mb={0.5}>Week of {fmtWeek(d.weekStart)}</Text>
-                            <Text color="fg.muted">Jobs: <Text as="span" color="fg.default" fontWeight="medium">{d.count}</Text></Text>
-                            <Text color="fg.muted">Earnings: <Text as="span" color="green.700" fontWeight="medium">${d.earnings.toFixed(2)}</Text></Text>
-                          </Box>
-                        );
-                      }}
-                    />
-                    <Line type="monotone" dataKey="earnings" stroke="var(--chakra-colors-green-600)" strokeWidth={2} dot={{ r: 3, fill: "var(--chakra-colors-green-600)" }}>
-                      <LabelList dataKey="count" position="top" offset={14} fontSize={10} fill="var(--chakra-colors-fg-default)" formatter={(v: any) => (v && v > 0 ? String(v) : "")} />
-                    </Line>
-                  </ComposedChart>
-                </ResponsiveContainer>
-              </Box>
-            </Box>
-          );
-        })()}
 
-        <SimpleGrid columns={{ base: 1, sm: 2 }} gap={3}>
-          {/* Today's jobs — always shown, dimmed if 0.
-              Hint shows "$X earned with $Y remaining potential" matching the hero. */}
-          <Tile
-            icon={FiClipboard}
-            label="Today's jobs"
-            value={s.today}
-            hint={(() => {
-              const earned = s.todayEarnedAmount ?? 0;
-              const remaining = s.todayPotentialAmount ?? 0;
-              if (earned + remaining <= 0) return undefined;
-              return `${fmtMoney(earned)} earned, ${fmtMoney(remaining)} potential`;
-            })()}
-            color="blue.600"
-            bg="blue.50"
-            dimmed={s.today === 0}
-            onClick={() => navTo("jobs", { datePreset: "today", type: "JOBS" })}
-          />
 
-          {/* Tomorrow's jobs — always shown, dimmed if 0.
-              Adds a weather chip under the hint when tomorrow's forecast is inclement
-              (rain, thunderstorm, or snow) so workers can plan around it. */}
-          <Tile
-            icon={FiNavigation}
-            label="Tomorrow's plan"
-            value={s.tomorrow}
-            hint={s.tomorrow > 0 ? "Confirm and notify clients" : undefined}
-            color="purple.600"
-            bg="purple.50"
-            dimmed={s.tomorrow === 0}
-            badge={<TomorrowWeatherWarning size="sm" />}
-            onClick={() => navPlain("reminders")}
-          />
-
-          {/* Equipment — in aggregate mode, show team totals (reserved + checked out).
-              Otherwise directional based on time of day:
-              morning/midday → reserved you need to check out;
-              evening/night → checked out you need to return;
-              otherwise → generic "no actions" tile that links to the Equipment tab. */}
-          {(() => {
-            if (isAggregate) {
-              const reserved = s.equipmentReserved ?? 0;
-              const checkedOut = s.equipmentCheckedOut ?? 0;
-              // Mirror per-person directional logic for the team:
-              // morning/midday → focus on reserved (gear awaiting checkout);
-              // evening → focus on checked out (gear that needs return).
-              if (!isEvening && reserved > 0) {
-                return (
-                  <Tile
-                    icon={FiTool}
-                    label="Reserved equipment"
-                    value={reserved}
-                    hint={checkedOut > 0 ? `${checkedOut} also checked out` : "Awaiting checkout"}
-                    color="teal.600"
-                    bg="teal.50"
-                    onClick={() => navTo("equipment", { status: "RESERVED" })}
-                  />
-                );
-              }
-              if (isEvening && checkedOut > 0) {
-                return (
-                  <Tile
-                    icon={FiTool}
-                    label="Equipment out"
-                    value={checkedOut}
-                    hint={reserved > 0 ? `${reserved} also reserved` : "Currently in workers' hands"}
-                    color="teal.600"
-                    bg="teal.50"
-                    onClick={() => navTo("equipment", { status: "CHECKED_OUT" })}
-                  />
-                );
-              }
-              // Combined fallback view. Click filters to whichever bucket has items
-              // (so a "0 reserved · 5 checked out" tile filters to CHECKED_OUT, not the
-              // empty RESERVED bucket). When both have items, time-of-day breaks the tie.
-              // navTo also clears the worker-scope filter on the destination tab.
-              const total = reserved + checkedOut;
-              const hint = total > 0
-                ? `${reserved} reserved · ${checkedOut} checked out`
-                : "Nothing in workers' hands right now";
-              const fallbackStatus =
-                reserved > 0 && checkedOut === 0 ? "RESERVED"
-                : checkedOut > 0 && reserved === 0 ? "CHECKED_OUT"
-                : isEvening ? "CHECKED_OUT"
-                : "RESERVED";
-              return (
-                <Tile
-                  icon={FiTool}
-                  label="Equipment"
-                  value={total}
-                  hint={hint}
-                  color="teal.600"
-                  bg="teal.50"
-                  dimmed={total === 0}
-                  onClick={() => navTo("equipment", { status: fallbackStatus })}
-                />
-              );
-            }
-            if (!isEvening && s.equipmentReserved > 0) {
-              return (
-                <Tile
-                  icon={FiTool}
-                  label="Reserved equipment"
-                  value={s.equipmentReserved}
-                  hint="Check out before heading out"
-                  color="teal.600"
-                  bg="teal.50"
-                  onClick={() => navTo("equipment", { status: "MY_RESERVED" })}
-                />
-              );
-            }
-            if (isEvening && s.equipmentCheckedOut > 0) {
-              return (
-                <Tile
-                  icon={FiTool}
-                  label="Equipment to return"
-                  value={s.equipmentCheckedOut}
-                  hint="Check back in"
-                  color="teal.600"
-                  bg="teal.50"
-                  onClick={() => navTo("equipment", { status: "MY_CHECKED_OUT" })}
-                />
-              );
-            }
-            return (
-              <Tile
-                icon={FiTool}
-                label="Equipment"
-                value={0}
-                hint="No actions to take at the moment"
-                color="teal.600"
-                bg="teal.50"
-                dimmed
-                onClick={() => navPlain("equipment")}
-              />
-            );
-          })()}
-
-          {/* Pending payments — last month window */}
-          <Tile
-            icon={TfiMoney}
-            label="Awaiting payment"
-            value={s.pendingPayment}
-            hint="Last month · tap to view"
-            color="orange.600"
-            bg="orange.50"
-            dimmed={s.pendingPayment === 0}
-            onClick={() => navTo("jobs", { status: "PENDING_PAYMENT", datePreset: "lastMonth" })}
-          />
-
-          {/* Notices — announcements, follow-ups, events scheduled for today */}
-          <Tile
-            icon={FiInfo}
-            label="Notices"
-            value={s.notices}
-            hint={(() => {
-              const a = s.noticesAnnouncements ?? 0;
-              const f = s.noticesFollowups ?? 0;
-              const e = s.noticesEvents ?? 0;
-              const parts: string[] = [];
-              if (a > 0) parts.push(`${a} announcement${a === 1 ? "" : "s"}`);
-              if (f > 0) parts.push(`${f} follow-up${f === 1 ? "" : "s"}`);
-              if (e > 0) parts.push(`${e} event${e === 1 ? "" : "s"}`);
-              return parts.length > 0 ? parts.join(" · ") : "Announcements, follow-ups & events";
-            })()}
-            color="purple.700"
-            bg="purple.50"
-            dimmed={s.notices === 0}
-            onClick={() => navTo("jobs", { type: "NOTICES", datePreset: "today" })}
-          />
-
-          {/* Reminders due — Reminder-table notifications + TASK-workflow occurrences scheduled today or earlier.
-              Click goes to JobsTab filtered to TASK workflow (the actionable subset). */}
-          <Tile
-            icon={FiBell}
-            label="Reminders"
-            value={(s.followUps ?? 0) + (s.tasksDue ?? 0)}
-            hint={(() => {
-              const r = s.followUps ?? 0;
-              const t = s.tasksDue ?? 0;
-              const parts: string[] = [];
-              if (r > 0) parts.push(`${r} reminder${r === 1 ? "" : "s"}`);
-              if (t > 0) parts.push(`${t} task${t === 1 ? "" : "s"}`);
-              return parts.length > 0 ? parts.join(" · ") : undefined;
-            })()}
-            color="red.600"
-            bg="red.50"
-            dimmed={(s.followUps ?? 0) + (s.tasksDue ?? 0) === 0}
-            onClick={() => navTo("jobs", { type: "DUE", datePreset: "lastMonth" })}
-          />
-
-          {/* Hours worked in the last 7 days — pairs with the earnings tile. */}
-          <Tile
-            icon={FiClock}
-            label="Hours (last 7 days)"
-            value={(() => {
-              const m = s.minutesThisWeek ?? 0;
-              const h = Math.floor(m / 60);
-              const mm = Math.round(m % 60);
-              return h > 0 ? `${h}h ${mm}m` : `${mm}m`;
-            })()}
-            hint={`Time spent on ${s.weekJobCount ?? 0} job${(s.weekJobCount ?? 0) === 1 ? "" : "s"}`}
-            color="teal.700"
-            bg="teal.50"
-            dimmed={(s.minutesThisWeek ?? 0) === 0}
-            onClick={() => navTo("jobs", { status: "FINISHED", dateFrom: sevenDaysAgoKey(), dateTo: bizDateKey(new Date()) })}
-          />
-
-          {/* Earnings for the last 7 days (EXCLUDING today). Worker-type-split:
-              - Employee/trainee: work-anchored (promised net for jobs completed
-                in the window). Whole tile drills into the Jobs tab.
-              - Contractor: payment-anchored (actual payout from payments
-                recorded in the window). Tile body drills into the Payments
-                tab; the "X jobs" hint drills into the Jobs tab.
-              Window dates come from the API so the number and the drill-down
-              always cover the same range. */}
-          {(() => {
-            const isEmp = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
-            const from = s.weekEarningsFrom || sevenDaysAgoKey();
-            const to = s.weekEarningsTo || bizDateKey(new Date());
-            const jobCount = s.weekJobCount ?? 0;
-            const goJobs = () => navTo("jobs", { status: "FINISHED", dateFrom: from, dateTo: to });
-            const goPayments = () => navTo("payments", { dateFrom: from, dateTo: to });
-            return (
-              <Tile
-                icon={TfiMoney}
-                label="Earnings (last 7 days)"
-                value={fmtMoney(s.actualWeekEarnings ?? 0)}
-                hint={`Earned for ${jobCount} job${jobCount === 1 ? "" : "s"}`}
-                color="green.700"
-                bg="green.50"
-                dimmed={(s.actualWeekEarnings ?? 0) === 0}
-                onClick={isEmp ? goJobs : goPayments}
-                hintOnClick={isEmp ? undefined : goJobs}
-              />
-            );
-          })()}
-        </SimpleGrid>
 
       </VStack>
     </Box>

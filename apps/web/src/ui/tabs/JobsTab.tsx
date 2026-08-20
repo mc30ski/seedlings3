@@ -1,7 +1,29 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSwipe } from "@/src/lib/useSwipe";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  AdminViewAsBadges,
+  AdminViewAsSelector,
+  type AdminWorker,
+  Dashboard,
+  ElevatedActionRow,
+  OpsSummaryStrip,
+} from "@/src/ui/tabs/JobsTab.parts";
+import {
+  addonTotal,
+  assigneeSortOrder,
+  type CardDensity,
+  effectiveMinutes,
+  formatDuration,
+  getQuickMessage,
+  kindStates,
+  nextDensity,
+  occInEditableState,
+  parseJobTags,
+  quickDateItemsBase,
+  statusStates,
+  totalPrice,
+} from "@/src/ui/tabs/JobsTab.utils";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
   Badge,
@@ -17,8 +39,10 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertCircle, AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, Eye, Filter, Hand, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, PinOff, Play, RefreshCw, Repeat, Share2, Star, Tag, Users, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, Archive, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, Eye, Filter, Hand, Heart, Inbox, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, Play, RefreshCw, Repeat, Share2, Star, Tag, Users, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
+import { WeatherIcon } from "@/src/ui/components/WeatherBar";
+import { useForecastByDate } from "@/src/lib/useForecastByDate";
 import {
   useWorkdayGate,
   useTeamWorkdayDialog,
@@ -26,8 +50,6 @@ import {
 } from "@/src/ui/dialogs/WorkdayRequiredDialog";
 import ImpersonationWarning from "@/src/ui/components/ImpersonationWarning";
 import NextStartOverrideAffordance from "@/src/ui/components/NextStartOverrideAffordance";
-import WorkdayStrip from "@/src/ui/components/WorkdayStrip";
-import MileageStrip from "@/src/ui/components/MileageStrip";
 import RepeatingPauseInfoLine from "@/src/ui/components/RepeatingPauseInfoLine";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { projectViewerPayout, projectTeamPayoutsForOcc, perWorkerShare, rateForViewer } from "@/src/lib/paymentMath";
@@ -39,7 +61,7 @@ import { determineRoles, occurrenceStatusColor, prettyStatus, clientLabel, fmtDa
 import { isOccurrenceOverdue, loadPaymentRequestExpiryHours, DEFAULT_PAYMENT_REQUEST_EXPIRY_HOURS } from "@/src/lib/overdueRule";
 import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
 import { useBranding } from "@/src/lib/useBranding";
-import { type TabPropsType, type WorkerOccurrence, JOB_OCCURRENCE_STATUS, JOB_KIND } from "@/src/lib/types";
+import { type TabPropsType, type WorkerOccurrence, type Role } from "@/src/lib/types";
 import { normalizeReceiptNumber } from "@/src/lib/receiptNumber";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import {
@@ -47,7 +69,6 @@ import {
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
-import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 import { StatusBadge } from "@/src/ui/components/StatusBadge";
 import HolidayChip from "@/src/ui/components/HolidayChip";
 import ClientRequestsSection from "@/src/ui/components/ClientRequestsSection";
@@ -65,9 +86,9 @@ import { openEventSearch, navigateToProfile, bumpTitleBarEarnings } from "@/src/
 import { suggestedEquipment, parseEquipmentKindsConfig, type EquipmentKindConfig } from "@/src/lib/equipmentSuggestions";
 import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/lib/datePresets";
 import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
-import OccurrenceInstructions, { InstructionsBadge } from "@/src/ui/components/OccurrenceInstructions";
+import OccurrenceInstructions from "@/src/ui/components/OccurrenceInstructions";
 import PaymentCommsButtons from "@/src/ui/components/PaymentCommsButtons";
-import { jobTagLabel as _jobTagLabel, JOB_TAGS, parseServiceTypesConfig, pricingJobTags, DEFAULT_SERVICE_TYPES, type ServiceTypeConfig } from "@/src/ui/components/JobTagPicker";
+import { jobTagLabel as _jobTagLabel, parseServiceTypesConfig, pricingJobTags, DEFAULT_SERVICE_TYPES, type ServiceTypeConfig } from "@/src/ui/components/JobTagPicker";
 import { parseAdminTags, adminTagLabel, adminTagColor } from "@/src/ui/components/AdminTagPicker";
 import TruncatedText from "@/src/ui/components/TruncatedText";
 import { useOffline } from "@/src/lib/offline";
@@ -97,129 +118,10 @@ import {
 // `localDate` removed — use `bizDateKey` directly (single canonical
 // helper from @/src/lib/lib). See docs/DATE_HANDLING.md.
 
-function formatDuration(minutes: number): string {
-  const h = Math.floor(minutes / 60);
-  const m = Math.round(minutes % 60);
-  return h > 0 ? `${h}h ${m}m` : `${m}m`;
-}
-
-function effectiveMinutes(occ: {
-  startedAt?: string | null;
-  completedAt?: string | null;
-  pausedAt?: string | null;
-  totalPausedMs?: number | null;
-  status?: string;
-}): number | null {
-  if (!occ.startedAt) return null;
-  const startMs = new Date(occ.startedAt).getTime();
-  const paused = occ.totalPausedMs ?? 0;
-  let endMs: number;
-  if (occ.status === "PAUSED" && occ.pausedAt) endMs = new Date(occ.pausedAt).getTime();
-  else if (occ.completedAt) endMs = new Date(occ.completedAt).getTime();
-  else endMs = Date.now();
-  // Clamp to 0 to avoid showing negative durations when data is invalid
-  // (e.g., completedAt before startedAt). The backend Hours-this-week sum also clamps,
-  // so the per-card display stays consistent with the tile total.
-  return Math.max(0, (endMs - startMs - paused) / 60000);
-}
-
-function assigneeSortOrder(a: { assignedById?: string | null; userId: string; role?: string | null }): number {
-  const isClaimer = a.assignedById === a.userId && a.role !== "observer";
-  if (isClaimer) return 0;
-  if (a.role === "observer") return 2;
-  return 1;
-}
-
-/**
- * Returns a preset contact message based on occurrence state, or null if no message is appropriate.
- */
-function getQuickMessage(occ: any, contactName: string | null): { label: string; body: string } | null {
-  const name = contactName ?? "there";
-  const dateStr = occ.startAt ? fmtDateOpts(occ.startAt, { weekday: "long", month: "long", day: "numeric" }) : "your upcoming appointment";
-  // Property address joined into "street, city, state" form. Empty string
-  // when no address is on file so the message just omits the location clause
-  // instead of rendering an awkward "at ." segment.
-  const prop = occ.job?.property;
-  const addressStr = [prop?.street1, prop?.city, prop?.state].filter(Boolean).join(", ");
-  const atAddress = addressStr ? ` at ${addressStr}` : "";
-
-  // Unconfirmed — needs client confirmation. Previously gated on
-  // isClaimed so unclaimed jobs hid the Request Confirmation button.
-  // That's wrong for the Admin Jobs tab where an admin routinely
-  // confirms unclaimed jobs on the client's behalf and still wants
-  // the messaging affordance. The message copy doesn't depend on
-  // anyone being claimed — it's "we have your appointment scheduled,
-  // please confirm" — so the gate doesn't earn its keep.
-  if (occ.status === "SCHEDULED" && occ.jobId && !(occ as any).isClientConfirmed) {
-    return {
-      label: "Request Confirmation",
-      body: `Hi ${name}, this is Seedlings Lawn Care. We have your lawn service scheduled for ${dateStr}${atAddress}. Could you please confirm this works for you? Or let us know if you need to reschedule.`,
-    };
-  }
-
-  // Pending payment
-  if (occ.status === "PENDING_PAYMENT") {
-    const amount = totalPrice(occ);
-    const amountStr = amount != null ? ` of $${amount.toFixed(2)}` : "";
-    return {
-      label: "Request Payment",
-      body: `Hi ${name}, this is Seedlings Lawn Care. Your lawn service on ${dateStr}${atAddress} has been completed. A payment${amountStr} is due at your earliest convenience. Please let us know if you have any questions. Thank you!`,
-    };
-  }
-
-  return null;
-}
-
-function addonTotal(occ: any): number {
-  return (occ.addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0);
-}
-
-// Whether the claimer can still edit a job's billables (expenses, add-on
-// services). They keep full edit access through completion and while the
-// occurrence sits in PENDING_PAYMENT *before* payment is committed —
-// claimers routinely reconcile the evening before sending the client their
-// payment request. Editing locks the moment payment is committed: a request
-// was sent to the client (paymentRequestSentAt) or a payment was
-// recorded/accepted (a Payment row exists). CLOSED and terminal states are
-// always frozen — admins do retroactive edits via the Services tab.
-function occInEditableState(occ: any): boolean {
-  switch (occ?.status) {
-    case "SCHEDULED":
-    case "IN_PROGRESS":
-    case "PAUSED":
-    case "COMPLETED":
-      return true;
-    case "PENDING_PAYMENT":
-      return !occ.payment && !occ.paymentRequestSentAt;
-    default:
-      return false;
-  }
-}
-
-function totalPrice(occ: any): number | null {
-  const base = (occ.price || null) ?? (occ.proposalAmount || null);
-  if (base == null) return addonTotal(occ) > 0 ? addonTotal(occ) : null;
-  return base + addonTotal(occ);
-}
-
-function parseJobTags(occ: any): string[] {
-  if (!occ.jobTags) return [];
-  if (Array.isArray(occ.jobTags)) return occ.jobTags;
-  try { return JSON.parse(occ.jobTags); } catch { return []; }
-}
-
-const statusStates = ["ALL", "UNCLAIMED", ...JOB_OCCURRENCE_STATUS.filter((s) => s !== "ARCHIVED" && s !== "CANCELED")] as const;
-
-const quickDateItemsBase = [
-  { label: "Now", value: "now" },
-  { label: "This week", value: "thisWeek" },
-  { label: "This month", value: "thisMonth" },
-  { label: "Yesterday", value: "yesterday" },
-  { label: "Last week", value: "lastWeek" },
-  { label: "Last month", value: "lastMonth" },
-];
-
-const kindStates = ["ALL", ...JOB_KIND] as const;
+// Pure helpers + tab-wide constants live in JobsTab.utils.ts so
+// they can be shared with the card / filter subcomponents without
+// dragging any of the tab's local state along. Everything imported
+// below is React-free and side-effect-free.
 
 type OccComment = {
   id: string;
@@ -229,7 +131,12 @@ type OccComment = {
   author: { id: string; displayName?: string | null; email?: string | null };
 };
 
-type JobsTabProps = TabPropsType & {
+type JobsTabProps = Omit<TabPropsType, "purpose"> & {
+  /** Optional purpose override. Defaults to "WORKER" — the whole point
+   *  of this tab is to render the worker layout as the baseline for
+   *  every role, then layer admin/super overlays via `scope`. Callers
+   *  don't need to pass this. */
+  purpose?: Role;
   /** When set, filter occurrences to only those assigned to these users */
   viewAsUserIds?: string[];
   /** Simulated worker type when admin is impersonating (for UI behavior like hiding tentative) */
@@ -244,25 +151,135 @@ type JobsTabProps = TabPropsType & {
   headerBelowSlot?: React.ReactNode;
   /** Called when the "Clear" badge is clicked, to reset external filters (e.g. View as) */
   onClearAll?: () => void;
+  /** Blended-view scope. Admin/super overlays layer additively via
+   *  this flag set; the shipped card + section layout underneath is
+   *  untouched. */
+  scope: { isWorker: boolean; isAdmin: boolean; isSuper: boolean };
 };
 
-export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsWorkerType, viewAsDisplayName, headerSlot, headerBelowSlot, onClearAll }: JobsTabProps) {
+// ─────────────────────────────────────────────────────────────────────────────
+// JobsTab — blended-role Jobs tab. One tab serves worker/admin/super
+// via a `scope` prop; `purpose` defaults to "WORKER" so the worker
+// layout is the baseline and admin/super capabilities layer
+// additively:
+//   • scope.isAdmin → AdminViewAsSelector + Client Requests dashboard
+//                     + admin action row (Cancel) on cards
+//   • scope.isSuper → Ops summary strip at the top + super action row
+//                     (Reopen / Archive / Force next) on cards
+//
+// Nothing is REMOVED for a lower role — capabilities only ADD.
+//
+// Companion files:
+//   • JobsTab.utils.ts   — pure helpers + tab-wide constants
+//   • JobsTab.parts.tsx  — additive UI (Dashboard/CompactBanner
+//                          re-exports, OpsSummaryStrip,
+//                          ElevatedActionRow, SkeletonBanner,
+//                          CompliancePromptBanner,
+//                          NotificationOptInBanner,
+//                          AdminViewAsSelector/Badges)
+//   • JobsTab.workday.tsx — WorkdayBanner + MileageBanner (surfaces
+//                          consumed by MyDashboard).
+// ─────────────────────────────────────────────────────────────────────────────
+export default function JobsTab({
+  me,
+  purpose = "WORKER",
+  viewAsUserIds: propViewAsUserIds,
+  viewAsWorkerType: propViewAsWorkerType,
+  viewAsDisplayName: propViewAsDisplayName,
+  headerSlot: propHeaderSlot,
+  headerBelowSlot: propHeaderBelowSlot,
+  onClearAll: propOnClearAll,
+  scope,
+}: JobsTabProps) {
   const { isAvail, forAdmin, isAdmin: hasAdminRole, isSuper: hasSuperRole } = determineRoles(me, purpose);
-  // Tab-aware role gates. The Worker Jobs tab (`purpose === "WORKER"`)
-  // is strictly a worker UI — admin and super capabilities (estimates,
-  // manage-in-services, reset-job, per-occurrence overrides, payment
-  // reconciliation tools, etc.) only surface when the actor is on the
-  // Admin Jobs tab (`forAdmin`). Without this gate, every condition in
-  // the file like `(isAdmin || isSuper) && …` would render admin
-  // controls on the worker tab whenever the signed-in user happened to
-  // have those roles — which is exactly the role-leak we're closing.
-  //
-  // Use these throughout the file; the raw `hasAdminRole` /
-  // `hasSuperRole` are kept so the (very rare) places that need to know
-  // "does the actor TRULY have super, regardless of which tab they're
-  // on" can opt in explicitly.
-  const isAdmin = forAdmin && hasAdminRole;
-  const isSuper = forAdmin && hasSuperRole;
+  // Tab-aware role gates. Purpose defaults to WORKER so the worker
+  // layout is the baseline; admin/super capabilities surface
+  // additively for elevated scopes. An actor with the underlying
+  // role AND admin scope gets `isAdmin === true` even when purpose
+  // is still WORKER, which lights up every `{isAdmin && …}` section
+  // (Client Requests, admin filter chips, admin-only sections, …).
+  // Worker scope stays untouched.
+  const isAdmin = (forAdmin || scope.isAdmin) && hasAdminRole;
+  const isSuper = (forAdmin || scope.isSuper) && hasSuperRole;
+  // Admin/super-additive gate. Used in place of `forAdmin` at every
+  // site where forAdmin gates an ADMIN-ONLY ADDITION (Client Requests
+  // fetch/render, admin filter chips, admin data feeds, admin API
+  // path selection). Where forAdmin gates a WORKER-BASELINE default
+  // (daily filter reset, worker-only fetch shape) leave it alone —
+  // admin scope in JobsTab still wants worker-baseline behaviors.
+  const showAdminExtras = forAdmin || scope.isAdmin;
+  const showSuperExtras = forAdmin || scope.isSuper;
+
+  // Internal admin "View as" state — only wired when scope.isAdmin AND
+  // the parent didn't already pass its own viewAsUserIds. Workers
+  // list is fetched once from /api/workers on mount.
+  const [adminWorkers, setAdminWorkers] = useState<AdminWorker[]>([]);
+  const [selfViewAsIds, setSelfViewAsIds] = usePersistedState<string[]>(
+    "jobsTab_viewAsIds",
+    [],
+  );
+  useEffect(() => {
+    if (!showAdminExtras) return;
+    apiGet<AdminWorker[]>("/api/workers")
+      .then((list) => setAdminWorkers(Array.isArray(list) ? list : []))
+      .catch(() => {});
+  }, [showAdminExtras]);
+
+  // Pending client-request count — drives the collapsed-glow on the
+  // Client Requests Dashboard wrapper. Refetches on the same
+  // "something changed" events the child section listens for.
+  const [clientRequestPending, setClientRequestPending] = useState<number>(0);
+  useEffect(() => {
+    if (!showAdminExtras) return;
+    const load = () => {
+      apiGet<Array<{ id: string }>>("/api/admin/change-requests?status=PENDING")
+        .then((rows) => setClientRequestPending(Array.isArray(rows) ? rows.length : 0))
+        .catch(() => setClientRequestPending(0));
+    };
+    load();
+    const onChange = () => load();
+    window.addEventListener("seedlings:change-requests-updated", onChange);
+    window.addEventListener("focus", onChange);
+    return () => {
+      window.removeEventListener("seedlings:change-requests-updated", onChange);
+      window.removeEventListener("focus", onChange);
+    };
+  }, [showAdminExtras]);
+
+  // Effective view-as bindings — either the prop-provided ones (if the
+  // parent wrapped us with explicit values, matches JobsTab's
+  // contract) or the internal state (blended admin scope, no wrapper).
+  // Every downstream reader uses these names, so the shadowing here is
+  // the single point of resolution.
+  const usingSelfViewAs = showAdminExtras && !propViewAsUserIds;
+  const viewAsUserIds = usingSelfViewAs
+    ? (selfViewAsIds.length > 0 ? selfViewAsIds : undefined)
+    : propViewAsUserIds;
+  const viewAsWorkerType = usingSelfViewAs
+    ? (selfViewAsIds.length === 1
+        ? (adminWorkers.find((w) => w.id === selfViewAsIds[0])?.workerType ?? null)
+        : undefined)
+    : propViewAsWorkerType;
+  const viewAsDisplayName = usingSelfViewAs
+    ? (selfViewAsIds.length === 1
+        ? (adminWorkers.find((w) => w.id === selfViewAsIds[0])?.displayName ?? null)
+        : null)
+    : propViewAsDisplayName;
+  const headerSlot = usingSelfViewAs
+    ? (
+        <AdminViewAsSelector
+          workers={adminWorkers}
+          selected={selfViewAsIds}
+          onChange={setSelfViewAsIds}
+        />
+      )
+    : propHeaderSlot;
+  const headerBelowSlot = usingSelfViewAs
+    ? <AdminViewAsBadges workers={adminWorkers} selected={selfViewAsIds} />
+    : propHeaderBelowSlot;
+  const onClearAll = usingSelfViewAs
+    ? () => setSelfViewAsIds([])
+    : propOnClearAll;
   const { isOffline } = useOffline();
   // Workday gate — wraps job-start actions with the "you need an active
   // workday" check. Renders its own dialog at the bottom of the tree.
@@ -318,28 +335,21 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const myId = viewAsUserIds?.length === 1 ? viewAsUserIds[0] : me?.id || "";
   const pfx = purpose === "ADMIN" ? "ajobs" : "wjobs";
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // STATE — search, density, filters, occurrences, dialogs, comments…
+  // ═══════════════════════════════════════════════════════════════════════
   const [q, setQ] = useState("");
   // Card density: three levels.
   //   ultra  — single-row scan view, ~32px tall
   //   semi   — compact card (default)
   //   expanded — full detail view
   // The global density (`cardDensity`) sets the default for every card.
-  // `cardOverrides` is a per-card override Map — clicking a card cycles
-  // its mode (ultra → semi → expanded → ultra…) independently of the
-  // global setting. Switching the global density clears all overrides.
-  type CardDensity = "ultra" | "semi" | "expanded";
+  // Card density type + cycle helper live in JobsTab.utils —
+  // `cardOverrides` (below) is the per-card override map that lets a
+  // single click on any card cycle it (ultra → semi → expanded → …)
+  // independently of the global setting. Switching the global density
+  // clears all overrides.
   const [cardDensity, setCardDensity] = usePersistedState<CardDensity>(`${pfx}_density`, "semi");
-  // Backward-compat shim: a few legacy spots still read `compact`. Treat
-  // anything but "expanded" as compact for those checks.
-  const compact = cardDensity !== "expanded";
-
-  // Cycle order matches the segmented toggle (left→right): ultra → semi
-  // → expanded → ultra. Used by per-card click handlers.
-  const CARD_DENSITY_CYCLE: CardDensity[] = ["ultra", "semi", "expanded"];
-  const nextDensity = (m: CardDensity): CardDensity => {
-    const i = CARD_DENSITY_CYCLE.indexOf(m);
-    return CARD_DENSITY_CYCLE[(i + 1) % CARD_DENSITY_CYCLE.length];
-  };
   const [cardOverrides, setCardOverrides] = useState<Map<string, CardDensity>>(new Map());
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   // Per-occurrence collapse state for the estimate "Notes" disclosure on
@@ -374,12 +384,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       { label: "Notices", value: "NOTICES" },
       // Admin-only: foreign rows from the Timeline tab (activities) and
       // Documents (per-day expirations). Read-only in this feed.
-      ...(forAdmin ? [
+      ...(showAdminExtras ? [
         { label: "Activity", value: "ACTIVITY" },
         { label: "Doc expiration", value: "DOC_EXPIRATION" },
       ] : []),
     ],
-    [forAdmin]
+    [showAdminExtras]
   );
   const typeCollection = useMemo(
     () => createListCollection({ items: typeItems }),
@@ -389,7 +399,15 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [statusFilter, setStatusFilter] = usePersistedState<string[]>(`${pfx}_status`, ["ALL"]);
   const statusItems = useMemo(
     () => [
-      ...statusStates.map((s) => ({ label: s === "ALL" ? "All Statuses" : s === "UNCLAIMED" ? "Unclaimed" : prettyStatus(s), value: s as string })),
+      ...statusStates.map((s) => ({
+        label:
+          s === "ALL" ? "All Statuses"
+          : s === "UNCLAIMED" ? "Unclaimed"
+          : s === "UNCONFIRMED" ? "Unconfirmed"
+          : s === "PAUSED_REPEATING" ? "Paused repeating"
+          : prettyStatus(s),
+        value: s as string,
+      })),
       { label: "Finished", value: "FINISHED" },
     ].map((s) => ({ label: s.label, value: s.value })),
     []
@@ -438,7 +456,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [timelineCategories, setTimelineCategories] = useState<TimelineCategoryConfig[]>(DEFAULT_TIMELINE_CATEGORIES);
   const [documentTypes, setDocumentTypes] = useState<DocumentTypeConfig[]>(DEFAULT_DOCUMENT_TYPES);
   useEffect(() => {
-    if (!forAdmin) return;
+    if (!showAdminExtras) return;
     (async () => {
       try {
         const settings = await apiGet<{ key: string; value: string }[]>("/api/admin/settings");
@@ -451,7 +469,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         if (dtp) setDocumentTypes(dtp);
       } catch {}
     })();
-  }, [forAdmin]);
+  }, [showAdminExtras]);
   // Live tick — re-render every minute so "X actual" elapsed time updates while the page is open.
   // (Once a job is completed, effectiveMinutes() uses completedAt and stops counting naturally.)
   const [, setNowTick] = useState(0);
@@ -888,7 +906,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   }, []);
 
   useEffect(() => {
-    if (!forAdmin) return;
+    if (!showAdminExtras) return;
     try {
       const flag = localStorage.getItem("seedlings_adminJobs_showOverdue");
       if (flag) {
@@ -899,7 +917,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     const onShowOverdue = () => applyOverdue();
     window.addEventListener("adminJobs:showOverdue", onShowOverdue);
     return () => window.removeEventListener("adminJobs:showOverdue", onShowOverdue);
-  }, [forAdmin]);
+  }, [showAdminExtras]);
 
   // "Estimate follow-ups" header alert → filter to ESTIMATE/PROPOSAL_SUBMITTED
   // visits from 4 weeks ago through 1 week ago. Same shape as applyOverdue:
@@ -927,7 +945,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   }, []);
 
   useEffect(() => {
-    if (!forAdmin) return;
+    if (!showAdminExtras) return;
     try {
       const flag = localStorage.getItem("seedlings_adminJobs_showEstimateFollowups");
       if (flag) {
@@ -938,7 +956,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     const onShow = () => applyEstimateFollowups();
     window.addEventListener("adminJobs:showEstimateFollowups", onShow);
     return () => window.removeEventListener("adminJobs:showEstimateFollowups", onShow);
-  }, [forAdmin, applyEstimateFollowups]);
+  }, [showAdminExtras, applyEstimateFollowups]);
 
   // "Hours awaiting approval" title-bar alert → wide date range (last 90
   // days) + unapprovedHoursActive flag. Window is generous so admins can
@@ -966,7 +984,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   }, []);
 
   useEffect(() => {
-    if (!forAdmin) return;
+    if (!showAdminExtras) return;
     try {
       const flag = localStorage.getItem("seedlings_adminJobs_showUnapprovedHours");
       if (flag) {
@@ -977,7 +995,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     const onShow = () => applyUnapprovedHours();
     window.addEventListener("adminJobs:showUnapprovedHours", onShow);
     return () => window.removeEventListener("adminJobs:showUnapprovedHours", onShow);
-  }, [forAdmin, applyUnapprovedHours]);
+  }, [showAdminExtras, applyUnapprovedHours]);
 
   // Worker-only "peek at others" toggle. When on, the load filter is
   // relaxed to include jobs assigned to other workers (not just mine +
@@ -988,6 +1006,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   // (their scope is intentionally narrower — see `isTrainee` below).
   // Not shown on the Admin Jobs tab (admins already see everything).
   const [peekOthers, setPeekOthers] = usePersistedState<boolean>("wjobs_peekOthers", false);
+
+  // Forecast lookup by ET date key. Used to prefix each dayGroup
+  // header with a small weather glyph (Today, Tomorrow, plus the
+  // next few days that fall inside the forecast window). Silently
+  // no-op for date keys outside the forecast range.
+  const forecastByDate = useForecastByDate();
 
   const [datePreset, setDatePreset] = usePersistedState<DatePreset>(`${pfx}_datePreset`, "now");
   const presetDates = useMemo(() => computeDatesFromPreset(datePreset), [datePreset]);
@@ -1156,9 +1180,35 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   // group context, not as a solo claim.
   const [pendingClaimGroupId, setPendingClaimGroupId] = useState<string | null>(null);
   const isTrainee = viewAsWorkerType !== undefined ? viewAsWorkerType === "TRAINEE" : me?.workerType === "TRAINEE";
-  // Peek is only active when: the toggle is on, we're on the worker
-  // tab (never admin), and the current viewer isn't a trainee.
-  const peekActive = peekOthers && isWorkerView && !isTrainee;
+  // ═════════════════════════════════════════════════════════════════════
+  // TEAM / PEEK MODEL — see docstring block below every field.
+  // ═════════════════════════════════════════════════════════════════════
+  //
+  // The Team button + per-card Users icon share one mental model:
+  // "who is 'I' right now, and which cards have people OTHER than me
+  // on them?" The set of people who count as "me" varies with scope:
+  //
+  //   Worker scope, no view-as  → identity = {myId}
+  //   Admin/Super + view-as N   → identity = {...viewAsUserIds}
+  //   Admin/Super, All Workers  → no identity → team concept off
+  //   Trainee                   → team concept off
+  //
+  // teamContextEnabled: true when there IS a coherent identity. Drives
+  //                     the toolbar button's enable state.
+  // peekActive:         the button is on AND there's a context to
+  //                     apply it in. Drives whether the load fetches
+  //                     teammate cards (worker scope only) and
+  //                     whether the per-card Users icon renders.
+  // teamIdentityIds:    the set of user ids that count as "me" for the
+  //                     purpose of deciding which cards are shared-
+  //                     team jobs.
+  const teamContextEnabled =
+    !isTrainee &&
+    ((viewAsUserIds?.length ?? 0) > 0 || !showAdminExtras);
+  const peekActive = peekOthers && teamContextEnabled;
+  const teamIdentityIds: Set<string> = viewAsUserIds?.length
+    ? new Set(viewAsUserIds)
+    : new Set([myId].filter(Boolean));
   const [manageOccurrence, setManageOccurrence] = useState<WorkerOccurrence | null>(null);
   const [completeDialogOcc, setCompleteDialogOcc] = useState<WorkerOccurrence | null>(null);
   // Admin-only "Reset Job" confirm. Holds the occurrence the admin
@@ -1210,10 +1260,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [pricingGuideOpen, setPricingGuideOpen] = useState(false);
   useEffect(() => {
     if (!addAddonOcc) return;
-    apiGet<PricingHintEntry[]>(forAdmin ? "/api/admin/pricing" : "/api/pricing")
+    apiGet<PricingHintEntry[]>(showAdminExtras ? "/api/admin/pricing" : "/api/pricing")
       .then((list) => setPricingHints(Array.isArray(list) ? list : []))
       .catch(() => setPricingHints([]));
-  }, [addAddonOcc, forAdmin]);
+  }, [addAddonOcc, showAdminExtras]);
   const addonHintEntry = useMemo(() => {
     if (!addonTag) return null;
     return pricingHints.find((p) => pricingJobTags(p.parsedValue).includes(addonTag)) ?? null;
@@ -1489,14 +1539,22 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       if (seq !== loadSeqRef.current) return;
       if (!Array.isArray(list)) list = [];
       if (viewAsUserIds?.length) {
-        // Admin "View as" — show ONLY jobs the selected worker(s) are assigned to
+        // Admin "View as" — show jobs assigned to the selected
+        // worker(s). Announcements pass through. When peek is ON,
+        // ALSO include cards where none of the selected workers are
+        // assigned, so the operator can see teammate work outside
+        // the identity set — same "peek at teammates" model the
+        // worker view uses, just with a set-of-selected-workers as
+        // the identity instead of {myId}.
         const idSet = new Set(viewAsUserIds);
         list = list.filter((occ) => {
           if (occ.workflow === "ANNOUNCEMENT") return true;
           const assignees = occ.assignees ?? [];
-          return assignees.some((a) => idSet.has(a.userId));
+          const hitsViewAs = assignees.some((a) => idSet.has(a.userId));
+          if (hitsViewAs) return true;
+          return peekActive;
         });
-      } else if (!forAdmin && myId) {
+      } else if (!showAdminExtras && myId) {
         if (isTrainee) {
           // Trainees only see jobs they are assigned to (no unassigned/
           // claimable). Timeline events (workflow=EVENT) are admin-only —
@@ -1554,7 +1612,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       // expirations. Without this guard, an admin viewing as a worker
       // would still see admin-only Timeline rows mixed into the feed,
       // contradicting the view-as semantics.
-      if (forAdmin && !viewAsUserIds?.length) {
+      if (showAdminExtras && !viewAsUserIds?.length) {
         try {
           type UpcomingApiRow =
             | {
@@ -1656,7 +1714,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     apiGet<CollectionLite[]>("/api/equipment-collections")
       .then((list) => setEquipmentCollections(Array.isArray(list) ? list : []))
       .catch(() => setEquipmentCollections([]));
-  }, [dateFrom, dateTo, viewAsUserIds, isTrainee, peekActive]);
+    // showAdminExtras included so switching RoleChip Admin → Worker
+    // (or vice versa) triggers a fresh load; the client-side scope
+    // filter runs inside load() and would otherwise keep the
+    // previously-scoped items in place, showing e.g. team cards to
+    // a worker after they'd been visible to admin.
+  }, [dateFrom, dateTo, viewAsUserIds, isTrainee, peekActive, showAdminExtras]);
 
   // Re-fetch data after offline queue syncs
   const loadRef = useRef(load);
@@ -1826,11 +1889,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   }, []);
 
 
-  // In-app handoff: RemindersTab's "View →" links pre-write `<occId>|<startAt>`
-  // to localStorage and force a remount. This effect runs once on every fresh
-  // mount, consumes the key, and applies the highlight with a narrow date range
-  // anchored on startAt — that prevents clampWorkerDates from clobbering the
-  // range. The OAuth deep-link path keeps using the event listener above.
+  // In-app handoff: any caller that wants to jump straight to a
+  // specific occurrence on this tab pre-writes `<occId>|<startAt>`
+  // to `seedlings_jobs_pendingHighlight` in localStorage and forces
+  // a remount. This effect runs once on every fresh mount, consumes
+  // the key, and applies the highlight with a narrow date range
+  // anchored on startAt — that prevents clampWorkerDates from
+  // clobbering the range. The OAuth deep-link path keeps using the
+  // event listener above.
   useEffect(() => {
     let pending: string | null = null;
     try { pending = localStorage.getItem("seedlings_jobs_pendingHighlight"); } catch {}
@@ -1873,7 +1939,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           if (isTrainee) return assignees.some((a) => idSet.has(a.userId));
           return assignees.length === 0 || assignees.some((a) => idSet.has(a.userId));
         });
-      } else if (!forAdmin && myId) {
+      } else if (!showAdminExtras && myId) {
         if (isTrainee) {
           list = list.filter((occ) => (occ.assignees ?? []).some((a) => a.userId === myId));
         } else {
@@ -2417,7 +2483,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     const sf = statusFilter[0];
     if (sf !== "ALL") {
       rows = rows.filter((occ) => {
-        const hasAssignees = (occ.assignees ?? []).length > 0;
         if (sf === "UNCLAIMED") {
           // Only claimable work counts as "unclaimed". Reminders/tasks/events/
           // announcements/followups have no claim semantics and would otherwise
@@ -2434,6 +2499,28 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           const hasNonObserverAssignee = (occ.assignees ?? []).some((a) => a.role !== "observer");
           return claimable && !hasNonObserverAssignee;
         }
+        if (sf === "UNCONFIRMED") {
+          // "Unconfirmed" = a SCHEDULED occurrence with a jobId, not
+          // yet client-confirmed, and of a workflow that carries the
+          // confirmation flow (STANDARD / ONE_OFF / ESTIMATE, plus
+          // legacy null workflow). Mirrors `needsConfirmation` in
+          // the card render so the filter chip's list matches
+          // exactly what shows the orange "Unconfirmed" status
+          // badge inside the cards.
+          // Ghost rows (reminder-ghost, pinned-ghost, next-occurrence
+          // "Expiring" placeholder) are shallow copies of a real
+          // occurrence with `status: SCHEDULED` + `jobId` set +
+          // `isClientConfirmed` missing, so they'd otherwise slip
+          // through. Exclude them explicitly.
+          if ((occ as any)._isReminderGhost) return false;
+          if ((occ as any)._isPinnedGhost) return false;
+          if ((occ as any)._isNextOccurrenceGhost) return false;
+          if (!occ.jobId) return false;
+          if (occ.status !== "SCHEDULED") return false;
+          if ((occ as any).isClientConfirmed) return false;
+          const w = occ.workflow;
+          return w === "STANDARD" || w === "ONE_OFF" || w === "ESTIMATE" || !w;
+        }
         if (sf === "FINISHED") {
           // FINISHED = completed *real jobs* (STANDARD/ONE_OFF/ESTIMATE) only. Tasks,
           // reminders, events, follow-ups, and announcements have their own lifecycles
@@ -2443,6 +2530,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           const isJob = w === "STANDARD" || w === "ONE_OFF" || w === "ESTIMATE" || !w;
           return isJob && (occ.status === "COMPLETED" || occ.status === "CLOSED" || occ.status === "PENDING_PAYMENT");
         }
+        // PAUSED_REPEATING is a synthetic dropdown option — the
+        // real DB status for a paused repeating stream is
+        // STREAM_PAUSED. Map here so the dropdown label ("Paused
+        // repeating") reads correctly while the filter still hits
+        // the right row.
+        if (sf === "PAUSED_REPEATING") return (occ.status as string) === "STREAM_PAUSED";
         return occ.status === sf;
       });
     } else {
@@ -2541,7 +2634,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     //    Unclaimed alert — should not be polluted with Timeline cards.
     const statusFilterIsRestricted =
       statusFilter.length > 0 && !statusFilter.includes("ALL");
-    if (forAdmin && foreignRows.length > 0 && !unapprovedHoursActive && !statusFilterIsRestricted) {
+    if (showAdminExtras && foreignRows.length > 0 && !unapprovedHoursActive && !statusFilterIsRestricted) {
       const tf = typeFilter[0];
       const showActivities = tf === "ALL" || tf === "ACTIVITY";
       const showDocs = tf === "ALL" || tf === "DOC_EXPIRATION";
@@ -2579,7 +2672,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     }
 
     return rows;
-  }, [items, q, kind, statusFilter, typeFilter, overdueActive, overdueExpiryHours, unapprovedHoursActive, vipOnly, likedOnly, likedIds, isTrainee, highlightOccId, filterJobId, pinnedIds, isWorkerView, dateFrom, dateTo, showCanceled, showArchived, pausedRepeatingOnly, forAdmin, foreignRows]);
+  }, [items, q, kind, statusFilter, typeFilter, overdueActive, overdueExpiryHours, unapprovedHoursActive, vipOnly, likedOnly, likedIds, isTrainee, highlightOccId, filterJobId, pinnedIds, isWorkerView, dateFrom, dateTo, showCanceled, showArchived, pausedRepeatingOnly, forAdmin, showAdminExtras, foreignRows]);
 
   const dayGroups = useMemo(() => {
     const groups: { key: string; label: string; items: WorkerOccurrence[] }[] = [];
@@ -2751,40 +2844,109 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
   if (!isAvail) return <UnavailableNotice />;
 
+  // Client-scope guard — Jobs is an operator surface (Worker /
+  // Admin / Super). When the RoleChip is on "Client", all three
+  // scope flags are false; without this guard the tab would fall
+  // into the worker-default branch and render a scoped worker view
+  // to someone acting as a client. Show a short empty state
+  // instead.
+  if (!scope.isWorker && !scope.isAdmin && !scope.isSuper) {
+    return (
+      <Box w="full" p={6} textAlign="center">
+        <Text fontSize="sm" color="fg.muted">
+          Jobs isn't available for the Client role. Switch to Worker,
+          Admin, or Super in the role picker to use this tab.
+        </Text>
+      </Box>
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // RENDER — top-of-tab overlays, WorkdayStrip, filter bar, list groups.
+  // The card-render loop is inside the results VStack far below; look
+  // for `group.items.map`.
+  // ═══════════════════════════════════════════════════════════════════════
   return (
-    <Box w="full">
-      {/* Workday strip — same Start / Pause / Resume / End controls
-          surfaced on the Worker Home tab. Mounted here so workers can
-          clock in / out without bouncing back to Home before opening
-          their job list. Worker-only: not rendered on Admin Jobs (where
-          purpose is "ADMIN"/"SUPER" and there's no personal workday to
-          act on). Mileage strip embedded so the same "one card, two
-          zones" experience carries across tabs — see HomeTab for the
-          canonical rendering + the mileageSlot contract. Hidden while
-          admin views another worker (viewAsUserIds) since the mileage
-          belongs to the current viewer, not the viewed worker. */}
-      {isWorkerView && (
-        <WorkdayStrip
-          mileageSlot={
-            (viewAsUserIds?.length ?? 0) > 0 ? null : <MileageStrip embedded />
-          }
-        />
+    <Box
+      w="full"
+      position="relative"
+      // Whole-tab dim + pointer-events lock while loading — the
+      // toolbar/filters/list all become non-interactive together so
+      // the user can't half-click something that's about to
+      // re-render. Fixed spinner overlay renders below.
+      style={{
+        opacity: loading ? 0.5 : 1,
+        pointerEvents: loading ? "none" : "auto",
+        transition: "opacity 0.15s ease",
+      }}
+      aria-busy={loading}
+    >
+      {loading && (
+        <Box
+          position="fixed"
+          top="50%"
+          left="50%"
+          transform="translate(-50%, -50%)"
+          zIndex={9999}
+          style={{ pointerEvents: "none" }}
+        >
+          <Spinner size="lg" />
+        </Box>
       )}
+      {/* ─── Admin / super overlays ─────────────────────────────── */}
+      <VStack align="stretch" gap={2} mb={2}>
+        {/* MY WORKDAY lives inside HomeTab as its own section — Jobs
+            doesn't need its own self-view surface. */}
+        {/* Client Requests — admin-only queue of reschedule / skip
+            requests submitted by clients. Wrapped in its own
+            collapsible Dashboard so the operator can hide it when
+            it's not relevant; frame glows red when any pending
+            request exists so a collapsed section still surfaces
+            attention. Count is fetched here (small poll) instead of
+            reading it out of the ClientRequestsSection child, which
+            owns its own internal fetch. */}
+        {showAdminExtras && (
+          <Dashboard
+            storageKey="seedlings:jobsTab:clientRequestsOpen"
+            title="Client requests"
+            icon={Inbox}
+            forceGlow={clientRequestPending > 0 ? "red" : undefined}
+            count={clientRequestPending}
+          >
+            <ClientRequestsSection />
+          </Dashboard>
+        )}
+        {/* Ops summary strip — super-scope status roll-up across the
+            visible date range. Placed under Client Requests so it
+            reads as a stats-summary bookend to the actionable
+            sections above rather than crowding the top. */}
+        {scope.isSuper && <OpsSummaryStrip rows={items} />}
+      </VStack>
       <HStack mb={2} gap={2} wrap="nowrap">
         <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)", border: "1px solid var(--chakra-colors-gray-300)", borderRadius: "6px" }}>
           <RefreshCw size={14} />
         </Button>
-        {/* Team view toggle — worker-only, non-trainee. Icon-only to
-            fit the compact button row. Purple on-state ties visually
-            to the per-card peek chip + footer. */}
-        {isWorkerView && !isTrainee && (
-          <Button
-            size="sm"
-            variant="ghost"
-            px="2"
-            flexShrink={0}
-            onClick={() => setPeekOthers(!peekOthers)}
-            css={peekOthers ? {
+        {/* Team view toggle — always rendered so its position in the
+            toolbar stays stable. Disabled when admin has "All
+            Workers" selected (no viewAs) since "peeking at
+            teammates" isn't meaningful there. Enabled in worker
+            scope and in admin/super scope with specific workers
+            selected via View as. */}
+        <Button
+          size="sm"
+          variant="ghost"
+          px="2"
+          flexShrink={0}
+          disabled={!teamContextEnabled}
+          onClick={() => setPeekOthers(!peekOthers)}
+          css={
+            !teamContextEnabled ? {
+              background: "var(--chakra-colors-gray-100)",
+              border: "1px solid var(--chakra-colors-gray-300)",
+              borderRadius: "6px",
+              opacity: 0.5,
+            }
+            : peekOthers ? {
               background: "var(--chakra-colors-purple-100)",
               color: "var(--chakra-colors-purple-800)",
               border: "1px solid var(--chakra-colors-purple-400)",
@@ -2794,14 +2956,18 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               background: "var(--chakra-colors-gray-100)",
               border: "1px solid var(--chakra-colors-gray-300)",
               borderRadius: "6px",
-            }}
-            title={peekOthers
-              ? "Hide teammates' jobs"
-              : "Show teammates' jobs (view-only)"}
-          >
-            <Users size={14} />
-          </Button>
-        )}
+            }
+          }
+          title={
+            !teamContextEnabled
+              ? "Team view is unavailable when viewing All Workers — pick specific workers in View as to enable."
+              : peekOthers
+                ? "Hide teammates' jobs"
+                : "Show teammates' jobs (view-only)"
+          }
+        >
+          <Users size={14} />
+        </Button>
         {/* Density cycle button — icon reflects current density; clicking
             advances to the next (ultra → semi → expanded → ultra) and
             clears all per-card overrides. */}
@@ -3055,7 +3221,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             </Badge>
           )}
           {statusFilter[0] !== "ALL" && (
-            <Badge size="sm" colorPalette={statusFilter[0] === "UNCLAIMED" ? "yellow" : "purple"} variant="subtle">
+            <Badge size="sm" colorPalette={statusFilter[0] === "UNCLAIMED" ? "yellow" : statusFilter[0] === "UNCONFIRMED" ? "orange" : "purple"} variant="subtle">
               {statusItems.find((i) => i.value === statusFilter[0])?.label}
             </Badge>
           )}
@@ -3143,7 +3309,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         <Select.Root
           collection={statusCollection}
           value={statusFilter}
-          onValueChange={(e) => setStatusFilter(e.value)}
+          onValueChange={(e) => {
+            // Sync the "these normally-hidden statuses should show"
+            // flags off the current pick so a CANCELED / ARCHIVED /
+            // PAUSED_REPEATING selection makes rows visible without
+            // needing the old separate icon toggles.
+            const chosen = e.value[0];
+            setShowCanceled(chosen === "CANCELED");
+            setShowArchived(chosen === "ARCHIVED");
+            setPausedRepeatingOnly(chosen === "PAUSED_REPEATING");
+            setStatusFilter(e.value);
+          }}
           size="sm"
           positioning={{ strategy: "fixed", hideWhenDetached: true }}
           css={{ width: "auto", flex: "0 0 auto" }}
@@ -3260,58 +3436,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             </Badge>
           )}
         </Button>
-        {forAdmin && (
-          <Button
-            size="sm"
-            variant={showCanceled ? "solid" : "outline"}
-            px="2"
-            onClick={() => setShowCanceled(!showCanceled)}
-            css={showCanceled ? {
-              background: "var(--chakra-colors-red-100)",
-              color: "var(--chakra-colors-red-700)",
-              border: "1px solid var(--chakra-colors-red-300)",
-              "&:hover": { background: "var(--chakra-colors-red-200)" },
-            } : undefined}
-            title={showCanceled ? "Hide canceled" : "Show canceled"}
-          >
-            <Ban size={14} />
-          </Button>
-        )}
-        {forAdmin && (
-          <Button
-            size="sm"
-            variant={showArchived ? "solid" : "outline"}
-            px="2"
-            onClick={() => setShowArchived(!showArchived)}
-            css={showArchived ? {
-              background: "var(--chakra-colors-gray-200)",
-              color: "var(--chakra-colors-gray-700)",
-              border: "1px solid var(--chakra-colors-gray-400)",
-              "&:hover": { background: "var(--chakra-colors-gray-300)" },
-            } : undefined}
-            title={showArchived ? "Hide archived" : "Show archived"}
-          >
-            <Archive size={14} />
-          </Button>
-        )}
-        {forAdmin && (
-          <Button
-            size="sm"
-            variant={pausedRepeatingOnly ? "solid" : "outline"}
-            px="2"
-            onClick={() => setPausedRepeatingOnly(!pausedRepeatingOnly)}
-            css={pausedRepeatingOnly ? {
-              background: "var(--chakra-colors-purple-100)",
-              color: "var(--chakra-colors-purple-800)",
-              border: "1px solid var(--chakra-colors-purple-400)",
-              "&:hover": { background: "var(--chakra-colors-purple-200)" },
-            } : undefined}
-            title={pausedRepeatingOnly ? "Show all occurrences" : "Show only paused repeating"}
-          >
-            <Repeat size={14} />
-            <Text as="span" fontSize="xs" ml={1}>Paused</Text>
-          </Button>
-        )}
+        {/* Show Canceled / Show Archived / Paused-repeating icon
+            toggles retired — they now live as first-class options in
+            the Status filter dropdown above. Selecting Canceled /
+            Archived / Paused repeating from the dropdown flips the
+            same underlying flags via its onValueChange. */}
         <Box flex="1" />
         {isWorkerView && (
           <Button
@@ -3357,51 +3486,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             if (clamped) publishInlineMessage({ type: "WARNING", text: "Date range limited to 2 months." });
           }}
         />
-        <Select.Root
-          collection={quickDateCollection}
-          value={quickDate}
-          onValueChange={(e) => {
-            setQuickDate(e.value);
-            const val = e.value[0] as DatePreset;
-            if (!val) return;
-            if (val === "all") {
-              setConfirmAction({
-                title: "Load All Data",
-                message:
-                  "This will load all occurrences for all time. This may be slow. Are you sure?",
-                confirmLabel: "Load All",
-                colorPalette: "orange",
-                onConfirm: () => {
-                  setDatePreset("all");
-                },
-              });
-              requestAnimationFrame(() => setQuickDate([]));
-              return;
-            }
-            setDatePreset(val);
-            setOverdueActive(false);
-            requestAnimationFrame(() => setQuickDate([]));
-          }}
-          size="sm"
-          positioning={{ strategy: "fixed", hideWhenDetached: true }}
-          css={{ width: "auto", flex: "0 0 auto" }}
-        >
-          <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2">
-              <CalendarRange size={14} />
-              <Select.Indicator display="none" />
-            </Select.Trigger>
-          </Select.Control>
-          <Select.Positioner>
-            <Select.Content>
-              {quickDateItems.map((it) => (
-                <Select.Item key={it.value} item={it.value}>
-                  <Select.ItemText>{it.label}</Select.ItemText>
-                </Select.Item>
-              ))}
-            </Select.Content>
-          </Select.Positioner>
-        </Select.Root>
+        {/* CalendarRange preset dropdown removed — presets now live
+            exclusively in the green chip dropdown below the toolbar
+            (opens on the "Now / This week / …" pill). Manual From/To
+            pickers above remain for custom ranges. */}
       </HStack>
       {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || vipOnly || likedOnly || showCanceled || showArchived || highlightOccId || filterJobId || datePreset || dateFrom || dateTo || peekActive) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
@@ -3486,7 +3574,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             </Badge>
           )}
           {statusFilter[0] !== "ALL" && (
-            <Badge size="sm" colorPalette={statusFilter[0] === "UNCLAIMED" ? "yellow" : "purple"} variant="subtle">
+            <Badge size="sm" colorPalette={statusFilter[0] === "UNCLAIMED" ? "yellow" : statusFilter[0] === "UNCONFIRMED" ? "orange" : "purple"} variant="subtle">
               {statusItems.find((i) => i.value === statusFilter[0])?.label}
             </Badge>
           )}
@@ -3569,16 +3657,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       )}
       </Box>}
 
-      {loading && items.length === 0 && <LoadingCenter />}
+      {/* List-level loading overlays are handled entirely by the
+          fixed viewport-center spinner above — the whole tab is
+          also dimmed + non-interactive via the outer Box's
+          aria-busy state, so a second inline LoadingCenter here
+          would just stack on top of the fixed spinner. */}
 
       <Box position="relative">
-        {loading && items.length > 0 && (<>
-          <Box position="absolute" inset="0" bg="bg/80" zIndex="1" />
-          <Spinner size="lg" position="fixed" top="50%" left="50%" zIndex="2" />
-        </>)}
         <VStack align="stretch" gap={3}>
-          {forAdmin && <ClientRequestsSection />}
-          {forAdmin && !viewAsUserIds?.length && (
+          {/* Client Requests moved above the filter bar — see the
+              Dashboard section render for the actual mount point. */}
+          {showAdminExtras && !viewAsUserIds?.length && (
             <Box px={3} py={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" borderRadius="md">
               <Text fontSize="xs" color="yellow.800">Showing all jobs for all workers, including unclaimed.</Text>
             </Box>
@@ -3624,6 +3713,31 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               >
                 <Box flex="1" borderBottomWidth="2px" borderColor="gray.300" />
                 <HStack gap={1.5} align="center">
+                  {/* Forecast glyph — prefixes the label for any date
+                      the forecast covers (today, tomorrow, plus the
+                      next few days). Rain % appears next to the icon
+                      when >= 30% so a stormy day scans without
+                      hovering. Silently absent for date keys outside
+                      the forecast window. */}
+                  {(() => {
+                    const f = forecastByDate.get(group.key);
+                    if (!f) return null;
+                    return (
+                      <HStack
+                        gap={0.5}
+                        align="center"
+                        color="gray.600"
+                        title={`${f.description}${f.rainChance > 0 ? ` · ${f.rainChance}% rain` : ""} · ${Math.round(f.high)}° / ${Math.round(f.low)}°`}
+                      >
+                        <WeatherIcon icon={f.icon} size={14} />
+                        {f.rainChance >= 30 && (
+                          <Text fontSize="2xs" color="blue.600" fontWeight="semibold" lineHeight="1">
+                            {f.rainChance}%
+                          </Text>
+                        )}
+                      </HStack>
+                    );
+                  })()}
                   <Text fontSize="sm" fontWeight="bold" color="gray.600" whiteSpace="nowrap" textTransform="uppercase" letterSpacing="wide">
                     {group.label}
                   </Text>
@@ -3662,33 +3776,77 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       Route →
                     </Badge>
                   )}
-                  {isWorkerView && group.label === "Tomorrow" && group.items.some((o) => (o.workflow === "STANDARD" || o.workflow === "ONE_OFF" || o.workflow === "ESTIMATE") && (o.assignees ?? []).some((a) => a.userId === myId)) && (
-                    <Badge
-                      size="sm"
-                      variant="solid"
-                      bg="blue.400"
-                      color="white"
-                      px="2"
-                      py="0.5"
-                      borderRadius="full"
-                      cursor="pointer"
-                      fontSize="2xs"
-                      lineHeight="1.3"
-                      whiteSpace="nowrap"
-                      _hover={{ opacity: 0.85 }}
-                      onClick={(e: any) => {
-                        e.stopPropagation();
-                        window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "reminders" } }));
-                      }}
-                    >
-                      Plan →
-                    </Badge>
-                  )}
+                  {/* Orange "Unconfirmed" chip on the TOMORROW group —
+                      counts the group's items still needing client
+                      confirmation. Clicking narrows the tab to just
+                      those rows (status=UNCONFIRMED, date=Tomorrow).
+                      Hidden when the count is zero so the header
+                      stays clean when tomorrow is fully prepped. */}
+                  {group.label === "Tomorrow" && (() => {
+                    const unconfirmedCount = group.items.filter((o) =>
+                      // Same ghost exclusion the UNCONFIRMED filter
+                      // branch uses — otherwise the "Expiring" next-
+                      // occurrence placeholder inflates the count
+                      // even though the click properly filters it out.
+                      !(o as any)._isReminderGhost &&
+                      !(o as any)._isPinnedGhost &&
+                      !(o as any)._isNextOccurrenceGhost &&
+                      !!(o as any).jobId &&
+                      o.status === "SCHEDULED" &&
+                      !(o as any).isClientConfirmed &&
+                      (o.workflow === "STANDARD" || o.workflow === "ONE_OFF" || o.workflow === "ESTIMATE" || !o.workflow),
+                    ).length;
+                    if (unconfirmedCount === 0) return null;
+                    return (
+                      <Badge
+                        size="sm"
+                        variant="solid"
+                        colorPalette="orange"
+                        px="2"
+                        py="0.5"
+                        borderRadius="full"
+                        cursor="pointer"
+                        fontSize="2xs"
+                        lineHeight="1.3"
+                        whiteSpace="nowrap"
+                        _hover={{ opacity: 0.85 }}
+                        title="Filter to unconfirmed jobs for tomorrow"
+                        onClick={(e: any) => {
+                          e.stopPropagation();
+                          // Use the Tomorrow preset (same convention
+                          // "Today" clicks use elsewhere) so the top
+                          // date-preset chip shows "Tomorrow" and
+                          // the from/to stay in sync via
+                          // computeDatesFromPreset.
+                          setStatusFilter(["UNCONFIRMED"]);
+                          setDatePreset("tomorrow");
+                          const d = computeDatesFromPreset("tomorrow");
+                          setDateFrom(d.from);
+                          setDateTo(d.to);
+                        }}
+                      >
+                        {unconfirmedCount} unconfirmed →
+                      </Badge>
+                    );
+                  })()}
                   <Text fontSize="xs" color="gray.400">{collapsedGroups.has(group.key) ? "▶" : "▼"}</Text>
                 </HStack>
                 <Box flex="1" borderBottomWidth="2px" borderColor="gray.300" />
               </HStack>
               {!collapsedGroups.has(group.key) && <VStack align="stretch" gap={3}>
+          {/* ═══════════════════════════════════════════════════════════
+              CARD RENDER LOOP — dispatches between:
+                • foreign row (admin activity feed / doc expiration)
+                • ghost card (next occurrence not scheduled yet)
+                • announcement / reminder / event / task pinned rows
+                • real occurrence card (worker action bar, then admin
+                  Cancel + super Reopen/Force-next/Archive via
+                  ElevatedActionRow, wrapped in a Fragment)
+              Each branch has its own `return (…)` for the JSX. Only
+              the real-occurrence branch is wrapped in a Fragment for
+              ElevatedActionRow; the other branches render bare cards
+              (ElevatedActionRow doesn't apply to them).
+              ═══════════════════════════════════════════════════════ */}
           {group.items.map((occ, occIdx) => {
             // Admin-only foreign rows (Timeline activities + doc expirations)
             // short-circuit here with a distinct, read-only render. The rest
@@ -3736,7 +3894,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     onClick={fToggle}
                     css={{ borderLeft: `4px solid var(--chakra-colors-${isOverdue ? "red" : "purple"}-500)` }}
                   >
-                    <HStack px="3" py="1" gap={2} minH="32px" align="center" fontSize="xs">
+                    <HStack px="3" py="1" gap={2} h="44px" align="center" fontSize="xs">
                       <Badge colorPalette="purple" variant="solid" fontSize="xs" px="1.5" borderRadius="full" flexShrink={0}>
                         Timeline
                       </Badge>
@@ -3829,7 +3987,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     onClick={fToggle}
                     css={{ borderLeft: "4px solid var(--chakra-colors-red-500)" }}
                   >
-                    <HStack px="3" py="1" gap={2} minH="32px" align="center" fontSize="xs">
+                    <HStack px="3" py="1" gap={2} h="44px" align="center" fontSize="xs">
                       <Badge colorPalette="red" variant="solid" fontSize="xs" px="1.5" borderRadius="full" flexShrink={0}>
                         Doc expires
                       </Badge>
@@ -3886,15 +4044,26 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
             const isClaimer = !!myAssignee && !isObserver && myAssignee.assignedById === myId;
 
-            // Peek mode is a WORKER-tab-only concept: on the worker
-            // view, cards for jobs the current user isn't assigned to
-            // are surfaced by the "Team" toggle and rendered read-
-            // only. On the Admin Jobs tab this concept doesn't apply
-            // — admins see and act on everyone's jobs normally, so
-            // `isPeek` stays false regardless of assignment.
+            // Team icon rule — fires iff:
+            //   1. peekActive (button on + context makes sense)
+            //   2. NONE of this card's active assignees are in the
+            //      identity set — i.e., this card exists in the
+            //      feed only because peek is on; no one you're
+            //      "acting as" is assigned to it.
+            //
+            // Identity set is {myId} in worker scope, or
+            // {...viewAsUserIds} in admin+view-as. So peek turning
+            // on ADDS teammate cards (via the load filter above)
+            // and those extras get the icon. Cards you're already
+            // seeing without peek (identity is on them) stay clean.
+            const activeAssigneesForPeek = (occ.assignees ?? [])
+              .filter((a) => a.role !== "observer");
+            const hasIdentityAssignee = activeAssigneesForPeek
+              .some((a) => !!a.userId && teamIdentityIds.has(a.userId));
             const isPeek =
-              isWorkerView &&
-              (isAssignedToOthers || !!(occ as any)._peekRedacted);
+              peekActive &&
+              activeAssigneesForPeek.length > 0 &&
+              !hasIdentityAssignee;
 
             const isTentative = !!occ.isTentative;
 
@@ -3927,7 +4096,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             // precise three-state value the ultra branches use.
             const cardKey = (occ._isReminderGhost || occ._isPinnedGhost)
               ? `ghost:${occ.id}`
-              : occ.id;
+              : (occ as any)._isNextOccurrenceGhost
+                ? `ghost-next:${occ.id}`
+                : occ.id;
             const cardMode: CardDensity = cardOverrides.get(cardKey) ?? cardDensity;
             const isCardCompact = cardMode !== "expanded";
             // Click cycles this card ultra → semi → expanded → ultra,
@@ -4144,22 +4315,56 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 : blockerStatus === "PAUSED" ? "prior visit paused"
                 : blockerStatus === "SCHEDULED" ? "prior visit not yet complete"
                 : "prior visit not closed";
-              // Dark card with light text — deliberately high-contrast
-              // against the rest of the feed (which is all light bgs) so
-              // the operator's eye catches it as a "needs attention"
-              // marker rather than blending in as another neutral row.
+              const propAddress = occ.job?.property
+                ? [occ.job.property.street1, occ.job.property.city, occ.job.property.state]
+                    .filter(Boolean).join(", ")
+                : "";
+              const cardStyle = {
+                borderLeft: "4px dashed var(--chakra-colors-gray-400)",
+                borderStyle: "dashed",
+                borderColor: "var(--chakra-colors-gray-500)",
+                borderWidth: "1px",
+              } as const;
+
+              // Ultra — single scan row, matches the ~44px height the
+              // regular ultra cards use. Tap-anywhere cycles density.
+              if (cardMode === "ultra") {
+                return (
+                  <Card.Root
+                    key={`ghost-next-${occ.id}-${occIdx}`}
+                    variant="outline"
+                    overflow="hidden"
+                    bg="gray.600"
+                    color="gray.50"
+                    cursor="pointer"
+                    onClick={toggleCard}
+                    style={cardStyle}
+                  >
+                    <HStack px="3" py="1" gap={2} h="44px" align="center" fontSize="xs">
+                      <Clock size={13} style={{ color: "var(--chakra-colors-gray-300)", flexShrink: 0 }} />
+                      <Badge size="xs" variant="solid" colorPalette="gray" bg="gray.100" color="gray.900" flexShrink={0}>
+                        Expiring
+                      </Badge>
+                      <Text fontWeight="medium" color="white" flex="1" minW={0} overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
+                        {propName}{clientName ? ` — ${clientLabel(clientName)}` : ""}
+                      </Text>
+                    </HStack>
+                  </Card.Root>
+                );
+              }
+
+              // Semi (default compact) and Expanded share the header
+              // block; Expanded adds an address line + a "would post"
+              // and "blocking status" detail row.
               return (
                 <Card.Root
-                  key={`ghost-next:${occ.id}`}
+                  key={`ghost-next-${occ.id}-${occIdx}`}
                   size="sm"
                   bg="gray.600"
                   color="gray.50"
-                  style={{
-                    borderLeft: "4px dashed var(--chakra-colors-gray-400)",
-                    borderStyle: "dashed",
-                    borderColor: "var(--chakra-colors-gray-500)",
-                    borderWidth: "1px",
-                  }}
+                  cursor="pointer"
+                  onClick={toggleCard}
+                  style={cardStyle}
                 >
                   <Card.Body p={3}>
                     <HStack justify="space-between" align="start" gap={2}>
@@ -4177,13 +4382,20 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         <Text fontSize="xs" color="gray.200">
                           Would post on {wouldBeDateKey ? fmtDate(wouldBeDateKey) : "—"} · {blockerLabel}
                         </Text>
+                        {cardMode === "expanded" && (
+                          <VStack align="start" gap={0.5} pt={2} borderTopWidth="1px" borderColor="gray.500" mt={2} w="full">
+                            {propAddress && (
+                              <Text fontSize="xs" color="gray.200">
+                                {propAddress}
+                              </Text>
+                            )}
+                            <Text fontSize="xs" color="gray.300">
+                              This card will disappear once the prior visit is
+                              closed and the next occurrence is generated.
+                            </Text>
+                          </VStack>
+                        )}
                       </VStack>
-                      {/* "Expiring" = this recurring client's next visit
-                          hasn't been scheduled — if the operator doesn't
-                          follow up (typically to accept payment), the
-                          service could lapse. Light-gray pill on the
-                          dark card so it stands out but stays in the
-                          monochrome palette. */}
                       <Badge size="xs" variant="solid" colorPalette="gray" bg="gray.100" color="gray.900">
                         Expiring
                       </Badge>
@@ -4841,6 +5053,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             );
 
             return (
+              // Shipped Card.Root — the blended ElevatedActionRow
+              // (admin Cancel / super Reopen / Force next / Archive)
+              // is nested inside near the bottom so the row visually
+              // belongs to the card instead of floating below it.
               <Card.Root
                 key={occ.id}
                 variant="outline"
@@ -8032,6 +8248,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 )}
                 </>
                 )}
+                {/* Elevated action row — nested INSIDE Card.Root so
+                    it reads as part of the card, and follows the
+                    same density cycle (ultra = hidden, semi/expanded
+                    = visible) so ultra cards stay compact and the
+                    row only appears once you've expanded the card. */}
+                <ElevatedActionRow occ={occ} scope={scope} cardMode={cardMode} onAfter={load} />
               </Card.Root>
             );
           })}
@@ -9359,7 +9581,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
                   <Box p={3} borderWidth="1px" rounded="md" borderColor="purple.300" bg="purple.50">
                     <Badge colorPalette="purple" variant="solid" mb={1}>Reminder</Badge>
-                    <Text fontSize="sm">A personal reminder only visible to you (e.g., "Pick up supplies"). Appears in the Planning tab when due. Can be dismissed and reopened. Supports high-priority mode for a more prominent card.</Text>
+                    <Text fontSize="sm">A personal reminder only visible to you (e.g., "Pick up supplies"). Appears in the Jobs feed when due. Can be dismissed and reopened. Supports high-priority mode for a more prominent card.</Text>
                   </Box>
 
                   {/* ── Team Types ── */}
@@ -9553,7 +9775,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         <Badge size="sm" colorPalette="gray" variant="subtle">All Kinds</Badge>
                       )}
                       {statusFilter[0] !== "ALL" ? (
-                        <Badge size="sm" colorPalette={statusFilter[0] === "UNCLAIMED" ? "yellow" : "purple"} variant="subtle">{statusItems.find((i) => i.value === statusFilter[0])?.label}</Badge>
+                        <Badge size="sm" colorPalette={statusFilter[0] === "UNCLAIMED" ? "yellow" : statusFilter[0] === "UNCONFIRMED" ? "orange" : "purple"} variant="subtle">{statusItems.find((i) => i.value === statusFilter[0])?.label}</Badge>
                       ) : (
                         <Badge size="sm" colorPalette="gray" variant="subtle">All Statuses</Badge>
                       )}
@@ -9624,9 +9846,20 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         setCalFeedLoading(true);
                         setCalFeedStep("result");
                         try {
+                          // Translate the client-side synthetic
+                          // PAUSED_REPEATING dropdown value to the real
+                          // DB status (STREAM_PAUSED) before sending
+                          // to the server. The calendar-feed .ics
+                          // handler doesn't know about the synthetic
+                          // value and would otherwise generate an
+                          // empty feed. See the row-filter mapping in
+                          // this same file for the parallel client-
+                          // side translation.
+                          const rawStatus = statusFilter[0];
+                          const wireStatus = rawStatus === "PAUSED_REPEATING" ? "STREAM_PAUSED" : rawStatus;
                           const filters = {
                             kind: kind[0],
-                            statusFilter: statusFilter[0],
+                            statusFilter: wireStatus,
                             typeFilter: typeFilter[0],
                             vipOnly,
                             likedOnly,

@@ -11,6 +11,8 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Box, Button, Card, HStack, IconButton, Spinner, Text, VStack } from "@chakra-ui/react";
+import { ComposedChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, LabelList } from "recharts";
+import { bizToday, bizAddDays } from "@/src/lib/lib";
 import {
   Award,
   ChevronDown,
@@ -72,6 +74,12 @@ type Props = {
   // Optional: display name of the impersonated worker for the header
   // copy ("Approximate pay per hour for {name}").
   viewAsDisplayName?: string | null;
+  // Optional: when provided, embed a weekly-earnings trend chart at
+  // the bottom of this card, filtered to whatever period the pay
+  // selector is on. The chart's own header ("Weekly Earnings") is
+  // omitted so both surfaces read as one section driven by one
+  // time-frame control.
+  weeklyCompleted?: { weekStart: string; count: number; earnings: number }[];
 };
 
 // Two kinds of periods:
@@ -278,7 +286,7 @@ function shareSourceLabel(s: BreakdownJob["shareSource"]): string {
   return "no share";
 }
 
-export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName }: Props = {}) {
+export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName, weeklyCompleted }: Props = {}) {
   // Period is session-only (plain useState, no persistence). Every fresh
   // page load resets to the default so the card always starts at the
   // "how am I doing lately" default instead of remembering whatever the
@@ -333,6 +341,16 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName }:
   }, [effectiveKey, viewAsUserId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Re-fetch when the hero refresh (or any surface that dispatches
+  // this event) asks for a page-wide refresh. Same channel the
+  // workday banners already listen on, so one event covers every
+  // data-owning surface on the Home page.
+  useEffect(() => {
+    const onRefresh = () => { void load(); };
+    window.addEventListener("seedlings:workday-changed", onRefresh);
+    return () => window.removeEventListener("seedlings:workday-changed", onRefresh);
+  }, [load]);
 
   // Any change to the summary inputs invalidates the details cache so
   // the next render pulls fresh breakdown data. If the panel is open
@@ -457,18 +475,6 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName }:
                 <ChevronsUpDown size={11} />
               </Box>
             </Button>
-            <IconButton
-              aria-label="Refresh"
-              size="xs"
-              variant="ghost"
-              onClick={refreshAll}
-              loading={loading || detailsLoading}
-              css={{
-                color: `var(--chakra-colors-${tier.fg.replace(".", "-")})`,
-              }}
-            >
-              <RefreshCw size={12} />
-            </IconButton>
           </HStack>
         </HStack>
 
@@ -562,6 +568,63 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName }:
             </Box>
           )}
         </Box>
+
+        {/* Weekly earnings trend — embedded inside this same Card so
+            the "pay per hour" number and the "week over week" trend
+            read as one section, both driven by the period selector
+            above. Filtered to the same window the pay data used. */}
+        {(weeklyCompleted?.length ?? 0) > 0 && (() => {
+          // Window: rolling days for a days-based period, or fall
+          // back to the last 60 days for calendar-anchored presets
+          // (today/yesterday) — a week-scale trend needs at least a
+          // month or two of context to read as a trend.
+          const windowDays = effectivePeriod.days ?? 60;
+          const cutoff = bizAddDays(bizToday(), -Math.max(7, windowDays));
+          const filtered = (weeklyCompleted ?? []).filter((w) => w.weekStart >= cutoff);
+          if (filtered.length === 0) return null;
+          const totalEarnings = filtered.reduce((sum, w) => sum + (w.earnings ?? 0), 0);
+          const fmtWeek = (s: string) => {
+            const [, m, d] = s.split("-");
+            return `${parseInt(m, 10)}/${parseInt(d, 10)}`;
+          };
+          return (
+            <Box mt={4} pt={3} borderTopWidth="1px" borderColor="gray.200">
+              <HStack justify="space-between" mb={2} wrap="wrap" gap={2}>
+                <Text fontSize="xs" fontWeight="semibold" color="fg.default" textTransform="uppercase" letterSpacing="wide">
+                  Earnings (jobs)
+                </Text>
+                <Text fontSize="xs" color="fg.muted">
+                  {buttonPeriodLabel(effectivePeriod.label)} · {fmtUSDPrecise(totalEarnings)}
+                </Text>
+              </HStack>
+              <Box h="160px">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={filtered} margin={{ top: 28, right: 12, bottom: 0, left: 8 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="weekStart" tickFormatter={fmtWeek} fontSize={10} interval="preserveStartEnd" />
+                    <YAxis fontSize={10} width={56} tickFormatter={(v: number) => v >= 1000 ? `$${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}k` : `$${v}`} />
+                    <Tooltip
+                      content={({ active, payload }: any) => {
+                        if (!active || !payload || !payload.length) return null;
+                        const d = payload[0].payload as { weekStart: string; count: number; earnings: number };
+                        return (
+                          <Box bg="white" p={2} borderWidth="1px" borderColor="gray.200" rounded="md" fontSize="xs" shadow="sm">
+                            <Text fontWeight="semibold" mb={0.5}>Week of {fmtWeek(d.weekStart)}</Text>
+                            <Text color="fg.muted">Jobs: <Text as="span" color="fg.default" fontWeight="medium">{d.count}</Text></Text>
+                            <Text color="fg.muted">Earnings: <Text as="span" color="green.700" fontWeight="medium">${d.earnings.toFixed(2)}</Text></Text>
+                          </Box>
+                        );
+                      }}
+                    />
+                    <Line type="monotone" dataKey="earnings" stroke="var(--chakra-colors-green-600)" strokeWidth={2} dot={{ r: 3, fill: "var(--chakra-colors-green-600)" }}>
+                      <LabelList dataKey="count" position="top" offset={14} fontSize={10} fill="var(--chakra-colors-fg-default)" formatter={(v: any) => (v && v > 0 ? String(v) : "")} />
+                    </Line>
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </Box>
+            </Box>
+          );
+        })()}
       </Card.Body>
     </Card.Root>
   );

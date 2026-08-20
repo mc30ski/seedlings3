@@ -2450,7 +2450,7 @@ async function seedDatabase() {
     // in Vercel Domains + add it to Clerk Satellites (see the
     // multi-domain doc for the checklist).
     { key: "ALLOWED_DOMAINS", value: '["https://seedlings.team","https://seedlings.pro"]', description: "JSON array of all domains this app serves. Used by the Promotion editor's domain picker and by public-route Host-header validation. Primary (PAYMENT_REQUEST_BASE_URL) must be one of these." },
-    { key: "VANITY_STARTUP_ANIMATION_SHOW_HISTORY", value: "true", description: "When true, the app's startup typing animation stacks previously-shown vanity slugs as a muted history below the current line. When false, the history is hidden and only the current line renders." },
+    { key: "VANITY_STARTUP_ANIMATION_SHOW_HISTORY", value: "false", description: "When true, the app's startup typing animation stacks previously-shown vanity slugs as a muted history below the current line. When false, the history is hidden and only the current line renders." },
     { key: "VANITY_STARTUP_ANIMATION_ENABLED", value: "true", description: "Master kill switch for the app's startup typing animation. When false the splash renders just the logo and fades (no fetch, no typing). Toggle here or from the Vanity tab; the DB is authoritative so you can flip this via the Neon SQL Editor if the app itself is broken." },
   ];
   for (const s of paymentSettings) {
@@ -3451,17 +3451,56 @@ async function seedDatabase() {
   console.log("  Seed complete!");
 }
 
-// Vanity URL fixtures — the default fallback page + one example landing
-// (perties). Idempotent via upsert on slug. Operator can edit the copy
-// in the Vanity URLs tab; the seed exists so a fresh dev DB has
-// something useful on seedlings.pro/perties and any unknown slug
-// (seedlings.pro/xyz) without the operator having to create rows first.
+// Vanity URL fixtures — landing pages + the "PRO-" alias set that
+// drives the startup typing animation (seedlings.pro/crastinating,
+// /blematic, /totype, /bono, /fanity). Idempotent via upsert on slug.
+// Operator edits copy in the Vanity URLs tab; seed exists so a fresh
+// dev DB matches the live dev configuration.
+//
+// NOTE ON IMAGES: crastinating carries an imageR2Key in the live dev
+// DB. We intentionally DO NOT seed that value here — the R2 blob
+// isn't reseedable, so on a fresh DB the reference would point to a
+// missing file. Existing DBs keep their image (upsert doesn't touch
+// fields on match via `update: {}`).
 async function seedVanityPageFixtures() {
   console.log("  Seeding Vanity URL fixtures...");
-  // The default page — flagged isDefault=true so it renders as the
-  // fallback when a visitor hits an unknown slug on seedlings.pro.
-  // Also loosely doubles as the marketing home concept if the operator
-  // ever decides to point seedlings.pro/ at it.
+
+  const marketingBody =
+    "Hi, I'm Jacob — the middle of three brothers and the one who runs Seedlings Lawn Care. Together with my dad and brothers, we've been serving our local community with quality lawn care and landscaping.\n\n" +
+    "Our goal is bigger than just mowing lawns. We want to give young people like us a chance to earn money, learn real-life skills, and understand the value of hard work. It's about building something from the ground up — literally and professionally.\n\n" +
+    "My dad, a licensed general contractor in North Carolina, brings years of hands-on experience and guides us on every project. He's built two homes, and he makes sure every lawn care job is done right.\n\n" +
+    "We're a growing team, and we care about every yard we touch. Choosing us means supporting a local family business that's here to work hard and earn your trust.";
+  const marketingButtons = [
+    { kind: "URL", label: "Get a free estimate", target: "https://seedlings.team", source: "literal" },
+    { kind: "PHONE", label: "Call us", target: "", source: "business_phone" },
+    { kind: "EMAIL", label: "Email us", target: "", source: "business_email" },
+  ];
+
+  // /crastinating — LANDING, isDefault=true, first in the startup
+  // animation order (sortOrder 10). Alias targets below reference
+  // this row's id via the returned upsert result.
+  const crastinating = await prisma.vanityPage.upsert({
+    where: { slug: "crastinating" },
+    create: {
+      slug: "crastinating",
+      kind: "LANDING",
+      isDefault: true,
+      title: "Seedlings Lawn Care — Family-owned, trust-earned",
+      headline: "Family-owned lawn care that earns your trust",
+      body: marketingBody,
+      buttons: marketingButtons,
+      showInStartupAnimation: true,
+      sortOrder: 10,
+      enabled: true,
+      createdById: MICHAEL_ID,
+      updatedById: MICHAEL_ID,
+    },
+    update: {},
+  });
+
+  // /home — also LANDING, also isDefault=true (dev DB has both).
+  // showInStartupAnimation is FALSE here so /home doesn't clutter the
+  // typing animation alongside the "PRO-" alias set.
   await prisma.vanityPage.upsert({
     where: { slug: "home" },
     create: {
@@ -3470,24 +3509,19 @@ async function seedVanityPageFixtures() {
       isDefault: true,
       title: "Seedlings Lawn Care — Family-owned, trust-earned",
       headline: "Family-owned lawn care that earns your trust",
-      body:
-        "Hi, I'm Jacob — the middle of three brothers and the one who runs Seedlings Lawn Care. Together with my dad and brothers, we've been serving our local community with quality lawn care and landscaping.\n\n" +
-        "Our goal is bigger than just mowing lawns. We want to give young people like us a chance to earn money, learn real-life skills, and understand the value of hard work. It's about building something from the ground up — literally and professionally.\n\n" +
-        "My dad, a licensed general contractor in North Carolina, brings years of hands-on experience and guides us on every project. He's built two homes, and he makes sure every lawn care job is done right.\n\n" +
-        "We're a growing team, and we care about every yard we touch. Choosing us means supporting a local family business that's here to work hard and earn your trust.",
-      buttons: [
-        { kind: "URL", label: "Get a free estimate", target: "https://seedlings.team", source: "literal" },
-        { kind: "PHONE", label: "Call us", target: "", source: "business_phone" },
-        { kind: "EMAIL", label: "Email us", target: "", source: "business_email" },
-      ],
+      body: marketingBody,
+      buttons: marketingButtons,
+      showInStartupAnimation: false,
+      sortOrder: 0,
       enabled: true,
       createdById: MICHAEL_ID,
       updatedById: MICHAEL_ID,
     },
     update: {},
   });
-  // Example landing page — visitors hit seedlings.pro/perties. Copy is
-  // placeholder; operator edits in the tab.
+
+  // /perties — LANDING example. Kept as a distinct landing so the
+  // operator has a reference for editing copy in the tab.
   await prisma.vanityPage.upsert({
     where: { slug: "perties" },
     create: {
@@ -3503,13 +3537,47 @@ async function seedVanityPageFixtures() {
         { kind: "EMAIL", label: "Email us", target: "admin@seedlingslawncare.com" },
       ],
       showInStartupAnimation: true,
+      sortOrder: 0,
       enabled: true,
       createdById: MICHAEL_ID,
       updatedById: MICHAEL_ID,
     },
     update: {},
   });
-  console.log("  ✓ Seeded 2 Vanity URL fixtures (default home + perties)");
+
+  // "PRO-" alias set — seedlings.pro/{slug} → crastinating. Together
+  // they read: procrastinating, problematic, prototype, pro bono,
+  // profanity. All show in the startup animation in the sortOrder
+  // sequence baked in below.
+  const aliases: Array<{ slug: string; sortOrder: number }> = [
+    { slug: "blematic", sortOrder: 20 },
+    { slug: "totype", sortOrder: 30 },
+    { slug: "bono", sortOrder: 40 },
+    { slug: "fanity", sortOrder: 50 },
+  ];
+  for (const a of aliases) {
+    await prisma.vanityPage.upsert({
+      where: { slug: a.slug },
+      create: {
+        slug: a.slug,
+        kind: "ALIAS",
+        isDefault: false,
+        title: "",
+        headline: "",
+        body: "",
+        buttons: [],
+        aliasTargetId: crastinating.id,
+        showInStartupAnimation: true,
+        sortOrder: a.sortOrder,
+        enabled: true,
+        createdById: MICHAEL_ID,
+        updatedById: MICHAEL_ID,
+      },
+      update: {},
+    });
+  }
+
+  console.log("  ✓ Seeded 7 Vanity URL fixtures (crastinating + home + perties + 4 aliases)");
 }
 
 /**
@@ -4503,12 +4571,44 @@ async function seedVehicleFixtures() {
     },
   });
 
-  // Assign both the owner and one employee so both the Super and a
-  // worker session render a MileageStrip on next dev login.
+  // Second truck — assigned only to MICHAEL_ID so the Start-mileage
+  // vehicle picker on Jobs-Next renders multi-vehicle for him. Also
+  // gives the Vehicles admin tab a second row to look at.
+  const secondTruck = await prisma.vehicle.create({
+    data: {
+      displayName: "Jacob's F-150",
+      make: "Ford",
+      vehicleModel: "F-150",
+      year: 2019,
+      plate: "NC-LWN-88",
+      inServiceDate: "2024-05-15",
+      currentOdometer: 62450,
+    },
+  });
+
+  // Utility van — third option so the picker has enough to exercise
+  // its wrap/scroll behavior. Assigned to MICHAEL_ID only.
+  const van = await prisma.vehicle.create({
+    data: {
+      displayName: "Crew Van",
+      make: "Ford",
+      vehicleModel: "Transit",
+      year: 2022,
+      plate: "NC-LWN-15",
+      inServiceDate: "2025-01-10",
+      currentOdometer: 18740,
+    },
+  });
+
+  // Assignments. MICHAEL_ID gets all three so the vehicle picker
+  // renders as a multi-choice row. EMPLOYEE_ID stays on the Ram
+  // (single-vehicle worker flow still testable via that account).
   await prisma.vehicleAssignment.createMany({
     data: [
       { vehicleId: truck.id, userId: MICHAEL_ID },
       { vehicleId: truck.id, userId: EMPLOYEE_ID },
+      { vehicleId: secondTruck.id, userId: MICHAEL_ID },
+      { vehicleId: van.id, userId: MICHAEL_ID },
     ],
     skipDuplicates: true,
   });
@@ -4595,7 +4695,7 @@ async function seedVehicleFixtures() {
     },
   });
 
-  console.log("    Seeded 1 vehicle, 2 assignments, 3 mileage entries.");
+  console.log("    Seeded 3 vehicles, 4 assignments, 3 mileage entries.");
 }
 
 /**

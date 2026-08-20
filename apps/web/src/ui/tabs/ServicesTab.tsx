@@ -644,10 +644,6 @@ export default function ServicesTab({
     void refreshOverdueCount();
   }, [items]);
 
-  useEffect(() => {
-    onEventSearchRun("paymentsTabToServicesTabSearch", setQ, inputRef, setHighlightId);
-  }, []);
-
   // Handoff from ClientsTab "N services paused" click. Same event pattern
   // as the other cross-tab searches — index.tsx routes to Services, we
   // consume the `:run` event here. Beyond setting q to the client name,

@@ -8449,6 +8449,21 @@ Respond ONLY with valid JSON in this exact format:
     return superListMileageForDate(date);
   });
 
+  // Team travel rollup — feeds the Routes Next operations panel with
+  // aggregate mileage metrics for a rolling window. Super-only; not
+  // view-as (the panel is inherently a cross-team surface).
+  app.get("/super/routes/operations", superGuard, async (req: any) => {
+    const { from, to } = (req.query || {}) as { from?: string; to?: string };
+    if (!from || !/^\d{4}-\d{2}-\d{2}$/.test(from)) {
+      throw app.httpErrors.badRequest("from query param required (YYYY-MM-DD).");
+    }
+    if (!to || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      throw app.httpErrors.badRequest("to query param required (YYYY-MM-DD).");
+    }
+    const { superRoutesOperationsSummary } = await import("../services/mileage");
+    return superRoutesOperationsSummary(from, to);
+  });
+
   // Unified daily approval — approves every closed unapproved entry
   // for one worker on one ET date. Called by the daily-approval UX
   // alongside the workday-hours approval.

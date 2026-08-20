@@ -203,6 +203,15 @@ export default function InlineMessage({
                   aria-label="Dismiss"
                   color="white"
                   flexShrink={0}
+                  // Default Chakra CloseButton hovers to a light gray
+                  // overlay, which looks blown-out on colored toast
+                  // backgrounds (esp. red ERROR). Force hover/active
+                  // to a darker shade of the toast's own palette so
+                  // the interaction reads as "pressing into" the toast
+                  // instead of "punching a hole".
+                  bg="transparent"
+                  _hover={{ bg: palette.border }}
+                  _active={{ bg: palette.border, filter: "brightness(0.9)" }}
                   onClick={() => beginHide(fadeOutMs)}
                 />
               )}

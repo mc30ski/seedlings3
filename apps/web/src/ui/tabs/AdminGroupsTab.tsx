@@ -306,7 +306,7 @@ export default function AdminGroupsTab() {
 // Chakra v3's Select.Root has no built-in typeahead. For the Group editor's
 // user / equipment / collection pickers the lists can run into the hundreds,
 // so we wrap an input with a manually-filtered popover (matches the
-// AdminRoutesTab worker picker pattern). 2-option lists (worker/observer)
+// PreviewRoutesTab worker picker pattern). 2-option lists (worker/observer)
 // continue to use Select.Root since search would be wasted clicks.
 
 type FSOption = { value: string; label: string };

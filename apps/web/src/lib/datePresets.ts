@@ -9,6 +9,7 @@ import { bizToday, bizAddDays, bizAddMonths, bizAddYears } from "@/src/lib/lib";
 export type DatePreset =
   | "now"
   | "today"
+  | "tomorrow"
   | "next3"
   | "overdueAndNext3"
   | "overdueOnly"
@@ -35,6 +36,10 @@ export function computeDatesFromPreset(preset: DatePreset): { from: string; to: 
       return { from: today, to: bizAddDays(today, 2) };
     case "today":
       return { from: today, to: today };
+    case "tomorrow": {
+      const t = bizAddDays(today, 1);
+      return { from: t, to: t };
+    }
     case "yesterday": {
       const y = bizAddDays(today, -1);
       return { from: y, to: y };
@@ -80,6 +85,7 @@ export function computeDatesFromPreset(preset: DatePreset): { from: string; to: 
 export const PRESET_LABELS: Record<string, string> = {
   now: "Now (3 days)",
   today: "Today",
+  tomorrow: "Tomorrow",
   next3: "Next 3 days",
   overdueOnly: "Overdue only",
   overdueAndNext3: "Last 60 days + Next 3 days",

@@ -1,6 +1,19 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+// ─────────────────────────────────────────────────────────────────────────────
+// PreviewRoutesTab — blended-role Routes tab. Takes a `scope` prop
+// carrying {isWorker, isAdmin, isSuper} so one tab serves all three:
+// Worker plans own routes; Admin/Super get the inline worker picker
+// + on-behalf endpoints; Super also gets the team-travel Operations
+// rollup at the top of the tab.
+//
+// Offline: covered by the shell's service worker (public/sw.js)
+// which is network-first + cache-fallback for /api/*, plus this
+// component caches the analysis result blob in localStorage per
+// userId so results persist even without SW.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { useEffect, useState } from "react";
 import {
   Badge,
   Box,
@@ -8,20 +21,19 @@ import {
   Card,
   HStack,
   Input,
-  Select,
   Spinner,
   Text,
   VStack,
-  createListCollection,
 } from "@chakra-ui/react";
+import { Play, Settings2 } from "lucide-react";
 import { apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import { MapLink } from "@/src/ui/helpers/Link";
-import { type Me } from "@/src/lib/types";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import { openEventSearch } from "@/src/lib/bus";
 import { fmtDate, fmtDateTime, bizDateKey, bizTomorrow, bizDaysBetween, bizHourMinute, bizInstantFromEtParts , type EtDateKey } from "@/src/lib/lib";
 import AddressAutocomplete from "@/src/ui/components/AddressAutocomplete";
+import { AdminWorkerPicker, RoutesOperationsPanel, SectionExpander } from "@/src/ui/tabs/PreviewRoutesTab.parts";
 
 type RouteJob = {
   id: string;
@@ -111,7 +123,10 @@ function formatDuration(mins: number): string {
 // Date helpers come from @/src/lib/lib (bizTomorrow). NEVER reinvent.
 
 type Props = {
-  userId?: string;
+  /** Blended-role scope. Worker plans own routes; Admin/Super get
+   *  the inline worker picker + on-behalf-of endpoints. Capabilities
+   *  add — never subtract. */
+  scope: { isWorker: boolean; isAdmin: boolean; isSuper: boolean };
 };
 
 const STORAGE_KEY_PREFIX = "preview_routeResults";
@@ -152,11 +167,31 @@ function saveCachedTimestamp(ts: string | null, userId?: string) {
   } catch {}
 }
 
-export default function PreviewRoutesTab({ userId }: Props = {}) {
+export default function PreviewRoutesTab({ scope }: Props) {
+  // Blended admin picker — mounted when scope.isAdmin. Empty
+  // selection = plan own routes (admin can still plan their own
+  // day); picking a worker delegates to the on-behalf endpoints
+  // via the `userId` variable below.
+  const [selfPickedWorkerId, setSelfPickedWorkerId] = usePersistedState<string | null>(
+    "routesTab_viewAsWorker",
+    null,
+  );
+  const usingSelfPicker = scope.isAdmin;
+  const userId = usingSelfPicker ? (selfPickedWorkerId ?? undefined) : undefined;
   const [data, setData] = useState<Response | null>(() => loadCachedResults(userId));
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(() => loadCachedTimestamp(userId));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Rehydrate the cached-results state whenever the effective user
+  // changes (admin picking a different worker). Without this,
+  // useState's lazy initializer captured the mount-time userId and
+  // the "Last analyzed" strip + cached route stuck to whoever the
+  // admin was viewing first.
+  useEffect(() => {
+    setData(loadCachedResults(userId));
+    setLastUpdatedAt(loadCachedTimestamp(userId));
+  }, [userId]);
 
   // Target day = the day to optimize a route for
   const todayStr = bizDateKey(new Date());
@@ -193,13 +228,11 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
   // Mode: "claimed" = only optimize route for claimed jobs, "suggest" = also suggest new jobs to claim
   const [mode, setMode] = usePersistedState<"claimed" | "suggest">("preview_mode", "claimed");
 
-  // Routing provider
-  const [routingProvider, setRoutingProvider] = usePersistedState("preview_routingProvider", "mapbox");
-  const providerOptions = [{ value: "mapbox", label: "Mapbox" }];
-  const providerCollection = useMemo(
-    () => createListCollection({ items: providerOptions }),
-    [],
-  );
+  // Routing provider — hardcoded to the only supported provider.
+  // The picker UI was removed when the codebase settled on Mapbox;
+  // kept as a constant so the API param is preserved for later
+  // multi-provider work without touching every callsite.
+  const routingProvider = "mapbox";
 
   const [homeBase, setHomeBase] = useState("");
   const [profileHomeBase, setProfileHomeBase] = useState("");
@@ -207,6 +240,11 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
   const [homeBaseLoaded, setHomeBaseLoaded] = useState(false);
 
   useEffect(() => {
+    // Refetch the profile whenever the effective user changes so an
+    // admin switching workers gets the new worker's home-base +
+    // available-hours defaults, not the previously-viewed worker's.
+    setHomeBaseLoaded(false);
+    setProfileHoursLoaded(false);
     const endpoint = userId ? `/api/admin/users/${userId}` : "/api/me";
     apiGet<any>(endpoint)
       .then((u) => {
@@ -226,7 +264,7 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
         setProfileHoursLoaded(true);
       })
       .catch(() => { setHomeBaseLoaded(true); setProfileHoursLoaded(true); });
-  }, []);
+  }, [userId]);
 
   // Listen for auto-analyze trigger from workflow
   useEffect(() => {
@@ -236,7 +274,9 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
     };
     window.addEventListener("routes:autoAnalyze", onAutoAnalyze);
     return () => window.removeEventListener("routes:autoAnalyze", onAutoAnalyze);
-  }, [targetDate, mode, bufferPercent, lookAhead, availableHours, routingProvider]);
+    // userId included so an admin switching workers mid-session gets
+    // an auto-analyze scoped to the newly-picked worker.
+  }, [targetDate, mode, bufferPercent, lookAhead, availableHours, routingProvider, userId]);
 
   function setHomeBaseOverride() {
     try { localStorage.setItem("seedlings_routes_homeBaseOverride", homeBase); } catch {}
@@ -432,230 +472,259 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
           <Spinner size="lg" position="fixed" top="50%" left="50%" zIndex="2" />
         </>
       )}
-      <Box mb={3} p={3} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" rounded="md">
-        <Text fontSize="sm" fontWeight="medium" color="yellow.700">AI + Mapping Feature</Text>
-        <Text fontSize="xs" color="yellow.600">Routes are optimized using real driving distances from a mapping provider and refined by AI. Results should be used as a starting point, not a final plan.</Text>
-      </Box>
-      {/* "Last analyzed" stamp — the route results are cached in localStorage
-          across sessions (loadCachedResults), so without this banner the
-          stale numbers look freshly computed. Only shown when a cached
-          analysis exists; hidden until the user runs their first analysis. */}
-      {lastUpdatedAt && (
-        <Box mb={3} px={3} py={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" rounded="md">
-          <Text fontSize="xs" color="blue.700">
-            Last analyzed {fmtDateTime(lastUpdatedAt)} · re-run to refresh.
-          </Text>
+      {/* Tiny AI disclaimer — one line, muted (was previously a
+          full yellow card that dominated the first render). */}
+      <Text fontSize="xs" color="fg.muted" mb={3}>
+        Routes are optimized from driving distances + AI. Treat as a starting point, not a final plan.
+      </Text>
+
+      {/* Super capability layer — team travel rollup (miles, drive
+          time, sessions, active drivers, top drivers/vehicles) for
+          a rolling period. Placed above the admin picker so the
+          highest-level lens (team-wide travel) reads first; the
+          picker below narrows the per-worker planning surface. */}
+      {scope.isSuper && (
+        <Box mb={3}>
+          <RoutesOperationsPanel />
         </Box>
       )}
 
-      {/* Home base */}
-      <Box mb={3} p={3} bg="gray.50" rounded="md" borderWidth="1px">
-        <Text fontSize="xs" fontWeight="medium" mb={1}>Home Base</Text>
-        <HStack gap={2}>
-          <AddressAutocomplete
-            size="sm"
-            value={homeBaseLoaded ? homeBase : ""}
-            onChange={setHomeBase}
-            placeholder={homeBaseLoaded ? "e.g. 123 Main St, Chapel Hill, NC" : "Loading..."}
-            disabled={!homeBaseLoaded}
-            showValidation
+      {/* Admin picker — mounted when scope.isAdmin and no explicit
+          userId prop. "Me" = plan own routes. Picking a worker
+          delegates to the on-behalf endpoints. */}
+      {usingSelfPicker && (
+        <Box mb={3}>
+          <AdminWorkerPicker
+            selectedWorkerId={selfPickedWorkerId}
+            onChange={setSelfPickedWorkerId}
           />
-          <Button size="sm" onClick={setHomeBaseOverride} disabled={!homeBaseLoaded || homeBase === activeHomeBase}>
-            Set
-          </Button>
-          {homeBase !== profileHomeBase && (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                setHomeBase(profileHomeBase);
-                setActiveHomeBase(profileHomeBase);
-                try { localStorage.removeItem("seedlings_routes_homeBaseOverride"); } catch {}
-              }}
-              disabled={!homeBaseLoaded}
-            >
-              Reset
-            </Button>
-          )}
-        </HStack>
-        {!userId && (
-          <HStack gap={2} mt={2} align="center">
-            <Text fontSize="xs" fontWeight="medium" color="fg.muted">Start route from:</Text>
-            <Button
-              size="xs"
-              variant={effectiveStartFrom === "home" ? "solid" : "outline"}
-              colorPalette={effectiveStartFrom === "home" ? "blue" : "gray"}
-              onClick={() => setStartFrom("home")}
-            >
-              Home base
-            </Button>
-            <Button
-              size="xs"
-              variant={effectiveStartFrom === "current" ? "solid" : "outline"}
-              colorPalette={effectiveStartFrom === "current" ? "blue" : "gray"}
-              onClick={() => setStartFrom("current")}
-              title="Geolocate the device when Analyze runs and use those coords as the start (one-way, no return leg)"
-            >
-              My current location
-            </Button>
-          </HStack>
-        )}
-      </Box>
+        </Box>
+      )}
 
-      {/* Mode toggle */}
-      <Box mb={3}>
-        <HStack gap={2}>
-          <Button
-            size="sm"
-            variant={mode === "claimed" ? "solid" : "outline"}
-            colorPalette={mode === "claimed" ? "blue" : "gray"}
-            onClick={() => setMode("claimed")}
-          >
-            Claimed Only
-          </Button>
-          <Button
-            size="sm"
-            variant={mode === "suggest" ? "solid" : "outline"}
-            colorPalette={mode === "suggest" ? "blue" : "gray"}
-            onClick={() => setMode("suggest")}
-          >
-            Suggest Additional Jobs
-          </Button>
-        </HStack>
-        <HStack gap={2} mt={2} align="center">
-          <Text fontSize="xs" color="fg.muted">
-            {mode === "claimed"
-              ? "Optimize the route for jobs you've already claimed."
-              : "Also suggest nearby available jobs to fill your day."}
-          </Text>
-          <HStack gap={1} flexShrink={0} align="center">
-            <Text fontSize="xs" color="fg.muted">Map:</Text>
-            <Select.Root
-              collection={providerCollection}
-              value={[routingProvider]}
-              onValueChange={(e) => {
-                if (e.value[0]) setRoutingProvider(e.value[0]);
-              }}
-              size="xs"
-              positioning={{ strategy: "fixed", hideWhenDetached: true }}
-              css={{ width: "auto", flex: "0 0 auto" }}
-            >
-              <Select.Control>
-                <Select.Trigger w="auto" minW="0" px="2">
-                  <Select.ValueText />
-                </Select.Trigger>
-              </Select.Control>
-              <Select.Positioner>
-                <Select.Content>
-                  {providerOptions.map((o) => (
-                    <Select.Item key={o.value} item={o.value}>
-                      <Select.ItemText>{o.label}</Select.ItemText>
-                    </Select.Item>
-                  ))}
-                </Select.Content>
-              </Select.Positioner>
-            </Select.Root>
-          </HStack>
-        </HStack>
-      </Box>
-
-      {/* Planning controls */}
-      <Box mb={3} p={3} bg="gray.50" rounded="md" borderWidth="1px">
-        <HStack gap={4} wrap="wrap" align="flex-end">
+      {/* Primary CTA — one clear next step. Big date + Plan button,
+          replaces the previous three-separate-cards layout for date
+          + mode + settings + Analyze button. */}
+      <Box mb={3} p={4} bg="blue.50" borderWidth="1px" borderColor="blue.200" rounded="lg">
+        <HStack gap={3} align="flex-end" wrap="wrap">
           <Box flex="1" minW="140px">
             <HStack mb={1} gap={2}>
-              <Text fontSize="xs" fontWeight="medium">Plan for date</Text>
+              <Text fontSize="xs" fontWeight="semibold" color="blue.900" textTransform="uppercase" letterSpacing="wide">
+                Plan for
+              </Text>
               {dateBadge && <Badge size="sm" colorPalette="blue" variant="subtle">{dateBadge}</Badge>}
             </HStack>
             <Input
               type="date"
-              size="sm"
+              size="md"
               value={targetDate}
               min={todayStr}
               onChange={(e) => setTargetDate(e.target.value as EtDateKey)}
+              bg="white"
             />
           </Box>
-          <Box flex="1" minW="140px">
-            <HStack justify="space-between" mb={1}>
-              <Text fontSize="xs" fontWeight="medium">Buffer</Text>
-              <Text fontSize="xs" color="fg.muted" fontWeight="medium">{bufferPercent}%</Text>
-            </HStack>
-            <input
-              type="range"
-              min={0}
-              max={50}
-              step={5}
-              value={bufferPercent}
-              onChange={(e) => setBufferPercent(Number(e.target.value))}
-              style={{ width: "100%", accentColor: "var(--chakra-colors-orange-500)" }}
-            />
-            <HStack justify="space-between" fontSize="xs" color="fg.muted">
-              <Text>0%</Text>
-              <Text>50%</Text>
-            </HStack>
-          </Box>
-        </HStack>
-        {mode === "suggest" && (
-          <HStack gap={4} wrap="wrap" align="flex-end" mt={3}>
-            <Box flex="1" minW="140px">
-              <HStack justify="space-between" mb={1}>
-                <Text fontSize="xs" fontWeight="medium">Consider jobs within</Text>
-                <Text fontSize="xs" color="fg.muted" fontWeight="medium">±{Math.min(lookAhead, maxMoveDays)} days</Text>
-              </HStack>
-              <input
-                type="range"
-                min={0}
-                max={maxMoveDays}
-                value={Math.min(lookAhead, maxMoveDays)}
-                onChange={(e) => setLookAhead(Number(e.target.value))}
-                style={{ width: "100%", accentColor: "var(--chakra-colors-blue-500)" }}
-              />
-              <HStack justify="space-between" fontSize="xs" color="fg.muted">
-                <Text>Same day only</Text>
-                <Text>{maxMoveDays} days</Text>
-              </HStack>
-            </Box>
-            <Box flex="1" minW="140px">
-              <HStack justify="space-between" mb={1}>
-                <Text fontSize="xs" fontWeight="medium">Available hours</Text>
-                <Text fontSize="xs" color="fg.muted" fontWeight="medium">{availableHours}h</Text>
-              </HStack>
-              <input
-                type="range"
-                min={2}
-                max={12}
-                value={availableHours}
-                onChange={(e) => setAvailableHours(Number(e.target.value))}
-                style={{ width: "100%", accentColor: "var(--chakra-colors-blue-500)" }}
-              />
-              <HStack justify="space-between" fontSize="xs" color="fg.muted">
-                <Text>2h</Text>
-                <Text>12h</Text>
-              </HStack>
-            </Box>
-          </HStack>
-        )}
-      </Box>
-
-      <HStack justify="space-between" mb={4}>
-        <VStack align="start" gap={0}>
-          <Text fontSize="lg" fontWeight="semibold">Route Planner</Text>
-          <Text fontSize="xs" color="fg.muted">
-            Optimizing {fmtDate(targetDate + "T12:00:00Z")}
-            {lookAhead > 0 ? ` · considering jobs ±${lookAhead} day${lookAhead !== 1 ? "s" : ""}` : ""}
-          </Text>
-        </VStack>
-        <HStack gap={2}>
-          <Button size="sm" onClick={loadSuggestions} loading={loading}>
-            Analyze
+          <Button
+            size="md"
+            colorPalette="blue"
+            onClick={loadSuggestions}
+            loading={loading}
+            flexShrink={0}
+          >
+            <Play size={14} />
+            <Text ml={1}>{data ? "Re-plan" : "Plan route"}</Text>
           </Button>
           {data && (
-            <Button size="sm" variant="ghost" onClick={clearResults}>
+            <Button size="sm" variant="ghost" onClick={clearResults} flexShrink={0}>
               Clear
             </Button>
           )}
         </HStack>
-      </HStack>
+        {lastUpdatedAt && (
+          <Text fontSize="xs" color="blue.700" mt={2}>
+            Last analyzed {fmtDateTime(lastUpdatedAt)}
+          </Text>
+        )}
+      </Box>
+
+      {/* Advanced settings — folded away by default so the first
+          render is just "pick a date, hit Plan". Home base, mode
+          toggle, buffer, look-ahead, available hours, map provider,
+          start-from all live here. Open state is persisted so a
+          user who wants them always visible only has to expand
+          once. */}
+      <Box mb={3}>
+        <SectionExpander
+          title={
+            <HStack gap={2}>
+              <Settings2 size={14} />
+              <Text as="span">Advanced settings</Text>
+              <Text as="span" fontSize="xs" color="fg.muted">
+                · {mode === "claimed" ? "Claimed only" : "Suggest jobs"} · {bufferPercent}% buffer
+                {mode === "suggest" ? ` · ${availableHours}h · ±${Math.min(lookAhead, maxMoveDays)}d` : ""}
+              </Text>
+            </HStack>
+          }
+          storageKey="routesTab_advancedOpen"
+        >
+          <VStack align="stretch" gap={4}>
+            {/* Home base */}
+            <Box>
+              <Text fontSize="xs" fontWeight="medium" mb={1}>Home base</Text>
+              <HStack gap={2}>
+                <AddressAutocomplete
+                  size="sm"
+                  value={homeBaseLoaded ? homeBase : ""}
+                  onChange={setHomeBase}
+                  placeholder={homeBaseLoaded ? "e.g. 123 Main St, Chapel Hill, NC" : "Loading..."}
+                  disabled={!homeBaseLoaded}
+                  showValidation
+                />
+                <Button size="sm" onClick={setHomeBaseOverride} disabled={!homeBaseLoaded || homeBase === activeHomeBase}>
+                  Set
+                </Button>
+                {homeBase !== profileHomeBase && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setHomeBase(profileHomeBase);
+                      setActiveHomeBase(profileHomeBase);
+                      try { localStorage.removeItem("seedlings_routes_homeBaseOverride"); } catch {}
+                    }}
+                    disabled={!homeBaseLoaded}
+                  >
+                    Reset
+                  </Button>
+                )}
+              </HStack>
+              {!userId && (
+                <HStack gap={2} mt={2} align="center">
+                  <Text fontSize="xs" fontWeight="medium" color="fg.muted">Start route from:</Text>
+                  <Button
+                    size="xs"
+                    variant={effectiveStartFrom === "home" ? "solid" : "outline"}
+                    colorPalette={effectiveStartFrom === "home" ? "blue" : "gray"}
+                    onClick={() => setStartFrom("home")}
+                  >
+                    Home base
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant={effectiveStartFrom === "current" ? "solid" : "outline"}
+                    colorPalette={effectiveStartFrom === "current" ? "blue" : "gray"}
+                    onClick={() => setStartFrom("current")}
+                    title="Geolocate the device when Analyze runs and use those coords as the start (one-way, no return leg)"
+                  >
+                    My current location
+                  </Button>
+                </HStack>
+              )}
+            </Box>
+
+            {/* Mode toggle + map provider */}
+            <Box>
+              <Text fontSize="xs" fontWeight="medium" mb={1}>What to include</Text>
+              <HStack gap={2} wrap="wrap">
+                <Button
+                  size="sm"
+                  variant={mode === "claimed" ? "solid" : "outline"}
+                  colorPalette={mode === "claimed" ? "blue" : "gray"}
+                  onClick={() => setMode("claimed")}
+                >
+                  Claimed only
+                </Button>
+                <Button
+                  size="sm"
+                  variant={mode === "suggest" ? "solid" : "outline"}
+                  colorPalette={mode === "suggest" ? "blue" : "gray"}
+                  onClick={() => setMode("suggest")}
+                >
+                  Suggest additional
+                </Button>
+              </HStack>
+              <Text fontSize="xs" color="fg.muted" mt={1}>
+                {mode === "claimed"
+                  ? "Optimize the route for jobs you've already claimed."
+                  : "Also suggest nearby available jobs to fill your day."}
+              </Text>
+            </Box>
+
+            {/* Buffer slider — always shown */}
+            <Box>
+              <HStack justify="space-between" mb={1}>
+                <Text fontSize="xs" fontWeight="medium">Setup buffer between stops</Text>
+                <Text fontSize="xs" color="fg.muted" fontWeight="medium">{bufferPercent}%</Text>
+              </HStack>
+              <input
+                type="range"
+                min={0}
+                max={50}
+                step={5}
+                value={bufferPercent}
+                onChange={(e) => setBufferPercent(Number(e.target.value))}
+                style={{ width: "100%", accentColor: "var(--chakra-colors-orange-500)" }}
+              />
+              <HStack justify="space-between" fontSize="xs" color="fg.muted">
+                <Text>0%</Text>
+                <Text>50%</Text>
+              </HStack>
+            </Box>
+
+            {/* Suggest-only sliders */}
+            {mode === "suggest" && (
+              <HStack gap={4} wrap="wrap" align="flex-end">
+                <Box flex="1" minW="140px">
+                  <HStack justify="space-between" mb={1}>
+                    <Text fontSize="xs" fontWeight="medium">Consider jobs within</Text>
+                    <Text fontSize="xs" color="fg.muted" fontWeight="medium">±{Math.min(lookAhead, maxMoveDays)} days</Text>
+                  </HStack>
+                  <input
+                    type="range"
+                    min={0}
+                    max={maxMoveDays}
+                    value={Math.min(lookAhead, maxMoveDays)}
+                    onChange={(e) => setLookAhead(Number(e.target.value))}
+                    style={{ width: "100%", accentColor: "var(--chakra-colors-blue-500)" }}
+                  />
+                  <HStack justify="space-between" fontSize="xs" color="fg.muted">
+                    <Text>Same day only</Text>
+                    <Text>{maxMoveDays} days</Text>
+                  </HStack>
+                </Box>
+                <Box flex="1" minW="140px">
+                  <HStack justify="space-between" mb={1}>
+                    <Text fontSize="xs" fontWeight="medium">Available hours</Text>
+                    <Text fontSize="xs" color="fg.muted" fontWeight="medium">{availableHours}h</Text>
+                  </HStack>
+                  <input
+                    type="range"
+                    min={2}
+                    max={12}
+                    value={availableHours}
+                    onChange={(e) => setAvailableHours(Number(e.target.value))}
+                    style={{ width: "100%", accentColor: "var(--chakra-colors-blue-500)" }}
+                  />
+                  <HStack justify="space-between" fontSize="xs" color="fg.muted">
+                    <Text>2h</Text>
+                    <Text>12h</Text>
+                  </HStack>
+                </Box>
+              </HStack>
+            )}
+          </VStack>
+        </SectionExpander>
+      </Box>
+
+      {/* Empty state — clearer than the old "no jobs found" muted
+          note. Only rendered when there's no cached data AND no
+          in-flight analysis, so the CTA card above is the loudest
+          thing on the page. */}
+      {!data && !loading && (
+        <Box mb={4} p={4} bg="gray.50" rounded="md" textAlign="center" borderWidth="1px" borderColor="gray.200">
+          <Text fontSize="sm" color="fg.muted">
+            Pick a date above, then tap <Text as="span" fontWeight="semibold">Plan route</Text> to see the best order to run your day.
+          </Text>
+        </Box>
+      )}
 
       {error && <Text color="red.500" fontSize="sm" mb={4}>{error}</Text>}
 
@@ -1017,41 +1086,45 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
         </Box>
       )}
 
-      {/* All jobs listing */}
+      {/* All jobs listing — collapsed by default (redundant with the
+          visible route when everything's shown up top). Kept for the
+          "let me browse everything" case. */}
       {data?.jobs && data.jobs.length > 0 && (
         <Box mt={6}>
-          <Text fontSize="xs" fontWeight="semibold" color="fg.muted" mb={2} textTransform="uppercase" letterSpacing="wide">
-            All Available Jobs ({data.jobs.length})
-          </Text>
-          <VStack align="stretch" gap={1}>
-            {data.jobs.map((job) => (
-              <HStack key={job.id} fontSize="xs" px={2} py={1.5} borderWidth="1px" rounded="md" gap={2} justify="space-between">
-                <HStack gap={2} flex="1" minW={0}>
-                  <Badge
-                    colorPalette={job.type === "claimed" ? "teal" : "gray"}
-                    variant={job.type === "claimed" ? "solid" : "outline"}
-                    fontSize="xs"
-                    px="1.5"
-                    borderRadius="full"
-                  >
-                    {job.type === "claimed" ? "Claimed" : "Open"}
-                  </Badge>
-                  {job.isEstimate && (
-                    <Badge colorPalette="purple" variant="solid" fontSize="xs" px="1.5" borderRadius="full">
-                      Estimate
+          <SectionExpander
+            title={`All available jobs (${data.jobs.length})`}
+            storageKey="routesTab_allJobsOpen"
+          >
+            <VStack align="stretch" gap={1}>
+              {data.jobs.map((job) => (
+                <HStack key={job.id} fontSize="xs" px={2} py={1.5} borderWidth="1px" rounded="md" gap={2} justify="space-between">
+                  <HStack gap={2} flex="1" minW={0}>
+                    <Badge
+                      colorPalette={job.type === "claimed" ? "teal" : "gray"}
+                      variant={job.type === "claimed" ? "solid" : "outline"}
+                      fontSize="xs"
+                      px="1.5"
+                      borderRadius="full"
+                    >
+                      {job.type === "claimed" ? "Claimed" : "Open"}
                     </Badge>
-                  )}
-                  <Text fontWeight="medium" truncate>{job.property}{job.client ? ` — ${job.client}` : ""}</Text>
-                  <Text color="fg.muted" truncate>{job.city}</Text>
+                    {job.isEstimate && (
+                      <Badge colorPalette="purple" variant="solid" fontSize="xs" px="1.5" borderRadius="full">
+                        Estimate
+                      </Badge>
+                    )}
+                    <Text fontWeight="medium" truncate>{job.property}{job.client ? ` — ${job.client}` : ""}</Text>
+                    <Text color="fg.muted" truncate>{job.city}</Text>
+                  </HStack>
+                  <HStack gap={2} flexShrink={0}>
+                    {job.currentDate && <Text color="fg.muted">{fmtDate(job.currentDate + "T12:00:00Z")}</Text>}
+                    {job.price != null && <Text color="green.600">${job.price.toFixed(2)}</Text>}
+                    {job.estimatedMinutes != null && <Text color="fg.muted">~{formatDuration(job.estimatedMinutes)}</Text>}
+                  </HStack>
                 </HStack>
-                <HStack gap={2} flexShrink={0}>
-                  {job.currentDate && <Text color="fg.muted">{fmtDate(job.currentDate + "T12:00:00Z")}</Text>}
-                  {job.price != null && <Text color="green.600">${job.price.toFixed(2)}</Text>}
-                  {job.estimatedMinutes != null && <Text color="fg.muted">~{formatDuration(job.estimatedMinutes)}</Text>}
-                </HStack>
-              </HStack>
-            ))}
-          </VStack>
+              ))}
+            </VStack>
+          </SectionExpander>
         </Box>
       )}
     </Box>

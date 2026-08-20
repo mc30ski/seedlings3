@@ -83,9 +83,9 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   );
   const [kind, setKind] = usePersistedState<string[]>(`${pfx}_kind`, ["ALL"]);
   const [likedOnly, setLikedOnly] = usePersistedState<boolean>(`${pfx}_likedOnly`, false);
-  // Admin-only "filter to a specific worker" — pre-set externally from AdminHomeTab tile
+  // Admin-only "filter to a specific worker" — pre-set externally from HomeTab tile
   // click-throughs so the Equipment tab shows only what that worker has reserved/checked
-  // out. Multi-select array to mirror AdminJobsTab's pattern.
+  // out. Multi-select array to mirror JobsTab's pattern.
   const [workerFilter, setWorkerFilter] = usePersistedState<string[]>(
     `${pfx}_workers`, [],
   );
