@@ -3,7 +3,6 @@ export type Role = "SUPER" | "ADMIN" | "WORKER";
 export type AdminTabs =
   | "tasks"
   | "home"
-  | "reminders"
   | "equipment"
   | "clients"
   | "properties"
@@ -26,7 +25,31 @@ export type AdminTabs =
   | "documents"
   | "timeline";
 
-export type SuperTabs = "home" | "unclaimed" | "audit" | "settings" | "profile" | "ledger" | "supplies" | "pricing" | "documents" | "timeline" | "payments" | "users" | "reconcile" | "workdays" | "compliance" | "vanity";
+export type SuperTabs =
+  | "home"
+  | "jobs"
+  | "routes"
+  | "services"
+  | "audit"
+  | "settings"
+  | "profile"
+  | "ledger"
+  | "supplies"
+  | "pricing"
+  | "documents"
+  | "timeline"
+  | "payments"
+  | "users"
+  | "clients"
+  | "reconcile"
+  | "workdays"
+  | "compliance"
+  | "vanity"
+  | "equipment"
+  | "vehicles"
+  | "promotions"
+  | "tools-mowing"
+  | "tools-mulch";
 
 // Client "Services" uses `client-services` (not just `services`) so
 // BreadcrumbNav's cross-role chip logic (matches inner-tab values
@@ -43,9 +66,7 @@ export type PreviewTabs = "routes";
 export type WorkerTabs =
   | "home"
   | "tasks"
-  | "reminders"
   | "routes"
-  | "statistics"
   | "equipment"
   | "collections"
   | "usage"
@@ -66,7 +87,7 @@ export type EventTypes =
   | "jobsTabToClientsTabSearch"
   | "paymentsTabToPropertiesTabSearch"
   | "paymentsTabToClientsTabSearch"
-  | "paymentsTabToServicesTabSearch"
+  | "paymentsTabToJobsTabSearch"
   | "jobsTabToServicesTabSearch"
   | "servicesTabToJobsTabSearch"
   | "clientsTabToServicesTabSearch"

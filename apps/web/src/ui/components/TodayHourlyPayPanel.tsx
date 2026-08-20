@@ -25,7 +25,7 @@ type WorkerEarningsToday = {
 };
 
 type Props = {
-  // Comma-joined worker id list (from the AdminHomeTab picker). Empty
+  // Comma-joined worker id list (from the HomeTab picker). Empty
   // string = all approved workers. Undefined = same as empty string.
   workerIds?: string;
   // Bump to force a refetch (e.g. after "Started/Ended workday" mutations).

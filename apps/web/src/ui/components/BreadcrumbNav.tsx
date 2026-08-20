@@ -14,6 +14,11 @@ export type InnerTab = {
   categoryIcon?: React.ElementType; // icon for the category
   categoryHighlight?: boolean; // highlight this category in the dropdown
   chip?: boolean; // render this tab on a light chip in the inner dropdown
+  /** Optional grouping bucket for the inner-tab dropdown ordering.
+   *  Tabs are shown in order: bucket="core" (default), then a
+   *  divider row, then bucket="next". Retained for backwards
+   *  compatibility with any legacy tab that still tags itself. */
+  bucket?: "core" | "next";
 };
 
 export type OuterTab = {
@@ -167,6 +172,10 @@ export default function BreadcrumbNav({
       icon?: React.ElementType;
       highlight?: boolean;
       chip?: boolean;
+      /** Group tag for ordering + divider insertion. Items are shown
+       *  in the order: bucket="core" (default), then a horizontal
+       *  divider row, then bucket="next". */
+      bucket?: "core" | "next";
       /** When set, render small role-jump badges on the right of the
        *  dropdown row. Each badge navigates to the same inner tab under
        *  a different outer role. Empty/undefined → no badges shown. */
@@ -175,6 +184,12 @@ export default function BreadcrumbNav({
     activeValue: string,
     onSelect: (value: string) => void,
   ) {
+    // Partition into core + next, preserving each group's caller-given
+    // order. Divider row renders BETWEEN the two groups, only when both
+    // sides have at least one item.
+    const coreItems = items.filter((t) => (t.bucket ?? "core") === "core");
+    const nextItems = items.filter((t) => t.bucket === "next");
+    const showDivider = coreItems.length > 0 && nextItems.length > 0;
     return (
       <Box
         position="fixed"
@@ -212,7 +227,26 @@ export default function BreadcrumbNav({
           };
         })()}
       >
-        {items.map((t) => (
+        {renderItems(coreItems)}
+        {showDivider && (
+          <Box
+            key="__divider"
+            my={1.5}
+            mx={2}
+            borderTopWidth="2px"
+            borderColor="gray.700"
+            aria-hidden
+          />
+        )}
+        {renderItems(nextItems)}
+      </Box>
+    );
+
+    // Row renderer factored out so we can render core + next lists
+    // independently with a divider between them. Same visual output as
+    // the previous single-.map — only the outer structure changed.
+    function renderItems(list: typeof items) {
+      return list.map((t) => (
           <HStack
             key={t.value}
             as="button"
@@ -311,9 +345,8 @@ export default function BreadcrumbNav({
               </HStack>
             )}
           </HStack>
-        ))}
-      </Box>
-    );
+      ));
+    }
   }
 
   return (
@@ -419,6 +452,7 @@ export default function BreadcrumbNav({
                       label: t.label,
                       icon: t.icon,
                       chip: t.chip,
+                      bucket: t.bucket,
                       crossRoleTargets: hideOuterTab ? [] : computeCrossRoleTargets(t.value),
                     })),
                     innerValue,
@@ -454,6 +488,7 @@ export default function BreadcrumbNav({
                 label: t.label,
                 icon: t.icon,
                 chip: t.chip,
+                bucket: t.bucket,
                 crossRoleTargets: hideOuterTab ? [] : computeCrossRoleTargets(t.value),
               })),
               innerValue,

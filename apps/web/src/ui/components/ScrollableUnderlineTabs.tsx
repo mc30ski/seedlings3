@@ -22,6 +22,11 @@ export type TabItem = {
   visible?: boolean | (() => boolean);
   /** If false, tab is hidden behind "More" menu. Default true. */
   pinned?: boolean;
+  /** Optional grouping bucket for the inner-tab dropdown — "core"
+   *  (default) or "next". BreadcrumbNav places all "next" tabs
+   *  below a horizontal divider at the bottom of the dropdown.
+   *  Retained for legacy tags; new tabs default to core. */
+  bucket?: "core" | "next";
 };
 
 type EdgeMode = "buttons" | "fade" | "overlay" | "none";

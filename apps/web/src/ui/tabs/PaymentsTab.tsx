@@ -612,7 +612,7 @@ function WorkerPayments({
                       {prop?.displayName && (
                         <TextLink
                           text="Job"
-                          onClick={() => openEventSearch("paymentsTabToServicesTabSearch", prop.displayName, forAdmin, item.occurrence?.id, item.occurrence?.startAt ?? null)}
+                          onClick={() => openEventSearch("paymentsTabToJobsTabSearch", prop.displayName, forAdmin, item.occurrence?.id, item.occurrence?.startAt ?? null)}
                         />
                       )}
                     </HStack>
@@ -2286,7 +2286,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                       {prop?.displayName && (
                         <TextLink
                           text="Job"
-                          onClick={() => openEventSearch("paymentsTabToServicesTabSearch", prop.displayName, forAdmin, p.occurrence?.id, p.occurrence?.startAt ?? null)}
+                          onClick={() => openEventSearch("paymentsTabToJobsTabSearch", prop.displayName, forAdmin, p.occurrence?.id, p.occurrence?.startAt ?? null)}
                         />
                       )}
                     </HStack>
@@ -3088,7 +3088,7 @@ export default function PaymentsTab({ me, purpose = "WORKER" }: TabPropsType) {
 type ViewAsWorker = { id: string; displayName: string | null; workerType: any };
 
 function SuperPaymentsTabWithViewAs({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: boolean }) {
-  // Mirrors the AdminHomeTab "View as" picker — same Input + dropdown +
+  // Mirrors the HomeTab "View as" picker — same Input + dropdown +
   // badge-row treatment, same colors, same persistedState lifecycle.
   // 0 selected = normal admin worklist; 1 = that worker's WorkerPayments
   // view fetched via ?asUserId; 2+ = stacked WorkerPayments per worker.

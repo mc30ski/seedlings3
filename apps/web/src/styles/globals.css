@@ -70,6 +70,15 @@ html, body {
   50% { box-shadow: 0 0 0 8px rgba(220, 38, 38, 0); }
 }
 
+/* Gray pulse — neutral "something needs attention" ripple that
+   doesn't imply severity via color. Used by the JobsNext Dashboard
+   sections so the collapsed frame can pulsate without competing
+   with per-row status colors. */
+@keyframes seedlings-pulse-gray {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(107, 114, 128, 0.5); }
+  50% { box-shadow: 0 0 0 8px rgba(107, 114, 128, 0); }
+}
+
 /* App splash — see components/AppSplash.tsx. Keyframes live here (not
    emotion-generated) so they're on the page from the very first paint;
    the splash mounts before Chakra's runtime CSS is fully applied and

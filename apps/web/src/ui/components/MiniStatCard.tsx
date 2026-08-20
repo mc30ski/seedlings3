@@ -1,7 +1,7 @@
 // Compact single-metric card. Shares visual DNA with the mini cards
 // inside AllWorkersHourlyPayCards but for scalar dashboard stats
 // (money totals, job counts, equipment states, etc.). Used by
-// SuperWorkHomeTab to fill each section's grid.
+// HomeTab to fill each section's grid.
 
 "use client";
 import { Box, Card, HStack, Text, VStack } from "@chakra-ui/react";

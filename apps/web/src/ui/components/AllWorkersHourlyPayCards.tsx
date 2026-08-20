@@ -60,7 +60,7 @@ function sortRank(row: WorkerCardRow): number {
 
 type Props = {
   /** When set, the outer surface controls the period and the internal
-   *  cycle button is hidden. Used by SuperWorkHomeTab so a single
+   *  cycle button is hidden. Used by HomeTab so a single
    *  dashboard-wide period button drives every section at once. */
   periodOverride?: Period;
 };

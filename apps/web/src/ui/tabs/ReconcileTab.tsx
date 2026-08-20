@@ -2340,7 +2340,7 @@ function DetailRows({ state }: { state: DetailState | undefined }) {
             textAlign="left"
             onClick={() => {
               window.dispatchEvent(
-                new CustomEvent("open:paymentsTabToServicesTabSearch", {
+                new CustomEvent("open:paymentsTabToJobsTabSearch", {
                   detail: {
                     forAdmin: true,
                     entityId: r.occurrenceId,

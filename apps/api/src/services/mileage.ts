@@ -554,6 +554,99 @@ export async function superListMileageForDate(
   return byUser;
 }
 
+/**
+ * Team travel rollup for the Routes Next operations panel. Aggregates
+ * every closed MileageEntry whose entryDate falls within [from, to]
+ * (inclusive, ET calendar dates). Open entries are excluded because
+ * we can't compute miles without an endOdometer.
+ *
+ * All numbers are pre-computed on the server so the client can render
+ * a MiniStatCard grid without further math. Per-driver + per-vehicle
+ * top-N arrays are included so the panel can call out the leaders.
+ */
+export async function superRoutesOperationsSummary(
+  from: string,
+  to: string,
+): Promise<{
+  totalMiles: number;
+  totalDriveMinutes: number;
+  entryCount: number;
+  approvedCount: number;
+  pendingCount: number;
+  activeDrivers: number;
+  activeVehicles: number;
+  avgMilesPerDriver: number;
+  avgMilesPerEntry: number;
+  topDrivers: Array<{ userId: string; displayName: string; miles: number; entries: number }>;
+  topVehicles: Array<{ vehicleId: string; vehicleName: string; miles: number; entries: number }>;
+}> {
+  const entries = await prisma.mileageEntry.findMany({
+    where: {
+      entryDate: { gte: from, lte: to },
+      endedAt: { not: null },
+      miles: { not: null },
+    },
+    include: {
+      driver: { select: { id: true, displayName: true, email: true } },
+      vehicle: { select: { id: true, displayName: true } },
+    },
+  });
+
+  let totalMiles = 0;
+  let totalDriveMs = 0;
+  let approvedCount = 0;
+  const byDriver = new Map<string, { userId: string; displayName: string; miles: number; entries: number }>();
+  const byVehicle = new Map<string, { vehicleId: string; vehicleName: string; miles: number; entries: number }>();
+
+  for (const e of entries) {
+    const miles = e.miles ?? 0;
+    totalMiles += miles;
+    if (e.endedAt) {
+      totalDriveMs += e.endedAt.getTime() - e.startedAt.getTime();
+    }
+    if (e.approvedAt) approvedCount++;
+
+    const dName = e.driver.displayName || e.driver.email || e.driverUserId;
+    const d = byDriver.get(e.driverUserId) ?? { userId: e.driverUserId, displayName: dName, miles: 0, entries: 0 };
+    d.miles += miles;
+    d.entries += 1;
+    byDriver.set(e.driverUserId, d);
+
+    const vName = e.vehicle.displayName;
+    const v = byVehicle.get(e.vehicleId) ?? { vehicleId: e.vehicleId, vehicleName: vName, miles: 0, entries: 0 };
+    v.miles += miles;
+    v.entries += 1;
+    byVehicle.set(e.vehicleId, v);
+  }
+
+  const activeDrivers = byDriver.size;
+  const activeVehicles = byVehicle.size;
+  const totalDriveMinutes = Math.round(totalDriveMs / 60_000);
+  const avgMilesPerDriver = activeDrivers > 0 ? totalMiles / activeDrivers : 0;
+  const avgMilesPerEntry = entries.length > 0 ? totalMiles / entries.length : 0;
+
+  const topDrivers = Array.from(byDriver.values())
+    .sort((a, b) => b.miles - a.miles)
+    .slice(0, 5);
+  const topVehicles = Array.from(byVehicle.values())
+    .sort((a, b) => b.miles - a.miles)
+    .slice(0, 5);
+
+  return {
+    totalMiles: Math.round(totalMiles * 10) / 10,
+    totalDriveMinutes,
+    entryCount: entries.length,
+    approvedCount,
+    pendingCount: entries.length - approvedCount,
+    activeDrivers,
+    activeVehicles,
+    avgMilesPerDriver: Math.round(avgMilesPerDriver * 10) / 10,
+    avgMilesPerEntry: Math.round(avgMilesPerEntry * 10) / 10,
+    topDrivers,
+    topVehicles,
+  };
+}
+
 function shapeEntry(e: {
   id: string;
   vehicleId: string;

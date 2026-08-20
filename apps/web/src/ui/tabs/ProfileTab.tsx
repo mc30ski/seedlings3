@@ -986,7 +986,7 @@ function NotificationsSection() {
               {bannerDismissed && (
                 <HStack justify="space-between" align="center">
                   <Text fontSize="xs" color="fg.muted">
-                    You dismissed the reminder on the Home tab.
+                    You dismissed the enable-notifications reminder.
                   </Text>
                   <Button
                     size="xs"
@@ -994,10 +994,10 @@ function NotificationsSection() {
                     onClick={() => {
                       try { localStorage.removeItem("seedlings_pushBannerDismissed"); } catch {}
                       setBannerDismissed(false);
-                      publishInlineMessage({ type: "SUCCESS", text: "Reminder will show on the Home tab again." });
+                      publishInlineMessage({ type: "SUCCESS", text: "Reminder will show again on the Home + Jobs-Next tabs." });
                     }}
                   >
-                    Show on Home
+                    Show reminder again
                   </Button>
                 </HStack>
               )}
