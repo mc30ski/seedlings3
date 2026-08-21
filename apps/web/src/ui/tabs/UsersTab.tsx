@@ -4,11 +4,13 @@ import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
   Box,
   Button,
+  Card,
   Dialog,
   HStack,
   Input,
   Portal,
   Select,
+  Spinner,
   Stack,
   Switch,
   Text,
@@ -19,7 +21,7 @@ import {
 import { ChevronDown, ChevronRight, Filter, Info, RefreshCw, Shield, Tag, X } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { prettyStatus, equipmentStatusColor, fmtDate, bizToday, bizAddDays, bizDateKey, bizDaysBetween } from "@/src/lib/lib";
-import { Role } from "@/src/lib/types";
+import { Role, WorkerType } from "@/src/lib/types";
 import { openEventSearch } from "@/src/lib/bus";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
@@ -39,7 +41,16 @@ import {
 // have awareness of the approval queue) but with identity badges only;
 // the action buttons further down are gated by `!readOnly`. User
 // management actions are SUPER-only — handled via Super → Users.
-export type TabRolePropType = { role: "worker" | "admin"; readOnly?: boolean };
+export type TabRolePropType = {
+  role?: "worker" | "admin";
+  readOnly?: boolean;
+  /** Additive scope — capabilities ADD as you climb the ladder.
+   *  scope.isWorker → worker Team roster (read-only, name + type only)
+   *  scope.isAdmin  → the full admin/super directory (this file's main UI)
+   *  scope.isSuper  → mutation controls (approve, delete, LLC owner, GP period)
+   *  Falls back to the legacy `role` prop when not passed. */
+  scope?: { isWorker: boolean; isAdmin: boolean; isSuper: boolean };
+};
 
 type ApiUser = {
   id: string;
@@ -131,8 +142,27 @@ const workerTypeFilterItems = [
 ];
 const workerTypeFilterCollection = createListCollection({ items: workerTypeFilterItems });
 
-export default function UsersTab({ role = "worker", readOnly = false }: TabRolePropType) {
-  if (role !== "admin") return <UnavailableNotice />;
+export default function UsersTab({ role = "worker", readOnly = false, scope }: TabRolePropType) {
+  // Effective scope: prefer the additive prop; fall back to `role`
+  // for legacy callsites. Older Admin/Super mounts still pass just
+  // `role="admin"` (with or without readOnly); worker mounts always
+  // pass the scope prop.
+  const effScope = scope ?? {
+    isWorker: role === "worker",
+    isAdmin: role === "admin",
+    // Legacy super mounts didn't distinguish super at the prop level;
+    // super-only affordances still gate on `hasSuperRole` below so a
+    // non-super user calling with role="admin" can't unlock them.
+    isSuper: role === "admin",
+  };
+  // Worker-only render path — trimmed "Team roster" card list.
+  // Wholly separate render tree from the admin directory; keeps the
+  // worker code path simple and prevents accidental leakage of the
+  // admin surface's sensitive controls.
+  if (effScope.isWorker && !effScope.isAdmin && !effScope.isSuper) {
+    return <WorkerTeamRoster />;
+  }
+  if (!effScope.isAdmin && !effScope.isSuper) return <UnavailableNotice />;
 
   const [items, setItems] = useState<ApiUser[]>([]);
   const [loading, setLoading] = useState(false);
@@ -146,6 +176,13 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
   // who am I? (used to hide actions for self)
   const [me, setMe] = useState<Me | null>(null);
   const [meReady, setMeReady] = useState(false); // prevents action button flash
+
+  // Super-only affordances (delete, LLC owner, guaranteed-payout period)
+  // gate on this. Scope carries the intent (Super tab vs Admin tab),
+  // but the underlying role is checked defense-in-depth so a
+  // mis-provisioned mount can't unlock super buttons for a non-super.
+  const hasSuperRole = !!me?.roles?.includes("SUPER");
+  const showSuperExtras = effScope.isSuper && hasSuperRole;
 
   // Collapsed-by-default Permissions section per user. Most admin tasks
   // don't involve toggling these — keep the card compact unless drilled in.
@@ -1028,9 +1065,7 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
                                     setConfirm({ userId: u.id, kind: "delete" })
                                   }
                                   title="Remove this user completely"
-                                  disabled={
-                                    me?.roles?.includes("SUPER") ? false : true
-                                  }
+                                  disabled={!showSuperExtras}
                                 >
                                   Delete
                                 </Button>
@@ -1089,7 +1124,7 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
                         Opens the date picker dialog; handles both "Start"
                         (no current period) and "Manage" (active, can extend
                         or end early). Button shows current state inline. */}
-                    {isContractor && me?.roles?.includes("SUPER") && (
+                    {isContractor && showSuperExtras && (
                       <Button
                         size={{ base: "xs", md: "sm" }}
                         variant={guaranteedPayoutActive ? "subtle" : "outline"}
@@ -1118,7 +1153,7 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
                         is hidden on everyone else (server would 409 anyway).
                         The current owner keeps the "Owner ✓" button so they
                         can be unflagged. */}
-                    {me?.roles?.includes("SUPER") && (u.isOwner || !hasOwner) && (
+                    {showSuperExtras && (u.isOwner || !hasOwner) && (
                       <Button
                         size={{ base: "xs", md: "sm" }}
                         onClick={() => setOwnerConfirm({ userId: u.id, isOwner: !u.isOwner, displayName: u.displayName ?? u.email ?? u.id })}
@@ -1664,6 +1699,94 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
             void load();
           }}
         />
+      )}
+    </Box>
+  );
+}
+
+// ─── Worker "Team roster" view ───────────────────────────────────────
+// Compact card list of approved workers, name + worker-type only.
+// Explicitly hides email, phone, wage, role labels (ADMIN/SUPER),
+// privilege flags, approval state, pending users, mutations.
+// Data comes from /api/me/team which strips sensitive fields
+// server-side; we filter defense-in-depth here too.
+type WorkerTeammate = {
+  id: string;
+  displayName?: string | null;
+  workerType?: WorkerType | null;
+};
+
+function workerTypeBadge(workerType?: WorkerType | null): { label: string; palette: string } | null {
+  if (workerType === "CONTRACTOR") return { label: "Contractor", palette: "orange" };
+  if (workerType === "EMPLOYEE") return { label: "Employee", palette: "blue" };
+  if (workerType === "TRAINEE") return { label: "Trainee", palette: "cyan" };
+  return null;
+}
+
+function WorkerTeamRoster() {
+  const [loading, setLoading] = useState(true);
+  const [team, setTeam] = useState<WorkerTeammate[]>([]);
+  const [q, setQ] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await apiGet<WorkerTeammate[]>("/api/me/team");
+        if (cancelled) return;
+        // Defense-in-depth strip: keep ONLY the sanitized fields even
+        // if the API is later loosened by mistake.
+        const clean = (Array.isArray(list) ? list : []).map((u) => ({
+          id: u.id,
+          displayName: u.displayName ?? null,
+          workerType: u.workerType ?? null,
+        }));
+        clean.sort((a, b) => (a.displayName ?? "").localeCompare(b.displayName ?? ""));
+        setTeam(clean);
+      } catch (err) {
+        if (!cancelled) {
+          publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load team", err) });
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const filtered = useMemo(() => {
+    const qlc = q.trim().toLowerCase();
+    if (!qlc) return team;
+    return team.filter((u) => (u.displayName ?? "").toLowerCase().includes(qlc));
+  }, [team, q]);
+
+  return (
+    <Box w="full">
+      <HStack mb={3} gap={2}>
+        <SearchWithClear value={q} onChange={setQ} inputId="worker-team-search" placeholder="Search teammates…" />
+      </HStack>
+      {loading ? (
+        <LoadingCenter />
+      ) : filtered.length === 0 ? (
+        <Text fontSize="sm" color="fg.muted" pl={2}>No teammates to show.</Text>
+      ) : (
+        <VStack align="stretch" gap={2}>
+          {filtered.map((u) => {
+            const badge = workerTypeBadge(u.workerType);
+            return (
+              <Card.Root key={u.id} variant="outline">
+                <Card.Body p={3}>
+                  <HStack gap={2} wrap="wrap">
+                    <Text fontSize="sm" fontWeight="semibold">
+                      {u.displayName || "(no name)"}
+                    </Text>
+                    {badge && <Badge size="sm" colorPalette={badge.palette}>{badge.label}</Badge>}
+                  </HStack>
+                </Card.Body>
+              </Card.Root>
+            );
+          })}
+        </VStack>
       )}
     </Box>
   );

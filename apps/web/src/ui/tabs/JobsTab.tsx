@@ -207,7 +207,6 @@ export default function JobsTab({
   // (daily filter reset, worker-only fetch shape) leave it alone —
   // admin scope in JobsTab still wants worker-baseline behaviors.
   const showAdminExtras = forAdmin || scope.isAdmin;
-  const showSuperExtras = forAdmin || scope.isSuper;
 
   // Internal admin "View as" state — only wired when scope.isAdmin AND
   // the parent didn't already pass its own viewAsUserIds. Workers

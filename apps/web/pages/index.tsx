@@ -888,14 +888,48 @@ export default function HomePage() {
       value: "clients",
       label: "Clients",
       icon: FiUsers,
-      content: wrapWithInlineMessage(<ClientsTab me={me} purpose="WORKER" />),
+      content: wrapWithInlineMessage(
+        <ClientsTab
+          me={me}
+          purpose="WORKER"
+          scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }}
+        />
+      ),
     },
     {
       value: "properties",
       label: "Properties",
       icon: FiMapPin,
       content: wrapWithInlineMessage(
-        <PropertiesTab me={me} purpose="WORKER" />
+        <PropertiesTab
+          me={me}
+          purpose="WORKER"
+          scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }}
+        />
+      ),
+    },
+    {
+      // Team roster — read-only list of active workers (name +
+      // worker-type badge only). Sensitive data (email, wage, roles,
+      // privilege flags) is scrubbed server-side and again on the
+      // client. Admin/Super get the full user-management UI on their
+      // own tabs.
+      value: "users",
+      label: "Users",
+      icon: AiOutlineTeam,
+      content: wrapWithInlineMessage(
+        <UsersTab scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }} />
+      ),
+    },
+    {
+      // Worker view — read-only list of ONLY the crews the caller is on.
+      // Fetches from /api/me/groups; cost-split percentages and other
+      // crews the worker isn't on stay hidden.
+      value: "groups",
+      label: "Groups",
+      icon: AiOutlineTeam,
+      content: wrapWithInlineMessage(
+        <AdminGroupsTab scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }} />
       ),
     },
     // ── Money ──
@@ -903,19 +937,19 @@ export default function HomePage() {
       value: "payments",
       label: "Payments",
       icon: TfiMoney,
-      content: wrapWithInlineMessage(<PaymentsTab key={`wpay-${paymentsRemountKey}`} me={me} purpose="WORKER" />),
+      content: wrapWithInlineMessage(<PaymentsTab key={`wpay-${paymentsRemountKey}`} me={me} purpose="WORKER" scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }} />),
     },
     {
       value: "pricing",
       label: "Pricing",
       icon: FiTag,
-      content: wrapWithInlineMessage(<PricingTab readOnly />),
+      content: wrapWithInlineMessage(<PricingTab readOnly scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }} />),
     },
     {
       value: "supplies",
       label: "Supplies",
       icon: FiPackage,
-      content: wrapWithInlineMessage(<SuppliesTab readOnly purpose="WORKER" />),
+      content: wrapWithInlineMessage(<SuppliesTab readOnly purpose="WORKER" scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }} />),
     },
     // NOTE: the Worker "Records → Statistics" tab was removed per operator
     // preference (no longer needed). The StatisticsTab component file and
@@ -934,35 +968,6 @@ export default function HomePage() {
   ];
 
   const adminTabs: TabItem[] = [
-    {
-      // ── Records ──
-      // Moved to the top of the Admin shell per operator preference, mirroring
-      // the Super shell ordering. BreadcrumbNav derives the category list
-      // from the order tabs appear here; keep tabs of the same category
-      // contiguous.
-      value: "activity",
-      label: "Engagement",
-      icon: FiActivity,
-      content: wrapWithInlineMessage(<ActivityTab role="admin" />),
-    },
-    {
-      value: "history",
-      label: "History",
-      icon: FiFileText,
-      content: wrapWithInlineMessage(<HistoryTab role="admin" />),
-    },
-    {
-      value: "timeline",
-      label: "Timeline",
-      icon: FiCalendar,
-      content: wrapWithInlineMessage(<TimelineTab />),
-    },
-    {
-      value: "documents",
-      label: "Documents",
-      icon: FiFolder,
-      content: wrapWithInlineMessage(<DocumentsTab />),
-    },
     {
       // ── Work ──
       // Inner value matches the Worker shell's Home tab so BreadcrumbNav's
@@ -1063,13 +1068,25 @@ export default function HomePage() {
       value: "clients",
       label: "Clients",
       icon: FiUsers,
-      content: wrapWithInlineMessage(<ClientsTab me={me} purpose="ADMIN" />),
+      content: wrapWithInlineMessage(
+        <ClientsTab
+          me={me}
+          purpose="ADMIN"
+          scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }}
+        />
+      ),
     },
     {
       value: "properties",
       label: "Properties",
       icon: FiMapPin,
-      content: wrapWithInlineMessage(<PropertiesTab me={me} purpose="ADMIN" />),
+      content: wrapWithInlineMessage(
+        <PropertiesTab
+          me={me}
+          purpose="ADMIN"
+          scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }}
+        />
+      ),
     },
     {
       value: "users",
@@ -1079,35 +1096,77 @@ export default function HomePage() {
       // privilege toggles / delete) moved to the Super tab. Admins see
       // the directory for context but can't mutate it, and pending
       // users are hidden entirely so the queue doesn't tempt action.
-      content: wrapWithInlineMessage(<UsersTab role="admin" readOnly />),
+      content: wrapWithInlineMessage(
+        <UsersTab
+          role="admin"
+          readOnly
+          scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }}
+        />
+      ),
     },
     {
       value: "groups",
       label: "Groups",
       icon: AiOutlineTeam,
-      content: wrapWithInlineMessage(<AdminGroupsTab />),
+      content: wrapWithInlineMessage(
+        <AdminGroupsTab scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }} />
+      ),
     },
     {
       // ── Money ──
       value: "payments",
       label: "Payments",
       icon: TfiMoney,
-      content: wrapWithInlineMessage(<PaymentsTab key={`apay-${adminPaymentsRemountKey}`} me={me} purpose="ADMIN" />),
+      content: wrapWithInlineMessage(<PaymentsTab key={`apay-${adminPaymentsRemountKey}`} me={me} purpose="ADMIN" scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }} />),
     },
     {
       value: "pricing",
       label: "Pricing",
       icon: FiTag,
-      content: wrapWithInlineMessage(<PricingTab readOnly />),
+      content: wrapWithInlineMessage(<PricingTab readOnly scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }} />),
     },
     {
       value: "supplies",
       label: "Supplies",
       icon: FiPackage,
-      content: wrapWithInlineMessage(<SuppliesTab readOnly purpose="ADMIN" />),
+      content: wrapWithInlineMessage(<SuppliesTab readOnly purpose="ADMIN" scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }} />),
     },
     {
-      // ── System ──
+      // ── Records ── (audit / review surfaces — placed between
+      // Money and System so the Admin category strip matches the
+      // canonical top-level order Work → Equipment → Directory →
+      // Money → Records → System.)
+      value: "activity",
+      label: "Engagement",
+      icon: FiActivity,
+      content: wrapWithInlineMessage(<ActivityTab role="admin" />),
+    },
+    {
+      value: "history",
+      label: "History",
+      icon: FiFileText,
+      content: wrapWithInlineMessage(<HistoryTab role="admin" />),
+    },
+    {
+      value: "timeline",
+      label: "Timeline",
+      icon: FiCalendar,
+      content: wrapWithInlineMessage(<TimelineTab />),
+    },
+    {
+      value: "documents",
+      label: "Documents",
+      icon: FiFolder,
+      content: wrapWithInlineMessage(<DocumentsTab />),
+    },
+    {
+      // ── System ── (order: Profile → Notify → Settings)
+      value: "profile",
+      label: "Profile",
+      icon: FiUser,
+      content: wrapWithInlineMessage(<ProfileTab me={me} isAdmin purpose="ADMIN" onProfileUpdated={refreshMe} />),
+    },
+    {
       value: "notify",
       label: "Notify",
       icon: FiBell,
@@ -1118,12 +1177,6 @@ export default function HomePage() {
       label: "Settings",
       icon: FiSettings,
       content: wrapWithInlineMessage(<SettingsTab me={me} purpose="ADMIN" />),
-    },
-    {
-      value: "profile",
-      label: "Profile",
-      icon: FiUser,
-      content: wrapWithInlineMessage(<ProfileTab me={me} isAdmin purpose="ADMIN" onProfileUpdated={refreshMe} />),
     },
   ];
 
@@ -1231,7 +1284,7 @@ export default function HomePage() {
         const catMap: Record<string, string> = {
           home: "Work", jobs: "Work", routes: "Work", tasks: "Work",
           equipment: "Equipment", collections: "Equipment", vehicles: "Equipment",
-          clients: "Directory", properties: "Directory",
+          clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
           payments: "Money", pricing: "Money", supplies: "Money",
           // statistics: "Records" — re-add when the Worker Statistics tab is restored.
           profile: "System",
@@ -1442,6 +1495,148 @@ chip: false, bucket: t.bucket }));
           categoryIcon: FiTool,
         },
         {
+          // ── Directory ── (Clients → Properties → Users → Groups)
+          // Clients — Super's home for the "View as this client"
+          // affordance (Super-only impersonation for support debugging).
+          // Mounted with purpose="SUPER" so ClientsTab can distinguish
+          // this from the admin-side Clients mount and render the "View
+          // as" button only here. See ViewAsClientButton gate below.
+          value: "clients",
+          label: "Clients",
+          icon: FiUsers,
+          content: wrapWithInlineMessage(
+            <ClientsTab
+              me={me}
+              purpose="SUPER"
+              scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }}
+            />
+          ),
+          category: "Directory",
+          categoryIcon: AiOutlineTeam,
+        },
+        {
+          // Properties — same PropertiesTab admins see. Mounted at the
+          // Super tier for parity with Admin's Directory category. The
+          // legacy `purpose="ADMIN"` is preserved for backward-compat;
+          // the additive `scope` prop is authoritative and passes the
+          // Super capability through so `superRequired` (hard-delete
+          // unlock) resolves correctly here.
+          value: "properties",
+          label: "Properties",
+          icon: FiMapPin,
+          content: wrapWithInlineMessage(
+            <PropertiesTab
+              me={me}
+              purpose="ADMIN"
+              scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }}
+            />
+          ),
+          category: "Directory",
+          categoryIcon: AiOutlineTeam,
+        },
+        {
+          // Super-only writable Users view. The same component admins
+          // see read-only on their Directory tab, but with full mutation
+          // surface (approve / role changes / privilege toggles / delete).
+          // The "Pending Users" alert chip in the title bar routes here.
+          value: "users",
+          label: "Users",
+          icon: AiOutlineTeam,
+          content: wrapWithInlineMessage(
+            <UsersTab
+              role="admin"
+              scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }}
+            />
+          ),
+          category: "Directory",
+          categoryIcon: AiOutlineTeam,
+        },
+        {
+          // Groups — the same AdminGroupsTab admins see. Groups (crews)
+          // are managed at the admin tier, but Super also needs the
+          // surface for support debugging + cross-role parity.
+          value: "groups",
+          label: "Groups",
+          icon: AiOutlineTeam,
+          content: wrapWithInlineMessage(
+            <AdminGroupsTab scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }} />
+          ),
+          category: "Directory",
+          categoryIcon: AiOutlineTeam,
+        },
+        {
+          // ── Money ── (Super sub-tab order: Payments → Pricing →
+          // Supplies → Ledger → Promotions. Payments/Pricing/Supplies
+          // are shared across all three roles via the additive scope
+          // prop; Ledger + Promotions are Super-only.)
+          value: "payments",
+          label: "Payments",
+          icon: TfiMoney,
+          content: wrapWithInlineMessage(<PaymentsTab me={me} purpose="SUPER" scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }} />),
+          category: "Money",
+          categoryIcon: TfiMoney,
+        },
+        {
+          value: "pricing",
+          label: "Pricing",
+          icon: FiTag,
+          content: wrapWithInlineMessage(<PricingTab isSuper scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }} />),
+          category: "Money",
+          categoryIcon: TfiMoney,
+        },
+        // NOTE: the Super "Money → Statistics" tab was removed per operator
+        // preference (no longer needed for routine ops review). The
+        // StatisticsTab component still ships for the Worker personal-stats
+        // view (workerTabs, "Records" category). To restore the Super entry,
+        // re-add a tab block here pointing at <StatisticsTab /> (no myId).
+        {
+          value: "supplies",
+          label: "Supplies",
+          icon: FiPackage,
+          content: wrapWithInlineMessage(<SuppliesTab scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }} />),
+          category: "Money",
+          categoryIcon: TfiMoney,
+        },
+        {
+          // Internally this tab is BusinessExpensesTab and the API/model
+          // is BusinessExpense — both kept for historical reasons. The
+          // visible label is "Ledger" because the tab is a hand-logged
+          // record of three money-movement categories: business expenses,
+          // capital contributions (equity in), and owner draws (equity
+          // out). See the EntryType discriminator on the BusinessExpense
+          // model. The URL key is "ledger" to match the visible name —
+          // deep links and localStorage handoffs (Supply badge, Job badge)
+          // need updating to match.
+          //
+          // Super-only — Ledger is intentionally NOT mounted for Admin or
+          // Worker.
+          value: "ledger",
+          label: "Ledger",
+          icon: FiBook,
+          content: wrapWithInlineMessage(<BusinessExpensesTab />),
+          category: "Money",
+          categoryIcon: TfiMoney,
+        },
+        {
+          // Promotions — Super-only marketing campaigns. Piggyback on
+          // outgoing invoice comms (or blast manually), with full audit
+          // trail and per-contact opt-out. See PromotionsTab +
+          // services/promotions.ts.
+          value: "promotions",
+          label: "Promotions",
+          icon: FiSpeaker,
+          content: wrapWithInlineMessage(<PromotionsTab />),
+          category: "Money",
+          categoryIcon: TfiMoney,
+        },
+        // NOTE: Reconcile moved out of Money → Records. It lives next to
+        // Workdays / Audit / Timeline now since it's an external-system
+        // reconciliation surface rather than a per-record money editor.
+        {
+          // ── Records ── (audit / review surfaces — placed between
+          // Money and Tools so the top-level category order matches
+          // Work → Equipment → Directory → Money → Records → Tools
+          // → System.)
           // Reconcile — accounting-software validation surface. Replaces
           // the old Exports + P&L Report tabs. Renders a QB-style P&L
           // for the selected window with click-to-drill-down on every
@@ -1450,10 +1645,6 @@ chip: false, bucket: t.bucket }));
           // accounting software (which is now the source of truth, wired
           // directly to the bank). See ReconcileTab.tsx + services/
           // pnlReport.ts + services/exports.ts.
-          //
-          // Lives under Records (not Money) because it's primarily a
-          // review / audit surface for reconciling against an external
-          // system, alongside Workdays / Audit / Timeline.
           value: "reconcile",
           label: "Reconcile",
           icon: FiBarChart2,
@@ -1492,6 +1683,26 @@ chip: false, bucket: t.bucket }));
           categoryIcon: FiBarChart2,
         },
         {
+          // Engagement — same ActivityTab admins see. Surfaced under
+          // Super Records for parity with Admin's Records sub-tabs.
+          value: "activity",
+          label: "Engagement",
+          icon: FiActivity,
+          content: wrapWithInlineMessage(<ActivityTab role="admin" />),
+          category: "Records",
+          categoryIcon: FiBarChart2,
+        },
+        {
+          // History — same HistoryTab admins see. Same rationale as
+          // Engagement above.
+          value: "history",
+          label: "History",
+          icon: FiFileText,
+          content: wrapWithInlineMessage(<HistoryTab role="admin" />),
+          category: "Records",
+          categoryIcon: FiBarChart2,
+        },
+        {
           value: "timeline",
           label: "Timeline",
           icon: FiCalendar,
@@ -1514,94 +1725,6 @@ chip: false, bucket: t.bucket }));
           content: <AuditTab />,
           category: "Records",
           categoryIcon: FiBarChart2,
-        },
-        {
-          // ── Directory ──
-          // Super-only writable Users view. The same component admins
-          // see read-only on their Directory tab, but with full mutation
-          // surface (approve / role changes / privilege toggles / delete).
-          // The "Pending Users" alert chip in the title bar routes here.
-          value: "users",
-          label: "Users",
-          icon: AiOutlineTeam,
-          content: wrapWithInlineMessage(<UsersTab role="admin" />),
-          category: "Directory",
-          categoryIcon: AiOutlineTeam,
-        },
-        {
-          // Clients — Super's home for the "View as this client"
-          // affordance (Super-only impersonation for support debugging).
-          // Mounted with purpose="SUPER" so ClientsTab can distinguish
-          // this from the admin-side Clients mount and render the "View
-          // as" button only here. See ViewAsClientButton gate below.
-          value: "clients",
-          label: "Clients",
-          icon: FiUsers,
-          content: wrapWithInlineMessage(<ClientsTab me={me} purpose="SUPER" />),
-          category: "Directory",
-          categoryIcon: AiOutlineTeam,
-        },
-        {
-          // ── Money ──
-          value: "payments",
-          label: "Payments",
-          icon: TfiMoney,
-          content: wrapWithInlineMessage(<PaymentsTab me={me} purpose="SUPER" />),
-          category: "Money",
-          categoryIcon: TfiMoney,
-        },
-        {
-          // Internally this tab is BusinessExpensesTab and the API/model
-          // is BusinessExpense — both kept for historical reasons. The
-          // visible label is "Ledger" because the tab is a hand-logged
-          // record of three money-movement categories: business expenses,
-          // capital contributions (equity in), and owner draws (equity
-          // out). See the EntryType discriminator on the BusinessExpense
-          // model. The URL key is "ledger" to match the visible name —
-          // deep links and localStorage handoffs (Supply badge, Job badge)
-          // need updating to match.
-          value: "ledger",
-          label: "Ledger",
-          icon: FiBook,
-          content: wrapWithInlineMessage(<BusinessExpensesTab />),
-          category: "Money",
-          categoryIcon: TfiMoney,
-        },
-        {
-          // Promotions — Super-only marketing campaigns. Piggyback on
-          // outgoing invoice comms (or blast manually), with full audit
-          // trail and per-contact opt-out. See PromotionsTab +
-          // services/promotions.ts.
-          value: "promotions",
-          label: "Promotions",
-          icon: FiSpeaker,
-          content: wrapWithInlineMessage(<PromotionsTab />),
-          category: "Money",
-          categoryIcon: TfiMoney,
-        },
-        // NOTE: Reconcile moved out of Money → Records. It lives next to
-        // Workdays / Audit / Timeline now since it's an external-system
-        // reconciliation surface rather than a per-record money editor.
-        // NOTE: the Super "Money → Statistics" tab was removed per operator
-        // preference (no longer needed for routine ops review). The
-        // StatisticsTab component still ships for the Worker personal-stats
-        // view (workerTabs, "Records" category). To restore the Super entry,
-        // re-add a tab block here pointing at <StatisticsTab /> (no myId).
-        {
-          value: "supplies",
-          label: "Supplies",
-          icon: FiPackage,
-          content: wrapWithInlineMessage(<SuppliesTab />),
-          category: "Money",
-          categoryIcon: TfiMoney,
-        },
-        {
-          value: "pricing",
-          label: "Pricing",
-          icon: FiTag,
-          content: wrapWithInlineMessage(<PricingTab isSuper />),
-          category: "Money",
-          categoryIcon: TfiMoney,
         },
         {
           // ── Tools ──
@@ -1627,11 +1750,21 @@ chip: false, bucket: t.bucket }));
           categoryIcon: FiTool,
         },
         {
-          // ── System ──
-          value: "settings",
-          label: "Settings",
-          icon: FiSettings,
-          content: wrapWithInlineMessage(<SettingsTab me={me} purpose="SUPER" />),
+          // ── System ── (order: Profile → Notify → Vanity → Settings)
+          value: "profile",
+          label: "Profile",
+          icon: FiUser,
+          content: wrapWithInlineMessage(<ProfileTab me={me} isAdmin purpose="SUPER" onProfileUpdated={refreshMe} />),
+          category: "System",
+          categoryIcon: FiSettings,
+        },
+        {
+          // Notify — same AdminNotifyTab admins use. Mounted here for
+          // parity with the Admin System sub-tab list.
+          value: "notify",
+          label: "Notify",
+          icon: FiBell,
+          content: wrapWithInlineMessage(<AdminNotifyTab />),
           category: "System",
           categoryIcon: FiSettings,
         },
@@ -1649,10 +1782,10 @@ chip: false, bucket: t.bucket }));
           categoryIcon: FiSettings,
         },
         {
-          value: "profile",
-          label: "Profile",
-          icon: FiUser,
-          content: wrapWithInlineMessage(<ProfileTab me={me} isAdmin purpose="SUPER" onProfileUpdated={refreshMe} />),
+          value: "settings",
+          label: "Settings",
+          icon: FiSettings,
+          content: wrapWithInlineMessage(<SettingsTab me={me} purpose="SUPER" />),
           category: "System",
           categoryIcon: FiSettings,
         },
@@ -2874,13 +3007,18 @@ chip: false, bucket: t.bucket }));
   // so cross-tab handoffs that need a fresh mount (e.g. clearing per-mount
   // state) work identically in super scope.
   useEffect(() => {
+    // Kept in sync with the super tab tree above — every super inner
+    // tab needs an entry so cross-tab handoffs route to the right
+    // category strip. Values must match `category:` on the tab entry.
     const superCatMap: Record<string, string> = {
       home: "Work", jobs: "Work", routes: "Work", services: "Work", tasks: "Work",
       equipment: "Equipment", collections: "Equipment", vehicles: "Equipment",
       clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
-      payments: "Money", pricing: "Money", supplies: "Money", ledger: "Money", reconcile: "Money", workdays: "Money",
-      audit: "Records", history: "Records", timeline: "Records", documents: "Records",
-      notify: "System", settings: "System", profile: "System", compliance: "System", vanity: "System",
+      payments: "Money", pricing: "Money", supplies: "Money", ledger: "Money", promotions: "Money",
+      reconcile: "Records", workdays: "Records", compliance: "Records", activity: "Records",
+      history: "Records", timeline: "Records", documents: "Records", audit: "Records",
+      "tools-mowing": "Tools", "tools-mulch": "Tools",
+      notify: "System", settings: "System", profile: "System", vanity: "System",
     };
     const onNav = (e: Event) => {
       const { tab, remount } = (e as CustomEvent).detail || {};
@@ -3454,12 +3592,12 @@ chip: false, bucket: t.bucket }));
     setSuperInnerTab("ledger" as any);
   }, []);
 
-  // Super → Directory → Compliance. Both compliance alerts (pending
+  // Super → Records → Compliance. Both compliance alerts (pending
   // upload reviews, pending version approvals) land here — the tab
   // surfaces each in its own section so the operator sees both at once.
   const goToCompliance = useCallback(() => {
     setTopTab("super");
-    setSuperCategory("Directory");
+    setSuperCategory("Records");
     setSuperInnerTab("compliance");
   }, []);
 
@@ -3469,7 +3607,7 @@ chip: false, bucket: t.bucket }));
   const goToWorkerCompliance = useCallback(() => {
     setTopTab("worker");
     setWorkerInnerTab("profile");
-    setWorkerCategory("Profile");
+    setWorkerCategory("System");
   }, []);
 
   // Stream-pause reminders — land on the Admin Services tab where the

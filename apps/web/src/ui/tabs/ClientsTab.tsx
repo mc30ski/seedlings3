@@ -58,9 +58,37 @@ const kindStates = ["ALL", ...CLIENT_KIND] as const;
 // Constant representing the status states for this entity.
 const statusStates = ["ALL", ...CLIENT_STATUS] as const;
 
-export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
-  const { isSuper, isAvail, isAdmin, forAdmin } = determineRoles(me, purpose);
-  const pfx = purpose === "ADMIN" ? "aclients" : "wclients";
+type ClientsTabProps = TabPropsType & {
+  /** Additive scope — capabilities ADD as you climb the ladder.
+   *  scope.isWorker → worker-only affordances (currently none unique
+   *  to Clients; kept for parity with the Inventory/Vehicles pattern).
+   *  scope.isAdmin  → adds admin list endpoint + CRUD + tags + banner.
+   *  scope.isSuper  → adds "View as this client" + hard-delete.
+   *  Falls back to a scope derived from the legacy `purpose` prop when
+   *  not passed, so mounts still on the old shape keep working. */
+  scope?: { isWorker: boolean; isAdmin: boolean; isSuper: boolean };
+};
+
+export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTabProps) {
+  const { isSuper: hasSuperRole, isAvail, isAdmin, forAdmin } = determineRoles(me, purpose);
+
+  // Effective scope: prefer the additive prop; fall back to a scope
+  // derived from `purpose` for any callsite still on the old shape.
+  const effScope = scope ?? {
+    isWorker: purpose === "WORKER",
+    isAdmin: purpose === "ADMIN" || purpose === "SUPER",
+    isSuper: purpose === "SUPER",
+  };
+  // Capabilities render additively AND are strictly governed by the
+  // scope prop — not by the underlying role. A user with admin+super
+  // roles viewing the *Admin* tab must NOT see Super buttons (that's
+  // what the Super top-tab is for). Super scope inherits Admin
+  // capabilities so a super sees admin controls too.
+  const showWorkerExtras = effScope.isWorker;
+  const showAdminExtras = effScope.isAdmin || effScope.isSuper;
+  const showSuperExtras = effScope.isSuper && hasSuperRole;
+
+  const pfx = showAdminExtras ? "aclients" : "wclients";
   const isTrainee = !forAdmin && me?.workerType === "TRAINEE";
   const [traineeClientIds, setTraineeClientIds] = useState<Set<string> | null>(null);
 
@@ -117,12 +145,12 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
   async function load(displayLoading: boolean = true) {
     setLoading(displayLoading);
     try {
-      const base = forAdmin ? "/api/admin/clients" : "/api/clients";
+      const base = showAdminExtras ? "/api/admin/clients" : "/api/clients";
       const list: Client[] = await apiGet(base);
       setItems(
         list
           .sort((a, b) => a.displayName.localeCompare(b.displayName))
-          .filter((i) => forAdmin || i.status === "ACTIVE")
+          .filter((i) => showAdminExtras || i.status === "ACTIVE")
       );
     } catch (err) {
       publishInlineMessage({
@@ -138,7 +166,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
   // Loads all the items for the first time.
   useEffect(() => {
     void load();
-  }, [forAdmin]);
+  }, [showAdminExtras]);
 
   // For trainees: fetch their assigned client IDs
   useEffect(() => {
@@ -718,7 +746,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                         the admin clients list response (see
                         services/clients.ts), so this check adds no
                         extra request. */}
-                    {isSuper && purpose === "SUPER" && c.contacts?.some((ct) => !!ct.clerkUserId) && (
+                    {showSuperExtras && c.contacts?.some((ct) => !!ct.clerkUserId) && (
                       <ViewAsClientButton clientId={c.id} clientName={c.displayName} />
                     )}
                     {/* Client-level "Pause" / "Unpause" buttons removed
@@ -828,7 +856,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                               hasProperties = Array.isArray(props) && props.length > 0;
                             } catch { /* proceed; server will guard */ }
 
-                            const superRequired = !isSuper;
+                            const superRequired = !showSuperExtras;
                             const blocked = hasProperties || superRequired;
 
                             void setToDelete({

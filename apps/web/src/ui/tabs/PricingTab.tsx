@@ -50,17 +50,39 @@ type Props = {
   isSuper?: boolean;
   /** Forces read-only regardless of role. Admin + Worker views set this. */
   readOnly?: boolean;
+  /** Additive scope — capabilities ADD as you climb the ladder.
+   *  scope.isWorker → read-only view of the pricing guide.
+   *  scope.isAdmin  → read-only view (same data).
+   *  scope.isSuper  → adds add/edit/delete affordances.
+   *  Falls back to a scope derived from the legacy `isSuper` + `readOnly`
+   *  props when not passed, so mounts still on the old shape keep working. */
+  scope?: { isWorker: boolean; isAdmin: boolean; isSuper: boolean };
 };
 
-export default function PricingTab({ isSuper, readOnly }: Props) {
+export default function PricingTab({ isSuper, readOnly, scope }: Props) {
   const [entries, setEntries] = useState<PricingEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Effective editability: Super only, and not forced read-only.
-  const canEdit = !!isSuper && !readOnly;
-  // Workers hit the worker-guard endpoint; admin+super read /admin/pricing
+  // Effective scope: prefer the additive prop; fall back to a scope
+  // derived from the legacy props. `isSuper` = the super, writable
+  // variant; `readOnly` on its own = admin (or worker) read-only view.
+  const effScope = scope ?? {
+    isWorker: !isSuper && !!readOnly,
+    isAdmin: !isSuper && !!readOnly,
+    isSuper: !!isSuper && !readOnly,
+  };
+  // Capabilities render additively AND are strictly governed by the
+  // scope prop. No `me` prop on this tab — trust the scope for the
+  // super check (the shell only sets scope.isSuper on the super tab).
+  const showWorkerExtras = effScope.isWorker;
+  const showAdminExtras = effScope.isAdmin || effScope.isSuper;
+  const showSuperExtras = effScope.isSuper;
+
+  // Effective editability: Super only.
+  const canEdit = showSuperExtras;
+  // Workers/admins hit the worker-guard endpoint; super reads /admin/pricing
   // which carries the updatedBy join. Mutations always go to /admin/pricing.
-  const readEndpoint = isSuper ? "/api/admin/pricing" : "/api/pricing";
+  const readEndpoint = showSuperExtras ? "/api/admin/pricing" : "/api/pricing";
 
   // Dialog state
   const [dialogOpen, setDialogOpen] = useState(false);

@@ -3058,16 +3058,35 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
 
 // ─── Main Export ──────────────────────────────────────────────────────
 
-export default function PaymentsTab({ me, purpose = "WORKER" }: TabPropsType) {
+type PaymentsTabProps = TabPropsType & {
+  /** Additive scope — capabilities ADD as you climb the ladder.
+   *  scope.isWorker → own-payout view (Jobs + Equipment lists for `me`).
+   *  scope.isAdmin  → adds the admin worklist + all-workers totals.
+   *  scope.isSuper  → adds Pending Approvals, Outstanding Requests,
+   *                   edit/revert affordances, and the view-as picker.
+   *  Falls back to a scope derived from the legacy `purpose` prop when
+   *  not passed, so mounts still on the old shape keep working. */
+  scope?: { isWorker: boolean; isAdmin: boolean; isSuper: boolean };
+};
+
+export default function PaymentsTab({ me, purpose = "WORKER", scope }: PaymentsTabProps) {
   const { isAvail, forAdmin, isSuper: hasSuperRole } = determineRoles(me, purpose);
 
-  // The Super → Money → Payments tab passes purpose="SUPER"; determineRoles()
-  // only sets forAdmin for purpose="ADMIN", so treat the Super tab as an
-  // admin-level view here. Payment approval + edit/revert are Super-only.
-  const isSuper = purpose === "SUPER" && hasSuperRole;
-  const showAdmin = forAdmin || isSuper;
+  // Effective scope: prefer the additive prop; fall back to a scope
+  // derived from `purpose` for any callsite still on the old shape.
+  const effScope = scope ?? {
+    isWorker: purpose === "WORKER",
+    isAdmin: purpose === "ADMIN" || purpose === "SUPER",
+    isSuper: purpose === "SUPER",
+  };
+  // Capabilities render additively AND are strictly governed by the
+  // scope prop — not by the underlying role. Super scope inherits Admin
+  // capabilities so a super sees admin controls too.
+  const showWorkerExtras = effScope.isWorker;
+  const showAdminExtras = effScope.isAdmin || effScope.isSuper;
+  const showSuperExtras = effScope.isSuper && hasSuperRole;
 
-  if (!isAvail && !isSuper) return <UnavailableNotice />;
+  if (!isAvail && !showSuperExtras) return <UnavailableNotice />;
 
   // Super-only "view as worker" wrapper. Adds a multi-select picker at
   // the top of the tab that, when one worker is selected, swaps the
@@ -3076,12 +3095,12 @@ export default function PaymentsTab({ me, purpose = "WORKER" }: TabPropsType) {
   // selected, we stack one WorkerPayments per selected worker so the
   // Super can compare worker-eye views side-by-side. With none, the
   // normal admin worklist renders.
-  if (isSuper) {
+  if (showSuperExtras) {
     return <SuperPaymentsTabWithViewAs me={me} forAdmin={forAdmin} />;
   }
 
-  return showAdmin
-    ? <AdminPayments forAdmin isSuper={isSuper} />
+  return showAdminExtras
+    ? <AdminPayments forAdmin isSuper={showSuperExtras} />
     : <WorkerPayments me={me} forAdmin={forAdmin} />;
 }
 

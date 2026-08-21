@@ -102,7 +102,25 @@ function equipmentChipLabel(e: EquipmentBrief): string {
   return extras.length > 0 ? `${primary} · ${extras.join(" · ")}` : primary;
 }
 
-export default function AdminGroupsTab() {
+export type AdminGroupsTabProps = {
+  /** Additive scope — capabilities ADD as you climb the ladder.
+   *  scope.isWorker → worker "My Groups" (read-only list of crews the caller is in)
+   *  scope.isAdmin  → the full admin/super Groups management UI
+   *  scope.isSuper  → same as admin at this tab; no super-only affordances yet
+   *  Falls back to the admin view when not passed (legacy callers). */
+  scope?: { isWorker: boolean; isAdmin: boolean; isSuper: boolean };
+};
+
+export default function AdminGroupsTab({ scope }: AdminGroupsTabProps = {}) {
+  const effScope = scope ?? { isWorker: false, isAdmin: true, isSuper: false };
+  // Worker-only render path — trimmed "My Groups" card list. Wholly
+  // separate render tree from the admin management UI; keeps the
+  // worker code path simple and prevents accidental leakage of
+  // cost-split percentages / mutation surface.
+  if (effScope.isWorker && !effScope.isAdmin && !effScope.isSuper) {
+    return <WorkerMyCrews />;
+  }
+
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
   const [includeArchived, setIncludeArchived] = useState(false);
@@ -159,10 +177,17 @@ export default function AdminGroupsTab() {
 
   return (
     <Box w="full" pb={8}>
-      <HStack mb={3} gap={2} wrap="wrap">
-        <Text fontSize="lg" fontWeight="semibold">Groups</Text>
+      {/* Title row — kept intentionally identical in shape to the
+          Worker "My Groups" view below (same outer Box, same HStack
+          props, same Text sizing) so the title's font size and
+          vertical position match across roles. Admin+ extras
+          (archived toggle, New Group) live on a second row so they
+          don't push the title's baseline off. */}
+      <HStack mb={3} gap={2} wrap="wrap" align="center">
+        <Text fontSize="lg" fontWeight="semibold" lineHeight="1.2">Groups</Text>
         <Badge size="sm" colorPalette="gray" variant="subtle">{groups.length}</Badge>
-        <Box flex="1" />
+      </HStack>
+      <HStack mb={3} gap={2} wrap="wrap" align="center">
         <Button size="sm" variant="outline" onClick={() => setIncludeArchived(!includeArchived)}>
           {includeArchived ? "Hide archived" : "Show archived"}
         </Button>
@@ -915,5 +940,95 @@ function GroupEditor({ initial, users, equipment, collections, onClose, onSaved 
         </Dialog.Positioner>
       </Portal>
     </Dialog.Root>
+  );
+}
+
+// ─── Worker "My Groups" view ──────────────────────────────────────────
+// Read-only card list of ONLY the crews the caller is a member of
+// (as claimer or member). Explicitly hides cost-split percentages,
+// equipmentCostPercent, create/edit/delete controls, other crews.
+// Data comes from /api/me/groups which strips sensitive fields
+// server-side; we render only the fields we know are safe.
+type MyGroupMemberRow = {
+  userId: string;
+  displayName: string | null;
+  role: string; // "claimer" | "worker" | "observer"
+};
+type MyGroupRow = {
+  id: string;
+  name: string;
+  claimerId: string | null;
+  myRole: "claimer" | "worker";
+  members: MyGroupMemberRow[];
+};
+
+function WorkerMyCrews() {
+  const [loading, setLoading] = useState(true);
+  const [crews, setCrews] = useState<MyGroupRow[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await apiGet<MyGroupRow[]>("/api/me/groups");
+        if (cancelled) return;
+        setCrews(Array.isArray(list) ? list : []);
+      } catch (err) {
+        if (!cancelled) {
+          publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load crews", err) });
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  return (
+    <Box w="full" pb={8}>
+      <HStack mb={3} gap={2} wrap="wrap" align="center">
+        <Text fontSize="lg" fontWeight="semibold" lineHeight="1.2">My Groups</Text>
+        <Badge size="sm" colorPalette="gray" variant="subtle">{crews.length}</Badge>
+      </HStack>
+      {loading ? (
+        <Box textAlign="center" py={6}><Spinner /></Box>
+      ) : crews.length === 0 ? (
+        <Card.Root variant="outline">
+          <Card.Body p={4}>
+            <Text fontSize="sm" color="fg.muted">You aren't on any crews yet.</Text>
+          </Card.Body>
+        </Card.Root>
+      ) : (
+        <VStack align="stretch" gap={2}>
+          {crews.map((g) => (
+            <Card.Root key={g.id} variant="outline">
+              <Card.Body p={3}>
+                <VStack align="start" gap={2}>
+                  <HStack gap={2} wrap="wrap">
+                    <Text fontWeight="semibold">{g.name}</Text>
+                    <Badge size="sm" colorPalette={g.myRole === "claimer" ? "teal" : "blue"} variant="solid">
+                      {g.myRole === "claimer" ? "Claimer" : "Member"}
+                    </Badge>
+                  </HStack>
+                  <HStack gap={1.5} wrap="wrap">
+                    {g.members.map((m) => (
+                      <Badge
+                        key={m.userId}
+                        size="sm"
+                        colorPalette={m.role === "claimer" ? "teal" : m.role === "observer" ? "gray" : "blue"}
+                        variant="subtle"
+                      >
+                        {m.displayName || "(no name)"}
+                        {m.role === "claimer" ? " (claimer)" : m.role === "observer" ? " (observer)" : ""}
+                      </Badge>
+                    ))}
+                  </HStack>
+                </VStack>
+              </Card.Body>
+            </Card.Root>
+          ))}
+        </VStack>
+      )}
+    </Box>
   );
 }

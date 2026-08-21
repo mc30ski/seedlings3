@@ -1865,6 +1865,14 @@ export const policies = {
             contentDigest: true,
             status: true,
             policyDocumentId: true,
+            // Content fields — exposed on history rows so the worker
+            // can re-open a signed document for review from the
+            // "Recorded on file" section.
+            contentFormat: true,
+            contentMarkdown: true,
+            contentR2Key: true,
+            contentFileName: true,
+            contentContentType: true,
           },
         },
         signedBy: { select: { id: true, displayName: true } },
@@ -2075,7 +2083,16 @@ export const policies = {
         policyId: policy?.id ?? s.version.policyDocumentId,
         policyKey: policy?.key ?? null,
         policyTitle: policy?.title ?? "(archived policy)",
+        versionId: s.version.id,
         versionNumber: s.version.versionNumber,
+        // Content fields — let the UI re-open the exact document that
+        // was signed. Markdown policies render inline; PDF policies
+        // hit `/api/me/policies/download?r2Key=…` for a presigned URL.
+        contentFormat: s.version.contentFormat,
+        contentMarkdown: s.version.contentMarkdown,
+        contentR2Key: s.version.contentR2Key,
+        contentFileName: s.version.contentFileName,
+        contentContentType: s.version.contentContentType,
         signedAt: s.signedAt,
         signedByUserId: s.signedByUserId,
         signedByDisplayName: s.signedBy?.displayName ?? null,

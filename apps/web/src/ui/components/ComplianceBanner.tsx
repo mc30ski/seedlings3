@@ -121,7 +121,7 @@ export default function ComplianceBanner({
 
   // View-as mode: instead of "Sign now" (nonsensical — Super can't sign
   // for Jacob) and "View profile" (would open Super's profile), send the
-  // operator to Super → Directory → Compliance where they can grant an
+  // operator to Super → Records → Compliance where they can grant an
   // exception or upload on the worker's behalf.
   const openSuperCompliance = () => {
     window.dispatchEvent(
