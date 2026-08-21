@@ -52,12 +52,38 @@ const kindStates = ["ALL", ...PROPERTY_KIND] as const;
 // Constant representing the status states for this entity.
 const statusStates = ["ALL", ...PROPERTY_STATUS] as const;
 
+type PropertiesTabProps = TabPropsType & {
+  /** Additive scope — capabilities ADD as you climb the ladder.
+   *  scope.isWorker → worker-facing list (ACTIVE only).
+   *  scope.isAdmin  → adds admin list endpoint + CRUD + photos manager.
+   *  scope.isSuper  → adds hard-delete confirmation unlock.
+   *  Falls back to a scope derived from the legacy `purpose` prop when
+   *  not passed, so mounts still on the old shape keep working. */
+  scope?: { isWorker: boolean; isAdmin: boolean; isSuper: boolean };
+};
+
 export default function PropertiesTab({
   me,
   purpose = "WORKER",
-}: TabPropsType) {
-  const { isSuper, isAvail, forAdmin } = determineRoles(me, purpose);
-  const pfx = purpose === "ADMIN" ? "aprops" : "wprops";
+  scope,
+}: PropertiesTabProps) {
+  const { isSuper: hasSuperRole, isAvail, forAdmin } = determineRoles(me, purpose);
+
+  // Effective scope: prefer the additive prop; fall back to a scope
+  // derived from `purpose` for any callsite still on the old shape.
+  const effScope = scope ?? {
+    isWorker: purpose === "WORKER",
+    isAdmin: purpose === "ADMIN" || purpose === "SUPER",
+    isSuper: purpose === "SUPER",
+  };
+  // Capabilities render additively AND are strictly governed by the
+  // scope prop — not by the underlying role. A user with admin+super
+  // roles viewing the *Admin* tab must NOT see Super buttons.
+  const showWorkerExtras = effScope.isWorker;
+  const showAdminExtras = effScope.isAdmin || effScope.isSuper;
+  const showSuperExtras = effScope.isSuper && hasSuperRole;
+
+  const pfx = showAdminExtras ? "aprops" : "wprops";
   const isTrainee = !forAdmin && me?.workerType === "TRAINEE";
   const [traineePropertyIds, setTraineePropertyIds] = useState<Set<string> | null>(null);
 
@@ -102,12 +128,12 @@ export default function PropertiesTab({
   async function load(displayLoading: boolean = true) {
     setLoading(displayLoading);
     try {
-      const base = forAdmin ? "/api/admin/properties" : "/api/properties";
+      const base = showAdminExtras ? "/api/admin/properties" : "/api/properties";
       const list: Property[] = await apiGet(base);
       setItems(
         list
           .sort((a, b) => a.displayName.localeCompare(b.displayName))
-          .filter((i) => forAdmin || i.status === "ACTIVE"),
+          .filter((i) => showAdminExtras || i.status === "ACTIVE"),
       );
     } catch (err) {
       publishInlineMessage({
@@ -123,7 +149,7 @@ export default function PropertiesTab({
   // Loads all the items for the first time.
   useEffect(() => {
     void load();
-  }, [forAdmin]);
+  }, [showAdminExtras]);
 
   // For trainees: fetch their assigned property IDs
   useEffect(() => {
@@ -590,7 +616,7 @@ export default function PropertiesTab({
                             hasJobs = Array.isArray(jobs) && jobs.length > 0;
                           } catch { /* proceed; server will guard */ }
 
-                          const superRequired = !isSuper;
+                          const superRequired = !showSuperExtras;
 
                           void setToDelete({
                             id: p.id,

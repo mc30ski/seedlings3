@@ -104,12 +104,37 @@ type Props = {
    *  - SUPER: same data as ADMIN, plus mutation actions (default behavior)
    */
   purpose?: "WORKER" | "ADMIN" | "SUPER";
+  /** Additive scope — capabilities ADD as you climb the ladder.
+   *  scope.isWorker → worker-endpoint list, "Remaining" only, no actions.
+   *  scope.isAdmin  → admin-endpoint list with per-job claim breakdown.
+   *  scope.isSuper  → adds add/buy/adjust/edit/archive/reverse actions.
+   *  Falls back to a scope derived from the legacy `purpose` + `readOnly`
+   *  props when not passed, so mounts still on the old shape keep working. */
+  scope?: { isWorker: boolean; isAdmin: boolean; isSuper: boolean };
 };
 
 export default function SuppliesTab({
   readOnly = false,
   purpose = "SUPER",
+  scope,
 }: Props = {}) {
+  // Effective scope: prefer the additive prop; fall back to a scope
+  // derived from the legacy `purpose` + `readOnly` props. Legacy shape:
+  //   purpose="WORKER" readOnly → worker view (worker endpoint)
+  //   purpose="ADMIN"  readOnly → admin read-only view (admin endpoint)
+  //   purpose="SUPER" (default, no readOnly) → super view (writable)
+  const effScope = scope ?? {
+    isWorker: purpose === "WORKER",
+    isAdmin: purpose === "ADMIN" || purpose === "SUPER",
+    isSuper: purpose === "SUPER" && !readOnly,
+  };
+  // Capabilities render additively AND are strictly governed by the
+  // scope prop. No `me` prop on this tab — trust the scope for the
+  // super check (the shell only sets scope.isSuper on the super tab).
+  const showWorkerExtras = effScope.isWorker;
+  const showAdminExtras = effScope.isAdmin || effScope.isSuper;
+  const showSuperExtras = effScope.isSuper;
+
   const { selectableCategories } = useExpenseCategories();
   const [supplies, setSupplies] = useState<Supply[]>([]);
   const [loading, setLoading] = useState(false);
@@ -121,9 +146,9 @@ export default function SuppliesTab({
 
   // Worker uses the worker-readable endpoint (no per-job breakdown).
   // Admin/Super hit /admin/supplies which now returns activeHolds details.
-  const listEndpoint = purpose === "WORKER" ? "/api/supplies" : "/api/admin/supplies";
+  const listEndpoint = showAdminExtras ? "/api/admin/supplies" : "/api/supplies";
   const historyEndpoint = (id: string) =>
-    purpose === "WORKER" ? `/api/supplies/${id}/history` : `/api/admin/supplies/${id}/history`;
+    showAdminExtras ? `/api/admin/supplies/${id}/history` : `/api/supplies/${id}/history`;
 
   // Edit / create supply dialog
   const [editOpen, setEditOpen] = useState(false);
@@ -554,7 +579,7 @@ export default function SuppliesTab({
     <Box w="full">
       <HStack justify="space-between" mb={3} wrap="wrap" gap={2}>
         <Text fontWeight="bold" fontSize="lg">Supplies</Text>
-        {!readOnly && (
+        {showSuperExtras && (
           <HStack gap={2}>
             <Button
               size="sm"
@@ -574,7 +599,7 @@ export default function SuppliesTab({
       </HStack>
 
       {/* Tax-method explainer (super-only — workers/admins don't manage tax ledger) */}
-      {!readOnly && (
+      {showSuperExtras && (
         <Box mb={3} p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" borderRadius="md">
           <Text fontSize="xs" color="blue.800">
             Each <Text as="span" fontWeight="semibold">purchase</Text> creates a Business Expense (tax ledger) right away.
@@ -584,7 +609,7 @@ export default function SuppliesTab({
           </Text>
         </Box>
       )}
-      {readOnly && (
+      {!showSuperExtras && (
         <Box mb={3} p={2} bg="gray.50" borderWidth="1px" borderColor="gray.200" borderRadius="md">
           <Text fontSize="xs" color="fg.muted">
             Read-only view of on-hand inventory. Quantities update automatically as jobs reserve and consume supplies.
@@ -607,7 +632,7 @@ export default function SuppliesTab({
             pl="8"
           />
         </Box>
-        {!readOnly && (
+        {showSuperExtras && (
         <Button
           size="sm"
           variant={includeArchived ? "solid" : "outline"}
@@ -633,7 +658,7 @@ export default function SuppliesTab({
         <Box py={8} textAlign="center"><Spinner /></Box>
       ) : filtered.length === 0 ? (
         <Box py={8} textAlign="center" color="fg.muted">
-          <Text>{q || includeArchived || lowStockOnly ? "No supplies match the current filters." : (readOnly ? "No supplies have been added yet." : "No supplies yet. Click Add Supply to get started.")}</Text>
+          <Text>{q || includeArchived || lowStockOnly ? "No supplies match the current filters." : (!showSuperExtras ? "No supplies have been added yet." : "No supplies yet. Click Add Supply to get started.")}</Text>
         </Box>
       ) : (
         <VStack align="stretch" gap={1}>
@@ -657,7 +682,7 @@ export default function SuppliesTab({
                       )}
                     </HStack>
                     <HStack gap={3} fontSize="xs" color="fg.muted" wrap="wrap">
-                      {purpose === "WORKER" ? (
+                      {!showAdminExtras ? (
                         // Worker view: just "Remaining" (= available). Holds
                         // and onHand are operational detail they don't need.
                         <Text>
@@ -697,8 +722,8 @@ export default function SuppliesTab({
                             )}
                           </Text>
                           {/* businessCost is internal margin info — Super only. */}
-                          {!readOnly && <Text>Buy: {fmtUSD(s.businessCost)}</Text>}
-                          <Text>{readOnly ? "Cost per unit" : "Charge"}: <Text as="span" fontWeight="medium" color="orange.600">{fmtUSD(s.jobPayoutCost)}</Text></Text>
+                          {showSuperExtras && <Text>Buy: {fmtUSD(s.businessCost)}</Text>}
+                          <Text>{!showSuperExtras ? "Cost per unit" : "Charge"}: <Text as="span" fontWeight="medium" color="orange.600">{fmtUSD(s.jobPayoutCost)}</Text></Text>
                           {s.upc && <Text>UPC: {s.upc}</Text>}
                         </>
                       )}
@@ -708,7 +733,7 @@ export default function SuppliesTab({
                     )}
                     {/* Per-job claim breakdown — admin/super only, expanded
                         on click of the "claimed by jobs: N" link above. */}
-                    {purpose !== "WORKER" && expandedClaims.has(s.id) && s.activeHolds && s.activeHolds.length > 0 && (
+                    {showAdminExtras && expandedClaims.has(s.id) && s.activeHolds && s.activeHolds.length > 0 && (
                       <VStack align="stretch" gap={1} mt={2} pl={2} borderLeftWidth="2px" borderColor="blue.200">
                         {s.activeHolds.map((h) => {
                           const job = h.occurrence?.job;
@@ -761,7 +786,7 @@ export default function SuppliesTab({
                     )}
                   </Box>
                   <HStack gap={1} wrap="wrap">
-                    {!readOnly && !s.archivedAt && (
+                    {showSuperExtras && !s.archivedAt && (
                       <>
                         <Button size="xs" variant="outline" colorPalette="green" onClick={() => openBuy(s)} title="Record a purchase">
                           <ShoppingCart size={12} /> Buy
@@ -774,12 +799,12 @@ export default function SuppliesTab({
                     <Button size="xs" variant="ghost" onClick={() => openHistory(s)} title="View history">
                       <Clock size={12} />
                     </Button>
-                    {!readOnly && (
+                    {showSuperExtras && (
                       <Button size="xs" variant="ghost" onClick={() => openEdit(s)} title="Edit">
                         <Pencil size={12} />
                       </Button>
                     )}
-                    {!readOnly && (s.archivedAt ? (
+                    {showSuperExtras && (s.archivedAt ? (
                       <Button size="xs" variant="ghost" onClick={() => unarchiveSupply(s)} title="Unarchive">
                         <ArchiveRestore size={12} />
                       </Button>
@@ -1138,7 +1163,7 @@ export default function SuppliesTab({
                               </>
                             )}
                           </Box>
-                          {!readOnly && evt.kind === "PURCHASE" && (
+                          {showSuperExtras && evt.kind === "PURCHASE" && (
                             <Button
                               size="xs"
                               variant="ghost"

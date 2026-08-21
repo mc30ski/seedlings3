@@ -85,7 +85,12 @@ export default function UnlinkedClientAccountsSection() {
     void load();
   }, [load]);
 
-  if (users.length === 0 && !loading) return null;
+  // Hide the section entirely whenever there are no unlinked users —
+  // previously we kept it visible during the initial load and only
+  // hid it after `loading` flipped false, which flashed the section
+  // in and back out on every mount. Rendering nothing until real
+  // data arrives avoids the flicker; empty responses stay hidden.
+  if (users.length === 0) return null;
 
   return (
     <>

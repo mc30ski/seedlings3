@@ -1581,6 +1581,53 @@ export default async function workerRoutes(app: FastifyInstance) {
     return services.groups.listForClaimer(uid);
   });
 
+  // Crews the caller is a member of (claimer OR member — worker or
+  // observer). Powers the Worker "My Crews" tab, which surfaces a
+  // read-only view of the caller's own crews so they can see who
+  // they're teamed with. Sensitive fields (email, wage, roles,
+  // equipmentCostPercent) are stripped server-side; the client
+  // filters again defense-in-depth.
+  // view-as-allow: "my crews" is inherently caller-scoped — Admin/Super
+  // gets cross-worker crew visibility via /admin/groups.
+  app.get("/me/groups", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const groups = await services.groups.listForUser(uid);
+    return groups.map((g) => {
+      const claimerRow = {
+        userId: g.claimerUserId,
+        displayName: g.claimer?.displayName ?? null,
+        role: "claimer" as const,
+      };
+      const memberRows = g.members.map((m) => ({
+        userId: m.userId,
+        displayName: m.user?.displayName ?? null,
+        role: m.role === "observer" ? "observer" : "worker",
+      }));
+      return {
+        id: g.id,
+        name: g.name,
+        claimerId: g.claimerUserId,
+        myRole: g.claimerUserId === uid ? "claimer" : "worker",
+        members: [claimerRow, ...memberRows],
+      };
+    });
+  });
+
+  // Sanitized team roster for worker-facing directory views.
+  // Returns approved workers with ONLY displayName + workerType (no
+  // email, phone, wage, role labels, privilege flags). Sibling of
+  // /workers which returns richer data for admin callers.
+  // view-as-allow: identical output for every caller — no viewer-specific
+  // scoping needed.
+  app.get("/me/team", workerGuard, async () => {
+    const list = await services.users.list({ approved: true, role: "WORKER" });
+    return list.map((u) => ({
+      id: u.id,
+      displayName: u.displayName,
+      workerType: u.workerType,
+    }));
+  });
+
   // view-as-allow: worker's own outstanding payment requests for the
   // planning-tab nudge. Admin sees cross-worker payment state under
   // /admin/payment-requests / /admin/payments.

@@ -11,11 +11,12 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { AlertTriangle, CheckCircle2, Clock, FileText, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, Eye, FileText, XCircle } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
 import { fmtDate } from "@/src/lib/lib";
 import PolicySignWizard, { type RequiredPolicy } from "@/src/ui/dialogs/PolicySignWizard";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
+import SignedPolicyViewDialog from "@/src/ui/dialogs/SignedPolicyViewDialog";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -27,7 +28,14 @@ type HistoryRow = {
   policyId: string;
   policyKey: string | null;
   policyTitle: string;
+  versionId: string;
   versionNumber: number;
+  // Content fields — power the "View again" action on each row.
+  contentFormat: "MARKDOWN" | "PDF" | string;
+  contentMarkdown: string | null;
+  contentR2Key: string | null;
+  contentFileName: string | null;
+  contentContentType: string | null;
   signedAt: string;
   signedByUserId: string;
   signedByDisplayName: string | null;
@@ -80,8 +88,15 @@ export default function WorkerComplianceSection() {
   // opens the wizard against just that one policy so the resubmission is
   // scoped, not a full-queue re-run.
   const [replacePolicy, setReplacePolicy] = useState<AwaitingReviewRow | null>(null);
+  // Set when the worker clicks "Sign" on a single required row — opens
+  // the wizard scoped to just that one policy so they can pick their
+  // signing order instead of being forced through the full batch.
+  const [singleSignPolicy, setSingleSignPolicy] = useState<RequiredPolicy | null>(null);
   // Set when the worker clicks "Cancel upload" — opens the confirm dialog.
   const [cancelPolicy, setCancelPolicy] = useState<AwaitingReviewRow | null>(null);
+  // Set when the worker clicks "View" on a Recorded-on-file row —
+  // opens the read-only viewer for the exact document that was signed.
+  const [viewingHistory, setViewingHistory] = useState<HistoryRow | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -161,8 +176,9 @@ export default function WorkerComplianceSection() {
                   size="sm"
                   colorPalette={hasBlocking ? "red" : "orange"}
                   onClick={() => setWizardOpen(true)}
+                  title="Sign every outstanding policy in one wizard flow"
                 >
-                  Sign now
+                  Sign all
                 </Button>
               )}
             </HStack>
@@ -174,7 +190,11 @@ export default function WorkerComplianceSection() {
                 </Text>
                 <VStack align="stretch" gap={1}>
                   {data.required.map((p) => (
-                    <RequiredRow key={p.policyId} policy={p} />
+                    <RequiredRow
+                      key={p.policyId}
+                      policy={p}
+                      onSign={() => setSingleSignPolicy(p)}
+                    />
                   ))}
                 </VStack>
               </Box>
@@ -213,7 +233,11 @@ export default function WorkerComplianceSection() {
                   </Text>
                   <VStack align="stretch" gap={1}>
                     {filteredHistory.slice(0, 10).map((h) => (
-                      <HistoryRow key={h.signatureId} row={h} />
+                      <HistoryRow
+                        key={h.signatureId}
+                        row={h}
+                        onView={() => setViewingHistory(h)}
+                      />
                     ))}
                     {filteredHistory.length > 10 && (
                       <Text fontSize="xs" color="fg.muted" textAlign="center">
@@ -257,6 +281,33 @@ export default function WorkerComplianceSection() {
             void load();
             window.dispatchEvent(new CustomEvent("policies:signed"));
           }}
+        />
+      )}
+      {singleSignPolicy && (
+        <PolicySignWizard
+          open={true}
+          policies={[singleSignPolicy]}
+          displayName={data.displayName}
+          onClose={() => setSingleSignPolicy(null)}
+          onCompleted={() => {
+            setSingleSignPolicy(null);
+            void load();
+            window.dispatchEvent(new CustomEvent("policies:signed"));
+          }}
+        />
+      )}
+      {viewingHistory && (
+        <SignedPolicyViewDialog
+          open={true}
+          onClose={() => setViewingHistory(null)}
+          title={viewingHistory.policyTitle}
+          versionNumber={viewingHistory.versionNumber}
+          signedAt={viewingHistory.signedAt}
+          contentFormat={viewingHistory.contentFormat}
+          contentMarkdown={viewingHistory.contentMarkdown}
+          contentR2Key={viewingHistory.contentR2Key}
+          contentFileName={viewingHistory.contentFileName}
+          contentContentType={viewingHistory.contentContentType}
         />
       )}
       <ConfirmDialog
@@ -349,7 +400,13 @@ function AwaitingReviewRowView({
   );
 }
 
-function RequiredRow({ policy }: { policy: RequiredPolicy }) {
+function RequiredRow({
+  policy,
+  onSign,
+}: {
+  policy: RequiredPolicy;
+  onSign: () => void;
+}) {
   return (
     <HStack
       gap={2}
@@ -358,8 +415,9 @@ function RequiredRow({ policy }: { policy: RequiredPolicy }) {
       borderWidth="1px"
       borderColor={policy.enforcement === "BLOCK" ? "red.200" : "orange.200"}
       bg={policy.enforcement === "BLOCK" ? "red.50" : "orange.50"}
+      align="flex-start"
     >
-      <Box color={policy.enforcement === "BLOCK" ? "red.600" : "orange.600"} flexShrink={0}>
+      <Box color={policy.enforcement === "BLOCK" ? "red.600" : "orange.600"} flexShrink={0} mt={0.5}>
         <AlertTriangle size={14} />
       </Box>
       <VStack align="start" gap={0} flex="1" minW={0}>
@@ -372,14 +430,36 @@ function RequiredRow({ policy }: { policy: RequiredPolicy }) {
           </Text>
         )}
       </VStack>
-      <Badge size="xs" colorPalette={policy.enforcement === "BLOCK" ? "red" : "orange"} variant="subtle" flexShrink={0}>
-        {policy.enforcement === "BLOCK" ? "Required" : "Recommended"}
-      </Badge>
+      <VStack gap={1} flexShrink={0} align="end">
+        <Badge size="xs" colorPalette={policy.enforcement === "BLOCK" ? "red" : "orange"} variant="subtle">
+          {policy.enforcement === "BLOCK" ? "Required" : "Recommended"}
+        </Badge>
+        {/* Per-row Sign lets the worker pick their signing order
+            instead of being forced through the batch wizard. Button
+            has a fixed minW so its width doesn't track the badge
+            above it (Required = 8 chars, Recommended = 11 chars —
+            with align="stretch" that made the buttons visibly
+            different widths across the two enforcement tiers). */}
+        <Button
+          size="xs"
+          minW="14"
+          colorPalette={policy.enforcement === "BLOCK" ? "red" : "orange"}
+          onClick={onSign}
+        >
+          Sign
+        </Button>
+      </VStack>
     </HStack>
   );
 }
 
-function HistoryRow({ row }: { row: HistoryRow }) {
+function HistoryRow({ row, onView }: { row: HistoryRow; onView: () => void }) {
+  // Row is viewable when the version has real content behind it — a
+  // markdown body or an R2-backed PDF. Revoked/archived rows with no
+  // content still render as a paper trail but don't expose a View.
+  const hasContent =
+    (row.contentFormat === "MARKDOWN" && !!row.contentMarkdown) ||
+    (row.contentFormat === "PDF" && !!row.contentR2Key);
   const iconColor =
     row.revokedAt
       ? "var(--chakra-colors-gray-500)"
@@ -443,6 +523,18 @@ function HistoryRow({ row }: { row: HistoryRow }) {
           </Text>
         )}
       </VStack>
+      {hasContent && (
+        <Button
+          size="xs"
+          variant="ghost"
+          onClick={onView}
+          title="View the document you signed"
+          flexShrink={0}
+        >
+          <Eye size={12} />
+          <Text ml={1}>View</Text>
+        </Button>
+      )}
     </HStack>
   );
 }
