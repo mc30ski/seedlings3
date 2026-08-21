@@ -39,6 +39,9 @@ export { CompactBanner } from "@/src/ui/components/CompactBanner";
 // workflows, financials, attention, scale). All numbers are derived
 // from the currently-loaded row set — filter/date changes reflect
 // immediately.
+// Bare summary + details — the caller supplies the section frame
+// (Insights orange card on JobsTab). Renders the compact chip row
+// at top and the expanded MiniStatCard grid below in a single flow.
 export function OpsSummaryStrip({ rows }: { rows: WorkerOccurrence[] }) {
   const metrics = useMemo(() => computeOpsMetrics(rows), [rows]);
   const summaryItems: Array<{ label: string; count: number; palette: BannerPalette }> = [
@@ -48,31 +51,18 @@ export function OpsSummaryStrip({ rows }: { rows: WorkerOccurrence[] }) {
     { label: "Canceled", count: metrics.byStatus.CANCELED, palette: "gray" },
     { label: "Closed", count: metrics.byStatus.CLOSED, palette: "gray" },
   ];
-  // Rendered as a Dashboard section — same visual + header height as
-  // the other collapsible sections (DASHBOARD, CLIENT REQUESTS).
-  // Summary chips live in the header via summarySlot so they stay
-  // visible when collapsed; full metrics render as children on
-  // expand.
   return (
-    <Dashboard
-      storageKey="seedlings:jobsTab:operationsOpen"
-      title="Operations"
-      icon={Activity}
-      summarySlot={
-        <HStack gap={2} wrap="nowrap" overflow="hidden" justify="flex-end" w="full">
-          {summaryItems.map((it) => (
-            <HStack key={it.label} gap={1} flexShrink={0}>
-              <Badge size="xs" variant="subtle" colorPalette={it.palette}>{it.count}</Badge>
-              <Text fontSize="xs" color="gray.700" display={{ base: "none", md: "inline" }}>
-                {it.label}
-              </Text>
-            </HStack>
-          ))}
-        </HStack>
-      }
-    >
+    <VStack align="stretch" gap={3}>
+      <HStack gap={2} wrap="wrap">
+        {summaryItems.map((it) => (
+          <HStack key={it.label} gap={1} flexShrink={0}>
+            <Badge size="sm" variant="subtle" colorPalette={it.palette}>{it.count}</Badge>
+            <Text fontSize="xs" color="gray.700">{it.label}</Text>
+          </HStack>
+        ))}
+      </HStack>
       <OpsExpandedDetails metrics={metrics} />
-    </Dashboard>
+    </VStack>
   );
 }
 

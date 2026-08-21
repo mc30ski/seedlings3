@@ -5,7 +5,6 @@ import {
   AdminViewAsBadges,
   AdminViewAsSelector,
   type AdminWorker,
-  Dashboard,
   ElevatedActionRow,
   OpsSummaryStrip,
 } from "@/src/ui/tabs/JobsTab.parts";
@@ -39,7 +38,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertCircle, AlertTriangle, Archive, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, Eye, Filter, Hand, Heart, Inbox, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, Play, RefreshCw, Repeat, Share2, Star, Tag, Users, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, Archive, BarChart3, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, Eye, Filter, Hand, Heart, Inbox, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, Play, RefreshCw, Repeat, Share2, Star, Tag, Users, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { WeatherIcon } from "@/src/ui/components/WeatherBar";
 import { useForecastByDate } from "@/src/lib/useForecastByDate";
@@ -397,6 +396,13 @@ export default function JobsTab({
   );
 
   const [statusFilter, setStatusFilter] = usePersistedState<string[]>(`${pfx}_status`, ["ALL"]);
+  // Collapse state for the Insights + Client Requests section frames.
+  // Match the Equipment tab pattern — outlined box, icon + UPPERCASE
+  // title, chevron toggle. Insights defaults open (Super lands here),
+  // Client Requests defaults open too since it only renders when
+  // there's actionable content (count > 0).
+  const [insightsCollapsed, setInsightsCollapsed] = usePersistedState<boolean>(`${pfx}_insightsCollapsed`, false);
+  const [clientReqCollapsed, setClientReqCollapsed] = usePersistedState<boolean>(`${pfx}_clientReqCollapsed`, false);
   const statusItems = useMemo(
     () => [
       ...statusStates.map((s) => ({
@@ -2893,10 +2899,13 @@ export default function JobsTab({
           <Spinner size="lg" />
         </Box>
       )}
-      {/* ─── Admin / super overlays ─────────────────────────────── */}
+      {/* ─── Admin / super overlays ───────────────────────────────
+          Section frames match the Equipment tab pattern: outlined
+          box (or orange Card for Insights), icon + UPPERCASE title,
+          chevron toggle. The Job feed below stays outside these
+          frames since it's the primary content of the tab, not a
+          collapsible subsection. */}
       <VStack align="stretch" gap={2} mb={2}>
-        {/* MY WORKDAY lives inside HomeTab as its own section — Jobs
-            doesn't need its own self-view surface. */}
         {/* Client Requests — admin-only queue of reschedule / skip
             requests submitted by clients. Only rendered when there
             IS a pending request; otherwise the section (which would
@@ -2904,21 +2913,58 @@ export default function JobsTab({
             useEffect keeps polling behind the scenes so a new
             request pops the section in as soon as it lands. */}
         {showAdminExtras && clientRequestPending > 0 && (
-          <Dashboard
-            storageKey="seedlings:jobsTab:clientRequestsOpen"
-            title="Client requests"
-            icon={Inbox}
-            forceGlow="red"
-            count={clientRequestPending}
+          <Box
+            borderWidth="1px"
+            borderColor="yellow.400"
+            borderRadius="md"
+            p={3}
+            bg="yellow.200"
+            css={{ animation: "seedlings-pulse-yellow 2.5s ease-in-out infinite" }}
           >
-            <ClientRequestsSection />
-          </Dashboard>
+            <HStack
+              gap={2}
+              align="center"
+              mb={clientReqCollapsed ? 0 : 2}
+              cursor="pointer"
+              onClick={() => setClientReqCollapsed(!clientReqCollapsed)}
+              _hover={{ opacity: 0.7 }}
+            >
+              <Inbox size={14} color="var(--chakra-colors-yellow-900)" />
+              <Text fontSize="sm" fontWeight="bold" color="yellow.900" textTransform="uppercase" letterSpacing="wide">
+                Client Requests
+              </Text>
+              <Badge size="sm" colorPalette="red" variant="solid" borderRadius="full" px="1.5" fontSize="2xs">
+                {clientRequestPending}
+              </Badge>
+              <Text fontSize="xs" color="yellow.800">{clientReqCollapsed ? "▶" : "▼"}</Text>
+            </HStack>
+            {!clientReqCollapsed && <ClientRequestsSection />}
+          </Box>
         )}
-        {/* Ops summary strip — super-scope status roll-up across the
-            visible date range. Placed under Client Requests so it
-            reads as a stats-summary bookend to the actionable
-            sections above rather than crowding the top. */}
-        {scope.isSuper && <OpsSummaryStrip rows={items} />}
+        {/* Insights (Super only) — Ops summary strip wrapped in the
+            same orange card as the Equipment Insights section, for a
+            consistent Super visual language across tabs. */}
+        {scope.isSuper && (
+          <Card.Root variant="outline" bg="orange.50" borderColor="orange.200">
+            <Card.Body py={3} px={3}>
+              <HStack
+                gap={2}
+                align="center"
+                mb={insightsCollapsed ? 0 : 2}
+                cursor="pointer"
+                onClick={() => setInsightsCollapsed(!insightsCollapsed)}
+                _hover={{ opacity: 0.7 }}
+              >
+                <BarChart3 size={14} color="var(--chakra-colors-gray-600)" />
+                <Text fontSize="sm" fontWeight="bold" color="gray.600" textTransform="uppercase" letterSpacing="wide">
+                  Insights
+                </Text>
+                <Text fontSize="xs" color="gray.400">{insightsCollapsed ? "▶" : "▼"}</Text>
+              </HStack>
+              {!insightsCollapsed && <OpsSummaryStrip rows={items} />}
+            </Card.Body>
+          </Card.Root>
+        )}
       </VStack>
       <HStack mb={2} gap={2} wrap="nowrap">
         <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)", border: "1px solid var(--chakra-colors-gray-300)", borderRadius: "6px" }}>
@@ -3263,9 +3309,8 @@ export default function JobsTab({
                 setQ("");
                 setHighlightOccId(null);
                 setFilterJobId(null);
-                const defaultPreset = forAdmin ? "thisWeek" : "now";
-                const d = computeDatesFromPreset(defaultPreset);
-                setDatePreset(defaultPreset);
+                const d = computeDatesFromPreset("now");
+                setDatePreset("now");
                 setDateFrom(d.from);
                 setDateTo(d.to);
                 setFiltersOpen(false);
@@ -3638,9 +3683,8 @@ export default function JobsTab({
                 setQ("");
                 setHighlightOccId(null);
                 setFilterJobId(null);
-                const defaultPreset = forAdmin ? "thisWeek" : "now";
-                const d = computeDatesFromPreset(defaultPreset);
-                setDatePreset(defaultPreset);
+                const d = computeDatesFromPreset("now");
+                setDatePreset("now");
                 setDateFrom(d.from);
                 setDateTo(d.to);
                 setFiltersOpen(false);
@@ -3768,7 +3812,7 @@ export default function JobsTab({
                           // evening doesn't land tomorrow's route preview.
                           localStorage.setItem("seedlings_preview_targetDate", JSON.stringify(bizToday()));
                         } catch {}
-                        window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "routes", autoAnalyze: true } }));
+                        window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "routes" } }));
                       }}
                     >
                       Route →
@@ -5100,6 +5144,37 @@ export default function JobsTab({
                   toggleCard();
                 } : undefined}
               >
+                {/* Occurrence instructions — surfaced at the TOP of
+                    the card (before header/body/footer) on semi +
+                    expanded densities so critical notes are the
+                    first thing the worker reads. Ultra stays clean;
+                    OccurrenceInstructions guidance (photos + notes)
+                    still renders at the bottom below since it's more
+                    of a details drawer than a warning banner. */}
+                {cardMode !== "ultra" && ((occ as any).instructions ?? []).length > 0 && (
+                  <Box mx="3" mt="2" mb="0" px="3" py="1.5" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
+                    <VStack align="stretch" gap="0.5">
+                      {((occ as any).instructions as { id: string; text: string; repeats: boolean }[]).map((inst) => (
+                        <HStack key={inst.id} gap="1.5" align="center">
+                          <AlertCircle
+                            size={18}
+                            color="var(--chakra-colors-yellow-900)"
+                            fill="var(--chakra-colors-yellow-400)"
+                            strokeWidth={2.5}
+                          />
+                          <Text fontSize="xs" fontWeight="semibold" color="yellow.700" flex="1">
+                            {inst.text}
+                          </Text>
+                          {inst.repeats && (
+                            <Box display="inline-flex" alignItems="center" title="Carries forward">
+                              <Repeat size={12} color="var(--chakra-colors-yellow-700)" />
+                            </Box>
+                          )}
+                        </HStack>
+                      ))}
+                    </VStack>
+                  </Box>
+                )}
                 {/* Loading overlay */}
                 {busyOccId === occ.id && (
                   <Box position="absolute" inset="0" bg="whiteAlpha.700" zIndex="1" display="flex" alignItems="center" justifyContent="center" borderRadius="inherit">
@@ -8168,81 +8243,31 @@ export default function JobsTab({
                     component (defaultExpanded={false}) so the Guidance pill is
                     clickable and reveals the photos + description inline —
                     same flow as the fully-expanded card, just starts collapsed. */}
+                {/* Guidance drawer (photos + guidance note) stays at
+                    the bottom of the card. The yellow instructions
+                    banner was relocated to the TOP of the Card.Root
+                    above so critical notes surface first. */}
                 {isCardCompact ? (
-                  ((occ.propertyPhotos ?? []).length > 0 || ((occ as any).instructions ?? []).length > 0) && (
-                    <VStack mx="3" mb="2" mt="0" align="stretch" gap="1">
-                      {(occ.propertyPhotos ?? []).length > 0 && (
-                        <Box>
-                          <OccurrenceInstructions
-                            occurrenceId={occ.id}
-                            count={(occ.propertyPhotos ?? []).length}
-                            guidanceNote={(occ as any).guidanceNote ?? null}
-                            defaultExpanded={false}
-                          />
-                        </Box>
-                      )}
-                      {((occ as any).instructions ?? []).length > 0 && (
-                        <Box px="3" py="1.5" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
-                          <VStack align="stretch" gap="0.5">
-                            {((occ as any).instructions as { id: string; text: string; repeats: boolean }[]).map((inst) => (
-                              <HStack key={inst.id} gap="1.5" align="center">
-                                <AlertCircle
-                                  size={18}
-                                  color="var(--chakra-colors-yellow-900)"
-                                  fill="var(--chakra-colors-yellow-400)"
-                                  strokeWidth={2.5}
-                                />
-                                <Text fontSize="xs" fontWeight="semibold" color="yellow.700" flex="1">
-                                  {inst.text}
-                                </Text>
-                                {inst.repeats && (
-                                  <Box display="inline-flex" alignItems="center" title="Carries forward">
-                                    <Repeat size={12} color="var(--chakra-colors-yellow-700)" />
-                                  </Box>
-                                )}
-                              </HStack>
-                            ))}
-                          </VStack>
-                        </Box>
-                      )}
-                    </VStack>
+                  (occ.propertyPhotos ?? []).length > 0 && (
+                    <Box mx="3" mb="2" mt="0">
+                      <OccurrenceInstructions
+                        occurrenceId={occ.id}
+                        count={(occ.propertyPhotos ?? []).length}
+                        guidanceNote={(occ as any).guidanceNote ?? null}
+                        defaultExpanded={false}
+                      />
+                    </Box>
                   )
                 ) : (
-                  <>
-                    {((occ.propertyPhotos ?? []).length > 0 || (occ as any).guidanceNote) && (
-                      <Box mx="3" mb="2" mt="0">
-                        <OccurrenceInstructions
-                          occurrenceId={occ.id}
-                          count={(occ.propertyPhotos ?? []).length}
-                          guidanceNote={(occ as any).guidanceNote ?? null}
-                        />
-                      </Box>
-                    )}
-                    {((occ as any).instructions ?? []).length > 0 && (
-                      <Box mx="3" mb="2" mt="0" px="3" py="1.5" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
-                        <VStack align="stretch" gap="0.5">
-                          {((occ as any).instructions as { id: string; text: string; repeats: boolean }[]).map((inst) => (
-                            <HStack key={inst.id} gap="1.5" align="center">
-                              <AlertCircle
-                                size={18}
-                                color="var(--chakra-colors-yellow-900)"
-                                fill="var(--chakra-colors-yellow-400)"
-                                strokeWidth={2.5}
-                              />
-                              <Text fontSize="xs" fontWeight="semibold" color="yellow.700" flex="1">
-                                {inst.text}
-                              </Text>
-                              {inst.repeats && (
-                                <Box display="inline-flex" alignItems="center" title="Carries forward">
-                                  <Repeat size={12} color="var(--chakra-colors-yellow-700)" />
-                                </Box>
-                              )}
-                            </HStack>
-                          ))}
-                        </VStack>
-                      </Box>
-                    )}
-                  </>
+                  ((occ.propertyPhotos ?? []).length > 0 || (occ as any).guidanceNote) && (
+                    <Box mx="3" mb="2" mt="0">
+                      <OccurrenceInstructions
+                        occurrenceId={occ.id}
+                        count={(occ.propertyPhotos ?? []).length}
+                        guidanceNote={(occ as any).guidanceNote ?? null}
+                      />
+                    </Box>
+                  )
                 )}
                 </>
                 )}

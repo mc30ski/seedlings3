@@ -246,11 +246,11 @@ export default function ClientRequestsSection() {
   if (rows.length === 0) return null;
 
   return (
-    <Box id="client-requests-section" mb={4}>
-      <HStack mb={2} justify="space-between">
-        <Text fontSize="sm" fontWeight="semibold" color="orange.700">
-          Client requests ({rows.length})
-        </Text>
+    <Box id="client-requests-section">
+      {/* Section header + count live on the outer JobsTab section
+          frame (icon + UPPERCASE title + red count badge). Only the
+          Refresh button remains here, right-aligned above the list. */}
+      <HStack mb={2} justify="flex-end">
         <Button size="xs" variant="ghost" onClick={() => void load()} loading={loading}>
           <RefreshCw size={12} /> Refresh
         </Button>

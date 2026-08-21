@@ -659,7 +659,10 @@ async function seedDatabase() {
       name: "Spring Cleanup",
       description: "Heavy debris, branch removal, and post-winter property restoration.",
       sortOrder: 50,
-      equipmentIds: [blower1.id, blower2.id, chainsawEquip.id],
+      // Wheelbarrow is intentionally included even though it's RETIRED
+      // — populates the Super Collections Insights "Kits with issues"
+      // panel with a real actionable row for the reviewer.
+      equipmentIds: [blower1.id, blower2.id, chainsawEquip.id, wheelbarrow.id],
     },
     {
       name: "Fall Cleanup",
@@ -837,6 +840,102 @@ async function seedDatabase() {
   const todayCheckoutReturn = new Date(NOW.getTime() - 2 * 3_600_000); // 2h ago
   await prisma.checkout.create({ data: { equipmentId: mower2.id, userId: ADMIN_WORKER_ID, reservedAt: todayCheckoutStart, checkedOutAt: todayCheckoutStart } });
   await prisma.checkout.create({ data: { equipmentId: trimmer1.id, userId: CONTRACTOR_ID, reservedAt: todayCheckoutStart, checkedOutAt: todayCheckoutStart, releasedAt: todayCheckoutReturn, rentalDays: 1, rentalCost: 5.0 } });
+
+  // ── Equipment enrichment for the blended Inventory / Collections /
+  //     Vehicles views. Adds:
+  //       • Historical released checkouts (last 60d) — populates the
+  //         Usage breakdown, Super Insights leaderboard, and
+  //         "Pieces Used" counters.
+  //       • PinnedEquipment / LikedEquipment rows for each seed
+  //         worker so the pin/like affordances have visible state.
+  //     Additional MAINTENANCE / RETIRED equipment and a retired
+  //     member in a collection lands in the enrichment near the
+  //     collection seed (further above). Vehicle mileage enrichment
+  //     is in seedVehicleFixtures.
+  console.log("  Equipment enrichment (pins, likes, history)...");
+
+  const equipmentPool = [
+    mower1, mower2, mower3, mower4, trimmer1, trimmer2, trimmer3,
+    blower1, blower2, blower3, edger1, edger2, chainsawEquip,
+    aerator, spreader, pressureWasher, trailer,
+  ];
+  const workerPool = [MICHAEL_ID, ADMIN_WORKER_ID, EMPLOYEE_ID, CONTRACTOR_ID, TRAINEE_ID];
+
+  // Deterministic pseudo-random so re-runs produce the same layout —
+  // helps testing (screenshot stability, e2e determinism).
+  let __rngState = 42;
+  const rng = () => {
+    __rngState = (__rngState * 1103515245 + 12345) & 0x7fffffff;
+    return __rngState / 0x7fffffff;
+  };
+  const pick = <T>(arr: T[]): T => arr[Math.floor(rng() * arr.length)]!;
+
+  // 25 released historical checkouts spread across the last 60 days.
+  // Each spans 1-4 days. Contractors get a small rentalCost so the
+  // Super Insights income leaderboard has non-zero numbers.
+  for (let i = 0; i < 25; i++) {
+    const daysBack = 2 + Math.floor(rng() * 58); // 2-60 days ago
+    const rentalDays = 1 + Math.floor(rng() * 4); // 1-4 days
+    const start = daysAgo(daysBack, 8);
+    const end = daysAgo(daysBack - rentalDays, 16);
+    // Skip if the calculated end is in the future (edge case near
+    // today) — clamp to today.
+    const releasedAt = end.getTime() > NOW.getTime() ? NOW : end;
+    const eq = pick(equipmentPool);
+    const userId = pick(workerPool);
+    const isContractor = userId === CONTRACTOR_ID;
+    await prisma.checkout.create({
+      data: {
+        equipmentId: eq.id,
+        userId,
+        reservedAt: start,
+        checkedOutAt: start,
+        releasedAt,
+        rentalDays,
+        rentalCost: isContractor && eq.dailyRate ? +(eq.dailyRate * rentalDays).toFixed(2) : 0,
+      },
+    });
+  }
+
+  // Pinned equipment — 2 per worker with a stable, useful selection.
+  const pinSeeds: Array<{ userId: string; equipmentIds: string[] }> = [
+    { userId: MICHAEL_ID,      equipmentIds: [mower1.id, trailer.id] },
+    { userId: ADMIN_WORKER_ID, equipmentIds: [mower2.id, blower2.id] },
+    { userId: EMPLOYEE_ID,     equipmentIds: [mower1.id, trimmer2.id, blower1.id] },
+    { userId: CONTRACTOR_ID,   equipmentIds: [trimmer1.id, edger1.id] },
+    { userId: TRAINEE_ID,      equipmentIds: [blower3.id] },
+  ];
+  for (const p of pinSeeds) {
+    for (const equipmentId of p.equipmentIds) {
+      await prisma.pinnedEquipment.upsert({
+        where: { userId_equipmentId: { userId: p.userId, equipmentId } },
+        create: { userId: p.userId, equipmentId },
+        update: {},
+      });
+    }
+  }
+
+  // Liked equipment — 3-4 per worker, biased toward the pieces they
+  // actually use. Contractors like the cheaper/free pieces; the
+  // employee likes the daily workhorses.
+  const likeSeeds: Array<{ userId: string; equipmentIds: string[] }> = [
+    { userId: MICHAEL_ID,      equipmentIds: [mower1.id, mower2.id, trailer.id, chainsawEquip.id] },
+    { userId: ADMIN_WORKER_ID, equipmentIds: [mower2.id, blower2.id, trimmer2.id] },
+    { userId: EMPLOYEE_ID,     equipmentIds: [mower1.id, trimmer2.id, blower1.id, edger1.id] },
+    { userId: CONTRACTOR_ID,   equipmentIds: [trimmer1.id, edger1.id, blower2.id] },
+    { userId: TRAINEE_ID,      equipmentIds: [blower3.id, wheelbarrow.id] },
+  ];
+  for (const l of likeSeeds) {
+    for (const equipmentId of l.equipmentIds) {
+      await prisma.likedEquipment.upsert({
+        where: { userId_equipmentId: { userId: l.userId, equipmentId } },
+        create: { userId: l.userId, equipmentId },
+        update: {},
+      });
+    }
+  }
+
+  console.log("    +25 historical checkouts, +12 pins, +18 likes.");
 
   // ── Jobs (18) ─────────────────────────────────────────────────────────────
   console.log("  Creating jobs...");
@@ -4695,7 +4794,55 @@ async function seedVehicleFixtures() {
     },
   });
 
-  console.log("    Seeded 3 vehicles, 4 assignments, 3 mileage entries.");
+  // Backfill enrichment — 10 additional past-30d approved sessions
+  // spread across all three vehicles + all drivers, plus one extra
+  // pending entry per week. This populates the Super Insights strip
+  // on the Vehicles tab: "Last 30d miles" gets ~250-400 realistic
+  // miles, "Pending approvals" ticks past 1, "Fleet" + "Unassigned"
+  // read as configured. Odometers are advanced monotonically so the
+  // per-vehicle current-odo stays consistent with the log.
+  const vehiclePool = [
+    { v: truck, driver: EMPLOYEE_ID, baseOdo: 47500 },
+    { v: truck, driver: MICHAEL_ID, baseOdo: 47700 },
+    { v: secondTruck, driver: MICHAEL_ID, baseOdo: 62100 },
+    { v: van, driver: MICHAEL_ID, baseOdo: 18400 },
+  ];
+  let seededMileage = 0;
+  let seededPending = 0;
+  for (let i = 0; i < 12; i++) {
+    const bucket = vehiclePool[i % vehiclePool.length]!;
+    const daysBack = 2 + i * 2; // 2, 4, 6, ... 24 days back
+    const start = new Date(now);
+    start.setDate(start.getDate() - daysBack);
+    start.setHours(8, 30, 0, 0);
+    const end = new Date(start);
+    end.setHours(15, 45, 0, 0);
+    const miles = 22 + (i * 4) % 45; // 22-66 mile deterministic spread
+    const startOdo = bucket.baseOdo + i * 60;
+    const endOdo = startOdo + miles;
+    // Every 4th entry stays pending to give the "Pending approvals"
+    // panel non-zero data.
+    const isPending = i % 4 === 3;
+    await prisma.mileageEntry.create({
+      data: {
+        vehicleId: bucket.v.id,
+        driverUserId: bucket.driver,
+        entryDate: dayKey(start),
+        startedAt: start,
+        endedAt: end,
+        startOdometer: startOdo,
+        endOdometer: endOdo,
+        miles,
+        notes: isPending ? "Awaiting approval." : "Routine service loop.",
+        approvedAt: isPending ? null : new Date(end.getTime() + 12 * 60 * 60 * 1000),
+        approvedById: isPending ? null : MICHAEL_ID,
+      },
+    });
+    if (isPending) seededPending++;
+    else seededMileage++;
+  }
+
+  console.log(`    Seeded 3 vehicles, 4 assignments, 3 baseline mileage entries + ${seededMileage} approved + ${seededPending} pending in last 30d.`);
 }
 
 /**

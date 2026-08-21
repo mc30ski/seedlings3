@@ -20,13 +20,16 @@ import {
   createListCollection,
   useDisclosure,
 } from "@chakra-ui/react";
-import { AlertCircle, AlertTriangle, BarChart3, ChevronDown, ChevronRight, ChevronUp, Copy, Filter, Hand, Heart, LayoutGrid, LayoutList, List, Maximize2, MoreHorizontal, Pin, Plus, RefreshCw, RotateCcw, ScanLine, Share2, User, Users, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, BarChart3, ChevronDown, ChevronRight, ChevronUp, Copy, Eye, Filter, Hand, Heart, LayoutGrid, LayoutList, Maximize2, MoreHorizontal, Package, Pin, Plus, RefreshCw, RotateCcw, ScanLine, Share2, User, Users, X, Zap } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import {
   bizToday,
   bizAddDays,
+  bizDateKey,
   determineRoles,
+  fmtDateOpts,
+  fmtDateShort,
   prettyStatus,
   notifyEquipmentUpdated,
   extractSlug,
@@ -54,6 +57,7 @@ import DeleteDialog, {
 import EquipmentDialog from "@/src/ui/dialogs/EquipmentDialog";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import ImpersonationWarning from "@/src/ui/components/ImpersonationWarning";
+import { AdminViewAsSelector, AdminViewAsBadges, type AdminWorker } from "@/src/ui/tabs/JobsTab.parts";
 
 import { EQUIPMENT_KIND, EQUIPMENT_STATUS } from "@/src/lib/types";
 import { parseEquipmentKindsConfig, type EquipmentKindConfig } from "@/src/lib/equipmentSuggestions";
@@ -69,17 +73,238 @@ const workerStatusStates = [
 ] as const;
 const adminStatusStates = ["ALL", ...EQUIPMENT_STATUS] as const;
 
-export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
-  const { isSuper, isAvail, forAdmin } = determineRoles(me, purpose);
+// Card action bands — worker/admin/super buttons split into three
+// role-labeled bands so a super sees at a glance which capability
+// tier each button belongs to. Mirrors the pattern used by
+// ElevatedActionRow on the Jobs tab: subtle top-bordered band with
+// a leading colored badge and the wrap-flow buttons trailing.
+function CardActionBands(props: {
+  e: Equipment;
+  loading: boolean;
+  statusButtonBusyId: string;
+  setStatusButtonBusyId: (v: string) => void;
+  showWorkerExtras: boolean;
+  showAdminExtras: boolean;
+  isTrainee: boolean;
+  viewAsUserId: string | null;
+  viewAsUserName: string | null;
+  canWorkerCheckout: boolean;
+  canWorkerCancel: boolean;
+  canWorkerReturn: boolean;
+  canWorkerReserve: boolean;
+  canAdminForceRelease: boolean;
+  canAdminStartMaintenance: boolean;
+  canAdminEndMaintenance: boolean;
+  canAdminRetire: boolean;
+  canAdminUnretire: boolean;
+  canSuperHardDelete: boolean;
+  canSuperReserveFor: boolean;
+  canSuperCancelFor: boolean;
+  canSuperCheckoutFor: boolean;
+  canSuperReturnFor: boolean;
+  onEdit: () => void;
+  onWorkerCheckout: () => void;
+  onWorkerCancel: () => void;
+  onWorkerReturn: () => void;
+  onWorkerReserve: () => void;
+  onForceRelease: () => void;
+  onStartMaintenance: () => void;
+  onEndMaintenance: () => void;
+  onRetire: () => void;
+  onUnretire: () => void;
+  onHardDelete: () => void;
+  onSuperReserveFor: () => void;
+  onSuperCancelFor: () => void;
+  onSuperCheckoutFor: () => void;
+  onSuperReturnFor: () => void;
+}) {
+  const {
+    e, loading, statusButtonBusyId, setStatusButtonBusyId,
+    showWorkerExtras, showAdminExtras, isTrainee,
+    viewAsUserId, viewAsUserName,
+    canWorkerCheckout, canWorkerCancel, canWorkerReturn, canWorkerReserve,
+    canAdminForceRelease, canAdminStartMaintenance, canAdminEndMaintenance,
+    canAdminRetire, canAdminUnretire, canSuperHardDelete,
+    canSuperReserveFor, canSuperCancelFor, canSuperCheckoutFor, canSuperReturnFor,
+    onEdit, onWorkerCheckout, onWorkerCancel, onWorkerReturn, onWorkerReserve,
+    onForceRelease, onStartMaintenance, onEndMaintenance, onRetire, onUnretire,
+    onHardDelete, onSuperReserveFor, onSuperCancelFor, onSuperCheckoutFor, onSuperReturnFor,
+  } = props;
+
+  const holderLabel = e.holder?.displayName || e.holder?.email || "holder";
+
+  // Worker band — surfaces only when at least one worker action is
+  // available (own reserve/checkout/cancel/return, or the trainee
+  // gate hint). Empty band would be visual noise on admin cards with
+  // nothing to reserve.
+  const showTraineeHint = showWorkerExtras && e.status === "AVAILABLE" && isTrainee && !viewAsUserId;
+  const showWorkerBand =
+    canWorkerCheckout || canWorkerCancel || canWorkerReturn || canWorkerReserve || showTraineeHint;
+  // Admin band always renders when scope includes admin — the "Edit"
+  // button anchors it, and the other Admin buttons appear as their
+  // per-status guards permit.
+  const showSuperBand =
+    canSuperReserveFor || canSuperCancelFor || canSuperCheckoutFor || canSuperReturnFor || canSuperHardDelete;
+
+  if (!showWorkerBand && !showAdminExtras && !showSuperBand) return null;
+
+  const bandProps = {
+    px: 3, py: 1.5, gap: 2, wrap: "wrap" as const,
+    borderTopWidth: "1px", borderColor: "blackAlpha.100",
+    bg: "blackAlpha.50",
+  };
+
+  return (
+    <VStack align="stretch" gap={0}>
+      {showWorkerBand && (
+        <HStack {...bandProps}>
+          {/* Worker band leading label — only shows the "Acting as X"
+              chip when admin has view-as active, since that context is
+              load-bearing. In the normal (own-scope) case the buttons
+              stand alone, matching how "own" actions read across the
+              rest of the app. */}
+          {viewAsUserId && (
+            <Badge size="xs" variant="subtle" colorPalette="cyan">
+              <Eye size={9} style={{ marginRight: 3 }} />
+              <Text as="span">Acting as {viewAsUserName ?? "worker"}</Text>
+            </Badge>
+          )}
+          {canWorkerReserve && (
+            <StatusButton id="equipment-reserve" itemId={e.id} label="Reserve" onClick={async () => onWorkerReserve()}
+              variant="solid" colorPalette="green" disabled={loading}
+              busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
+          )}
+          {canWorkerCheckout && (
+            <StatusButton id="equipment-checkout" itemId={e.id} label="Check Out" onClick={async () => onWorkerCheckout()}
+              variant="solid" colorPalette="blue" disabled={loading}
+              busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
+          )}
+          {canWorkerReturn && (
+            <StatusButton id="equipment-return" itemId={e.id} label="Return" onClick={async () => onWorkerReturn()}
+              variant="solid" colorPalette="orange" disabled={loading}
+              busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
+          )}
+          {canWorkerCancel && (
+            <StatusButton id="equipment-cancel" itemId={e.id} label="Cancel Reservation" onClick={async () => onWorkerCancel()}
+              variant="outline" disabled={loading}
+              busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
+          )}
+          {showTraineeHint && (
+            <HStack gap={1} fontSize="xs" color="gray.500"><AlertTriangle size={12} /><Text>Trainees cannot reserve equipment</Text></HStack>
+          )}
+        </HStack>
+      )}
+      {showAdminExtras && (
+        <HStack {...bandProps}>
+          <Badge size="xs" variant="subtle" colorPalette="purple">Admin</Badge>
+          <StatusButton id="equipment-edit" itemId={e.id} label="Edit" onClick={async () => onEdit()}
+            variant="outline" disabled={loading}
+            busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
+          {canAdminForceRelease && (
+            <StatusButton id="equipment-forceRelease" itemId={e.id} label="Force release" onClick={async () => onForceRelease()}
+              variant="solid" disabled={loading}
+              busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
+          )}
+          {canAdminStartMaintenance && (
+            <StatusButton id="equipment-startMaintenance" itemId={e.id} label="Start maintenance" onClick={async () => onStartMaintenance()}
+              variant="subtle" disabled={loading}
+              busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
+          )}
+          {canAdminEndMaintenance && (
+            <StatusButton id="equipment-endMaintenance" itemId={e.id} label="End maintenance" onClick={async () => onEndMaintenance()}
+              variant="subtle" disabled={loading}
+              busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
+          )}
+          {canAdminRetire && (
+            <StatusButton id="equipment-retire" itemId={e.id} label="Retire" onClick={async () => onRetire()}
+              variant="outline" disabled={loading}
+              busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
+          )}
+          {canAdminUnretire && (
+            <StatusButton id="equipment-unretire" itemId={e.id} label="Unretire" onClick={async () => onUnretire()}
+              variant="subtle" disabled={loading}
+              busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
+          )}
+        </HStack>
+      )}
+      {showSuperBand && (
+        <HStack {...bandProps}>
+          <Badge size="xs" variant="subtle" colorPalette="orange">
+            <HStack gap={0.5}><Zap size={9} /><Text>Super</Text></HStack>
+          </Badge>
+          {canSuperReserveFor && (
+            <StatusButton id="equipment-super-reserve-for" itemId={e.id} label="Reserve for worker…"
+              onClick={async () => onSuperReserveFor()}
+              variant="subtle" colorPalette="purple" disabled={loading}
+              busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
+          )}
+          {canSuperCancelFor && (
+            <StatusButton id="equipment-super-cancel-for" itemId={e.id} label={`Cancel for ${holderLabel}`}
+              onClick={async () => onSuperCancelFor()}
+              variant="subtle" colorPalette="purple" disabled={loading}
+              busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
+          )}
+          {canSuperCheckoutFor && (
+            <StatusButton id="equipment-super-checkout-for" itemId={e.id} label={`Checkout for ${holderLabel}`}
+              onClick={async () => onSuperCheckoutFor()}
+              variant="solid" colorPalette="purple" disabled={loading}
+              busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
+          )}
+          {canSuperReturnFor && (
+            <StatusButton id="equipment-super-return-for" itemId={e.id} label={`Return for ${holderLabel}`}
+              onClick={async () => onSuperReturnFor()}
+              variant="solid" colorPalette="purple" disabled={loading}
+              busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
+          )}
+          {canSuperHardDelete && (
+            <StatusButton id="equipment-hardDelete" itemId={e.id} label="Delete" onClick={async () => onHardDelete()}
+              variant="danger-outline" disabled={loading}
+              busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
+          )}
+        </HStack>
+      )}
+    </VStack>
+  );
+}
+
+type InventoryTabProps = TabPropsType & {
+  /** Additive scope — capabilities ADD as you climb the ladder.
+   *  scope.isWorker → like/pin/reserve-for-self/reserve-for-group/kit
+   *  scope.isAdmin  → adds edit/force-release/maintenance/retire/insights/…
+   *  scope.isSuper  → adds reserve-for/checkout-for/return-for/hard-delete
+   *  Falls back to the legacy `purpose` prop when not passed. */
+  scope?: { isWorker: boolean; isAdmin: boolean; isSuper: boolean };
+};
+
+export default function InventoryTab({ me, purpose = "WORKER", scope }: InventoryTabProps) {
+  const { isSuper: hasSuperRole, isAvail, forAdmin } = determineRoles(me, purpose);
+
+  // Effective scope: prefer the additive prop; fall back to a scope
+  // derived from `purpose` for any callsite still on the old shape.
+  const effScope = scope ?? {
+    isWorker: purpose === "WORKER",
+    isAdmin: purpose === "ADMIN" || purpose === "SUPER",
+    isSuper: purpose === "SUPER",
+  };
+  // Capabilities render additively AND are strictly governed by the
+  // scope prop — not by the underlying role. A user with admin+super
+  // roles viewing the *Admin* tab must NOT see Super buttons (that's
+  // what the Super top-tab is for). Super scope inherits Admin
+  // capabilities so a super sees admin controls too.
+  const showWorkerExtras = effScope.isWorker;
+  const showAdminExtras = effScope.isAdmin || effScope.isSuper;
+  const showSuperExtras = effScope.isSuper && hasSuperRole;
 
   // Variables for filtering the items.
   const [q, setQ] = useState("");
-  const pfx = purpose === "WORKER" ? "equip_w" : "equip_a";
+  // Persisted-state prefix: worker-only view gets its own bucket so
+  // filters don't collide with an admin/super view on the same device.
+  const pfx = showAdminExtras ? "equip_a" : "equip_w";
   const [compact, setCompact] = usePersistedState(`${pfx}_compact`, false);
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = usePersistedState<string[]>(
-    `${pfx}_status`, purpose === "WORKER" ? ["CLAIMED"] : ["ALL"]
+    `${pfx}_status`, showAdminExtras ? ["ALL"] : ["CLAIMED"]
   );
   const [kind, setKind] = usePersistedState<string[]>(`${pfx}_kind`, ["ALL"]);
   const [likedOnly, setLikedOnly] = usePersistedState<boolean>(`${pfx}_likedOnly`, false);
@@ -90,13 +315,30 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
     `${pfx}_workers`, [],
   );
 
-  const isWorkerView = purpose === "WORKER";
+  // Admin "view as" — pick a worker's context so the worker-side
+  // reserve/checkout affordances execute on their behalf via the
+  // super endpoints. Persisted so a mid-session refresh keeps the
+  // active workers in view.
+  const [viewAsUserIds, setViewAsUserIds] = usePersistedState<string[]>(
+    "inventoryTab_viewAsIds", [],
+  );
+  const viewAsUserId = viewAsUserIds[0] ?? null;
+
+  // `isWorkerView` — retained for existing callsites; means "the
+  // worker-facing affordances are showing on this render". Now driven
+  // by additive scope.
+  const isWorkerView = showWorkerExtras;
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [openActionMenuId, setOpenActionMenuId] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(false);
+  // Global "refreshing all sections" flag — set by the toolbar refresh
+  // button and cleared after a fixed window. Drives the tab-body dim
+  // + spinning icon so users see feedback even for sections that are
+  // currently collapsed (their internal spinner would be invisible).
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [items, setItems] = useState<Equipment[]>([]);
   const [equipmentKinds, setEquipmentKinds] = useState<EquipmentKindConfig[]>([]);
   // Master toggle EQUIPMENT_BILLING_ENABLED — when OFF every billing
@@ -114,7 +356,21 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   // Collections admin tab shows for each kit).
   const [expandedCollections, setExpandedCollections] = useState<Set<string>>(new Set());
   const [reservingKitId, setReservingKitId] = useState<string | null>(null);
+  // Partial-availability confirm dialog state — opens when the user
+  // taps Reserve on a collection whose members are not all AVAILABLE.
+  // Shows what CAN be reserved + what's blocking each excluded piece,
+  // lets the caller confirm the partial checkout or bail.
+  type KitPartial = {
+    collection: Collection;
+    available: CollectionItem[];
+    unavailable: { item: CollectionItem; reason: string }[];
+    opts: { groupId?: string | null };
+  };
+  const [kitPartialConfirm, setKitPartialConfirm] = useState<KitPartial | null>(null);
   const [collectionsCollapsed, setCollectionsCollapsed] = usePersistedState<boolean>(`${pfx}_collectionsCollapsed`, false);
+  const [usageCollapsed, setUsageCollapsed] = usePersistedState<boolean>(`${pfx}_usageCollapsed`, true);
+  const [teamUsageCollapsed, setTeamUsageCollapsed] = usePersistedState<boolean>(`${pfx}_teamUsageCollapsed`, true);
+  const [insightsCollapsed, setInsightsCollapsed] = usePersistedState<boolean>(`${pfx}_insightsCollapsed`, false);
   const [highlightCollectionId, setHighlightCollectionId] = useState<string | null>(null);
   const [equipmentCollapsed, setEquipmentCollapsed] = usePersistedState<boolean>(`${pfx}_equipmentCollapsed`, false);
   // Track filter-active transitions so we can auto-collapse the Collections
@@ -142,7 +398,11 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
     | null
   >(null);
   useEffect(() => {
-    if (forAdmin) return;
+    // Fetch the caller's crew-lead groups regardless of scope. Admins
+    // who are ALSO workers (dual-role) should see their group card in
+    // admin view too — the endpoint returns [] for admin-only users so
+    // this is a no-op for them.
+    if (!showWorkerExtras) return;
     apiGet<ClaimerGroup[]>("/api/me/groups-as-claimer")
       .then((list) => {
         const groups = Array.isArray(list) ? list : [];
@@ -156,7 +416,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
       })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [forAdmin]);
+  }, [showWorkerExtras]);
 
   // Hand-off from JobsTab: when a worker clicks a preferred-equipment chip
   // on a group-claimed job, the chip sets `reserveAsGroupId` so the picker
@@ -176,11 +436,11 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   // Workers list — only used by the admin worker-filter chip to look up names.
   const [adminWorkers, setAdminWorkers] = useState<Array<{ id: string; displayName?: string | null; email?: string | null }>>([]);
   useEffect(() => {
-    if (!forAdmin) return;
+    if (!showAdminExtras) return;
     apiGet<Array<{ id: string; displayName?: string | null; email?: string | null }>>("/api/workers")
       .then((list) => setAdminWorkers(Array.isArray(list) ? list : []))
       .catch(() => {});
-  }, [forAdmin]);
+  }, [showAdminExtras]);
   const adminWorkerName = (id: string) => {
     const w = adminWorkers.find((x) => x.id === id);
     return w?.displayName || w?.email || id.slice(0, 6);
@@ -362,10 +622,12 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
     } catch {}
   };
 
-  // Loads all the items for the first time.
+  // Loads all the items for the first time. Also re-runs whenever the
+  // admin's view-as picker changes so the list reflects the target
+  // worker's holdings and status filters resolve correctly.
   useEffect(() => {
     void load();
-    const settingsPath = forAdmin ? "/api/admin/settings" : "/api/settings";
+    const settingsPath = showAdminExtras ? "/api/admin/settings" : "/api/settings";
     apiGet<any[]>(settingsPath)
       .then((list) => {
         if (!Array.isArray(list)) return;
@@ -377,13 +639,22 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
       .then((list) => setCollections(Array.isArray(list) ? list : []))
       .catch(() => setCollections([]));
     applyHandoffFilters();
-  }, [forAdmin]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showAdminExtras, viewAsUserId]);
 
   // Re-apply hand-off filters whenever someone navigates to this tab.
   // The chip click sets sessionStorage *then* dispatches the navigate
-  // event, so by the time this handler runs the key is present.
+  // event, so by the time this handler runs the key is present. Super
+  // scope dispatches its own event to keep cross-tab wiring correct
+  // (previously piggybacked on navigate:adminTab which routed super
+  // clicks to the admin inner-tab space).
   useEffect(() => {
-    const eventName = forAdmin ? "navigate:adminTab" : "navigate:workerTab";
+    const eventName =
+      showSuperExtras
+        ? "navigate:superTab"
+        : showAdminExtras
+          ? "navigate:adminTab"
+          : "navigate:workerTab";
     function handler(ev: Event) {
       const detail = (ev as CustomEvent).detail;
       if (detail?.tab !== "equipment") return;
@@ -392,7 +663,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
     window.addEventListener(eventName, handler as EventListener);
     return () => window.removeEventListener(eventName, handler as EventListener);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [forAdmin]);
+  }, [showSuperExtras, showAdminExtras]);
 
   // Worker-only: load pinned + liked equipment
   useEffect(() => {
@@ -728,9 +999,18 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
 
   async function checkoutVerifiedWithSlug(id: string, slug: string) {
     try {
-      await apiPost(`/api/equipment/${id}/checkout/verify`, {
-        slug: extractSlug(slug),
-      });
+      // Admin view-as: bypass the worker's own endpoint and route the
+      // checkout through the super endpoint with the picked worker id.
+      if (viewAsUserId && showAdminExtras) {
+        await apiPost(`/api/super/equipment/${id}/checkout-for/verify`, {
+          userId: viewAsUserId,
+          slug: extractSlug(slug),
+        });
+      } else {
+        await apiPost(`/api/equipment/${id}/checkout/verify`, {
+          slug: extractSlug(slug),
+        });
+      }
       notifyEquipmentUpdated();
       await load(false);
       publishInlineMessage({
@@ -745,11 +1025,20 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
     }
   }
   // Check-in: no QR slug sent — the server skips the scan verification
-  // when the slug is absent (see equipment.returnWithQr).
+  // when the slug is absent (see equipment.returnWithQr). View-as
+  // sends the equipment's own qrSlug through the super endpoint so the
+  // scan-verify check inside the service still passes.
   async function doReturn(e: Equipment) {
     setStatusButtonBusyId(`equipment-return${e.id}`);
     try {
-      await apiPost(`/api/equipment/${e.id}/return/verify`, {});
+      if (viewAsUserId && showAdminExtras) {
+        await apiPost(`/api/super/equipment/${e.id}/return-for/verify`, {
+          userId: viewAsUserId,
+          slug: e.qrSlug,
+        });
+      } else {
+        await apiPost(`/api/equipment/${e.id}/return/verify`, {});
+      }
       notifyEquipmentUpdated();
       await load(false);
       publishInlineMessage({
@@ -784,13 +1073,25 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   async function doReserve(e: Equipment, opts?: { groupId?: string | null }) {
     const groupId = opts?.groupId !== undefined ? opts.groupId : reserveForGroupId;
     try {
-      await apiPost(`/api/equipment/${e.id}/reserve`, groupId ? { groupId } : {});
+      if (viewAsUserId && showAdminExtras) {
+        // Admin view-as: reserve on behalf of the picked worker via
+        // the super endpoint. Group scope is only meaningful for the
+        // actual worker (who leads groups), so we drop groupId here.
+        await apiPost(`/api/super/equipment/${e.id}/reserve-for`, {
+          userId: viewAsUserId,
+        });
+      } else {
+        await apiPost(`/api/equipment/${e.id}/reserve`, groupId ? { groupId } : {});
+      }
       notifyEquipmentUpdated();
       await load(false);
       const groupName = groupsAsClaimer.find((g) => g.id === groupId)?.name;
+      const asName = viewAsUserId ? adminWorkerName(viewAsUserId) : null;
       publishInlineMessage({
         type: "SUCCESS",
-        text: groupName
+        text: asName
+          ? `Reserved '${e.qrSlug}' on behalf of ${asName}.`
+          : groupName
           ? `Reserved '${e.qrSlug}' on behalf of ${groupName}.`
           : `Equipment '${e.qrSlug}' successfully reserved.`,
       });
@@ -819,36 +1120,90 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
     await doReserveKit(collection);
   }
 
+  // Split each kit member into "reservable now" vs "blocked" based on
+  // the LIVE equipment status from the parent `items` state. Reason
+  // strings are the same short labels shown in the partial-confirm
+  // dialog + the post-reserve toast.
+  function computeKitAvailability(collection: Collection): {
+    available: CollectionItem[];
+    unavailable: { item: CollectionItem; reason: string }[];
+  } {
+    const available: CollectionItem[] = [];
+    const unavailable: { item: CollectionItem; reason: string }[] = [];
+    for (const i of collection.items) {
+      const live = items.find((eq) => eq.id === i.equipmentId);
+      if (!live) {
+        unavailable.push({ item: i, reason: "not found" });
+        continue;
+      }
+      if (live.retiredAt) {
+        unavailable.push({ item: i, reason: "retired" });
+        continue;
+      }
+      if (live.status === "AVAILABLE") {
+        available.push(i);
+        continue;
+      }
+      if (live.status === "RESERVED" || live.status === "CHECKED_OUT") {
+        unavailable.push({ item: i, reason: "already in use" });
+      } else if (live.status === "MAINTENANCE") {
+        unavailable.push({ item: i, reason: "in maintenance" });
+      } else {
+        unavailable.push({ item: i, reason: "not available" });
+      }
+    }
+    return { available, unavailable };
+  }
+
   async function doReserveKit(collection: Collection, opts?: { groupId?: string | null }) {
     const groupId = opts?.groupId !== undefined ? opts.groupId : reserveForGroupId;
+    const { available, unavailable } = computeKitAvailability(collection);
+    // Nothing to reserve — surface why, don't touch the API.
+    if (available.length === 0) {
+      const reasonCounts: Record<string, number> = {};
+      for (const u of unavailable) reasonCounts[u.reason] = (reasonCounts[u.reason] ?? 0) + 1;
+      const reasonText = Object.entries(reasonCounts)
+        .sort(([, a], [, b]) => b - a)
+        .map(([msg, n]) => (Object.keys(reasonCounts).length === 1 ? msg : `${msg} (${n})`))
+        .join(", ");
+      publishInlineMessage({ type: "WARNING", text: `${collection.name}: nothing reserved — ${reasonText}` });
+      return;
+    }
+    // Not all available — open the partial-confirm dialog. User can
+    // either accept the reduced checkout or bail entirely.
+    if (unavailable.length > 0) {
+      setKitPartialConfirm({ collection, available, unavailable, opts: { groupId: groupId ?? null } });
+      return;
+    }
+    // Everything available — execute directly.
+    await executeReserveKit(collection, available, { groupId: groupId ?? null });
+  }
+
+  // The actual per-item reserve loop. Only runs against the pre-filtered
+  // "available" list — either the full membership (all-available fast
+  // path) or the subset the user confirmed via the partial dialog.
+  async function executeReserveKit(
+    collection: Collection,
+    itemsToReserve: CollectionItem[],
+    opts: { groupId?: string | null },
+  ) {
     setReservingKitId(collection.id);
     try {
-      // Aggregate human-readable reasons → count
       const reasons: Record<string, number> = {};
       const addReason = (raw: string) => {
         const k = raw.replace(/\.+$/, "").trim() || "could not reserve";
         reasons[k] = (reasons[k] ?? 0) + 1;
       };
-
       let reserved = 0;
-      for (const i of collection.items) {
-        const live = items.find((eq) => eq.id === i.equipmentId);
-        if (!live) {
-          addReason("equipment not found");
-          continue;
-        }
-        if (live.retiredAt) {
-          addReason("retired");
-          continue;
-        }
-        if (live.status !== "AVAILABLE") {
-          if (live.status === "RESERVED" || live.status === "CHECKED_OUT") addReason("already in use");
-          else if (live.status === "MAINTENANCE") addReason("in maintenance");
-          else addReason("not available");
-          continue;
-        }
+      for (const i of itemsToReserve) {
         try {
-          await apiPost(`/api/equipment/${i.equipmentId}/reserve`, groupId ? { groupId } : {});
+          if (viewAsUserId && showAdminExtras) {
+            await apiPost(`/api/super/equipment/${i.equipmentId}/reserve-for`, {
+              userId: viewAsUserId,
+            });
+          } else {
+            await apiPost(`/api/equipment/${i.equipmentId}/reserve`, opts.groupId ? { groupId: opts.groupId } : {});
+          }
           reserved++;
         } catch (err: any) {
           addReason(err?.message || "could not reserve");
@@ -859,19 +1214,18 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
       await load(false);
       apiGet<Collection[]>("/api/equipment-collections").then((list) => setCollections(Array.isArray(list) ? list : []));
 
-      const totalUnavail = Object.values(reasons).reduce((a, b) => a + b, 0);
+      const totalFailed = Object.values(reasons).reduce((a, b) => a + b, 0);
       const reasonEntries = Object.entries(reasons).sort(([, a], [, b]) => b - a);
-      // If only one reason, just show it. If multiple, show "(count)" suffixes.
       const reasonText = reasonEntries.length === 1
         ? reasonEntries[0][0]
         : reasonEntries.map(([msg, n]) => `${msg} (${n})`).join(", ");
 
-      if (totalUnavail === 0) {
+      if (totalFailed === 0) {
         publishInlineMessage({ type: "SUCCESS", text: `${collection.name}: ${reserved} reserved` });
       } else if (reserved === 0) {
         publishInlineMessage({ type: "WARNING", text: `${collection.name}: nothing reserved — ${reasonText}` });
       } else {
-        publishInlineMessage({ type: "WARNING", text: `${collection.name}: ${reserved} reserved · ${totalUnavail} unable to reserve — ${reasonText}` });
+        publishInlineMessage({ type: "WARNING", text: `${collection.name}: ${reserved} reserved · ${totalFailed} failed — ${reasonText}` });
       }
     } finally {
       setReservingKitId(null);
@@ -879,7 +1233,13 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   }
   async function cancel(e: Equipment) {
     try {
-      await apiPost(`/api/equipment/${e.id}/reserve/cancel`);
+      if (viewAsUserId && showAdminExtras) {
+        await apiPost(`/api/super/equipment/${e.id}/reserve-for/cancel`, {
+          userId: viewAsUserId,
+        });
+      } else {
+        await apiPost(`/api/equipment/${e.id}/reserve/cancel`);
+      }
       notifyEquipmentUpdated();
       await load(false);
       publishInlineMessage({
@@ -1119,17 +1479,29 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
     }
   }
 
-  const canWorkerCheckout = (e: Equipment) =>
-    purpose === "WORKER" && e.status === "RESERVED" && !!me && e.holder?.userId === me.id;
-  const canWorkerCancel = (e: Equipment) =>
-    purpose === "WORKER" && e.status === "RESERVED" && !!me && e.holder?.userId === me.id;
-  const canWorkerReturn = (e: Equipment) =>
-    purpose === "WORKER" && e.status === "CHECKED_OUT" && !!me && e.holder?.userId === me.id;
+  // ── Action-visibility helpers ───────────────────────────────────────
+  // "Worker" actions (like/pin, reserve/cancel/checkout/return) fire on
+  // behalf of a subject worker. Without view-as that subject is the
+  // caller; with an admin view-as picker active it's the picked worker.
+  // The helpers always compare against `subjectUserId` so the same
+  // card affordances appear whether admin is looking at themselves or
+  // impersonating.
+  const subjectUserId = viewAsUserId ?? me?.id ?? null;
   const isTrainee = me?.workerType === "TRAINEE";
+
+  const canWorkerCheckout = (e: Equipment) =>
+    showWorkerExtras && e.status === "RESERVED" && !!subjectUserId && e.holder?.userId === subjectUserId;
+  const canWorkerCancel = (e: Equipment) =>
+    showWorkerExtras && e.status === "RESERVED" && !!subjectUserId && e.holder?.userId === subjectUserId;
+  const canWorkerReturn = (e: Equipment) =>
+    showWorkerExtras && e.status === "CHECKED_OUT" && !!subjectUserId && e.holder?.userId === subjectUserId;
   const canWorkerReserve = (e: Equipment) =>
-    purpose === "WORKER" &&
+    showWorkerExtras &&
     e.status === "AVAILABLE" &&
-    !isTrainee;
+    // Trainee gate only applies when the ACTING caller is a trainee —
+    // an admin viewing-as a trainee is still an admin under the hood
+    // and can reserve on their behalf.
+    (!!viewAsUserId || !isTrainee);
     // Compliance-policy gating (previously "insurance required") has TWO
     // enforcement layers now:
     //   1. `openReserveConfirm` below does a fast client-side pre-check —
@@ -1156,7 +1528,12 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
    */
   async function openReserveConfirm(e: Equipment) {
     const equipmentPolicyIds = e.requiredPolicyIds ?? [];
-    if (equipmentPolicyIds.length > 0 && purpose === "WORKER") {
+    // Compliance pre-check runs only when the caller is themselves the
+    // subject of the reservation. Admin view-as skips this — the
+    // super endpoint on the server enforces the picked worker's
+    // compliance, and dispatching the interceptor for the admin's
+    // own compliance would be nonsensical.
+    if (equipmentPolicyIds.length > 0 && showWorkerExtras && !viewAsUserId) {
       try {
         const data = await apiGet<{
           required: Array<{ policyId: string }>;
@@ -1186,40 +1563,43 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
     setReserveChecked(false);
   }
 
-  // Super "act on behalf of a worker" capabilities. The Super Equipment
-  // Inventory tab is the same as the Admin tab plus the ability for the
-  // Super to perform any worker action (reserve, cancel, checkout, return)
-  // when a worker is stuck. Only "Reserve" needs a worker picker; the
-  // other three act on the current holder.
-  const isSuperView = purpose === "SUPER";
+  // Super-tier "act on behalf" buttons — hidden when an admin view-as
+  // picker is active because the worker-tier buttons (rewired to route
+  // through the same super endpoints under view-as) already cover the
+  // same intent without the extra picker dialog.
+  const showSuperOnBehalfButtons = showSuperExtras && !viewAsUserId;
   const canSuperReserveFor = (e: Equipment) =>
-    isSuperView && e.status === "AVAILABLE";
+    showSuperOnBehalfButtons && e.status === "AVAILABLE";
   const canSuperCancelFor = (e: Equipment) =>
-    isSuperView && e.status === "RESERVED" && !!e.holder;
+    showSuperOnBehalfButtons && e.status === "RESERVED" && !!e.holder;
   const canSuperCheckoutFor = (e: Equipment) =>
-    isSuperView && e.status === "RESERVED" && !!e.holder;
+    showSuperOnBehalfButtons && e.status === "RESERVED" && !!e.holder;
   const canSuperReturnFor = (e: Equipment) =>
-    isSuperView && e.status === "CHECKED_OUT" && !!e.holder;
+    showSuperOnBehalfButtons && e.status === "CHECKED_OUT" && !!e.holder;
 
-  const canAdminForceRelease = (e: Equipment) =>
-    (purpose === "ADMIN" || purpose === "SUPER") && !!e.holder;
+  const canAdminForceRelease = (e: Equipment) => showAdminExtras && !!e.holder;
   const canAdminStartMaintenance = (e: Equipment) =>
-    (purpose === "ADMIN" || purpose === "SUPER") &&
+    showAdminExtras &&
     e.status !== "RETIRED" &&
     e.status !== "MAINTENANCE" &&
     !e.holder;
   const canAdminEndMaintenance = (e: Equipment) =>
-    (purpose === "ADMIN" || purpose === "SUPER") && e.status === "MAINTENANCE";
+    showAdminExtras && e.status === "MAINTENANCE";
   const canAdminRetire = (e: Equipment) =>
-    (purpose === "ADMIN" || purpose === "SUPER") &&
+    showAdminExtras &&
     e.status !== "RETIRED" &&
     !e.holder &&
     e.status !== "RESERVED" &&
     e.status !== "CHECKED_OUT";
   const canAdminUnretire = (e: Equipment) =>
-    (purpose === "ADMIN" || purpose === "SUPER") && e.status === "RETIRED";
-  const canAdminHardDelete = (e: Equipment) =>
-    (purpose === "ADMIN" || purpose === "SUPER") && e.status === "RETIRED";
+    showAdminExtras && e.status === "RETIRED";
+  // Hard-delete button is super-only, gated on both the UI (this
+  // helper) and the server (superGuard on DELETE /admin/equipment/:id).
+  // The DeleteDialog previously rendered for admin as shown-but-
+  // disabled with a "must be Super" hint, which was confusing —
+  // hidden outright is cleaner.
+  const canSuperHardDelete = (e: Equipment) =>
+    showSuperExtras && e.status === "RETIRED";
 
   const isMine = (e: Equipment) =>
     !!me && !!e.holder && e.holder.userId === me.id;
@@ -1327,31 +1707,41 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
 
   return (
     <Box w="full">
-      <HStack mb={2} gap={2}>
-        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)" }}>
-          <RefreshCw size={14} />
-        </Button>
+      {/* Top toolbar — tab-level actions only (refresh, scan-to-find,
+          admin Add). Section-scoped controls (search / compact /
+          kind / status / liked / active-filter chips) live inside
+          the Equipment section header below since that's the only
+          section they affect. */}
+      <HStack mt={1} mb={1} gap={2}>
         <Button
           size="sm"
           variant="ghost"
+          onClick={() => {
+            // Reload the equipment list + collections here in the
+            // parent, then broadcast so every subsection (Insights,
+            // Team/Your Usage, Vehicles insights, etc.) refetches
+            // its own data. Listeners hang on the same event name.
+            setIsRefreshing(true);
+            void load();
+            apiGet<Collection[]>("/api/equipment-collections")
+              .then((list) => setCollections(Array.isArray(list) ? list : []))
+              .catch(() => {});
+            try { window.dispatchEvent(new CustomEvent("inventory:refresh")); } catch {}
+            // Clear the dim after a fixed window — long enough that
+            // fast fetches still register visually, short enough to
+            // not feel laggy on slow ones.
+            setTimeout(() => setIsRefreshing(false), 900);
+          }}
+          disabled={isRefreshing}
           px="2"
           flexShrink={0}
-          onClick={() => { setCompact((v) => !v); setExpandedCards(new Set()); }}
-          css={{
-            background: !compact ? "var(--chakra-colors-gray-200)" : "var(--chakra-colors-gray-100)",
-            color: !compact ? "var(--chakra-colors-gray-700)" : undefined,
-          }}
-          title={compact ? "Expand all cards" : "Collapse all cards"}
+          css={{ background: "var(--chakra-colors-gray-100)" }}
+          title="Refresh all sections"
         >
-          <Maximize2 size={14} />
+          <Box css={isRefreshing ? { animation: "seedlings-spin 0.9s linear infinite" } : undefined}>
+            <RefreshCw size={14} />
+          </Box>
         </Button>
-        <SearchWithClear
-          ref={inputRef}
-          value={q}
-          onChange={setQ}
-          inputId="equipment-search"
-          placeholder="Search…"
-        />
         <Button
           size="sm"
           variant="ghost"
@@ -1363,87 +1753,12 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
         >
           <ScanLine size={14} />
         </Button>
-        <Select.Root
-          collection={kindCollection}
-          value={kind}
-          onValueChange={(e) => setKind(e.value)}
-          size="sm"
-          positioning={{ strategy: "fixed", hideWhenDetached: true }}
-          css={{ width: "auto", flex: "0 0 auto" }}
-        >
-          <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: kind[0] !== "ALL" ? "var(--chakra-colors-blue-200)" : "var(--chakra-colors-blue-100)", border: kind[0] !== "ALL" ? "1px solid var(--chakra-colors-blue-400)" : "1px solid var(--chakra-colors-blue-300)", borderRadius: "6px" }}>
-              <LayoutList size={14} />
-              <Select.Indicator display="none" />
-            </Select.Trigger>
-          </Select.Control>
-          <Select.Positioner>
-            <Select.Content>
-              {kindItems.map((it) => (
-                <Select.Item key={it.value} item={it.value}>
-                  <Select.ItemText>{it.label}</Select.ItemText>
-                </Select.Item>
-              ))}
-            </Select.Content>
-          </Select.Positioner>
-        </Select.Root>
-        <Select.Root
-          collection={statusCollection}
-          value={statusFilter}
-          onValueChange={(e) => setStatusFilter(e.value)}
-          size="sm"
-          positioning={{ strategy: "fixed", hideWhenDetached: true }}
-          css={{ width: "auto", flex: "0 0 auto" }}
-        >
-          <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: statusFilter[0] !== "ALL" ? "var(--chakra-colors-purple-200)" : "var(--chakra-colors-purple-100)", border: statusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-purple-400)" : "1px solid var(--chakra-colors-purple-300)", borderRadius: "6px" }}>
-              <Filter size={14} />
-              <Select.Indicator display="none" />
-            </Select.Trigger>
-          </Select.Control>
-          <Select.Positioner>
-            <Select.Content>
-              {statusItems.map((it) => (
-                <Select.Item key={it.value} item={it.value}>
-                  <Select.ItemText>{it.label}</Select.ItemText>
-                </Select.Item>
-              ))}
-            </Select.Content>
-          </Select.Positioner>
-        </Select.Root>
-        {isWorkerView && (
-          <Button
-            size="sm"
-            variant={likedOnly ? "solid" : "outline"}
-            px="2"
-            flexShrink={0}
-            onClick={() => setLikedOnly(!likedOnly)}
-            css={likedOnly ? {
-              background: "var(--chakra-colors-red-100)",
-              color: "var(--chakra-colors-red-600)",
-              border: "1px solid var(--chakra-colors-red-400)",
-              "&:hover": { background: "var(--chakra-colors-red-200)" },
-            } : undefined}
-            title={`Show liked only (${likedIds.size})`}
-          >
-            <Heart size={14} fill={likedOnly ? "currentColor" : "none"} color="var(--chakra-colors-red-500)" />
-            {likedIds.size > 0 && (
-              <Badge
-                size="xs"
-                colorPalette="red"
-                variant="solid"
-                borderRadius="full"
-                px="1.5"
-                fontSize="2xs"
-                lineHeight="1"
-                minW="0"
-              >
-                {likedIds.size}
-              </Badge>
-            )}
-          </Button>
-        )}
-        {forAdmin && (
+        {/* Create Equipment — super-only. Bringing new equipment onto
+            the books is a capital-account decision and is gated at
+            both the UI (this branch) and the server (superGuard on
+            POST /admin/equipment). Admins can still edit + retire
+            existing pieces via the card action bands. */}
+        {showSuperExtras && (
           <Button
             variant="solid"
             size="sm"
@@ -1452,65 +1767,33 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
             onClick={openCreate}
             bg="black"
             color="white"
+            title="Add new equipment"
           >
             <Plus size={16} strokeWidth={2.5} />
           </Button>
         )}
       </HStack>
-      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || (isWorkerView && likedOnly) || (forAdmin && workerFilter.length > 0) || !!collectionFilter || highlightId) && (
-        <HStack mb={2} gap={1} wrap="wrap" pl="2">
-          {collectionFilter && (() => {
-            const c = collections.find((x) => x.id === collectionFilter);
-            return (
-              <Badge size="sm" colorPalette="blue" variant="solid" cursor="pointer" onClick={() => setCollectionFilter(null)}>
-                Collection: {c?.name ?? collectionFilter} ✕
-              </Badge>
-            );
-          })()}
-          {highlightId && (
-            <Badge size="sm" colorPalette="teal" variant="subtle">Filtered to 1 item</Badge>
-          )}
-          {!highlightId && kind[0] !== "ALL" && (
-            <Badge size="sm" colorPalette="blue" variant="subtle">
-              {kindItems.find((i) => i.value === kind[0])?.label}
-            </Badge>
-          )}
-          {!highlightId && statusFilter[0] !== "ALL" && (
-            <Badge size="sm" colorPalette="purple" variant="subtle">
-              {statusItems.find((i) => i.value === statusFilter[0])?.label}
-            </Badge>
-          )}
-          {!highlightId && isWorkerView && likedOnly && (
-            <Badge size="sm" colorPalette="red" variant="subtle">Liked</Badge>
-          )}
-          {!highlightId && forAdmin && workerFilter.map((id) => (
-            <Badge key={id} size="sm" colorPalette="blue" variant="solid">
-              {adminWorkerName(id)}
-            </Badge>
-          ))}
-          <Badge
-            size="sm"
-            colorPalette="red"
-            variant="outline"
-            cursor="pointer"
-            onClick={() => {
-              setHighlightId(null);
-              setKind(["ALL"]);
-              setStatusFilter(["ALL"]);
-              setCollectionFilter(null);
-              if (isWorkerView) setLikedOnly(false);
-              if (forAdmin) setWorkerFilter([]);
-            }}
-          >
-            ✕ Clear
-          </Badge>
-        </HStack>
-      )}
-      {/* Group-claimer reserve scope picker. Only shows when the worker is
-          the claimer of at least one active group. Designed to be
-          deliberately loud — workers were missing it and accidentally
-          renting under the wrong scope. */}
-      {!forAdmin && groupsAsClaimer.length > 0 && (() => {
+      {/* Refresh-dim wrapper — the isRefreshing flag dims + blocks
+          interaction on every section on the tab for a fixed window
+          when the toolbar refresh button is clicked. Section-internal
+          spinners still fire; this just makes the whole-page reload
+          obvious, especially for collapsed sections whose spinners
+          wouldn't be visible. */}
+      <Box
+        css={{
+          opacity: isRefreshing ? 0.55 : 1,
+          pointerEvents: isRefreshing ? "none" : "auto",
+          transition: "opacity 0.15s ease-out",
+        }}
+      >
+      {/* Group-claimer reserve scope picker. Shows whenever the caller
+          leads at least one active group (fetched only when the tab
+          exposes worker-tier actions). An admin who's also a worker
+          and leads a group sees this in admin view too — the
+          endpoint returns [] for admin-only users so it's a natural
+          no-op there. Hidden when the admin has view-as active,
+          since group-scope only applies to the acting worker. */}
+      {showWorkerExtras && !viewAsUserId && groupsAsClaimer.length > 0 && (() => {
         const activeGroup = groupsAsClaimer.find((g) => g.id === reserveForGroupId);
         const isUnset = reserveForGroupId == null;
         const isSolo = reserveForGroupId === "";
@@ -1578,9 +1861,84 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
           </Box>
         );
       })()}
+      {/* Super-only Insights — operations-focused rollups only:
+          today's fleet state, this-window checkouts + rental income
+          + pieces used, the equipment leaderboard, and idle list.
+          Team-usage breakdown lives in its own admin+ section below
+          so admins have access to it too (Super Insights is now
+          reserved for company-operational metrics, not raw per-
+          checkout logs). */}
+      {showSuperExtras && (
+        <Card.Root variant="outline" bg="orange.50" borderColor="orange.200" mt={3}>
+          <Card.Body py={3} px={3}>
+            <HStack
+              gap={2}
+              align="center"
+              mb={insightsCollapsed ? 0 : 2}
+              cursor="pointer"
+              onClick={() => setInsightsCollapsed(!insightsCollapsed)}
+              _hover={{ opacity: 0.7 }}
+            >
+              <BarChart3 size={14} color="var(--chakra-colors-gray-600)" />
+              <Text fontSize="sm" fontWeight="bold" color="gray.600" textTransform="uppercase" letterSpacing="wide">
+                Insights
+              </Text>
+              <Text fontSize="xs" color="gray.400">{insightsCollapsed ? "▶" : "▼"}</Text>
+            </HStack>
+            {!insightsCollapsed && <EquipmentInsightsSection />}
+          </Card.Body>
+        </Card.Root>
+      )}
+      {/* Admin+ team-usage section — the raw per-checkout log
+          from the retired Usage tab, scoped to the whole team.
+          Uses UsageBreakdown in SUPER mode (hits the admin
+          `/api/admin/equipment-usage` endpoint that returns every
+          worker's checkouts) and unlocks the Person group-by. */}
+      {showAdminExtras && (
+        <Box mt={3} borderWidth="1px" borderColor="gray.300" borderRadius="md" p={3}>
+          <HStack
+            gap={2}
+            align="center"
+            mb={teamUsageCollapsed ? 0 : 2}
+            cursor="pointer"
+            onClick={() => setTeamUsageCollapsed(!teamUsageCollapsed)}
+            _hover={{ opacity: 0.7 }}
+          >
+            <Users size={14} color="var(--chakra-colors-gray-600)" />
+            <Text fontSize="sm" fontWeight="bold" color="gray.600" textTransform="uppercase" letterSpacing="wide">
+              Team Usage
+            </Text>
+            <Text fontSize="xs" color="gray.400">{teamUsageCollapsed ? "▶" : "▼"}</Text>
+          </HStack>
+          {!teamUsageCollapsed && <UsageBreakdown purpose="SUPER" />}
+        </Box>
+      )}
+      {/* Worker-only personal usage — hidden for admin/super since
+          they get the fleet-wide Team Usage above (which surfaces
+          the caller's own history alongside everyone else's under
+          Person group-by). Collapsed by default. */}
+      {showWorkerExtras && !showAdminExtras && (
+        <Box mt={3} borderWidth="1px" borderColor="gray.300" borderRadius="md" p={3}>
+          <HStack
+            gap={2}
+            align="center"
+            mb={usageCollapsed ? 0 : 2}
+            cursor="pointer"
+            onClick={() => setUsageCollapsed(!usageCollapsed)}
+            _hover={{ opacity: 0.7 }}
+          >
+            <User size={14} color="var(--chakra-colors-gray-600)" />
+            <Text fontSize="sm" fontWeight="bold" color="gray.600" textTransform="uppercase" letterSpacing="wide">
+              Your Usage
+            </Text>
+            <Text fontSize="xs" color="gray.400">{usageCollapsed ? "▶" : "▼"}</Text>
+          </HStack>
+          {!usageCollapsed && <UsageBreakdown purpose="WORKER" />}
+        </Box>
+      )}
       {collections.length > 0 && (
-        <Box mb={3}>
-          <HStack gap={2} align="center" mb={2}>
+        <Box mt={3} borderWidth="1px" borderColor="gray.300" borderRadius="md" p={3}>
+          <HStack gap={2} align="center" mb={collectionsCollapsed ? 0 : 2}>
             <HStack
               gap={2}
               align="center"
@@ -1588,11 +1946,12 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
               onClick={() => setCollectionsCollapsed(!collectionsCollapsed)}
               _hover={{ opacity: 0.7 }}
             >
+              <Package size={14} color="var(--chakra-colors-gray-600)" />
               <Text fontSize="sm" fontWeight="bold" color="gray.600" textTransform="uppercase" letterSpacing="wide">Collections</Text>
               <Badge size="sm" colorPalette="gray" variant="subtle" borderRadius="full" px="1.5" fontSize="2xs">{collections.length}</Badge>
               <Text fontSize="xs" color="gray.400">{collectionsCollapsed ? "▶" : "▼"}</Text>
             </HStack>
-            {forAdmin && (
+            {showAdminExtras && (
               <Badge
                 size="sm"
                 colorPalette="blue"
@@ -1601,7 +1960,8 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                 px="2"
                 borderRadius="full"
                 onClick={() => {
-                  window.dispatchEvent(new CustomEvent("navigate:adminTab", { detail: { tab: "collections" } }));
+                  const evName = showSuperExtras ? "navigate:superTab" : "navigate:adminTab";
+                  window.dispatchEvent(new CustomEvent(evName, { detail: { tab: "collections" } }));
                 }}
               >
                 Manage collections →
@@ -1739,14 +2099,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
         </Box>
       )}
 
-      {/* Admin-only Insights section — window-scoped equipment
-          leaderboard and idle list. Sits above the equipment browser
-          so a super can see "what's earning its keep in this period"
-          without leaving the tab. Independent date range from the
-          rest of the tab (which isn't window-scoped). */}
-      {forAdmin && <EquipmentInsightsSection />}
-
-      <Box position="relative">
+      <Box position="relative" mt={3} borderWidth="1px" borderColor="gray.300" borderRadius="md" p={3}>
         {loading && items.length > 0 && (<>
           <Box position="absolute" inset="0" bg="bg/80" zIndex="1" />
           <Spinner size="lg" position="fixed" top="50%" left="50%" zIndex="2" />
@@ -1754,17 +2107,196 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
       <HStack
         gap={2}
         align="center"
-        mb={2}
+        mb={equipmentCollapsed ? 0 : 2}
         cursor="pointer"
         onClick={() => setEquipmentCollapsed(!equipmentCollapsed)}
         _hover={{ opacity: 0.7 }}
       >
+        <LayoutGrid size={14} color="var(--chakra-colors-gray-600)" />
         <Text fontSize="sm" fontWeight="bold" color="gray.600" textTransform="uppercase" letterSpacing="wide">Equipment</Text>
         <Badge size="sm" colorPalette="gray" variant="subtle" borderRadius="full" px="1.5" fontSize="2xs">{filtered.length}</Badge>
         <Text fontSize="xs" color="gray.400">{equipmentCollapsed ? "▶" : "▼"}</Text>
       </HStack>
       {!equipmentCollapsed && (
       <VStack align="stretch" gap={3}>
+        {/* Admin view-as picker — scopes ONLY the Equipment section
+            (card actions + kit reserve). Insights / Team Usage /
+            Collections list are fleet-wide regardless. Lives here
+            inside the Equipment frame so it's obvious what it
+            affects, not up at the tab level. */}
+        {showAdminExtras && (
+          <HStack gap={2} wrap="wrap" alignItems="center">
+            <AdminViewAsSelector
+              workers={adminWorkers as AdminWorker[]}
+              selected={viewAsUserIds}
+              // AdminViewAsSelector is multi-select — clicking a new
+              // worker APPENDS to the array. Inventory only supports
+              // one impersonation target at a time, so keep the
+              // LAST clicked worker (slice(-1)), not the first —
+              // otherwise re-opening the dropdown and picking a
+              // different worker silently keeps the old one.
+              onChange={(next) => setViewAsUserIds(next.slice(-1))}
+            />
+          </HStack>
+        )}
+        {showAdminExtras && viewAsUserIds.length > 0 && (
+          <HStack gap={1} wrap="wrap" pl="1" alignItems="center">
+            <Text fontSize="xs" color="fg.muted">Acting as:</Text>
+            <AdminViewAsBadges workers={adminWorkers as AdminWorker[]} selected={viewAsUserIds} />
+            <Badge
+              size="sm"
+              colorPalette="red"
+              variant="outline"
+              cursor="pointer"
+              onClick={() => setViewAsUserIds([])}
+            >
+              ✕ Clear
+            </Badge>
+          </HStack>
+        )}
+        {/* Filter toolbar — search / kind / status / liked / density
+            toggle. These scope the Equipment cards below and nothing
+            else on the tab, so they live inside this section frame. */}
+        <HStack gap={2}>
+          <SearchWithClear
+            ref={inputRef}
+            value={q}
+            onChange={setQ}
+            inputId="equipment-search"
+            placeholder="Search…"
+          />
+          <Button
+            size="sm"
+            variant="ghost"
+            px="2"
+            flexShrink={0}
+            onClick={() => { setCompact((v) => !v); setExpandedCards(new Set()); }}
+            css={{
+              background: !compact ? "var(--chakra-colors-gray-200)" : "var(--chakra-colors-gray-100)",
+              color: !compact ? "var(--chakra-colors-gray-700)" : undefined,
+            }}
+            title={compact ? "Expand all cards" : "Collapse all cards"}
+          >
+            <Maximize2 size={14} />
+          </Button>
+          <Select.Root
+            collection={kindCollection}
+            value={kind}
+            onValueChange={(e) => setKind(e.value)}
+            size="sm"
+            positioning={{ strategy: "fixed", hideWhenDetached: true }}
+            css={{ width: "auto", flex: "0 0 auto" }}
+          >
+            <Select.Control>
+              <Select.Trigger w="auto" minW="0" px="2" css={{ background: kind[0] !== "ALL" ? "var(--chakra-colors-blue-200)" : "var(--chakra-colors-blue-100)", border: kind[0] !== "ALL" ? "1px solid var(--chakra-colors-blue-400)" : "1px solid var(--chakra-colors-blue-300)", borderRadius: "6px" }}>
+                <LayoutList size={14} />
+                <Select.Indicator display="none" />
+              </Select.Trigger>
+            </Select.Control>
+            <Select.Positioner>
+              <Select.Content>
+                {kindItems.map((it) => (
+                  <Select.Item key={it.value} item={it.value}>
+                    <Select.ItemText>{it.label}</Select.ItemText>
+                  </Select.Item>
+                ))}
+              </Select.Content>
+            </Select.Positioner>
+          </Select.Root>
+          <Select.Root
+            collection={statusCollection}
+            value={statusFilter}
+            onValueChange={(e) => setStatusFilter(e.value)}
+            size="sm"
+            positioning={{ strategy: "fixed", hideWhenDetached: true }}
+            css={{ width: "auto", flex: "0 0 auto" }}
+          >
+            <Select.Control>
+              <Select.Trigger w="auto" minW="0" px="2" css={{ background: statusFilter[0] !== "ALL" ? "var(--chakra-colors-purple-200)" : "var(--chakra-colors-purple-100)", border: statusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-purple-400)" : "1px solid var(--chakra-colors-purple-300)", borderRadius: "6px" }}>
+                <Filter size={14} />
+                <Select.Indicator display="none" />
+              </Select.Trigger>
+            </Select.Control>
+            <Select.Positioner>
+              <Select.Content>
+                {statusItems.map((it) => (
+                  <Select.Item key={it.value} item={it.value}>
+                    <Select.ItemText>{it.label}</Select.ItemText>
+                  </Select.Item>
+                ))}
+              </Select.Content>
+            </Select.Positioner>
+          </Select.Root>
+          {isWorkerView && (
+            <Button
+              size="sm"
+              variant={likedOnly ? "solid" : "outline"}
+              px="2"
+              flexShrink={0}
+              onClick={() => setLikedOnly(!likedOnly)}
+              css={likedOnly ? {
+                background: "var(--chakra-colors-red-100)",
+                color: "var(--chakra-colors-red-600)",
+                border: "1px solid var(--chakra-colors-red-400)",
+                "&:hover": { background: "var(--chakra-colors-red-200)" },
+              } : undefined}
+              title="Show liked only"
+            >
+              <Heart size={14} fill={likedOnly ? "currentColor" : "none"} color="var(--chakra-colors-red-500)" />
+            </Button>
+          )}
+        </HStack>
+        {/* Active-filter chip row — reflects the toolbar's current
+            state and offers a ✕ Clear to reset all filters at once. */}
+        {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || (isWorkerView && likedOnly) || (forAdmin && workerFilter.length > 0) || !!collectionFilter || highlightId) && (
+          <HStack gap={1} wrap="wrap" pl="2">
+            {collectionFilter && (() => {
+              const c = collections.find((x) => x.id === collectionFilter);
+              return (
+                <Badge size="sm" colorPalette="blue" variant="solid" cursor="pointer" onClick={() => setCollectionFilter(null)}>
+                  Collection: {c?.name ?? collectionFilter} ✕
+                </Badge>
+              );
+            })()}
+            {highlightId && (
+              <Badge size="sm" colorPalette="teal" variant="subtle">Filtered to 1 item</Badge>
+            )}
+            {!highlightId && kind[0] !== "ALL" && (
+              <Badge size="sm" colorPalette="blue" variant="subtle">
+                {kindItems.find((i) => i.value === kind[0])?.label}
+              </Badge>
+            )}
+            {!highlightId && statusFilter[0] !== "ALL" && (
+              <Badge size="sm" colorPalette="purple" variant="subtle">
+                {statusItems.find((i) => i.value === statusFilter[0])?.label}
+              </Badge>
+            )}
+            {!highlightId && isWorkerView && likedOnly && (
+              <Badge size="sm" colorPalette="red" variant="subtle">Liked</Badge>
+            )}
+            {!highlightId && forAdmin && workerFilter.map((id) => (
+              <Badge key={id} size="sm" colorPalette="blue" variant="solid">
+                {adminWorkerName(id)}
+              </Badge>
+            ))}
+            <Badge
+              size="sm"
+              colorPalette="red"
+              variant="outline"
+              cursor="pointer"
+              onClick={() => {
+                setHighlightId(null);
+                setKind(["ALL"]);
+                setStatusFilter(["ALL"]);
+                setCollectionFilter(null);
+                if (isWorkerView) setLikedOnly(false);
+                if (forAdmin) setWorkerFilter([]);
+              }}
+            >
+              ✕ Clear
+            </Badge>
+          </HStack>
+        )}
         {filtered.length === 0 && (
           <Box p="8" color="fg.muted">
             No equipment matches current filters.
@@ -1823,6 +2355,47 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
               toggleCard();
             }}
           >
+            {/* Equipment instructions — surfaced at the TOP of the
+                card (before header/body/footer) so critical notes
+                are the first thing the worker reads, not something
+                buried under status chips + action buttons. Same
+                rendering shape for compact and expanded densities;
+                only the margins differ. */}
+            {(e.instructions ?? []).length > 0 && (
+              isCardCompact ? (
+                <Box mx="3" mt="2" mb="0" display="flex" flexWrap="wrap" gap="1">
+                  {(e.instructions ?? []).map((inst) => (
+                    <HStack key={inst.id} gap="1.5" px="2" py="1" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
+                      <AlertCircle
+                        size={18}
+                        color="var(--chakra-colors-yellow-900)"
+                        fill="var(--chakra-colors-yellow-400)"
+                        strokeWidth={2.5}
+                      />
+                      <Text fontSize="xs" fontWeight="semibold" color="yellow.700">{inst.text}</Text>
+                    </HStack>
+                  ))}
+                </Box>
+              ) : (
+                <Box mx="3" mt="2" mb="0" px="3" py="1.5" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
+                  <VStack align="stretch" gap="0.5">
+                    {(e.instructions ?? []).map((inst) => (
+                      <HStack key={inst.id} gap="1.5" align="center">
+                        <AlertCircle
+                          size={18}
+                          color="var(--chakra-colors-yellow-900)"
+                          fill="var(--chakra-colors-yellow-400)"
+                          strokeWidth={2.5}
+                        />
+                        <Text fontSize="xs" fontWeight="semibold" color="yellow.700">
+                          {inst.text}
+                        </Text>
+                      </HStack>
+                    ))}
+                  </VStack>
+                </Box>
+              )
+            )}
             {isCardCompact ? (
               <HStack align="center" gap={3} py="2" px="3">
                 <EquipmentThumbnail equipmentId={e.id} hasPhotos={e.hasPhotos} />
@@ -1889,34 +2462,27 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                       {e.brand ? `${e.brand} ` : ""}
                       {e.model ? `${e.model} ` : ""}
                     </Text>
-                    {forAdmin ? (() => {
-                      // Admin view — show the contractor-billing chip
-                      // (matches the non-compact admin card) so admins see
-                      // the rate/cap mode at a glance.
+                    {(() => {
+                      // Compact-card billing pill — same additive rules as
+                      // the full card: caller's own rate for worker
+                      // scope, plus the equipment's contractor rate chip
+                      // for admin scope. Space is tight here so we skip
+                      // the role labels — the color palettes carry the
+                      // distinction (orange = admin/contractor rate,
+                      // blue/green = personal rate).
                       const chip = shortBillingChip(resolveBillingMode(e.dailyRate, e.equivalentJobs, equipmentBillingEnabled));
-                      return chip ? (
-                        <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="1.5" borderRadius="full" title="Contractor billing">
-                          {chip}
-                        </Badge>
-                      ) : null;
-                    })() : (() => {
                       const wt = me?.workerType;
-                      // Only contractors are charged. Employees + trainees
-                      // always see "No charge."
                       const palette = wt === "EMPLOYEE" ? "blue" : wt === "TRAINEE" ? "green" : "orange";
                       const rate = wt === "CONTRACTOR" ? e.dailyRate : null;
-                      if (rate != null && rate > 0) {
-                        return (
-                          <Badge colorPalette={palette} variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
-                            ${rate.toFixed(2)}/day
-                          </Badge>
-                        );
-                      }
-                      return (
-                        <Badge colorPalette={palette} variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
-                          No charge
-                        </Badge>
-                      );
+                      const workerPill = showWorkerExtras
+                        ? rate != null && rate > 0
+                          ? <Badge key="w" colorPalette={palette} variant="subtle" fontSize="xs" px="1.5" borderRadius="full">${rate.toFixed(2)}/day</Badge>
+                          : <Badge key="w" colorPalette={palette} variant="subtle" fontSize="xs" px="1.5" borderRadius="full">No charge</Badge>
+                        : null;
+                      const adminPill = showAdminExtras && chip
+                        ? <Badge key="a" colorPalette="orange" variant="subtle" fontSize="xs" px="1.5" borderRadius="full" title="Contractor billing">{chip}</Badge>
+                        : null;
+                      return <>{workerPill}{adminPill}</>;
                     })()}
                   </HStack>
                 </VStack>
@@ -1988,47 +2554,67 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                   </Text>
                 )}
                 {(() => {
+                  // Billing display — capabilities ADD by scope:
+                  //  • Worker row (always when scope includes worker) —
+                  //    shows THIS operator's own rate: contractor sees
+                  //    the daily rate, employee/trainee sees "No charge".
+                  //  • Admin row (when scope includes admin) — shows
+                  //    the CONTRACTOR + EMPLOYEE billing rules for the
+                  //    equipment itself, so admins can audit the
+                  //    rate/cap config at a glance.
+                  //
+                  // Each row is prefixed with a small role label so a
+                  // super sees both without confusion. The role label
+                  // pattern mirrors the ElevatedActionRow footer bands.
                   const mode = resolveBillingMode(e.dailyRate, e.equivalentJobs, equipmentBillingEnabled);
                   const chip = shortBillingChip(mode);
-                  if (forAdmin) {
-                    return (
-                      <VStack align="start" gap={1} mt={0.5} fontSize="xs">
-                        <HStack gap={2}>
-                          <Text color="fg.muted">Contractor:</Text>
-                          {chip ? (
-                            <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
-                              {chip}
-                            </Badge>
-                          ) : (
-                            <Badge colorPalette="green" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">No charge</Badge>
-                          )}
-                        </HStack>
-                        <HStack gap={2}>
-                          <Text color="fg.muted">Employee:</Text>
-                          <Badge colorPalette="green" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">No charge</Badge>
-                        </HStack>
-                      </VStack>
-                    );
-                  }
-                  if (me?.workerType === "TRAINEE") return (
-                    <HStack gap={2} mt={0.5} wrap="wrap">
+                  const wt = me?.workerType;
+                  const workerRateBadge = (() => {
+                    if (wt === "TRAINEE") return (
                       <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">
-                        No charge — trainees cannot reserve equipment
+                        No charge — trainees cannot reserve
                       </Badge>
-                    </HStack>
-                  );
-                  if (me?.workerType === "EMPLOYEE") return (
-                    <Text fontSize="xs" color="blue.500" mt={0.5}>No rental cost</Text>
-                  );
-                  return chip ? (
-                    <HStack gap={2} mt={0.5}>
-                      <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="2" borderRadius="full">
-                        {chip}
-                      </Badge>
-                      <Text fontSize="xs" color="orange.500">rental cost</Text>
-                    </HStack>
-                  ) : (
-                    <Text fontSize="xs" color="orange.500" mt={0.5}>No rental cost</Text>
+                    );
+                    if (wt === "EMPLOYEE") return (
+                      <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="2" borderRadius="full">No charge</Badge>
+                    );
+                    // CONTRACTOR (or unknown workerType — treat as chargeable)
+                    return chip ? (
+                      <>
+                        <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="2" borderRadius="full">{chip}</Badge>
+                        <Text fontSize="xs" color="orange.500">rental cost</Text>
+                      </>
+                    ) : (
+                      <Text fontSize="xs" color="orange.500">No rental cost</Text>
+                    );
+                  })();
+                  return (
+                    <VStack align="start" gap={1} mt={0.5} fontSize="xs">
+                      {showWorkerExtras && (
+                        <HStack gap={2}>
+                          <Badge size="xs" variant="subtle" colorPalette="blue">You</Badge>
+                          {workerRateBadge}
+                        </HStack>
+                      )}
+                      {showAdminExtras && (
+                        <>
+                          <HStack gap={2}>
+                            <Badge size="xs" variant="subtle" colorPalette="purple">Admin</Badge>
+                            <Text color="fg.muted">Contractor:</Text>
+                            {chip ? (
+                              <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">{chip}</Badge>
+                            ) : (
+                              <Badge colorPalette="green" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">No charge</Badge>
+                            )}
+                          </HStack>
+                          <HStack gap={2}>
+                            <Badge size="xs" variant="subtle" colorPalette="purple">Admin</Badge>
+                            <Text color="fg.muted">Employee:</Text>
+                            <Badge colorPalette="green" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">No charge</Badge>
+                          </HStack>
+                        </>
+                      )}
+                    </VStack>
                   );
                 })()}
                 {/* Minimal collapsible for details */}
@@ -2036,259 +2622,61 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                 {unavailableMessage(e)}
               </VStack>
             </Card.Body>
-            <Card.Footer py="2" px="3" pt="0">
-              <HStack gap={2} wrap="wrap">
-                {forAdmin && (
-                  <StatusButton
-                    id={"equipment-edit"}
-                    itemId={e.id}
-                    label={"Edit"}
-                    onClick={async () => {
-                      await openEdit(e);
-                    }}
-                    variant={"outline"}
-                    disabled={loading}
-                    busyId={statusButtonBusyId}
-                    setBusyId={setStatusButtonBusyId}
-                  />
-                )}
-                {canWorkerCheckout(e) && (
-                  <StatusButton
-                    id={"equipment-checkout"}
-                    itemId={e.id}
-                    label={"Check Out"}
-                    onClick={async () => void setScanFor(e.id)}
-                    variant={"solid"}
-                    colorPalette={"blue"}
-                    disabled={loading}
-                    busyId={statusButtonBusyId}
-                    setBusyId={setStatusButtonBusyId}
-                  />
-                )}
-                {canWorkerCancel(e) && (
-                  <StatusButton
-                    id={"equipment-cancel"}
-                    itemId={e.id}
-                    label={"Cancel Reservation"}
-                    onClick={async () => await cancel(e)}
-                    variant={"outline"}
-                    disabled={loading}
-                    busyId={statusButtonBusyId}
-                    setBusyId={setStatusButtonBusyId}
-                  />
-                )}
-                {canWorkerReturn(e) && (
-                  <StatusButton
-                    id={"equipment-return"}
-                    itemId={e.id}
-                    label={"Return"}
-                    onClick={async () => void setReturnConfirmEquip(e)}
-                    variant={"solid"}
-                    colorPalette={"orange"}
-                    disabled={loading}
-                    busyId={statusButtonBusyId}
-                    setBusyId={setStatusButtonBusyId}
-                  />
-                )}
-                {canWorkerReserve(e) && (
-                  <StatusButton
-                    id={"equipment-reserve"}
-                    itemId={e.id}
-                    label={"Reserve"}
-                    onClick={async () => { await openReserveConfirm(e); }}
-                    variant={"solid"}
-                    colorPalette={"green"}
-                    disabled={loading}
-                    busyId={statusButtonBusyId}
-                    setBusyId={setStatusButtonBusyId}
-                  />
-                )}
-                {purpose === "WORKER" && e.status === "AVAILABLE" && isTrainee && (
-                  <HStack gap={1} fontSize="xs" color="gray.500"><AlertTriangle size={12} /><Text>Trainees cannot reserve equipment</Text></HStack>
-                )}
-                {/* Inline "insurance required" hint removed with the
-                    compliance-policy migration. Slice 3 wires the reactive
-                    sign wizard into the reserve action itself — a worker
-                    who's out of compliance gets a modal listing the
-                    outstanding policies, not just a static warning. */}
-                {canAdminForceRelease(e) && (
-                  <StatusButton
-                    id={"equipment-forceRelease"}
-                    itemId={e.id}
-                    label={"Force release"}
-                    onClick={async () => await forceRelease(e)}
-                    variant={"solid"}
-                    disabled={loading}
-                    busyId={statusButtonBusyId}
-                    setBusyId={setStatusButtonBusyId}
-                  />
-                )}
-                {canAdminStartMaintenance(e) && (
-                  <StatusButton
-                    id={"equipment-startMaintenance"}
-                    itemId={e.id}
-                    label={"Start maintenance"}
-                    onClick={async () => await startMaintainence(e)}
-                    variant={"subtle"}
-                    disabled={loading}
-                    busyId={statusButtonBusyId}
-                    setBusyId={setStatusButtonBusyId}
-                  />
-                )}
-                {canAdminEndMaintenance(e) && (
-                  <StatusButton
-                    id={"equipment-endMaintenance"}
-                    itemId={e.id}
-                    label={"End maintenance"}
-                    onClick={async () => await endMaintainence(e)}
-                    variant={"subtle"}
-                    disabled={loading}
-                    busyId={statusButtonBusyId}
-                    setBusyId={setStatusButtonBusyId}
-                  />
-                )}
-                {canAdminRetire(e) && (
-                  <StatusButton
-                    id={"equipment-retire"}
-                    itemId={e.id}
-                    label={"Retire"}
-                    onClick={async () => await retire(e)}
-                    variant={"outline"}
-                    disabled={loading}
-                    busyId={statusButtonBusyId}
-                    setBusyId={setStatusButtonBusyId}
-                  />
-                )}
-                {canAdminUnretire(e) && (
-                  <StatusButton
-                    id={"equipment-unretire"}
-                    itemId={e.id}
-                    label={"Unretire"}
-                    onClick={async () => await unretire(e)}
-                    variant={"subtle"}
-                    disabled={loading}
-                    busyId={statusButtonBusyId}
-                    setBusyId={setStatusButtonBusyId}
-                  />
-                )}
-                {canAdminHardDelete(e) && (
-                  <StatusButton
-                    id={"equipment-hardDelete"}
-                    itemId={e.id}
-                    label={"Delete"}
-                    onClick={async () =>
-                      void setToDelete({
-                        id: e.id,
-                        title: "Delete equipment?",
-                        summary: e.shortDesc,
-                        disabled: !isSuper,
-                        details: (
-                          <Text color="red.500">
-                            You must be a Super Admin to delete.
-                          </Text>
-                        ),
-                        extra: e.qrSlug,
-                      })
-                    }
-                    variant={"danger-outline"}
-                    disabled={loading}
-                    busyId={statusButtonBusyId}
-                    setBusyId={setStatusButtonBusyId}
-                  />
-                )}
-                {canSuperReserveFor(e) && (
-                  <StatusButton
-                    id={"equipment-super-reserve-for"}
-                    itemId={e.id}
-                    label={"Reserve for worker…"}
-                    onClick={async () => {
-                      setSuperPickerUserId("");
-                      setSuperActionFor({ equipment: e, action: "reserve" });
-                    }}
-                    variant={"subtle"}
-                    colorPalette={"purple"}
-                    disabled={loading}
-                    busyId={statusButtonBusyId}
-                    setBusyId={setStatusButtonBusyId}
-                  />
-                )}
-                {canSuperCancelFor(e) && (
-                  <StatusButton
-                    id={"equipment-super-cancel-for"}
-                    itemId={e.id}
-                    label={`Cancel for ${e.holder?.displayName || e.holder?.email || "holder"}`}
-                    onClick={async () => setSuperActionFor({ equipment: e, action: "cancel" })}
-                    variant={"subtle"}
-                    colorPalette={"purple"}
-                    disabled={loading}
-                    busyId={statusButtonBusyId}
-                    setBusyId={setStatusButtonBusyId}
-                  />
-                )}
-                {canSuperCheckoutFor(e) && (
-                  <StatusButton
-                    id={"equipment-super-checkout-for"}
-                    itemId={e.id}
-                    label={`Checkout for ${e.holder?.displayName || e.holder?.email || "holder"}`}
-                    onClick={async () => setSuperActionFor({ equipment: e, action: "checkout" })}
-                    variant={"solid"}
-                    colorPalette={"purple"}
-                    disabled={loading}
-                    busyId={statusButtonBusyId}
-                    setBusyId={setStatusButtonBusyId}
-                  />
-                )}
-                {canSuperReturnFor(e) && (
-                  <StatusButton
-                    id={"equipment-super-return-for"}
-                    itemId={e.id}
-                    label={`Return for ${e.holder?.displayName || e.holder?.email || "holder"}`}
-                    onClick={async () => setSuperActionFor({ equipment: e, action: "return" })}
-                    variant={"solid"}
-                    colorPalette={"purple"}
-                    disabled={loading}
-                    busyId={statusButtonBusyId}
-                    setBusyId={setStatusButtonBusyId}
-                  />
-                )}
-              </HStack>
+            <Card.Footer py="0" px="0" pt="0" flexDirection="column" alignItems="stretch" gap={0}>
+              <CardActionBands
+                e={e}
+                loading={loading}
+                statusButtonBusyId={statusButtonBusyId}
+                setStatusButtonBusyId={setStatusButtonBusyId}
+                // Gates
+                showWorkerExtras={showWorkerExtras}
+                showAdminExtras={showAdminExtras}
+                isTrainee={isTrainee}
+                viewAsUserId={viewAsUserId}
+                viewAsUserName={viewAsUserId ? adminWorkerName(viewAsUserId) : null}
+                canWorkerCheckout={canWorkerCheckout(e)}
+                canWorkerCancel={canWorkerCancel(e)}
+                canWorkerReturn={canWorkerReturn(e)}
+                canWorkerReserve={canWorkerReserve(e)}
+                canAdminForceRelease={canAdminForceRelease(e)}
+                canAdminStartMaintenance={canAdminStartMaintenance(e)}
+                canAdminEndMaintenance={canAdminEndMaintenance(e)}
+                canAdminRetire={canAdminRetire(e)}
+                canAdminUnretire={canAdminUnretire(e)}
+                canSuperHardDelete={canSuperHardDelete(e)}
+                canSuperReserveFor={canSuperReserveFor(e)}
+                canSuperCancelFor={canSuperCancelFor(e)}
+                canSuperCheckoutFor={canSuperCheckoutFor(e)}
+                canSuperReturnFor={canSuperReturnFor(e)}
+                // Handlers
+                onEdit={() => void openEdit(e)}
+                onWorkerCheckout={() => void setScanFor(e.id)}
+                onWorkerCancel={() => void cancel(e)}
+                onWorkerReturn={() => void setReturnConfirmEquip(e)}
+                onWorkerReserve={() => void openReserveConfirm(e)}
+                onForceRelease={() => void forceRelease(e)}
+                onStartMaintenance={() => void startMaintainence(e)}
+                onEndMaintenance={() => void endMaintainence(e)}
+                onRetire={() => void retire(e)}
+                onUnretire={() => void unretire(e)}
+                onHardDelete={() =>
+                  void setToDelete({
+                    id: e.id,
+                    title: "Delete equipment?",
+                    summary: e.shortDesc,
+                    extra: e.qrSlug,
+                  })
+                }
+                onSuperReserveFor={() => {
+                  setSuperPickerUserId("");
+                  setSuperActionFor({ equipment: e, action: "reserve" });
+                }}
+                onSuperCancelFor={() => setSuperActionFor({ equipment: e, action: "cancel" })}
+                onSuperCheckoutFor={() => setSuperActionFor({ equipment: e, action: "checkout" })}
+                onSuperReturnFor={() => setSuperActionFor({ equipment: e, action: "return" })}
+              />
             </Card.Footer>
             </>
-            )}
-            {(e.instructions ?? []).length > 0 && (
-              isCardCompact ? (
-                <Box mx="3" mb="2" mt="0" display="flex" flexWrap="wrap" gap="1">
-                  {(e.instructions ?? []).map((inst) => (
-                    <HStack key={inst.id} gap="1.5" px="2" py="1" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
-                      <AlertCircle
-                        size={18}
-                        color="var(--chakra-colors-yellow-900)"
-                        fill="var(--chakra-colors-yellow-400)"
-                        strokeWidth={2.5}
-                      />
-                      <Text fontSize="xs" fontWeight="semibold" color="yellow.700">{inst.text}</Text>
-                    </HStack>
-                  ))}
-                </Box>
-              ) : (
-                <Box mx="3" mb="2" mt="0" px="3" py="1.5" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
-                  <VStack align="stretch" gap="0.5">
-                    {(e.instructions ?? []).map((inst) => (
-                      <HStack key={inst.id} gap="1.5" align="center">
-                        <AlertCircle
-                          size={18}
-                          color="var(--chakra-colors-yellow-900)"
-                          fill="var(--chakra-colors-yellow-400)"
-                          strokeWidth={2.5}
-                        />
-                        <Text fontSize="xs" fontWeight="semibold" color="yellow.700">
-                          {inst.text}
-                        </Text>
-                      </HStack>
-                    ))}
-                  </VStack>
-                </Box>
-              )
             )}
           </Card.Root>
           );
@@ -2338,17 +2726,76 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
         }}
         onCancel={() => setReturnConfirmEquip(null)}
       />
-      {forAdmin && (
+      {/* Partial-availability confirm for kit reservations. Fires
+          when the caller taps Reserve on a collection that has some
+          — but not all — members available. Lists what will be
+          reserved + what's excluded (with the blocking reason for
+          each), and asks whether to proceed with the reduced set. */}
+      <ConfirmDialog
+        open={!!kitPartialConfirm}
+        title={kitPartialConfirm ? `Some ${kitPartialConfirm.collection.name} items aren't available` : ""}
+        message=""
+        messageNode={kitPartialConfirm ? (
+          <VStack align="stretch" gap={3}>
+            <Text fontSize="sm">
+              Reserve the {kitPartialConfirm.available.length} available piece{kitPartialConfirm.available.length === 1 ? "" : "s"}
+              {" "}and skip the {kitPartialConfirm.unavailable.length} that {kitPartialConfirm.unavailable.length === 1 ? "isn't" : "aren't"} ready?
+            </Text>
+            <Box borderWidth="1px" borderColor="green.300" borderRadius="md" bg="green.50" px={2} py={1.5}>
+              <Text fontSize="xs" color="green.800" fontWeight="semibold" mb={1}>
+                Will reserve ({kitPartialConfirm.available.length})
+              </Text>
+              <VStack align="stretch" gap={0.5}>
+                {kitPartialConfirm.available.map((it) => (
+                  <Text key={it.id} fontSize="xs" color="green.900">
+                    • {it.equipment.shortDesc
+                        || [it.equipment.brand, it.equipment.model].filter(Boolean).join(" ")
+                        || it.equipment.type
+                        || it.equipmentId.slice(-6)}
+                  </Text>
+                ))}
+              </VStack>
+            </Box>
+            <Box borderWidth="1px" borderColor="yellow.300" borderRadius="md" bg="yellow.50" px={2} py={1.5}>
+              <Text fontSize="xs" color="yellow.900" fontWeight="semibold" mb={1}>
+                Will skip ({kitPartialConfirm.unavailable.length})
+              </Text>
+              <VStack align="stretch" gap={0.5}>
+                {kitPartialConfirm.unavailable.map((u) => (
+                  <HStack key={u.item.id} gap={2} justify="space-between">
+                    <Text fontSize="xs" color="yellow.900">
+                      • {u.item.equipment.shortDesc
+                          || [u.item.equipment.brand, u.item.equipment.model].filter(Boolean).join(" ")
+                          || u.item.equipment.type
+                          || u.item.equipmentId.slice(-6)}
+                    </Text>
+                    <Badge size="xs" colorPalette="yellow" variant="subtle">{u.reason}</Badge>
+                  </HStack>
+                ))}
+              </VStack>
+            </Box>
+          </VStack>
+        ) : undefined}
+        confirmLabel={kitPartialConfirm ? `Reserve ${kitPartialConfirm.available.length} of ${kitPartialConfirm.available.length + kitPartialConfirm.unavailable.length}` : "Reserve"}
+        confirmColorPalette="green"
+        onConfirm={async () => {
+          const p = kitPartialConfirm;
+          setKitPartialConfirm(null);
+          if (p) await executeReserveKit(p.collection, p.available, p.opts);
+        }}
+        onCancel={() => setKitPartialConfirm(null)}
+      />
+      {showAdminExtras && (
         <EquipmentDialog
           open={dialogOpen}
           onOpenChange={setDialogOpen}
           mode={editing ? "UPDATE" : "CREATE"}
-          role={forAdmin ? "ADMIN" : "WORKER"}
+          role="ADMIN"
           initial={editing ?? undefined}
           onSaved={() => void load()}
         />
       )}
-      {forAdmin && (
+      {showAdminExtras && (
         <DeleteDialog
           toDelete={toDelete}
           cancel={() => setToDelete(null)}
@@ -2758,6 +3205,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
           </Dialog.Positioner>
         </Portal>
       </Dialog.Root>
+      </Box>
     </Box>
   );
 }
@@ -2810,7 +3258,9 @@ function fmtMoney(n: number): string {
 }
 
 function EquipmentInsightsSection() {
-  const [insightsOpen, setInsightsOpen] = usePersistedState<boolean>("equip_insightsOpen", true);
+  // Section header + collapse toggle live on the parent (the outer
+  // orange Insights card), so this component always renders its body
+  // when mounted. Parent gates render via `insightsCollapsed`.
   const [dateFrom, setDateFrom] = usePersistedState<string>("equip_insights_from", bizAddDays(bizToday(), -30));
   const [dateTo, setDateTo] = usePersistedState<string>("equip_insights_to", bizToday());
   const [view, setView] = usePersistedState<"table" | "chart">("equip_insightsView", "table");
@@ -2821,8 +3271,14 @@ function EquipmentInsightsSection() {
   const [data, setData] = useState<InsightsEquipment | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const [refreshTick, setRefreshTick] = useState(0);
+  // Global "refresh all sections" event from the tab's top toolbar.
   useEffect(() => {
-    if (!insightsOpen) return;
+    const on = () => setRefreshTick((t) => t + 1);
+    window.addEventListener("inventory:refresh", on);
+    return () => window.removeEventListener("inventory:refresh", on);
+  }, []);
+  useEffect(() => {
     let cancelled = false;
     async function load() {
       setLoading(true);
@@ -2841,26 +3297,10 @@ function EquipmentInsightsSection() {
     return () => {
       cancelled = true;
     };
-  }, [insightsOpen, dateFrom, dateTo]);
+  }, [dateFrom, dateTo, refreshTick]);
 
   return (
-    <Box mb={4}>
-      <HStack
-        gap={2}
-        align="center"
-        mb={2}
-        cursor="pointer"
-        onClick={() => setInsightsOpen(!insightsOpen)}
-        _hover={{ opacity: 0.7 }}
-      >
-        <Text fontSize="sm" fontWeight="bold" color="gray.600" textTransform="uppercase" letterSpacing="wide">
-          Insights
-        </Text>
-        <Text fontSize="xs" color="gray.400">{insightsOpen ? "▼" : "▶"}</Text>
-      </HStack>
-
-      {insightsOpen && (
-        <VStack align="stretch" gap={2}>
+    <VStack align="stretch" gap={2}>
           {/* Date range strip */}
           <HStack gap={2} wrap="wrap" align="flex-end">
             <Box>
@@ -2970,9 +3410,7 @@ function EquipmentInsightsSection() {
               )}
             </>
           )}
-        </VStack>
-      )}
-    </Box>
+    </VStack>
   );
 }
 
@@ -3115,5 +3553,316 @@ function EquipmentLeaderboard({
         </Card.Root>
       )}
     </>
+  );
+}
+
+// ─── Usage breakdown ─────────────────────────────────────────────
+// Absorbed from the retired EquipmentUsageTab. Renders a summary
+// strip + a group-by picker (equipment / collection / day, plus
+// Person for admin+super) + expandable checkout rows. Data source
+// depends on scope:
+//   • purpose="WORKER"  → /api/equipment-usage      (own history)
+//   • purpose="SUPER"   → /api/admin/equipment-usage (fleet-wide)
+// Uses its own persisted date range + group-by state so the mount
+// site (Worker Inventory vs Super Insights) doesn't have to thread
+// props through.
+
+type UsagePurpose = "WORKER" | "SUPER";
+type UsagePreset = "all" | "7" | "30" | "90" | "365";
+type UsageGroupBy = "person" | "equipment" | "collection" | "day";
+
+type UsageRow = {
+  id: string;
+  equipmentId: string;
+  equipment: { id: string; shortDesc?: string | null; brand?: string | null; model?: string | null; type?: string | null; qrSlug?: string | null };
+  user: { id: string; displayName?: string | null; email?: string | null } | null;
+  group: { id: string; name: string } | null;
+  checkedOutAt: string | null;
+  releasedAt: string | null;
+  rentalDays: number | null;
+  active: boolean;
+};
+
+type UsageCollection = { id: string; name: string; items: { equipmentId: string }[] };
+
+const USAGE_PRESETS: { key: UsagePreset; label: string }[] = [
+  { key: "7", label: "Last 7 days" },
+  { key: "30", label: "Last 30 days" },
+  { key: "90", label: "Last 90 days" },
+  { key: "365", label: "Last year" },
+  { key: "all", label: "All time" },
+];
+
+function usageRangeForPreset(p: UsagePreset): { from: string; to: string } {
+  if (p === "all") return { from: "", to: "" };
+  const days = Number(p);
+  const to = bizToday();
+  return { from: bizAddDays(to, -days), to };
+}
+
+function usageEquipmentLabel(e: UsageRow["equipment"]): string {
+  if (e.shortDesc) return e.shortDesc;
+  const parts = [e.brand, e.model].filter(Boolean);
+  if (parts.length > 0) return parts.join(" ");
+  if (e.type) return e.type;
+  return e.id.slice(-6);
+}
+
+function usagePersonLabel(u: UsageRow["user"]): string {
+  if (!u) return "Unknown";
+  return u.displayName || u.email || u.id.slice(-6);
+}
+
+function usageDaysOut(c: UsageRow): number {
+  if (!c.checkedOutAt) return 0;
+  const start = new Date(c.checkedOutAt).getTime();
+  const end = c.releasedAt ? new Date(c.releasedAt).getTime() : Date.now();
+  // date-handling-allow: constant ms-per-day is the correct unit here — the
+  // start/end are ISO instants, not calendar dates, so DST doesn't apply.
+  return Math.max(1, Math.ceil((end - start) / 86400000));
+}
+
+function UsageBreakdown({ purpose }: { purpose: UsagePurpose }) {
+  const isSuper = purpose === "SUPER";
+  const pfx = `usage_${purpose.toLowerCase()}`;
+  const [rows, setRows] = useState<UsageRow[]>([]);
+  const [collections, setCollections] = useState<UsageCollection[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [preset, setPreset] = usePersistedState<UsagePreset>(`${pfx}_preset`, "30");
+  const [groupBy, setGroupBy] = usePersistedState<UsageGroupBy>(
+    `${pfx}_groupBy`,
+    isSuper ? "person" : "equipment",
+  );
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const [refreshTick, setRefreshTick] = useState(0);
+  // Global "refresh all sections" event from the tab's top toolbar.
+  useEffect(() => {
+    const on = () => setRefreshTick((t) => t + 1);
+    window.addEventListener("inventory:refresh", on);
+    return () => window.removeEventListener("inventory:refresh", on);
+  }, []);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      setLoading(true);
+      try {
+        const { from, to } = usageRangeForPreset(preset);
+        const qs = new URLSearchParams();
+        if (from) qs.set("from", from);
+        if (to) qs.set("to", to);
+        const base = isSuper ? "/api/admin/equipment-usage" : "/api/equipment-usage";
+        const [usage, cols] = await Promise.all([
+          apiGet<UsageRow[]>(`${base}?${qs}`),
+          apiGet<UsageCollection[]>("/api/equipment-collections"),
+        ]);
+        if (cancelled) return;
+        setRows(Array.isArray(usage) ? usage : []);
+        setCollections(Array.isArray(cols) ? cols : []);
+      } catch (err) {
+        if (!cancelled) publishInlineMessage({ type: "ERROR", text: getErrorMessage("Usage load failed.", err) });
+      }
+      if (!cancelled) setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [preset, isSuper, refreshTick]);
+
+  const equipmentCollections = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const c of collections) {
+      for (const it of c.items) {
+        const arr = map.get(it.equipmentId) ?? [];
+        arr.push(c.name);
+        map.set(it.equipmentId, arr);
+      }
+    }
+    return map;
+  }, [collections]);
+
+  const summary = useMemo(() => {
+    const distinctEquipment = new Set(rows.map((r) => r.equipmentId));
+    const activeCount = rows.filter((r) => r.active).length;
+    const totalDays = rows.reduce((sum, r) => sum + usageDaysOut(r), 0);
+    return {
+      checkouts: rows.length,
+      equipment: distinctEquipment.size,
+      active: activeCount,
+      totalDays,
+    };
+  }, [rows]);
+
+  type Group = { key: string; label: string; rows: UsageRow[]; days: number };
+  const groups = useMemo<Group[]>(() => {
+    const buckets = new Map<string, { label: string; rows: UsageRow[] }>();
+    const add = (key: string, label: string, row: UsageRow) => {
+      const b = buckets.get(key) ?? { label, rows: [] };
+      b.rows.push(row);
+      buckets.set(key, b);
+    };
+    for (const r of rows) {
+      if (groupBy === "person") {
+        add(r.user?.id ?? "unknown", usagePersonLabel(r.user), r);
+      } else if (groupBy === "equipment") {
+        add(r.equipmentId, usageEquipmentLabel(r.equipment), r);
+      } else if (groupBy === "day") {
+        const key = r.checkedOutAt ? bizDateKey(r.checkedOutAt) : "unknown";
+        const label = r.checkedOutAt
+          ? fmtDateOpts(r.checkedOutAt, { weekday: "short", month: "short", day: "numeric" })
+          : "Unknown date";
+        add(key, label, r);
+      } else {
+        const names = equipmentCollections.get(r.equipmentId) ?? [];
+        if (names.length === 0) {
+          add("__none__", "Not in a collection", r);
+        } else {
+          for (const n of names) add(`col:${n}`, n, r);
+        }
+      }
+    }
+    const list: Group[] = Array.from(buckets.entries()).map(([key, b]) => ({
+      key,
+      label: b.label,
+      rows: b.rows,
+      days: b.rows.reduce((s, r) => s + usageDaysOut(r), 0),
+    }));
+    if (groupBy === "day") list.sort((a, b) => (a.key < b.key ? 1 : -1));
+    else list.sort((a, b) => b.rows.length - a.rows.length);
+    return list;
+  }, [rows, groupBy, equipmentCollections]);
+
+  const groupModes: { key: UsageGroupBy; label: string }[] = isSuper
+    ? [
+        { key: "person", label: "Person" },
+        { key: "equipment", label: "Equipment" },
+        { key: "collection", label: "Collection" },
+        { key: "day", label: "Day" },
+      ]
+    : [
+        { key: "equipment", label: "Equipment" },
+        { key: "collection", label: "Collection" },
+        { key: "day", label: "Day" },
+      ];
+
+  const toggle = (key: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
+  return (
+    <VStack align="stretch" gap={2}>
+      <HStack gap={2} flexWrap="wrap">
+        {USAGE_PRESETS.map((p) => (
+          <Button
+            key={p.key}
+            size="xs"
+            variant={preset === p.key ? "solid" : "outline"}
+            colorPalette={preset === p.key ? "blue" : "gray"}
+            onClick={() => setPreset(p.key)}
+          >
+            {p.label}
+          </Button>
+        ))}
+      </HStack>
+
+      {loading ? (
+        <Spinner size="sm" />
+      ) : (
+        <>
+          <SimpleGrid columns={{ base: 2, md: 4 }} gap={2}>
+            <UsageSummaryCard label="Checkouts" value={summary.checkouts} />
+            <UsageSummaryCard label="Equipment used" value={summary.equipment} />
+            <UsageSummaryCard label="Out now" value={summary.active} colorPalette={summary.active > 0 ? "blue" : undefined} />
+            <UsageSummaryCard label="Total days" value={summary.totalDays} />
+          </SimpleGrid>
+
+          <HStack gap={2} flexWrap="wrap">
+            <Text fontSize="xs" color="fg.muted">Group by</Text>
+            {groupModes.map((m) => (
+              <Button
+                key={m.key}
+                size="xs"
+                variant={groupBy === m.key ? "solid" : "outline"}
+                colorPalette={groupBy === m.key ? "teal" : "gray"}
+                onClick={() => { setGroupBy(m.key); setExpanded(new Set()); }}
+              >
+                {m.label}
+              </Button>
+            ))}
+          </HStack>
+
+          {groups.length === 0 ? (
+            <Card.Root variant="outline">
+              <Card.Body py={6} textAlign="center">
+                <Text color="fg.muted" fontSize="sm">No equipment usage in this window.</Text>
+              </Card.Body>
+            </Card.Root>
+          ) : (
+            groups.map((g) => {
+              const open = expanded.has(g.key);
+              return (
+                <Card.Root key={g.key} variant="outline">
+                  <Card.Body py="2" px="3">
+                    <HStack justify="space-between" cursor="pointer" onClick={() => toggle(g.key)}>
+                      <HStack gap={2} minW={0}>
+                        {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                        <Text fontWeight="semibold" lineHeight="1.2">{g.label}</Text>
+                      </HStack>
+                      <HStack gap={1.5} flexShrink={0}>
+                        <Badge size="sm" colorPalette="gray">
+                          {g.rows.length} checkout{g.rows.length === 1 ? "" : "s"}
+                        </Badge>
+                        <Badge size="sm" colorPalette="purple">{g.days} day{g.days === 1 ? "" : "s"}</Badge>
+                      </HStack>
+                    </HStack>
+                    {open && (
+                      <VStack align="stretch" gap={1} mt={2}>
+                        {g.rows.map((r) => {
+                          const ctx: string[] = [];
+                          if (groupBy !== "equipment") ctx.push(usageEquipmentLabel(r.equipment));
+                          if (isSuper && groupBy !== "person") ctx.push(usagePersonLabel(r.user));
+                          if (r.group) ctx.push(r.group.name);
+                          return (
+                            <HStack key={r.id} justify="space-between" gap={2} px={2} py={1.5} borderRadius="md" bg="bg.subtle">
+                              <VStack align="start" gap={0} minW={0}>
+                                <Text fontSize="sm" lineHeight="1.3">
+                                  {fmtDateShort(r.checkedOutAt)} → {r.active ? "out" : fmtDateShort(r.releasedAt)}
+                                </Text>
+                                {ctx.length > 0 && (
+                                  <Text fontSize="xs" color="fg.muted">{ctx.join(" · ")}</Text>
+                                )}
+                              </VStack>
+                              <HStack gap={1.5} flexShrink={0}>
+                                {r.active && <Badge size="sm" colorPalette="blue">Out</Badge>}
+                                <Badge size="sm" colorPalette="purple">{usageDaysOut(r)}d</Badge>
+                              </HStack>
+                            </HStack>
+                          );
+                        })}
+                      </VStack>
+                    )}
+                  </Card.Body>
+                </Card.Root>
+              );
+            })
+          )}
+        </>
+      )}
+    </VStack>
+  );
+}
+
+function UsageSummaryCard(props: { label: string; value: number; colorPalette?: string }) {
+  return (
+    <Card.Root variant="outline">
+      <Card.Body py="2" px="3">
+        <Text fontSize="xl" fontWeight="bold" color={props.colorPalette ? `${props.colorPalette}.600` : undefined}>
+          {props.value}
+        </Text>
+        <Text fontSize="xs" color="fg.muted">{props.label}</Text>
+      </Card.Body>
+    </Card.Root>
   );
 }
