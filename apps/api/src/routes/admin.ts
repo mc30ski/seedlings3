@@ -182,12 +182,24 @@ export default async function adminRoutes(app: FastifyInstance) {
     preHandler: (req: FastifyRequest, reply: FastifyReply) =>
       app.requireRole(req, reply, RoleVal.SUPER),
   };
+  // Any signed-in worker (WORKER, ADMIN, or SUPER). Used sparingly
+  // for reads that the blended tab pattern exposes to all roles —
+  // e.g. the Vehicles list, which any driver can view but only
+  // super/admin can mutate.
+  const workerGuard = {
+    preHandler: (req: FastifyRequest, reply: FastifyReply) =>
+      app.requireRole(req, reply, RoleVal.WORKER),
+  };
 
   app.get("/admin/equipment", adminGuard, async () =>
     services.equipment.listAllAdmin()
   );
 
-  app.post("/admin/equipment", adminGuard, async (req: any) =>
+  // Create + hard-delete are super-only — bringing new equipment
+  // onto the books (or wiping it) is a capital-account decision, not
+  // an admin day-to-day. Edit/retire/release stay adminGuard so
+  // admins can still manage the existing fleet.
+  app.post("/admin/equipment", superGuard, async (req: any) =>
     services.equipment.create(await currentUserId(req), req.body)
   );
 
@@ -203,7 +215,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     services.equipment.unretire(await currentUserId(req), req.params.id)
   );
 
-  app.delete("/admin/equipment/:id", adminGuard, async (req: any) =>
+  app.delete("/admin/equipment/:id", superGuard, async (req: any) =>
     services.equipment.hardDelete(await currentUserId(req), req.params.id)
   );
 
@@ -239,7 +251,12 @@ export default async function adminRoutes(app: FastifyInstance) {
   // the flow. The userId of the worker being acted FOR is passed in the
   // request body. The audit actor remains the calling Super so the trail
   // shows who pulled the lever.
-  app.post("/super/equipment/:id/reserve-for", superGuard, async (req: any) => {
+  // Act-on-behalf-of endpoints — admin+ can drive equipment actions
+  // for a stuck worker (reserve / cancel / checkout / return). The
+  // audit actor is the caller; the target worker is in the body.
+  // Route was originally super-only; admin now uses the same path via
+  // the Inventory tab's view-as picker.
+  app.post("/super/equipment/:id/reserve-for", adminGuard, async (req: any) => {
     const id = String(req.params.id);
     const b = (req.body || {}) as { userId?: string; groupId?: string | null };
     if (!b.userId) throw app.httpErrors.badRequest("userId is required.");
@@ -251,7 +268,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     );
   });
 
-  app.post("/super/equipment/:id/reserve-for/cancel", superGuard, async (req: any) => {
+  app.post("/super/equipment/:id/reserve-for/cancel", adminGuard, async (req: any) => {
     const id = String(req.params.id);
     const b = (req.body || {}) as { userId?: string };
     if (!b.userId) throw app.httpErrors.badRequest("userId is required.");
@@ -262,7 +279,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     );
   });
 
-  app.post("/super/equipment/:id/checkout-for/verify", superGuard, async (req: any) => {
+  app.post("/super/equipment/:id/checkout-for/verify", adminGuard, async (req: any) => {
     const id = String(req.params.id);
     const b = (req.body || {}) as { userId?: string; slug?: string };
     if (!b.userId) throw app.httpErrors.badRequest("userId is required.");
@@ -275,7 +292,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     );
   });
 
-  app.post("/super/equipment/:id/return-for/verify", superGuard, async (req: any) => {
+  app.post("/super/equipment/:id/return-for/verify", adminGuard, async (req: any) => {
     const id = String(req.params.id);
     const b = (req.body || {}) as { userId?: string; slug?: string };
     if (!b.userId) throw app.httpErrors.badRequest("userId is required.");
@@ -8312,7 +8329,10 @@ Respond ONLY with valid JSON in this exact format:
   // + their own mileage entries through the worker routes; everything
   // Super touches (create/assign/edit-any/approve) lives here.
 
-  app.get("/super/vehicles", superGuard, async (req: any) => {
+  // Vehicle list — the read-only feed powers the blended Vehicles
+  // tab across all roles (worker/admin/super). Mutations and the
+  // per-vehicle mileage log remain super-guarded below.
+  app.get("/super/vehicles", workerGuard, async (req: any) => {
     const { listVehicles } = await import("../services/vehicles");
     const includeArchived = req.query?.includeArchived === "true";
     return listVehicles({ includeArchived });

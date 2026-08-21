@@ -1,29 +1,35 @@
 "use client";
 
-// Super → Equipment → Vehicles.
+// Equipment → Vehicles. Blended across all roles via the additive
+// `scope` prop, gated by what the API actually permits:
+//   • scope.isWorker → read-only view of the fleet list. Workers get
+//     their own driving history from the MileageStrip on HomeTab.
+//   • scope.isAdmin  → same read-only view as worker for now. The
+//     underlying mutation + mileage-drilldown endpoints are still
+//     super-guarded; if admin CRUD is opened up later, gate those
+//     UI branches on `scope.isAdmin || scope.isSuper` and loosen
+//     the corresponding endpoints in admin.ts in the same pass.
+//   • scope.isSuper  → adds full vehicle CRUD (create / edit /
+//     archive / unarchive / assign / unassign), per-vehicle mileage
+//     log with drill-down, AND the orange Insights strip at the top.
 //
-// Admin surface for the fleet of dual-use vehicles (personal-owned,
-// used partly for business). Super manages:
-//   • Vehicle list (add / edit / archive / unarchive)
-//   • Worker assignments (who can log mileage against which vehicle)
-//   • Mileage log per vehicle (edit odometers, approve / unapprove
-//     individual entries)
-//
-// Approval also flows through the unified daily approval UX
-// (Workday + Mileage in one shot); this tab is the fallback for
-// making corrections outside that flow.
+// Approval of individual mileage entries flows through the unified
+// daily approval UX (Workday + Mileage in one shot); this tab is
+// the fallback for making corrections outside that flow.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Badge,
   Box,
   Button,
+  Card,
   createListCollection,
   Dialog,
   HStack,
   Input,
   Portal,
   Select,
+  SimpleGrid,
   Spinner,
   Table,
   Text,
@@ -39,6 +45,7 @@ import {
   Trash2,
   UserPlus,
   X,
+  Zap,
 } from "lucide-react";
 import { apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import { bizToday, bizAddDays, bizInstantFromEtParts , type EtDateKey } from "@/src/lib/lib";
@@ -84,7 +91,15 @@ type MileageEntry = {
 
 type WorkerLite = { id: string; displayName: string | null; email: string | null };
 
-export default function VehiclesTab() {
+type VehiclesTabScope = { isWorker: boolean; isAdmin: boolean; isSuper: boolean };
+
+export default function VehiclesTab({ scope }: { scope: VehiclesTabScope }) {
+  // Capabilities layer additively. Worker + Admin see the fleet
+  // list read-only; only Super gets mutations and the per-vehicle
+  // mileage drill-down (the underlying endpoints are all
+  // super-guarded). Super also adds the orange Insights strip.
+  const showSuperExtras = scope.isSuper;
+
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [loading, setLoading] = useState(true);
   const [showArchived, setShowArchived] = useState(false);
@@ -114,7 +129,10 @@ export default function VehiclesTab() {
   useEffect(() => { void load(); }, [load]);
 
   useEffect(() => {
-    // Worker directory — used by the assign dialog. Load once.
+    // Worker directory — used by the assign dialog. Admin+ only; the
+    // list endpoint is admin-guarded and workers don't need it (they
+    // can't open the assign dialog anyway).
+    if (!showSuperExtras) return;
     apiGet<any[]>("/api/admin/users?includeInactive=false")
       .then((raw) => {
         if (!Array.isArray(raw)) return;
@@ -127,7 +145,7 @@ export default function VehiclesTab() {
         );
       })
       .catch(() => {});
-  }, []);
+  }, [showSuperExtras]);
 
   function toggle(id: string) {
     setExpanded((prev) => {
@@ -150,12 +168,16 @@ export default function VehiclesTab() {
           >
             {showArchived ? "Hide archived" : "Show archived"}
           </Button>
-          <Button size="sm" colorPalette="teal" onClick={() => setAddDialogOpen(true)}>
-            <Plus size={14} />
-            <Text ml={1}>Add vehicle</Text>
-          </Button>
+          {showSuperExtras && (
+            <Button size="sm" colorPalette="teal" onClick={() => setAddDialogOpen(true)}>
+              <Plus size={14} />
+              <Text ml={1}>Add vehicle</Text>
+            </Button>
+          )}
         </HStack>
       </HStack>
+
+      {showSuperExtras && <VehiclesInsightsSection vehicles={vehicles} />}
 
       {loading ? (
         <HStack justify="center" py={8}><Spinner /></HStack>
@@ -165,70 +187,58 @@ export default function VehiclesTab() {
           <Text fontSize="xs" mt={1}>Add one to start tracking business mileage.</Text>
         </Box>
       ) : (
-        <Table.Root variant="outline" size="sm">
-          <Table.Header>
-            <Table.Row>
-              <Table.ColumnHeader w="24px" />
-              <Table.ColumnHeader>Vehicle</Table.ColumnHeader>
-              <Table.ColumnHeader>Make / Model</Table.ColumnHeader>
-              <Table.ColumnHeader>Current odo</Table.ColumnHeader>
-              <Table.ColumnHeader>Assigned</Table.ColumnHeader>
-              <Table.ColumnHeader>Status</Table.ColumnHeader>
-              <Table.ColumnHeader />
-            </Table.Row>
-          </Table.Header>
-          <Table.Body>
-            {vehicles.map((v) => (
-              <VehicleRow
-                key={v.id}
-                vehicle={v}
-                expanded={expanded.has(v.id)}
-                onToggle={() => toggle(v.id)}
-                onEdit={() => setEditing(v)}
-                onAssign={() => setAssigningVehicle(v)}
-                onArchive={async () => {
-                  try {
-                    await apiPost(`/api/super/vehicles/${v.id}/archive`);
-                    publishInlineMessage({ type: "SUCCESS", text: "Vehicle archived." });
-                    void load();
-                  } catch (err) {
-                    publishInlineMessage({
-                      type: "ERROR",
-                      text: getErrorMessage("Archive failed.", err),
-                    });
-                  }
-                }}
-                onUnarchive={async () => {
-                  try {
-                    await apiPost(`/api/super/vehicles/${v.id}/unarchive`);
-                    publishInlineMessage({ type: "SUCCESS", text: "Vehicle restored." });
-                    void load();
-                  } catch (err) {
-                    publishInlineMessage({
-                      type: "ERROR",
-                      text: getErrorMessage("Restore failed.", err),
-                    });
-                  }
-                }}
-                onUnassign={async (userId) => {
-                  try {
-                    await apiPost(`/api/super/vehicles/${v.id}/unassign`, { userId });
-                    publishInlineMessage({ type: "SUCCESS", text: "Assignment removed." });
-                    void load();
-                  } catch (err) {
-                    publishInlineMessage({
-                      type: "ERROR",
-                      text: getErrorMessage("Unassign failed.", err),
-                    });
-                  }
-                }}
-              />
-            ))}
-          </Table.Body>
-        </Table.Root>
+        <VStack align="stretch" gap={2}>
+          {vehicles.map((v) => (
+            <VehicleCard
+              key={v.id}
+              vehicle={v}
+              showSuperExtras={showSuperExtras}
+              expanded={expanded.has(v.id)}
+              onToggle={() => toggle(v.id)}
+              onEdit={() => setEditing(v)}
+              onAssign={() => setAssigningVehicle(v)}
+              onArchive={async () => {
+                try {
+                  await apiPost(`/api/super/vehicles/${v.id}/archive`);
+                  publishInlineMessage({ type: "SUCCESS", text: "Vehicle archived." });
+                  void load();
+                } catch (err) {
+                  publishInlineMessage({
+                    type: "ERROR",
+                    text: getErrorMessage("Archive failed.", err),
+                  });
+                }
+              }}
+              onUnarchive={async () => {
+                try {
+                  await apiPost(`/api/super/vehicles/${v.id}/unarchive`);
+                  publishInlineMessage({ type: "SUCCESS", text: "Vehicle restored." });
+                  void load();
+                } catch (err) {
+                  publishInlineMessage({
+                    type: "ERROR",
+                    text: getErrorMessage("Restore failed.", err),
+                  });
+                }
+              }}
+              onUnassign={async (userId) => {
+                try {
+                  await apiPost(`/api/super/vehicles/${v.id}/unassign`, { userId });
+                  publishInlineMessage({ type: "SUCCESS", text: "Assignment removed." });
+                  void load();
+                } catch (err) {
+                  publishInlineMessage({
+                    type: "ERROR",
+                    text: getErrorMessage("Unassign failed.", err),
+                  });
+                }
+              }}
+            />
+          ))}
+        </VStack>
       )}
 
-      {addDialogOpen && (
+      {showSuperExtras && addDialogOpen && (
         <EditVehicleDialog
           onClose={() => setAddDialogOpen(false)}
           onSaved={() => {
@@ -237,7 +247,7 @@ export default function VehiclesTab() {
           }}
         />
       )}
-      {editing && (
+      {showSuperExtras && editing && (
         <EditVehicleDialog
           vehicle={editing}
           onClose={() => setEditing(null)}
@@ -247,7 +257,7 @@ export default function VehiclesTab() {
           }}
         />
       )}
-      {assigningVehicle && (
+      {showSuperExtras && assigningVehicle && (
         <AssignWorkerDialog
           vehicle={assigningVehicle}
           workers={workers}
@@ -262,8 +272,15 @@ export default function VehiclesTab() {
   );
 }
 
-function VehicleRow({
+// Vehicle card — one per fleet vehicle. Replaces the earlier
+// Table.Row-based layout which overflowed on narrow mobile screens.
+// Fields stack vertically inside a Card so the row always fits the
+// viewport regardless of width. Super gets the expand chevron +
+// action buttons + mileage log drill-down; worker/admin see the
+// same static summary card.
+function VehicleCard({
   vehicle,
+  showSuperExtras,
   expanded,
   onToggle,
   onEdit,
@@ -273,6 +290,7 @@ function VehicleRow({
   onUnassign,
 }: {
   vehicle: Vehicle;
+  showSuperExtras: boolean;
   expanded: boolean;
   onToggle: () => void;
   onEdit: () => void;
@@ -283,46 +301,59 @@ function VehicleRow({
 }) {
   const modelLine = [vehicle.year, vehicle.make, vehicle.vehicleModel]
     .filter(Boolean)
-    .join(" ") || "—";
+    .join(" ") || null;
+  const isArchived = !!vehicle.archivedAt;
   return (
-    <>
-      <Table.Row>
-        <Table.Cell>
-          <Button size="xs" variant="ghost" onClick={onToggle} p={1}>
-            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          </Button>
-        </Table.Cell>
-        <Table.Cell>
-          <Text fontWeight="semibold">{vehicle.displayName}</Text>
-          {vehicle.plate && (
-            <Text fontSize="2xs" color="fg.muted">{vehicle.plate}</Text>
+    <Card.Root variant="outline">
+      <Card.Body py={2.5} px={3}>
+        {/* Header row: expand chevron (super) + name/plate on left,
+            status badge on right. Wraps if title is unusually long. */}
+        <HStack gap={2} align="flex-start" justify="space-between" flexWrap="wrap">
+          <HStack gap={2} align="flex-start" flex="1" minW={0}>
+            {showSuperExtras && (
+              <Button size="xs" variant="ghost" onClick={onToggle} p={1} flexShrink={0} mt={0.5}>
+                {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              </Button>
+            )}
+            <VStack align="start" gap={0} minW={0} flex="1">
+              <Text fontWeight="semibold" lineClamp={1}>{vehicle.displayName}</Text>
+              {(modelLine || vehicle.plate) && (
+                <HStack gap={2} wrap="wrap" fontSize="xs" color="fg.muted">
+                  {modelLine && <Text>{modelLine}</Text>}
+                  {vehicle.plate && <Text>· {vehicle.plate}</Text>}
+                </HStack>
+              )}
+            </VStack>
+          </HStack>
+          {isArchived ? (
+            <Badge colorPalette="gray" variant="subtle" fontSize="2xs" flexShrink={0}>Archived</Badge>
+          ) : (
+            <Badge colorPalette="green" variant="subtle" fontSize="2xs" flexShrink={0}>Active</Badge>
           )}
-        </Table.Cell>
-        <Table.Cell>
-          <Text fontSize="sm">{modelLine}</Text>
-        </Table.Cell>
-        <Table.Cell>
-          <Text fontSize="sm">
+        </HStack>
+
+        {/* Meta row: current odometer + assignment chips. Wraps
+            naturally on narrow. */}
+        <HStack gap={2} mt={2} wrap="wrap" align="center">
+          <Badge colorPalette="purple" variant="subtle" fontSize="2xs">
             {vehicle.currentOdometer != null
               ? `${vehicle.currentOdometer.toLocaleString()} mi`
-              : "—"}
-          </Text>
-        </Table.Cell>
-        <Table.Cell>
-          <HStack gap={1} flexWrap="wrap">
-            {vehicle.assignments.length === 0 ? (
-              <Text fontSize="xs" color="fg.muted">Nobody</Text>
-            ) : (
-              vehicle.assignments.map((a) => (
-                <Badge
-                  key={a.id}
-                  variant="subtle"
-                  colorPalette="blue"
-                  fontSize="2xs"
-                  px={2}
-                  gap={1}
-                >
-                  {a.user.displayName ?? a.user.email ?? a.userId}
+              : "no odo"}
+          </Badge>
+          {vehicle.assignments.length === 0 ? (
+            <Text fontSize="xs" color="fg.muted">Nobody assigned</Text>
+          ) : (
+            vehicle.assignments.map((a) => (
+              <Badge
+                key={a.id}
+                variant="subtle"
+                colorPalette="blue"
+                fontSize="2xs"
+                px={2}
+                gap={1}
+              >
+                {a.user.displayName ?? a.user.email ?? a.userId}
+                {showSuperExtras && (
                   <Box
                     as="button"
                     onClick={() => onUnassign(a.userId)}
@@ -332,46 +363,43 @@ function VehicleRow({
                   >
                     <X size={10} />
                   </Box>
-                </Badge>
-              ))
-            )}
-          </HStack>
-        </Table.Cell>
-        <Table.Cell>
-          {vehicle.archivedAt ? (
-            <Badge colorPalette="gray" variant="subtle" fontSize="2xs">Archived</Badge>
-          ) : (
-            <Badge colorPalette="green" variant="subtle" fontSize="2xs">Active</Badge>
+                )}
+              </Badge>
+            ))
           )}
-        </Table.Cell>
-        <Table.Cell>
-          <HStack gap={1} justify="flex-end">
-            <Button size="xs" variant="ghost" onClick={onAssign} title="Assign worker">
-              <UserPlus size={12} />
+        </HStack>
+
+        {/* Super actions row */}
+        {showSuperExtras && (
+          <HStack gap={1} mt={2} wrap="wrap">
+            <Button size="xs" variant="outline" onClick={onAssign}>
+              <UserPlus size={12} /><Text ml={1}>Assign</Text>
             </Button>
-            <Button size="xs" variant="ghost" onClick={onEdit} title="Edit vehicle">
-              <Pencil size={12} />
+            <Button size="xs" variant="outline" onClick={onEdit}>
+              <Pencil size={12} /><Text ml={1}>Edit</Text>
             </Button>
-            {vehicle.archivedAt ? (
-              <Button size="xs" variant="ghost" onClick={onUnarchive} title="Restore">
-                <ArchiveRestore size={12} />
+            {isArchived ? (
+              <Button size="xs" variant="outline" onClick={onUnarchive}>
+                <ArchiveRestore size={12} /><Text ml={1}>Restore</Text>
               </Button>
             ) : (
-              <Button size="xs" variant="ghost" colorPalette="red" onClick={onArchive} title="Archive">
-                <Archive size={12} />
+              <Button size="xs" variant="outline" colorPalette="red" onClick={onArchive}>
+                <Archive size={12} /><Text ml={1}>Archive</Text>
               </Button>
             )}
           </HStack>
-        </Table.Cell>
-      </Table.Row>
-      {expanded && (
-        <Table.Row>
-          <Table.Cell colSpan={7} bg="gray.50">
-            <MileageLog vehicle={vehicle} />
-          </Table.Cell>
-        </Table.Row>
+        )}
+      </Card.Body>
+
+      {/* Mileage log drill-down — expanded state is super-only. Kept
+          inline within the card so the log's rows sit with their
+          parent vehicle rather than in a modal. */}
+      {showSuperExtras && expanded && (
+        <Box bg="gray.50" borderTopWidth="1px" borderColor="gray.200" px={0} py={0}>
+          <MileageLog vehicle={vehicle} />
+        </Box>
       )}
-    </>
+    </Card.Root>
   );
 }
 
@@ -436,29 +464,34 @@ function MileageLog({ vehicle }: { vehicle: Vehicle }) {
       {rows.length === 0 ? (
         <Text fontSize="sm" color="fg.muted" py={2}>No mileage entries yet.</Text>
       ) : (
-        <Table.Root size="sm">
-          <Table.Header>
-            <Table.Row>
-              <Table.ColumnHeader>Date</Table.ColumnHeader>
-              <Table.ColumnHeader>Driver</Table.ColumnHeader>
-              <Table.ColumnHeader>Start</Table.ColumnHeader>
-              <Table.ColumnHeader>End</Table.ColumnHeader>
-              <Table.ColumnHeader>Miles</Table.ColumnHeader>
-              <Table.ColumnHeader>Note</Table.ColumnHeader>
-              <Table.ColumnHeader>Status</Table.ColumnHeader>
-              <Table.ColumnHeader />
-            </Table.Row>
-          </Table.Header>
-          <Table.Body>
-            {rows.map((e) => (
-              <EntryRow
-                key={e.id}
-                entry={e}
-                onReview={() => setReviewEntryId(e.id)}
-              />
-            ))}
-          </Table.Body>
-        </Table.Root>
+        // Wide multi-column log — wrap in overflow-x so narrow
+        // mobile viewports can scroll horizontally instead of the
+        // whole page bleeding wider than the viewport.
+        <Box overflowX="auto">
+          <Table.Root size="sm">
+            <Table.Header>
+              <Table.Row>
+                <Table.ColumnHeader>Date</Table.ColumnHeader>
+                <Table.ColumnHeader>Driver</Table.ColumnHeader>
+                <Table.ColumnHeader>Start</Table.ColumnHeader>
+                <Table.ColumnHeader>End</Table.ColumnHeader>
+                <Table.ColumnHeader>Miles</Table.ColumnHeader>
+                <Table.ColumnHeader>Note</Table.ColumnHeader>
+                <Table.ColumnHeader>Status</Table.ColumnHeader>
+                <Table.ColumnHeader />
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
+              {rows.map((e) => (
+                <EntryRow
+                  key={e.id}
+                  entry={e}
+                  onReview={() => setReviewEntryId(e.id)}
+                />
+              ))}
+            </Table.Body>
+          </Table.Root>
+        </Box>
       )}
       {addOpen && (
         <AddMileageEntryDialog
@@ -948,6 +981,123 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     <Box>
       <Text fontSize="xs" color="fg.muted" mb={1}>{label}</Text>
       {children}
+    </Box>
+  );
+}
+
+// ─── Super Insights ───────────────────────────────────────────────
+// Fleet-view rollups computed from the loaded vehicle list, mirroring
+// the orange Insights strip on the Inventory + Collections tabs.
+// Fetches unapproved mileage counts + last-30-days miles rollup once
+// on mount from the super endpoint; skips silently if the caller
+// isn't super (defensive — the guard is also enforced at the render
+// gate in the parent).
+function VehiclesInsightsSection({ vehicles }: { vehicles: Vehicle[] }) {
+  const [rollup, setRollup] = useState<{
+    unapprovedEntries: number;
+    activeDrivers: number;
+    windowMiles: number;
+    windowEntries: number;
+  } | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      setLoading(true);
+      try {
+        const ops = await apiGet<{
+          totalMiles: number;
+          entryCount: number;
+          pendingCount: number;
+          activeDrivers: number;
+        }>(
+          `/api/super/routes/operations?from=${bizAddDays(bizToday(), -30)}&to=${bizToday()}`,
+        );
+        if (cancelled) return;
+        setRollup({
+          unapprovedEntries: ops.pendingCount ?? 0,
+          activeDrivers: ops.activeDrivers ?? 0,
+          windowMiles: ops.totalMiles ?? 0,
+          windowEntries: ops.entryCount ?? 0,
+        });
+      } catch {
+        // Insights are non-critical; silent fail is fine.
+      }
+      if (!cancelled) setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const fleetSummary = useMemo(() => {
+    const active = vehicles.filter((v) => !v.archivedAt);
+    const archived = vehicles.length - active.length;
+    const assigned = active.filter((v) => v.assignments.length > 0).length;
+    return { active: active.length, archived, assignedActive: assigned };
+  }, [vehicles]);
+
+  return (
+    <Card.Root variant="outline" bg="orange.50" borderColor="orange.200">
+      <Card.Body py={3} px={3}>
+        <HStack gap={2} mb={2}>
+          <Badge size="sm" variant="subtle" colorPalette="orange">
+            <HStack gap={1}><Zap size={10} /><Text>Insights</Text></HStack>
+          </Badge>
+        </HStack>
+        <SimpleGrid columns={{ base: 2, md: 4 }} gap={2}>
+          <InsightPanel
+            title="Fleet"
+            value={String(fleetSummary.active)}
+            hint={`${fleetSummary.assignedActive} assigned · ${fleetSummary.archived} archived`}
+          />
+          <InsightPanel
+            title="Pending approvals"
+            value={loading ? "…" : String(rollup?.unapprovedEntries ?? 0)}
+            hint={loading
+              ? "loading…"
+              : (rollup?.activeDrivers ?? 0) === 0
+                ? "no drivers this month"
+                : `${rollup!.activeDrivers} driver${rollup!.activeDrivers === 1 ? "" : "s"} active`}
+            palette={(rollup?.unapprovedEntries ?? 0) > 0 ? "red" : "gray"}
+          />
+          <InsightPanel
+            title="Last 30d miles"
+            value={loading ? "…" : (rollup?.windowMiles ?? 0).toLocaleString()}
+            hint={loading ? "loading…" : `${rollup?.windowEntries ?? 0} sessions`}
+            palette="blue"
+          />
+          <InsightPanel
+            title="Unassigned"
+            value={String(fleetSummary.active - fleetSummary.assignedActive)}
+            hint="active w/o a driver"
+            palette={(fleetSummary.active - fleetSummary.assignedActive) > 0 ? "yellow" : "gray"}
+          />
+        </SimpleGrid>
+      </Card.Body>
+    </Card.Root>
+  );
+}
+
+function InsightPanel({
+  title,
+  value,
+  hint,
+  palette,
+}: {
+  title: string;
+  value: string;
+  hint: string;
+  palette?: string;
+}) {
+  return (
+    <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" bg="white" p={2}>
+      <Text fontSize="2xs" fontWeight="semibold" color="gray.700" textTransform="uppercase" letterSpacing="wide">
+        {title}
+      </Text>
+      <Text fontSize="xl" fontWeight="bold" color={palette ? `${palette}.600` : undefined}>
+        {value}
+      </Text>
+      <Text fontSize="xs" color="fg.muted">{hint}</Text>
     </Box>
   );
 }

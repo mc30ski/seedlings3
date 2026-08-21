@@ -564,7 +564,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
           return (
             <>
               <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">{active} Active</Badge>
-              <Badge colorPalette="red" variant="subtle" fontSize="xs" px="2" borderRadius="full">{archived} Archived</Badge>
+              {forAdmin && <Badge colorPalette="red" variant="subtle" fontSize="xs" px="2" borderRadius="full">{archived} Archived</Badge>}
             </>
           );
         })()}

@@ -27,7 +27,6 @@ import {
 import { apiGet } from "@/src/lib/api";
 import { bizAddDays, bizToday } from "@/src/lib/lib";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
-import { Dashboard } from "@/src/ui/components/Dashboard";
 import MiniStatCard from "@/src/ui/components/MiniStatCard";
 import AllWorkersHourlyPayCards from "@/src/ui/components/AllWorkersHourlyPayCards";
 import {
@@ -164,29 +163,11 @@ export function OperationsPanel() {
     setPeriod(next);
   }
 
+  // Renders bare content — the caller (HomeTab) wraps this in the
+  // orange Insights card so the Super visual language is consistent
+  // across tabs (matches JobsTab + InventoryTab Insights sections).
   return (
-    <Dashboard
-      storageKey="seedlings:homeTab:operationsOpen"
-      title="Operations"
-      icon={Activity}
-      summarySlot={
-        // Only the period-range text lives in the header so the
-        // collapsed row is the same height as MY DASHBOARD (no
-        // buttons in the header). The period-cycle and refresh
-        // controls sit at the top of the expanded body.
-        <Text
-          fontSize="xs"
-          color="gray.700"
-          textAlign="right"
-          w="full"
-          truncate
-          display={{ base: "none", sm: "block" }}
-        >
-          {periodDisplay} · {range.from} → {range.to}
-        </Text>
-      }
-    >
-      <VStack align="stretch" gap={3}>
+    <VStack align="stretch" gap={3}>
         {/* Period controls — cycle + refresh, live inside the expanded
             body so the collapsed header stays the same height as MY
             DASHBOARD. */}
@@ -489,8 +470,7 @@ export function OperationsPanel() {
             </SimpleGrid>
           )}
         </OpsSection>
-      </VStack>
-    </Dashboard>
+    </VStack>
   );
 }
 

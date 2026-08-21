@@ -194,7 +194,6 @@ const FORBIDDEN_PATTERNS: Rule[] = [
     // sites appear.
     allowFiles: [
       "apps/api/src/services/equipment.ts", // listEtDaysBetween: iterates UTC-noon steps
-      "apps/web/src/ui/tabs/EquipmentUsageTab.tsx", // daysOut: rental duration billing
       "apps/web/src/ui/components/UnlinkedClientAccountsSection.tsx", // "X days ago" cosmetic label
     ],
   },

@@ -33,7 +33,7 @@ import TimelineTab from "@/src/ui/tabs/TimelineTab";
 import WeatherBar, { WeatherIcon, type WeatherBarMode } from "@/src/ui/components/WeatherBar";
 import WorkdayStrip from "@/src/ui/components/WorkdayStrip";
 import MileageStrip from "@/src/ui/components/MileageStrip";
-import EquipmentTab from "@/src/ui/tabs/EquipmentTab";
+import InventoryTab from "@/src/ui/tabs/InventoryTab";
 import VehiclesTab from "@/src/ui/tabs/VehiclesTab";
 import JobsTab from "@/src/ui/tabs/JobsTab";
 // ServicesTab: one mount serves both Admin and Super. The tab
@@ -63,9 +63,7 @@ import ImpersonationBanner from "@/src/ui/components/ImpersonationBanner";
 import MulchJobTool from "@/src/ui/tools/MulchJobTool";
 import MowingJobTool from "@/src/ui/tools/MowingJobTool";
 import AdminNotifyTab from "@/src/ui/tabs/AdminNotifyTab";
-import AdminCollectionsTab from "@/src/ui/tabs/AdminCollectionsTab";
-import WorkerCollectionsTab from "@/src/ui/tabs/WorkerCollectionsTab";
-import EquipmentUsageTab from "@/src/ui/tabs/EquipmentUsageTab";
+import CollectionsTab from "@/src/ui/tabs/CollectionsTab";
 import AdminGroupsTab from "@/src/ui/tabs/AdminGroupsTab";
 import PricingTab from "@/src/ui/tabs/PricingTab";
 import PromotionsTab from "@/src/ui/tabs/PromotionsTab";
@@ -212,17 +210,18 @@ export default function HomePage() {
     if (stale === "operations" || stale === "unclaimed") setSuperInnerTab("home");
   }, []);
 
-  // Migration: existing workers and admins had "reminders" persisted
-  // under workerTab / adminTab from when the Planning tab existed.
-  // Redirect them to "home" / "jobs" once so they don't land on a
+  // Migration: existing workers and admins had removed tab values
+  // ("reminders" from the retired Planning tab, "usage" from the
+  // retired Equipment Usage tab) persisted under workerTab /
+  // adminTab. Redirect them to "home" once so they don't land on a
   // now-nonexistent inner tab and see a blank tab area.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     const w = workerInnerTab as string;
-    if (w === "reminders") setWorkerInnerTab("home");
+    if (w === "reminders" || w === "usage") setWorkerInnerTab("home");
     // eslint-disable-next-line react-hooks/exhaustive-deps
     const a = adminInnerTab as string;
-    if (a === "reminders") setAdminInnerTab("home");
+    if (a === "reminders" || a === "usage") setAdminInnerTab("home");
   }, []);
 
   // Workday-approval badge state — declared up here (before the tab
@@ -855,19 +854,34 @@ export default function HomePage() {
       value: "equipment",
       label: "Inventory",
       icon: FiTool,
-      content: wrapWithInlineMessage(<EquipmentTab key={`weq-${equipmentRemountKey}`} me={me} purpose="WORKER" />),
+      content: wrapWithInlineMessage(
+        <InventoryTab
+          key={`weq-${equipmentRemountKey}`}
+          me={me}
+          purpose="WORKER"
+          scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }}
+        />
+      ),
     },
     {
       value: "collections",
       label: "Collections",
       icon: FiPackage,
-      content: wrapWithInlineMessage(<WorkerCollectionsTab />),
+      content: wrapWithInlineMessage(
+        <CollectionsTab
+          scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }}
+        />
+      ),
     },
     {
-      value: "usage",
-      label: "Usage",
-      icon: FiBarChart2,
-      content: wrapWithInlineMessage(<EquipmentUsageTab purpose="WORKER" />),
+      value: "vehicles",
+      label: "Vehicles",
+      icon: FiTruck,
+      content: wrapWithInlineMessage(
+        <VehiclesTab
+          scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }}
+        />
+      ),
     },
     // ── Directory ──
     {
@@ -1015,19 +1029,34 @@ export default function HomePage() {
       value: "equipment",
       label: "Inventory",
       icon: FiTool,
-      content: wrapWithInlineMessage(<EquipmentTab key={`aeq-${adminEquipmentRemountKey}`} me={me} purpose="ADMIN" />),
+      content: wrapWithInlineMessage(
+        <InventoryTab
+          key={`aeq-${adminEquipmentRemountKey}`}
+          me={me}
+          purpose="ADMIN"
+          scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }}
+        />
+      ),
     },
     {
       value: "collections",
       label: "Collections",
       icon: FiPackage,
-      content: wrapWithInlineMessage(<AdminCollectionsTab />),
+      content: wrapWithInlineMessage(
+        <CollectionsTab
+          scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }}
+        />
+      ),
     },
     {
-      value: "usage",
-      label: "Usage",
-      icon: FiBarChart2,
-      content: wrapWithInlineMessage(<EquipmentUsageTab purpose="ADMIN" />),
+      value: "vehicles",
+      label: "Vehicles",
+      icon: FiTruck,
+      content: wrapWithInlineMessage(
+        <VehiclesTab
+          scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }}
+        />
+      ),
     },
     {
       // ── Directory ──
@@ -1201,7 +1230,7 @@ export default function HomePage() {
         // Money · Records · System.
         const catMap: Record<string, string> = {
           home: "Work", jobs: "Work", routes: "Work", tasks: "Work",
-          equipment: "Equipment", collections: "Equipment", usage: "Equipment",
+          equipment: "Equipment", collections: "Equipment", vehicles: "Equipment",
           clients: "Directory", properties: "Directory",
           payments: "Money", pricing: "Money", supplies: "Money",
           // statistics: "Records" — re-add when the Worker Statistics tab is restored.
@@ -1210,7 +1239,11 @@ export default function HomePage() {
         const catIconMap: Record<string, React.ElementType> = {
           Work: FiClipboard, Equipment: FiTool, Directory: FiUsers, Money: TfiMoney, Records: FiBarChart2, System: FiSettings,
         };
-        return workerTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, visible: t.visible, content: t.content, category: catMap[t.value], categoryIcon: catIconMap[catMap[t.value]], chip: t.value === "tasks", bucket: t.bucket }));
+        return workerTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, visible: t.visible, content: t.content, category: catMap[t.value], categoryIcon: catIconMap[catMap[t.value]], // Actions/tasks tab was previously chip-styled on Worker + Admin
+// (`chip: t.value === "tasks"`), but Super renders it plain — the
+// mismatch read as a bug. Dropping the chip so all three roles
+// render the Actions tab with the same plain style.
+chip: false, bucket: t.bucket }));
       })(),
     },
     {
@@ -1246,7 +1279,7 @@ export default function HomePage() {
       innerTabs: (() => {
         const catMap: Record<string, string> = {
           home: "Work", jobs: "Work", routes: "Work", services: "Work", tasks: "Work",
-          equipment: "Equipment", collections: "Equipment", usage: "Equipment",
+          equipment: "Equipment", collections: "Equipment", vehicles: "Equipment",
           clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
           payments: "Money", pricing: "Money", supplies: "Money",
           activity: "Records", history: "Records", timeline: "Records", documents: "Records",
@@ -1255,7 +1288,11 @@ export default function HomePage() {
         const catIconMap: Record<string, React.ElementType> = {
           Work: FiClipboard, Equipment: FiTool, Directory: FiUsers, Money: TfiMoney, Records: FiBarChart2, System: FiSettings,
         };
-        return adminTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, visible: t.visible, content: t.content, category: catMap[t.value], categoryIcon: catIconMap[catMap[t.value]], chip: t.value === "tasks", bucket: t.bucket }));
+        return adminTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, visible: t.visible, content: t.content, category: catMap[t.value], categoryIcon: catIconMap[catMap[t.value]], // Actions/tasks tab was previously chip-styled on Worker + Admin
+// (`chip: t.value === "tasks"`), but Super renders it plain — the
+// mismatch read as a bug. Dropping the chip so all three roles
+// render the Actions tab with the same plain style.
+chip: false, bucket: t.bucket }));
       })(),
     },
     {
@@ -1333,6 +1370,78 @@ export default function HomePage() {
           categoryIcon: FiHome,
         },
         {
+          // Actions (+) — same shipped AdminTasksTab admins see.
+          // Super uses the admin task list; there's no super-only
+          // shortcut set today, but the tab is here so cross-role
+          // navigation stays consistent.
+          value: "tasks",
+          label: "Actions",
+          icon: FiPlus,
+          content: <AdminTasksTab tasks={adminTasks} />,
+          category: "Work",
+          categoryIcon: FiHome,
+        },
+        {
+          // ── Equipment ──
+          // Same component as the admin Inventory tab, but rendered with
+          // scope.isSuper so InventoryTab exposes its act-on-behalf-of-
+          // worker controls (reserve / cancel / checkout / return for a
+          // specific worker). Fail-safe for when a worker is stuck in the
+          // mobile flow and a Super needs to drive the action remotely.
+          //
+          // Positioned right after Services so the Equipment category
+          // sits IMMEDIATELY BELOW Work in the category strip (matches
+          // Worker/Admin tab-order).
+          value: "equipment",
+          label: "Inventory",
+          icon: FiTool,
+          content: wrapWithInlineMessage(
+            <InventoryTab
+              key={`seq-${adminEquipmentRemountKey}`}
+              me={me}
+              purpose="SUPER"
+              scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }}
+            />
+          ),
+          category: "Equipment",
+          categoryIcon: FiTool,
+        },
+        {
+          // ── Equipment → Collections (Super scope) ──
+          // Blended CollectionsTab renders admin CRUD + a Super-only
+          // Insights strip (kits with issues, availability, job
+          // coverage) computed from the collections payload — no
+          // extra server round-trip.
+          value: "collections",
+          label: "Collections",
+          icon: FiPackage,
+          content: wrapWithInlineMessage(
+            <CollectionsTab
+              scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }}
+            />
+          ),
+          category: "Equipment",
+          categoryIcon: FiTool,
+        },
+        {
+          // ── Equipment → Vehicles ──
+          // Dual-use vehicle fleet: manage vehicles, assignments (which
+          // workers can log mileage against which vehicle), and the
+          // per-vehicle mileage log. See services/vehicles.ts and
+          // services/mileage.ts for the backend contracts and the
+          // MileageStrip on the worker HomeTab for the driver-side flow.
+          value: "vehicles",
+          label: "Vehicles",
+          icon: FiTruck,
+          content: wrapWithInlineMessage(
+            <VehiclesTab
+              scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }}
+            />
+          ),
+          category: "Equipment",
+          categoryIcon: FiTool,
+        },
+        {
           // Reconcile — accounting-software validation surface. Replaces
           // the old Exports + P&L Report tabs. Renders a QB-style P&L
           // for the selected window with click-to-drill-down on every
@@ -1405,34 +1514,6 @@ export default function HomePage() {
           content: <AuditTab />,
           category: "Records",
           categoryIcon: FiBarChart2,
-        },
-        {
-          // ── Equipment ──
-          // Same component as the admin Inventory tab, but rendered with
-          // purpose="SUPER" so EquipmentTab exposes its act-on-behalf-of-
-          // worker controls (reserve / cancel / checkout / return for a
-          // specific worker). Fail-safe for when a worker is stuck in the
-          // mobile flow and a Super needs to drive the action remotely.
-          value: "equipment",
-          label: "Inventory",
-          icon: FiTool,
-          content: wrapWithInlineMessage(<EquipmentTab key={`seq-${adminEquipmentRemountKey}`} me={me} purpose="SUPER" />),
-          category: "Equipment",
-          categoryIcon: FiTool,
-        },
-        {
-          // ── Equipment → Vehicles ──
-          // Dual-use vehicle fleet: manage vehicles, assignments (which
-          // workers can log mileage against which vehicle), and the
-          // per-vehicle mileage log. See services/vehicles.ts and
-          // services/mileage.ts for the backend contracts and the
-          // MileageStrip on the worker HomeTab for the driver-side flow.
-          value: "vehicles",
-          label: "Vehicles",
-          icon: FiTruck,
-          content: wrapWithInlineMessage(<VehiclesTab />),
-          category: "Equipment",
-          categoryIcon: FiTool,
         },
         {
           // ── Directory ──
@@ -2754,7 +2835,7 @@ export default function HomePage() {
   useEffect(() => {
     const adminCatMap: Record<string, string> = {
       home: "Work", jobs: "Work", routes: "Work", services: "Work", tasks: "Work",
-      equipment: "Equipment", collections: "Equipment", usage: "Equipment",
+      equipment: "Equipment", collections: "Equipment", vehicles: "Equipment",
       clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
       payments: "Money", pricing: "Money", supplies: "Money",
       activity: "Records", history: "Records", timeline: "Records", documents: "Records",
@@ -2786,9 +2867,23 @@ export default function HomePage() {
   // BusinessExpensesTab clicking the "Supply: Mulch ×10" badge to land on
   // Super → Supplies). Mirrors the navigate:adminTab pattern; the receiving
   // tab reads its own pendingHighlight key on mount.
+  //
+  // Category map matches the Super category strip; kept in sync with the
+  // Super tab tree above so a cross-tab jump also switches the category
+  // nav to reveal the destination. Also mirrors admin's remount handling
+  // so cross-tab handoffs that need a fresh mount (e.g. clearing per-mount
+  // state) work identically in super scope.
   useEffect(() => {
+    const superCatMap: Record<string, string> = {
+      home: "Work", jobs: "Work", routes: "Work", services: "Work", tasks: "Work",
+      equipment: "Equipment", collections: "Equipment", vehicles: "Equipment",
+      clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
+      payments: "Money", pricing: "Money", supplies: "Money", ledger: "Money", reconcile: "Money", workdays: "Money",
+      audit: "Records", history: "Records", timeline: "Records", documents: "Records",
+      notify: "System", settings: "System", profile: "System", compliance: "System", vanity: "System",
+    };
     const onNav = (e: Event) => {
-      const { tab } = (e as CustomEvent).detail || {};
+      const { tab, remount } = (e as CustomEvent).detail || {};
       if (!tab) return;
       const current = getCurrentNavState();
       const wouldChange = current.outer !== "super" || current.inner !== tab;
@@ -2796,9 +2891,13 @@ export default function HomePage() {
       programmaticNavRef.current = true;
       setTopTab("super");
       setSuperInnerTab(tab as any);
-      if (tab === "supplies" || tab === "ledger" || tab === "payments" || tab === "pricing" || tab === "reconcile") setSuperCategory("Money");
-      else if (tab === "audit" || tab === "documents" || tab === "timeline") setSuperCategory("Records");
-      else if (tab === "settings" || tab === "profile") setSuperCategory("System");
+      const destCategory = superCatMap[tab];
+      if (destCategory) setSuperCategory(destCategory);
+      if (remount) {
+        if (tab === "jobs") setAdminJobsRemountKey((k) => k + 1);
+        else if (tab === "equipment") setAdminEquipmentRemountKey((k) => k + 1);
+        else if (tab === "payments") setAdminPaymentsRemountKey((k) => k + 1);
+      }
       setTimeout(() => { programmaticNavRef.current = false; }, 50);
     };
     window.addEventListener("navigate:superTab", onNav as EventListener);

@@ -18,6 +18,7 @@
 
 import { useEffect, useState } from "react";
 import { Box, Button, Card, HStack, SimpleGrid, Spinner, Text, VStack } from "@chakra-ui/react";
+import { BarChart3 } from "lucide-react";
 import { FiMoon, FiPlay, FiRefreshCw, FiSun } from "react-icons/fi";
 import { computeDatesFromPreset, type DatePreset } from "@/src/lib/datePresets";
 import { apiGet } from "@/src/lib/api";
@@ -272,6 +273,12 @@ export default function HomeTab({
   const [selfViewAsIds, setSelfViewAsIds] = usePersistedState<string[]>(
     "homeTab_viewAsIds",
     [],
+  );
+  // Super Insights (Operations rollup) collapse state — same
+  // pattern as the Equipment + Jobs Insights sections.
+  const [insightsCollapsed, setInsightsCollapsed] = usePersistedState<boolean>(
+    "homeTab_insightsCollapsed",
+    false,
   );
   const usingSelfViewAs =
     scope.isAdmin && !propViewAsUserId && !propAggregate && !propSubsetUserIds?.length;
@@ -542,12 +549,34 @@ export default function HomeTab({
             misleading in that context. */}
         <HomeBanners disabled={isViewingOther} />
 
-        {/* Super capability layer — Operations rollup (money, jobs,
-            equipment, team & clients) driven by one period control.
-            Placed ABOVE the admin picker so the highest-level lens
+        {/* Super Insights — Operations rollup (money, jobs, equipment,
+            team & clients) driven by one period control. Placed
+            ABOVE the admin picker so the highest-level lens
             (business-wide pulse) sits at the top; the picker below
-            narrows the main hero/tile area. */}
-        {scope.isSuper && <OperationsPanel />}
+            narrows the main hero/tile area. Wrapped in the orange
+            Insights card that matches the Equipment + Jobs Insights
+            sections for a consistent Super visual language. */}
+        {scope.isSuper && (
+          <Card.Root variant="outline" bg="orange.50" borderColor="orange.200">
+            <Card.Body py={3} px={3}>
+              <HStack
+                gap={2}
+                align="center"
+                mb={insightsCollapsed ? 0 : 2}
+                cursor="pointer"
+                onClick={() => setInsightsCollapsed(!insightsCollapsed)}
+                _hover={{ opacity: 0.7 }}
+              >
+                <BarChart3 size={14} color="var(--chakra-colors-gray-600)" />
+                <Text fontSize="sm" fontWeight="bold" color="gray.600" textTransform="uppercase" letterSpacing="wide">
+                  Insights
+                </Text>
+                <Text fontSize="xs" color="gray.400">{insightsCollapsed ? "▶" : "▼"}</Text>
+              </HStack>
+              {!insightsCollapsed && <OperationsPanel />}
+            </Card.Body>
+          </Card.Root>
+        )}
 
         {/* Admin picker — mirrors the shipped Admin → Work → Home
             worker selector. Default (nothing selected) = All Workers
