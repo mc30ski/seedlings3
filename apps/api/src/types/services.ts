@@ -900,6 +900,10 @@ export type ServicesPayments = {
       amountPaid?: number;
       method?: string;
       note?: string | null;
+      /** Corrected money-received date. Re-anchors Payment.createdAt (and
+       *  confirmedAt when the row is already confirmed) — see
+       *  services/payments.ts updatePayment. */
+      paidAt?: Date;
       splits?: Array<{ userId: string; amount: number }>;
     },
   ): Promise<any>;

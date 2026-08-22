@@ -19,6 +19,8 @@ Each feature spec binds to two enforcement mechanisms:
 **Playwright auth pattern** for e2e tests: use Clerk sign-in tokens (`clerkClient.signInTokens.createSignInToken({ userId })`) + `@clerk/testing`'s `clerk.signIn({ strategy: 'ticket', ticket })`. See [[reference-playwright-setup]] for details.
 
 **Existing feature specs**:
-- Compliance — `docs/features/compliance.md` (this session, June 2026)
+- Compliance — `docs/features/compliance.md` (June 2026; first exemplar)
+- Client View-As — `docs/features/client-view-as.md`
+- Documents → Google Drive backup — `docs/features/documents-gdrive-backup.md` (spec only; no code yet — see [[project-documents-gdrive-backup]])
 
 Related: [[reference-playwright-setup]], [[financial-system-doc]], [[date-handling-reference]], [[feedback-run-tests-trigger]].

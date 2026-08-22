@@ -437,7 +437,10 @@ describe("loadLandingPageForPublic — non-ACTIVE promotions don't leak content"
     intro: "Coming spring 2027 — internal preview only",
     viewCount: 0,
     items: [
-      { id: "item_1", title: "Secret Bundle", description: "Details", imageR2Key: null, imageMimeType: null, ordinal: 0 },
+      // `photos` replaced the single imageR2Key/imageMimeType pair. Empty
+      // array is the faithful translation of the old "no image" fixture —
+      // what these scenarios assert is content LEAKAGE, not imagery.
+      { id: "item_1", title: "Secret Bundle", description: "Details", ordinal: 0, photos: [] },
     ],
     promotion: { status: promoStatus, startAt: null, endAt: null },
     ...extras,

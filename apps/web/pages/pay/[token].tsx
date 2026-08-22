@@ -17,6 +17,7 @@ import Head from "next/head";
 import { useRouter } from "next/router";
 import { useAuth } from "@clerk/nextjs";
 import { useBranding } from "@/src/lib/useBranding";
+import PhotoLightbox from "@/src/ui/components/PhotoLightbox";
 import { fmtDateOpts, bizMonth } from "@/src/lib/lib";
 import {
   Badge,
@@ -74,6 +75,9 @@ type InvoicePagePromo = {
   body: string;
   ctaText: string;
   ctaUrl: string | null;
+  /** Cover photo from the promo's landing page. Null when the promo links
+   *  to an external URL, or its landing page has no photos yet. */
+  imageUrl?: string | null;
 };
 
 type ResolveResponse = {
@@ -689,14 +693,40 @@ function PromoDisplaySection({ promos }: { promos: InvoicePagePromo[] }) {
           borderLeftColor="blue.500"
           rounded="lg"
         >
-          {p.headline && (
-            <Text fontSize="sm" fontWeight="bold" color="blue.900" mb={2}>
-              {p.headline}
-            </Text>
-          )}
-          <Text fontSize="sm" color="fg.default" whiteSpace="pre-wrap">
-            {p.body}
-          </Text>
+          {/* Cover photo beside the copy — small and square so the offer
+              stays a compact strip on the invoice rather than competing
+              with the amount due above it. Text keeps its own column and
+              wraps, so a long body doesn't squash the image. */}
+          <HStack align="start" gap={3}>
+            {p.imageUrl && (
+              <Box
+                w={{ base: "64px", md: "80px" }}
+                h={{ base: "64px", md: "80px" }}
+                flexShrink={0}
+                rounded="md"
+                overflow="hidden"
+                bg="blackAlpha.100"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={p.imageUrl}
+                  alt=""
+                  style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                  loading="lazy"
+                />
+              </Box>
+            )}
+            <Box flex="1" minW={0}>
+              {p.headline && (
+                <Text fontSize="sm" fontWeight="bold" color="blue.900" mb={2}>
+                  {p.headline}
+                </Text>
+              )}
+              <Text fontSize="sm" color="fg.default" whiteSpace="pre-wrap">
+                {p.body}
+              </Text>
+            </Box>
+          </HStack>
           {p.ctaUrl && (
             <Button
               as="a"
@@ -783,124 +813,6 @@ function SocialLinksRow({ links }: { links: SocialLink[] }) {
 /** Fullscreen photo viewer for the public payment page. Matches the
  *  OccurrencePhotos PhotoViewer behavior — keyboard arrows, swipe gestures,
  *  click-backdrop-to-close — without the worker-only delete/uploadedBy bits. */
-function PhotoLightbox({
-  photos,
-  index,
-  onClose,
-  onPrev,
-  onNext,
-}: {
-  photos: { url: string }[];
-  index: number;
-  onClose: () => void;
-  onPrev: () => void;
-  onNext: () => void;
-}) {
-  const touchXRef = useRef<number | null>(null);
-  const hasPrev = index > 0;
-  const hasNext = index < photos.length - 1;
-  const current = photos[index];
-
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "ArrowLeft") { e.preventDefault(); onPrev(); }
-      else if (e.key === "ArrowRight") { e.preventDefault(); onNext(); }
-      else if (e.key === "Escape") { e.preventDefault(); onClose(); }
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onPrev, onNext, onClose]);
-
-  if (!current) return null;
-
-  return (
-    <Box
-      position="fixed"
-      inset="0"
-      zIndex="9999"
-      bg="blackAlpha.800"
-      display="flex"
-      alignItems="center"
-      justifyContent="center"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-      onTouchStart={(e) => { touchXRef.current = e.touches[0].clientX; }}
-      onTouchEnd={(e) => {
-        if (touchXRef.current === null) return;
-        const dx = e.changedTouches[0].clientX - touchXRef.current;
-        touchXRef.current = null;
-        if (Math.abs(dx) > 50) {
-          if (dx < 0) onNext();
-          else onPrev();
-        }
-      }}
-    >
-      {hasPrev && (
-        <Box
-          position="absolute"
-          left="3"
-          top="50%"
-          transform="translateY(-50%)"
-          color="white"
-          cursor="pointer"
-          p={2}
-          zIndex={1}
-          onClick={(e) => { e.stopPropagation(); onPrev(); }}
-          userSelect="none"
-        >
-          <ChevronLeft size={28} />
-        </Box>
-      )}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={current.url}
-        alt=""
-        style={{ maxWidth: "90vw", maxHeight: "80vh", objectFit: "contain", borderRadius: "8px" }}
-        onClick={(e) => e.stopPropagation()}
-      />
-      {hasNext && (
-        <Box
-          position="absolute"
-          right="3"
-          top="50%"
-          transform="translateY(-50%)"
-          color="white"
-          cursor="pointer"
-          p={2}
-          zIndex={1}
-          onClick={(e) => { e.stopPropagation(); onNext(); }}
-          userSelect="none"
-        >
-          <ChevronRight size={28} />
-        </Box>
-      )}
-      <Box
-        position="absolute"
-        top="3"
-        right="3"
-        color="white"
-        cursor="pointer"
-        p={2}
-        zIndex={1}
-        onClick={(e) => { e.stopPropagation(); onClose(); }}
-        userSelect="none"
-        aria-label="Close"
-      >
-        <X size={24} />
-      </Box>
-      <Text
-        position="absolute"
-        bottom="4"
-        left="0"
-        right="0"
-        textAlign="center"
-        color="whiteAlpha.700"
-        fontSize="sm"
-      >
-        {index + 1} / {photos.length}
-      </Text>
-    </Box>
-  );
-}
 
 // Season-aware brand icon resolver — mirrors BrandLabel.tsx so the pay
 // page uses the same seasonal swap (spring/summer vs. fall) as the rest

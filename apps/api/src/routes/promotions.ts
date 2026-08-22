@@ -72,10 +72,23 @@ export default async function promotionsRoutes(app: FastifyInstance) {
       else cur.skipped += s._count;
       statMap.set(s.promotionId, cur);
     }
+    // Shipped count — deliveredAt non-null, the schema's own definition of
+    // "this URL reached someone". Distinct from deliveredCount above,
+    // which counts un-skipped rows and therefore includes rows still
+    // queued. The slug locks drive off THIS number, so it has to be the
+    // precise one: an over-count would re-strand operators on a typo'd
+    // slug that nothing has actually shipped.
+    const shippedStats = await prisma.promotionDelivery.groupBy({
+      by: ["promotionId"],
+      where: { deliveredAt: { not: null } },
+      _count: true,
+    });
+    const shippedMap = new Map(shippedStats.map((s) => [s.promotionId, s._count]));
     return rows.map((r) => ({
       ...r,
       deliveredCount: statMap.get(r.id)?.delivered ?? 0,
       skippedCount: statMap.get(r.id)?.skipped ?? 0,
+      shippedCount: shippedMap.get(r.id) ?? 0,
     }));
   });
 
@@ -175,18 +188,24 @@ export default async function promotionsRoutes(app: FastifyInstance) {
     }
     const uid = await currentUserId(req);
     const data = parsed.data;
-    // Slug lock — shortSlug is locked once the promotion has EVER been
-    // ACTIVE (i.e., startedAt is set). Reason: URLs bearing the old
-    // slug may already be in the wild; changing the slug would 404
-    // every recipient's link. Even if the campaign is currently in
-    // PAUSED, the fact that it's been ACTIVE at least once means old
-    // URLs exist. Match the same lock semantics as landing page slug.
+    // Slug lock — shortSlug locks on the FIRST SHIPPED DELIVERY, not on
+    // startedAt. Same reasoning as the landing-page slug (see
+    // services/promotions.ts updateLandingPage): the rule exists so URLs
+    // already in a recipient's hands don't 404, and merely starting a
+    // campaign doesn't put any URL in anyone's hands. Locking on
+    // startedAt stranded operators who spotted a typo right after
+    // activating, with no way back.
     const newSlug = data.shortSlug?.toLowerCase() ?? null;
-    if (existing.startedAt && newSlug !== existing.shortSlug) {
-      return reply.code(409).send({
-        error: "slug_locked",
-        detail: "Short URL slug can't change once the promotion has been started (would 404 every recipient's link).",
+    if (newSlug !== existing.shortSlug) {
+      const shipped = await prisma.promotionDelivery.count({
+        where: { promotionId: existing.id, deliveredAt: { not: null } },
       });
+      if (shipped > 0) {
+        return reply.code(409).send({
+          error: "slug_locked",
+          detail: `Short URL slug can't change — ${shipped} ${shipped === 1 ? "delivery" : "deliveries"} already went out with the old link, and changing it would 404 them.`,
+        });
+      }
     }
     // Per-campaign domain must be a member of ALLOWED_DOMAINS when set.
     if (data.baseDomain) {
@@ -613,6 +632,43 @@ export default async function promotionsRoutes(app: FastifyInstance) {
     return page;
   });
 
+  // Mint a short-lived preview URL for a landing page. Super-only.
+  //
+  // Exists because a non-ACTIVE promotion's public page deliberately
+  // returns an empty shell (slug enumeration would otherwise leak
+  // unpublished copy and imagery), which left operators unable to review
+  // the page they were building. The token is slug-scoped, expires on its
+  // own, and carries no privileges beyond rendering this one page.
+  app.post("/super/promotions/:id/landing/preview-url", superGuard, async (req: any, reply: any) => {
+    const promoId = String(req.params.id);
+    const promo = await prisma.promotion.findUnique({
+      where: { id: promoId },
+      select: { landingPage: { select: { slug: true } } },
+    });
+    if (!promo?.landingPage) return reply.code(404).send({ error: "not_found" });
+    const {
+      loadPromotionSettings,
+      signLandingPreviewToken,
+      LANDING_PREVIEW_TTL_MINUTES,
+    } = await import("../services/promotions");
+    const settings = await loadPromotionSettings();
+    if (!settings.hmacSecret) {
+      // Fail loudly rather than handing back an unsigned URL that would
+      // silently render the withheld shell and look like a broken page.
+      return reply
+        .code(503)
+        .send({ error: "preview_unavailable", detail: "Promotion HMAC secret is not configured." });
+    }
+    const expiresAtMs = Date.now() + LANDING_PREVIEW_TTL_MINUTES * 60_000;
+    const token = signLandingPreviewToken(settings.hmacSecret, promo.landingPage.slug, expiresAtMs);
+    const base = String(settings.baseUrl ?? "").replace(/\/$/, "");
+    return {
+      url: `${base}/promotion/${encodeURIComponent(promo.landingPage.slug)}?preview=${encodeURIComponent(token)}`,
+      expiresAtMs,
+      ttlMinutes: LANDING_PREVIEW_TTL_MINUTES,
+    };
+  });
+
   // PATCH landing-page (headline/intro/slug). Slug locked once ACTIVE.
   app.patch("/super/promotions/landing/:pageId", superGuard, async (req: any, reply: any) => {
     const pageId = String(req.params.pageId);
@@ -701,10 +757,41 @@ export default async function promotionsRoutes(app: FastifyInstance) {
       const itemId = String(req.params.itemId);
       const body = (req.body ?? {}) as { key?: string; contentType?: string };
       if (!body.key) return reply.code(400).send({ error: "key_required" });
-      await confirmLandingPageImageUpload({
+      const created = await confirmLandingPageImageUpload({
         itemId,
         key: body.key,
         contentType: body.contentType || "image/jpeg",
+      });
+      return { ok: true, photoId: created.id };
+    },
+  );
+
+  // Delete one photo from an item. Explicit action — uploading a second
+  // photo appends rather than replacing, so removal has to be deliberate.
+  app.delete(
+    "/super/promotions/landing/photos/:photoId",
+    superGuard,
+    async (req: any) => {
+      const { deleteLandingPageItemPhoto } = await import("../services/promotions");
+      await deleteLandingPageItemPhoto(String(req.params.photoId));
+      return { ok: true };
+    },
+  );
+
+  // Reorder an item's photos. Body: { photoIds: string[] } in the desired
+  // order. Ids not belonging to the item are ignored by the service.
+  app.post(
+    "/super/promotions/landing/items/:itemId/photos/reorder",
+    superGuard,
+    async (req: any, reply: any) => {
+      const body = (req.body ?? {}) as { photoIds?: unknown };
+      if (!Array.isArray(body.photoIds)) {
+        return reply.code(400).send({ error: "photoIds_required" });
+      }
+      const { reorderLandingPageItemPhotos } = await import("../services/promotions");
+      await reorderLandingPageItemPhotos({
+        itemId: String(req.params.itemId),
+        photoIds: body.photoIds.map((x) => String(x)),
       });
       return { ok: true };
     },

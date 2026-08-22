@@ -14,7 +14,7 @@ After making ANY code change in `apps/api/` — and any change that touches paym
 cd apps/api && npm run test:build-gate
 ```
 
-That executes 80 tests (`payments-build-gate.test.ts` + `payments.test.ts` + `exports.test.ts` + `date-handling-build-gate.test.ts`) in ~350ms. If anything fails, fix it before declaring the task complete.
+That executes **416 tests across 15 files in ~630ms** (verified 2026-08-21) — seven build gates plus their companion unit suites. Full roster in [[reference-build-gates-roster]]. If anything fails, fix it before declaring the task complete.
 
 The date-handling test also fires on `apps/web/` changes — it scans every `.ts`/`.tsx` file under `apps/web/src/` and `apps/web/pages/`. So a web-only edit that introduces `.toISOString().slice(0,10)` or `setDate(getDate()+n)` fails the API build gate, not just web TS. Run the gate after web edits too.
 

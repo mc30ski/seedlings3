@@ -20,6 +20,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
+import { Eye } from "lucide-react";
 import { apiGet, apiPatch, apiPost, apiDelete } from "@/src/lib/api";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
@@ -82,16 +83,26 @@ type Promotion = {
   updatedBy?: { displayName: string | null; email: string | null } | null;
   deliveredCount?: number;
   skippedCount?: number;
+  /** Deliveries with deliveredAt set — the URL actually reached someone.
+   *  Drives both slug locks. Distinct from deliveredCount, which counts
+   *  un-skipped rows and so includes ones still queued. */
+  shippedCount?: number;
+};
+
+type LandingPageItemPhoto = {
+  id: string;
+  url: string | null;
+  contentType: string | null;
 };
 
 type LandingPageItem = {
   id: string;
   title: string;
   description: string;
-  imageUrl: string | null;
-  imageR2Key: string | null;
-  imageMimeType: string | null;
   ordinal: number;
+  /** All photos in display order. Replaced the single imageUrl/imageR2Key
+   *  trio — items hold many photos now. */
+  photos: LandingPageItemPhoto[];
 };
 
 type LandingPage = {
@@ -100,6 +111,11 @@ type LandingPage = {
   headline: string | null;
   intro: string | null;
   viewCount: number;
+  /** Server-computed: true once a delivery has actually shipped this URL.
+   *  Authoritative — the same predicate gates the PATCH, so the input's
+   *  enabled state and the server's guard can never disagree. */
+  slugLocked: boolean;
+  shippedDeliveryCount: number;
   items: LandingPageItem[];
 };
 
@@ -154,8 +170,8 @@ function CampaignsView() {
   const [creating, setCreating] = useState(false);
   // Standalone landing-page editor — opens independently of the main
   // PromotionEditor so it works even while the promotion is ACTIVE
-  // (landing-page content is safe to edit mid-campaign; only the slug
-  // stays locked so shipped URLs don't 404).
+  // (landing-page content is safe to edit mid-campaign; the slug locks
+  // only once a delivery has actually shipped the URL).
   const [editingLanding, setEditingLanding] = useState<{
     promoId: string;
     pageId: string;
@@ -324,6 +340,8 @@ function PromotionDetail({
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState<null | "start" | "pause" | "resume" | "retire" | "sendNow">(null);
   const [testChannel, setTestChannel] = useState<"email" | "sms" | null>(null);
+  const [previewInvoice, setPreviewInvoice] = useState(false);
+  const [previewingLanding, setPreviewingLanding] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -473,19 +491,51 @@ function PromotionDetail({
               View opens the public URL in a new tab; Edit opens the
               promotion editor which embeds the landing-page section. */}
           {promotion.linkKind === "LANDING_PAGE" && promotion.landingPage?.slug && (
-            <Button
-              size="xs"
-              variant="outline"
-              colorPalette="purple"
-              as="a"
-              {...({
-                href: `/promotion/${promotion.landingPage.slug}`,
-                target: "_blank",
-                rel: "noopener noreferrer",
-              } as any)}
-            >
-              View landing page ↗
-            </Button>
+            promotion.status === "ACTIVE" ? (
+              <Button
+                size="xs"
+                variant="outline"
+                colorPalette="purple"
+                as="a"
+                {...({
+                  href: `/promotion/${promotion.landingPage.slug}`,
+                  target: "_blank",
+                  rel: "noopener noreferrer",
+                } as any)}
+              >
+                View landing page ↗
+              </Button>
+            ) : (
+              /* Not live — a plain link would render the withheld shell
+                 ("not available yet"), which is what a client should see
+                 but useless to the operator building the page. Mint a
+                 short-lived preview token instead and open that. */
+              <Button
+                size="xs"
+                variant="outline"
+                colorPalette="purple"
+                loading={previewingLanding}
+                onClick={async () => {
+                  setPreviewingLanding(true);
+                  try {
+                    const r = await apiPost<{ url: string; ttlMinutes: number }>(
+                      `/api/super/promotions/${promotion.id}/landing/preview-url`,
+                      {},
+                    );
+                    window.open(r.url, "_blank", "noopener,noreferrer");
+                  } catch (err: any) {
+                    publishInlineMessage({
+                      type: "ERROR",
+                      text: err?.message ?? "Couldn't build a preview link.",
+                    });
+                  } finally {
+                    setPreviewingLanding(false);
+                  }
+                }}
+              >
+                Preview landing page ↗
+              </Button>
+            )
           )}
           {/* Edit landing page is available EVEN WHILE ACTIVE — landing-page
               content isn't per-delivery snapshotted (clients always see the
@@ -497,7 +547,28 @@ function PromotionDetail({
               Edit landing page
             </Button>
           )}
+          {/* Preview how this promo lands on a client's invoice. Only
+              meaningful when the promo actually targets that surface and
+              has content for it — the same pair the dispatcher requires
+              (Invariant B in promotions-build-gate). Mirrors the button
+              inside the editor so the check is reachable without opening
+              Edit, which is the state an operator is usually in when
+              they want to eyeball it. */}
+          {(promotion.displaySurfaces ?? []).includes("invoice_page")
+            && promotion.content?.invoice_page && (
+            <Button size="xs" variant="outline" colorPalette="blue" onClick={() => setPreviewInvoice(true)}>
+              <Eye size={12} />
+              <Text ml={1}>Preview invoice</Text>
+            </Button>
+          )}
         </HStack>
+        {previewInvoice && promotion.content?.invoice_page && (
+          <InvoicePreviewDialog
+            content={promotion.content.invoice_page}
+            promoId={promotion.linkKind === "LANDING_PAGE" ? promotion.id : null}
+            onClose={() => setPreviewInvoice(false)}
+          />
+        )}
 
         {/* Config summary */}
         <VStack align="stretch" gap={1} fontSize="xs" mb={4} p={2} bg="gray.50" rounded="md">
@@ -690,11 +761,30 @@ function PromotionEditor({
   const [baseDomain, setBaseDomain] = useState<string>(initial?.baseDomain ?? "");
   const [busy, setBusy] = useState(false);
   const [savedPromoId, setSavedPromoId] = useState<string | null>(initial?.id ?? null);
+  // Pending landing-page meta edits (headline / intro / slug). The nested
+  // editor registers a flush here while its fields are dirty so this
+  // dialog's Save persists them too — see LandingPageEditor.registerSave.
+  // Short link code mirrors the landing page address until the operator
+  // types their own. Seeded as "already touched" for a promo that has a
+  // short code on file, so reopening an existing campaign never silently
+  // rewrites a code that may already be in the wild.
+  const [shortSlugTouched, setShortSlugTouched] = useState(!!initial?.shortSlug);
+  const [landingSlug, setLandingSlug] = useState("");
+  const onLandingSlugChange = useCallback((v: string) => setLandingSlug(v), []);
+  const landingFlushRef = useRef<(() => Promise<void>) | null>(null);
+  const [landingDirty, setLandingDirty] = useState(false);
+  const registerLandingSave = useCallback((fn: (() => Promise<void>) | null) => {
+    landingFlushRef.current = fn;
+    setLandingDirty(!!fn);
+  }, []);
   const promoIsDraft = !initial || initial.status === "DRAFT";
   // Slug is locked once the promotion has ever been started — changing
   // it would 404 every already-sent short URL. Matches the server-side
   // check in routes/promotions.ts.
-  const slugLocked = !!initial?.startedAt;
+  // Short-URL slug locks on first SHIPPED delivery, matching the landing
+  // page slug and the server guard in routes/promotions.ts. Not on
+  // startedAt: activating a campaign puts no URL in anyone's hands.
+  const slugLocked = (initial?.shippedCount ?? 0) > 0;
 
   // Allowed domains for the per-campaign domain picker. Fetched lazily
   // when the editor opens so the dropdown is populated from the same
@@ -719,10 +809,26 @@ function PromotionEditor({
   const previewAnonymousUrl = previewSlug
     ? `${previewBase}/mo/${previewSlug}`
     : null;
-  // Client-side slug validation mirrors the server-side Zod rule so
-  // operators see errors before hitting Save. Same regex.
-  const slugValidationError = previewSlug && !/^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,39}$/.test(previewSlug)
-    ? "Lowercase letters, digits, and single hyphens only (1–40 chars, no leading/trailing hyphen, no double hyphens)."
+  // Mirror. Skipped once the operator has typed their own code, once the
+  // code locks (real links are out there), and for EXTERNAL promos, which
+  // have no landing page to mirror.
+  useEffect(() => {
+    if (shortSlugTouched || slugLocked) return;
+    if (linkKind !== "LANDING_PAGE" || !landingSlug) return;
+    setShortSlug(landingSlug);
+  }, [landingSlug, shortSlugTouched, slugLocked, linkKind]);
+
+  // Client-side slug validation mirrors the server-side rule so operators
+  // see errors before hitting Save. Same regex, same 64-char cap as the
+  // landing-page slug (see PROMO_SHORT_SLUG_PATTERN).
+  const slugValidationError = previewSlug && !/^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,63}$/.test(previewSlug)
+    ? "Lowercase letters, digits, and single hyphens only (1–64 chars, no leading/trailing hyphen, no double hyphens)."
+    : null;
+  // Advisory, NOT a block. Every character here rides along in each text
+  // message, and crossing a segment boundary bills as two — but that's a
+  // judgement call for the operator, not something to forbid.
+  const slugLengthWarning = previewSlug.length > 40
+    ? `${previewSlug.length} characters — long for a text message. Every character counts toward the SMS segment, and going over bills as two.`
     : null;
 
   function toggleChannel(c: DispatchChannel) {
@@ -786,6 +892,16 @@ function PromotionEditor({
       if (linkKind === "LANDING_PAGE" && id && !initial?.landingPageId) {
         await apiPost(`/api/super/promotions/${id}/landing`, {}).catch(() => {});
       }
+      // Flush unsaved landing-page headline / intro / slug. Those fields
+      // live in a nested editor with its own Save button, and an operator
+      // who edits the slug and then clicks THIS dialog's Save would
+      // otherwise lose the change silently — permanently, since the slug
+      // locks the moment the promotion leaves DRAFT. Deliberately NOT
+      // swallowed: a rejected slug (duplicate, or already locked) has to
+      // surface, or we're back to silently discarding the edit.
+      if (landingFlushRef.current) {
+        await landingFlushRef.current();
+      }
       onSaved();
     } catch (err: any) {
       publishInlineMessage({ type: "ERROR", text: err?.message ?? String(err) });
@@ -843,6 +959,8 @@ function PromotionEditor({
                     pageId={initial.landingPageId}
                     promoId={savedPromoId}
                     promotionStatus={initial.status}
+                    registerSave={registerLandingSave}
+                    onSlugChange={onLandingSlugChange}
                   />
                 )}
                 {linkKind === "LANDING_PAGE" && !initial?.landingPageId && (
@@ -857,26 +975,40 @@ function PromotionEditor({
                     outbound messages. Leaving both fields blank keeps the
                     campaign on the legacy long-form wrapper URL. */}
                 <Box borderTopWidth="1px" borderColor="gray.200" pt={4}>
-                  <Text fontSize="xs" fontWeight="semibold" mb={1}>Short URL (optional)</Text>
+                  <Text fontSize="xs" fontWeight="semibold" mb={1}>Short link (optional)</Text>
                   <Text fontSize="2xs" color="fg.muted" mb={2}>
-                    Set a slug to use short branded URLs like <b>{previewBase}/mo/&lt;slug&gt;/abcd</b> in outbound messages. Leave blank to use the older long-form tracker URL.
+                    A short branded <b>tracker</b> link like <b>{previewBase}/mo/&lt;code&gt;/abcd</b> to
+                    put in outbound texts and emails. It hosts nothing: opening it records the
+                    click{linkKind === "LANDING_PAGE" ? " and forwards to the landing page above" : " and forwards to the External URL above"}.
+                    The <b>abcd</b> tail identifies which recipient clicked. Leave blank to use the
+                    older long-form tracker URL.
                     {slugLocked && (
-                      <> The slug is <b>locked</b> because this campaign has been started — changing it would 404 every URL already sent.</>
+                      <> The code is <b>locked</b> because {initial?.shippedCount} {(initial?.shippedCount ?? 0) === 1 ? "delivery has" : "deliveries have"} already gone out with it — changing it would 404 those links.</>
                     )}
                   </Text>
                   <VStack align="stretch" gap={3}>
                     <Box>
-                      <Text fontSize="2xs" fontWeight="semibold" mb={1}>Slug</Text>
+                      <Text fontSize="2xs" fontWeight="semibold" mb={1}>Short link code</Text>
                       <Input
                         size="sm"
                         placeholder="fall-offer-2026"
                         value={shortSlug}
-                        onChange={(e) => setShortSlug(e.target.value)}
+                        onChange={(e) => { setShortSlug(e.target.value); setShortSlugTouched(true); }}
                         disabled={slugLocked}
                         fontFamily="mono"
                       />
                       {slugValidationError && (
                         <Text fontSize="2xs" color="red.600" mt={1}>{slugValidationError}</Text>
+                      )}
+                      {/* Advisory, never a block — the operator decides. */}
+                      {!slugValidationError && slugLengthWarning && (
+                        <Text fontSize="2xs" color="orange.700" mt={1}>{slugLengthWarning}</Text>
+                      )}
+                      {!shortSlugTouched && !slugLocked && linkKind === "LANDING_PAGE" && landingSlug && (
+                        <Text fontSize="2xs" color="fg.muted" mt={1}>
+                          Matches the landing page address. Change it only if you want a
+                          shorter link for texts.
+                        </Text>
                       )}
                     </Box>
                     {allowedDomains && allowedDomains.origins.length > 1 && (() => {
@@ -920,7 +1052,7 @@ function PromotionEditor({
                     })()}
                     {previewSlug && !slugValidationError && (
                       <Box p={3} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">
-                        <Text fontSize="2xs" color="fg.muted" mb={1}>Preview URLs</Text>
+                        <Text fontSize="2xs" color="fg.muted" mb={1}>Preview short links (both forward to the destination above)</Text>
                         <Text fontSize="xs" fontFamily="mono" wordBreak="break-all">
                           <b>Per-recipient</b> (sent in messages, tracks who clicked):
                           <br />{previewPersonalUrl}
@@ -1016,6 +1148,7 @@ function PromotionEditor({
                   <ChannelPanelInvoicePage
                     content={content.invoice_page ?? { body: "", ctaText: "" }}
                     link={link}
+                    promoId={linkKind === "LANDING_PAGE" ? savedPromoId : null}
                     onChange={(v) => setContent((p) => ({ ...p, invoice_page: v }))}
                   />
                 )}
@@ -1027,11 +1160,19 @@ function PromotionEditor({
               </VStack>
             </Dialog.Body>
             <Dialog.Footer>
-              <HStack gap={2} justify="flex-end" w="full">
-                <Button variant="ghost" onClick={onCancel} disabled={busy}>Cancel</Button>
-                <Button colorPalette="blue" onClick={save} loading={busy} disabled={!title.trim()}>
-                  Save
-                </Button>
+              <HStack gap={2} justify="space-between" w="full">
+                {/* Tell the operator the nested landing-page fields are
+                    included. Without this the dialog has two Save buttons
+                    and no indication that the outer one now covers both. */}
+                <Text fontSize="2xs" color="fg.muted">
+                  {landingDirty ? "Includes your unsaved landing page changes." : ""}
+                </Text>
+                <HStack gap={2}>
+                  <Button variant="ghost" onClick={onCancel} disabled={busy}>Cancel</Button>
+                  <Button colorPalette="blue" onClick={save} loading={busy} disabled={!title.trim()}>
+                    Save
+                  </Button>
+                </HStack>
               </HStack>
             </Dialog.Footer>
           </Dialog.Content>
@@ -1120,17 +1261,192 @@ function ChannelPanelEmail({
   );
 }
 
+/** Full-invoice preview — renders the promo card in its real position on
+ *  the client-facing /pay/[token] page. Deliberately mirrors that page's
+ *  structure and styling (see apps/web/pages/pay/[token].tsx): Invoice
+ *  total card → Offers → Payment. Sample invoice data is obviously fake
+ *  so nobody mistakes it for a real client's figures; the ONLY real
+ *  content is the promo card itself.
+ *
+ *  Kept as a static mirror rather than importing from the pay page: that
+ *  page is a Next route that fetches by token and renders a full page
+ *  shell, so it can't be mounted standalone. If the pay page's promo
+ *  treatment changes, update the Offers block here to match. */
+function InvoicePreviewDialog({
+  content, promoId, onClose,
+}: {
+  content: { headline?: string; body: string; ctaText?: string };
+  /** When set, the dialog loads the promo's landing page to show the same
+   *  cover photo the real invoice will use (first photo of the first
+   *  item). Omitted for promos with no landing page. */
+  promoId?: string | null;
+  onClose: () => void;
+}) {
+  const [coverUrl, setCoverUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!promoId) return;
+    let cancelled = false;
+    apiGet<{ items: { photos: { url: string | null }[] }[] }>(
+      `/api/super/promotions/${promoId}/landing`,
+    )
+      .then((page) => {
+        if (cancelled) return;
+        // Same selection the server makes in loadInvoicePagePromos:
+        // first photo of the first item, both already in display order.
+        const first = page.items.flatMap((i) => i.photos).find((ph) => ph.url);
+        setCoverUrl(first?.url ?? null);
+      })
+      // No landing page (external-link promo) or no photos — the real
+      // invoice renders text-only in that case too, so match it silently.
+      .catch(() => { if (!cancelled) setCoverUrl(null); });
+    return () => { cancelled = true; };
+  }, [promoId]);
+
+  return (
+    <Dialog.Root open onOpenChange={(e) => { if (!e.open) onClose(); }} placement="center" size="lg">
+      <Portal>
+        <Dialog.Backdrop />
+        <Dialog.Positioner>
+          <Dialog.Content mx="4" maxW="lg" w="full" rounded="2xl" p={4}>
+            <Dialog.CloseTrigger />
+            <Dialog.Header>
+              <Dialog.Title>Invoice preview</Dialog.Title>
+            </Dialog.Header>
+            <Dialog.Body>
+              <Text fontSize="xs" color="fg.muted" mb={3}>
+                How this promotion appears on the invoice your client opens.
+                The invoice details below are sample data &mdash; only the
+                offer is your real content.
+              </Text>
+
+              {/* Mirrors the pay page's own page shell width + section gap. */}
+              <Box borderWidth="1px" borderColor="gray.200" rounded="lg" p={4} bg="white">
+                <VStack gap={5} align="stretch">
+                  {/* ── Invoice total (sample) ── */}
+                  <Box>
+                    <Text fontSize="md" fontWeight="bold" mb={2} letterSpacing="tight">Invoice</Text>
+                    <Box
+                      p={4}
+                      bg="gray.100"
+                      borderWidth="1px"
+                      borderColor="gray.300"
+                      borderLeftWidth="4px"
+                      borderLeftColor="gray.500"
+                      rounded="lg"
+                    >
+                      <VStack gap={1} align="stretch">
+                        <Text fontSize="md" fontWeight="semibold">123 Sample Street</Text>
+                        <Text fontSize="sm" color="fg.muted">Sample service date</Text>
+                        <HStack mt={2} align="baseline" justify="space-between">
+                          <Text fontSize="sm" color="fg.muted">Total due</Text>
+                          <Text fontSize="2xl" fontWeight="bold" color="teal.700">$85.00</Text>
+                        </HStack>
+                      </VStack>
+                    </Box>
+                  </Box>
+
+                  {/* ── Offers — the real promo card ── */}
+                  <Box>
+                    <Text fontSize="md" fontWeight="bold" mb={2} letterSpacing="tight">Offers</Text>
+                    <Box
+                      p={4}
+                      bg="blue.50"
+                      borderWidth="1px"
+                      borderColor="blue.200"
+                      borderLeftWidth="4px"
+                      borderLeftColor="blue.500"
+                      rounded="lg"
+                    >
+                      <HStack align="start" gap={3}>
+                        {coverUrl && (
+                          <Box w="80px" h="80px" flexShrink={0} rounded="md" overflow="hidden" bg="blackAlpha.100">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={coverUrl}
+                              alt=""
+                              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                            />
+                          </Box>
+                        )}
+                        <Box flex="1" minW={0}>
+                          {content.headline && (
+                            <Text fontSize="sm" fontWeight="bold" color="blue.900" mb={2}>
+                              {content.headline}
+                            </Text>
+                          )}
+                          <Text fontSize="sm" color="fg.default" whiteSpace="pre-wrap">
+                            {content.body || "(no body text yet)"}
+                          </Text>
+                        </Box>
+                      </HStack>
+                      {/* CTA always renders. On the real page the URL is a
+                          click-wrapper built server-side from the promo id
+                          (see loadInvoicePagePromos), NOT promotion.link —
+                          so a landing-page promo, which has link: null,
+                          still shows this button. Gating the preview on
+                          `link` hid it for exactly those promos. Inert
+                          here: it's a preview, there's nothing to click. */}
+                      <Button size="sm" colorPalette="blue" mt={3}>
+                        {content.ctaText || "Learn more \u2192"}
+                      </Button>
+                    </Box>
+                  </Box>
+
+                  {/* ── Payment (sample, dimmed — context only) ── */}
+                  <Box opacity={0.55}>
+                    <Text fontSize="md" fontWeight="bold" mb={2} letterSpacing="tight">Payment</Text>
+                    <Box p={3} borderWidth="1px" borderColor="gray.200" rounded="md">
+                      <Text fontSize="sm" color="fg.muted">
+                        Payment method picker and Pay button appear here.
+                      </Text>
+                    </Box>
+                  </Box>
+                </VStack>
+              </Box>
+            </Dialog.Body>
+            <Dialog.Footer>
+              <Button variant="ghost" onClick={onClose}>Close</Button>
+            </Dialog.Footer>
+          </Dialog.Content>
+        </Dialog.Positioner>
+      </Portal>
+    </Dialog.Root>
+  );
+}
+
 function ChannelPanelInvoicePage({
-  content, link, onChange,
+  content, link, promoId, onChange,
 }: {
   content: { headline?: string; body: string; ctaText?: string };
   link: string;
+  /** Passed to the preview so it can load the same cover photo the real
+   *  invoice shows. Null for external-link promos. */
+  promoId?: string | null;
   onChange: (v: { headline?: string; body: string; ctaText?: string }) => void;
 }) {
+  const [previewOpen, setPreviewOpen] = useState(false);
   return (
     <Card.Root variant="outline">
       <Card.Body>
-        <Text fontSize="sm" fontWeight="semibold" mb={2}>Invoice page content</Text>
+        <HStack justify="space-between" align="center" mb={2}>
+          <Text fontSize="sm" fontWeight="semibold">Invoice page content</Text>
+          {/* Full-invoice preview. The inline block below shows the promo
+              card on its own, which answers "does my copy look right" but
+              not "where does this land on the page the client actually
+              opens". This button shows it in position — between the
+              invoice total and the Payment section. */}
+          <Button size="xs" variant="outline" onClick={() => setPreviewOpen(true)}>
+            <Eye size={12} />
+            <Text ml={1}>Preview invoice</Text>
+          </Button>
+        </HStack>
+        {previewOpen && (
+          <InvoicePreviewDialog
+            content={content}
+            promoId={promoId}
+            onClose={() => setPreviewOpen(false)}
+          />
+        )}
         <VStack align="stretch" gap={2}>
           <Input size="sm" placeholder="Headline (optional, appears in bold)" value={content.headline ?? ""}
             onChange={(e) => onChange({ ...content, headline: e.target.value })} />
@@ -1444,8 +1760,10 @@ function OptHistoryDialog({ contactId, onClose }: { contactId: string; onClose: 
 //   2. In StandaloneLandingPageDialog for editing while ACTIVE
 //
 // Editing rules — split by field:
-//   • Slug editable ONLY while parent promotion is DRAFT (shipped URLs
-//     must not break once ACTIVE).
+//   • Slug editable until the FIRST delivery actually ships (server
+//     computes `slugLocked`; status is irrelevant). Activating a campaign
+//     doesn't put the URL in anyone's hands by itself, so locking on
+//     ACTIVE stranded operators who spotted a typo right after starting.
 //   • Headline / intro / item CRUD / image upload permitted through
 //     ACTIVE (landing-page content is not per-delivery snapshotted, so
 //     mid-campaign edits are safe — clients always see the current
@@ -1456,16 +1774,28 @@ function OptHistoryDialog({ contactId, onClose }: { contactId: string; onClose: 
 // ─────────────────────────────────────────────────────────────────────────────
 
 function LandingPageEditor({
-  pageId, promoId, promotionStatus,
+  pageId, promoId, promotionStatus, registerSave, onSlugChange,
 }: {
   pageId: string;
   promoId: string;
   promotionStatus: PromotionStatus;
+  /** Reports the current landing-page address up so the enclosing editor
+   *  can mirror it into the Short link code. The two URLs are different
+   *  things but almost always want the same name, and making the operator
+   *  type it twice is what made them read as unrelated settings. */
+  onSlugChange?: (slug: string) => void;
+  /** Lets the enclosing PromotionEditor flush unsaved headline/intro/slug
+   *  edits when ITS Save button is pressed. Without this, the nested
+   *  "Save headline / intro / slug" button is the only thing that
+   *  persists those fields — and an operator who edits the slug and then
+   *  clicks the dialog's prominent Save loses the change silently. That
+   *  is unrecoverable once the promotion leaves DRAFT, because the slug
+   *  locks. Optional: the standalone dialog has no outer Save. */
+  registerSave?: (fn: (() => Promise<void>) | null) => void;
 }) {
   // Split the edit gates: slug locks tight; content stays editable
   // longer.
   const contentEditable = promotionStatus !== "CLOSED";
-  const slugEditable = promotionStatus === "DRAFT";
   const [page, setPage] = useState<LandingPage | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingMeta, setSavingMeta] = useState(false);
@@ -1475,6 +1805,19 @@ function LandingPageEditor({
   const [headline, setHeadline] = useState("");
   const [intro, setIntro] = useState("");
   const [slug, setSlug] = useState("");
+  // Optimistic upload tiles, keyed by item id. Each carries an object URL
+  // of the local file so the operator sees the actual photo immediately.
+  const [pendingUploads, setPendingUploads] = useState<
+    Record<string, { id: string; previewUrl: string }[]>
+  >({});
+  // In-flight counts live in a ref, not state: the "am I the last upload?"
+  // decision has to read a value that's current synchronously, and batched
+  // state updates would let two finishers both think they were last.
+  const inFlightRef = useRef<Record<string, number>>({});
+  const uploadSeqRef = useRef(0);
+  // Successes in the current batch, so the completion message can say
+  // "3 photos added" once instead of firing a toast per file.
+  const uploadOkRef = useRef<Record<string, number>>({});
   const [origSlug, setOrigSlug] = useState("");
 
   const load = useCallback(async () => {
@@ -1510,6 +1853,60 @@ function LandingPageEditor({
       publishInlineMessage({ type: "ERROR", text: err?.message ?? String(err) });
     } finally {
       setSavingMeta(false);
+    }
+  }
+
+  // Expose a flush to the parent dialog. Registered on every render where
+  // the dirty-state changes so the captured closure always sees current
+  // headline/intro/slug values. Deregisters on unmount so the parent never
+  // calls into a dead component.
+  useEffect(() => {
+    onSlugChange?.(slug);
+    // onSlugChange is a stable useCallback in the parent.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slug]);
+
+  // Slug lock comes from the server payload, never from status. A closed
+  // promotion is read-only anyway (contentEditable), so combine the two.
+  const slugEditable = contentEditable && page != null && !page.slugLocked;
+  const metaDirty =
+    headline !== (page?.headline ?? "") ||
+    intro !== (page?.intro ?? "") ||
+    slug !== origSlug;
+  useEffect(() => {
+    if (!registerSave) return;
+    registerSave(metaDirty ? saveMeta : null);
+    return () => registerSave(null);
+    // saveMeta is redefined each render; metaDirty + the field values are
+    // the real inputs. Re-registering on those keeps the closure fresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [registerSave, metaDirty, headline, intro, slug]);
+
+  async function deletePhoto(photoId: string) {
+    try {
+      await apiDelete(`/api/super/promotions/landing/photos/${photoId}`);
+      await load();
+    } catch (err: any) {
+      publishInlineMessage({ type: "ERROR", text: err?.message ?? String(err) });
+    }
+  }
+
+  // Swap a photo one position earlier. Simple arrow-based reordering
+  // rather than drag-and-drop: the strip is small, this works on a phone,
+  // and the only ordering that really matters is which photo is first
+  // (it's the cover / link preview).
+  async function movePhotoUp(item: LandingPageItem, photoId: string) {
+    const ids = item.photos.map((p) => p.id);
+    const i = ids.indexOf(photoId);
+    if (i <= 0) return;
+    [ids[i - 1], ids[i]] = [ids[i], ids[i - 1]];
+    try {
+      await apiPost(`/api/super/promotions/landing/items/${item.id}/photos/reorder`, {
+        photoIds: ids,
+      });
+      await load();
+    } catch (err: any) {
+      publishInlineMessage({ type: "ERROR", text: err?.message ?? String(err) });
     }
   }
 
@@ -1568,7 +1965,28 @@ function LandingPageEditor({
     }
   }
 
+  /**
+   * Upload one photo, with visible progress.
+   *
+   * An upload is three round-trips (presign, PUT to R2, confirm) and used
+   * to show nothing at all until the final reload landed — on a phone
+   * over cell data that reads as "the button didn't work", and invites a
+   * second tap. Now a tile appears instantly showing the actual file via
+   * an object URL, with a spinner over it, and is swapped for the real
+   * photo once the reload completes.
+   *
+   * Reload is deferred until the LAST in-flight upload for this item
+   * finishes — a multi-select of six photos used to fire six full page
+   * reloads, each one fighting the others' renders.
+   */
   async function uploadImage(itemId: string, file: File) {
+    const tempId = `pending-${uploadSeqRef.current++}`;
+    const previewUrl = URL.createObjectURL(file);
+    inFlightRef.current[itemId] = (inFlightRef.current[itemId] ?? 0) + 1;
+    setPendingUploads((prev) => ({
+      ...prev,
+      [itemId]: [...(prev[itemId] ?? []), { id: tempId, previewUrl }],
+    }));
     try {
       const contentType = file.type || "image/jpeg";
       const { uploadUrl, key } = await apiPost<{ uploadUrl: string; key: string }>(
@@ -1585,10 +2003,35 @@ function LandingPageEditor({
         key,
         contentType,
       });
-      publishInlineMessage({ type: "SUCCESS", text: "Image uploaded." });
-      await load();
+      uploadOkRef.current[itemId] = (uploadOkRef.current[itemId] ?? 0) + 1;
     } catch (err: any) {
       publishInlineMessage({ type: "ERROR", text: err?.message ?? String(err) });
+      // Drop just this tile — the other uploads in the batch carry on.
+      URL.revokeObjectURL(previewUrl);
+      setPendingUploads((prev) => ({
+        ...prev,
+        [itemId]: (prev[itemId] ?? []).filter((u) => u.id !== tempId),
+      }));
+    } finally {
+      const remaining = (inFlightRef.current[itemId] ?? 1) - 1;
+      inFlightRef.current[itemId] = remaining;
+      if (remaining <= 0) {
+        // Last one home: fetch the real photos, THEN clear the pending
+        // tiles. Clearing first would blink the strip empty in between.
+        await load();
+        setPendingUploads((prev) => {
+          (prev[itemId] ?? []).forEach((u) => URL.revokeObjectURL(u.previewUrl));
+          return { ...prev, [itemId]: [] };
+        });
+        const ok = uploadOkRef.current[itemId] ?? 0;
+        uploadOkRef.current[itemId] = 0;
+        if (ok > 0) {
+          publishInlineMessage({
+            type: "SUCCESS",
+            text: `${ok} photo${ok === 1 ? "" : "s"} added.`,
+          });
+        }
+      }
     }
   }
 
@@ -1608,12 +2051,48 @@ function LandingPageEditor({
       <Card.Body>
         <Text fontSize="sm" fontWeight="semibold" mb={2}>Custom landing page</Text>
         <Text fontSize="2xs" color="fg.muted" mb={3}>
-          Public URL: <Text as="span" fontFamily="mono">/promotion/{page.slug}</Text> · Views: {page.viewCount}
+          The page clients actually land on:{" "}
+          <Text as="span" fontFamily="mono">/promotion/{page.slug}</Text> · Views: {page.viewCount}
         </Text>
         <VStack align="stretch" gap={2}>
           <Box>
-            <Text fontSize="2xs" fontWeight="semibold" mb={1}>URL slug {slugEditable ? "" : "(locked — shipped URLs must not break)"}</Text>
-            <Input size="sm" value={slug} onChange={(e) => setSlug(e.target.value)} disabled={!slugEditable} />
+            <Text fontSize="2xs" fontWeight="semibold" mb={1}>
+              Landing page address{" "}
+              {slugEditable ? "" : page?.slugLocked
+                ? `(locked — ${page.shippedDeliveryCount} ${page.shippedDeliveryCount === 1 ? "delivery" : "deliveries"} already sent with this URL)`
+                : "(locked)"}
+            </Text>
+            {/* The /promotion/ prefix renders inline rather than living only
+                in the "Public URL" line above. Two slug-shaped fields in one
+                dialog (this and the Short link code) previously read as the
+                same setting — showing each one's URL shape at the point of
+                entry is what distinguishes them. */}
+            <HStack gap={0} align="stretch">
+              <Box
+                px={2}
+                display="flex"
+                alignItems="center"
+                fontSize="xs"
+                fontFamily="mono"
+                color="fg.muted"
+                bg="gray.100"
+                borderWidth="1px"
+                borderRightWidth={0}
+                borderColor="gray.200"
+                borderLeftRadius="md"
+                flexShrink={0}
+              >
+                /promotion/
+              </Box>
+              <Input
+                size="sm"
+                value={slug}
+                onChange={(e) => setSlug(e.target.value)}
+                disabled={!slugEditable}
+                fontFamily="mono"
+                borderLeftRadius={0}
+              />
+            </HStack>
           </Box>
           <Box>
             <Text fontSize="2xs" fontWeight="semibold" mb={1}>Headline (optional)</Text>
@@ -1626,7 +2105,7 @@ function LandingPageEditor({
           {contentEditable && (
             <HStack>
               <Button size="xs" onClick={() => void saveMeta()} loading={savingMeta}>
-                Save {slugEditable ? "headline / intro / slug" : "headline / intro"}
+                Save {slugEditable ? "address / headline / intro" : "headline / intro"}
               </Button>
             </HStack>
           )}
@@ -1642,6 +2121,9 @@ function LandingPageEditor({
               onSave={(t, d) => void saveItem(item.id, t, d)}
               onDelete={() => void deleteItem(item.id)}
               onUpload={(f) => void uploadImage(item.id, f)}
+              pendingUploads={pendingUploads[item.id] ?? []}
+              onDeletePhoto={(photoId) => void deletePhoto(photoId)}
+              onMovePhotoUp={(photoId) => void movePhotoUp(item, photoId)}
               onMoveUp={idx > 0 ? () => void moveItem(item.id, "up") : undefined}
               onMoveDown={idx < page.items.length - 1 ? () => void moveItem(item.id, "down") : undefined}
             />
@@ -1667,13 +2149,18 @@ function LandingPageEditor({
 }
 
 function LandingItemRow({
-  item, editable, onSave, onDelete, onUpload, onMoveUp, onMoveDown,
+  item, editable, onSave, onDelete, onUpload, pendingUploads, onDeletePhoto, onMovePhotoUp, onMoveUp, onMoveDown,
 }: {
   item: LandingPageItem;
   editable: boolean;
+  /** Photos mid-upload — rendered as spinner-overlaid tiles after the
+   *  saved ones so the strip reflects the final order as it fills in. */
+  pendingUploads: { id: string; previewUrl: string }[];
   onSave: (title: string, description: string) => void;
   onDelete: () => void;
   onUpload: (file: File) => void;
+  onDeletePhoto: (photoId: string) => void;
+  onMovePhotoUp: (photoId: string) => void;
   onMoveUp?: () => void;
   onMoveDown?: () => void;
 }) {
@@ -1688,56 +2175,133 @@ function LandingItemRow({
   return (
     <Card.Root variant="outline" p={3}>
       <HStack align="start" gap={3}>
-        <Box
-          w="72px"
-          h="72px"
-          // Yellow-tinted background when there's no image yet — reads
-          // as an actionable gap (not a broken state) so the operator
-          // knows to upload. Reverts to gray once an image is set.
-          bg={item.imageUrl ? "gray.100" : "yellow.50"}
-          borderWidth={item.imageUrl ? "0" : "1px"}
-          borderStyle="dashed"
-          borderColor="yellow.400"
-          rounded="md"
-          overflow="hidden"
-          flexShrink={0}
-          cursor={editable ? "pointer" : "default"}
-          onClick={() => editable && fileInputRef.current?.click()}
-          title={editable && !item.imageUrl ? "Click to upload a photo" : undefined}
-        >
-          {item.imageUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={item.imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-          ) : (
-            <Box
-              w="100%"
-              h="100%"
-              display="flex"
-              flexDirection="column"
-              alignItems="center"
-              justifyContent="center"
-              gap="2px"
-              color="yellow.700"
-              textAlign="center"
-              px={1}
-            >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-                <circle cx="12" cy="13" r="4" />
-              </svg>
-              <Text fontSize="2xs" fontWeight="semibold" lineHeight="1">
-                {editable ? "Add photo" : "No photo"}
-              </Text>
-            </Box>
+        {/* Photo strip — existing photos, then an "Add" tile. Wraps, so
+            an item with many photos grows downward instead of squeezing
+            the text column. */}
+        <Box flexShrink={0} w="160px">
+          <HStack gap={1} wrap="wrap">
+            {item.photos.map((ph, idx) => (
+              <Box
+                key={ph.id}
+                position="relative"
+                w="48px"
+                h="48px"
+                bg="gray.100"
+                rounded="md"
+                overflow="hidden"
+                role="group"
+              >
+                {ph.url && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={ph.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                )}
+                {/* First photo is what link previews use — label it so the
+                    operator knows reordering has a consequence. */}
+                {idx === 0 && (
+                  <Box position="absolute" bottom="0" left="0" right="0" bg="blackAlpha.600" px={1}>
+                    <Text fontSize="3xs" color="white" textAlign="center" lineHeight="1.4">Cover</Text>
+                  </Box>
+                )}
+                {editable && (
+                  <Box
+                    position="absolute"
+                    top="0"
+                    right="0"
+                    bg="blackAlpha.700"
+                    color="white"
+                    px={1}
+                    cursor="pointer"
+                    onClick={() => onDeletePhoto(ph.id)}
+                    title="Remove this photo"
+                  >
+                    <Text fontSize="2xs" lineHeight="1.4">×</Text>
+                  </Box>
+                )}
+                {editable && idx > 0 && (
+                  <Box
+                    position="absolute"
+                    top="0"
+                    left="0"
+                    bg="blackAlpha.700"
+                    color="white"
+                    px={1}
+                    cursor="pointer"
+                    onClick={() => onMovePhotoUp(ph.id)}
+                    title="Move earlier"
+                  >
+                    <Text fontSize="2xs" lineHeight="1.4">‹</Text>
+                  </Box>
+                )}
+              </Box>
+            ))}
+            {pendingUploads.map((u) => (
+              <Box
+                key={u.id}
+                position="relative"
+                w="48px"
+                h="48px"
+                bg="gray.100"
+                rounded="md"
+                overflow="hidden"
+              >
+                {/* The real file, shown immediately from an object URL —
+                    dimmed so it reads as not-yet-saved. */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={u.previewUrl}
+                  alt=""
+                  style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", opacity: 0.45 }}
+                />
+                <Box
+                  position="absolute"
+                  inset="0"
+                  display="flex"
+                  alignItems="center"
+                  justifyContent="center"
+                >
+                  <Spinner size="sm" color="blue.600" />
+                </Box>
+              </Box>
+            ))}
+            {editable && (
+              <Box
+                w="48px"
+                h="48px"
+                bg="yellow.50"
+                borderWidth="1px"
+                borderStyle="dashed"
+                borderColor="yellow.400"
+                rounded="md"
+                display="flex"
+                alignItems="center"
+                justifyContent="center"
+                cursor="pointer"
+                color="yellow.700"
+                onClick={() => fileInputRef.current?.click()}
+                title="Add a photo"
+              >
+                <Text fontSize="lg" lineHeight="1">+</Text>
+              </Box>
+            )}
+            {!editable && item.photos.length === 0 && pendingUploads.length === 0 && (
+              <Text fontSize="2xs" color="fg.muted">No photos</Text>
+            )}
+          </HStack>
+          {pendingUploads.length > 0 && (
+            <Text fontSize="2xs" color="blue.600" mt={1}>
+              Uploading {pendingUploads.length} photo{pendingUploads.length === 1 ? "" : "s"}…
+            </Text>
           )}
           <input
             ref={fileInputRef}
             type="file"
             accept="image/*"
+            multiple
             style={{ display: "none" }}
             onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) onUpload(file);
+              // Multi-select: upload every file the operator picked.
+              const files = Array.from(e.target.files ?? []);
+              files.forEach((f) => onUpload(f));
               e.target.value = "";
             }}
           />
@@ -1753,8 +2317,9 @@ function LandingItemRow({
                     Save
                   </Button>
                 )}
+                {/* "Add", never "Replace" — uploads append now. */}
                 <Button size="xs" variant="ghost" onClick={() => fileInputRef.current?.click()}>
-                  {item.imageUrl ? "Replace image" : "Upload image"}
+                  {item.photos.length > 0 ? "Add photos" : "Upload photos"}
                 </Button>
                 {onMoveUp && <Button size="xs" variant="ghost" onClick={onMoveUp}>↑</Button>}
                 {onMoveDown && <Button size="xs" variant="ghost" onClick={onMoveDown}>↓</Button>}
@@ -1801,8 +2366,8 @@ function StandaloneLandingPageDialog({
               {status === "ACTIVE" && (
                 <Text fontSize="xs" color="fg.muted" mt={1}>
                   Editing while active — changes go live immediately for anyone
-                  who clicks the promo link. The URL slug is locked until the
-                  promotion is closed.
+                  who clicks the promo link. The URL slug stays editable until
+                  the first delivery ships, then locks for good.
                 </Text>
               )}
             </Dialog.Header>

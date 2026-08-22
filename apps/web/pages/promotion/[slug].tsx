@@ -11,7 +11,9 @@
 
 import { GetServerSideProps } from "next";
 import Head from "next/head";
-import { Box, Container, Grid, Heading, HStack, Link as ChakraLink, Text, VStack } from "@chakra-ui/react";
+import { useState } from "react";
+import PhotoLightbox from "@/src/ui/components/PhotoLightbox";
+import { Box, Container, Grid, Heading, HStack, Link as ChakraLink, SimpleGrid, Text, VStack } from "@chakra-ui/react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
@@ -19,7 +21,8 @@ type LandingPageItem = {
   id: string;
   title: string;
   description: string;
-  imageUrl: string | null;
+  /** All photos in display order; first is the cover / og:image. */
+  photos: { id: string; url: string }[];
 };
 
 type BusinessBlock = {
@@ -35,6 +38,13 @@ type LandingPageData = {
   intro: string | null;
   items: LandingPageItem[];
   promotionActive: boolean;
+  /** Why the page isn't live. Coarse by design — see
+   *  loadLandingPageForPublic. Older responses may omit it, hence the
+   *  optional type and the fallback in the copy map below. */
+  inactiveReason?: "not_started" | "ended" | "unavailable" | null;
+  /** True when the content is only visible via an operator preview token.
+   *  Drives the "not live yet" banner. */
+  preview?: boolean;
   business: BusinessBlock;
 };
 
@@ -47,6 +57,12 @@ type Props = {
 };
 
 export default function PromotionLandingPage({ slug, page, ogTitle, ogDescription, ogImage }: Props) {
+  // Carousel state. Scoped to ONE item — a client browsing "Clean yard
+  // debris" should page through that entry's photos, not slide into the
+  // next service's. Null = closed.
+  const [lightbox, setLightbox] = useState<{ itemId: string; index: number } | null>(null);
+  const lightboxPhotos =
+    (lightbox && page?.items.find((i) => i.id === lightbox.itemId)?.photos) || [];
   return (
     <>
       <Head>
@@ -66,14 +82,68 @@ export default function PromotionLandingPage({ slug, page, ogTitle, ogDescriptio
                 This promotion link doesn&apos;t exist. It may have been removed.
               </Text>
             </Notice>
-          ) : !page.promotionActive ? (
-            <Notice title="This offer has ended">
-              <Text>
-                The promotion for <b>{slug}</b> has ended. Please contact us for current offers.
-              </Text>
-            </Notice>
+          ) : !page.promotionActive && !page.preview ? (
+            // `preview` deliberately leaves promotionActive false — the page
+            // is NOT live, and nothing downstream should treat it as such
+            // (no view-count bump, banner shown). But the operator still
+            // needs to SEE it, so preview takes the content branch.
+            // A draft campaign, or one whose window hasn't opened, has NOT
+            // ended — saying so misleads clients and misleads the operator
+            // previewing their own unpublished page. The server sends a
+            // coarse reason; content stays withheld either way.
+            (() => {
+              const notice = {
+                not_started: {
+                  title: "This offer isn't available yet",
+                  body: "This promotion hasn't started. Please check back soon, or contact us for current offers.",
+                },
+                ended: {
+                  title: "This offer has ended",
+                  body: "This promotion has ended. Please contact us for current offers.",
+                },
+                unavailable: {
+                  title: "This offer isn't available right now",
+                  body: "This promotion isn't running at the moment. Please contact us for current offers.",
+                },
+                // Pre-`inactiveReason` responses: keep the old wording
+                // rather than guessing at a state the server didn't send.
+                unknown: {
+                  title: "This offer has ended",
+                  body: "This promotion has ended. Please contact us for current offers.",
+                },
+              }[page.inactiveReason ?? "unknown"];
+              return (
+                <Notice title={notice.title}>
+                  <Text>{notice.body}</Text>
+                </Notice>
+              );
+            })()
           ) : (
             <VStack align="stretch" gap={6}>
+              {/* Preview banner. Unmissable on purpose — this page looks
+                  exactly like the live one, and mistaking a draft for
+                  published is the failure mode worth designing against. */}
+              {page.preview && (
+                <Box
+                  bg="orange.100"
+                  borderWidth="1px"
+                  borderColor="orange.300"
+                  borderLeftWidth="4px"
+                  borderLeftColor="orange.500"
+                  rounded="md"
+                  px={4}
+                  py={3}
+                >
+                  <Text fontWeight="bold" color="orange.900" fontSize="sm">
+                    Preview — not live
+                  </Text>
+                  <Text color="orange.900" fontSize="xs" mt={1}>
+                    Only you can see this. Clients visiting this link get
+                    &ldquo;not available yet&rdquo; until you start the campaign.
+                    This preview link expires shortly.
+                  </Text>
+                </Box>
+              )}
               <ContactHeader business={page.business} />
               {page.headline && (
                 <Heading size={{ base: "lg", md: "xl" }} color="fg.default">
@@ -91,16 +161,32 @@ export default function PromotionLandingPage({ slug, page, ogTitle, ogDescriptio
                 </Text>
               ) : (
                 <Grid
+                  // auto-fit + a max track width, rather than a fixed
+                  // column count. A fixed count left a single item pinned
+                  // to a third of the width with dead space beside it, and
+                  // the 1fr max let a lone card balloon. auto-fit collapses
+                  // the empty tracks, the 320px cap keeps every card the
+                  // same size whether there's one or nine, and centering
+                  // means a short row sits in the middle instead of
+                  // hugging the left edge.
                   templateColumns={{
-                    base: "1fr",
-                    sm: "repeat(2, 1fr)",
-                    md: "repeat(2, 1fr)",
-                    lg: "repeat(3, 1fr)",
+                    base: "repeat(auto-fit, minmax(240px, 1fr))",
+                    sm: "repeat(auto-fit, minmax(240px, 320px))",
                   }}
+                  justifyContent="center"
+                  // Cards size to their own content. Grid's default
+                  // `stretch` made every card as tall as the tallest in the
+                  // row — which, with one short item, produced a card of
+                  // mostly empty white.
+                  alignItems="start"
                   gap={{ base: 4, md: 6 }}
                 >
                   {page.items.map((item) => (
-                    <ItemCard key={item.id} item={item} />
+                    <ItemCard
+                      key={item.id}
+                      item={item}
+                      onOpenPhoto={(i) => setLightbox({ itemId: item.id, index: i })}
+                    />
                   ))}
                 </Grid>
               )}
@@ -108,11 +194,33 @@ export default function PromotionLandingPage({ slug, page, ogTitle, ogDescriptio
           )}
         </Container>
       </Box>
+      {lightbox && lightboxPhotos.length > 0 && (
+        <PhotoLightbox
+          photos={lightboxPhotos}
+          index={Math.min(lightbox.index, lightboxPhotos.length - 1)}
+          onClose={() => setLightbox(null)}
+          onPrev={() =>
+            setLightbox((l) => (l && l.index > 0 ? { ...l, index: l.index - 1 } : l))
+          }
+          onNext={() =>
+            setLightbox((l) =>
+              l && l.index < lightboxPhotos.length - 1 ? { ...l, index: l.index + 1 } : l,
+            )
+          }
+        />
+      )}
     </>
   );
 }
 
-function ItemCard({ item }: { item: LandingPageItem }) {
+function ItemCard({
+  item,
+  onOpenPhoto,
+}: {
+  item: LandingPageItem;
+  /** Opens the shared carousel at this photo's index within the item. */
+  onOpenPhoto: (index: number) => void;
+}) {
   return (
     <Box
       bg="white"
@@ -122,33 +230,75 @@ function ItemCard({ item }: { item: LandingPageItem }) {
       overflow="hidden"
       shadow="sm"
     >
-      <Box
-        w="100%"
-        style={{ aspectRatio: "1" }}
-        bg="gray.100"
-        overflow="hidden"
-      >
-        {item.imageUrl ? (
-          // Direct <img> — Next.js's Image component would require
-          // configuring remotePatterns for the R2 presigned domain,
-          // and presigned URLs rotate every 6 hours making the optimization
-          // cache thrash. Plain <img> is fine for this use case.
-          // eslint-disable-next-line @next/next/no-img-element
+      {/* Photo grid. One photo fills the card's width; several tile into
+          squares. Tapping any opens the carousel at that photo, so the
+          grid stays compact no matter how many photos an entry has.
+
+          Direct <img> — Next.js's Image component would need
+          remotePatterns for the R2 presigned domain, and presigned URLs
+          rotate every 6 hours, so the optimization cache would thrash. */}
+      {item.photos.length === 0 ? (
+        <Box w="100%" style={{ aspectRatio: "1" }} bg="gray.100" overflow="hidden">
+          <MissingPhotoPlaceholder />
+        </Box>
+      ) : item.photos.length === 1 ? (
+        <Box
+          w="100%"
+          style={{ aspectRatio: "1" }}
+          bg="gray.100"
+          overflow="hidden"
+          cursor="pointer"
+          onClick={() => onOpenPhoto(0)}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={item.imageUrl}
+            src={item.photos[0].url}
             alt={item.title}
-            style={{
-              width: "100%",
-              height: "100%",
-              objectFit: "cover",
-              display: "block",
-            }}
+            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
             loading="lazy"
           />
-        ) : (
-          <MissingPhotoPlaceholder />
-        )}
-      </Box>
+        </Box>
+      ) : (
+        <SimpleGrid columns={item.photos.length === 2 ? 2 : 3} gap="2px" bg="gray.100">
+          {item.photos.slice(0, 6).map((ph, i) => {
+            // 6th tile doubles as a "+N more" affordance when there are
+            // more photos than fit — the carousel still holds all of them.
+            const overflow = i === 5 && item.photos.length > 6;
+            return (
+              <Box
+                key={ph.id}
+                position="relative"
+                style={{ aspectRatio: "1" }}
+                overflow="hidden"
+                cursor="pointer"
+                onClick={() => onOpenPhoto(i)}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={ph.url}
+                  alt=""
+                  style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                  loading="lazy"
+                />
+                {overflow && (
+                  <Box
+                    position="absolute"
+                    inset="0"
+                    bg="blackAlpha.600"
+                    display="flex"
+                    alignItems="center"
+                    justifyContent="center"
+                  >
+                    <Text color="white" fontWeight="bold" fontSize="lg">
+                      +{item.photos.length - 5}
+                    </Text>
+                  </Box>
+                )}
+              </Box>
+            );
+          })}
+        </SimpleGrid>
+      )}
       <Box p={4}>
         <Text fontWeight="bold" fontSize="md" mb={1}>
           {item.title}
@@ -321,7 +471,14 @@ function Notice({ title, children }: { title: string; children: React.ReactNode 
       textAlign="center"
     >
       <Heading size="md" mb={2}>{title}</Heading>
-      <Text color="fg.muted">{children}</Text>
+      {/* Box, not Text. Chakra's Text renders a <p>, and every caller here
+          passes its own <Text> as children — nesting <p> inside <p> is
+          invalid HTML, so the browser reparents it during parsing and the
+          client tree no longer matches the server's. That surfaced as
+          "Expected server HTML to contain a matching <p> in <p>" and took
+          the whole page down with a hydration error. A div wrapper accepts
+          block children of any shape. */}
+      <Box color="fg.muted">{children}</Box>
     </Box>
   );
 }
@@ -339,7 +496,12 @@ export const getServerSideProps: GetServerSideProps<Props> = async (ctx) => {
   const isAbsoluteApiBase = /^https?:\/\//i.test(API_BASE);
   const proto = String(ctx.req.headers["x-forwarded-proto"] ?? "https").split(",")[0];
   const origin = isAbsoluteApiBase ? API_BASE : `${proto}://${ctx.req.headers.host}${API_BASE}`;
-  const url = `${origin}/api/public/promotion/${encodeURIComponent(slug)}`;
+  // Forward the operator's preview token when present. The API verifies
+  // it (slug-scoped, short-lived HMAC); this layer just passes it along.
+  const previewToken = typeof ctx.query.preview === "string" ? ctx.query.preview : "";
+  const url =
+    `${origin}/api/public/promotion/${encodeURIComponent(slug)}` +
+    (previewToken ? `?preview=${encodeURIComponent(previewToken)}` : "");
   let page: LandingPageData | null = null;
   try {
     const res = await fetch(url, { headers: { accept: "application/json" } });
@@ -357,7 +519,9 @@ export const getServerSideProps: GetServerSideProps<Props> = async (ctx) => {
     page?.intro?.slice(0, 200) ||
     page?.items[0]?.description?.slice(0, 200) ||
     "See our latest offers.";
-  const ogImage = page?.items[0]?.imageUrl ?? null;
+  // First available photo across items — an item without photos shouldn't
+  // cost the page its link preview.
+  const ogImage = page?.items.flatMap((i) => i.photos)[0]?.url ?? null;
   return {
     props: { slug, page, ogTitle, ogDescription, ogImage },
   };

@@ -5143,37 +5143,6 @@ export default function JobsTab({
                   toggleCard();
                 } : undefined}
               >
-                {/* Occurrence instructions — surfaced at the TOP of
-                    the card (before header/body/footer) on semi +
-                    expanded densities so critical notes are the
-                    first thing the worker reads. Ultra stays clean;
-                    OccurrenceInstructions guidance (photos + notes)
-                    still renders at the bottom below since it's more
-                    of a details drawer than a warning banner. */}
-                {cardMode !== "ultra" && ((occ as any).instructions ?? []).length > 0 && (
-                  <Box mx="3" mt="2" mb="0" px="3" py="1.5" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
-                    <VStack align="stretch" gap="0.5">
-                      {((occ as any).instructions as { id: string; text: string; repeats: boolean }[]).map((inst) => (
-                        <HStack key={inst.id} gap="1.5" align="center">
-                          <AlertCircle
-                            size={18}
-                            color="var(--chakra-colors-yellow-900)"
-                            fill="var(--chakra-colors-yellow-400)"
-                            strokeWidth={2.5}
-                          />
-                          <Text fontSize="xs" fontWeight="semibold" color="yellow.700" flex="1">
-                            {inst.text}
-                          </Text>
-                          {inst.repeats && (
-                            <Box display="inline-flex" alignItems="center" title="Carries forward">
-                              <Repeat size={12} color="var(--chakra-colors-yellow-700)" />
-                            </Box>
-                          )}
-                        </HStack>
-                      ))}
-                    </VStack>
-                  </Box>
-                )}
                 {/* Loading overlay */}
                 {busyOccId === occ.id && (
                   <Box position="absolute" inset="0" bg="whiteAlpha.700" zIndex="1" display="flex" alignItems="center" justifyContent="center" borderRadius="inherit">
@@ -6054,6 +6023,41 @@ export default function JobsTab({
                       </Box>
                     )}
                 </Card.Header>
+
+                {/* Occurrence instructions — rendered directly BELOW the
+                    title bar (between Card.Header and the body), so the
+                    worker reads the job name first and the critical notes
+                    immediately under it. Ultra needs no density guard here:
+                    this sits inside the non-ultra branch of the cardMode
+                    ternary, so it's structurally unreachable at that
+                    density (the ultra row surfaces the same signal via the
+                    yellow AlertCircle chip). OccurrenceInstructions
+                    guidance (photos + notes) still renders at the bottom of
+                    the card — that's a details drawer, not a warning. */}
+                {((occ as any).instructions ?? []).length > 0 && (
+                  <Box mx="3" mt="2" mb="0" px="3" py="1.5" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
+                    <VStack align="stretch" gap="0.5">
+                      {((occ as any).instructions as { id: string; text: string; repeats: boolean }[]).map((inst) => (
+                        <HStack key={inst.id} gap="1.5" align="center">
+                          <AlertCircle
+                            size={18}
+                            color="var(--chakra-colors-yellow-900)"
+                            fill="var(--chakra-colors-yellow-400)"
+                            strokeWidth={2.5}
+                          />
+                          <Text fontSize="xs" fontWeight="semibold" color="yellow.700" flex="1">
+                            {inst.text}
+                          </Text>
+                          {inst.repeats && (
+                            <Box display="inline-flex" alignItems="center" title="Carries forward">
+                              <Repeat size={12} color="var(--chakra-colors-yellow-700)" />
+                            </Box>
+                          )}
+                        </HStack>
+                      ))}
+                    </VStack>
+                  </Box>
+                )}
 
                 {/* Peek strip — renders at the top of the card body
                     (immediately below the title bar) whenever the
@@ -8244,8 +8248,9 @@ export default function JobsTab({
                     same flow as the fully-expanded card, just starts collapsed. */}
                 {/* Guidance drawer (photos + guidance note) stays at
                     the bottom of the card. The yellow instructions
-                    banner was relocated to the TOP of the Card.Root
-                    above so critical notes surface first. */}
+                    banner sits directly under the title bar (just below
+                    Card.Header above) so critical notes surface with the
+                    job name rather than ahead of it. */}
                 {isCardCompact ? (
                   (occ.propertyPhotos ?? []).length > 0 && (
                     <Box mx="3" mb="2" mt="0">

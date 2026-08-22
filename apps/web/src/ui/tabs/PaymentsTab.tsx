@@ -23,7 +23,7 @@ import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/li
 import DateInput from "@/src/ui/components/DateInput";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import { apiGet, apiPatch, apiDelete, apiPost } from "@/src/lib/api";
-import { determineRoles, prettyStatus, clientLabel, fmtDate, fmtDateTime, bizDateKey, bizToday, bizAddDays, bizAddYears } from "@/src/lib/lib";
+import { determineRoles, prettyStatus, clientLabel, fmtDate, fmtDateKey, fmtDateTime, bizDateKey, bizToday, bizAddDays, bizAddYears, type EtDateKey } from "@/src/lib/lib";
 import { composePaymentMessage } from "@/src/lib/paymentMessages";
 import { resolveBillingMode, shortBillingChip } from "@/src/lib/equipmentBilling";
 import { useEquipmentBillingEnabled } from "@/src/lib/useEquipmentBillingEnabled";
@@ -1008,6 +1008,10 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
   const [editMethod, setEditMethod] = useState<string[]>([]);
   const [editNote, setEditNote] = useState("");
   const [editSplits, setEditSplits] = useState<Record<string, string>>({});
+  // Money-received date. Seeded from Payment.createdAt (which IS the
+  // received date — there's no separate column) so the operator can fix a
+  // date they missed back-dating at approval time.
+  const [editPaidAt, setEditPaidAt] = useState<EtDateKey>("" as EtDateKey);
   const [editBusy, setEditBusy] = useState(false);
   const [editConfirm, setEditConfirm] = useState(false);
 
@@ -1486,6 +1490,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
     const map: Record<string, string> = {};
     p.splits.forEach((sp) => { map[sp.userId] = sp.amount.toFixed(2); });
     setEditSplits(map);
+    setEditPaidAt(p.createdAt ? bizDateKey(p.createdAt) : bizToday());
     setEditConfirm(false);
   }
 
@@ -1506,10 +1511,15 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
         userId: sp.userId,
         amount: parseFloat(editSplits[sp.userId] || "0"),
       }));
+      const originalPaidAt = editPayment.createdAt ? bizDateKey(editPayment.createdAt) : "";
       await apiPatch(`/api/admin/payments/${editPayment.id}`, {
         amountPaid: amt,
         method: editMethod[0],
         note: editNote.trim() || null,
+        // Only sent when the operator actually moved the date — an unchanged
+        // value is a no-op server-side anyway, but omitting it keeps the
+        // audit trail free of phantom "date corrected" rows.
+        ...(editPaidAt && editPaidAt !== originalPaidAt ? { paidAt: editPaidAt } : {}),
         splits,
       });
       publishInlineMessage({ type: "SUCCESS", text: composePaymentMessage("updated") });
@@ -2926,6 +2936,19 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                     </Select.Root>
                   </div>
                   <div>
+                    <Text mb="1">Date Received</Text>
+                    <DateInput
+                      value={editPaidAt}
+                      max={bizToday()}
+                      onChange={(val) => { setEditPaidAt(val); setEditConfirm(false); }}
+                    />
+                    <Text fontSize="xs" color="fg.muted" mt="1">
+                      The day the money actually landed. Correct this if it was
+                      recorded on the wrong date — it drives which week the
+                      payment shows up in on reports and payroll exports.
+                    </Text>
+                  </div>
+                  <div>
                     <Text mb="1">Note</Text>
                     <Input
                       value={editNote}
@@ -2961,6 +2984,14 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                   <Text fontSize="sm" color="orange.600" fontWeight="medium">
                     Are you sure you want to update this payment? This will change the recorded payment amounts.
                   </Text>
+                  {editPayment && editPaidAt && editPaidAt !== bizDateKey(editPayment.createdAt ?? "") && (
+                    <Text fontSize="sm" color="orange.600">
+                      The received date moves from{" "}
+                      {editPayment.createdAt ? fmtDate(editPayment.createdAt) : "—"} to{" "}
+                      {fmtDateKey(editPaidAt)}. Reports, exports, and payroll
+                      windows will show this payment on the new date.
+                    </Text>
+                  )}
                 </VStack>
               )}
 
