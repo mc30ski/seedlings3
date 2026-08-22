@@ -1986,11 +1986,15 @@ model PromotionLandingPageItem {
   title       String
   description String @db.Text  // Markdown
 
-  // R2 storage key in the promotion-images bucket. Square-cropped at
-  // render time via CSS (any aspect ratio uploads accepted). Deleting
-  // the item deletes the R2 object best-effort.
+  // DEPRECATED — superseded by the `photos` relation below, which
+  // supports multiple images per item. Retained (not dropped) so the
+  // backfill in migration `add_landing_item_photos` stays auditable and
+  // a rollback doesn't lose the original key. Nothing reads these two
+  // columns any more; new writes go to PromotionLandingPageItemPhoto.
   imageR2Key    String?
   imageMimeType String?
+
+  photos PromotionLandingPageItemPhoto[]
 
   // Display order — lower first. Editor drag-reorders update this.
   ordinal Int
@@ -1999,6 +2003,28 @@ model PromotionLandingPageItem {
   updatedAt DateTime @updatedAt
 
   @@index([pageId, ordinal])
+}
+
+// One photo on a landing-page item. Mirrors the PropertyPhoto shape
+// (r2Key + contentType + sortOrder) so the upload/confirm/delete flow
+// matches every other photo surface in the app.
+model PromotionLandingPageItemPhoto {
+  id     String                   @id @default(cuid())
+  itemId String
+  item   PromotionLandingPageItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  // R2 storage key in the promotion-images bucket. Any aspect ratio is
+  // accepted; the grid square-crops at render time via CSS.
+  r2Key       String
+  contentType String?
+
+  // Display order within the item — lower first. The first photo is the
+  // one used for link previews (og:image).
+  sortOrder Int @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([itemId, sortOrder])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

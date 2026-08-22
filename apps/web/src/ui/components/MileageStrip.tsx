@@ -32,6 +32,7 @@ import {
 } from "@chakra-ui/react";
 import { Car, Play, StopCircle, X } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
+import { fetchWorkdayToday, type WorkdayState } from "@/src/lib/workday";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -80,6 +81,11 @@ export default function MileageStrip({
 } = {}) {
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [openEntries, setOpenEntries] = useState<OpenEntry[]>([]);
+  // Workday state drives the "you're on the clock — start mileage too"
+  // nudge. A worker who clocks in with a vehicle assigned almost always
+  // means to log the drive, and forgetting at the start is unrecoverable
+  // (the odometer reading is gone by the time they notice).
+  const [workdayState, setWorkdayState] = useState<WorkdayState["state"] | null>(null);
   const [loading, setLoading] = useState(true);
   // Which vehicle is the "start" dialog for. null = dialog closed.
   const [startDialog, setStartDialog] = useState<Vehicle | null>(null);
@@ -92,12 +98,17 @@ export default function MileageStrip({
 
   const load = useCallback(async () => {
     try {
-      const [vs, opens] = await Promise.all([
+      const [vs, opens, workday] = await Promise.all([
         apiGet<Vehicle[]>("/api/me/vehicles"),
         apiGet<OpenEntry[]>("/api/me/mileage/open"),
+        // Tolerate a workday fetch failure independently — a missing
+        // workday state only costs the nudge, it must never blank the
+        // strip a driver needs to reach their Stop button.
+        fetchWorkdayToday().catch(() => null),
       ]);
       setVehicles(Array.isArray(vs) ? vs : []);
       setOpenEntries(Array.isArray(opens) ? opens : []);
+      setWorkdayState(workday?.today?.state ?? null);
     } catch {
       // Silent fail — the strip either doesn't render (no vehicles)
       // or shows a "reload" prompt. No point in a toast for a
@@ -109,6 +120,19 @@ export default function MileageStrip({
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  // Re-read when a workday starts/ends elsewhere (WorkdayStrip, the Jobs
+  // tab banner, the offline queue draining) so the nudge appears the
+  // moment the worker clocks in, without a manual refresh.
+  useEffect(() => {
+    const onChange = () => void load();
+    window.addEventListener("seedlings:workday-changed", onChange);
+    window.addEventListener("focus", onChange);
+    return () => {
+      window.removeEventListener("seedlings:workday-changed", onChange);
+      window.removeEventListener("focus", onChange);
+    };
   }, [load]);
 
   // Self-hide when the worker has no assigned vehicles AND no open
@@ -123,6 +147,17 @@ export default function MileageStrip({
   const vehiclesWithoutOpenSession = vehicles.filter(
     (v) => !openEntries.some((o) => o.vehicleId === v.id),
   );
+
+  // Nudge condition: worker is on the clock, has a vehicle they could be
+  // driving, and hasn't opened a session. PAUSED counts — a paused
+  // workday is still an active day, and a worker who paused mid-route is
+  // exactly who'd forget to start the drive log. NOT_STARTED and
+  // COMPLETED deliberately don't nudge: there's no day to attach the
+  // miles to, and nagging outside working hours trains people to ignore it.
+  const suggestStart =
+    (workdayState === "IN_PROGRESS" || workdayState === "PAUSED") &&
+    openEntries.length === 0 &&
+    vehiclesWithoutOpenSession.length > 0;
 
   // Compact render — small icon button + a single unified dialog that
   // handles vehicle-pick AND odometer input in one flow (no cross-
@@ -145,8 +180,8 @@ export default function MileageStrip({
             e.stopPropagation();
             setCompactPickerOpen(true);
           }}
-          title={hasOpen ? "Stop driving" : "Start driving"}
-          aria-label={hasOpen ? "Stop driving" : "Start driving"}
+          title={hasOpen ? "Stop driving" : suggestStart ? "You're on the clock — start your mileage" : "Start driving"}
+          aria-label={hasOpen ? "Stop driving" : suggestStart ? "You're on the clock — start your mileage" : "Start driving"}
           display="flex"
           alignItems="center"
           justifyContent="center"
@@ -162,6 +197,11 @@ export default function MileageStrip({
           }}
           position="relative"
           flexShrink={0}
+          // Collapsed-row nudge. The expanded strip spells the suggestion
+          // out in words; here there's only the icon, so it pulses instead.
+          // Reuses the same keyframe the workday strip uses for active
+          // states rather than inventing a second attention animation.
+          css={suggestStart ? { animation: "seedlings-pulse-orange 2.5s ease-in-out infinite" } : undefined}
         >
           <Car size={18} strokeWidth={2.2} />
           {hasOpen && (
@@ -230,6 +270,33 @@ export default function MileageStrip({
             row reads "Start driving <name>". */}
         {vehiclesWithoutOpenSession.length > 0 && (
           <>
+            {/* On-the-clock nudge — the worker started a workday and has a
+                vehicle assigned but no open drive log. Amber (not red):
+                this is a suggestion, not an error, and plenty of workdays
+                legitimately involve no driving. Disappears the moment a
+                session opens or the day ends. */}
+            {suggestStart && (
+              <HStack
+                gap={2}
+                align="start"
+                p={2}
+                mb={1}
+                borderWidth="1px"
+                borderColor="orange.300"
+                bg="orange.50"
+                borderRadius="md"
+              >
+                <Car size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+                <Text fontSize="xs" color="orange.900">
+                  You&rsquo;re on the clock{vehiclesWithoutOpenSession.length === 1
+                    ? ` and ${vehiclesWithoutOpenSession[0].displayName} is assigned to you`
+                    : " with vehicles assigned to you"}
+                  . Start your mileage too if you&rsquo;re driving today &mdash;
+                  you&rsquo;ll need the starting odometer, so it&rsquo;s easiest
+                  before you pull out.
+                </Text>
+              </HStack>
+            )}
             <HStack gap={2} wrap="wrap">
               {vehiclesWithoutOpenSession.map((v) => (
                 <Button

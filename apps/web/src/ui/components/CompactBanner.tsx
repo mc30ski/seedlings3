@@ -138,16 +138,23 @@ export function CompactBanner({
       style={animation ? { animation } : undefined}
       overflow="hidden"
     >
-      {/* Compact row — kept at exactly 48px so all banners line up.
+      {/* Compact row — kept at exactly 48px while COLLAPSED so all
+          banners line up. On expand the height constraint is released
+          and the summary text below wraps to its full length: the
+          ellipsis is a collapsed-state affordance, and keeping it after
+          the worker asked for more would hide the very words they
+          expanded to read.
           When the banner is expandable, the entire row (except the
           action buttons) is the toggle. Buttons stop propagation so
           clicking an action never accidentally toggles the reveal. */}
       <HStack
         gap={2}
-        align="center"
+        align={expanded ? "start" : "center"}
         wrap="nowrap"
         w="full"
-        h="48px"
+        h={expanded ? "auto" : "48px"}
+        minH="48px"
+        py={expanded ? 3 : 0}
         px={3}
         cursor={isExpandable ? "pointer" : "default"}
         onClick={isExpandable ? () => setExpanded((v) => !v) : undefined}
@@ -158,6 +165,7 @@ export function CompactBanner({
             flexShrink={0}
             display="flex"
             alignItems="center"
+            mt={expanded ? "3px" : undefined}
             style={{
               transform: expanded ? "rotate(180deg)" : undefined,
               transition: "transform 0.15s ease",
@@ -167,17 +175,26 @@ export function CompactBanner({
             <ChevronDown size={14} />
           </Box>
         )}
-        <Box color={`${palette}.600`} display="flex" alignItems="center" flexShrink={0}>
+        <Box
+          color={`${palette}.600`}
+          display="flex"
+          alignItems="center"
+          flexShrink={0}
+          mt={expanded ? "2px" : undefined}
+        >
           {icon}
         </Box>
+        {/* Summary text. Clamped to one ellipsised line while collapsed
+            so every banner is the same height; wraps freely once
+            expanded so nothing stays hidden. */}
         <Box
           fontSize="sm"
           color={`${palette}.900`}
           flex="1"
           minW={0}
-          overflow="hidden"
-          textOverflow="ellipsis"
-          whiteSpace="nowrap"
+          overflow={expanded ? undefined : "hidden"}
+          textOverflow={expanded ? undefined : "ellipsis"}
+          whiteSpace={expanded ? "normal" : "nowrap"}
         >
           {children}
         </Box>

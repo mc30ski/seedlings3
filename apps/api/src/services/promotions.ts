@@ -326,7 +326,21 @@ export function buildAnonymousShortUrl(baseUrl: string, slug: string): string {
 // Promo short-URL slug: kebab-case + digits, 1–40 chars. Same rules as
 // vanity URL slugs so operators don't have to context-switch. Enforced
 // both at the save-payload Zod schema and at slug-lock-check time.
-const PROMO_SHORT_SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,39}$/;
+// Short-slug format. Cap raised 40 -> 64 on 2026-08-22 to match the
+// landing-page slug cap (slugifyTitle), so the short code can always
+// mirror the landing page address — the two used to disagree, which made
+// mirroring impossible for longer campaign names and forced operators to
+// invent a second name by hand.
+//
+// 64 is a sanity bound, not a product rule: the column is unconstrained
+// and a path segment this long is still valid. Length ABOVE 40 is now a
+// UI warning (SMS segment cost — see smsSegmentInfo and Invariant E)
+// rather than a hard stop, per operator decision.
+const PROMO_SHORT_SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,63}$/;
+
+/** Length beyond which a short slug starts meaningfully eating into an
+ *  SMS segment. Advisory only — callers warn, they don't reject. */
+export const SHORT_SLUG_SMS_ADVISORY_LENGTH = 40;
 
 export function isValidShortSlugFormat(slug: string): boolean {
   return PROMO_SHORT_SLUG_PATTERN.test(slug);
@@ -468,6 +482,66 @@ export function signPromoClickToken(
   requireSecret(secret);
   const payload = `p:${promotionId}:${contactId ?? ""}`;
   return createHmac("sha256", secret).update(payload).digest("base64url");
+}
+
+/** Preview-token lifetime. Short: a preview link bypasses the ACTIVE
+ *  check, so it must stop working soon after the operator stops using it.
+ *  Expressed in minutes then converted, to stay clear of the build gate's
+ *  spelled-out-millisecond rules. */
+export const LANDING_PREVIEW_TTL_MINUTES = 30;
+
+/**
+ * Sign a preview token for one landing-page slug.
+ *
+ * Third HMAC flavor alongside delivery (`d:`) and promo (`p:`) click
+ * tokens, namespaced `v:` so it can never cross-verify with either — the
+ * same isolation Invariants I and M lock in for the other two.
+ *
+ * The expiry is BOTH inside the signed payload and carried in the token
+ * (`<expiryMs>.<sig>`), so a tampered expiry changes the payload and
+ * fails the signature. There's no server-side state to store or revoke.
+ */
+export function signLandingPreviewToken(
+  secret: string,
+  slug: string,
+  expiresAtMs: number,
+): string {
+  requireSecret(secret);
+  const sig = createHmac("sha256", secret)
+    .update(`v:${slug}:${expiresAtMs}`)
+    .digest("base64url");
+  return `${expiresAtMs}.${sig}`;
+}
+
+/**
+ * Verify a preview token for a slug. Never throws — this runs on a public
+ * route, same 500-safety rule as the other verifiers.
+ *
+ * Returns false for: bad secret, malformed token, expired token, or a
+ * signature that doesn't match. Expiry is checked BEFORE the HMAC so an
+ * expired token is cheap to reject.
+ */
+export function verifyLandingPreviewToken(
+  secret: string,
+  slug: string,
+  token: string,
+  nowMs: number,
+): boolean {
+  if (!isSecretValid(secret) || !slug || !token) return false;
+  const dot = token.indexOf(".");
+  if (dot <= 0) return false;
+  const expRaw = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  if (!sig || !/^[0-9]{1,15}$/.test(expRaw)) return false;
+  const expiresAtMs = Number(expRaw);
+  if (!Number.isFinite(expiresAtMs) || expiresAtMs <= nowMs) return false;
+  const expected = createHmac("sha256", secret)
+    .update(`v:${slug}:${expiresAtMs}`)
+    .digest("base64url");
+  const a = Buffer.from(sig, "utf8");
+  const b = Buffer.from(expected, "utf8");
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }
 
 export function verifyPromoClickToken(
@@ -1808,6 +1882,10 @@ export async function loadInvoicePagePromos(params: {
     body: string;
     ctaText: string;
     ctaUrl: string | null;
+    /** First photo from the promo's landing page — the cover. Null for
+     *  EXTERNAL-link promos (no landing page) and for landing pages whose
+     *  items have no photos yet. */
+    imageUrl: string | null;
   }[]
 > {
   // Load the viewing contact's opt-out state (if any) so we can apply
@@ -1846,6 +1924,7 @@ export async function loadInvoicePagePromos(params: {
     body: string;
     ctaText: string;
     ctaUrl: string | null;
+    imageUrl: string | null;
   }[] = [];
   for (const p of promos) {
     const surfaces = Array.isArray(p.displaySurfaces)
@@ -1882,12 +1961,30 @@ export async function loadInvoicePagePromos(params: {
       channel: "invoice_page",
       unsubscribeLink: null,
     });
+    // Cover photo — first photo of the first item on the promo's landing
+    // page. Fetched per surviving promo rather than joined into the list
+    // query above, because the vast majority of promos are filtered out
+    // by the surface/opt-out checks before reaching here.
+    let imageUrl: string | null = null;
+    if (p.landingPageId) {
+      const cover = await prisma.promotionLandingPageItemPhoto.findFirst({
+        where: { item: { pageId: p.landingPageId } },
+        orderBy: [{ item: { ordinal: "asc" } }, { sortOrder: "asc" }],
+        select: { r2Key: true },
+      });
+      if (cover) {
+        imageUrl = await getDownloadUrl(cover.r2Key, 6 * 3600, "promotion-images").catch(
+          () => null,
+        );
+      }
+    }
     out.push({
       id: p.id,
       headline: snap.headline,
       body: snap.body,
       ctaText: snap.ctaText,
       ctaUrl: snap.ctaUrl,
+      imageUrl,
     });
   }
   return out;
@@ -1954,14 +2051,40 @@ export async function updateLandingPage(params: {
 }): Promise<{ id: string; slug: string }> {
   const page = await prisma.promotionLandingPage.findUnique({
     where: { id: params.pageId },
-    select: { id: true, slug: true, promotion: { select: { status: true } } },
+    select: { id: true, slug: true, promotion: { select: { id: true, status: true } } },
   });
   if (!page) throw new Error("Landing page not found");
   const nextSlug =
     params.payload.slug && params.payload.slug !== page.slug
       ? await (async () => {
-          if (page.promotion && page.promotion.status !== "DRAFT") {
-            throw new Error("Cannot change slug once promotion is out of DRAFT");
+          // Lock on FIRST SHIPPED DELIVERY, not on leaving DRAFT.
+          //
+          // The rule's whole purpose is "URLs already in a client's hands
+          // must not 404". Status was only ever a proxy for that, and a
+          // bad one: activating a campaign doesn't put the URL anywhere
+          // by itself, so an operator who noticed a slug typo right after
+          // activating was locked out of fixing a URL nobody had seen.
+          //
+          // `deliveredAt: { not: null }` is the schema's own definition of
+          // shipped (see PromotionDelivery) — a row with deliveredAt null
+          // and skippedReason null is still queued, and a skipped row
+          // never carried the URL at all. Neither should lock the slug.
+          if (page.promotion) {
+            // CLOSED is terminal — the whole landing page is read-only,
+            // shipped or not. Without this the delivery-count rule alone
+            // would make a closed campaign's slug editable again, which
+            // the previous status-based guard blocked as a side effect.
+            if (page.promotion.status === "CLOSED") {
+              throw new Error("Cannot change slug — this promotion is closed.");
+            }
+            const shipped = await prisma.promotionDelivery.count({
+              where: { promotionId: page.promotion.id, deliveredAt: { not: null } },
+            });
+            if (shipped > 0) {
+              throw new Error(
+                `Cannot change slug — ${shipped} delivery${shipped === 1 ? "" : "s"} already carry this URL and would 404.`,
+              );
+            }
           }
           return ensureUniqueSlug(params.payload.slug!, page.id);
         })()
@@ -1989,34 +2112,54 @@ export async function loadLandingPageForEditor(params: {
   headline: string | null;
   intro: string | null;
   viewCount: number;
+  /** True once at least one delivery has actually shipped this URL, so the
+   *  slug can no longer change. Computed here rather than derived on the
+   *  client from status/counts — the editor's enable state and
+   *  updateLandingPage's guard must agree, and the only way to guarantee
+   *  that is to answer the question once, server-side. */
+  slugLocked: boolean;
+  /** How many deliveries carry the URL — drives the explanatory copy. */
+  shippedDeliveryCount: number;
   items: {
     id: string;
     title: string;
     description: string;
-    imageR2Key: string | null;
-    imageUrl: string | null;
-    imageMimeType: string | null;
     ordinal: number;
+    /** All photos, in display order. Empty array when none. */
+    photos: { id: string; url: string | null; contentType: string | null }[];
   }[];
 } | null> {
   const page = await prisma.promotionLandingPage.findUnique({
     where: { id: params.pageId },
     include: {
-      items: { orderBy: { ordinal: "asc" } },
+      items: {
+        orderBy: { ordinal: "asc" },
+        include: { photos: { orderBy: { sortOrder: "asc" } } },
+      },
+      promotion: { select: { id: true } },
     },
   });
   if (!page) return null;
+  // Same predicate as updateLandingPage's guard — see the comment there
+  // for why shipped-deliveries and not status.
+  const shippedDeliveryCount = page.promotion
+    ? await prisma.promotionDelivery.count({
+        where: { promotionId: page.promotion.id, deliveredAt: { not: null } },
+      })
+    : 0;
   const items = await Promise.all(
     page.items.map(async (i) => ({
       id: i.id,
       title: i.title,
       description: i.description,
-      imageR2Key: i.imageR2Key,
-      imageMimeType: i.imageMimeType,
       ordinal: i.ordinal,
-      imageUrl: i.imageR2Key
-        ? await getDownloadUrl(i.imageR2Key, 6 * 3600, "promotion-images").catch(() => null)
-        : null,
+      photos: await Promise.all(
+        i.photos.map(async (ph) => ({
+          id: ph.id,
+          contentType: ph.contentType,
+          url: await getDownloadUrl(ph.r2Key, 6 * 3600, "promotion-images").catch(() => null),
+        })),
+      ),
     })),
   );
   return {
@@ -2025,6 +2168,8 @@ export async function loadLandingPageForEditor(params: {
     headline: page.headline,
     intro: page.intro,
     viewCount: page.viewCount,
+    slugLocked: shippedDeliveryCount > 0,
+    shippedDeliveryCount,
     items,
   };
 }
@@ -2072,12 +2217,20 @@ export async function deleteLandingPageItem(params: {
 }): Promise<void> {
   const item = await prisma.promotionLandingPageItem.findUnique({
     where: { id: params.itemId },
-    select: { imageR2Key: true },
+    select: { imageR2Key: true, photos: { select: { r2Key: true } } },
   });
+  // The photo ROWS cascade on delete, but their R2 objects don't — collect
+  // the keys before the row disappears or the files are orphaned forever.
+  // Includes the deprecated single-image key so pre-migration leftovers
+  // still get cleaned up.
+  const keys = [
+    ...(item?.photos.map((ph) => ph.r2Key) ?? []),
+    ...(item?.imageR2Key ? [item.imageR2Key] : []),
+  ];
   await prisma.promotionLandingPageItem.delete({ where: { id: params.itemId } });
-  if (item?.imageR2Key) {
+  for (const key of new Set(keys)) {
     // Fire-and-forget — R2 cleanup shouldn't block the delete.
-    void deleteObject(item.imageR2Key, "promotion-images").catch(() => {});
+    void deleteObject(key, "promotion-images").catch(() => {});
   }
 }
 
@@ -2125,22 +2278,77 @@ export async function getLandingPageImageUploadUrl(params: {
 // After a successful client-side upload, persist the R2 key on the
 // item. Deletes any previous image (best-effort) so replacements don't
 // orphan bytes.
+/**
+ * Confirm a finished R2 upload by APPENDING it to the item's photos.
+ *
+ * Replaced the old single-image behavior (overwrite `imageR2Key`, delete
+ * the prior object). Items hold many photos now, so a second upload adds
+ * rather than destroys — deleting a photo is an explicit action.
+ */
 export async function confirmLandingPageImageUpload(params: {
   itemId: string;
   key: string;
   contentType: string;
+}): Promise<{ id: string }> {
+  // Append at the end. Aggregate rather than count() so a gap in
+  // sortOrder (left by a delete) can't collide with an existing row.
+  const max = await prisma.promotionLandingPageItemPhoto.aggregate({
+    where: { itemId: params.itemId },
+    _max: { sortOrder: true },
+  });
+  const created = await prisma.promotionLandingPageItemPhoto.create({
+    data: {
+      itemId: params.itemId,
+      r2Key: params.key,
+      contentType: params.contentType,
+      sortOrder: (max._max.sortOrder ?? -1) + 1,
+    },
+    select: { id: true },
+  });
+  return created;
+}
+
+/** Delete one photo, and its R2 object best-effort. */
+export async function deleteLandingPageItemPhoto(photoId: string): Promise<void> {
+  const photo = await prisma.promotionLandingPageItemPhoto.findUnique({
+    where: { id: photoId },
+    select: { r2Key: true },
+  });
+  if (!photo) return;
+  await prisma.promotionLandingPageItemPhoto.delete({ where: { id: photoId } });
+  // Best-effort: a stranded R2 object costs pennies, a failed request
+  // costs the operator their edit.
+  void deleteObject(photo.r2Key, "promotion-images").catch(() => {});
+}
+
+/**
+ * Reorder an item's photos to exactly the given id sequence.
+ *
+ * Ignores ids that don't belong to the item, so a stale client can't
+ * reassign another item's photo. Any photo omitted from the list keeps a
+ * stable position AFTER the listed ones rather than vanishing.
+ */
+export async function reorderLandingPageItemPhotos(params: {
+  itemId: string;
+  photoIds: string[];
 }): Promise<void> {
-  const prev = await prisma.promotionLandingPageItem.findUnique({
-    where: { id: params.itemId },
-    select: { imageR2Key: true },
+  const owned = await prisma.promotionLandingPageItemPhoto.findMany({
+    where: { itemId: params.itemId },
+    select: { id: true },
+    orderBy: { sortOrder: "asc" },
   });
-  await prisma.promotionLandingPageItem.update({
-    where: { id: params.itemId },
-    data: { imageR2Key: params.key, imageMimeType: params.contentType },
-  });
-  if (prev?.imageR2Key && prev.imageR2Key !== params.key) {
-    void deleteObject(prev.imageR2Key, "promotion-images").catch(() => {});
-  }
+  const ownedIds = new Set(owned.map((p) => p.id));
+  const ordered = params.photoIds.filter((id) => ownedIds.has(id));
+  const rest = owned.map((p) => p.id).filter((id) => !ordered.includes(id));
+  const finalOrder = [...ordered, ...rest];
+  await prisma.$transaction(
+    finalOrder.map((id, idx) =>
+      prisma.promotionLandingPageItemPhoto.update({
+        where: { id },
+        data: { sortOrder: idx },
+      }),
+    ),
+  );
 }
 
 // ── Click recorder ───────────────────────────────────────────────────────
@@ -2444,16 +2652,37 @@ export async function recordShortClickAndResolve(params: {
 // Public loader for a landing page by slug. Only returns the page when
 // its parent promotion is ACTIVE and within the window — DRAFT/PAUSED/
 // CLOSED promotions render as "This offer has ended" client-side.
-export async function loadLandingPageForPublic(slug: string): Promise<{
+export async function loadLandingPageForPublic(
+  slug: string,
+  opts?: {
+    /** Set only after the ROUTE has verified a preview token for this
+     *  exact slug. Bypasses the ACTIVE gate so the operator can see their
+     *  own draft. Never derive this from user input directly. */
+    previewUnlocked?: boolean;
+  },
+): Promise<{
   headline: string | null;
   intro: string | null;
   items: {
     id: string;
     title: string;
     description: string;
-    imageUrl: string | null;
+    /** All photos in display order. The first doubles as the og:image. */
+    photos: { id: string; url: string }[];
   }[];
   promotionActive: boolean;
+  /** Why the page isn't live, when promotionActive is false. Coarse on
+   *  purpose — enough for the visitor to get an accurate message, with no
+   *  campaign copy, imagery, dates, or contact info attached. Null while
+   *  the promotion IS live.
+   *
+   *  This leaks nothing new: a non-existent slug already 404s, so whether
+   *  a slug exists is public either way. What the privacy short-circuit
+   *  below protects is the CONTENT, and that stays withheld. */
+  inactiveReason: "not_started" | "ended" | "unavailable" | null;
+  /** True when this content is being shown via an operator preview token
+   *  rather than because the promotion is live. */
+  preview: boolean;
   // Business contact block from Settings — always populated (fields
   // that aren't configured are empty strings / empty arrays). Rendered
   // as a "Get in touch" footer on the landing page so clients can
@@ -2469,7 +2698,10 @@ export async function loadLandingPageForPublic(slug: string): Promise<{
   const page = await prisma.promotionLandingPage.findUnique({
     where: { slug },
     include: {
-      items: { orderBy: { ordinal: "asc" } },
+      items: {
+        orderBy: { ordinal: "asc" },
+        include: { photos: { orderBy: { sortOrder: "asc" } } },
+      },
       promotion: {
         select: { status: true, startAt: true, endAt: true },
       },
@@ -2477,11 +2709,34 @@ export async function loadLandingPageForPublic(slug: string): Promise<{
   });
   if (!page) return null;
   const now = new Date();
+  // Preview bypass — a valid, unexpired, slug-scoped token lets the
+  // operator see their own unpublished page. Deliberately does NOT set
+  // promotionActive: the page must still render as a preview (banner,
+  // no view-count bump), never as a live offer.
+  const previewUnlocked = opts?.previewUnlocked === true;
+
   const promotionActive =
     !!page.promotion &&
     page.promotion.status === "ACTIVE" &&
     (!page.promotion.startAt || page.promotion.startAt <= now) &&
     (!page.promotion.endAt || page.promotion.endAt >= now);
+
+  // Distinguish "not yet" from "over". A DRAFT campaign, or an ACTIVE one
+  // whose window hasn't opened, has NOT ended — telling a visitor (or the
+  // operator previewing their own draft) that it has is simply wrong.
+  const inactiveReason: "not_started" | "ended" | "unavailable" | null = promotionActive
+    ? null
+    : !page.promotion
+      ? "unavailable"
+      : page.promotion.status === "DRAFT" ||
+        (page.promotion.startAt != null && page.promotion.startAt > now)
+        ? "not_started"
+        : page.promotion.status === "CLOSED" ||
+          (page.promotion.endAt != null && page.promotion.endAt < now)
+          ? "ended"
+          // PAUSED, or anything else that isn't cleanly before/after the
+          // window — "not available right now" is the honest answer.
+          : "unavailable";
 
   // PRIVACY: when the parent promotion isn't ACTIVE (or the window has
   // closed / hasn't opened), short-circuit and return an empty shell
@@ -2493,12 +2748,14 @@ export async function loadLandingPageForPublic(slug: string): Promise<{
   // The frontend renders "This offer has ended" for promotionActive=false
   // and never reads the other fields, so returning empty values here
   // matches what the client actually needs while denying enumeration.
-  if (!promotionActive) {
+  if (!promotionActive && !previewUnlocked) {
     return {
       headline: null,
       intro: null,
       items: [],
       promotionActive: false,
+      inactiveReason,
+      preview: false,
       business: { name: "", phone: "", email: "", address: "", socialLinks: [] },
     };
   }
@@ -2508,9 +2765,18 @@ export async function loadLandingPageForPublic(slug: string): Promise<{
       id: i.id,
       title: i.title,
       description: i.description,
-      imageUrl: i.imageR2Key
-        ? await getDownloadUrl(i.imageR2Key, 6 * 3600, "promotion-images").catch(() => null)
-        : null,
+      // A photo whose presign fails is dropped rather than rendered as a
+      // broken tile — the grid should never show an empty square.
+      photos: (
+        await Promise.all(
+          i.photos.map(async (ph) => {
+            const url = await getDownloadUrl(ph.r2Key, 6 * 3600, "promotion-images").catch(
+              () => null,
+            );
+            return url ? { id: ph.id, url } : null;
+          }),
+        )
+      ).filter((ph): ph is { id: string; url: string } => ph !== null),
     })),
   );
   // Business contact fields — same keys the pay page + client-facing
@@ -2529,6 +2795,10 @@ export async function loadLandingPageForPublic(slug: string): Promise<{
     intro: page.intro,
     items,
     promotionActive,
+    inactiveReason,
+    // True when content is only visible because of a preview token. The
+    // page uses this to show an unmistakable "not live" banner.
+    preview: !promotionActive && previewUnlocked,
     business: {
       name: bizMap.get("BUSINESS_NAME") ?? "",
       phone: bizMap.get("BUSINESS_PHONE") ?? "",

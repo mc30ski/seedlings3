@@ -1368,7 +1368,44 @@ export const payments: ServicesPayments = {
       }
       if ("note" in input) data.note = input.note || null;
 
+      // `paidAt` — corrected money-received date. The operator can miss the
+      // back-date field at approval time (AdjustPaymentDialog defaults to
+      // today), and before this there was no way to fix it afterwards.
+      //
+      // Payment has no dedicated receivedAt column: `createdAt` IS the
+      // money-received date across the app — it anchors the BSD cutoff, the
+      // Payments/Reconcile date ranges, and PaymentSplit's cutoff traversal
+      // (splits anchor on payment.createdAt because their own createdAt
+      // jumps on re-approval). So a correction has to move createdAt.
+      //
+      // We mirror approvePayment's override exactly: move `confirmedAt`
+      // alongside it, but ONLY when the row is already confirmed — stamping
+      // confirmedAt on an unconfirmed payment would forge an approval that
+      // never happened, and `confirmed` stays the source of truth for the
+      // pending-approval queue.
+      const paidAt = input.paidAt;
+      const paidAtChanged =
+        paidAt !== undefined && paidAt.getTime() !== existing.createdAt.getTime();
+      if (paidAtChanged) {
+        data.createdAt = paidAt;
+        if (existing.confirmed) data.confirmedAt = paidAt;
+      }
+
       await tx.payment.update({ where: { id: paymentId }, data });
+
+      // Audit the date correction. This is a tax-period-relevant edit: it can
+      // move a payment across a reporting week, a BSD cutoff, or a Gusto
+      // payroll window, so the before/after has to be recoverable.
+      if (paidAtChanged) {
+        await writeAudit(tx, AUDIT.PAYMENT.ADJUSTED, currentUserId, {
+          paymentId,
+          occurrenceId: existing.occurrenceId,
+          field: "paidAt",
+          fromDate: existing.createdAt.toISOString(),
+          toDate: paidAt!.toISOString(),
+          confirmedAtMoved: existing.confirmed,
+        });
+      }
 
       if (input.splits) {
         const ownerSet = await loadOwnerSet(tx, input.splits.map((sp) => sp.userId));

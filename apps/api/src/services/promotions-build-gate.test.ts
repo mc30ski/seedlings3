@@ -57,6 +57,8 @@ import {
   verifyDeliveryClickToken,
   signPromoClickToken,
   verifyPromoClickToken,
+  signLandingPreviewToken,
+  verifyLandingPreviewToken,
   buildClickWrapperUrl,
   buildInvoicePageClickUrl,
   buildShortWrapperUrl,
@@ -634,9 +636,15 @@ describe("Invariant P — isValidShortSlugFormat", () => {
     expect(isValidShortSlugFormat("fall--offer")).toBe(false);
   });
 
-  it("P3: caps length at 40 chars", () => {
+  // POLICY CHANGE 2026-08-22: cap raised 40 -> 64 so the short slug can
+  // always mirror the landing-page slug, which uses the same 64 bound.
+  // Operator decision: lengths over 40 are a UI warning about SMS segment
+  // cost, not a rejection. The invariant that a cap EXISTS is what this
+  // test protects — an unbounded slug is still a bug.
+  it("P3: caps length at 64 chars (matches landing-page slug cap)", () => {
     expect(isValidShortSlugFormat("a".repeat(40))).toBe(true);
-    expect(isValidShortSlugFormat("a".repeat(41))).toBe(false);
+    expect(isValidShortSlugFormat("a".repeat(64))).toBe(true);
+    expect(isValidShortSlugFormat("a".repeat(65))).toBe(false);
   });
 
   it("P4: rejects empty + special chars + non-ASCII", () => {
@@ -664,6 +672,61 @@ describe("Invariant Q — generateShortCode alphabet + length", () => {
       const code = generateShortCode();
       expect(code).toMatch(allowed);
       for (const ch of code) expect(forbidden.has(ch)).toBe(false);
+    }
+  });
+});
+
+// ── R. Landing-page preview tokens ───────────────────────────────────
+// A preview token bypasses the ACTIVE gate on a PUBLIC route, so it is
+// the most security-sensitive token in this file. Three properties have
+// to hold or unpublished campaign copy leaks:
+//   - it expires,
+//   - it is bound to ONE slug,
+//   - it cannot cross-verify with the delivery/promo click flavors.
+
+describe("Invariant R — landing preview tokens", () => {
+  const SLUG = "fall-offers-2026";
+  const FUTURE = 4_000_000_000_000;
+  const NOW = 3_999_999_000_000;
+
+  it("R1: a freshly signed token verifies before its expiry", () => {
+    const t = signLandingPreviewToken(SECRET, SLUG, FUTURE);
+    expect(verifyLandingPreviewToken(SECRET, SLUG, t, NOW)).toBe(true);
+  });
+
+  it("R2: the SAME token is rejected once the expiry has passed", () => {
+    const t = signLandingPreviewToken(SECRET, SLUG, FUTURE);
+    expect(verifyLandingPreviewToken(SECRET, SLUG, t, FUTURE + 1)).toBe(false);
+  });
+
+  it("R3: a token for one slug does NOT unlock another slug", () => {
+    const t = signLandingPreviewToken(SECRET, SLUG, FUTURE);
+    expect(verifyLandingPreviewToken(SECRET, "some-other-campaign", t, NOW)).toBe(false);
+  });
+
+  it("R4: tampering with the carried expiry invalidates the signature", () => {
+    const t = signLandingPreviewToken(SECRET, SLUG, FUTURE);
+    const sig = t.slice(t.indexOf(".") + 1);
+    const extended = `${FUTURE + 999_999_999}.${sig}`;
+    expect(verifyLandingPreviewToken(SECRET, SLUG, extended, NOW)).toBe(false);
+  });
+
+  it("R5: click-flavor tokens do not verify as preview tokens", () => {
+    const promoTok = signPromoClickToken(SECRET, "promo_1", null);
+    const deliveryTok = signDeliveryClickToken(SECRET, "delivery_1");
+    expect(verifyLandingPreviewToken(SECRET, SLUG, promoTok, NOW)).toBe(false);
+    expect(verifyLandingPreviewToken(SECRET, SLUG, deliveryTok, NOW)).toBe(false);
+  });
+
+  it("R6: verify never throws under a missing/weak secret (public-route 500-safety)", () => {
+    const t = signLandingPreviewToken(SECRET, SLUG, FUTURE);
+    expect(verifyLandingPreviewToken("", SLUG, t, NOW)).toBe(false);
+    expect(verifyLandingPreviewToken("short", SLUG, t, NOW)).toBe(false);
+  });
+
+  it("R7: malformed tokens are rejected rather than throwing", () => {
+    for (const bad of ["", ".", "abc", "abc.def", ".sig", "99999999999999999999.sig"]) {
+      expect(verifyLandingPreviewToken(SECRET, SLUG, bad, NOW)).toBe(false);
     }
   });
 });

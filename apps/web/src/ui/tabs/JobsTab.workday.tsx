@@ -847,6 +847,14 @@ export function MileageBanner() {
   const open = payload.openMileageEntries;
   const openVehicleIds = new Set(open.map((e) => e.vehicleId));
   const availableVehicles = vehicles.filter((v) => !openVehicleIds.has(v.id));
+  // On the clock with a vehicle assigned but no drive log open. Escalates
+  // the otherwise-passive "Not driving" row into an actual suggestion —
+  // forgetting to start at clock-in is unrecoverable, since the starting
+  // odometer is gone by the time anyone notices. PAUSED counts as active;
+  // NOT_STARTED / COMPLETED don't (no day to attach the miles to).
+  const workdayActive =
+    payload.today.state === "IN_PROGRESS" || payload.today.state === "PAUSED";
+  const suggestStart = workdayActive && open.length === 0 && availableVehicles.length > 0;
 
   // Nothing to render if the worker has no vehicles at all AND no
   // open session — matches the shipped MileageStrip's self-hide.
@@ -904,7 +912,7 @@ export function MileageBanner() {
           on the Home tab's shipped MileageStrip. */}
       {open.length === 0 && availableVehicles.length > 0 && (
         <CompactBanner
-          palette="gray"
+          palette={suggestStart ? "orange" : "gray"}
           icon={<Car size={16} />}
           actions={[
             {
@@ -938,8 +946,20 @@ export function MileageBanner() {
             </VStack>
           }
         >
-          <Text as="span" fontWeight="semibold">Not driving.</Text>{" "}
-          <Text as="span">Start a mileage session when you head out.</Text>
+          {suggestStart ? (
+            <>
+              <Text as="span" fontWeight="semibold">You&rsquo;re on the clock.</Text>{" "}
+              <Text as="span">
+                Start your mileage too if you&rsquo;re driving &mdash; you&rsquo;ll
+                need the starting odometer.
+              </Text>
+            </>
+          ) : (
+            <>
+              <Text as="span" fontWeight="semibold">Not driving.</Text>{" "}
+              <Text as="span">Start a mileage session when you head out.</Text>
+            </>
+          )}
         </CompactBanner>
       )}
 

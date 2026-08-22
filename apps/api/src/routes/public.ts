@@ -1130,12 +1130,33 @@ export default async function publicRoutes(app: FastifyInstance) {
     if (!optOutRateLimit(String(req.ip ?? ""))) return reply.code(429).send({ error: "rate_limited" });
     const slug = String(req.params.slug ?? "");
     if (!slug) return reply.code(400).send({ error: "missing_slug" });
-    const page = await loadLandingPageForPublic(slug);
+    // Operator preview — a slug-scoped, short-lived HMAC token minted by
+    // the Super-only endpoint below. Lets the operator see their own
+    // unpublished page without making it public: the token can't be
+    // guessed, expires on its own, and is bound to this one slug, so it
+    // grants nothing anywhere else. Anyone without it still gets the
+    // withheld shell.
+    let previewUnlocked = false;
+    const previewToken = String((req.query || {}).preview ?? "");
+    if (previewToken) {
+      const { verifyLandingPreviewToken, loadPromotionSettings } = await import(
+        "../services/promotions"
+      );
+      const settings = await loadPromotionSettings();
+      previewUnlocked = verifyLandingPreviewToken(
+        settings.hmacSecret,
+        slug,
+        previewToken,
+        Date.now(),
+      );
+    }
+    const page = await loadLandingPageForPublic(slug, { previewUnlocked });
     if (!page) return reply.code(404).send({ error: "not_found" });
-    // Only bump viewCount for ACTIVE promotions — non-ACTIVE pages
-    // return an empty shell (see loadLandingPageForPublic short-circuit)
-    // so their view counters would otherwise inflate on enumeration.
-    if (page.promotionActive) {
+    // Only bump viewCount for genuinely-live hits. Non-ACTIVE pages
+    // return an empty shell so their counters would otherwise inflate on
+    // enumeration — and an operator previewing their own draft must not
+    // inflate them either, or the number stops meaning "clients looked".
+    if (page.promotionActive && !page.preview) {
       void incrementLandingPageViewCount(slug).catch(() => {});
     }
     return page;

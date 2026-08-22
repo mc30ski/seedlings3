@@ -2622,6 +2622,17 @@ export default async function adminRoutes(app: FastifyInstance) {
     if (body.amountPaid !== undefined) input.amountPaid = Number(body.amountPaid);
     if (body.method !== undefined) input.method = String(body.method);
     if ("note" in body) input.note = body.note ? String(body.note) : null;
+    // paidAt — YYYY-MM-DD in ET, same contract as the approve route. Anchors
+    // to ET-noon so the calendar day can't roll under a timezone offset.
+    // Lets the operator correct a money-received date they got wrong at
+    // approval time; see services/payments.ts updatePayment for what moves.
+    if (body.paidAt !== undefined && body.paidAt !== null) {
+      const key = String(body.paidAt);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) {
+        throw app.httpErrors.badRequest("paidAt must be YYYY-MM-DD");
+      }
+      input.paidAt = etInstantFromParts(key as EtDateKey, "12:00");
+    }
     if (body.splits !== undefined) {
       if (!Array.isArray(body.splits)) throw app.httpErrors.badRequest("splits must be an array");
       input.splits = body.splits.map((sp: any) => ({
