@@ -19,7 +19,7 @@ import { useAuth } from "@clerk/nextjs";
 import { useBranding } from "@/src/lib/useBranding";
 import PhotoLightbox from "@/src/ui/components/PhotoLightbox";
 import MarkdownContent from "@/src/ui/components/MarkdownContent";
-import { fmtDateOpts, bizMonth } from "@/src/lib/lib";
+import { fmtDateOpts, bizMonth } from "@/src/lib/dates";
 import {
   Badge,
   Box,
@@ -152,7 +152,7 @@ export default function PaymentPage() {
 function PaymentPageInner() {
   const router = useRouter();
   const { isSignedIn, getToken, isLoaded: isAuthLoaded } = useAuth();
-  const token = typeof router.query.token === "string" ? router.query.token : "";
+  const token = typeof router.query.paymentToken === "string" ? router.query.paymentToken : "";
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<ResolveResponse | null>(null);
   const [error, setError] = useState<string | null>(null);

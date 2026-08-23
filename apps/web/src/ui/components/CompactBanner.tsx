@@ -91,12 +91,22 @@ export function CompactBanner({
   actions,
   glow,
   expandedContent,
+  testId,
+  dataAttrs,
 }: {
   palette: BannerPalette;
   icon: React.ReactNode;
   children: React.ReactNode;
   actions?: BannerAction[];
   glow?: boolean;
+  /** Stable hook for e2e specs. Rendered as `data-testid` on the
+   *  outer Box. Banners that are asserted on by Playwright must set
+   *  this — see docs/features/compliance.md. */
+  testId?: string;
+  /** Extra `data-*` attributes on the outer Box, so a spec can read
+   *  banner state (severity, counts) without scraping copy. Keys are
+   *  written verbatim, so pass them fully qualified: `data-severity`. */
+  dataAttrs?: Record<string, string | number>;
   /** Optional detail block. When provided, clicking anywhere on the
    *  banner (except an action button) toggles a reveal that appends
    *  this content below the compact row. Useful on narrow screens
@@ -137,6 +147,8 @@ export function CompactBanner({
       borderRadius="md"
       style={animation ? { animation } : undefined}
       overflow="hidden"
+      data-testid={testId}
+      {...dataAttrs}
     >
       {/* Compact row — kept at exactly 48px while COLLAPSED so all
           banners line up. On expand the height constraint is released

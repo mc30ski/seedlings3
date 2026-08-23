@@ -55,10 +55,20 @@ test.describe("Reconcile P&L — CapEx subtotal", () => {
       await page.goto("/");
       await page.waitForLoadState("networkidle");
 
+      // `networkidle` does NOT imply Clerk has hydrated its session.
+      // Without this wait the token comes back "" and the request goes out
+      // unauthenticated, failing with a bare {"message":"Missing auth"}
+      // that reads like a server bug rather than the race it is.
+      await page.waitForFunction(
+        () => !!(window as any).Clerk?.session,
+        undefined,
+        { timeout: 15_000 },
+      );
       const token = await page.evaluate(async () => {
         const w = window as any;
         return (await w.Clerk?.session?.getToken()) ?? "";
       });
+      expect(token, "Clerk session token was empty after hydration").toBeTruthy();
       const resp = await page.request.get(
         `http://127.0.0.1:8080/api/admin/business-expenses/pnl-report?from=${from}&to=${to}`,
         { headers: token ? { Authorization: `Bearer ${token}` } : {} },

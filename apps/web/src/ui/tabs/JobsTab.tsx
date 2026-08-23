@@ -56,7 +56,10 @@ import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
 import { getLocation } from "@/src/lib/geo";
 import { useOnSiteHint } from "@/src/lib/onSiteHint";
 import OnSiteHintBanner from "@/src/ui/components/OnSiteHintBanner";
-import { determineRoles, occurrenceStatusColor, prettyStatus, clientLabel, fmtDate, fmtDateTime, fmtDateWeekday, fmtDateOpts, fmtTimeOpts, bizDateKey, bizToday, bizYesterday, bizAddDays, bizAddYears, bizYearOf, bizDaysBetween, bizHourMinute, bizInstantFromEtParts, bizToLocalInputValue, bizParseLocalInputValue, jobTypeLabel , type EtDateKey } from "@/src/lib/lib";
+import { fmtDate, fmtDateTime, fmtDateWeekday, fmtDateOpts, fmtTimeOpts, bizDateKey, bizToday, bizYesterday, bizAddDays, bizAddYears, bizYearOf, bizDaysBetween, bizHourMinute, bizInstantFromEtParts, bizToLocalInputValue, bizParseLocalInputValue, type EtDateKey } from "@/src/lib/dates";
+import { prettyStatus, clientLabel, jobTypeLabel } from "@/src/lib/labels";
+import { determineRoles } from "@/src/lib/roles";
+import { occurrenceStatusColor } from "@/src/lib/statusColors";
 import { isOccurrenceOverdue, loadPaymentRequestExpiryHours, DEFAULT_PAYMENT_REQUEST_EXPIRY_HOURS } from "@/src/lib/overdueRule";
 import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
 import { useBranding } from "@/src/lib/useBranding";
@@ -115,7 +118,7 @@ import {
 } from "@/src/ui/components/DocumentTypePicker";
 
 // `localDate` removed — use `bizDateKey` directly (single canonical
-// helper from @/src/lib/lib). See docs/DATE_HANDLING.md.
+// helper from @/src/lib/dates). See docs/DATE_HANDLING.md.
 
 // Pure helpers + tab-wide constants live in JobsTab.utils.ts so
 // they can be shared with the card / filter subcomponents without
@@ -1238,7 +1241,7 @@ export default function JobsTab({
   useEffect(() => {
     if (!editTimeOcc) return;
     // ET-anchored datetime-local converter via the canonical helper —
-    // see bizToLocalInputValue in lib/lib.ts. Browser-local round-trip
+    // see bizToLocalInputValue in lib/dates.ts. Browser-local round-trip
     // was the bug here previously.
     const toLocal = (iso?: string | null) =>
       iso ? bizToLocalInputValue(iso) : "";
@@ -9515,7 +9518,7 @@ export default function JobsTab({
                     })()}
                     onClick={async () => {
                       // ET-anchored parse of datetime-local strings —
-                      // see bizParseLocalInputValue in lib/lib.ts.
+                      // see bizParseLocalInputValue in lib/dates.ts.
                       const startedAtIso = editTimeForm.startedAt ? bizParseLocalInputValue(editTimeForm.startedAt) : null;
                       const completedAtIso = editTimeForm.completedAt ? bizParseLocalInputValue(editTimeForm.completedAt) : null;
                       const offH = parseInt(editTimeForm.offHours || "0", 10) || 0;

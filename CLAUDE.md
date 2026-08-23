@@ -12,7 +12,7 @@ helper.** No exceptions outside the ones documented in
 `docs/DATE_HANDLING.md`.
 
 - **API canonical helpers**: [`apps/api/src/lib/dates.ts`](apps/api/src/lib/dates.ts)
-- **Web canonical helpers**: [`apps/web/src/lib/lib.ts`](apps/web/src/lib/lib.ts) (search for `bizDateKey` onward)
+- **Web canonical helpers**: [`apps/web/src/lib/dates.ts`](apps/web/src/lib/dates.ts) (search for `bizDateKey` onward)
 - **Full policy + decision tables + forbidden patterns**: [`docs/DATE_HANDLING.md`](docs/DATE_HANDLING.md)
 
 ### Mechanical enforcement (you cannot bypass this)

@@ -10,7 +10,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import OccurrenceDialog from "@/src/ui/dialogs/OccurrenceDialog";
-import { bizAddDays, bizDateKey, bizInstantFromEtParts, fmtDate, type EtDateKey } from "@/src/lib/lib";
+import { bizAddDays, bizDateKey, bizInstantFromEtParts, fmtDate, type EtDateKey } from "@/src/lib/dates";
 
 // Add N days to an ISO datetime string in ET, returning the ET calendar
 // key N days later. Empty string for null inputs so existing callers work.

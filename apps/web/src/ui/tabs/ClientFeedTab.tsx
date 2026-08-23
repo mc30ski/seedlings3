@@ -14,7 +14,7 @@ import {
 import { LayoutGrid, List as ListIcon } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
 import { useOffline } from "@/src/lib/offline";
-import { fmtDate, fmtDateWeekday } from "@/src/lib/lib";
+import { fmtDate, fmtDateWeekday } from "@/src/lib/dates";
 import SafePhoto from "@/src/ui/components/SafePhoto";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 

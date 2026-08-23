@@ -23,20 +23,10 @@ import DateInput from "@/src/ui/components/DateInput";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import { normalizeReceiptNumber } from "@/src/lib/receiptNumber";
 import { getLocation } from "@/src/lib/geo";
-import {
-  determineRoles,
-  jobStatusColor,
-  occurrenceStatusColor,
-  prettyStatus,
-  clientLabel,
-  fmtDate,
-  fmtDateTime,
-  bizDateKey,
-  bizYesterday,
-  bizToday,
-  bizAddDays,
-  jobTypeLabel,
-} from "@/src/lib/lib";
+import { fmtDate, fmtDateTime, bizDateKey, bizYesterday, bizToday, bizAddDays } from "@/src/lib/dates";
+import { prettyStatus, clientLabel, jobTypeLabel } from "@/src/lib/labels";
+import { determineRoles } from "@/src/lib/roles";
+import { jobStatusColor, occurrenceStatusColor } from "@/src/lib/statusColors";
 import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
 import {
   type TabPropsType,

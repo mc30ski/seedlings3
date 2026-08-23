@@ -7,7 +7,7 @@
  * Admins can override via localStorage.
  */
 
-import { bizMonth } from "@/src/lib/lib";
+import { bizMonth } from "@/src/lib/dates";
 
 export type Season = "spring" | "fall";
 export type SeasonOverride = "auto" | "spring" | "fall";

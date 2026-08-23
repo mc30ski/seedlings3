@@ -15,7 +15,7 @@ import {
 } from "@chakra-ui/react";
 import { Badge } from "@chakra-ui/react";
 import { apiGet, apiPatch, apiPost } from "@/src/lib/api";
-import { bizDateKey } from "@/src/lib/lib";
+import { bizDateKey } from "@/src/lib/dates";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -51,7 +51,7 @@ type Props = {
 
 function isoToDateInput(iso: string | null | undefined): string {
   if (!iso) return "";
-  // ET-anchored — see lib/lib.ts header on bizDateKey.
+  // ET-anchored — see lib/dates.ts header on bizDateKey.
   try {
     return bizDateKey(iso);
   } catch {

@@ -27,7 +27,7 @@ import {
   fmtTimeOpts,
   prettyDate,
   type EtDateKey,
-} from "@web-lib/lib";
+} from "@web-lib/dates";
 
 describe("bizDateKey", () => {
   it("returns ET YYYY-MM-DD for a UTC instant on the same ET day", () => {

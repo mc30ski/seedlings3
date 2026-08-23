@@ -76,6 +76,16 @@ test.describe("Ledger — recurrenceSeriesId collapses forked descriptions", () 
       // session so the direct API call carries auth.
       await page.goto("/");
       await page.waitForLoadState("networkidle");
+      // `networkidle` does NOT imply Clerk has hydrated its session. The
+      // direct-request fallback below reads Clerk's token and falls back
+      // to "" — which would send an unauthenticated request and surface
+      // as a confusing "Missing auth". Same race as
+      // reconcile-capex-subtotal-admin.spec.ts.
+      await page.waitForFunction(
+        () => !!(window as any).Clerk?.session,
+        undefined,
+        { timeout: 15_000 },
+      );
 
       const resp = await page.request.get(
         "/api/_proxy/admin/business-expenses/due-soon",

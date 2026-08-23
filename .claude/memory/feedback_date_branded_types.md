@@ -18,7 +18,7 @@ type IsoInstant = string & { readonly __brand: "IsoInstant" };
 ```
 
 Constructors (throw on bad input):
-- Web:  `etDateKey(s)`  / `isoInstant(s)` in `apps/web/src/lib/lib.ts`
+- Web:  `etDateKey(s)`  / `isoInstant(s)` in `apps/web/src/lib/dates.ts`
 - API:  `toEtDateKey(s)` / `toIsoInstant(s)` in `apps/api/src/lib/dates.ts`
 
 **Every producer** (`bizToday`, `bizAddDays`, `bizDateKey`, `etToday`, `etAddDays`, `etFormatDate`, `etMondayOnOrBefore`, `etSundayOnOrBefore`, `etStartOfMonth`, `etStartOfYear`, and their web-side twins) returns `EtDateKey`.
@@ -48,7 +48,7 @@ When the source hasn't been validated (e.g. arbitrary user input, external API r
 
 ## Files touched (Phase 2)
 
-- `apps/web/src/lib/lib.ts` — brands + constructors + 10 producer/consumer signature updates
+- `apps/web/src/lib/dates.ts` — brands + constructors + 10 producer/consumer signature updates
 - `apps/api/src/lib/dates.ts` — brands + constructors + 10 producer/consumer signature updates
 - `apps/web/src/ui/components/DateInput.tsx` — onChange returns EtDateKey (native input boundary)
 - `apps/api/src/lib/policyPredicate.ts` — return type + internal usage

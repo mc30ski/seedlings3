@@ -19,7 +19,7 @@
 //     highlighting on Awaiting Payment rows (unchanged by this rule)
 
 import { apiGet } from "@/src/lib/api";
-import { bizDateKey } from "@/src/lib/lib";
+import { bizDateKey } from "@/src/lib/dates";
 
 /** Fallback used when the setting isn't available (fresh install, offline,
  *  fetch failed). Matches DEFAULT_EXPIRY_HOURS on the backend so the two

@@ -25,7 +25,7 @@ import {
   PROPERTY_KIND,
   PROPERTY_STATUS,
 } from "@/src/lib/types";
-import { prettyStatus, clientLabel } from "@/src/lib/lib";
+import { prettyStatus, clientLabel } from "@/src/lib/labels";
 import {
   publishInlineMessage,
   getErrorMessage,

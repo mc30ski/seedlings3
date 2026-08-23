@@ -12,7 +12,7 @@
     "paths": {
       "@web-lib/*": ["../web/src/lib/*"],
       // Mirror the web package's `@/*` alias so cross-package imports
-      // from web/src/lib/lib.ts (used by the web-date-helpers build-gate
+      // from web/src/lib/dates.ts (used by the web-date-helpers build-gate
       // test) resolve when tsc walks into them.
       "@/*": ["../web/*"]
     }

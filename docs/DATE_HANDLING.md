@@ -9,7 +9,7 @@ result of mixing those three frames.
 
 This document is the single source of truth. The helper files
 [`apps/api/src/lib/dates.ts`](../apps/api/src/lib/dates.ts) and
-[`apps/web/src/lib/lib.ts`](../apps/web/src/lib/lib.ts) implement the rules
+[`apps/web/src/lib/dates.ts`](../apps/web/src/lib/dates.ts) implement the rules
 described here; their file headers mirror this guide.
 
 ---
@@ -42,7 +42,7 @@ described here; their file headers mirror this guide.
 | Layer | File | What it exports |
 |---|---|---|
 | API (server) | [`apps/api/src/lib/dates.ts`](../apps/api/src/lib/dates.ts) | `etMidnight`, `etEndOfDay`, `etToday`, `etTomorrow`, `etFormatDate`, `etFormatDateOpts`, `etFormatTimeOpts`, `etIcalLocalDateTime`, `etHourMinute`, `etAddDays`, `etMondayOnOrBefore`, `etSundayOnOrBefore`, `etStartOfMonth`, `etStartOfYear`, `parseUserDate` |
-| Web (browser) | [`apps/web/src/lib/lib.ts`](../apps/web/src/lib/lib.ts) | `bizDateKey`, `bizToday`, `bizTomorrow`, `bizYesterday`, `bizAddDays`, `bizAddMonths`, `bizAddYears`, `bizYearOf`, `bizMondayOnOrBefore`, `bizStartOfMonth`, `bizStartOfYear`, `bizHour`, `bizMonth`, `bizInstantFromEtParts`, `fmtDate`, `fmtDateTime`, `fmtDateWeekday`, `fmtDateOpts`, `fmtTimeOpts` |
+| Web (browser) | [`apps/web/src/lib/dates.ts`](../apps/web/src/lib/dates.ts) | `bizDateKey`, `bizToday`, `bizTomorrow`, `bizYesterday`, `bizAddDays`, `bizAddMonths`, `bizAddYears`, `bizYearOf`, `bizMondayOnOrBefore`, `bizStartOfMonth`, `bizStartOfYear`, `bizHour`, `bizMonth`, `bizInstantFromEtParts`, `fmtDate`, `fmtDateTime`, `fmtDateWeekday`, `fmtDateOpts`, `fmtTimeOpts` |
 
 Two files for two reasons:
 - The web can't import server code directly (different bundle).
@@ -226,7 +226,7 @@ manually for these:
 
 ## When you change a date helper
 
-The helpers in `apps/api/src/lib/dates.ts` and `apps/web/src/lib/lib.ts`
+The helpers in `apps/api/src/lib/dates.ts` and `apps/web/src/lib/dates.ts`
 are public-API-shaped: many files depend on them. Before changing the
 behavior of a helper:
 

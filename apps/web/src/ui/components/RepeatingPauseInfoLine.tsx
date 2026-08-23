@@ -11,7 +11,7 @@
 
 import { Box, HStack, Text, VStack } from "@chakra-ui/react";
 import { PauseCircle } from "lucide-react";
-import { fmtDate } from "@/src/lib/lib";
+import { fmtDate } from "@/src/lib/dates";
 
 type Occ = {
   status?: string | null;

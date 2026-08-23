@@ -33,7 +33,34 @@ test.afterAll(async () => {
 });
 
 test.describe("Compliance exception date picker", () => {
-  test("Picking 2026-08-15 stores expiresAt at end-of-day ET on 8/15 (not 8/14 midnight UTC)", async ({ page }) => {
+  // The picked date must be in the FUTURE and within 90 days —
+  // grantException rejects anything else with INVALID_EXPIRY, so a
+  // hardcoded literal silently rots into a 400 and the DB row never
+  // appears. (It did: the original "2026-08-15" went stale and this
+  // spec failed on `expect(exc).not.toBeNull()` with no hint why.)
+  // Derive it from today in ET instead, anchored at UTC noon so the
+  // +30d hop can't be flipped by a DST boundary.
+  const etTodayKey = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    // date-handling-allow: e2e-seed, must not import app helpers
+  }).format(new Date());
+  const [etY, etM, etD] = etTodayKey.split("-").map(Number);
+  // date-handling-allow: e2e-seed
+  const targetUtcNoon = new Date(Date.UTC(etY, etM - 1, etD + 30, 12, 0, 0));
+  const pickDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "UTC",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    // date-handling-allow: e2e-seed
+  }).format(targetUtcNoon); // YYYY-MM-DD
+  const [pickY, pickM, pickD] = pickDate.split("-");
+  const expectedEtDay = `${pickM}/${pickD}/${pickY}`; // MM/DD/YYYY
+
+  test(`Picking ${pickDate} stores expiresAt at end-of-day ET (not midnight UTC the day before)`, async ({ page }) => {
     // Seed a scratch BLOCK policy so the Grant Exception drawer has
     // somewhere to attach — must target Employee since USERS.employee
     // is the target we pick in the dialog.
@@ -67,9 +94,9 @@ test.describe("Compliance exception date picker", () => {
       // "Employee Worker" (from db.helpers USERS.employee).
       await page.getByText(/Employee Worker/i).first().click();
 
-      // Set the date input to 2026-08-15.
+      // Set the date input to the derived future date.
       const dateInput = page.locator("input[type='date']").first();
-      await dateInput.fill("2026-08-15");
+      await dateInput.fill(pickDate);
 
       // Reason. Only one textarea in the Grant Exception dialog — the
       // Textarea has no placeholder or label so target by role.
@@ -103,14 +130,15 @@ test.describe("Compliance exception date picker", () => {
       });
       expect(exc).not.toBeNull();
 
-      // The ET calendar day of expiresAt must be 8/15 — not 8/14.
+      // The ET calendar day of expiresAt must be the picked day — not
+      // the day before (which is what UTC-midnight parsing produced).
       const dayInET = new Intl.DateTimeFormat("en-US", {
         timeZone: "America/New_York",
         year: "numeric",
         month: "2-digit",
         day: "2-digit",
       }).format(exc!.expiresAt);
-      expect(dayInET).toBe("08/15/2026");
+      expect(dayInET).toBe(expectedEtDay);
 
       // The ET wall-clock time must be 23:59 — end-of-day, not midnight.
       // A common wrong-fix is `etMidnight` which would show "8/15" but

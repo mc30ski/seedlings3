@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Badge, Box, Button, Card, HStack, Text, Textarea, VStack } from "@chakra-ui/react";
 import { Calendar, CheckCircle2, ChevronDown, ChevronUp, SkipForward, X } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
-import { fmtDate, fmtDateWeekday } from "@/src/lib/lib";
+import { fmtDate, fmtDateWeekday } from "@/src/lib/dates";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 
 type ChangeRequest = {

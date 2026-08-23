@@ -17,7 +17,7 @@ import {
 } from "@chakra-ui/react";
 import { DollarSign, Pencil, Plus, Trash2 } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
-import { fmtDate } from "@/src/lib/lib";
+import { fmtDate } from "@/src/lib/dates";
 import {
   publishInlineMessage,
   getErrorMessage,

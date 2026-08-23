@@ -21,7 +21,8 @@ import { apiGet, apiPatch, apiPost, apiDelete } from "@/src/lib/api";
 import { useBusinessStartCutoff } from "@/src/lib/businessStartCutoff";
 import { emailKey, phoneKey } from "@/src/lib/comms";
 import { type TabPropsType } from "@/src/lib/types";
-import { determineRoles, fmtDateTime, fmtDateOpts, fmtDateLong } from "@/src/lib/lib";
+import { fmtDateTime, fmtDateOpts, fmtDateLong } from "@/src/lib/dates";
+import { determineRoles } from "@/src/lib/roles";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
   SETTING_SECTIONS,
@@ -397,7 +398,7 @@ type PaymentMethodRow = {
   // "Where to send" target for methods without a deep link (e.g.
   // Zelle, Cash App). When set, the public pay page renders a big
   // orange button that opens a modal showing this target instead of
-  // the deep-link app-open behavior. See pages/pay/[token].tsx and
+  // the deep-link app-open behavior. See pages/pay/[paymentToken].tsx and
   // services/paymentMethods.ts.
   payToTarget: string | null;
   // QR code image stored as a data URL — rendered inline in the

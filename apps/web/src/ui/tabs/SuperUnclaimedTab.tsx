@@ -18,14 +18,16 @@ import { CalendarRange, ChevronDown, RefreshCw, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet } from "@/src/lib/api";
 import { type WorkerOccurrence } from "@/src/lib/types";
-import { fmtDate, bizDateKey, bizToday, bizTomorrow, bizYesterday, clientLabel, occurrenceStatusColor, prettyStatus } from "@/src/lib/lib";
+import { fmtDate, bizDateKey, bizToday, bizTomorrow, bizYesterday } from "@/src/lib/dates";
+import { clientLabel, prettyStatus } from "@/src/lib/labels";
+import { occurrenceStatusColor } from "@/src/lib/statusColors";
 import { StatusBadge } from "@/src/ui/components/StatusBadge";
 import { MapLink } from "@/src/ui/helpers/Link";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import { openEventSearch } from "@/src/lib/bus";
 import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/lib/datePresets";
 
-// `localDate` removed — use `bizDateKey` from @/src/lib/lib directly.
+// `localDate` removed — use `bizDateKey` from @/src/lib/dates directly.
 
 const superPresetItems = [
   { value: "overdueOnly", label: "Overdue only" },

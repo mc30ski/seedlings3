@@ -31,7 +31,7 @@ import {
   Sliders,
 } from "lucide-react";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
-import { bizToday, fmtDate, fmtDateTime , type EtDateKey } from "@/src/lib/lib";
+import { bizToday, fmtDate, fmtDateTime, type EtDateKey } from "@/src/lib/dates";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -91,7 +91,7 @@ function fmtUSD(n: number): string {
 }
 
 
-// Date helpers come from @/src/lib/lib. NEVER reinvent — see lib/lib.ts.
+// Date helpers come from @/src/lib/dates. NEVER reinvent — see lib/dates.ts.
 // `bizToday()` returns today's date as YYYY-MM-DD in Eastern Time.
 
 type Props = {

@@ -620,7 +620,7 @@ describe("Invariant N — Wrapper URL prefix", () => {
 
   it("N3: wrapper URL never starts with baseUrl + /promotion/ (bare, sans /api/public/)", () => {
     // The bare shape is what triggered the shipped 404 — Next.js
-    // /promotion/[slug].tsx accepts a single segment and 404s on
+    // /promotion/[promotionSlug].tsx accepts a single segment and 404s on
     // /promotion/click/d/anything. This is the negative-form guard.
     const durl = buildClickWrapperUrl("https://s.example.com", SECRET, "d1");
     const purl = buildInvoicePageClickUrl("https://s.example.com", SECRET, "p1", null);

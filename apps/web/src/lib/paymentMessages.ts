@@ -1,4 +1,4 @@
-import { fmtDate } from "@/src/lib/lib";
+import { fmtDate } from "@/src/lib/dates";
 
 // Shape returned by the API for any payment action that runs the
 // approval pipeline (approve / write-off / accept-payment etc). Either

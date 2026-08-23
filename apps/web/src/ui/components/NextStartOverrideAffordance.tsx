@@ -36,7 +36,7 @@ import DateInput from "@/src/ui/components/DateInput";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { apiPost } from "@/src/lib/api";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
-import { bizAddDays, bizDateKey, fmtDate, fmtDateKey } from "@/src/lib/lib";
+import { bizAddDays, bizDateKey, fmtDate, fmtDateKey } from "@/src/lib/dates";
 
 type Props = {
   occurrenceId: string;

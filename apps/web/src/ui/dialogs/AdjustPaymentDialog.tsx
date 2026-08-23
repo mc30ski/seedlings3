@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { bizToday, type EtDateKey } from "@/src/lib/lib";
+import { bizToday, type EtDateKey } from "@/src/lib/dates";
 import DateInput from "@/src/ui/components/DateInput";
 import {
   Box,

@@ -18,7 +18,7 @@ import {
 import { Calendar, Download, Eye, FileText, SkipForward } from "lucide-react";
 import { apiDelete, apiGet, apiPost } from "@/src/lib/api";
 import { getClientImpersonation } from "@/src/lib/impersonation";
-import { fmtDate, fmtDateWeekday, bizToday, bizAddDays } from "@/src/lib/lib";
+import { fmtDate, fmtDateWeekday, bizToday, bizAddDays } from "@/src/lib/dates";
 import { MapLink } from "@/src/ui/helpers/Link";
 import { type ReceiptData, downloadReceipt, getReceiptBlob } from "@/src/lib/receipt";
 import { useBranding } from "@/src/lib/useBranding";

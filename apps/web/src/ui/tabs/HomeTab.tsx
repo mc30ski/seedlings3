@@ -22,7 +22,7 @@ import { BarChart3 } from "lucide-react";
 import { FiMoon, FiPlay, FiRefreshCw, FiSun } from "react-icons/fi";
 import { computeDatesFromPreset, type DatePreset } from "@/src/lib/datePresets";
 import { apiGet } from "@/src/lib/api";
-import { bizToday, bizTomorrow, bizAddDays, bizHour, fmtDateOpts, fmtTimeOpts } from "@/src/lib/lib";
+import { bizToday, bizTomorrow, bizAddDays, bizHour, fmtDateOpts, fmtTimeOpts } from "@/src/lib/dates";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import HomeBanners from "@/src/ui/components/HomeBanners";
 import MyDashboard from "@/src/ui/components/MyDashboard";
@@ -34,6 +34,7 @@ import { OperationsPanel } from "@/src/ui/tabs/HomeTab.parts";
 import {
   AdminViewAsBadges,
   AdminViewAsSelector,
+  CompliancePromptBanner,
   type AdminWorker,
 } from "@/src/ui/tabs/JobsTab.parts";
 import { usePersistedState } from "@/src/lib/usePersistedState";
@@ -616,12 +617,23 @@ export default function HomeTab({
             mode — see MyDashboard). Hidden in subset (N workers)
             and aggregate (0 workers, admin scope) modes because
             the banners are inherently single-user surfaces. */}
-        {(!scope.isAdmin || !!viewAsUserId || (!isAggregate && !isSubset)) && (
+        {(!scope.isAdmin || !!viewAsUserId || (!isAggregate && !isSubset)) ? (
           <MyDashboard
             storageKey="seedlings:homeTab:myDashboardOpen"
             viewAsUserId={viewAsUserId ?? null}
             viewAsDisplayName={viewAsDisplayName ?? null}
           />
+        ) : (
+          /* Team modes (aggregate / subset) suppress MyDashboard because
+             workday + mileage are single-user surfaces. COMPLIANCE is
+             different: it reports the logged-in admin's OWN unsigned
+             policies, which don't stop being pending because they're
+             looking at the team. Dropping it here meant an admin parked
+             in Team overview never saw their own BLOCK-level items — the
+             nudge vanished even though PolicyGateInterceptor still
+             blocked the action. Always self-scoped: these modes have no
+             single target worker, so never view-as. */
+          <CompliancePromptBanner viewAsUserId={null} />
         )}
 
         {/* Aggregate mode: a single team-summary banner replaces the per-worker hero. */}

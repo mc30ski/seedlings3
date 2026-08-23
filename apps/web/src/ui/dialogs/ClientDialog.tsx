@@ -26,7 +26,7 @@ import {
   CLIENT_KIND,
   CLIENT_STATUS,
 } from "@/src/lib/types";
-import { prettyStatus } from "@/src/lib/lib";
+import { prettyStatus } from "@/src/lib/labels";
 import {
   publishInlineMessage,
   getErrorMessage,

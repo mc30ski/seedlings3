@@ -6,7 +6,7 @@ import {
   SignedOut,
   UserButton,
 } from "@clerk/clerk-react";
-import { bizMonth } from "@/src/lib/lib";
+import { bizMonth } from "@/src/lib/dates";
 
 function resolveIcon(): string {
   if (typeof window === "undefined") return "/seedlings-icon.png";

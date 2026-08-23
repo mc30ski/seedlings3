@@ -31,7 +31,7 @@ import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/Inlin
 import PaymentCommsButtons from "@/src/ui/components/PaymentCommsButtons";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
-import { bizToday, fmtDateTime, type EtDateKey } from "@/src/lib/lib";
+import { bizToday, fmtDateTime, type EtDateKey } from "@/src/lib/dates";
 import DateInput from "@/src/ui/components/DateInput";
 import { PaymentContactsLine as ContactsLine } from "@/src/ui/components/PaymentContactsLine";
 import { PaymentPropertyLine } from "@/src/ui/components/PaymentPropertyLine";

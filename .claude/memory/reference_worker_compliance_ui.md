@@ -46,7 +46,7 @@ different button widths under `align="stretch"`).
   policy title, version, signed-on date, and the exact content the
   worker agreed to.
 - Content rendering:
-  - MARKDOWN policies → inline via `<PolicyMarkdown>`.
+  - MARKDOWN policies → inline via `<MarkdownContent>` (renamed from PolicyMarkdown).
   - PDF policies → button that fetches a presigned URL from
     `/api/me/policies/download?r2Key=…` and opens it in a new tab.
 - Row's View button is hidden when there's no viewable content

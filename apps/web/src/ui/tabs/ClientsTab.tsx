@@ -18,7 +18,9 @@ import {
   createListCollection,
 } from "@chakra-ui/react";
 import { Filter, LayoutList, Mail, MessageCircle, PauseCircle, Plus, RefreshCw, Star, Tag, X } from "lucide-react";
-import { determineRoles, prettyStatus, clientStatusColor, clientLabel } from "@/src/lib/lib";
+import { prettyStatus, clientLabel } from "@/src/lib/labels";
+import { determineRoles } from "@/src/lib/roles";
+import { clientStatusColor } from "@/src/lib/statusColors";
 import {
   type TabPropsType,
   type Client,

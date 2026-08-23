@@ -39,11 +39,12 @@ const workflowItems = [
   { label: "One-Off Job", value: "ONE_OFF" },
 ];
 const workflowCollection = createListCollection({ items: workflowItems });
-import { prettyStatus, bizDateKey, bizToLocalInputValue, bizParseLocalInputValue } from "@/src/lib/lib";
+import { bizDateKey, bizToLocalInputValue, bizParseLocalInputValue } from "@/src/lib/dates";
+import { prettyStatus } from "@/src/lib/labels";
 
 function toDateInput(iso: string | null | undefined): string {
   if (!iso) return "";
-  // ET-anchored — see lib/lib.ts header on bizDateKey for the rationale.
+  // ET-anchored — see lib/dates.ts header on bizDateKey for the rationale.
   return bizDateKey(iso);
 }
 
@@ -270,7 +271,7 @@ export default function OccurrenceDialog({
   const [selectedAssignees, setSelectedAssignees] = useState<Set<string>>(new Set());
 
   // ET-anchored — see bizToLocalInputValue / bizParseLocalInputValue in
-  // lib/lib.ts for the rationale. Browser-local round-tripping makes the
+  // lib/dates.ts for the rationale. Browser-local round-tripping makes the
   // displayed and submitted times disagree for any operator outside ET.
   function toDateTimeLocal(iso: string | null | undefined): string {
     return iso ? bizToLocalInputValue(iso) : "";

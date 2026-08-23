@@ -81,7 +81,7 @@
 // Branded date types (Phase 2)
 // ═════════════════════════════════════════════════════════════════════════
 //
-// See apps/web/src/lib/lib.ts for the full rationale. Same brand strings
+// See apps/web/src/lib/dates.ts for the full rationale. Same brand strings
 // as the web side — TypeScript's structural typing means a key produced
 // by etToday() (API) is interchangeable with one produced by bizToday()
 // (web); both satisfy `EtDateKey`.

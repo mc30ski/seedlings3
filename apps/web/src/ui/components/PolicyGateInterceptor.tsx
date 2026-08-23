@@ -14,7 +14,7 @@ import {
 import { Clock } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
 import PolicySignWizard, { type RequiredPolicy } from "@/src/ui/dialogs/PolicySignWizard";
-import { fmtDate } from "@/src/lib/lib";
+import { fmtDate } from "@/src/lib/dates";
 
 type AwaitingReviewRow = RequiredPolicy & {
   signatureId: string | null;

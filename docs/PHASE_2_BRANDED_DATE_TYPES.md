@@ -71,7 +71,7 @@ export function fmtDate(d: EtDateKey | IsoInstant | Date | null | undefined): st
 Estimated **~90 files touched**, split into phases:
 
 ### Phase 2a — Foundation (no user-facing changes)
-1. Add `EtDateKey` + `IsoInstant` types + constructors to `apps/web/src/lib/lib.ts` and `apps/api/src/lib/dates.ts`.
+1. Add `EtDateKey` + `IsoInstant` types + constructors to `apps/web/src/lib/dates.ts` and `apps/api/src/lib/dates.ts`.
 2. Update helper signatures (`bizToday`, `bizAddDays`, `bizDateKey`, `bizDaysBetween`, `bizAddMonths`, `bizAddYears`, `etAddDays`, `etDaysBetween`, `etFormatDate`, `etMidnight`, `etInstantFromParts`) to accept/return branded types.
 3. **Zero migration required at this stage** — every existing caller passes `string`, which is compatible with the branded type at the JS level; TypeScript will complain about specific misuses only after step 2b.
 

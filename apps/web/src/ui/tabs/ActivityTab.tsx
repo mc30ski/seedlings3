@@ -10,7 +10,9 @@ import {
   Accordion,
 } from "@chakra-ui/react";
 import { apiGet } from "@/src/lib/api";
-import { equipmentStatusColor, prettyStatus, prettyDate } from "@/src/lib/lib";
+import { prettyDate } from "@/src/lib/dates";
+import { prettyStatus } from "@/src/lib/labels";
+import { equipmentStatusColor } from "@/src/lib/statusColors";
 import { openEventSearch } from "@/src/lib/bus";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";

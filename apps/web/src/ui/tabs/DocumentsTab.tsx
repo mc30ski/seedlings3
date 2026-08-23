@@ -38,7 +38,7 @@ import {
 } from "lucide-react";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import { apiDelete, apiGet, apiPost } from "@/src/lib/api";
-import { fmtDate } from "@/src/lib/lib";
+import { fmtDate } from "@/src/lib/dates";
 import {
   publishInlineMessage,
   getErrorMessage,

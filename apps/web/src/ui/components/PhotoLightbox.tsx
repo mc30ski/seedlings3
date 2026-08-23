@@ -2,7 +2,7 @@
 
 // Shared full-screen photo viewer with carousel navigation.
 //
-// Extracted verbatim from pages/pay/[token].tsx so the promotion landing
+// Extracted verbatim from pages/pay/[paymentToken].tsx so the promotion landing
 // page can reuse it rather than carry a second copy — the two behaved
 // identically and would have drifted. Keyboard (arrows + Escape), swipe,
 // on-screen arrows, and an "n / total" counter.

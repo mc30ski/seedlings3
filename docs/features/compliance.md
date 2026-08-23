@@ -101,14 +101,14 @@ Once a version reaches PUBLISHED, its `contentMarkdown` / `contentR2Key`
 
 The compliance state surfaces to workers in four places:
 
-1. **Home tab compliance banner** ([`apps/web/src/ui/components/ComplianceBanner.tsx`](../../apps/web/src/ui/components/ComplianceBanner.tsx))
+1. **Home tab compliance banner** (`CompliancePromptBanner` in [`apps/web/src/ui/tabs/JobsTab.parts.tsx`](../../apps/web/src/ui/tabs/JobsTab.parts.tsx), mounted from [`MyDashboard.tsx`](../../apps/web/src/ui/components/MyDashboard.tsx); renders through the shared [`CompactBanner`](../../apps/web/src/ui/components/CompactBanner.tsx))
    - Red when ≥1 BLOCK pending, orange when only WARN/INFO pending, silent when cleared.
    - Positioned below `HomeBanners` (admin announcements) + the push-notification enablement card.
    - Hidden while impersonating (`disabled={isViewingOther}`).
    - Refetches on `policies:signed` and `policies:changed` events.
 
 2. **PolicyGateInterceptor** ([`apps/web/src/ui/components/PolicyGateInterceptor.tsx`](../../apps/web/src/ui/components/PolicyGateInterceptor.tsx))
-   - Listens for `policies:required` custom events (dispatched by ComplianceBanner + button click failures).
+   - Listens for `policies:required` custom events (dispatched by CompliancePromptBanner + button click failures).
    - Fetches current pending list, opens `PolicySignWizard` with the required IDs.
 
 3. **Alerts dropdown badge** — count from `/api/me/policies/count`, refreshed on the same events.
@@ -146,11 +146,11 @@ in-sync across independent components. All are `window`-level.
 
 | Event | Emitted by | Handled by | What it means |
 |-------|------------|------------|---------------|
-| `policies:required` | ComplianceBanner "Sign now", gated actions | PolicyGateInterceptor | Open the sign wizard for pending policies |
-| `policies:signed` | PolicySignWizard after each successful sign | ComplianceBanner, index.tsx counts | Refresh — a signature was just written |
+| `policies:required` | CompliancePromptBanner "Sign now", gated actions | PolicyGateInterceptor | Open the sign wizard for pending policies |
+| `policies:signed` | PolicySignWizard after each successful sign | CompliancePromptBanner, index.tsx counts | Refresh — a signature was just written |
 | `policies:wizard-closed` | PolicyGateInterceptor on any wizard close (Cancel or after completion), with `detail: { completed: boolean }` | `lib/api.ts` POLICIES_REQUIRED branch | Signal for api.ts auto-retry: if `completed=true`, retry the original request that triggered the wizard; if `completed=false`, throw. |
-| `policies:changed` | Admin operations (grant exception, publish v2, etc.) | ComplianceBanner, index.tsx counts | Refresh — server-side state changed |
-| `navigate:profile` | ComplianceBanner "View profile" | index.tsx | Switch top tab → worker/Profile. Pushes onto nav history so the back button returns to Home. |
+| `policies:changed` | Admin operations (grant exception, publish v2, etc.) | CompliancePromptBanner, index.tsx counts | Refresh — server-side state changed |
+| `navigate:profile` | CompliancePromptBanner "View profile" | index.tsx | Switch top tab → worker/Profile. Pushes onto nav history so the back button returns to Home. |
 
 ## Auto-retry on gated requests
 
@@ -270,7 +270,7 @@ so no passwords are stored anywhere. Storage state cached to
   policy they'd never signed would still see the banner. Fixed by
   short-circuiting on `hasActiveException` before the fallback path.
   Caught by the Playwright edge spec.
-- **Home-tab banner** (this project) — Added `ComplianceBanner`
+- **Home-tab banner** (this project) — Added the compliance banner
   component to the worker Home tab, below `HomeBanners` and the push-
   notification card. Red for BLOCK, orange for WARN-only, silent when
   clear. Pulses. "View profile" + "Sign now" buttons.

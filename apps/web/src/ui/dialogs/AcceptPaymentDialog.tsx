@@ -17,7 +17,7 @@ import {
 import { apiGet, apiPost } from "@/src/lib/api";
 import { bumpAdminPayments } from "@/src/lib/bus";
 import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
-import { prettyStatus } from "@/src/lib/lib";
+import { prettyStatus } from "@/src/lib/labels";
 import { composePaymentMessage } from "@/src/lib/paymentMessages";
 
 // PAYMENT_METHODS taxonomy row shape. Mirrors the server-side type.

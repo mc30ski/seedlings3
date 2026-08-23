@@ -17,12 +17,9 @@ import {
 import { Filter, LayoutList, Plus, RefreshCw, X } from "lucide-react";
 import { apiGet, apiDelete, apiPost } from "@/src/lib/api";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
-import {
-  determineRoles,
-  propertyStatusColor,
-  prettyStatus,
-  clientLabel,
-} from "@/src/lib/lib";
+import { prettyStatus, clientLabel } from "@/src/lib/labels";
+import { determineRoles } from "@/src/lib/roles";
+import { propertyStatusColor } from "@/src/lib/statusColors";
 import {
   type TabPropsType,
   PROPERTY_KIND,

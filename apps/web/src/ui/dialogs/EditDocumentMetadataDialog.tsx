@@ -15,7 +15,7 @@ import {
 } from "@chakra-ui/react";
 import { Plus } from "lucide-react";
 import { apiPatch } from "@/src/lib/api";
-import { bizDateKey, bizInstantFromEtParts , type EtDateKey } from "@/src/lib/lib";
+import { bizDateKey, bizInstantFromEtParts, type EtDateKey } from "@/src/lib/dates";
 import {
   publishInlineMessage,
   getErrorMessage,

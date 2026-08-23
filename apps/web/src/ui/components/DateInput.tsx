@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import type { EtDateKey } from "@/src/lib/lib";
+import type { EtDateKey } from "@/src/lib/dates";
 
 type Props = {
   /** Current value — YYYY-MM-DD ET calendar key. `EtDateKey | string`

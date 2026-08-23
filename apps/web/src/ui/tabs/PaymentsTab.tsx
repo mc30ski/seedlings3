@@ -23,7 +23,9 @@ import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/li
 import DateInput from "@/src/ui/components/DateInput";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import { apiGet, apiPatch, apiDelete, apiPost } from "@/src/lib/api";
-import { determineRoles, prettyStatus, clientLabel, fmtDate, fmtDateKey, fmtDateTime, bizDateKey, bizToday, bizAddDays, bizAddYears, type EtDateKey } from "@/src/lib/lib";
+import { fmtDate, fmtDateKey, fmtDateTime, bizDateKey, bizToday, bizAddDays, bizAddYears, type EtDateKey } from "@/src/lib/dates";
+import { prettyStatus, clientLabel } from "@/src/lib/labels";
+import { determineRoles } from "@/src/lib/roles";
 import { composePaymentMessage } from "@/src/lib/paymentMessages";
 import { resolveBillingMode, shortBillingChip } from "@/src/lib/equipmentBilling";
 import { useEquipmentBillingEnabled } from "@/src/lib/useEquipmentBillingEnabled";
@@ -48,8 +50,8 @@ import { openEventSearch, bumpAdminPayments } from "@/src/lib/bus";
 import PendingApprovalsSection from "@/src/ui/components/PendingApprovalsSection";
 import OutstandingRequestsSection from "@/src/ui/components/OutstandingRequestsSection";
 
-// Date helpers come from @/src/lib/lib (bizToday, bizAddDays). NEVER
-// reinvent — see lib/lib.ts.
+// Date helpers come from @/src/lib/dates (bizToday, bizAddDays). NEVER
+// reinvent — see lib/dates.ts.
 function defaultDateFrom() {
   return bizAddDays(bizToday(), -30);
 }

@@ -11,7 +11,7 @@
 //
 // CANONICAL HELPERS (the only legitimate path for date code):
 //   • API side:  apps/api/src/lib/dates.ts
-//   • Web side:  apps/web/src/lib/lib.ts
+//   • Web side:  apps/web/src/lib/dates.ts
 //   • Reference: docs/DATE_HANDLING.md
 //
 // HOW IT WORKS
@@ -56,7 +56,7 @@ const SCAN_DIRS = [
 // and test files (which assert against the patterns).
 const HELPER_FILES = new Set<string>([
   "apps/api/src/lib/dates.ts",
-  "apps/web/src/lib/lib.ts",
+  "apps/web/src/lib/dates.ts",
 ]);
 
 function shouldSkipFile(repoRelPath: string): boolean {
@@ -132,7 +132,7 @@ const FORBIDDEN_PATTERNS: Rule[] = [
   {
     pattern: /new\s+Intl\.DateTimeFormat\b/,
     reason: "Inline `new Intl.DateTimeFormat(...)` should live in the canonical helper files only.",
-    fix: "If you need a new shape, add a helper to apps/api/src/lib/dates.ts or apps/web/src/lib/lib.ts and call it.",
+    fix: "If you need a new shape, add a helper to apps/api/src/lib/dates.ts or apps/web/src/lib/dates.ts and call it.",
     // ledgerId.ts builds a custom YY-MM-DD ID format; the implementation
     // is now routed through etFormatDate but the file may still reference
     // Intl elsewhere as comment / dead code. Allow it explicitly.
@@ -292,7 +292,7 @@ const FORBIDDEN_PATTERNS: Rule[] = [
   // 14. RETIRED. Formerly forbade `fmtDate(*Key)` — the off-by-one
   //     caused by parsing date-only ISO strings as UTC midnight. The
   //     underlying formatter now auto-routes YYYY-MM-DD input through
-  //     a UTC-noon anchor (see toDisplayInstant in apps/web/src/lib/lib.ts),
+  //     a UTC-noon anchor (see toDisplayInstant in apps/web/src/lib/dates.ts),
   //     so `fmtDate(usualKey)` is no longer a bug — it produces the
   //     correct display regardless of input shape.
   //
@@ -474,7 +474,7 @@ describe("Date-handling build gate — forbidden patterns must not appear in pro
         )
         .join("\n");
       throw new Error(
-        `Found ${allViolations.length} forbidden date pattern(s). Each must be migrated to the canonical helpers (apps/api/src/lib/dates.ts or apps/web/src/lib/lib.ts) or — if a documented exception — annotated with \`// date-handling-allow: <reason>\` on the line above.\n${report}\n\nSee docs/DATE_HANDLING.md for the full policy.`,
+        `Found ${allViolations.length} forbidden date pattern(s). Each must be migrated to the canonical helpers (apps/api/src/lib/dates.ts or apps/web/src/lib/dates.ts) or — if a documented exception — annotated with \`// date-handling-allow: <reason>\` on the line above.\n${report}\n\nSee docs/DATE_HANDLING.md for the full policy.`,
       );
     }
   });

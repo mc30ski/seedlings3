@@ -12,7 +12,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Box, Button, HStack, Text, VStack, Badge, IconButton, Spinner } from "@chakra-ui/react";
 import { RefreshCw, ChevronDown, ChevronUp } from "lucide-react";
 import { apiGet, apiPatch, apiPost } from "@/src/lib/api";
-import { fmtDate, fmtTimeOpts } from "@/src/lib/lib";
+import { fmtDate, fmtTimeOpts } from "@/src/lib/dates";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 

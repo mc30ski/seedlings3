@@ -13,7 +13,7 @@ import {
 } from "@chakra-ui/react";
 import { AlertTriangle, CheckCircle2, Clock, Eye, FileText, XCircle } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
-import { fmtDate } from "@/src/lib/lib";
+import { fmtDate } from "@/src/lib/dates";
 import PolicySignWizard, { type RequiredPolicy } from "@/src/ui/dialogs/PolicySignWizard";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import SignedPolicyViewDialog from "@/src/ui/dialogs/SignedPolicyViewDialog";

@@ -1,4 +1,4 @@
-// Public promotion landing page — no auth required. URL: /promotion/<slug>.
+// Public promotion landing page — no auth required. URL: /promotion/<promotionSlug>.
 // Referenced by the wrapper redirect when a Promotion has
 // linkKind=LANDING_PAGE. Also directly shareable (though the wrapper
 // is the canonical entry so click analytics work).
@@ -52,14 +52,14 @@ type LandingPageData = {
 };
 
 type Props = {
-  slug: string;
+  promotionSlug: string;
   page: LandingPageData | null;
   ogImage: string | null;
   ogTitle: string;
   ogDescription: string;
 };
 
-export default function PromotionLandingPage({ slug, page, ogTitle, ogDescription, ogImage }: Props) {
+export default function PromotionLandingPage({ promotionSlug, page, ogTitle, ogDescription, ogImage }: Props) {
   // Carousel state. Scoped to ONE item — a client browsing "Clean yard
   // debris" should page through that entry's photos, not slide into the
   // next service's. Null = closed.
@@ -195,16 +195,28 @@ export default function PromotionLandingPage({ slug, page, ogTitle, ogDescriptio
                   // same size whether there's one or nine, and centering
                   // means a short row sits in the middle instead of
                   // hugging the left edge.
-                  templateColumns={{
-                    base: "repeat(auto-fit, minmax(240px, 1fr))",
-                    sm: "repeat(auto-fit, minmax(240px, 320px))",
-                  }}
-                  justifyContent="center"
-                  // Cards size to their own content. Grid's default
-                  // `stretch` made every card as tall as the tallest in the
-                  // row — which, with one short item, produced a card of
-                  // mostly empty white.
-                  alignItems="start"
+                  // Tracks are `1fr`, so cards FILL the container width
+                  // instead of sitting capped at 320px with dead space on
+                  // both sides. auto-fit still wraps them onto new rows as
+                  // the viewport narrows.
+                  //
+                  // The one exception is a single item: at full container
+                  // width one card becomes a banner, so it gets a sane max
+                  // and centers. That was the original reason for the cap —
+                  // it just shouldn't have applied to every count.
+                  templateColumns={
+                    page.items.length === 1
+                      ? "minmax(260px, 420px)"
+                      : { base: "repeat(auto-fit, minmax(240px, 1fr))", sm: "repeat(auto-fit, minmax(260px, 1fr))" }
+                  }
+                  justifyContent={page.items.length === 1 ? "center" : "stretch"}
+                  // Cards in a row match heights. With the photo frame now
+                  // fixed (see ItemCard), the only variance left is
+                  // description length, and ragged bottoms look worse than
+                  // a little trailing space. The earlier "one card, mostly
+                  // empty white" problem came from the unbounded photo
+                  // block, not from stretch — the 320px track cap fixed it.
+                  alignItems="stretch"
                   gap={{ base: 4, md: 6 }}
                 >
                   {page.items.map((item) => (
@@ -255,6 +267,9 @@ function ItemCard({
       rounded="lg"
       overflow="hidden"
       shadow="sm"
+      display="flex"
+      flexDirection="column"
+      h="100%"
     >
       {/* Photo grid. One photo fills the card's width; several tile into
           squares. Tapping any opens the carousel at that photo, so the
@@ -263,46 +278,46 @@ function ItemCard({
           Direct <img> — Next.js's Image component would need
           remotePatterns for the R2 presigned domain, and presigned URLs
           rotate every 6 hours, so the optimization cache would thrash. */}
-      {item.photos.length === 0 ? (
-        <Box w="100%" style={{ aspectRatio: "1" }} bg="gray.100" overflow="hidden">
+      {/* Photo block — ALWAYS the same height, whatever the photo count.
+          It used to size itself from the tiles: one photo became a
+          full-width square, two became half-width squares side by side and
+          therefore half as tall, so cards in the same row came out wildly
+          different heights. Now the block is a fixed 4:3 frame and the
+          photos tile INSIDE it, so every card matches. */}
+      <Box
+        w="100%"
+        style={{ aspectRatio: "4 / 3" }}
+        bg="gray.100"
+        overflow="hidden"
+        display="grid"
+        gap="2px"
+        gridTemplateColumns={
+          item.photos.length <= 1 ? "1fr"
+            : item.photos.length === 3 ? "repeat(3, 1fr)"
+            : "repeat(2, 1fr)"
+        }
+        gridTemplateRows={item.photos.length > 4 ? "repeat(2, 1fr)" : "1fr"}
+      >
+        {item.photos.length === 0 ? (
           <MissingPhotoPlaceholder />
-        </Box>
-      ) : item.photos.length === 1 ? (
-        <Box
-          w="100%"
-          style={{ aspectRatio: "1" }}
-          bg="gray.100"
-          overflow="hidden"
-          cursor="pointer"
-          onClick={() => onOpenPhoto(0)}
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={item.photos[0].url}
-            alt={item.title}
-            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-            loading="lazy"
-          />
-        </Box>
-      ) : (
-        <SimpleGrid columns={item.photos.length === 2 ? 2 : 3} gap="2px" bg="gray.100">
-          {item.photos.slice(0, 6).map((ph, i) => {
-            // 6th tile doubles as a "+N more" affordance when there are
-            // more photos than fit — the carousel still holds all of them.
-            const overflow = i === 5 && item.photos.length > 6;
+        ) : (
+          // Cap at 4 tiles; the 4th carries a "+N" when there are more, and
+          // the carousel still holds every photo.
+          item.photos.slice(0, 4).map((ph, i) => {
+            const overflow = i === 3 && item.photos.length > 4;
             return (
               <Box
                 key={ph.id}
                 position="relative"
-                style={{ aspectRatio: "1" }}
                 overflow="hidden"
                 cursor="pointer"
+                minH={0}
                 onClick={() => onOpenPhoto(i)}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={ph.url}
-                  alt=""
+                  alt={i === 0 ? item.title : ""}
                   style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
                   loading="lazy"
                 />
@@ -316,15 +331,15 @@ function ItemCard({
                     justifyContent="center"
                   >
                     <Text color="white" fontWeight="bold" fontSize="lg">
-                      +{item.photos.length - 5}
+                      +{item.photos.length - 3}
                     </Text>
                   </Box>
                 )}
               </Box>
             );
-          })}
-        </SimpleGrid>
-      )}
+          })
+        )}
+      </Box>
       <Box p={4}>
         <Text fontWeight="bold" fontSize="md" mb={1}>
           {item.title}
@@ -512,9 +527,9 @@ function Notice({ title, children }: { title: string; children: React.ReactNode 
 
 // Server-side render so link-preview crawlers (iMessage, Facebook,
 // Slack, etc.) get real OG tags. Also lets us 404 cleanly before any
-// client bundle ships when the slug doesn't exist.
+// client bundle ships when the promotion doesn't exist.
 export const getServerSideProps: GetServerSideProps<Props> = async (ctx) => {
-  const slug = String(ctx.params?.slug ?? "");
+  const promotionSlug = String(ctx.params?.promotionSlug ?? "");
   // Base URL must be ABSOLUTE — server-side fetch() rejects relative
   // URLs with a TypeError. In prod NEXT_PUBLIC_API_BASE_URL is set to
   // "/api/_proxy" (relative) so callers on the CLIENT can hit the
@@ -527,7 +542,7 @@ export const getServerSideProps: GetServerSideProps<Props> = async (ctx) => {
   // it (slug-scoped, short-lived HMAC); this layer just passes it along.
   const previewToken = typeof ctx.query.preview === "string" ? ctx.query.preview : "";
   const url =
-    `${origin}/api/public/promotion/${encodeURIComponent(slug)}` +
+    `${origin}/api/public/promotion/${encodeURIComponent(promotionSlug)}` +
     (previewToken ? `?preview=${encodeURIComponent(previewToken)}` : "");
   let page: LandingPageData | null = null;
   try {
@@ -565,6 +580,6 @@ export const getServerSideProps: GetServerSideProps<Props> = async (ctx) => {
   // cost the page its link preview.
   const ogImage = page?.items.flatMap((i) => i.photos)[0]?.url ?? null;
   return {
-    props: { slug, page, ogTitle, ogDescription, ogImage },
+    props: { promotionSlug, page, ogTitle, ogDescription, ogImage },
   };
 };

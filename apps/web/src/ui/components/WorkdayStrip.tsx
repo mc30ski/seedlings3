@@ -43,7 +43,7 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
-import { bizInstantFromEtParts, bizToday, fmtDateTime , type EtDateKey } from "@/src/lib/lib";
+import { bizInstantFromEtParts, bizToday, fmtDateTime, type EtDateKey } from "@/src/lib/dates";
 import { useOffline } from "@/src/lib/offline";
 import { enqueueAction, type QueuedActionType } from "@/src/lib/offlineQueue";
 import ImpersonationWarning from "@/src/ui/components/ImpersonationWarning";

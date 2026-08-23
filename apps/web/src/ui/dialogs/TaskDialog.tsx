@@ -16,7 +16,8 @@ import {
 import { X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiPatch } from "@/src/lib/api";
-import { bizDateKey, clientLabel, fmtDate, jobTypeLabel } from "@/src/lib/lib";
+import { bizDateKey, fmtDate } from "@/src/lib/dates";
+import { clientLabel, jobTypeLabel } from "@/src/lib/labels";
 import { type WorkerOccurrence } from "@/src/lib/types";
 import {
   publishInlineMessage,

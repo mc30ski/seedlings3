@@ -25,7 +25,7 @@ import { apiGet, apiPatch, apiPost, apiDelete } from "@/src/lib/api";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import MarkdownContent from "@/src/ui/components/MarkdownContent";
-import { fmtDate, fmtDateTime, bizDateKey, bizInstantFromEtParts, type EtDateKey } from "@/src/lib/lib";
+import { fmtDate, fmtDateTime, bizDateKey, bizInstantFromEtParts, type EtDateKey } from "@/src/lib/dates";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Promotions tab — Super-only surface.
@@ -1691,7 +1691,7 @@ function ChannelPanelEmail({
 
 /** Full-invoice preview — renders the promo card in its real position on
  *  the client-facing /pay/[token] page. Deliberately mirrors that page's
- *  structure and styling (see apps/web/pages/pay/[token].tsx): Invoice
+ *  structure and styling (see apps/web/pages/pay/[paymentToken].tsx): Invoice
  *  total card → Offers → Payment. Sample invoice data is obviously fake
  *  so nobody mistakes it for a real client's figures; the ONLY real
  *  content is the promo card itself.

@@ -14,7 +14,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Badge, Box, Button, HStack, Spinner, Text, VStack } from "@chakra-ui/react";
 import { ArrowUpRight } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
-import { fmtDate } from "@/src/lib/lib";
+import { fmtDate } from "@/src/lib/dates";
 import {
   publishInlineMessage,
   getErrorMessage,

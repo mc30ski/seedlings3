@@ -21,7 +21,7 @@ import {
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 import { type Me, type Role } from "@/src/lib/types";
-import { fmtDate, fmtDateOpts, fmtDateLong, fmtTimeOpts, bizToday, bizDateKey, bizDaysBetween } from "@/src/lib/lib";
+import { fmtDate, fmtDateOpts, fmtDateLong, fmtTimeOpts, bizToday, bizDateKey, bizDaysBetween } from "@/src/lib/dates";
 import { useOffline } from "@/src/lib/offline";
 import { getAllActions, deleteAction, retryAction, clearAllActions, subscribeQueue, type QueuedAction } from "@/src/lib/offlineQueue";
 import { usePushNotifications } from "@/src/lib/usePushNotifications";
@@ -489,7 +489,7 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
                   const active = untilDate.getTime() > Date.now();
                   if (!active) return null;
                   // ET calendar-day diff (not raw ms / 86_400_000 which
-                  // drifts at DST). See bizDaysBetween in lib/lib.ts.
+                  // drifts at DST). See bizDaysBetween in lib/dates.ts.
                   const daysLeft = Math.max(0, bizDaysBetween(bizToday(), bizDateKey(untilDate)));
                   return (
                     <HStack fontSize="sm" align="flex-start">
