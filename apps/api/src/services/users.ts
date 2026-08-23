@@ -353,14 +353,31 @@ export const users: ServicesUsers = {
     });
 
     if (!user) {
-      user = await prisma.user.create({
-        data: {
+      user = await prisma.$transaction(async (tx) => {
+        const created = await tx.user.create({
+          data: {
+            clerkUserId,
+            email: fetchedEmail,
+            displayName: fetchedDisplayName,
+            isApproved: false,
+          },
+          include: { roles: true },
+        });
+        // First sign-in auto-provisions the account row. USER.SIGN_IN
+        // covers sessions, not the birth of the row — without this the
+        // only account-creation trail is the createdAt column. Audited
+        // ONLY on the create branch: /me runs on every authenticated
+        // request and must not emit a row on the read path. Actor is the
+        // user themselves — no admin is involved.
+        await writeAudit(tx, AUDIT.USER.CREATED, created.id, {
+          userId: created.id,
           clerkUserId,
-          email: fetchedEmail,
-          displayName: fetchedDisplayName,
+          email: created.email ?? null,
+          displayName: created.displayName ?? null,
           isApproved: false,
-        },
-        include: { roles: true },
+          source: "auto_provision_me",
+        });
+        return created;
       });
     } else {
       // Keep the local mirror in sync with Clerk (the identity source of
@@ -425,22 +442,52 @@ export const users: ServicesUsers = {
 
     if (shouldBootstrap) {
       await prisma.$transaction(async (tx) => {
-        if (!user!.isApproved) {
+        // Audit what this actually GRANTS. Approving a user and handing
+        // them ADMIN are both audited on the normal admin-driven paths
+        // (see approve() and addRole() above); this env-driven path did
+        // the same thing silently, leaving the one privilege escalation
+        // in the codebase with no trail.
+        //
+        // Only log real transitions. This block runs on EVERY /me for a
+        // bootstrap email and is idempotent, so auditing unconditionally
+        // would bury the History tab under a row per request.
+        const approvedNow = !user!.isApproved;
+        if (approvedNow) {
           await tx.user.update({
             where: { id: user!.id },
             data: { isApproved: true },
           });
         }
-        await tx.userRole.upsert({
-          where: { userId_role: { userId: user!.id, role: RoleVal.WORKER } },
-          update: {},
-          create: { userId: user!.id, role: RoleVal.WORKER },
+        const existing = await tx.userRole.findMany({
+          where: { userId: user!.id, role: { in: [RoleVal.WORKER, RoleVal.ADMIN] } },
+          select: { role: true },
         });
-        await tx.userRole.upsert({
-          where: { userId_role: { userId: user!.id, role: RoleVal.ADMIN } },
-          update: {},
-          create: { userId: user!.id, role: RoleVal.ADMIN },
-        });
+        const had = new Set(existing.map((r) => r.role));
+        const rolesGranted: string[] = [];
+        for (const role of [RoleVal.WORKER, RoleVal.ADMIN]) {
+          if (had.has(role)) continue;
+          await tx.userRole.create({ data: { userId: user!.id, role } });
+          rolesGranted.push(String(role));
+        }
+        if (approvedNow || rolesGranted.length > 0) {
+          // actorUserId is the user themselves — no admin is involved.
+          // `source` is what distinguishes this from a human decision.
+          if (approvedNow) {
+            await writeAudit(tx, AUDIT.USER.APPROVED, user!.id, {
+              userId: user!.id,
+              email: normalizedEmail,
+              source: "bootstrap_env",
+            });
+          }
+          if (rolesGranted.length > 0) {
+            await writeAudit(tx, AUDIT.USER.ROLE_ASSIGNED, user!.id, {
+              userId: user!.id,
+              email: normalizedEmail,
+              rolesGranted,
+              source: "bootstrap_env",
+            });
+          }
+        }
       });
       user = await prisma.user.findUnique({
         where: { clerkUserId },

@@ -769,11 +769,23 @@ export async function clearVanityPageImage(params: {
     throw err;
   }
   if (!prev.imageR2Key) return;
-  await prisma.vanityPage.update({
-    where: { id: params.vanityPageId },
-    data: { imageR2Key: null, updatedById: params.actorUserId },
+  const clearedKey = prev.imageR2Key;
+  await prisma.$transaction(async (tx) => {
+    const updated = await tx.vanityPage.update({
+      where: { id: params.vanityPageId },
+      data: { imageR2Key: null, updatedById: params.actorUserId },
+    });
+    // Irreversible: the R2 object is deleted right below, so the key
+    // recorded here is the only trace of what the public page showed.
+    await writeAudit(tx, AUDIT.VANITY.UPDATED, params.actorUserId, {
+      vanityPageId: updated.id,
+      slug: updated.slug,
+      change: "image_cleared",
+      action: "image_cleared",
+      clearedR2Key: clearedKey,
+    });
   });
-  void deleteObject(prev.imageR2Key, "promotion-images").catch(() => {});
+  void deleteObject(clearedKey, "promotion-images").catch(() => {});
 }
 
 export async function confirmVanityPageImageUpload(params: {
@@ -785,9 +797,21 @@ export async function confirmVanityPageImageUpload(params: {
     where: { id: params.vanityPageId },
     select: { imageR2Key: true },
   });
-  await prisma.vanityPage.update({
-    where: { id: params.vanityPageId },
-    data: { imageR2Key: params.key, updatedById: params.actorUserId },
+  await prisma.$transaction(async (tx) => {
+    const updated = await tx.vanityPage.update({
+      where: { id: params.vanityPageId },
+      data: { imageR2Key: params.key, updatedById: params.actorUserId },
+    });
+    // Changes the hero image on a PUBLIC page, and destroys the prior
+    // R2 object below — the replaced key survives only here.
+    await writeAudit(tx, AUDIT.VANITY.UPDATED, params.actorUserId, {
+      vanityPageId: updated.id,
+      slug: updated.slug,
+      change: "image_set",
+      action: "image_set",
+      newR2Key: params.key,
+      replacedR2Key: prev?.imageR2Key ?? null,
+    });
   });
   // Clean up the prior image so replacements don't orphan bytes.
   if (prev?.imageR2Key && prev.imageR2Key !== params.key) {

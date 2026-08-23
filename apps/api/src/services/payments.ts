@@ -524,6 +524,9 @@ export async function persistCompletionSplits(
   tx: any,
   occurrenceId: string,
   splits: Array<{ userId: string; percent: number }>,
+  // Optional so the existing worker-route caller keeps compiling unchanged.
+  // Null actor still writes the audit row (AuditEvent.actorUserId is nullable).
+  currentUserId?: string | null,
 ): Promise<PromisedRow[]> {
   if (!Array.isArray(splits) || splits.length === 0) {
     throw new ServiceError("INVALID_SPLITS", "At least one split entry is required.", 400);
@@ -607,12 +610,35 @@ export async function persistCompletionSplits(
   }));
   const promised = computeBreakdown(priceTotal, expenses, workers, rates);
 
+  const prior = await tx.jobOccurrence.findUnique({
+    where: { id: occurrenceId },
+    select: { completionSplits: true },
+  });
+
   await tx.jobOccurrence.update({
     where: { id: occurrenceId },
     data: {
       completionSplits: splits as any,
       promisedPayouts: promised as any,
     },
+  });
+
+  // Money: this IS the payout contract — completionSplits decides each
+  // worker's share and promisedPayouts is the net each is owed at approval
+  // time (employees/trainees get topped up to it). Rewriting it changes who
+  // gets paid what, so the before/after percentages are recorded here.
+  await writeAudit(tx, AUDIT.PAYMENT.ADJUSTED, currentUserId ?? null, {
+    occurrenceId,
+    action: "completion_splits_set",
+    splitsBefore: (prior?.completionSplits as any) ?? null,
+    splitsAfter: splits.map((x) => ({ userId: x.userId, percent: Number(x.percent) })),
+    promisedPayouts: promised.map((r: any) => ({
+      userId: r.userId,
+      splitPercent: r.splitPercent ?? null,
+      net: r.net ?? null,
+    })),
+    priceTotal,
+    expenses,
   });
 
   return promised;
@@ -686,7 +712,7 @@ export const payments: ServicesPayments = {
       // re-snapshot promisedPayouts. This is the single canonical place
       // splits get saved during Take Payment. The same helper is called
       // by paymentRequests for Request Payment.
-      const promised = await persistCompletionSplits(tx, occurrenceId, completionSplits);
+      const promised = await persistCompletionSplits(tx, occurrenceId, completionSplits, currentUserId);
 
       // Step 2: compute the RECONCILED breakdown against the reported
       // amount, using the same reconciliation logic admin approval will
@@ -795,6 +821,28 @@ export const payments: ServicesPayments = {
           splits: { include: { user: { select: { id: true, displayName: true, email: true, workerType: true } } } },
           collectedBy: { select: { id: true, displayName: true } },
         },
+      });
+
+      // Audit: the payment itself. This MUST be unconditional — the two
+      // conditional audits below (owner earnings, processor fee) used to be
+      // the only ones here, so an ordinary cash payment with no owner split
+      // and no processor fee recorded money changing hands with NO audit
+      // row at all. Cash is the most common case in this business, so the
+      // most routine money event was the least traceable.
+      await writeAudit(tx, AUDIT.PAYMENT.CREATED, currentUserId, {
+        paymentId: payment.id,
+        occurrenceId,
+        amountPaid,
+        method,
+        context,
+        confirmed: payment.confirmed,
+        selfReported: payment.selfReported,
+        receiptNumber: payment.receiptNumber,
+        splits: recon.splits.map((sp) => ({
+          userId: sp.userId,
+          amount: sp.amount,
+          netAmount: sp.netAmount,
+        })),
       });
 
       // Audit: flag the payment when any split is owner earnings (excluded
@@ -956,7 +1004,7 @@ export const payments: ServicesPayments = {
     return approved;
   },
 
-  async forceCreateNextOccurrence(_currentUserId: string, occurrenceId: string) {
+  async forceCreateNextOccurrence(currentUserId: string, occurrenceId: string) {
     const fullOcc = await prisma.jobOccurrence.findUnique({
       where: { id: occurrenceId },
       include: {
@@ -1043,6 +1091,26 @@ export const payments: ServicesPayments = {
           data: { nextOccurrenceSkipReason: null },
         });
       }
+
+      // Money: creates the next billable occurrence (carrying a price the
+      // client will owe and a roster of workers who will be paid for it) and
+      // clears the payment's nextOccurrenceSkipReason, which is the flag that
+      // recorded a deliberate decision NOT to bill again.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_CREATED, currentUserId, {
+        occurrenceId: nextOccurrence.id,
+        sourceOccurrenceId: occurrenceId,
+        jobId: fullOcc.jobId ?? null,
+        reason: "admin_force_create_next",
+        startAt: nextOccurrence.startAt?.toISOString() ?? null,
+        endAt: nextOccurrence.endAt?.toISOString() ?? null,
+        price: nextOccurrence.price ?? null,
+        frequencyDays: effectiveFreq,
+        snappedForward,
+        overrideUsed,
+        assigneeUserIds: (fullOcc.job?.defaultAssignees ?? []).map((d) => d.userId),
+        carriedInstructionCount: carryForwardInstructions.length,
+        clearedNextOccurrenceSkipReason: fullOcc.payment?.nextOccurrenceSkipReason ?? null,
+      });
 
       return {
         ok: true,
@@ -1393,17 +1461,42 @@ export const payments: ServicesPayments = {
 
       await tx.payment.update({ where: { id: paymentId }, data });
 
-      // Audit the date correction. This is a tax-period-relevant edit: it can
+      // Audit EVERY changed field, not just the date. This started as a
+      // paidAt-only audit, which left an amount or method correction — or a
+      // rewrite of who gets paid what — with no trail on a superGuard route
+      // that edits real money.
+      //
+      // Tax-period relevance is why paidAt gets its own before/after: it can
       // move a payment across a reporting week, a BSD cutoff, or a Gusto
-      // payroll window, so the before/after has to be recoverable.
+      // payroll window.
+      const changes: Record<string, { from: unknown; to: unknown }> = {};
+      if (input.amountPaid !== undefined && input.amountPaid !== existing.amountPaid) {
+        changes.amountPaid = { from: existing.amountPaid, to: input.amountPaid };
+      }
+      if (input.method !== undefined && input.method !== existing.method) {
+        changes.method = { from: existing.method, to: input.method };
+      }
+      if ("note" in input && (input.note || null) !== existing.note) {
+        changes.note = { from: existing.note, to: input.note || null };
+      }
       if (paidAtChanged) {
+        changes.paidAt = {
+          from: existing.createdAt.toISOString(),
+          to: paidAt!.toISOString(),
+        };
+      }
+      if (input.splits) {
+        changes.splits = {
+          from: existing.splits.map((sp) => ({ userId: sp.userId, amount: sp.amount })),
+          to: input.splits.map((sp) => ({ userId: sp.userId, amount: sp.amount })),
+        };
+      }
+      if (Object.keys(changes).length > 0) {
         await writeAudit(tx, AUDIT.PAYMENT.ADJUSTED, currentUserId, {
           paymentId,
           occurrenceId: existing.occurrenceId,
-          field: "paidAt",
-          fromDate: existing.createdAt.toISOString(),
-          toDate: paidAt!.toISOString(),
-          confirmedAtMoved: existing.confirmed,
+          changes,
+          ...(paidAtChanged ? { confirmedAtMoved: existing.confirmed } : {}),
         });
       }
 
@@ -1480,8 +1573,29 @@ export const payments: ServicesPayments = {
         data: { status: JobOccurrenceStatus.PENDING_PAYMENT },
       });
 
+      // Snapshot the splits before they cascade away — after the delete
+      // there is no way to reconstruct who was owed what.
+      const doomedSplits = await tx.paymentSplit.findMany({
+        where: { paymentId },
+        select: { userId: true, amount: true, netAmount: true, ownerEarnings: true },
+      });
+
       // Delete payment (splits cascade)
       await tx.payment.delete({ where: { id: paymentId } });
+
+      // This function had NO audit at all: it hard-deletes a payment, wipes
+      // its splits, and can destroy an auto-generated next occurrence with
+      // its assignees, pins, likes, and comments — none of it recoverable.
+      await writeAudit(tx, AUDIT.PAYMENT.DELETED, currentUserId, {
+        paymentId,
+        occurrenceId: existing.occurrenceId,
+        reason: "admin_deleted_payment",
+        amountPaid: existing.amountPaid,
+        method: existing.method,
+        confirmed: existing.confirmed,
+        receiptNumber: existing.receiptNumber,
+        splits: doomedSplits,
+      });
     });
   },
 
@@ -1499,7 +1613,9 @@ export const payments: ServicesPayments = {
     });
   },
 
-  async recalculateSplits(occurrenceId: string) {
+  // `currentUserId` is optional so the existing admin route caller keeps
+  // compiling unchanged; pass it through to attribute the rewrite.
+  async recalculateSplits(occurrenceId: string, currentUserId?: string | null) {
     return prisma.$transaction(async (tx) => {
       const payment = await tx.payment.findUnique({
         where: { occurrenceId },
@@ -1536,6 +1652,29 @@ export const payments: ServicesPayments = {
           ownerEarnings: ownerSet.has(uid),
           guaranteedPayoutPaidAt: advanceFlags.get(uid) ?? null,
         })),
+      });
+
+      // Money: every PaymentSplit on this payment is destroyed and replaced
+      // with a flat even distribution — it overwrites whatever each worker was
+      // actually owed, so the pre-rewrite amounts only survive here.
+      await writeAudit(tx, AUDIT.PAYMENT.ADJUSTED, currentUserId ?? null, {
+        paymentId: payment.id,
+        occurrenceId,
+        action: "recalculated_even_split",
+        amountPaid: payment.amountPaid,
+        splitsBefore: payment.splits.map((sp) => ({
+          userId: sp.userId,
+          amount: sp.amount,
+          ownerEarnings: sp.ownerEarnings,
+        })),
+        splitsAfter: assigneeIds.map((uid) => ({
+          userId: uid,
+          amount: splitAmount,
+          ownerEarnings: ownerSet.has(uid),
+        })),
+        totalPayout: Math.round(Math.max(0, totalPayout) * 100) / 100,
+        perWorkerAmount: splitAmount,
+        workerCount: assigneeIds.length,
       });
 
       return tx.payment.findUnique({

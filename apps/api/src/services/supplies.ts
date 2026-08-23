@@ -4,6 +4,8 @@ import { parseUserDate } from "../lib/dates";
 import { resolvePrivileges } from "../lib/privileges";
 import { loadCategoryLabels } from "./expenseCategories";
 import { generateLedgerId } from "../lib/ledgerId";
+import { writeAudit } from "../lib/auditLogger";
+import { AUDIT } from "../lib/auditActions";
 import type {
   ServicesSupplies,
   SupplyCreateInput,
@@ -227,22 +229,37 @@ export const supplies: ServicesSupplies = {
     const upc = input.upc ? input.upc.trim() || null : null;
     const description = input.description ? input.description.trim() || null : null;
 
-    return prisma.supply.create({
-      data: {
-        createdById: currentUserId,
+    return prisma.$transaction(async (tx) => {
+      const supply = await tx.supply.create({
+        data: {
+          createdById: currentUserId,
+          name,
+          unit,
+          category,
+          businessCost,
+          jobPayoutCost,
+          upc,
+          description,
+        },
+        include: supplyInclude,
+      });
+      // A new catalog row sets two prices that flow into money later:
+      // jobPayoutCost is what a worker gets charged per unit pulled, and
+      // category is the Schedule C line every purchase of it will file under.
+      await writeAudit(tx, AUDIT.SUPPLY.CREATED, currentUserId, {
+        supplyId: supply.id,
         name,
         unit,
         category,
         businessCost,
         jobPayoutCost,
         upc,
-        description,
-      },
-      include: supplyInclude,
+      });
+      return supply;
     });
   },
 
-  async update(_currentUserId, id, input) {
+  async update(currentUserId, id, input) {
     const existing = await prisma.supply.findUnique({ where: { id } });
     if (!existing) throw new ServiceError("NOT_FOUND", "Supply not found.", 404);
 
@@ -271,20 +288,63 @@ export const supplies: ServicesSupplies = {
       data.description = input.description ? String(input.description).trim() || null : null;
     }
 
-    return prisma.supply.update({ where: { id }, data, include: supplyInclude });
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.supply.update({ where: { id }, data, include: supplyInclude });
+      // Repricing is a money change with a delayed blast radius:
+      // jobPayoutCost sets what every future hold deducts from a worker's
+      // payout, businessCost is the reference cost, and category re-files
+      // every future purchase on a different Schedule C line.
+      await writeAudit(tx, AUDIT.SUPPLY.UPDATED, currentUserId, {
+        supplyId: id,
+        nameBefore: existing.name,
+        nameAfter: updated.name,
+        jobPayoutCostBefore: existing.jobPayoutCost,
+        jobPayoutCostAfter: updated.jobPayoutCost,
+        businessCostBefore: existing.businessCost,
+        businessCostAfter: updated.businessCost,
+        categoryBefore: existing.category,
+        categoryAfter: updated.category,
+        unitBefore: existing.unit,
+        unitAfter: updated.unit,
+        changedFields: Object.keys(data),
+      });
+      return updated;
+    });
   },
 
-  async archive(_currentUserId, id) {
+  async archive(currentUserId, id) {
     const existing = await prisma.supply.findUnique({ where: { id } });
     if (!existing) throw new ServiceError("NOT_FOUND", "Supply not found.", 404);
-    await prisma.supply.update({ where: { id }, data: { archivedAt: new Date() } });
+    await prisma.$transaction(async (tx) => {
+      await tx.supply.update({ where: { id }, data: { archivedAt: new Date() } });
+      // Archiving blocks new purchases and new holds against this supply —
+      // it takes the item out of both the tax-deduction and payout-charge
+      // paths, so it needs to be attributable.
+      await writeAudit(tx, AUDIT.SUPPLY.ARCHIVED, currentUserId, {
+        supplyId: id,
+        name: existing.name,
+        onHand: existing.onHand,
+        jobPayoutCost: existing.jobPayoutCost,
+        businessCost: existing.businessCost,
+      });
+    });
     return { archived: true };
   },
 
-  async unarchive(_currentUserId, id) {
+  async unarchive(currentUserId, id) {
     const existing = await prisma.supply.findUnique({ where: { id } });
     if (!existing) throw new ServiceError("NOT_FOUND", "Supply not found.", 404);
-    await prisma.supply.update({ where: { id }, data: { archivedAt: null } });
+    await prisma.$transaction(async (tx) => {
+      await tx.supply.update({ where: { id }, data: { archivedAt: null } });
+      // Puts the supply back in circulation: purchases (tax deductions) and
+      // holds (payout charges) become possible again.
+      await writeAudit(tx, AUDIT.SUPPLY.UNARCHIVED, currentUserId, {
+        supplyId: id,
+        name: existing.name,
+        onHand: existing.onHand,
+        jobPayoutCost: existing.jobPayoutCost,
+      });
+    });
     return { archived: false };
   },
 
@@ -348,11 +408,32 @@ export const supplies: ServicesSupplies = {
           businessCost: unitCost,
         },
       });
+      // Real cash out the door: this creates a Schedule C deduction for
+      // `totalCost` and silently overwrites the catalog's businessCost,
+      // which changes the reference cost for every later report.
+      await writeAudit(tx, AUDIT.SUPPLY.PURCHASE_RECORDED, currentUserId, {
+        supplyId,
+        supplyName: supply.name,
+        purchaseId: purchase.id,
+        businessExpenseId: businessExpense.id,
+        ledgerId: businessExpense.ledgerId,
+        quantity,
+        unitCost,
+        totalCost,
+        category: supply.category,
+        vendor,
+        invoiceNumber,
+        date: date.toISOString(),
+        onHandBefore: supply.onHand,
+        onHandAfter: supply.onHand + quantity,
+        businessCostBefore: supply.businessCost,
+        businessCostAfter: unitCost,
+      });
       return purchase;
     });
   },
 
-  async reversePurchase(_currentUserId, purchaseId) {
+  async reversePurchase(currentUserId, purchaseId) {
     const purchase = await prisma.supplyPurchase.findUnique({
       where: { id: purchaseId },
       include: { supply: true },
@@ -376,6 +457,23 @@ export const supplies: ServicesSupplies = {
       await tx.supplyPurchase.delete({ where: { id: purchaseId } });
       // Schema FK is Restrict — explicit BE delete required.
       await tx.businessExpense.delete({ where: { id: purchase.businessExpenseId } });
+      // Destroys a Schedule C deduction and removes stock that was paid for.
+      // Both rows are hard-deleted, so this snapshot is the only surviving
+      // evidence of the purchase that was un-filed.
+      await writeAudit(tx, AUDIT.SUPPLY.PURCHASE_REVERSED, currentUserId, {
+        supplyId: purchase.supplyId,
+        supplyName: purchase.supply.name,
+        purchaseId,
+        businessExpenseId: purchase.businessExpenseId,
+        quantity: purchase.quantity,
+        unitCost: purchase.unitCost,
+        totalCost: purchase.totalCost,
+        vendor: purchase.vendor,
+        invoiceNumber: purchase.invoiceNumber,
+        date: purchase.date.toISOString(),
+        onHandBefore: purchase.supply.onHand,
+        onHandAfter: newOnHand,
+      });
     });
     return { reversed: true };
   },
@@ -405,6 +503,19 @@ export const supplies: ServicesSupplies = {
       await tx.supply.update({
         where: { id: supplyId },
         data: { onHand: { increment: delta } },
+      });
+      // Manual stock correction — writes off (or writes on) inventory that
+      // was bought with deducted business money without any paired ledger
+      // row, so the reason + who typed it is the only accountability.
+      await writeAudit(tx, AUDIT.SUPPLY.ADJUSTED, currentUserId, {
+        supplyId,
+        supplyName: supply.name,
+        adjustmentId: adjustment.id,
+        delta,
+        reason,
+        onHandBefore: supply.onHand,
+        onHandAfter: newOnHand,
+        businessCost: supply.businessCost,
       });
       return adjustment;
     });
@@ -522,7 +633,7 @@ export const supplies: ServicesSupplies = {
         },
       });
 
-      return tx.supplyHold.create({
+      const hold = await tx.supplyHold.create({
         data: {
           supplyId: input.supplyId,
           occurrenceId,
@@ -534,6 +645,24 @@ export const supplies: ServicesSupplies = {
         },
         include: holdInclude,
       });
+      // Pulling stock onto a job charges the worker: the paired Expense
+      // (qty x jobPayoutCost) is deducted from their payout for this
+      // occurrence. Snapshot the per-unit cost used, since the catalog
+      // price can drift afterwards.
+      await writeAudit(tx, AUDIT.SUPPLY.HOLD_CREATED, currentUserId, {
+        supplyId: input.supplyId,
+        supplyName: supply.name,
+        holdId: hold.id,
+        expenseId: expense.id,
+        occurrenceId,
+        jobId: occ.jobId ?? null,
+        quantity,
+        jobPayoutCost: supply.jobPayoutCost,
+        totalCharge,
+        onHand: supply.onHand,
+        availableBefore: available,
+      });
+      return hold;
     });
   },
 
@@ -542,6 +671,10 @@ export const supplies: ServicesSupplies = {
       where: { id: holdId },
       include: {
         occurrence: { include: { assignees: true } },
+        // Both are hard-deleted below — read them first so the audit row
+        // can preserve what the payout deduction actually was.
+        expense: true,
+        supply: { select: { id: true, name: true, unit: true } },
       },
     });
     if (!hold) throw new ServiceError("NOT_FOUND", "Hold not found.", 404);
@@ -572,6 +705,22 @@ export const supplies: ServicesSupplies = {
         await tx.expense.delete({ where: { id: hold.expenseId } }).catch(() => {});
       }
       await tx.supplyHold.delete({ where: { id: holdId } });
+      // Reverses a payout deduction: the worker is credited back the paired
+      // Expense's cost, and a CONSUMED hold also returns units to stock.
+      // Both rows are gone after this tx, so snapshot the amounts.
+      await writeAudit(tx, AUDIT.SUPPLY.HOLD_REMOVED, currentUserId, {
+        supplyId: hold.supplyId,
+        supplyName: hold.supply.name,
+        holdId,
+        expenseId: hold.expenseId,
+        occurrenceId: hold.occurrenceId,
+        jobId: hold.occurrence.jobId ?? null,
+        quantity: hold.quantity,
+        jobPayoutCost: hold.jobPayoutCost,
+        expenseCostReversed: hold.expense?.cost ?? null,
+        holdStatusBefore: hold.status,
+        onHandRestored: hold.status === "CONSUMED" ? hold.quantity : 0,
+      });
     });
     return { removed: true };
   },
@@ -586,6 +735,8 @@ export const supplies: ServicesSupplies = {
       include: {
         supply: true,
         occurrence: { include: { assignees: true } },
+        // Before-value for the repriced payout deduction.
+        expense: true,
       },
     });
     if (!hold) throw new ServiceError("NOT_FOUND", "Hold not found.", 404);
@@ -652,21 +803,42 @@ export const supplies: ServicesSupplies = {
 
       // Reprice the paired payout Expense off the hold's snapshot per-unit
       // cost (not the supply's current cost — snapshots don't drift).
+      const newExpenseCost = Math.round(qty * hold.jobPayoutCost * 100) / 100;
       if (hold.expenseId) {
         await tx.expense.update({
           where: { id: hold.expenseId },
           data: {
-            cost: Math.round(qty * hold.jobPayoutCost * 100) / 100,
+            cost: newExpenseCost,
             description: `${hold.supply.name} × ${qty} ${hold.supply.unit}`,
           },
         });
       }
 
-      return tx.supplyHold.update({
+      const updated = await tx.supplyHold.update({
         where: { id: holdId },
         data: { quantity: qty },
         include: holdInclude,
       });
+      // Reprices the worker's payout deduction for this job and moves
+      // physical stock in the opposite direction. The dollar delta is
+      // exactly what the worker gains or loses on this occurrence.
+      await writeAudit(tx, AUDIT.SUPPLY.HOLD_ADJUSTED, currentUserId, {
+        supplyId: hold.supplyId,
+        supplyName: hold.supply.name,
+        holdId,
+        expenseId: hold.expenseId,
+        occurrenceId: hold.occurrenceId,
+        jobId: hold.occurrence.jobId ?? null,
+        quantityBefore: hold.quantity,
+        quantityAfter: qty,
+        quantityDelta: delta,
+        jobPayoutCost: hold.jobPayoutCost,
+        expenseCostBefore: hold.expense?.cost ?? null,
+        expenseCostAfter: newExpenseCost,
+        holdStatus: hold.status,
+        onHandDelta: hold.status === "CONSUMED" ? -delta : 0,
+      });
+      return updated;
     });
   },
 

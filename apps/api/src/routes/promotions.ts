@@ -669,6 +669,34 @@ export default async function promotionsRoutes(app: FastifyInstance) {
     };
   });
 
+  // Permanent delete. Super-only, and refused for a promotion with
+  // delivery history unless the body carries confirm: "APPROVE".
+  //
+  // Returns 409 NEEDS_APPROVE (not a hard failure) when history exists
+  // and no override was given, so the UI can escalate to the typed
+  // confirmation rather than dead-ending.
+  app.delete("/super/promotions/:id", superGuard, async (req: any, reply: any) => {
+    const uid = await currentUserId(req);
+    const confirm = (req.body ?? {})?.confirm;
+    const { hardDeletePromotion } = await import("../services/promotions");
+    try {
+      return await hardDeletePromotion({
+        promotionId: String(req.params.id),
+        actorUserId: uid,
+        overrideConfirmation: confirm != null ? String(confirm) : null,
+      });
+    } catch (err: any) {
+      if (err?.code === "NEEDS_APPROVE") {
+        return reply.code(409).send({
+          error: "NEEDS_APPROVE",
+          detail: String(err.message ?? err),
+          deliveryCount: err.deliveryCount ?? 0,
+        });
+      }
+      return reply.code(400).send({ error: "delete_failed", detail: String(err?.message ?? err) });
+    }
+  });
+
   // PATCH landing-page (headline/intro/slug). Slug locked once ACTIVE.
   app.patch("/super/promotions/landing/:pageId", superGuard, async (req: any, reply: any) => {
     const pageId = String(req.params.pageId);
@@ -691,6 +719,7 @@ export default async function promotionsRoutes(app: FastifyInstance) {
       pageId,
       title: body.title.trim(),
       description: (body.description ?? "").trim(),
+      actorUserId: await currentUserId(req),
     });
     return item;
   });
@@ -702,13 +731,14 @@ export default async function promotionsRoutes(app: FastifyInstance) {
       itemId,
       title: body.title?.trim(),
       description: body.description,
+      actorUserId: await currentUserId(req),
     });
     return { ok: true };
   });
 
   app.delete("/super/promotions/landing/items/:itemId", superGuard, async (req: any) => {
     const itemId = String(req.params.itemId);
-    await deleteLandingPageItem({ itemId });
+    await deleteLandingPageItem({ itemId, actorUserId: await currentUserId(req) });
     return { ok: true };
   });
 
@@ -716,7 +746,7 @@ export default async function promotionsRoutes(app: FastifyInstance) {
     const pageId = String(req.params.pageId);
     const body = (req.body ?? {}) as { itemIds?: string[] };
     const itemIds = Array.isArray(body.itemIds) ? body.itemIds.map(String) : [];
-    await reorderLandingPageItems({ pageId, itemIds });
+    await reorderLandingPageItems({ pageId, itemIds, actorUserId: await currentUserId(req) });
     return { ok: true };
   });
 
@@ -761,6 +791,7 @@ export default async function promotionsRoutes(app: FastifyInstance) {
         itemId,
         key: body.key,
         contentType: body.contentType || "image/jpeg",
+        actorUserId: await currentUserId(req),
       });
       return { ok: true, photoId: created.id };
     },
@@ -773,7 +804,7 @@ export default async function promotionsRoutes(app: FastifyInstance) {
     superGuard,
     async (req: any) => {
       const { deleteLandingPageItemPhoto } = await import("../services/promotions");
-      await deleteLandingPageItemPhoto(String(req.params.photoId));
+      await deleteLandingPageItemPhoto(String(req.params.photoId), await currentUserId(req));
       return { ok: true };
     },
   );
@@ -792,6 +823,7 @@ export default async function promotionsRoutes(app: FastifyInstance) {
       await reorderLandingPageItemPhotos({
         itemId: String(req.params.itemId),
         photoIds: body.photoIds.map((x) => String(x)),
+        actorUserId: await currentUserId(req),
       });
       return { ok: true };
     },

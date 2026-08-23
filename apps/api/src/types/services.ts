@@ -761,8 +761,11 @@ export type ServicesJobs = {
     occurrenceId: string,
   ): Promise<{ completed: JobOccurrence; next: JobOccurrence | null }>;
 
-  deleteJob(jobId: string): Promise<{ deleted: true }>;
-  deleteOccurrence(occurrenceId: string): Promise<{ deleted: true }>;
+  /** currentUserId is optional only so existing callers kept compiling
+   *  during the audit-coverage sweep; ALWAYS pass it — a hard delete
+   *  with a null actor is a trail that names no one. */
+  deleteJob(jobId: string, currentUserId?: string | null): Promise<{ deleted: true }>;
+  deleteOccurrence(occurrenceId: string, currentUserId?: string | null): Promise<{ deleted: true }>;
 
   // assignment at the occurrence level (workers only)
   setOccurrenceAssignees(
@@ -910,7 +913,7 @@ export type ServicesPayments = {
 
   deletePayment(currentUserId: string, paymentId: string): Promise<void>;
 
-  recalculateSplits(occurrenceId: string): Promise<any>;
+  recalculateSplits(occurrenceId: string, currentUserId?: string | null): Promise<any>;
   forceCreateNextOccurrence(
     currentUserId: string,
     occurrenceId: string,
@@ -1079,7 +1082,7 @@ export type ServicesExpenses = {
     input: ExpenseInput,
   ): Promise<any>;
 
-  adminDeleteExpense(expenseId: string): Promise<{ deleted: true }>;
+  adminDeleteExpense(currentUserId: string, expenseId: string): Promise<{ deleted: true }>;
 
   listExpensesByOccurrence(occurrenceId: string): Promise<any[]>;
 };

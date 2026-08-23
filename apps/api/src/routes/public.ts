@@ -362,6 +362,8 @@ export default async function publicRoutes(app: FastifyInstance) {
     if (!feedToken) return reply.code(404).send("Not found");
 
     // Update lastAccessedAt
+    // audit-allow: lastAccessedAt bump on every calendar poll. A usage
+    // counter — auditing it would write a row per feed refresh.
     await prisma.calendarFeedToken.update({
       where: { id: feedToken.id },
       data: { lastAccessedAt: new Date() },
@@ -925,6 +927,9 @@ export default async function publicRoutes(app: FastifyInstance) {
     // Tag every active contact on the client — the actual Clerk → contact
     // linking happens later via /client/link. This is just a hint that the
     // signup originated from the payment page.
+    // audit-allow: stamps a signup-origin hint for future discount logic.
+    // A marker for attribution, not a change to the contact's identity,
+    // access, or money. The real access grant is /client/link, audited.
     await prisma.clientContact.updateMany({
       where: {
         status: "ACTIVE",
@@ -994,6 +999,9 @@ export default async function publicRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: "unknown_method" });
     }
 
+    // audit-allow: records which method the client TAPPED on the pay page
+    // before paying. An intent signal, not a payment — the payment itself
+    // writes PAYMENT.CREATED.
     await prisma.jobOccurrence.update({
       where: { id: resolved.occurrenceId },
       data: {

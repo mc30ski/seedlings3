@@ -186,7 +186,8 @@ export async function loadPromotionSettings(): Promise<{
   // lands second is the persistent one; the loser only affected its
   // own in-flight call (which returned a valid, verifiable value at
   // that moment). No pending click URLs exist to invalidate.
-  let hmacSecret = map.get(SETTING_HMAC_SECRET) ?? "";
+  const previousSecret = map.get(SETTING_HMAC_SECRET) ?? "";
+  let hmacSecret = previousSecret;
   if (!hmacSecret || hmacSecret.length < 32) {
     hmacSecret = randomBytes(32).toString("base64url");
     await prisma.setting.upsert({
@@ -199,6 +200,33 @@ export async function loadPromotionSettings(): Promise<{
       },
       update: { value: hmacSecret },
     });
+    // Rewriting this row silently invalidates every outstanding signed
+    // click/preview token. Audited ONLY on this branch — the read path
+    // runs on every promo URL build and verify and must stay silent.
+    // Actor is null: an anonymous public click can reach this code.
+    //
+    // Deliberately NOT wrapped in a transaction with the upsert above,
+    // and failure-tolerant: this function sits on the anonymous public
+    // click path, and a bookkeeping insert must never be able to break
+    // URL signing/verification for a client tapping a link.
+    try {
+      await writeAudit(prisma, AUDIT.PROMOTION.HMAC_ROTATED, null, {
+        reason: "auto_generated_on_first_use",
+        // Distinguishes "no secret existed" (nothing to invalidate) from
+        // "a too-short secret was overwritten" (live tokens just died).
+        hadPreviousSecret: previousSecret.length > 0,
+        previousSecretLength: previousSecret.length,
+        previousSecretPreviewHash: previousSecret
+          ? createHash("sha256").update(previousSecret).digest("hex").slice(0, 8)
+          : null,
+        rotatedAt: new Date().toISOString(),
+      });
+    } catch (e) {
+      console.warn(
+        { error: (e as Error).message },
+        "[promotions] HMAC auto-generation audit write failed (continuing)",
+      );
+    }
   }
   return {
     hmacSecret,
@@ -2036,6 +2064,14 @@ export async function ensureLandingPageForPromotion(params: {
       where: { id: params.promotionId },
       data: { landingPageId: p.id, linkKind: "LANDING_PAGE" },
     });
+    // Mints a PUBLIC URL and repoints the campaign's destination at it.
+    await writeAudit(tx, AUDIT.PROMOTION.EDITED, params.actorUserId, {
+      action: "landing_page_created",
+      promotionId: params.promotionId,
+      landingPageId: p.id,
+      slug: p.slug,
+      linkKind: "LANDING_PAGE",
+    });
     return p;
   });
   return page;
@@ -2089,15 +2125,30 @@ export async function updateLandingPage(params: {
           return ensureUniqueSlug(params.payload.slug!, page.id);
         })()
       : page.slug;
-  const updated = await prisma.promotionLandingPage.update({
-    where: { id: params.pageId },
-    data: {
-      slug: nextSlug,
-      headline: params.payload.headline ?? undefined,
-      intro: params.payload.intro ?? undefined,
-      updatedById: params.actorUserId,
-    },
-    select: { id: true, slug: true },
+  const updated = await prisma.$transaction(async (tx) => {
+    const row = await tx.promotionLandingPage.update({
+      where: { id: params.pageId },
+      data: {
+        slug: nextSlug,
+        headline: params.payload.headline ?? undefined,
+        intro: params.payload.intro ?? undefined,
+        updatedById: params.actorUserId,
+      },
+      select: { id: true, slug: true },
+    });
+    // A slug change rewrites the PUBLIC URL; headline/intro change what
+    // every visitor reads.
+    await writeAudit(tx, AUDIT.PROMOTION.EDITED, params.actorUserId, {
+      action: "landing_page_updated",
+      promotionId: page.promotion?.id ?? null,
+      landingPageId: row.id,
+      slugChanged: row.slug !== page.slug,
+      fromSlug: row.slug !== page.slug ? page.slug : null,
+      toSlug: row.slug !== page.slug ? row.slug : null,
+      headlineChanged: params.payload.headline !== undefined,
+      introChanged: params.payload.intro !== undefined,
+    });
+    return row;
   });
   return updated;
 }
@@ -2180,20 +2231,38 @@ export async function createLandingPageItem(params: {
   pageId: string;
   title: string;
   description: string;
+  /** Optional so existing callers keep compiling; audit falls back to null. */
+  actorUserId?: string | null;
 }): Promise<{ id: string }> {
   const max = await prisma.promotionLandingPageItem.aggregate({
     where: { pageId: params.pageId },
     _max: { ordinal: true },
   });
   const nextOrd = (max._max.ordinal ?? -1) + 1;
-  const item = await prisma.promotionLandingPageItem.create({
-    data: {
-      pageId: params.pageId,
+  const page = await prisma.promotionLandingPage.findUnique({
+    where: { id: params.pageId },
+    select: { promotion: { select: { id: true } } },
+  });
+  const item = await prisma.$transaction(async (tx) => {
+    const created = await tx.promotionLandingPageItem.create({
+      data: {
+        pageId: params.pageId,
+        title: params.title,
+        description: params.description,
+        ordinal: nextOrd,
+      },
+      select: { id: true },
+    });
+    // Adds a block of copy that renders on the public landing page.
+    await writeAudit(tx, AUDIT.PROMOTION.EDITED, params.actorUserId ?? null, {
+      action: "landing_item_created",
+      promotionId: page?.promotion?.id ?? null,
+      landingPageId: params.pageId,
+      itemId: created.id,
       title: params.title,
-      description: params.description,
       ordinal: nextOrd,
-    },
-    select: { id: true },
+    });
+    return created;
   });
   return item;
 }
@@ -2202,22 +2271,170 @@ export async function updateLandingPageItem(params: {
   itemId: string;
   title?: string;
   description?: string;
+  /** Optional so existing callers keep compiling; audit falls back to null. */
+  actorUserId?: string | null;
 }): Promise<void> {
-  await prisma.promotionLandingPageItem.update({
+  const before = await prisma.promotionLandingPageItem.findUnique({
     where: { id: params.itemId },
-    data: {
-      title: params.title,
-      description: params.description,
+    select: {
+      title: true,
+      description: true,
+      pageId: true,
+      page: { select: { promotion: { select: { id: true } } } },
     },
   });
+  await prisma.$transaction(async (tx) => {
+    const after = await tx.promotionLandingPageItem.update({
+      where: { id: params.itemId },
+      data: {
+        title: params.title,
+        description: params.description,
+      },
+      select: { title: true, description: true },
+    });
+    // Rewrites copy that renders on the public landing page.
+    await writeAudit(tx, AUDIT.PROMOTION.EDITED, params.actorUserId ?? null, {
+      action: "landing_item_updated",
+      promotionId: before?.page.promotion?.id ?? null,
+      landingPageId: before?.pageId ?? null,
+      itemId: params.itemId,
+      fromTitle: before?.title ?? null,
+      toTitle: after.title,
+      fromDescription: before?.description ?? null,
+      toDescription: after.description,
+    });
+  });
+}
+
+/**
+ * Permanently delete a promotion that never reached anyone.
+ *
+ * Distinct from Retire, which moves a campaign to CLOSED and keeps it as
+ * a record. This removes the row, its landing page, items, photos, and
+ * R2 objects outright.
+ *
+ * GUARD, two tiers:
+ *
+ *  - No delivery rows at all → ordinary delete. Nothing ever reached a
+ *    client, so there is no history to lose.
+ *
+ *  - ANY delivery rows (shipped OR skipped) → refused unless the caller
+ *    passes `overrideConfirmation: "APPROVE"`. A delivery is the record
+ *    that a message went to — or was deliberately withheld from — a named
+ *    client contact. That is CAN-SPAM-relevant history, and destroying it
+ *    to tidy a list is the mistake worth making hard.
+ *
+ * The override is verified HERE, not only in the UI. The existing
+ * type-APPROVE surfaces (payment skip) gate at the UI layer, which is
+ * fine for a reversible flag; this one is irreversible and removes audit
+ * history, so the server refuses on its own rather than trusting that a
+ * client asked the question.
+ *
+ * Retire remains the right answer for anything that has delivered.
+ */
+export async function hardDeletePromotion(params: {
+  promotionId: string;
+  actorUserId: string;
+  /** Must be exactly "APPROVE" to delete a promotion that has deliveries. */
+  overrideConfirmation?: string | null;
+}): Promise<{ deleted: true; deliveriesDestroyed: number }> {
+  const promo = await prisma.promotion.findUnique({
+    where: { id: params.promotionId },
+    select: {
+      id: true,
+      title: true,
+      status: true,
+      startedAt: true,
+      landingPageId: true,
+      landingPage: {
+        select: {
+          id: true,
+          slug: true,
+          items: {
+            select: { imageR2Key: true, photos: { select: { r2Key: true } } },
+          },
+        },
+      },
+    },
+  });
+  if (!promo) throw new Error("Promotion not found");
+
+  const deliveryCount = await prisma.promotionDelivery.count({
+    where: { promotionId: promo.id },
+  });
+  if (deliveryCount > 0 && params.overrideConfirmation !== "APPROVE") {
+    const err: any = new Error(
+      `This promotion has ${deliveryCount} delivery record${deliveryCount === 1 ? "" : "s"}. Deleting it destroys that history permanently. Retire it instead, or type APPROVE to confirm.`,
+    );
+    // Shaped so the route can return a soft error the UI turns into the
+    // type-APPROVE prompt, rather than a dead-end failure.
+    err.code = "NEEDS_APPROVE";
+    err.deliveryCount = deliveryCount;
+    throw err;
+  }
+
+  // Collect R2 keys BEFORE the rows go: photo rows cascade away with the
+  // landing page, but their stored objects don't.
+  const r2Keys = new Set<string>();
+  for (const item of promo.landingPage?.items ?? []) {
+    for (const ph of item.photos) r2Keys.add(ph.r2Key);
+    if (item.imageR2Key) r2Keys.add(item.imageR2Key);
+  }
+
+  await prisma.$transaction(async (tx) => {
+    // The landingPageId FK is Restrict specifically to stop a page being
+    // deleted out from under a promotion still pointing at it. Clear the
+    // pointer first (same transaction) or the delete fails — see the
+    // schema comment on Promotion.landingPageId.
+    if (promo.landingPageId) {
+      await tx.promotion.update({
+        where: { id: promo.id },
+        data: { landingPageId: null, linkKind: "EXTERNAL" },
+      });
+      // Items and their photos cascade from the page.
+      await tx.promotionLandingPage.delete({ where: { id: promo.landingPageId } });
+    }
+    await tx.promotion.delete({ where: { id: promo.id } });
+    // Record enough to reconstruct WHAT was deleted — the row itself is
+    // gone, so the audit entry is the only remaining trace.
+    await writeAudit(tx, AUDIT.PROMOTION.DELETED, params.actorUserId, {
+      promotionId: promo.id,
+      title: promo.title,
+      status: promo.status,
+      startedAt: promo.startedAt ? promo.startedAt.toISOString() : null,
+      landingSlug: promo.landingPage?.slug ?? null,
+      photosDeleted: r2Keys.size,
+      // Non-zero only on the override path — the thing a future reader
+      // most needs to know is whether real send history was destroyed.
+      deliveriesDestroyed: deliveryCount,
+      overrideUsed: deliveryCount > 0,
+    });
+  });
+
+  // Best-effort, outside the transaction: a stranded object costs pennies,
+  // a failed request costs the operator their delete.
+  for (const key of r2Keys) {
+    void deleteObject(key, "promotion-images").catch(() => {});
+  }
+  return { deleted: true, deliveriesDestroyed: deliveryCount };
 }
 
 export async function deleteLandingPageItem(params: {
   itemId: string;
+  /** Optional so existing callers keep compiling; audit falls back to null. */
+  actorUserId?: string | null;
 }): Promise<void> {
   const item = await prisma.promotionLandingPageItem.findUnique({
     where: { id: params.itemId },
-    select: { imageR2Key: true, photos: { select: { r2Key: true } } },
+    select: {
+      title: true,
+      description: true,
+      ordinal: true,
+      pageId: true,
+      imageR2Key: true,
+      photos: { select: { id: true, r2Key: true } },
+      page: { select: { promotion: { select: { id: true } } } },
+    },
   });
   // The photo ROWS cascade on delete, but their R2 objects don't — collect
   // the keys before the row disappears or the files are orphaned forever.
@@ -2227,7 +2444,23 @@ export async function deleteLandingPageItem(params: {
     ...(item?.photos.map((ph) => ph.r2Key) ?? []),
     ...(item?.imageR2Key ? [item.imageR2Key] : []),
   ];
-  await prisma.promotionLandingPageItem.delete({ where: { id: params.itemId } });
+  await prisma.$transaction(async (tx) => {
+    await tx.promotionLandingPageItem.delete({ where: { id: params.itemId } });
+    // Irreversible: the item row goes, its photo rows cascade away, and
+    // the R2 objects are deleted below — this entry is the only record
+    // any of it existed.
+    await writeAudit(tx, AUDIT.PROMOTION.EDITED, params.actorUserId ?? null, {
+      action: "landing_item_deleted",
+      promotionId: item?.page.promotion?.id ?? null,
+      landingPageId: item?.pageId ?? null,
+      itemId: params.itemId,
+      title: item?.title ?? null,
+      description: item?.description ?? null,
+      ordinal: item?.ordinal ?? null,
+      photoIds: item?.photos.map((ph) => ph.id) ?? [],
+      photoR2Keys: [...new Set(keys)],
+    });
+  });
   for (const key of new Set(keys)) {
     // Fire-and-forget — R2 cleanup shouldn't block the delete.
     void deleteObject(key, "promotion-images").catch(() => {});
@@ -2241,6 +2474,8 @@ export async function deleteLandingPageItem(params: {
 export async function reorderLandingPageItems(params: {
   pageId: string;
   itemIds: string[];
+  /** Optional so existing callers keep compiling; audit falls back to null. */
+  actorUserId?: string | null;
 }): Promise<void> {
   const existing = await prisma.promotionLandingPageItem.findMany({
     where: { pageId: params.pageId },
@@ -2252,14 +2487,26 @@ export async function reorderLandingPageItems(params: {
     ...params.itemIds.filter((id) => existingSet.has(id)),
     ...existing.filter((i) => !requestedSet.has(i.id)).map((i) => i.id),
   ];
-  await prisma.$transaction(
-    ordered.map((id, ordinal) =>
-      prisma.promotionLandingPageItem.update({
-        where: { id },
+  const page = await prisma.promotionLandingPage.findUnique({
+    where: { id: params.pageId },
+    select: { promotion: { select: { id: true } } },
+  });
+  await prisma.$transaction(async (tx) => {
+    for (let ordinal = 0; ordinal < ordered.length; ordinal++) {
+      await tx.promotionLandingPageItem.update({
+        where: { id: ordered[ordinal] },
         data: { ordinal },
-      }),
-    ),
-  );
+      });
+    }
+    // Changes the order the blocks appear in on the public page.
+    await writeAudit(tx, AUDIT.PROMOTION.EDITED, params.actorUserId ?? null, {
+      action: "landing_items_reordered",
+      promotionId: page?.promotion?.id ?? null,
+      landingPageId: params.pageId,
+      itemIds: ordered,
+      count: ordered.length,
+    });
+  });
 }
 
 // Presigned R2 PUT URL for a new item image. Client uploads the
@@ -2289,6 +2536,8 @@ export async function confirmLandingPageImageUpload(params: {
   itemId: string;
   key: string;
   contentType: string;
+  /** Optional so existing callers keep compiling; audit falls back to null. */
+  actorUserId?: string | null;
 }): Promise<{ id: string }> {
   // Append at the end. Aggregate rather than count() so a gap in
   // sortOrder (left by a delete) can't collide with an existing row.
@@ -2296,26 +2545,69 @@ export async function confirmLandingPageImageUpload(params: {
     where: { itemId: params.itemId },
     _max: { sortOrder: true },
   });
-  const created = await prisma.promotionLandingPageItemPhoto.create({
-    data: {
+  const item = await prisma.promotionLandingPageItem.findUnique({
+    where: { id: params.itemId },
+    select: { pageId: true, page: { select: { promotion: { select: { id: true } } } } },
+  });
+  const sortOrder = (max._max.sortOrder ?? -1) + 1;
+  const created = await prisma.$transaction(async (tx) => {
+    const row = await tx.promotionLandingPageItemPhoto.create({
+      data: {
+        itemId: params.itemId,
+        r2Key: params.key,
+        contentType: params.contentType,
+        sortOrder,
+      },
+      select: { id: true },
+    });
+    // Publishes an image onto the public landing page.
+    await writeAudit(tx, AUDIT.PROMOTION.EDITED, params.actorUserId ?? null, {
+      action: "landing_photo_added",
+      promotionId: item?.page.promotion?.id ?? null,
+      landingPageId: item?.pageId ?? null,
       itemId: params.itemId,
+      photoId: row.id,
       r2Key: params.key,
       contentType: params.contentType,
-      sortOrder: (max._max.sortOrder ?? -1) + 1,
-    },
-    select: { id: true },
+      sortOrder,
+    });
+    return row;
   });
   return created;
 }
 
 /** Delete one photo, and its R2 object best-effort. */
-export async function deleteLandingPageItemPhoto(photoId: string): Promise<void> {
+export async function deleteLandingPageItemPhoto(
+  photoId: string,
+  /** Optional so existing callers keep compiling; audit falls back to null. */
+  actorUserId?: string | null,
+): Promise<void> {
   const photo = await prisma.promotionLandingPageItemPhoto.findUnique({
     where: { id: photoId },
-    select: { r2Key: true },
+    select: {
+      r2Key: true,
+      contentType: true,
+      itemId: true,
+      item: {
+        select: { pageId: true, page: { select: { promotion: { select: { id: true } } } } },
+      },
+    },
   });
   if (!photo) return;
-  await prisma.promotionLandingPageItemPhoto.delete({ where: { id: photoId } });
+  await prisma.$transaction(async (tx) => {
+    await tx.promotionLandingPageItemPhoto.delete({ where: { id: photoId } });
+    // Irreversible: the row goes and the R2 object is deleted right
+    // below, so the key recorded here is the only trace of the image.
+    await writeAudit(tx, AUDIT.PROMOTION.EDITED, actorUserId ?? null, {
+      action: "landing_photo_deleted",
+      promotionId: photo.item.page.promotion?.id ?? null,
+      landingPageId: photo.item.pageId,
+      itemId: photo.itemId,
+      photoId,
+      r2Key: photo.r2Key,
+      contentType: photo.contentType,
+    });
+  });
   // Best-effort: a stranded R2 object costs pennies, a failed request
   // costs the operator their edit.
   void deleteObject(photo.r2Key, "promotion-images").catch(() => {});
@@ -2331,6 +2623,8 @@ export async function deleteLandingPageItemPhoto(photoId: string): Promise<void>
 export async function reorderLandingPageItemPhotos(params: {
   itemId: string;
   photoIds: string[];
+  /** Optional so existing callers keep compiling; audit falls back to null. */
+  actorUserId?: string | null;
 }): Promise<void> {
   const owned = await prisma.promotionLandingPageItemPhoto.findMany({
     where: { itemId: params.itemId },
@@ -2341,14 +2635,28 @@ export async function reorderLandingPageItemPhotos(params: {
   const ordered = params.photoIds.filter((id) => ownedIds.has(id));
   const rest = owned.map((p) => p.id).filter((id) => !ordered.includes(id));
   const finalOrder = [...ordered, ...rest];
-  await prisma.$transaction(
-    finalOrder.map((id, idx) =>
-      prisma.promotionLandingPageItemPhoto.update({
-        where: { id },
+  const item = await prisma.promotionLandingPageItem.findUnique({
+    where: { id: params.itemId },
+    select: { pageId: true, page: { select: { promotion: { select: { id: true } } } } },
+  });
+  await prisma.$transaction(async (tx) => {
+    for (let idx = 0; idx < finalOrder.length; idx++) {
+      await tx.promotionLandingPageItemPhoto.update({
+        where: { id: finalOrder[idx] },
         data: { sortOrder: idx },
-      }),
-    ),
-  );
+      });
+    }
+    // Changes which image leads the item (and therefore the og:image on
+    // the public page).
+    await writeAudit(tx, AUDIT.PROMOTION.EDITED, params.actorUserId ?? null, {
+      action: "landing_photos_reordered",
+      promotionId: item?.page.promotion?.id ?? null,
+      landingPageId: item?.pageId ?? null,
+      itemId: params.itemId,
+      photoIds: finalOrder,
+      count: finalOrder.length,
+    });
+  });
 }
 
 // ── Click recorder ───────────────────────────────────────────────────────
