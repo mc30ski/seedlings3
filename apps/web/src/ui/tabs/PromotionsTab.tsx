@@ -25,6 +25,7 @@ import { apiGet, apiPatch, apiPost, apiDelete } from "@/src/lib/api";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import MarkdownContent from "@/src/ui/components/MarkdownContent";
+import { compressOnly } from "@/src/lib/imageRedact";
 import { fmtDate, fmtDateTime, bizDateKey, bizInstantFromEtParts, type EtDateKey } from "@/src/lib/dates";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -763,7 +764,10 @@ function PromotionDetail({
       {previewInvoice && resolveOfferCopy(promotion.content) && (
           <InvoicePreviewDialog
             content={resolveOfferCopy(promotion.content)!}
-            promoId={promotion.linkKind === "LANDING_PAGE" ? promotion.id : null}
+            // Invoice photos are keyed by PROMOTION, so external-link promos
+            // have them too. Gating this on LANDING_PAGE was correct only
+            // while the cover was derived from landing items.
+            promoId={promotion.id}
             onClose={() => setPreviewInvoice(false)}
           />
         )}
@@ -1495,7 +1499,9 @@ function PromotionEditor({
                   <ChannelPanelInvoicePage
                     content={content.shared ?? { body: "", ctaText: "" }}
                     link={link}
-                    promoId={linkKind === "LANDING_PAGE" ? savedPromoId : null}
+                    // Invoice photos belong to the promotion, not the landing page —
+                    // external-link promos can have them too.
+                    promoId={savedPromoId}
                   />
                 )}
                 {/* Invoice photos — uploaded for the invoice specifically.
@@ -1732,9 +1738,9 @@ function InvoicePreviewDialog({
   content, promoId, onClose,
 }: {
   content: { headline?: string; body: string; ctaText?: string };
-  /** When set, the dialog loads the promo's landing page to show the same
-   *  cover photo the real invoice will use (first photo of the first
-   *  item). Omitted for promos with no landing page. */
+  /** The promotion whose INVOICE photos this preview mirrors. Set for any
+   *  saved promo — invoice photos are keyed by promotion and exist for
+   *  external-link promos too, which have no landing page at all. */
   promoId?: string | null;
   onClose: () => void;
 }) {
@@ -1742,18 +1748,23 @@ function InvoicePreviewDialog({
   useEffect(() => {
     if (!promoId) return;
     let cancelled = false;
-    apiGet<{ items: { photos: { url: string | null }[] }[] }>(
-      `/api/super/promotions/${promoId}/landing`,
+    // Read the SAME source the real invoice reads: the promotion's own
+    // invoice photos. This used to fetch the landing page and take "first
+    // photo of the first item", which stopped matching the invoice the
+    // moment invoice photos became independent — the preview showed a
+    // landing image the client would never see, and rendered a broken
+    // icon once that landing photo's bytes were gone.
+    apiGet<{ photos: { url: string | null }[] }>(
+      `/api/super/promotions/${promoId}/invoice-photos`,
     )
-      .then((page) => {
+      .then((res) => {
         if (cancelled) return;
-        // Same selection the server makes in loadInvoicePagePromos:
-        // first photo of the first item, both already in display order.
-        const first = page.items.flatMap((i) => i.photos).find((ph) => ph.url);
+        // Already ordered by sortOrder server-side; index 0 is the cover.
+        const first = (res.photos ?? []).find((ph) => ph.url);
         setCoverUrl(first?.url ?? null);
       })
-      // No landing page (external-link promo) or no photos — the real
-      // invoice renders text-only in that case too, so match it silently.
+      // No photos uploaded — the real invoice renders text-only in that
+      // case too, so match it silently rather than showing a broken tile.
       .catch(() => { if (!cancelled) setCoverUrl(null); });
     return () => { cancelled = true; };
   }, [promoId]);
@@ -2448,7 +2459,13 @@ function LandingPageEditor({
       [itemId]: [...(prev[itemId] ?? []), { id: tempId, previewUrl }],
     }));
     try {
-      const contentType = file.type || "image/jpeg";
+      // Compress before upload, matching every other photo path in the app
+      // (occurrence, property, equipment, receipts, supplies) — and the
+      // invoice uploader above. Without this a phone-camera original went
+      // up untouched: the landing page shipped 16MB JPEGs to render as
+      // ~300px tiles, and the invoice inherited them via the backfill.
+      const compressed = await compressOnly(file);
+      const contentType = "image/jpeg";
       const { uploadUrl, key } = await apiPost<{ uploadUrl: string; key: string }>(
         `/api/super/promotions/landing/${pageId}/items/${itemId}/upload-url`,
         { contentType },
@@ -2456,7 +2473,7 @@ function LandingPageEditor({
       const put = await fetch(uploadUrl, {
         method: "PUT",
         headers: { "content-type": contentType },
-        body: file,
+        body: compressed,
       });
       if (!put.ok) throw new Error(`R2 upload failed (${put.status})`);
       await apiPost(`/api/super/promotions/landing/items/${itemId}/confirm-image`, {
@@ -2911,7 +2928,13 @@ function InvoicePhotosPanel({ promotionId }: { promotionId: string }) {
     inFlightRef.current += 1;
     setPending((prev) => [...prev, { id: tempId, previewUrl }]);
     try {
-      const contentType = file.type || "image/jpeg";
+      // Compress before upload, like every other photo path in the app
+      // (occurrence, property, equipment, receipts, supplies). Skipping it
+      // meant a phone camera original went up untouched — a 16MB JPEG
+      // served to a client rendering it as an 80px thumbnail on cell data,
+      // on the one page whose whole job is getting the invoice paid.
+      const compressed = await compressOnly(file);
+      const contentType = "image/jpeg";
       const { uploadUrl, key } = await apiPost<{ uploadUrl: string; key: string }>(
         `/api/super/promotions/${promotionId}/invoice-photos/upload-url`,
         { contentType },
@@ -2919,7 +2942,7 @@ function InvoicePhotosPanel({ promotionId }: { promotionId: string }) {
       const put = await fetch(uploadUrl, {
         method: "PUT",
         headers: { "content-type": contentType },
-        body: file,
+        body: compressed,
       });
       if (!put.ok) throw new Error(`Upload failed (${put.status})`);
       await apiPost(`/api/super/promotions/${promotionId}/invoice-photos/confirm`, {

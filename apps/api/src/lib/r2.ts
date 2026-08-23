@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, CopyObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const R2_ENDPOINT = process.env.R2_ENDPOINT!;
@@ -98,6 +98,67 @@ export async function deleteObject(key: string, bucket: BucketType = "photos"): 
   const command = new DeleteObjectCommand({
     Bucket: bucketName(bucket),
     Key: key,
+  });
+  await s3.send(command);
+}
+
+/**
+ * List every object key under a prefix, following pagination.
+ *
+ * For maintenance/reconciliation only — R2 cleanup on delete is
+ * fire-and-forget, so objects CAN outlive the rows that referenced them
+ * (a failed delete leaves no trace). This is how you find them.
+ *
+ * Returns keys with sizes so a caller can report storage, not just count.
+ */
+export async function listObjects(
+  prefix: string,
+  bucket: BucketType = "photos",
+): Promise<{ key: string; size: number }[]> {
+  const out: { key: string; size: number }[] = [];
+  let token: string | undefined;
+  do {
+    const res = await s3.send(
+      new ListObjectsV2Command({
+        Bucket: bucketName(bucket),
+        Prefix: prefix,
+        ContinuationToken: token,
+      }),
+    );
+    for (const o of res.Contents ?? []) {
+      if (o.Key) out.push({ key: o.Key, size: o.Size ?? 0 });
+    }
+    // IsTruncated means more pages; without following it a large bucket
+    // silently reports only its first 1000 keys, which would make an
+    // orphan report claim live objects are orphans.
+    token = res.IsTruncated ? res.NextContinuationToken : undefined;
+  } while (token);
+  return out;
+}
+
+/**
+ * Server-side copy of an object within the same bucket.
+ *
+ * Copies BYTES, producing an independent object. Use this whenever two
+ * records need "the same image" but must be able to delete independently:
+ * sharing one key across records makes any delete destroy the other's
+ * image (which is exactly what happened when the invoice-photo backfill
+ * seeded rows with landing-item keys).
+ *
+ * Server-side, so the bytes never round-trip through this process.
+ */
+export async function copyObject(
+  sourceKey: string,
+  destKey: string,
+  bucket: BucketType = "photos",
+): Promise<void> {
+  const name = bucketName(bucket);
+  const command = new CopyObjectCommand({
+    Bucket: name,
+    // CopySource is "<bucket>/<key>" and must be URI-encoded — keys here
+    // contain slashes and UUIDs, and an unencoded key silently 404s.
+    CopySource: encodeURI(`${name}/${sourceKey}`),
+    Key: destKey,
   });
   await s3.send(command);
 }

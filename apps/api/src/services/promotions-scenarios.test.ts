@@ -49,7 +49,19 @@ const mocks = vi.hoisted(() => ({
   // loadInvoicePagePromos. Defaults to [] so scenarios that don't care
   // about images (opt-out suppression, surface gating) don't each have to
   // stub it — the promo simply renders text-only.
-  promotionInvoicePhoto: { findMany: (vi.fn as any)().mockResolvedValue([]) },
+  promotionInvoicePhoto: {
+    findMany: (vi.fn as any)().mockResolvedValue([]),
+    findUnique: (vi.fn as any)(),
+    delete: (vi.fn as any)(),
+    aggregate: (vi.fn as any)(),
+    create: (vi.fn as any)(),
+    update: (vi.fn as any)(),
+    // Reference count used by deleteR2ObjectIfUnreferenced.
+    count: (vi.fn as any)().mockResolvedValue(0),
+  },
+  promotionLandingPageItemPhoto: {
+    count: (vi.fn as any)().mockResolvedValue(0),
+  },
   // Audit rows are written alongside the mutations these scenarios drive.
   auditEvent: { create: (vi.fn as any)().mockResolvedValue({}) },
 }));
@@ -72,6 +84,7 @@ vi.mock("../db/prisma", () => {
     promotionDelivery: mocks.promotionDelivery,
     promotionClick: mocks.promotionClick,
     promotionInvoicePhoto: mocks.promotionInvoicePhoto,
+    promotionLandingPageItemPhoto: mocks.promotionLandingPageItemPhoto,
     auditEvent: mocks.auditEvent,
   };
   client.$transaction = async (arg: any) =>
@@ -83,11 +96,19 @@ vi.mock("../db/prisma", () => {
 // makes a real presign call, fails (no creds in test), and the service's
 // `.catch(() => null)` swallows it — leaving imageUrls empty and any
 // photo assertion passing for entirely the wrong reason.
+// Records every deleteObject call so a test can assert that shared bytes
+// were NOT destroyed. Exported through the hoisted jar because vi.mock
+// factories are lifted above ordinary declarations.
+const r2 = vi.hoisted(() => ({ deletes: [] as string[] }));
 vi.mock("../lib/r2", () => ({
   getDownloadUrl: (key: string) => Promise.resolve(`https://r2.test/${key}`),
   getUploadUrl: (key: string) => Promise.resolve(`https://r2.test/upload/${key}`),
-  deleteObject: () => Promise.resolve(undefined),
+  deleteObject: (key: string) => {
+    r2.deletes.push(key);
+    return Promise.resolve(undefined);
+  },
 }));
+const r2Deletes = r2.deletes;
 
 // Mock socialLinks (dynamic-imported by loadLandingPageForPublic — not
 // tested here but the import path is walked by service module init).
@@ -146,6 +167,11 @@ function resetMocks() {
   // about opt-out suppression and have nothing to do with images. Default
   // to "no photos"; tests that care stub their own rows.
   mocks.promotionInvoicePhoto.findMany.mockResolvedValue([]);
+  // Reference counts default to "nothing else points at this key" so a
+  // delete test that forgets to stub them still exercises the real path.
+  mocks.promotionInvoicePhoto.count.mockResolvedValue(0);
+  mocks.promotionLandingPageItemPhoto.count.mockResolvedValue(0);
+  r2.deletes.length = 0;
 }
 
 // ── selectPromotionsForPiggyback — CAN-SPAM fail-closed ─────────────
@@ -726,8 +752,11 @@ describe("loadInvoicePagePromos — invoice photos are independent of landing it
     const call = mocks.promotionInvoicePhoto.findMany.mock.calls[0][0];
     expect(call.where).toEqual({ promotionId: "p1" });
     // Ordering is what makes position 0 "the cover" — assert it explicitly
-    // so a silent switch to insertion order can't slip through.
-    expect(call.orderBy).toEqual({ sortOrder: "asc" });
+    // so a silent switch to insertion order can't slip through. The
+    // createdAt tiebreaker is load-bearing too: concurrent uploads can
+    // land on the same sortOrder, and without it the cover would shuffle
+    // between page loads.
+    expect(call.orderBy).toEqual([{ sortOrder: "asc" }, { createdAt: "asc" }]);
     // The old implementation reached for landing content here. If a future
     // edit reintroduces that, this catches it.
     expect(JSON.stringify(call.where)).not.toContain("pageId");
@@ -759,5 +788,57 @@ describe("loadInvoicePagePromos — invoice photos are independent of landing it
     // The offer copy still has to be there — an image is an add-on, never
     // a precondition for showing the promo.
     expect(out[0].body).toBe("Body");
+  });
+});
+
+// ── Shared R2 objects must survive a sibling delete ─────────────────
+//
+// The add_promotion_invoice_photos backfill seeded invoice photos by
+// COPYING the landing item's r2Key — a pointer, not the bytes. So one R2
+// object is referenced from both tables. The first version of
+// deleteInvoicePhoto called deleteObject() unconditionally, which
+// destroyed the object out from under the landing page: an operator
+// removed an invoice cover and their landing item photos turned into
+// broken-image icons. Real data loss, hit within minutes of shipping.
+//
+// If one of these breaks, do NOT relax it — deleting shared bytes is
+// unrecoverable.
+
+describe("photo deletes never destroy an R2 object another row still uses", () => {
+  beforeEach(() => {
+    resetMocks();
+    setSettings();
+  });
+
+  it("keeps the object when a landing item still references the same key", async () => {
+    const SHARED = "promotions/p1/items/i1/shared-object";
+    mocks.promotionInvoicePhoto.findUnique.mockResolvedValue({
+      r2Key: SHARED, contentType: "image/jpeg", promotionId: "p1", sortOrder: 0,
+    });
+    mocks.promotionInvoicePhoto.delete.mockResolvedValue({});
+    // After the delete: no invoice rows left, but a landing row survives.
+    mocks.promotionInvoicePhoto.count.mockResolvedValue(0);
+    mocks.promotionLandingPageItemPhoto.count.mockResolvedValue(1);
+
+    const { deleteInvoicePhoto } = await import("./promotions");
+    await deleteInvoicePhoto("photo-1", "user-1");
+
+    expect(mocks.promotionInvoicePhoto.delete).toHaveBeenCalled();
+    expect(r2Deletes).toEqual([]); // the bytes MUST survive
+  });
+
+  it("deletes the object only once nothing references it", async () => {
+    const LONE = "promotions/p1/invoice/lone-object";
+    mocks.promotionInvoicePhoto.findUnique.mockResolvedValue({
+      r2Key: LONE, contentType: "image/jpeg", promotionId: "p1", sortOrder: 0,
+    });
+    mocks.promotionInvoicePhoto.delete.mockResolvedValue({});
+    mocks.promotionInvoicePhoto.count.mockResolvedValue(0);
+    mocks.promotionLandingPageItemPhoto.count.mockResolvedValue(0);
+
+    const { deleteInvoicePhoto } = await import("./promotions");
+    await deleteInvoicePhoto("photo-1", "user-1");
+
+    expect(r2Deletes).toEqual([LONE]);
   });
 });
