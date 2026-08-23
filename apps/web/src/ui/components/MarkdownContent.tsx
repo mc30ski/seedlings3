@@ -5,7 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 /**
- * Renders policy markdown content with Chakra-native styling.
+ * Renders markdown content with Chakra-native styling.
  *
  * Chakra v3's CSS reset strips native heading sizes, list bullets, and
  * paragraph margins — so a bare `<ReactMarkdown>` output ends up looking
@@ -13,12 +13,15 @@ import remarkGfm from "remark-gfm";
  * Chakra component (or styled `Box`) so the output looks like a real
  * document.
  *
- * Used by both the worker sign wizard (PolicySignWizard) and the admin
- * preview dialog (VersionPreviewDialog) so the two surfaces render
- * identically. Extend the components map here rather than in either
- * callsite.
+ * Shared by every surface that renders operator-authored markdown:
+ * the worker sign wizard, the admin policy preview, the client-facing
+ * invoice promo block, and the promotion editor's previews. Extend the
+ * components map HERE rather than in any callsite, so what an operator
+ * previews is byte-for-byte what a client sees.
+ *
+ * (Renamed from PolicyMarkdown 2026-08-22 — it outgrew policies.)
  */
-export default function PolicyMarkdown({ children }: { children: string }) {
+export default function MarkdownContent({ children }: { children: string }) {
   return (
     <Box
       fontSize="sm"

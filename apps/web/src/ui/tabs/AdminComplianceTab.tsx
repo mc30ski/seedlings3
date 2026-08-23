@@ -16,7 +16,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { AlertTriangle, Archive, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, Download, Eye, FileText, Info, Play, Plus, RotateCcw, Trash2, X, XCircle } from "lucide-react";
-import PolicyMarkdown from "@/src/ui/components/PolicyMarkdown";
+import MarkdownContent from "@/src/ui/components/MarkdownContent";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import { bizDateKey, bizToday, fmtDate } from "@/src/lib/lib";
@@ -3021,7 +3021,7 @@ function VersionPreviewDialog({
             </Dialog.Header>
             <Dialog.Body overflow="auto">
               {version.contentFormat === "MARKDOWN" ? (
-                <PolicyMarkdown>{version.contentMarkdown ?? "*(empty)*"}</PolicyMarkdown>
+                <MarkdownContent>{version.contentMarkdown ?? "*(empty)*"}</MarkdownContent>
               ) : pdfLoading ? (
                 <HStack gap={2}>
                   <Spinner size="sm" /> <Text fontSize="sm">Loading PDF…</Text>

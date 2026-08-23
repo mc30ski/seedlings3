@@ -6,7 +6,7 @@
 // content the worker agreed to, plus the signed-on date for context.
 //
 // Content rendering:
-//   • MARKDOWN → inline via <PolicyMarkdown>
+//   • MARKDOWN → inline via <MarkdownContent>
 //   • PDF      → fetch a presigned URL via /api/me/policies/download,
 //                open in a new browser tab (native PDF viewer).
 
@@ -24,7 +24,7 @@ import {
 import { ExternalLink, FileText } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
 import { fmtDate } from "@/src/lib/lib";
-import PolicyMarkdown from "@/src/ui/components/PolicyMarkdown";
+import MarkdownContent from "@/src/ui/components/MarkdownContent";
 import {
   getErrorMessage,
   publishInlineMessage,
@@ -104,7 +104,7 @@ export default function SignedPolicyViewDialog({
                   fontSize="sm"
                   lineHeight="tall"
                 >
-                  <PolicyMarkdown>{contentMarkdown}</PolicyMarkdown>
+                  <MarkdownContent>{contentMarkdown}</MarkdownContent>
                 </Box>
               ) : isPdf ? (
                 <VStack gap={3} py={6} textAlign="center">

@@ -1855,12 +1855,29 @@ model Promotion {
 
   status PromotionStatus @default(DRAFT)
 
-  // Per-channel content payload (validated at the service layer via Zod).
+  // Offer content (validated at the service layer via Zod — this is a Json
+  // column, so Postgres enforces nothing about its shape).
+  //
   // Expected shape:
-  //   { sms:          { body, ctaText },
-  //     email:        { subject, body, ctaText },
-  //     invoice_page: { headline?, body, ctaText } }
-  // body is Markdown for email + invoice_page; plain text for sms.
+  //   { shared:       { headline?, body, ctaText },   ← the canonical copy
+  //     sms:          { body, ctaText },              ← optional override
+  //     email:        { subject, body, ctaText },     ← optional override
+  //     invoice_page: { headline?, body, ctaText } }  ← optional override
+  //
+  // `shared` is what the operator writes once; every channel and display
+  // surface inherits it. The per-channel keys exist ONLY when that channel
+  // was deliberately customized (SMS is the usual case — 160 characters
+  // wants its own wording). Resolve via resolveChannelContent() in
+  // services/promotions.ts — never read a channel key directly, or the
+  // surface will disagree with what the operator previewed.
+  //
+  // body is Markdown for email + invoice_page + shared; plain text for sms.
+  //
+  // NOTE: rows created before the 2026-08-22 copy collapse have no
+  // `shared` key. resolveChannelContent falls back to the per-channel
+  // content, and the landing page falls back to its own headline/intro
+  // columns, so those promotions keep rendering. There was no migration
+  // because Json needs none — which also means there was no backfill.
   content Json @default("{}")
 
   // Lock preventing overlapping manual_send bursts. Set when the burst
