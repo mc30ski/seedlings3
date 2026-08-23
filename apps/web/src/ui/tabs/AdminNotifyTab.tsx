@@ -18,7 +18,7 @@ import {
 } from "@chakra-ui/react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { Mail, MessageSquare, Search, X } from "lucide-react";
-import { fmtDateOpts } from "@/src/lib/lib";
+import { fmtDateOpts } from "@/src/lib/dates";
 import {
   publishInlineMessage,
   getErrorMessage,

@@ -1,6 +1,6 @@
 ---
 name: date-handling-reference
-description: Canonical reference for all date handling in the app — ET-anchored helpers in apps/api/src/lib/dates.ts (server) and apps/web/src/lib/lib.ts (browser); forbidden patterns + full decision tables documented in docs/DATE_HANDLING.md.
+description: Canonical reference for all date handling in the app — ET-anchored helpers in apps/api/src/lib/dates.ts (server) and apps/web/src/lib/dates.ts (browser); forbidden patterns + full decision tables documented in docs/DATE_HANDLING.md.
 metadata: 
   node_type: memory
   type: reference
@@ -22,7 +22,7 @@ route through one of these (no inline `.toISOString().slice(0,10)`, no
   `etStartOfYear`, `parseUserDate`. File header has the strict
   forbidden-pattern list + decision table.
 
-- Web side: `apps/web/src/lib/lib.ts` — `bizDateKey`, `bizToday`,
+- Web side: `apps/web/src/lib/dates.ts` — `bizDateKey`, `bizToday`,
   `bizTomorrow`, `bizYesterday`, `bizAddDays`, `bizMondayOnOrBefore`,
   `bizStartOfMonth`, `bizStartOfYear`, `bizHour`, `bizMonth`,
   `bizInstantFromEtParts`, `fmtDate`, `fmtDateTime`, `fmtDateWeekday`,

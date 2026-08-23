@@ -19,7 +19,7 @@ import { AlertTriangle, Archive, CheckCircle2, ChevronDown, ChevronRight, Chevro
 import MarkdownContent from "@/src/ui/components/MarkdownContent";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
-import { bizDateKey, bizToday, fmtDate } from "@/src/lib/lib";
+import { bizDateKey, bizToday, fmtDate } from "@/src/lib/dates";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import WorkerPicker from "@/src/ui/components/WorkerPicker";
 

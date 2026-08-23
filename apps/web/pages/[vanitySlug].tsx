@@ -1,6 +1,6 @@
 // Vanity URL dynamic route — handles seedlings.pro/<anything> that isn't
 // a static page defined elsewhere in pages/. Static routes (sign-in,
-// opt-out, pay, promotion/[slug], etc.) take precedence via Next.js's
+// opt-out, pay, promotion/[promotionSlug], etc.) take precedence via Next.js's
 // routing order.
 //
 // Behavior:

@@ -13,7 +13,7 @@ import {
   createListCollection,
 } from "@chakra-ui/react";
 import { apiGet, apiPost } from "@/src/lib/api";
-import { bizToday , type EtDateKey } from "@/src/lib/lib";
+import { bizToday, type EtDateKey } from "@/src/lib/dates";
 import {
   getErrorMessage,
   publishInlineMessage,
@@ -30,7 +30,7 @@ import { useExpenseCategories } from "@/src/lib/useExpenseCategories";
 // job purchases almost always land there.
 const DEFAULT_CATEGORY = "Supplies";
 
-// Today as YYYY-MM-DD in ET via the shared helper. See lib/lib.ts.
+// Today as YYYY-MM-DD in ET via the shared helper. See lib/dates.ts.
 
 type Props = {
   open: boolean;

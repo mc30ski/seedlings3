@@ -725,7 +725,8 @@ export function SkeletonBanner({ label }: { label: string }) {
 }
 
 // ─── Compliance prompt banner ─────────────────────────────────────────────
-// Compact variant of the shipped ComplianceBanner. Reads the same
+// THE compliance banner (the standalone ComplianceBanner.tsx it was
+// split from was removed 2026-08-23). Reads the same
 // `/api/me/policies` endpoint and dispatches the same events, so
 // signing a policy anywhere in the app makes this banner disappear.
 //
@@ -740,7 +741,7 @@ export function CompliancePromptBanner({
    *  policies via /api/me/policies?viewAsUserId. Mutations (Sign)
    *  are inherently caller-scoped on the server, so the Sign
    *  action is hidden in view-as mode — matches the shipped
-   *  ComplianceBanner behavior in HomeTab. */
+   *  behavior HomeTab's banner has always had. */
   viewAsUserId?: string | null;
 } = {}) {
   const isViewingAs = !!viewAsUserId;
@@ -765,7 +766,7 @@ export function CompliancePromptBanner({
   }, [viewAsUserId]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
-    // Match the shipped ComplianceBanner behavior: policies:signed
+    // policies:signed
     // / policies:changed events fire from the CALLER's sign wizard,
     // not the impersonated worker's. Skip the refetch in view-as
     // mode so a Super signing their own item doesn't cause the
@@ -798,19 +799,45 @@ export function CompliancePromptBanner({
   const openProfile = () => {
     window.dispatchEvent(new CustomEvent("navigate:profile", { detail: {} }));
   };
+  // View-as: the operator can't sign or self-serve for someone else —
+  // send them to the Compliance tab where they CAN act (grant an
+  // exception, chase the signature). Matches the shipped
+  const openSuperCompliance = () => {
+    window.dispatchEvent(
+      new CustomEvent("navigate:superTab", { detail: { tab: "compliance" } }),
+    );
+  };
 
+  // View-as mode reframes the copy in the third person so the operator
+  // sees WHOSE compliance they're looking at, not their own.
+  const subject = isViewingAs
+    ? (summary.displayName || "This worker")
+    : null;
   const summaryText = (() => {
+    if (isViewingAs) {
+      if (hasBlocking && recommended.length === 0) {
+        return blocking.length === 1
+          ? `${subject} has 1 required document blocking them from starting work.`
+          : `${subject} has ${blocking.length} required documents blocking them from starting work.`;
+      }
+      if (hasBlocking && recommended.length > 0) {
+        return `${subject} has ${blocking.length} required + ${recommended.length} recommended pending document${blocking.length + recommended.length === 1 ? "" : "s"}.`;
+      }
+      return recommended.length === 1
+        ? `${subject} has 1 recommended document pending.`
+        : `${subject} has ${recommended.length} recommended documents pending.`;
+    }
     if (hasBlocking && recommended.length === 0) {
       return blocking.length === 1
-        ? "1 required document to sign before you can start work."
-        : `${blocking.length} required documents to sign before you can start work.`;
+        ? "You have 1 required document to sign before you can start work."
+        : `You have ${blocking.length} required documents to sign before you can start work.`;
     }
     if (hasBlocking && recommended.length > 0) {
-      return `${blocking.length} required + ${recommended.length} recommended document${blocking.length + recommended.length === 1 ? "" : "s"} to sign.`;
+      return `You have ${blocking.length} required + ${recommended.length} recommended document${blocking.length + recommended.length === 1 ? "" : "s"} to sign.`;
     }
     return recommended.length === 1
-      ? "1 recommended document to sign when you get a chance."
-      : `${recommended.length} recommended documents to sign when you get a chance.`;
+      ? "You have 1 recommended document to sign when you get a chance."
+      : `You have ${recommended.length} recommended documents to sign when you get a chance.`;
   })();
 
   return (
@@ -818,28 +845,36 @@ export function CompliancePromptBanner({
       palette={hasBlocking ? "red" : "orange"}
       icon={<FileText size={16} />}
       glow
+      // Stable e2e surface — the compliance specs read severity and
+      // counts off these rather than parsing the summary sentence.
+      // See docs/features/compliance.md.
+      testId="compliance-banner"
+      dataAttrs={{
+        "data-severity": hasBlocking ? "block" : "warn",
+        "data-blocking-count": blocking.length,
+        "data-recommended-count": recommended.length,
+      }}
       actions={
         // View-as: Sign is nonsensical (a Super can't sign for
         // another worker — the server rejects). Show View only,
-        // matching the shipped ComplianceBanner.
+        // matching the documented compliance-banner contract.
         isViewingAs
           ? [
               {
-                label: "View",
+                label: "Manage in Compliance",
                 icon: <FileText size={14} />,
-                variant: "outline",
-                onClick: openProfile,
+                onClick: openSuperCompliance,
               },
             ]
           : [
               {
-                label: "View",
+                label: "View profile",
                 icon: <FileText size={14} />,
                 variant: "outline",
                 onClick: openProfile,
               },
               {
-                label: "Sign",
+                label: "Sign now",
                 icon: <CheckCircle2 size={14} />,
                 onClick: openWizard,
               },

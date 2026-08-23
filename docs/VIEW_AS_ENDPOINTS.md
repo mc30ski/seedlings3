@@ -14,7 +14,7 @@ We've shipped the same class of bug **three times**:
    to zero matches against the target's pending IDs, and hung. Fixed by
    short-circuiting POLICIES_REQUIRED interception when the URL carries a
    `viewAsUserId` query param.
-3. **ComplianceBanner disabled in Admin view-as** — Super could not see
+3. **Compliance banner disabled in Admin view-as** — Super could not see
    from the Home tab that a target worker was blocked by a BLOCK-level
    policy. The banner had been *disabled* in view-as mode (`disabled={isViewingOther}`)
    rather than made view-as-aware. Fixed by teaching `/me/policies` to
@@ -128,7 +128,7 @@ When adding a client-side caller for a `/me/*` GET, decide up front
 whether the component ever renders in view-as mode. If it does, the URL
 must include the `?viewAsUserId=<id>` query param. See:
 
-- [`ComplianceBanner.tsx`](../apps/web/src/ui/components/ComplianceBanner.tsx)
+- [`CompliancePromptBanner`](../apps/web/src/ui/tabs/JobsTab.parts.tsx) (was `ComplianceBanner.tsx`, removed 2026-08-23)
   builds the URL from a prop passed by `HomeTab`.
 - [`workday.ts`](../apps/web/src/lib/workday.ts) `asQuery(opts)` helper
   is the canonical pattern for building a `?viewAsUserId=` suffix.

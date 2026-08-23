@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiGet } from "@/src/lib/api";
-import { prettyStatus } from "@/src/lib/lib";
+import { prettyStatus } from "@/src/lib/labels";
 
 // Loads the PAYMENT_METHODS taxonomy once and exposes both a label lookup
 // and the raw configs. Use everywhere the UI renders or selects a payment

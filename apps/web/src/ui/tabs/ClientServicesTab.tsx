@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Badge, Box, Button, Card, HStack, Text, VStack, Spinner } from "@chakra-ui/react";
 import { ExternalLink, Mail } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
-import { fmtDate } from "@/src/lib/lib";
+import { fmtDate } from "@/src/lib/dates";
 
 type ClientJob = {
   id: string;

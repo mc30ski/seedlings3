@@ -61,7 +61,13 @@ test.describe("Compliance banner in Admin view-as", () => {
       localStorage.setItem("seedlings_topTab", JSON.stringify("admin"));
       localStorage.setItem("seedlings_adminTab", JSON.stringify("home"));
       localStorage.setItem("seedlings_adminCategory", JSON.stringify("Work"));
-      localStorage.setItem("seedlings_adminhome_workers", JSON.stringify([employeeId]));
+      // HomeTab's admin view-as picker persists via
+      // usePersistedState("homeTab_viewAsIds"), which prefixes
+      // "seedlings_". Exactly ONE id = single-worker view-as (0 = All
+      // Workers aggregate, N = subset) — the mode this spec exercises.
+      // The old "seedlings_adminhome_workers" key was read by nothing,
+      // so this test silently ran in SELF mode and never covered view-as.
+      localStorage.setItem("seedlings_homeTab_viewAsIds", JSON.stringify([employeeId]));
     }, USERS.employee);
     await page.goto("/");
     await page.waitForLoadState("networkidle");

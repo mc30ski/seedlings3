@@ -15,7 +15,8 @@ import {
 import { apiGet, apiPost } from "@/src/lib/api";
 import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
 import { type WorkerOccurrence } from "@/src/lib/types";
-import { fmtDate, bizDateKey, bizToday, bizTomorrow, clientLabel } from "@/src/lib/lib";
+import { fmtDate, bizDateKey, bizToday, bizTomorrow } from "@/src/lib/dates";
+import { clientLabel } from "@/src/lib/labels";
 import { resolveBillingMode, shortBillingChip } from "@/src/lib/equipmentBilling";
 import { useEquipmentBillingEnabled } from "@/src/lib/useEquipmentBillingEnabled";
 import { MapLink } from "@/src/ui/helpers/Link";

@@ -9,7 +9,7 @@ import OfflineQueueDialog from "@/src/ui/dialogs/OfflineQueueDialog";
 import PolicyGateInterceptor from "@/src/ui/components/PolicyGateInterceptor";
 import { apiGet } from "@/src/lib/api";
 import { setCompressionDefaults } from "@/src/lib/imageRedact";
-import { bizDateKey, bizToday, bizTomorrow, bizYesterday, bizAddDays, bizHour } from "@/src/lib/lib";
+import { bizDateKey, bizToday, bizTomorrow, bizYesterday, bizAddDays, bizHour } from "@/src/lib/dates";
 import { isOccurrenceOverdue, loadPaymentRequestExpiryHours } from "@/src/lib/overdueRule";
 import { computeDatesFromPreset } from "@/src/lib/datePresets";
 import BrandLabel from "@/src/ui/helpers/BrandLabel";

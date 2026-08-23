@@ -41,7 +41,7 @@ import {
   Users,
 } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
-import { bizAddDays, bizToday } from "@/src/lib/lib";
+import { bizAddDays, bizToday } from "@/src/lib/dates";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import MiniStatCard from "@/src/ui/components/MiniStatCard";
 import { Dashboard } from "@/src/ui/components/Dashboard";

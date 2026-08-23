@@ -5,7 +5,7 @@
 // child renderer (cards, filters, dialogs).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { fmtDateOpts } from "@/src/lib/lib";
+import { fmtDateOpts } from "@/src/lib/dates";
 import { JOB_KIND, JOB_OCCURRENCE_STATUS } from "@/src/lib/types";
 
 /** Human-friendly duration ("1h 24m" / "36m"). */

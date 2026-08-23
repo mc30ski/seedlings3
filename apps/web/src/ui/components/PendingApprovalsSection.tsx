@@ -24,7 +24,7 @@ import {
 } from "@chakra-ui/react";
 import { Check, ExternalLink, Pencil, RefreshCw, Slash, XCircle } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
-import { fmtDate } from "@/src/lib/lib";
+import { fmtDate } from "@/src/lib/dates";
 import { composePaymentMessage, type PaymentActionResult } from "@/src/lib/paymentMessages";
 import {
   publishInlineMessage,

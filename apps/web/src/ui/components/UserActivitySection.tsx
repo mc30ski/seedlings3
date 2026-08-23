@@ -32,7 +32,7 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
-import { fmtDateOpts, fmtTimeOpts } from "@/src/lib/lib";
+import { fmtDateOpts, fmtTimeOpts } from "@/src/lib/dates";
 
 type ActivityItem = {
   id: string;

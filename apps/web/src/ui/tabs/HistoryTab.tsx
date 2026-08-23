@@ -14,7 +14,8 @@ import {
   useBreakpointValue,
 } from "@chakra-ui/react";
 import { apiGet } from "@/src/lib/api";
-import { equipmentStatusColor, fmtDateTime } from "@/src/lib/lib";
+import { fmtDateTime } from "@/src/lib/dates";
+import { equipmentStatusColor } from "@/src/lib/statusColors";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";

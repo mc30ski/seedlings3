@@ -31,7 +31,7 @@ import { usePersistedState } from "@/src/lib/usePersistedState";
 import { MapLink } from "@/src/ui/helpers/Link";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import { openEventSearch } from "@/src/lib/bus";
-import { fmtDate, fmtDateTime, bizDateKey, bizTomorrow, bizDaysBetween, bizHourMinute, bizInstantFromEtParts , type EtDateKey } from "@/src/lib/lib";
+import { fmtDate, fmtDateTime, bizDateKey, bizTomorrow, bizDaysBetween, bizHourMinute, bizInstantFromEtParts, type EtDateKey } from "@/src/lib/dates";
 import AddressAutocomplete from "@/src/ui/components/AddressAutocomplete";
 import { AdminWorkerPicker, RoutesOperationsPanel, SectionExpander } from "@/src/ui/tabs/PreviewRoutesTab.parts";
 
@@ -120,7 +120,7 @@ function formatDuration(mins: number): string {
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
-// Date helpers come from @/src/lib/lib (bizTomorrow). NEVER reinvent.
+// Date helpers come from @/src/lib/dates (bizTomorrow). NEVER reinvent.
 
 type Props = {
   /** Blended-role scope. Worker plans own routes; Admin/Super get

@@ -24,7 +24,7 @@ import {
   JOB_KIND,
   JOB_STATUS,
 } from "@/src/lib/types";
-import { prettyStatus, clientLabel } from "@/src/lib/lib";
+import { prettyStatus, clientLabel } from "@/src/lib/labels";
 import {
   getErrorMessage,
   publishInlineMessage,

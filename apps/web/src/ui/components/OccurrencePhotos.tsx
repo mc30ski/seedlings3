@@ -15,7 +15,7 @@ import {
 import { Camera, ChevronLeft, ChevronRight, ImageIcon, Trash2 } from "lucide-react";
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import { type OccurrencePhoto } from "@/src/lib/types";
-import { fmtDateTime } from "@/src/lib/lib";
+import { fmtDateTime } from "@/src/lib/dates";
 import { compressOnly } from "@/src/lib/imageRedact";
 import { useFileUpload } from "@/src/lib/useFileUpload";
 import PhotoUploadDialog from "@/src/ui/components/PhotoUploadDialog";

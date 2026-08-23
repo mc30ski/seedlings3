@@ -15,7 +15,7 @@ import {
 } from "@chakra-ui/react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiPost, apiPatch } from "@/src/lib/api";
-import { bizDateKey, bizInstantFromEtParts } from "@/src/lib/lib";
+import { bizDateKey, bizInstantFromEtParts } from "@/src/lib/dates";
 import {
   publishInlineMessage,
   getErrorMessage,

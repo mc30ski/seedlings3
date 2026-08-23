@@ -61,7 +61,7 @@ import {
 } from "@chakra-ui/react";
 import { CheckCircle2, ChevronDown, ChevronUp, Eye, Flag, Info, Paperclip, Pencil, Plus, Repeat, Search, Trash2, X } from "lucide-react";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
-import { bizToday, bizAddDays, bizStartOfMonth, bizStartOfYear, fmtDate, fmtDateOpts } from "@/src/lib/lib";
+import { bizToday, bizAddDays, bizStartOfMonth, bizStartOfYear, fmtDate, fmtDateOpts } from "@/src/lib/dates";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -219,11 +219,11 @@ const pageSizeItems = [
 ];
 const pageSizeCollection = createListCollection({ items: pageSizeItems });
 
-// Date display helpers come from @/src/lib/lib (fmtDate, fmtDateOpts, etc.) —
+// Date display helpers come from @/src/lib/dates (fmtDate, fmtDateOpts, etc.) —
 // see those helper headers for the strict no-reinvent policy.
 
-// Date helpers come from @/src/lib/lib (bizDateKey, bizToday, bizAddDays,
-// bizStartOfMonth, bizStartOfYear). NEVER reinvent — see lib/lib.ts.
+// Date helpers come from @/src/lib/dates (bizDateKey, bizToday, bizAddDays,
+// bizStartOfMonth, bizStartOfYear). NEVER reinvent — see lib/dates.ts.
 
 // Backward-looking, calendar-accurate ranges for the summary timeframe — the
 // shared datePresets lib is forward-looking (built for job scheduling), wrong

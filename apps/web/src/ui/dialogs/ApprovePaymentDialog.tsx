@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Box, Button, Dialog, HStack, Input, Portal, Text, VStack } from "@chakra-ui/react";
 import DateInput from "@/src/ui/components/DateInput";
-import { bizToday, type EtDateKey } from "@/src/lib/lib";
+import { bizToday, type EtDateKey } from "@/src/lib/dates";
 
 type ApproveRow = {
   id: string;

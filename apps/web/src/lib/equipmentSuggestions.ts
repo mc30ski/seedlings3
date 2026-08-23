@@ -4,7 +4,7 @@
  */
 
 import type { ServiceTypeConfig } from "@/src/ui/components/JobTagPicker";
-import { prettyStatus } from "@/src/lib/lib";
+import { prettyStatus } from "@/src/lib/labels";
 
 /** A single equipment kind definition */
 export type EquipmentKindConfig = { key: string; label: string };

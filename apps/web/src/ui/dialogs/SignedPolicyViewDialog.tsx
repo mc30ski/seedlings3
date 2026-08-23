@@ -23,7 +23,7 @@ import {
 } from "@chakra-ui/react";
 import { ExternalLink, FileText } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
-import { fmtDate } from "@/src/lib/lib";
+import { fmtDate } from "@/src/lib/dates";
 import MarkdownContent from "@/src/ui/components/MarkdownContent";
 import {
   getErrorMessage,

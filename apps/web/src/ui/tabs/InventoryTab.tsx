@@ -23,18 +23,10 @@ import {
 import { AlertCircle, AlertTriangle, BarChart3, ChevronDown, ChevronRight, ChevronUp, Copy, Eye, Filter, Hand, Heart, LayoutGrid, LayoutList, Maximize2, MoreHorizontal, Package, Pin, Plus, RefreshCw, RotateCcw, ScanLine, Share2, User, Users, X, Zap } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
-import {
-  bizToday,
-  bizAddDays,
-  bizDateKey,
-  determineRoles,
-  fmtDateOpts,
-  fmtDateShort,
-  prettyStatus,
-  notifyEquipmentUpdated,
-  extractSlug,
-  equipmentStatusColor,
-} from "@/src/lib/lib";
+import { bizToday, bizAddDays, bizDateKey, fmtDateOpts, fmtDateShort } from "@/src/lib/dates";
+import { prettyStatus, notifyEquipmentUpdated, extractSlug } from "@/src/lib/labels";
+import { determineRoles } from "@/src/lib/roles";
+import { equipmentStatusColor } from "@/src/lib/statusColors";
 import { TabPropsType, EquipmentStatus, Equipment } from "@/src/lib/types";
 import { onEventSearchRun } from "@/src/lib/bus";
 import { resolveBillingMode, shortBillingChip, instructiveBillingText } from "@/src/lib/equipmentBilling";

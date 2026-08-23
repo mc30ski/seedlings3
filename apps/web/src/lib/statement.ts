@@ -1,5 +1,5 @@
 import { jsPDF } from "jspdf";
-import { fmtDateLong } from "@/src/lib/lib";
+import { fmtDateLong } from "@/src/lib/dates";
 
 // Client-facing "Statement" PDF generator.
 //

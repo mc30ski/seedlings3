@@ -11,7 +11,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { apiGet, apiPost } from "@/src/lib/api";
-import { bizToLocalInputValue, bizParseLocalInputValue } from "@/src/lib/lib";
+import { bizToLocalInputValue, bizParseLocalInputValue } from "@/src/lib/dates";
 import {
   publishInlineMessage,
 } from "@/src/ui/components/InlineMessage";
@@ -91,7 +91,7 @@ export default function CompleteJobDialog({
   const splitsSum = Object.values(splits).reduce((s, v) => s + (Number(v) || 0), 0);
   const splitsValid = true;
 
-  // ET-anchored datetime-local helper — see lib/lib.ts. The previous
+  // ET-anchored datetime-local helper — see lib/dates.ts. The previous
   // browser-local implementation made the round-trip wrong for any
   // operator outside ET (they'd pick "2 PM" thinking ET, the system
   // would record 2 PM in their local zone, off by 3 hours for PST etc.).

@@ -1,4 +1,4 @@
-import { sleep } from "@/src/lib/lib";
+import { sleep } from "@/src/lib/labels";
 
 // Introduce delay for debugging
 const DELAY = 0;

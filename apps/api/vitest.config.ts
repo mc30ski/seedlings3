@@ -2,7 +2,7 @@ import { defineConfig } from "vitest/config";
 import { resolve } from "path";
 
 // Vitest config for the API package. The build gate cross-imports the
-// web canonical helpers (`apps/web/src/lib/lib.ts`) so we can lock them
+// web canonical helpers (`apps/web/src/lib/dates.ts`) so we can lock them
 // in with unit tests the same way we lock in the API helpers. Allow
 // resolution outside the package root via an explicit alias.
 export default defineConfig({

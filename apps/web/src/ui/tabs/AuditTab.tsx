@@ -14,7 +14,7 @@ import {
 } from "@chakra-ui/react";
 import { AlertCircle, AlertTriangle, CheckCircle2, ExternalLink, Info, Search } from "lucide-react";
 import { apiPost } from "@/src/lib/api";
-import { fmtDateTime } from "@/src/lib/lib";
+import { fmtDateTime } from "@/src/lib/dates";
 import {
   publishInlineMessage,
   getErrorMessage,
