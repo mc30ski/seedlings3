@@ -44,6 +44,17 @@ enum AuditScope {
   PROMO_OPT
   VANITY
   // add more scopes as you expand the schema
+
+  // Added 2026-08-22 after a system-wide audit-coverage sweep found
+  // these domains mutating state with no audit trail at all.
+  EXPENSE
+  SUPPLY
+  MILEAGE
+  GROUP
+  VEHICLE
+  CHANGE_REQUEST
+  EQUIPMENT_COLLECTION
+  CALENDAR_FEED
 }
 
 enum AuditVerb {
@@ -125,6 +136,30 @@ enum AuditVerb {
   PROMO_OPTED_OUT
   PROMO_OPTED_IN
   // add new verbs as needed
+
+  // Added 2026-08-22 — see the AuditScope note above.
+  PURCHASE_RECORDED
+  HOLD_CREATED
+  HOLD_REMOVED
+  HOLD_ADJUSTED
+  UNAPPROVED
+  RECONCILED
+  RECEIPT_ATTACHED
+  RECEIPT_DELETED
+  ADDON_ADDED
+  ADDON_REMOVED
+  OCCURRENCE_DELETED
+  PHOTO_DELETED
+  COMMENT_DELETED
+  DENIED
+  SPLITS_UPDATED
+  WAGE_UPDATED
+  MEMBER_ADDED
+  MEMBER_REMOVED
+  MEMBER_UPDATED
+  ASSIGNED
+  UNASSIGNED
+  CANCELED
 }
 
 enum WorkerType {

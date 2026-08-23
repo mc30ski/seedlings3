@@ -1286,16 +1286,27 @@ export default async function adminRoutes(app: FastifyInstance) {
     if (!key) throw app.httpErrors.badRequest("key is required");
     const count = await prisma.propertyPhoto.count({ where: { propertyId } });
     if (count >= 20) throw app.httpErrors.badRequest("Maximum 20 photos per property");
-    return prisma.propertyPhoto.create({
-      data: {
+    return prisma.$transaction(async (tx) => {
+      const photo = await tx.propertyPhoto.create({
+        data: {
+          propertyId,
+          r2Key: key,
+          fileName: fileName ?? null,
+          contentType: contentType ?? null,
+          description: description?.trim() || null,
+          sortOrder: count,
+          uploadedById: uid,
+        },
+      });
+      // Records a new photo joining the property gallery workers see on site.
+      await writeAudit(tx, AUDIT.PROPERTY.UPDATED, uid, {
         propertyId,
-        r2Key: key,
-        fileName: fileName ?? null,
-        contentType: contentType ?? null,
-        description: description?.trim() || null,
-        sortOrder: count,
-        uploadedById: uid,
-      },
+        photoId: photo.id,
+        action: "photo_added",
+        fileName: photo.fileName,
+        r2Key: photo.r2Key,
+      });
+      return photo;
     });
   });
 
@@ -1315,20 +1326,50 @@ export default async function adminRoutes(app: FastifyInstance) {
   });
 
   app.patch("/admin/properties/:id/photos/:photoId", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const propertyId = String(req.params.id);
     const photoId = String(req.params.photoId);
     const body = req.body || {};
     const data: any = {};
     if ("description" in body) data.description = body.description?.trim() || null;
     if ("sortOrder" in body) data.sortOrder = Number(body.sortOrder);
-    return prisma.propertyPhoto.update({ where: { id: photoId }, data });
+    return prisma.$transaction(async (tx) => {
+      const photo = await tx.propertyPhoto.update({ where: { id: photoId }, data });
+      // Records a caption / ordering edit on a property photo.
+      await writeAudit(tx, AUDIT.PROPERTY.UPDATED, uid, {
+        propertyId,
+        photoId,
+        action: "photo_updated",
+        changedFields: Object.keys(data),
+        description: photo.description,
+        sortOrder: photo.sortOrder,
+      });
+      return photo;
+    });
   });
 
   app.delete("/admin/properties/:id/photos/:photoId", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const photoId = String(req.params.photoId);
     const photo = await prisma.propertyPhoto.findUnique({ where: { id: photoId } });
     if (!photo) throw app.httpErrors.notFound("Photo not found");
     await deleteObject(photo.r2Key, "property-photos");
-    await prisma.propertyPhoto.delete({ where: { id: photoId } });
+    await prisma.$transaction(async (tx) => {
+      await tx.propertyPhoto.delete({ where: { id: photoId } });
+      // Destructive: the row + the R2 object are both gone, so this snapshot
+      // is the only surviving record of the photo.
+      await writeAudit(tx, AUDIT.PROPERTY.UPDATED, uid, {
+        propertyId: photo.propertyId,
+        photoId: photo.id,
+        action: "photo_deleted",
+        fileName: photo.fileName,
+        contentType: photo.contentType,
+        description: photo.description,
+        sortOrder: photo.sortOrder,
+        r2Key: photo.r2Key,
+        uploadedById: photo.uploadedById,
+      });
+    });
     return { deleted: true };
   });
 
@@ -1353,16 +1394,27 @@ export default async function adminRoutes(app: FastifyInstance) {
     if (!key) throw app.httpErrors.badRequest("key is required");
     const count = await prisma.equipmentPhoto.count({ where: { equipmentId } });
     if (count >= 10) throw app.httpErrors.badRequest("Maximum 10 photos per equipment");
-    return prisma.equipmentPhoto.create({
-      data: {
+    return prisma.$transaction(async (tx) => {
+      const photo = await tx.equipmentPhoto.create({
+        data: {
+          equipmentId,
+          r2Key: key,
+          fileName: fileName ?? null,
+          contentType: contentType ?? null,
+          description: description?.trim() || null,
+          sortOrder: count,
+          uploadedById: uid,
+        },
+      });
+      // Records a new photo joining the equipment gallery.
+      await writeAudit(tx, AUDIT.EQUIPMENT.UPDATED, uid, {
         equipmentId,
-        r2Key: key,
-        fileName: fileName ?? null,
-        contentType: contentType ?? null,
-        description: description?.trim() || null,
-        sortOrder: count,
-        uploadedById: uid,
-      },
+        photoId: photo.id,
+        action: "photo_added",
+        fileName: photo.fileName,
+        r2Key: photo.r2Key,
+      });
+      return photo;
     });
   });
 
@@ -1382,48 +1434,130 @@ export default async function adminRoutes(app: FastifyInstance) {
   });
 
   app.patch("/admin/equipment/:id/photos/:photoId", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const equipmentId = String(req.params.id);
     const photoId = String(req.params.photoId);
     const body = req.body || {};
     const data: any = {};
     if ("description" in body) data.description = body.description?.trim() || null;
     if ("sortOrder" in body) data.sortOrder = Number(body.sortOrder);
-    return prisma.equipmentPhoto.update({ where: { id: photoId }, data });
+    return prisma.$transaction(async (tx) => {
+      const photo = await tx.equipmentPhoto.update({ where: { id: photoId }, data });
+      // Records a caption / ordering edit on an equipment photo.
+      await writeAudit(tx, AUDIT.EQUIPMENT.UPDATED, uid, {
+        equipmentId,
+        photoId,
+        action: "photo_updated",
+        changedFields: Object.keys(data),
+        description: photo.description,
+        sortOrder: photo.sortOrder,
+      });
+      return photo;
+    });
   });
 
   app.delete("/admin/equipment/:id/photos/:photoId", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const photoId = String(req.params.photoId);
     const photo = await prisma.equipmentPhoto.findUnique({ where: { id: photoId } });
     if (!photo) throw app.httpErrors.notFound("Photo not found");
     await deleteObject(photo.r2Key, "equipment-photos");
-    await prisma.equipmentPhoto.delete({ where: { id: photoId } });
+    await prisma.$transaction(async (tx) => {
+      await tx.equipmentPhoto.delete({ where: { id: photoId } });
+      // Destructive: row + R2 object both gone; this snapshot is the only
+      // surviving record of the photo.
+      await writeAudit(tx, AUDIT.EQUIPMENT.UPDATED, uid, {
+        equipmentId: photo.equipmentId,
+        photoId: photo.id,
+        action: "photo_deleted",
+        fileName: photo.fileName,
+        contentType: photo.contentType,
+        description: photo.description,
+        sortOrder: photo.sortOrder,
+        r2Key: photo.r2Key,
+        uploadedById: photo.uploadedById,
+      });
+    });
     return { deleted: true };
   });
 
   // ── Equipment Instructions (admin only) ─────────────────────────────────
 
   app.post("/admin/equipment/:id/instructions", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const equipmentId = String(req.params.id);
     const { text, isPreset } = (req.body || {}) as { text: string; isPreset?: boolean };
     if (!text?.trim()) throw app.httpErrors.badRequest("text is required");
     const count = await prisma.equipmentInstruction.count({ where: { equipmentId } });
-    return prisma.equipmentInstruction.create({
-      data: { equipmentId, text: text.trim(), isPreset: !!isPreset, sortOrder: count },
+    return prisma.$transaction(async (tx) => {
+      const instruction = await tx.equipmentInstruction.create({
+        data: { equipmentId, text: text.trim(), isPreset: !!isPreset, sortOrder: count },
+      });
+      // Records a new safe-use instruction workers are expected to follow.
+      await writeAudit(tx, AUDIT.EQUIPMENT.UPDATED, uid, {
+        equipmentId,
+        instructionId: instruction.id,
+        action: "instruction_added",
+        text: instruction.text,
+        isPreset: instruction.isPreset,
+        sortOrder: instruction.sortOrder,
+      });
+      return instruction;
     });
   });
 
   app.patch("/admin/equipment/:id/instructions/:instructionId", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const equipmentId = String(req.params.id);
     const instructionId = String(req.params.instructionId);
     const body = req.body || {};
     const data: any = {};
     if ("text" in body) data.text = String(body.text).trim();
     if ("sortOrder" in body) data.sortOrder = Number(body.sortOrder);
-    return prisma.equipmentInstruction.update({ where: { id: instructionId }, data });
+    const before = await prisma.equipmentInstruction.findUnique({
+      where: { id: instructionId },
+      select: { text: true, sortOrder: true },
+    });
+    return prisma.$transaction(async (tx) => {
+      const instruction = await tx.equipmentInstruction.update({ where: { id: instructionId }, data });
+      // Records a reword / reorder of a safe-use instruction.
+      await writeAudit(tx, AUDIT.EQUIPMENT.UPDATED, uid, {
+        equipmentId,
+        instructionId,
+        action: "instruction_updated",
+        changedFields: Object.keys(data),
+        textBefore: before?.text ?? null,
+        textAfter: instruction.text,
+        sortOrderBefore: before?.sortOrder ?? null,
+        sortOrderAfter: instruction.sortOrder,
+      });
+      return instruction;
+    });
   });
 
   app.delete("/admin/equipment/:id/instructions/:instructionId", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const equipmentId = String(req.params.id);
     const instructionId = String(req.params.instructionId);
-    await prisma.equipmentInstruction.delete({ where: { id: instructionId } });
-    return { deleted: true };
+    // Snapshot before the row is gone — the audit entry becomes the only
+    // evidence the instruction ever existed.
+    const before = await prisma.equipmentInstruction.findUnique({
+      where: { id: instructionId },
+      select: { text: true, isPreset: true, sortOrder: true },
+    });
+    return prisma.$transaction(async (tx) => {
+      await tx.equipmentInstruction.delete({ where: { id: instructionId } });
+      // Destructive: removes a safe-use instruction from the equipment.
+      await writeAudit(tx, AUDIT.EQUIPMENT.UPDATED, uid, {
+        equipmentId,
+        instructionId,
+        action: "instruction_deleted",
+        text: before?.text ?? null,
+        isPreset: before?.isPreset ?? null,
+        sortOrder: before?.sortOrder ?? null,
+      });
+      return { deleted: true };
+    });
   });
 
   // ── Job Service Default Property Photos ─────────────────────────────────
@@ -1447,43 +1581,89 @@ export default async function adminRoutes(app: FastifyInstance) {
   });
 
   app.put("/admin/jobs/:id/property-photos", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const jobId = String(req.params.id);
     const { propertyPhotoIds } = (req.body || {}) as { propertyPhotoIds: string[] };
     if (!Array.isArray(propertyPhotoIds)) throw app.httpErrors.badRequest("propertyPhotoIds must be an array");
-    await prisma.jobPropertyPhoto.deleteMany({ where: { jobId } });
-    if (propertyPhotoIds.length > 0) {
-      await prisma.jobPropertyPhoto.createMany({
-        data: propertyPhotoIds.map((propertyPhotoId) => ({ jobId, propertyPhotoId })),
-        skipDuplicates: true,
+    await prisma.$transaction(async (tx) => {
+      // Snapshot the replaced set — this is a wholesale replace, so the
+      // previous selection is otherwise unrecoverable.
+      const before = await tx.jobPropertyPhoto.findMany({
+        where: { jobId },
+        select: { propertyPhotoId: true },
       });
-    }
+      await tx.jobPropertyPhoto.deleteMany({ where: { jobId } });
+      if (propertyPhotoIds.length > 0) {
+        await tx.jobPropertyPhoto.createMany({
+          data: propertyPhotoIds.map((propertyPhotoId) => ({ jobId, propertyPhotoId })),
+          skipDuplicates: true,
+        });
+      }
+      // Records which reference photos workers see by default on this job.
+      await writeAudit(tx, AUDIT.JOB.UPDATED, uid, {
+        jobId,
+        action: "default_property_photos_replaced",
+        propertyPhotoIdsBefore: before.map((r) => r.propertyPhotoId),
+        propertyPhotoIdsAfter: propertyPhotoIds,
+        countBefore: before.length,
+        countAfter: propertyPhotoIds.length,
+      });
+    });
     return { ok: true, count: propertyPhotoIds.length };
   });
 
   // ── Occurrence Property Photos (admin override) ─────────────────────────
 
   app.put("/admin/occurrences/:id/property-photos", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const occurrenceId = String(req.params.id);
     const { propertyPhotoIds, guidanceNote } = (req.body || {}) as {
       propertyPhotoIds: string[];
       guidanceNote?: string | null;
     };
     if (!Array.isArray(propertyPhotoIds)) throw app.httpErrors.badRequest("propertyPhotoIds must be an array");
-    await prisma.occurrencePropertyPhoto.deleteMany({ where: { occurrenceId } });
-    if (propertyPhotoIds.length > 0) {
-      await prisma.occurrencePropertyPhoto.createMany({
-        data: propertyPhotoIds.map((propertyPhotoId) => ({ occurrenceId, propertyPhotoId })),
-        skipDuplicates: true,
+    await prisma.$transaction(async (tx) => {
+      // Snapshot the replaced set + the guidance note this save overwrites.
+      const before = await tx.occurrencePropertyPhoto.findMany({
+        where: { occurrenceId },
+        select: { propertyPhotoId: true },
       });
-    }
-    // Optional overall guidance description — only touched when the caller
-    // sends the field, so a photos-only save leaves it untouched.
-    if (guidanceNote !== undefined) {
-      await prisma.jobOccurrence.update({
+      const occBefore = await tx.jobOccurrence.findUnique({
         where: { id: occurrenceId },
-        data: { guidanceNote: guidanceNote ? String(guidanceNote).trim() || null : null },
+        select: { jobId: true, guidanceNote: true },
       });
-    }
+      await tx.occurrencePropertyPhoto.deleteMany({ where: { occurrenceId } });
+      if (propertyPhotoIds.length > 0) {
+        await tx.occurrencePropertyPhoto.createMany({
+          data: propertyPhotoIds.map((propertyPhotoId) => ({ occurrenceId, propertyPhotoId })),
+          skipDuplicates: true,
+        });
+      }
+      // Optional overall guidance description — only touched when the caller
+      // sends the field, so a photos-only save leaves it untouched.
+      const nextGuidanceNote =
+        guidanceNote !== undefined
+          ? (guidanceNote ? String(guidanceNote).trim() || null : null)
+          : undefined;
+      if (nextGuidanceNote !== undefined) {
+        await tx.jobOccurrence.update({
+          where: { id: occurrenceId },
+          data: { guidanceNote: nextGuidanceNote },
+        });
+      }
+      // Records the per-visit override of the reference photos + guidance
+      // note the assigned crew sees.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+        occurrenceId,
+        jobId: occBefore?.jobId ?? null,
+        action: "occurrence_property_photos_replaced",
+        propertyPhotoIdsBefore: before.map((r) => r.propertyPhotoId),
+        propertyPhotoIdsAfter: propertyPhotoIds,
+        guidanceNoteChanged: nextGuidanceNote !== undefined,
+        guidanceNoteBefore: occBefore?.guidanceNote ?? null,
+        guidanceNoteAfter: nextGuidanceNote !== undefined ? nextGuidanceNote : (occBefore?.guidanceNote ?? null),
+      });
+    });
     return { ok: true, count: propertyPhotoIds.length };
   });
 
@@ -1495,21 +1675,65 @@ export default async function adminRoutes(app: FastifyInstance) {
     const { tag, customLabel, price } = (req.body || {}) as { tag?: string; customLabel?: string; price: number };
     if (price == null || price <= 0) throw app.httpErrors.badRequest("price is required and must be positive");
     if (!tag && !customLabel) throw app.httpErrors.badRequest("Either tag or customLabel is required");
-    return prisma.occurrenceAddon.create({
-      data: {
+    return prisma.$transaction(async (tx) => {
+      const addon = await tx.occurrenceAddon.create({
+        data: {
+          occurrenceId,
+          tag: tag || null,
+          customLabel: customLabel?.trim() || null,
+          price: Number(price),
+          createdById: uid,
+        },
+      });
+      const occ = await tx.jobOccurrence.findUnique({
+        where: { id: occurrenceId },
+        select: { jobId: true },
+      });
+      // Money: a priced add-on increases what the client is billed for
+      // this visit (and therefore what the crew is paid out of it).
+      await writeAudit(tx, AUDIT.JOB.ADDON_ADDED, uid, {
         occurrenceId,
-        tag: tag || null,
-        customLabel: customLabel?.trim() || null,
-        price: Number(price),
-        createdById: uid,
-      },
+        jobId: occ?.jobId ?? null,
+        addonId: addon.id,
+        tag: addon.tag,
+        customLabel: addon.customLabel,
+        priceBefore: null,
+        priceAfter: addon.price,
+      });
+      return addon;
     });
   });
 
   app.delete("/admin/occurrences/:id/addons/:addonId", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
     const addonId = String(req.params.addonId);
-    await prisma.occurrenceAddon.delete({ where: { id: addonId } });
-    return { deleted: true };
+    // Snapshot the charge before it's destroyed — after the delete the audit
+    // entry is the only evidence the client was ever billed for it.
+    const before = await prisma.occurrenceAddon.findUnique({
+      where: { id: addonId },
+      select: { occurrenceId: true, tag: true, customLabel: true, price: true, createdById: true },
+    });
+    if (!before) throw app.httpErrors.notFound("Add-on not found");
+    return prisma.$transaction(async (tx) => {
+      await tx.occurrenceAddon.delete({ where: { id: addonId } });
+      const occ = await tx.jobOccurrence.findUnique({
+        where: { id: before.occurrenceId },
+        select: { jobId: true },
+      });
+      // Money: removes a line item from what the client is billed.
+      await writeAudit(tx, AUDIT.JOB.ADDON_REMOVED, uid, {
+        occurrenceId: before.occurrenceId ?? occurrenceId,
+        jobId: occ?.jobId ?? null,
+        addonId,
+        tag: before.tag,
+        customLabel: before.customLabel,
+        priceBefore: before.price,
+        priceAfter: null,
+        createdById: before.createdById,
+      });
+      return { deleted: true };
+    });
   });
 
   // Jobs: list / get / create / update
@@ -1623,18 +1847,37 @@ export default async function adminRoutes(app: FastifyInstance) {
   // Default assignees for a job
   // Legacy bulk-replace (kept for backwards compatibility)
   app.put("/admin/jobs/:id/default-assignees", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const jobId = String(req.params.id);
     const body = req.body || {};
     const userIds: string[] = Array.isArray(body.userIds) ? body.userIds.map(String) : [];
 
     await prisma.$transaction(async (tx) => {
+      // Snapshot the crew being replaced — deleteMany wipes it wholesale, so
+      // without this the previous roster (and its claimer) is unrecoverable.
+      const before = await tx.jobAssigneeDefault.findMany({
+        where: { jobId },
+        orderBy: { sortOrder: "asc" },
+        select: { userId: true, role: true, active: true },
+      });
       await tx.jobAssigneeDefault.deleteMany({ where: { jobId } });
       if (userIds.length > 0) {
         await tx.jobAssigneeDefault.createMany({
-          data: userIds.map((uid) => ({ jobId, userId: uid })),
+          data: userIds.map((u) => ({ jobId, userId: u })),
           skipDuplicates: true,
         });
       }
+      // Records a wholesale replacement of the job's default crew — the
+      // first entry becomes the claimer, which drives payout routing.
+      await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, uid, {
+        jobId,
+        action: "default_assignees_replaced",
+        userIdsBefore: before.map((r) => r.userId),
+        rolesBefore: before.map((r) => r.role ?? null),
+        userIdsAfter: userIds,
+        claimerBefore: before[0]?.userId ?? null,
+        claimerAfter: userIds[0] ?? null,
+      });
     });
 
     return { updated: true };
@@ -1643,6 +1886,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   // Per-member default crew management (mirrors occurrence assignee endpoints)
 
   app.post("/admin/jobs/:id/default-assignees/add", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const jobId = String(req.params.id);
     const { userId, role } = (req.body || {}) as { userId?: string; role?: string | null };
     if (!userId) throw app.httpErrors.badRequest("userId is required");
@@ -1655,6 +1899,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       // job would carry both, and occurrence generation would prefer the
       // group (silently ignoring the individual the admin just added).
       const job = await tx.job.findUnique({ where: { id: jobId }, select: { defaultGroupId: true } });
+      const clearedGroupId = job?.defaultGroupId ?? null;
       if (job?.defaultGroupId) {
         await tx.job.update({ where: { id: jobId }, data: { defaultGroupId: null } });
       }
@@ -1670,17 +1915,41 @@ export default async function adminRoutes(app: FastifyInstance) {
             data: { active: true, role: validRole },
           });
         }
+        // Records the re-add / role flip, plus the silent switch out of
+        // crew mode (clearedGroupId) that comes with it.
+        await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, uid, {
+          jobId,
+          action: "default_assignee_reactivated",
+          userId,
+          roleBefore: existing.role ?? null,
+          roleAfter: validRole,
+          activeBefore: existing.active,
+          activeAfter: true,
+          clearedDefaultGroupId: clearedGroupId,
+        });
         return { added: true };
       }
 
-      await tx.jobAssigneeDefault.create({
+      const created = await tx.jobAssigneeDefault.create({
         data: { jobId, userId, role: validRole, active: true },
+      });
+      // Records a worker joining the job's default crew — and the silent
+      // switch out of group mode when clearedDefaultGroupId is non-null.
+      await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, uid, {
+        jobId,
+        action: "default_assignee_added",
+        userId,
+        assigneeDefaultId: created.id,
+        roleBefore: null,
+        roleAfter: validRole,
+        clearedDefaultGroupId: clearedGroupId,
       });
       return { added: true };
     });
   });
 
   app.delete("/admin/jobs/:id/default-assignees/:userId", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const jobId = String(req.params.id);
     const userId = String(req.params.userId);
 
@@ -1689,11 +1958,25 @@ export default async function adminRoutes(app: FastifyInstance) {
     });
     if (!existing) throw app.httpErrors.notFound("Not found");
 
-    await prisma.jobAssigneeDefault.delete({ where: { id: existing.id } });
-    return { removed: true };
+    return prisma.$transaction(async (tx) => {
+      await tx.jobAssigneeDefault.delete({ where: { id: existing.id } });
+      // Destructive: the membership row is gone, so this snapshot is the
+      // only record of the worker's place (and sortOrder) in the crew.
+      await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, uid, {
+        jobId,
+        action: "default_assignee_removed",
+        userId,
+        assigneeDefaultId: existing.id,
+        roleBefore: existing.role ?? null,
+        activeBefore: existing.active,
+        sortOrderBefore: existing.sortOrder,
+      });
+      return { removed: true };
+    });
   });
 
   app.patch("/admin/jobs/:id/default-assignees/:userId/role", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const jobId = String(req.params.id);
     const userId = String(req.params.userId);
     const { role } = (req.body || {}) as { role?: string | null };
@@ -1704,17 +1987,30 @@ export default async function adminRoutes(app: FastifyInstance) {
     if (!existing) throw app.httpErrors.notFound("Not found");
 
     const validRole = role === "observer" ? "observer" : null;
-    await prisma.jobAssigneeDefault.update({
-      where: { id: existing.id },
-      data: { role: validRole },
+    return prisma.$transaction(async (tx) => {
+      await tx.jobAssigneeDefault.update({
+        where: { id: existing.id },
+        data: { role: validRole },
+      });
+      // Records the observer flip — observers don't count as the claimer,
+      // so this changes who the job pays out through.
+      await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, uid, {
+        jobId,
+        action: "default_assignee_role_changed",
+        userId,
+        assigneeDefaultId: existing.id,
+        roleBefore: existing.role ?? null,
+        roleAfter: validRole,
+      });
+      return { updated: true };
     });
-    return { updated: true };
   });
 
   // Reassign the default-team claimer. Promotes the chosen user to first
   // (lowest sortOrder). If they were an observer, also clears that role so
   // they qualify as the claimer.
   app.post("/admin/jobs/:id/default-assignees/:userId/make-claimer", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const jobId = String(req.params.id);
     const userId = String(req.params.userId);
 
@@ -1732,11 +2028,33 @@ export default async function adminRoutes(app: FastifyInstance) {
     });
     const newSortOrder = (lowest?.sortOrder ?? 100) - 1;
 
-    await prisma.jobAssigneeDefault.update({
-      where: { id: existing.id },
-      data: { sortOrder: newSortOrder, role: null, active: true },
+    return prisma.$transaction(async (tx) => {
+      // Snapshot who held the claimer slot before the promotion.
+      const priorClaimer = await tx.jobAssigneeDefault.findFirst({
+        where: { jobId, active: true, role: null },
+        orderBy: { sortOrder: "asc" },
+        select: { userId: true },
+      });
+      await tx.jobAssigneeDefault.update({
+        where: { id: existing.id },
+        data: { sortOrder: newSortOrder, role: null, active: true },
+      });
+      // Money: the claimer is who the job's payment routes through, so a
+      // reassignment moves the payout to a different worker.
+      await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, uid, {
+        jobId,
+        action: "default_claimer_changed",
+        userId,
+        assigneeDefaultId: existing.id,
+        claimerBefore: priorClaimer?.userId ?? null,
+        claimerAfter: userId,
+        roleBefore: existing.role ?? null,
+        roleAfter: null,
+        sortOrderBefore: existing.sortOrder,
+        sortOrderAfter: newSortOrder,
+      });
+      return { updated: true };
     });
-    return { updated: true };
   });
 
   // Default crew: choose between the per-user default-assignees list OR
@@ -1745,12 +2063,22 @@ export default async function adminRoutes(app: FastifyInstance) {
   // the per-user list intact — admins can move between modes without
   // re-entering data each time.
   app.put("/admin/jobs/:id/default-group", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const jobId = String(req.params.id);
     const body = (req.body || {}) as { groupId?: string | null };
     const groupId = body.groupId ?? null;
     return prisma.$transaction(async (tx) => {
       const job = await tx.job.findUnique({ where: { id: jobId } });
       if (!job) throw app.httpErrors.notFound("Job not found.");
+      // Snapshot the per-user list BEFORE the group swap wipes it — the
+      // deleteMany below is unrecoverable otherwise.
+      const wipedAssignees = groupId
+        ? await tx.jobAssigneeDefault.findMany({
+            where: { jobId },
+            orderBy: { sortOrder: "asc" },
+            select: { userId: true, role: true, active: true },
+          })
+        : [];
       if (groupId) {
         const group = await tx.group.findUnique({ where: { id: groupId } });
         if (!group) throw app.httpErrors.badRequest("Group not found.");
@@ -1761,6 +2089,17 @@ export default async function adminRoutes(app: FastifyInstance) {
         where: { id: jobId },
         data: { defaultGroupId: groupId },
         select: { id: true, defaultGroupId: true },
+      });
+      // Records the crew-mode swap (individuals <-> group). Setting a group
+      // destroys the per-user list, which changes who is assigned AND who
+      // claims — the wiped roster is captured here.
+      await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, uid, {
+        jobId,
+        action: "default_group_changed",
+        defaultGroupIdBefore: job.defaultGroupId ?? null,
+        defaultGroupIdAfter: groupId,
+        wipedAssigneeUserIds: wipedAssignees.map((r) => r.userId),
+        wipedAssigneeRoles: wipedAssignees.map((r) => r.role ?? null),
       });
       return updated;
     });
@@ -2008,6 +2347,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   // Response: { ok: true, nextStartOverride: string | null,
   //             normalCadenceDate: string | null }
   app.post("/admin/occurrences/:id/next-start-override", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const id = String(req.params.id);
     const body = (req.body ?? {}) as { date?: string | null; forceApprove?: boolean };
     const rawDate = body.date;
@@ -2041,9 +2381,20 @@ export default async function adminRoutes(app: FastifyInstance) {
 
     // Clear path — sets the field to null. No range validation.
     if (rawDate == null || rawDate === "") {
-      await prisma.jobOccurrence.update({
-        where: { id },
-        data: { nextStartOverride: null },
+      await prisma.$transaction(async (tx) => {
+        await tx.jobOccurrence.update({
+          where: { id },
+          data: { nextStartOverride: null },
+        });
+        // Records dropping the override — the next visit reverts to normal
+        // cadence, which is a client-visible date change.
+        await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+          occurrenceId: id,
+          jobId: occ.jobId ?? null,
+          action: "next-start-override-cleared",
+          dateBefore: occ.nextStartOverride ?? null,
+          dateAfter: null,
+        });
       });
       return { ok: true, nextStartOverride: null, normalCadenceDate: null };
     }
@@ -2118,18 +2469,27 @@ export default async function adminRoutes(app: FastifyInstance) {
       };
     }
 
-    await prisma.jobOccurrence.update({
-      where: { id },
-      data: { nextStartOverride: rawDate },
-    });
-    if (forceApprove && reasons.length > 0) {
-      await writeAudit(prisma, AUDIT.JOB.OCCURRENCE_UPDATED, await currentUserId(req), {
+    await prisma.$transaction(async (tx) => {
+      await tx.jobOccurrence.update({
+        where: { id },
+        data: { nextStartOverride: rawDate },
+      });
+      // Records the moved next-visit date — client-visible reschedule of the
+      // following occurrence. Fires on BOTH the silent-save and the typed-
+      // APPROVE path; `reasons` is non-empty only on the latter.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
         occurrenceId: id,
-        action: "next-start-override-set-with-approve",
-        date: rawDate,
+        jobId: occ.jobId ?? null,
+        action:
+          forceApprove && reasons.length > 0
+            ? "next-start-override-set-with-approve"
+            : "next-start-override-set",
+        dateBefore: occ.nextStartOverride ?? null,
+        dateAfter: rawDate,
+        normalCadenceDate,
         reasons,
       });
-    }
+    });
     return {
       ok: true,
       nextStartOverride: rawDate,
@@ -2151,6 +2511,7 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   // Link two occurrences (must share the same jobId)
   app.post("/admin/occurrences/:id/link", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const occId = String(req.params.id);
     const targetId = String(req.body?.targetOccurrenceId ?? "");
     if (!targetId) throw app.httpErrors.badRequest("targetOccurrenceId is required");
@@ -2172,56 +2533,101 @@ export default async function adminRoutes(app: FastifyInstance) {
     const crypto = require("crypto");
     let groupId = occ.linkGroupId ?? target.linkGroupId ?? crypto.randomUUID();
 
-    // If both have different groups, merge them (move target's group to occ's group)
-    if (occ.linkGroupId && target.linkGroupId && occ.linkGroupId !== target.linkGroupId) {
-      await prisma.jobOccurrence.updateMany({
-        where: { linkGroupId: target.linkGroupId },
-        data: { linkGroupId: occ.linkGroupId },
-      });
-      groupId = occ.linkGroupId;
-    }
-
-    // Set groupId on both
-    await prisma.jobOccurrence.updateMany({
-      where: { id: { in: [occId, targetId] } },
-      data: { linkGroupId: groupId },
-    });
-
-    // Sync dates — the source occurrence's startAt becomes the group date
-    if (occ.startAt) {
-      const syncUpdates: any = { startAt: occ.startAt };
-      // Sync all other occurrences in the group to the source date
-      const allInGroup = await prisma.jobOccurrence.findMany({
-        where: { linkGroupId: groupId, id: { not: occId } },
-      });
-      for (const l of allInGroup) {
-        const updates: any = { startAt: occ.startAt };
-        if (l.startAt && l.endAt) {
-          const duration = l.endAt.getTime() - l.startAt.getTime();
-          updates.endAt = new Date(occ.startAt.getTime() + duration);
-        }
-        await prisma.jobOccurrence.update({ where: { id: l.id }, data: updates });
+    await prisma.$transaction(async (tx) => {
+      // If both have different groups, merge them (move target's group to occ's group)
+      if (occ.linkGroupId && target.linkGroupId && occ.linkGroupId !== target.linkGroupId) {
+        await tx.jobOccurrence.updateMany({
+          where: { linkGroupId: target.linkGroupId },
+          data: { linkGroupId: occ.linkGroupId },
+        });
+        groupId = occ.linkGroupId;
       }
-    }
+
+      // Set groupId on both
+      await tx.jobOccurrence.updateMany({
+        where: { id: { in: [occId, targetId] } },
+        data: { linkGroupId: groupId },
+      });
+
+      // Sync dates — the source occurrence's startAt becomes the group date
+      const rescheduled: Array<{
+        occurrenceId: string;
+        startAtBefore: string | null;
+        startAtAfter: string | null;
+        endAtBefore: string | null;
+        endAtAfter: string | null;
+      }> = [];
+      if (occ.startAt) {
+        // Sync all other occurrences in the group to the source date
+        const allInGroup = await tx.jobOccurrence.findMany({
+          where: { linkGroupId: groupId, id: { not: occId } },
+        });
+        for (const l of allInGroup) {
+          const updates: any = { startAt: occ.startAt };
+          if (l.startAt && l.endAt) {
+            const duration = l.endAt.getTime() - l.startAt.getTime();
+            updates.endAt = new Date(occ.startAt.getTime() + duration);
+          }
+          await tx.jobOccurrence.update({ where: { id: l.id }, data: updates });
+          rescheduled.push({
+            occurrenceId: l.id,
+            startAtBefore: l.startAt?.toISOString() ?? null,
+            startAtAfter: occ.startAt.toISOString(),
+            endAtBefore: l.endAt?.toISOString() ?? null,
+            endAtAfter: updates.endAt ? (updates.endAt as Date).toISOString() : (l.endAt?.toISOString() ?? null),
+          });
+        }
+      }
+
+      // Records the link merge AND the client-visible reschedule it forces on
+      // every other occurrence in the group (their startAt/endAt are rewritten
+      // to the source occurrence's date).
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+        occurrenceId: occId,
+        jobId: occ.jobId ?? null,
+        action: "occurrences_linked",
+        targetOccurrenceId: targetId,
+        linkGroupIdBefore: occ.linkGroupId ?? null,
+        targetLinkGroupIdBefore: target.linkGroupId ?? null,
+        linkGroupIdAfter: groupId,
+        affectedOccurrenceIds: rescheduled.map((r) => r.occurrenceId),
+        rescheduled,
+      });
+    });
 
     return { ok: true, linkGroupId: groupId };
   });
 
   // Unlink an occurrence from its group
   app.post("/admin/occurrences/:id/unlink", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const occId = String(req.params.id);
     const occ = await prisma.jobOccurrence.findUnique({ where: { id: occId } });
     if (!occ) throw app.httpErrors.notFound("Occurrence not found");
     if (!occ.linkGroupId) return { ok: true };
 
     const groupId = occ.linkGroupId;
-    await prisma.jobOccurrence.update({ where: { id: occId }, data: { linkGroupId: null } });
+    await prisma.$transaction(async (tx) => {
+      await tx.jobOccurrence.update({ where: { id: occId }, data: { linkGroupId: null } });
 
-    // If only 1 occurrence left in the group, remove the group from it too
-    const remaining = await prisma.jobOccurrence.count({ where: { linkGroupId: groupId } });
-    if (remaining === 1) {
-      await prisma.jobOccurrence.updateMany({ where: { linkGroupId: groupId }, data: { linkGroupId: null } });
-    }
+      // If only 1 occurrence left in the group, remove the group from it too
+      const remaining = await tx.jobOccurrence.count({ where: { linkGroupId: groupId } });
+      let dissolvedGroup = false;
+      if (remaining === 1) {
+        await tx.jobOccurrence.updateMany({ where: { linkGroupId: groupId }, data: { linkGroupId: null } });
+        dissolvedGroup = true;
+      }
+      // Records the occurrence leaving its link group (and the group being
+      // dissolved when only one member would be left).
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+        occurrenceId: occId,
+        jobId: occ.jobId ?? null,
+        action: "occurrence_unlinked",
+        linkGroupIdBefore: groupId,
+        linkGroupIdAfter: null,
+        dissolvedGroup,
+      });
+    });
 
     return { ok: true };
   });
@@ -2361,7 +2767,7 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   // Delete a proposed job permanently
   app.delete("/admin/jobs/:id", adminGuard, async (req: any) => {
-    return services.jobs.deleteJob(String(req.params.id));
+    return services.jobs.deleteJob(String(req.params.id), await currentUserId(req));
   });
 
   // Archive a completed occurrence
@@ -2531,7 +2937,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     adminGuard,
     async (req: any) => {
       const occurrenceId = String(req.params.occurrenceId);
-      return services.jobs.deleteOccurrence(occurrenceId);
+      return services.jobs.deleteOccurrence(occurrenceId, await currentUserId(req));
     }
   );
 
@@ -2558,7 +2964,7 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   // Recalculate payment splits based on current assignees
   app.post("/admin/occurrences/:occurrenceId/recalculate-splits", adminGuard, async (req: any) => {
-    return services.payments.recalculateSplits(String(req.params.occurrenceId));
+    return services.payments.recalculateSplits(String(req.params.occurrenceId), await currentUserId(req));
   });
 
   // Admin "Mark Invoice Paid" — closes out a PENDING_PAYMENT occurrence
@@ -2694,12 +3100,16 @@ export default async function adminRoutes(app: FastifyInstance) {
   });
 
   app.delete("/admin/expenses/:id", adminGuard, async (req: any) => {
-    return services.expenses.adminDeleteExpense(String(req.params.id));
+    // Deleting an expense removes a Schedule C ledger row and reverses a
+    // worker payout deduction — the audit row needs a real actor.
+    const uid = await currentUserId(req);
+    return services.expenses.adminDeleteExpense(uid, String(req.params.id));
   });
 
   // ── Estimate Proposal Actions ──
 
   app.post("/admin/occurrences/:occurrenceId/accept-proposal", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const occurrenceId = String(req.params.occurrenceId);
     const body = req.body || {};
 
@@ -2717,12 +3127,26 @@ export default async function adminRoutes(app: FastifyInstance) {
     }
 
     // Accept the estimate with optional comment
-    await prisma.jobOccurrence.update({
-      where: { id: occurrenceId },
-      data: {
-        status: "ACCEPTED",
-        notes: body.comment ? `${occ.notes ? occ.notes + "\n" : ""}Accepted: ${String(body.comment)}` : occ.notes,
-      },
+    await prisma.$transaction(async (tx) => {
+      await tx.jobOccurrence.update({
+        where: { id: occurrenceId },
+        data: {
+          status: "ACCEPTED",
+          notes: body.comment ? `${occ.notes ? occ.notes + "\n" : ""}Accepted: ${String(body.comment)}` : occ.notes,
+        },
+      });
+      // Money: accepting locks in the quoted price as the amount the client
+      // agreed to, and unblocks converting the estimate into billable work.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+        occurrenceId,
+        jobId: occ.jobId ?? null,
+        action: "estimate_proposal_accepted",
+        statusBefore: occ.status,
+        statusAfter: "ACCEPTED",
+        priceBefore: occ.price ?? null,
+        proposalAmount: (occ as any).proposalAmount ?? null,
+        comment: body.comment ? String(body.comment) : null,
+      });
     });
 
     // Return job info so frontend can prompt to create occurrence
@@ -2744,6 +3168,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   });
 
   app.post("/admin/occurrences/:occurrenceId/reject-proposal", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const occurrenceId = String(req.params.occurrenceId);
     const body = req.body || {};
 
@@ -2757,12 +3182,26 @@ export default async function adminRoutes(app: FastifyInstance) {
       throw app.httpErrors.badRequest("Estimates can only be rejected after the team has completed them.");
     }
 
-    await prisma.jobOccurrence.update({
-      where: { id: occurrenceId },
-      data: {
-        status: "REJECTED",
-        rejectionReason: body.reason ? String(body.reason) : null,
-      },
+    await prisma.$transaction(async (tx) => {
+      await tx.jobOccurrence.update({
+        where: { id: occurrenceId },
+        data: {
+          status: "REJECTED",
+          rejectionReason: body.reason ? String(body.reason) : null,
+        },
+      });
+      // Money: rejecting kills the quoted work — the proposed amount will
+      // never be billed and the visit won't convert into a job.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+        occurrenceId,
+        jobId: occ.jobId ?? null,
+        action: "estimate_proposal_rejected",
+        statusBefore: occ.status,
+        statusAfter: "REJECTED",
+        priceBefore: occ.price ?? null,
+        proposalAmount: (occ as any).proposalAmount ?? null,
+        reason: body.reason ? String(body.reason) : null,
+      });
     });
 
     return { rejected: true };
@@ -2771,6 +3210,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   // ── Generate AI Estimate ──
 
   app.post("/admin/occurrences/:occurrenceId/generate-estimate", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const occurrenceId = String(req.params.occurrenceId);
 
     const occ = await prisma.jobOccurrence.findUniqueOrThrow({
@@ -2896,12 +3336,24 @@ Respond ONLY with valid JSON in this exact format:
       } catch {}
 
       // Save to the occurrence
-      await prisma.jobOccurrence.update({
-        where: { id: occurrenceId },
-        data: {
-          generatedEstimate: message,
-          generatedEstimateBreakdown: breakdown,
-        },
+      await prisma.$transaction(async (tx) => {
+        await tx.jobOccurrence.update({
+          where: { id: occurrenceId },
+          data: {
+            generatedEstimate: message,
+            generatedEstimateBreakdown: breakdown,
+          },
+        });
+        // Records that AI-authored estimate copy was written onto the
+        // occurrence, overwriting whatever draft was there before.
+        await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+          occurrenceId,
+          jobId: occ.jobId ?? null,
+          action: "estimate_text_generated",
+          hadPreviousEstimate: !!(occ as any).generatedEstimate,
+          estimateLength: message.length,
+          breakdownLength: breakdown.length,
+        });
       });
 
       return { estimate: message, breakdown };
@@ -2987,11 +3439,27 @@ Respond ONLY with valid JSON in this exact format:
   });
 
   app.patch("/admin/users/:id/home-base", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const userId = String(req.params.id);
     const body = req.body || {};
-    await prisma.user.update({
-      where: { id: userId },
-      data: { homeBaseAddress: body.address != null ? String(body.address).trim() || null : null },
+    const nextAddress = body.address != null ? String(body.address).trim() || null : null;
+    await prisma.$transaction(async (tx) => {
+      const before = await tx.user.findUnique({
+        where: { id: userId },
+        select: { homeBaseAddress: true },
+      });
+      await tx.user.update({
+        where: { id: userId },
+        data: { homeBaseAddress: nextAddress },
+      });
+      // Records the home-base move — it's the origin point for deductible
+      // mileage, so it feeds the worker's reimbursements.
+      await writeAudit(tx, AUDIT.USER.PRIVILEGES_UPDATED, uid, {
+        userId,
+        action: "home_base_updated",
+        homeBaseAddressBefore: before?.homeBaseAddress ?? null,
+        homeBaseAddressAfter: nextAddress,
+      });
     });
     return { ok: true };
   });
@@ -3378,6 +3846,7 @@ Respond ONLY with valid JSON in this exact format:
   });
 
   app.patch("/admin/users/:id/profile", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const userId = String(req.params.id);
     const body = req.body || {};
     const data: any = {};
@@ -3409,7 +3878,55 @@ Respond ONLY with valid JSON in this exact format:
     if (body.firstName !== undefined) data.firstName = body.firstName ? String(body.firstName).trim() : null;
     if (body.lastName !== undefined) data.lastName = body.lastName ? String(body.lastName).trim() : null;
     if (body.displayName !== undefined) data.displayName = body.displayName ? String(body.displayName).trim() : null;
-    await prisma.user.update({ where: { id: userId }, data });
+    await prisma.$transaction(async (tx) => {
+      const before = await tx.user.findUnique({
+        where: { id: userId },
+        select: {
+          hourlyWage: true,
+          homeBaseAddress: true,
+          availableDays: true,
+          availableHoursPerDay: true,
+          phone: true,
+          firstName: true,
+          lastName: true,
+          displayName: true,
+        },
+      });
+      await tx.user.update({ where: { id: userId }, data });
+      const wageChanged = "hourlyWage" in data && data.hourlyWage !== (before?.hourlyWage ?? null);
+      const detail = {
+        userId,
+        action: wageChanged ? "wage_updated" : "profile_updated",
+        changedFields: Object.keys(data),
+        // Money: hourlyWage drives payroll, so it always carries before/after
+        // even when the edit also touched non-money profile fields.
+        hourlyWageBefore: before?.hourlyWage ?? null,
+        hourlyWageAfter: "hourlyWage" in data ? data.hourlyWage : (before?.hourlyWage ?? null),
+        homeBaseAddressBefore: before?.homeBaseAddress ?? null,
+        homeBaseAddressAfter: "homeBaseAddress" in data ? data.homeBaseAddress : (before?.homeBaseAddress ?? null),
+        availableDaysBefore: before?.availableDays ?? null,
+        availableDaysAfter: "availableDays" in data ? data.availableDays : (before?.availableDays ?? null),
+        availableHoursPerDayBefore: before?.availableHoursPerDay ?? null,
+        availableHoursPerDayAfter:
+          "availableHoursPerDay" in data ? data.availableHoursPerDay : (before?.availableHoursPerDay ?? null),
+        phoneBefore: before?.phone ?? null,
+        phoneAfter: "phone" in data ? data.phone : (before?.phone ?? null),
+        firstNameBefore: before?.firstName ?? null,
+        firstNameAfter: "firstName" in data ? data.firstName : (before?.firstName ?? null),
+        lastNameBefore: before?.lastName ?? null,
+        lastNameAfter: "lastName" in data ? data.lastName : (before?.lastName ?? null),
+        displayNameBefore: before?.displayName ?? null,
+        displayNameAfter: "displayName" in data ? data.displayName : (before?.displayName ?? null),
+      };
+      // A wage change is payroll-affecting and gets its own verb; everything
+      // else on this endpoint is ordinary profile bookkeeping.
+      await writeAudit(
+        tx,
+        wageChanged ? AUDIT.USER.WAGE_UPDATED : AUDIT.USER.PRIVILEGES_UPDATED,
+        uid,
+        detail,
+      );
+    });
     return { ok: true };
   });
 
@@ -3788,13 +4305,28 @@ Respond ONLY with valid JSON in this exact format:
   });
 
   app.delete("/admin/photos/:id", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const photoId = String(req.params.id);
 
     const photo = await prisma.jobOccurrencePhoto.findUnique({ where: { id: photoId } });
     if (!photo) throw app.httpErrors.notFound("Photo not found");
 
     await deleteObject(photo.r2Key);
-    await prisma.jobOccurrencePhoto.delete({ where: { id: photoId } });
+    await prisma.$transaction(async (tx) => {
+      await tx.jobOccurrencePhoto.delete({ where: { id: photoId } });
+      // Destructive: an admin removed a worker's proof-of-work photo and the
+      // R2 object with it. This snapshot is the only surviving evidence.
+      await writeAudit(tx, AUDIT.JOB.PHOTO_DELETED, uid, {
+        photoId: photo.id,
+        occurrenceId: photo.occurrenceId,
+        action: "occurrence_photo_deleted",
+        fileName: photo.fileName,
+        contentType: photo.contentType,
+        r2Key: photo.r2Key,
+        uploadedById: photo.uploadedById,
+        uploadedAt: photo.createdAt.toISOString(),
+      });
+    });
 
     return { ok: true };
   });
@@ -4538,13 +5070,33 @@ Respond ONLY with valid JSON in this exact format:
   });
 
   app.delete("/admin/light-estimates/:id", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const id = String(req.params.id);
     const occ = await prisma.jobOccurrence.findUnique({ where: { id } });
     if (!occ) throw app.httpErrors.notFound("Estimate not found");
     if (occ.jobId) throw app.httpErrors.badRequest("This estimate is linked to a job — delete it from the Job Service instead");
     if (occ.workflow !== "ESTIMATE") throw app.httpErrors.badRequest("Not a stand-alone estimate");
-    await prisma.jobOccurrence.delete({ where: { id } });
-    return { deleted: true };
+    return prisma.$transaction(async (tx) => {
+      await tx.jobOccurrence.delete({ where: { id } });
+      // Destructive: hard-deletes a priced estimate (and its quoted amount +
+      // prospect contact details). Nothing else survives the delete.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_DELETED, uid, {
+        occurrenceId: id,
+        jobId: null,
+        action: "light_estimate_deleted",
+        workflow: occ.workflow,
+        status: occ.status,
+        title: occ.title ?? null,
+        startAt: occ.startAt?.toISOString() ?? null,
+        priceBefore: occ.price ?? null,
+        proposalAmountBefore: (occ as any).proposalAmount ?? null,
+        contactName: (occ as any).contactName ?? null,
+        contactPhone: (occ as any).contactPhone ?? null,
+        contactEmail: (occ as any).contactEmail ?? null,
+        estimateAddress: (occ as any).estimateAddress ?? null,
+      });
+      return { deleted: true };
+    });
   });
 
   // ── Events (admin-only shared occurrences) ──
@@ -4562,6 +5114,7 @@ Respond ONLY with valid JSON in this exact format:
   });
 
   app.patch("/admin/events/:id", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const id = String(req.params.id);
     const occ = await prisma.jobOccurrence.findUnique({ where: { id } });
     if (!occ) throw app.httpErrors.notFound("Event not found");
@@ -4572,7 +5125,23 @@ Respond ONLY with valid JSON in this exact format:
     if (body.notes !== undefined) data.notes = body.notes ? String(body.notes).trim() : null;
     if (body.startAt !== undefined) data.startAt = new Date(body.startAt);
     if (body.frequencyDays !== undefined) data.frequencyDays = body.frequencyDays != null ? Number(body.frequencyDays) : null;
-    return prisma.jobOccurrence.update({ where: { id }, data });
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.jobOccurrence.update({ where: { id }, data });
+      // Records an edit to a shared calendar event every worker sees.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+        occurrenceId: id,
+        jobId: occ.jobId ?? null,
+        action: "event_updated",
+        changedFields: Object.keys(data),
+        titleBefore: occ.title ?? null,
+        titleAfter: updated.title ?? null,
+        startAtBefore: occ.startAt?.toISOString() ?? null,
+        startAtAfter: updated.startAt?.toISOString() ?? null,
+        frequencyDaysBefore: (occ as any).frequencyDays ?? null,
+        frequencyDaysAfter: (updated as any).frequencyDays ?? null,
+      });
+      return updated;
+    });
   });
 
   app.post("/admin/events/:id/complete", adminGuard, async (req: any) => {
@@ -4581,12 +5150,28 @@ Respond ONLY with valid JSON in this exact format:
   });
 
   app.delete("/admin/events/:id", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const id = String(req.params.id);
     const occ = await prisma.jobOccurrence.findUnique({ where: { id } });
     if (!occ) throw app.httpErrors.notFound("Event not found");
     if (occ.workflow !== "EVENT") throw app.httpErrors.badRequest("Not an event");
-    await prisma.jobOccurrence.delete({ where: { id } });
-    return { deleted: true };
+    return prisma.$transaction(async (tx) => {
+      await tx.jobOccurrence.delete({ where: { id } });
+      // Destructive: hard-deletes a shared calendar event; this snapshot is
+      // the only record it was ever on the schedule.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_DELETED, uid, {
+        occurrenceId: id,
+        jobId: occ.jobId ?? null,
+        action: "event_deleted",
+        workflow: occ.workflow,
+        status: occ.status,
+        title: occ.title ?? null,
+        notes: occ.notes ?? null,
+        startAt: occ.startAt?.toISOString() ?? null,
+        frequencyDays: (occ as any).frequencyDays ?? null,
+      });
+      return { deleted: true };
+    });
   });
 
   // ── Followups (admin-only, with optional client/job attachments) ──
@@ -4606,6 +5191,7 @@ Respond ONLY with valid JSON in this exact format:
   });
 
   app.patch("/admin/followups/:id", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const id = String(req.params.id);
     const occ = await prisma.jobOccurrence.findUnique({ where: { id } });
     if (!occ) throw app.httpErrors.notFound("Followup not found");
@@ -4616,25 +5202,44 @@ Respond ONLY with valid JSON in this exact format:
     if (body.notes !== undefined) data.notes = body.notes ? String(body.notes).trim() : null;
     if (body.startAt !== undefined) data.startAt = new Date(body.startAt);
     if (body.frequencyDays !== undefined) data.frequencyDays = body.frequencyDays != null ? Number(body.frequencyDays) : null;
-    await prisma.jobOccurrence.update({ where: { id }, data });
+    await prisma.$transaction(async (tx) => {
+      await tx.jobOccurrence.update({ where: { id }, data });
 
-    // Replace client/job attachments if provided
-    if (Array.isArray(body.clientIds)) {
-      await prisma.followupClient.deleteMany({ where: { occurrenceId: id } });
-      if (body.clientIds.length > 0) {
-        await prisma.followupClient.createMany({
-          data: body.clientIds.map((clientId: string) => ({ occurrenceId: id, clientId })),
-        });
+      // Replace client/job attachments if provided
+      if (Array.isArray(body.clientIds)) {
+        await tx.followupClient.deleteMany({ where: { occurrenceId: id } });
+        if (body.clientIds.length > 0) {
+          await tx.followupClient.createMany({
+            data: body.clientIds.map((clientId: string) => ({ occurrenceId: id, clientId })),
+          });
+        }
       }
-    }
-    if (Array.isArray(body.jobIds)) {
-      await prisma.followupJob.deleteMany({ where: { occurrenceId: id } });
-      if (body.jobIds.length > 0) {
-        await prisma.followupJob.createMany({
-          data: body.jobIds.map((jobId: string) => ({ occurrenceId: id, jobId })),
-        });
+      if (Array.isArray(body.jobIds)) {
+        await tx.followupJob.deleteMany({ where: { occurrenceId: id } });
+        if (body.jobIds.length > 0) {
+          await tx.followupJob.createMany({
+            data: body.jobIds.map((jobId: string) => ({ occurrenceId: id, jobId })),
+          });
+        }
       }
-    }
+
+      // Records the followup edit, including the wholesale replacement of its
+      // client / job attachments.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+        occurrenceId: id,
+        jobId: occ.jobId ?? null,
+        action: "followup_updated",
+        changedFields: Object.keys(data),
+        titleBefore: occ.title ?? null,
+        titleAfter: "title" in data ? data.title : (occ.title ?? null),
+        startAtBefore: occ.startAt?.toISOString() ?? null,
+        startAtAfter: "startAt" in data ? (data.startAt as Date).toISOString() : (occ.startAt?.toISOString() ?? null),
+        frequencyDaysBefore: (occ as any).frequencyDays ?? null,
+        frequencyDaysAfter: "frequencyDays" in data ? data.frequencyDays : ((occ as any).frequencyDays ?? null),
+        clientIdsAfter: Array.isArray(body.clientIds) ? body.clientIds.map(String) : null,
+        jobIdsAfter: Array.isArray(body.jobIds) ? body.jobIds.map(String) : null,
+      });
+    });
 
     return prisma.jobOccurrence.findUnique({ where: { id } });
   });
@@ -4645,12 +5250,36 @@ Respond ONLY with valid JSON in this exact format:
   });
 
   app.delete("/admin/followups/:id", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const id = String(req.params.id);
     const occ = await prisma.jobOccurrence.findUnique({ where: { id } });
     if (!occ) throw app.httpErrors.notFound("Followup not found");
     if (occ.workflow !== "FOLLOWUP") throw app.httpErrors.badRequest("Not a followup");
-    await prisma.jobOccurrence.delete({ where: { id } });
-    return { deleted: true };
+    // Snapshot the client/job attachments too — they cascade away with the
+    // occurrence and are otherwise unrecoverable.
+    const [attachedClients, attachedJobs] = await Promise.all([
+      prisma.followupClient.findMany({ where: { occurrenceId: id }, select: { clientId: true } }),
+      prisma.followupJob.findMany({ where: { occurrenceId: id }, select: { jobId: true } }),
+    ]);
+    return prisma.$transaction(async (tx) => {
+      await tx.jobOccurrence.delete({ where: { id } });
+      // Destructive: hard-deletes a followup reminder and everything it was
+      // attached to.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_DELETED, uid, {
+        occurrenceId: id,
+        jobId: occ.jobId ?? null,
+        action: "followup_deleted",
+        workflow: occ.workflow,
+        status: occ.status,
+        title: occ.title ?? null,
+        notes: occ.notes ?? null,
+        startAt: occ.startAt?.toISOString() ?? null,
+        frequencyDays: (occ as any).frequencyDays ?? null,
+        attachedClientIds: attachedClients.map((r) => r.clientId),
+        attachedJobIds: attachedJobs.map((r) => r.jobId),
+      });
+      return { deleted: true };
+    });
   });
 
   // ── Announcements (admin-only, universally visible) ──
@@ -4668,6 +5297,7 @@ Respond ONLY with valid JSON in this exact format:
   });
 
   app.patch("/admin/announcements/:id", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const id = String(req.params.id);
     const occ = await prisma.jobOccurrence.findUnique({ where: { id } });
     if (!occ) throw app.httpErrors.notFound("Announcement not found");
@@ -4678,7 +5308,23 @@ Respond ONLY with valid JSON in this exact format:
     if (body.notes !== undefined) data.notes = body.notes ? String(body.notes).trim() : null;
     if (body.startAt !== undefined) data.startAt = new Date(body.startAt);
     if (body.frequencyDays !== undefined) data.frequencyDays = body.frequencyDays != null ? Number(body.frequencyDays) : null;
-    return prisma.jobOccurrence.update({ where: { id }, data });
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.jobOccurrence.update({ where: { id }, data });
+      // Records an edit to an announcement shown to every worker.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+        occurrenceId: id,
+        jobId: occ.jobId ?? null,
+        action: "announcement_updated",
+        changedFields: Object.keys(data),
+        titleBefore: occ.title ?? null,
+        titleAfter: updated.title ?? null,
+        startAtBefore: occ.startAt?.toISOString() ?? null,
+        startAtAfter: updated.startAt?.toISOString() ?? null,
+        frequencyDaysBefore: (occ as any).frequencyDays ?? null,
+        frequencyDaysAfter: (updated as any).frequencyDays ?? null,
+      });
+      return updated;
+    });
   });
 
   app.post("/admin/announcements/:id/complete", adminGuard, async (req: any) => {
@@ -4687,23 +5333,54 @@ Respond ONLY with valid JSON in this exact format:
   });
 
   app.delete("/admin/announcements/:id", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const id = String(req.params.id);
     const occ = await prisma.jobOccurrence.findUnique({ where: { id } });
     if (!occ) throw app.httpErrors.notFound("Announcement not found");
     if (occ.workflow !== "ANNOUNCEMENT") throw app.httpErrors.badRequest("Not an announcement");
-    await prisma.jobOccurrence.delete({ where: { id } });
-    return { deleted: true };
+    return prisma.$transaction(async (tx) => {
+      await tx.jobOccurrence.delete({ where: { id } });
+      // Destructive: hard-deletes a company-wide announcement; this snapshot
+      // is the only record of what it said.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_DELETED, uid, {
+        occurrenceId: id,
+        jobId: occ.jobId ?? null,
+        action: "announcement_deleted",
+        workflow: occ.workflow,
+        status: occ.status,
+        title: occ.title ?? null,
+        notes: occ.notes ?? null,
+        startAt: occ.startAt?.toISOString() ?? null,
+        frequencyDays: (occ as any).frequencyDays ?? null,
+      });
+      return { deleted: true };
+    });
   });
 
   app.post("/admin/occurrences/:id/link-to-job", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const occId = String(req.params.id);
     const jobId = String(req.body?.jobId ?? "");
     if (!jobId) throw app.httpErrors.badRequest("jobId is required");
     const occ = await prisma.jobOccurrence.findUnique({ where: { id: occId } });
     if (!occ) throw app.httpErrors.notFound("Occurrence not found");
-    await prisma.jobOccurrence.update({
-      where: { id: occId },
-      data: { jobId, kind: "SINGLE_ADDRESS" },
+    await prisma.$transaction(async (tx) => {
+      await tx.jobOccurrence.update({
+        where: { id: occId },
+        data: { jobId, kind: "SINGLE_ADDRESS" },
+      });
+      // Money: re-parenting an orphan occurrence changes which job (and
+      // therefore which client) the visit is billed under.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+        occurrenceId: occId,
+        action: "occurrence_reparented_to_job",
+        jobIdBefore: occ.jobId ?? null,
+        jobIdAfter: jobId,
+        jobId,
+        kindBefore: occ.kind,
+        kindAfter: "SINGLE_ADDRESS",
+        priceBefore: occ.price ?? null,
+      });
     });
     return { ok: true };
   });
@@ -5346,6 +6023,9 @@ Respond ONLY with valid JSON in this exact format:
       });
       if (!cr) throw app.httpErrors.notFound("Request not found.");
       if (cr.status !== "PENDING") throw app.httpErrors.badRequest("Already resolved.");
+      // Captured for the audit entry below: SKIP approvals can silently
+      // create the next occurrence in the recurring chain.
+      let createdNextOccurrenceId: string | null = null;
       // Apply the change.
       if (cr.kind === "RESCHEDULE") {
         // RESCHEDULE is now a conversation-starter, not a command. The
@@ -5411,6 +6091,7 @@ Respond ONLY with valid JSON in this exact format:
                 frequencyDays: (occ as any).frequencyDays ?? null,
               } as any,
             });
+            createdNextOccurrenceId = nextOcc.id;
             // Copy default assignees from the job (group first, then
             // individual). The earlier occurrence's actual assignees are
             // ignored — the recurring chain restarts from the template.
@@ -5459,6 +6140,22 @@ Respond ONLY with valid JSON in this exact format:
           resolutionNote: body.note ? String(body.note).trim() : null,
         },
       });
+      // Records the approval and everything it cascaded into: a SKIP cancels
+      // the visit (no payment will ever be collected on it) and advances the
+      // recurring chain by creating the next occurrence + its crew.
+      await writeAudit(tx, AUDIT.CHANGE_REQUEST.APPROVED, uid, {
+        changeRequestId: id,
+        occurrenceId: cr.occurrenceId,
+        jobId: cr.occurrence?.jobId ?? null,
+        kind: cr.kind,
+        statusBefore: "PENDING",
+        statusAfter: "APPROVED",
+        occurrenceStatusBefore: cr.occurrence?.status ?? null,
+        occurrenceStatusAfter: cr.kind === "SKIP" ? "CANCELED" : (cr.occurrence?.status ?? null),
+        canceledOccurrencePrice: cr.kind === "SKIP" ? (cr.occurrence?.price ?? null) : null,
+        createdNextOccurrenceId,
+        resolutionNote: body.note ? String(body.note).trim() : null,
+      });
       return updated;
     });
   });
@@ -5470,14 +6167,28 @@ Respond ONLY with valid JSON in this exact format:
     const cr = await prisma.occurrenceChangeRequest.findUnique({ where: { id } });
     if (!cr) throw app.httpErrors.notFound("Request not found.");
     if (cr.status !== "PENDING") throw app.httpErrors.badRequest("Already resolved.");
-    return prisma.occurrenceChangeRequest.update({
-      where: { id },
-      data: {
-        status: "DENIED",
-        resolvedById: uid,
-        resolvedAt: new Date(),
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.occurrenceChangeRequest.update({
+        where: { id },
+        data: {
+          status: "DENIED",
+          resolvedById: uid,
+          resolvedAt: new Date(),
+          resolutionNote: body.note ? String(body.note).trim() : null,
+        },
+      });
+      // Records the denial — the worker's requested change to the visit does
+      // not happen and the request is closed out.
+      await writeAudit(tx, AUDIT.CHANGE_REQUEST.DENIED, uid, {
+        changeRequestId: id,
+        occurrenceId: cr.occurrenceId,
+        kind: cr.kind,
+        statusBefore: "PENDING",
+        statusAfter: "DENIED",
+        requestedById: cr.requestedById,
         resolutionNote: body.note ? String(body.note).trim() : null,
-      },
+      });
+      return updated;
     });
   });
 
@@ -5876,28 +6587,49 @@ Respond ONLY with valid JSON in this exact format:
       }
       if (!recurrenceSeriesId) recurrenceSeriesId = randomUUID();
     }
-    const created = await prisma.businessExpense.create({
-      data: {
-        ledgerId: generateLedgerId(),
-        createdById: uid,
-        type: type as any,
-        description: String(b.description).trim(),
-        cost: Number(b.cost),
-        date: parseUserDate(String(b.date)),
-        category: type === "EXPENSE" ? trimmedCategory : null,
-        // Vendor + invoice are expense-only — no external vendor/invoice
-        // exists for owner contributions or draws.
-        vendor: type === "EXPENSE" && b.vendor ? String(b.vendor).trim() : null,
-        invoiceNumber: type === "EXPENSE" && b.invoiceNumber ? String(b.invoiceNumber).trim() : null,
-        // paymentFrom applies to every entry type — equity entries (capital
-        // contributions / owner draws) have a source/destination too. Pure
-        // free-text operator note; never tax-relevant.
-        paymentFrom: b.paymentFrom ? String(b.paymentFrom).trim() : null,
-        notes: b.notes ? String(b.notes).trim() : null,
-        equipmentId: type === "EXPENSE" ? equipmentId : null,
-        recurrence: recurrence as any,
-        recurrenceSeriesId,
-      },
+    const created = await prisma.$transaction(async (tx) => {
+      const row = await tx.businessExpense.create({
+        data: {
+          ledgerId: generateLedgerId(),
+          createdById: uid,
+          type: type as any,
+          description: String(b.description).trim(),
+          cost: Number(b.cost),
+          date: parseUserDate(String(b.date)),
+          category: type === "EXPENSE" ? trimmedCategory : null,
+          // Vendor + invoice are expense-only — no external vendor/invoice
+          // exists for owner contributions or draws.
+          vendor: type === "EXPENSE" && b.vendor ? String(b.vendor).trim() : null,
+          invoiceNumber: type === "EXPENSE" && b.invoiceNumber ? String(b.invoiceNumber).trim() : null,
+          // paymentFrom applies to every entry type — equity entries (capital
+          // contributions / owner draws) have a source/destination too. Pure
+          // free-text operator note; never tax-relevant.
+          paymentFrom: b.paymentFrom ? String(b.paymentFrom).trim() : null,
+          notes: b.notes ? String(b.notes).trim() : null,
+          equipmentId: type === "EXPENSE" ? equipmentId : null,
+          recurrence: recurrence as any,
+          recurrenceSeriesId,
+        },
+      });
+      // Money: creates a Schedule C tax-ledger row that lands in the QB /
+      // tax exports and moves the P&L.
+      await writeAudit(tx, AUDIT.EXPENSE.CREATED, uid, {
+        businessExpenseId: row.id,
+        ledgerId: row.ledgerId,
+        action: "business_expense_created",
+        type: row.type,
+        description: row.description,
+        costBefore: null,
+        costAfter: row.cost,
+        date: etFormatDate(row.date),
+        category: row.category,
+        vendor: row.vendor,
+        invoiceNumber: row.invoiceNumber,
+        equipmentId: row.equipmentId,
+        recurrence: row.recurrence,
+        recurrenceSeriesId: row.recurrenceSeriesId,
+      });
+      return row;
     });
     // For recurring rows, tell the client when the next instance is
     // expected so the success toast can say "Next occurrence expected
@@ -6007,6 +6739,7 @@ Respond ONLY with valid JSON in this exact format:
   });
 
   app.patch("/admin/business-expenses/:id", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const id = String(req.params.id);
     const b = req.body || {};
     const data: any = {};
@@ -6056,7 +6789,18 @@ Respond ONLY with valid JSON in this exact format:
     // reconciliation-auto-clear check further down.
     const existing = await prisma.businessExpense.findUnique({
       where: { id },
-      select: { type: true, cost: true, date: true, reconciledAt: true },
+      select: {
+        type: true,
+        cost: true,
+        date: true,
+        reconciledAt: true,
+        ledgerId: true,
+        description: true,
+        category: true,
+        vendor: true,
+        invoiceNumber: true,
+        recurrence: true,
+      },
     });
     if (!existing) throw app.httpErrors.notFound("Expense not found.");
 
@@ -6138,14 +6882,43 @@ Respond ONLY with valid JSON in this exact format:
     }
     const updated = await prisma.$transaction(async (tx) => {
       const updated = await tx.businessExpense.update({ where: { id }, data });
+      const syncedFields: string[] = [];
       if (linkedExpense) {
         const expenseSync: any = {};
         if ("cost" in data) expenseSync.cost = data.cost;
         if ("description" in data) expenseSync.description = data.description;
         if (Object.keys(expenseSync).length > 0) {
           await tx.expense.update({ where: { id: linkedExpense.id }, data: expenseSync });
+          syncedFields.push(...Object.keys(expenseSync));
         }
       }
+      // Money: edits a Schedule C tax-ledger row (and mirrors cost onto the
+      // paired job Expense, which changes the worker's payout deduction). A
+      // cost/date change also silently clears the QuickBooks reconciliation.
+      await writeAudit(tx, AUDIT.EXPENSE.UPDATED, uid, {
+        businessExpenseId: id,
+        ledgerId: existing.ledgerId,
+        action: "business_expense_updated",
+        changedFields: Object.keys(data),
+        costBefore: existing.cost,
+        costAfter: "cost" in data ? data.cost : existing.cost,
+        dateBefore: etFormatDate(existing.date),
+        dateAfter: data.date ? etFormatDate(data.date as Date) : etFormatDate(existing.date),
+        typeBefore: existing.type,
+        typeAfter: "type" in data ? data.type : existing.type,
+        categoryBefore: existing.category,
+        categoryAfter: "category" in data ? data.category : existing.category,
+        descriptionBefore: existing.description,
+        descriptionAfter: "description" in data ? data.description : existing.description,
+        vendorBefore: existing.vendor,
+        vendorAfter: "vendor" in data ? data.vendor : existing.vendor,
+        recurrenceBefore: existing.recurrence,
+        recurrenceAfter: "recurrence" in data ? data.recurrence : existing.recurrence,
+        reconciliationCleared: "reconciledAt" in data && data.reconciledAt === null,
+        reconciledAtBefore: existing.reconciledAt ? existing.reconciledAt.toISOString() : null,
+        linkedExpenseId: linkedExpense?.id ?? null,
+        linkedExpenseSyncedFields: syncedFields,
+      });
       return updated;
     });
     // Same tail as the create endpoint: if the row is (still or now)
@@ -6205,30 +6978,69 @@ Respond ONLY with valid JSON in this exact format:
           })
         : source;
       if (!latest) throw app.httpErrors.notFound("Latest row in series not found.");
-      const updated = await prisma.businessExpense.update({
-        where: { id: latest.id },
-        data: { recurrenceEndedAt: new Date(), recurrenceEndedById: uid },
-        include: {
-          recurrenceEndedBy: { select: { id: true, displayName: true, email: true } },
-        },
+      const updated = await prisma.$transaction(async (tx) => {
+        const row = await tx.businessExpense.update({
+          where: { id: latest.id },
+          data: { recurrenceEndedAt: new Date(), recurrenceEndedById: uid },
+          include: {
+            recurrenceEndedBy: { select: { id: true, displayName: true, email: true } },
+          },
+        });
+        // Records the recurring tax-ledger series being closed out — no
+        // further instances will be prompted for or forecast.
+        await writeAudit(tx, AUDIT.EXPENSE.UPDATED, uid, {
+          businessExpenseId: row.id,
+          ledgerId: row.ledgerId,
+          action: "recurrence_series_ended",
+          recurrenceSeriesId: source.recurrenceSeriesId,
+          recurrence: String(source.recurrence),
+          requestedFromId: id,
+          recurrenceEndedAtBefore: null,
+          recurrenceEndedAtAfter: row.recurrenceEndedAt ? row.recurrenceEndedAt.toISOString() : null,
+        });
+        return row;
       });
       return updated;
     }
     // Restart path — clear flag on every row in the series that has it.
-    if (source.recurrenceSeriesId) {
-      await prisma.businessExpense.updateMany({
-        where: {
-          recurrenceSeriesId: source.recurrenceSeriesId,
-          recurrenceEndedAt: { not: null },
-        },
-        data: { recurrenceEndedAt: null, recurrenceEndedById: null },
+    await prisma.$transaction(async (tx) => {
+      let clearedIds: string[] = [];
+      if (source.recurrenceSeriesId) {
+        // Snapshot which rows carried the flag — updateMany doesn't return
+        // them and the flag is gone afterwards.
+        const flagged = await tx.businessExpense.findMany({
+          where: {
+            recurrenceSeriesId: source.recurrenceSeriesId,
+            recurrenceEndedAt: { not: null },
+          },
+          select: { id: true },
+        });
+        clearedIds = flagged.map((r) => r.id);
+        await tx.businessExpense.updateMany({
+          where: {
+            recurrenceSeriesId: source.recurrenceSeriesId,
+            recurrenceEndedAt: { not: null },
+          },
+          data: { recurrenceEndedAt: null, recurrenceEndedById: null },
+        });
+      } else {
+        await tx.businessExpense.update({
+          where: { id: source.id },
+          data: { recurrenceEndedAt: null, recurrenceEndedById: null },
+        });
+        clearedIds = [source.id];
+      }
+      // Records the series being reopened — future instances get forecast
+      // and prompted again across every row that carried the ended flag.
+      await writeAudit(tx, AUDIT.EXPENSE.UPDATED, uid, {
+        businessExpenseId: source.id,
+        action: "recurrence_series_restarted",
+        recurrenceSeriesId: source.recurrenceSeriesId,
+        recurrence: String(source.recurrence),
+        clearedBusinessExpenseIds: clearedIds,
+        recurrenceEndedAtAfter: null,
       });
-    } else {
-      await prisma.businessExpense.update({
-        where: { id: source.id },
-        data: { recurrenceEndedAt: null, recurrenceEndedById: null },
-      });
-    }
+    });
     // Re-fetch the source row so the caller sees its new (null) flag.
     const refetched = await prisma.businessExpense.findUnique({
       where: { id: source.id },
@@ -6253,30 +7065,51 @@ Respond ONLY with valid JSON in this exact format:
     }
     const existing = await prisma.businessExpense.findUnique({
       where: { id },
-      select: { id: true },
+      select: { id: true, ledgerId: true, cost: true, date: true, reconciledAt: true, reconciledById: true },
     });
     if (!existing) throw app.httpErrors.notFound("Business expense not found.");
-    const updated = await prisma.businessExpense.update({
-      where: { id },
-      data: b.reconciled
-        ? { reconciledAt: new Date(), reconciledById: uid }
-        : { reconciledAt: null, reconciledById: null },
-      include: {
-        reconciledBy: { select: { id: true, displayName: true, email: true } },
-      },
+    const updated = await prisma.$transaction(async (tx) => {
+      const row = await tx.businessExpense.update({
+        where: { id },
+        data: b.reconciled
+          ? { reconciledAt: new Date(), reconciledById: uid }
+          : { reconciledAt: null, reconciledById: null },
+        include: {
+          reconciledBy: { select: { id: true, displayName: true, email: true } },
+        },
+      });
+      // Money: asserts (or retracts) that this ledger row's amount + date
+      // match QuickBooks — the sign-off the tax exports lean on.
+      await writeAudit(tx, AUDIT.EXPENSE.RECONCILED, uid, {
+        businessExpenseId: id,
+        ledgerId: existing.ledgerId,
+        action: b.reconciled ? "reconciled" : "unreconciled",
+        cost: existing.cost,
+        date: etFormatDate(existing.date),
+        reconciledAtBefore: existing.reconciledAt ? existing.reconciledAt.toISOString() : null,
+        reconciledAtAfter: row.reconciledAt ? row.reconciledAt.toISOString() : null,
+        reconciledByIdBefore: existing.reconciledById,
+        reconciledByIdAfter: row.reconciledById,
+      });
+      return row;
     });
     return updated;
   });
 
   app.delete("/admin/business-expenses/:id", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const id = String(req.params.id);
+    // Snapshot the ledger row before anything is destroyed — after the
+    // cascade below nothing survives except this audit entry.
+    const beBefore = await prisma.businessExpense.findUnique({ where: { id } });
+    if (!beBefore) throw app.httpErrors.notFound("Business expense not found.");
     // Cascade: if this BE is paired with a job-level Expense, delete the
     // Expense too. Otherwise the schema's ON DELETE SET NULL would leave the
     // Expense in place — still reducing the worker's payout but no longer
     // appearing in the tax ledger.
     const linkedExpense = await prisma.expense.findFirst({
       where: { businessExpenseId: id },
-      select: { id: true },
+      select: { id: true, occurrenceId: true, cost: true, description: true },
     });
     // If paired with a SupplyPurchase (step-3), reverse inventory and remove
     // the SupplyPurchase row first — schema FK is Restrict so the BE delete
@@ -6305,6 +7138,45 @@ Respond ONLY with valid JSON in this exact format:
         await tx.supplyPurchase.delete({ where: { id: linkedSupplyPurchase.id } });
       }
       await tx.businessExpense.delete({ where: { id } });
+      // Destructive money path: removes a Schedule C ledger row from the tax
+      // exports, deletes the paired job Expense (restoring the worker's
+      // payout), reverses Supply.onHand, and drops the SupplyPurchase. Every
+      // destroyed value is captured here because nothing else survives.
+      await writeAudit(tx, AUDIT.EXPENSE.DELETED, uid, {
+        businessExpenseId: id,
+        ledgerId: beBefore.ledgerId,
+        action: "business_expense_deleted",
+        type: beBefore.type,
+        description: beBefore.description,
+        costBefore: beBefore.cost,
+        costAfter: null,
+        date: etFormatDate(beBefore.date),
+        category: beBefore.category,
+        vendor: beBefore.vendor,
+        invoiceNumber: beBefore.invoiceNumber,
+        paymentFrom: beBefore.paymentFrom,
+        notes: beBefore.notes,
+        equipmentId: beBefore.equipmentId,
+        recurrence: beBefore.recurrence,
+        recurrenceSeriesId: beBefore.recurrenceSeriesId,
+        reconciledAt: beBefore.reconciledAt ? beBefore.reconciledAt.toISOString() : null,
+        receiptR2Key: beBefore.receiptR2Key,
+        createdById: beBefore.createdById,
+        // Cascaded job-level Expense (worker payout deduction).
+        linkedExpenseId: linkedExpense?.id ?? null,
+        linkedExpenseOccurrenceId: linkedExpense?.occurrenceId ?? null,
+        linkedExpenseCostBefore: linkedExpense?.cost ?? null,
+        linkedExpenseDescription: linkedExpense?.description ?? null,
+        // Reversed supply purchase (inventory movement).
+        linkedSupplyPurchaseId: linkedSupplyPurchase?.id ?? null,
+        supplyId: linkedSupplyPurchase?.supplyId ?? null,
+        supplyName: linkedSupplyPurchase?.supply.name ?? null,
+        supplyQuantityReversed: linkedSupplyPurchase?.quantity ?? null,
+        supplyOnHandBefore: linkedSupplyPurchase?.supply.onHand ?? null,
+        supplyOnHandAfter: linkedSupplyPurchase
+          ? linkedSupplyPurchase.supply.onHand - linkedSupplyPurchase.quantity
+          : null,
+      });
     });
     return { deleted: true };
   });
@@ -6717,11 +7589,12 @@ Respond ONLY with valid JSON in this exact format:
   // (the expected date the user is dismissing). Stored on the most recent
   // row of the series; the due-soon endpoint advances past it.
   app.post("/admin/business-expenses/:id/skip-recurrence", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
     const id = String(req.params.id);
     const b = req.body || {};
     const be = await prisma.businessExpense.findUnique({
       where: { id },
-      select: { id: true, recurrence: true },
+      select: { id: true, recurrence: true, ledgerId: true, recurrenceSkippedUntil: true },
     });
     if (!be) throw app.httpErrors.notFound("Business expense not found.");
     if (!be.recurrence) {
@@ -6733,10 +7606,23 @@ Respond ONLY with valid JSON in this exact format:
     if (isNaN(skipDate.getTime())) {
       throw app.httpErrors.badRequest("skipDate is not a valid date.");
     }
-    return prisma.businessExpense.update({
-      where: { id },
-      data: { recurrenceSkippedUntil: skipDate },
-      select: { id: true, recurrenceSkippedUntil: true },
+    return prisma.$transaction(async (tx) => {
+      const row = await tx.businessExpense.update({
+        where: { id },
+        data: { recurrenceSkippedUntil: skipDate },
+        select: { id: true, recurrenceSkippedUntil: true },
+      });
+      // Records the operator dismissing one expected instance of a recurring
+      // tax-ledger entry — the next reminder moves out by a full period.
+      await writeAudit(tx, AUDIT.EXPENSE.UPDATED, uid, {
+        businessExpenseId: id,
+        ledgerId: be.ledgerId,
+        action: "recurrence_instance_skipped",
+        recurrence: String(be.recurrence),
+        skippedUntilBefore: be.recurrenceSkippedUntil ? etFormatDate(be.recurrenceSkippedUntil) : null,
+        skippedUntilAfter: row.recurrenceSkippedUntil ? etFormatDate(row.recurrenceSkippedUntil) : null,
+      });
+      return row;
     });
   });
 
@@ -7092,6 +7978,7 @@ Respond ONLY with valid JSON in this exact format:
     "/admin/business-expenses/:id/receipt",
     superGuard,
     async (req: any) => {
+      const uid = await currentUserId(req);
       const id = String(req.params.id);
       const b = req.body || {};
       const key = String(b.key ?? "");
@@ -7111,21 +7998,35 @@ Respond ONLY with valid JSON in this exact format:
       if (prev.receiptR2Key && prev.receiptR2Key !== key) {
         await deleteObject(prev.receiptR2Key, "receipts").catch(() => {});
       }
-      return prisma.businessExpense.update({
-        where: { id },
-        data: {
-          receiptR2Key: key,
-          receiptFileName: fileName || null,
-          receiptContentType: contentType || null,
-          receiptUploadedAt: new Date(),
-        },
-        select: {
-          id: true,
-          receiptR2Key: true,
-          receiptFileName: true,
-          receiptContentType: true,
-          receiptUploadedAt: true,
-        },
+      return prisma.$transaction(async (tx) => {
+        const row = await tx.businessExpense.update({
+          where: { id },
+          data: {
+            receiptR2Key: key,
+            receiptFileName: fileName || null,
+            receiptContentType: contentType || null,
+            receiptUploadedAt: new Date(),
+          },
+          select: {
+            id: true,
+            receiptR2Key: true,
+            receiptFileName: true,
+            receiptContentType: true,
+            receiptUploadedAt: true,
+          },
+        });
+        // Records the tax-substantiation document being attached — and, when
+        // it replaced one, the prior R2 object that was destroyed with it.
+        await writeAudit(tx, AUDIT.EXPENSE.RECEIPT_ATTACHED, uid, {
+          businessExpenseId: id,
+          action: "receipt_attached",
+          receiptR2KeyBefore: prev.receiptR2Key,
+          receiptR2KeyAfter: row.receiptR2Key,
+          fileName: row.receiptFileName,
+          contentType: row.receiptContentType,
+          replacedPreviousReceipt: !!(prev.receiptR2Key && prev.receiptR2Key !== key),
+        });
+        return row;
       });
     },
   );
@@ -7150,23 +8051,49 @@ Respond ONLY with valid JSON in this exact format:
     "/admin/business-expenses/:id/receipt",
     superGuard,
     async (req: any) => {
+      const uid = await currentUserId(req);
       const id = String(req.params.id);
+      // Snapshot before the R2 object is destroyed — the receipt is the
+      // substantiation for this deduction and nothing else records it.
       const be = await prisma.businessExpense.findUnique({
         where: { id },
-        select: { receiptR2Key: true },
+        select: {
+          ledgerId: true,
+          cost: true,
+          date: true,
+          receiptR2Key: true,
+          receiptFileName: true,
+          receiptContentType: true,
+          receiptUploadedAt: true,
+        },
       });
       if (!be) throw app.httpErrors.notFound("Business expense not found.");
       if (be.receiptR2Key) {
         await deleteObject(be.receiptR2Key, "receipts").catch(() => {});
       }
-      await prisma.businessExpense.update({
-        where: { id },
-        data: {
-          receiptR2Key: null,
-          receiptFileName: null,
-          receiptContentType: null,
-          receiptUploadedAt: null,
-        },
+      await prisma.$transaction(async (tx) => {
+        await tx.businessExpense.update({
+          where: { id },
+          data: {
+            receiptR2Key: null,
+            receiptFileName: null,
+            receiptContentType: null,
+            receiptUploadedAt: null,
+          },
+        });
+        // Destructive: the R2 receipt object backing this deduction is gone.
+        await writeAudit(tx, AUDIT.EXPENSE.RECEIPT_DELETED, uid, {
+          businessExpenseId: id,
+          ledgerId: be.ledgerId,
+          action: "receipt_deleted",
+          cost: be.cost,
+          date: etFormatDate(be.date),
+          receiptR2KeyBefore: be.receiptR2Key,
+          receiptR2KeyAfter: null,
+          fileName: be.receiptFileName,
+          contentType: be.receiptContentType,
+          uploadedAt: be.receiptUploadedAt ? be.receiptUploadedAt.toISOString() : null,
+        });
       });
       return { deleted: true };
     },
@@ -7260,7 +8187,7 @@ Respond ONLY with valid JSON in this exact format:
 
   app.post("/admin/groups", adminGuard, async (req: any) => {
     const b = req.body || {};
-    return services.groups.create({
+    return services.groups.create(await currentUserId(req), {
       name: String(b.name ?? ""),
       description: b.description != null ? String(b.description) : null,
       claimerUserId: String(b.claimerUserId ?? ""),
@@ -7280,21 +8207,21 @@ Respond ONLY with valid JSON in this exact format:
     if ("name" in b) input.name = String(b.name ?? "");
     if ("description" in b) input.description = b.description != null ? String(b.description) : null;
     if ("claimerUserId" in b) input.claimerUserId = String(b.claimerUserId);
-    return services.groups.update(String(req.params.id), input);
+    return services.groups.update(await currentUserId(req), String(req.params.id), input);
   });
 
   app.post("/admin/groups/:id/archive", adminGuard, async (req: any) => {
-    return services.groups.archive(String(req.params.id));
+    return services.groups.archive(await currentUserId(req), String(req.params.id));
   });
 
   app.post("/admin/groups/:id/unarchive", adminGuard, async (req: any) => {
-    return services.groups.unarchive(String(req.params.id));
+    return services.groups.unarchive(await currentUserId(req), String(req.params.id));
   });
 
   // Member management
   app.post("/admin/groups/:id/members", adminGuard, async (req: any) => {
     const b = req.body || {};
-    return services.groups.addMember(String(req.params.id), {
+    return services.groups.addMember(await currentUserId(req), String(req.params.id), {
       userId: String(b.userId ?? ""),
       role: b.role != null ? String(b.role) : "worker",
       equipmentCostPercent: b.equipmentCostPercent != null ? Number(b.equipmentCostPercent) : null,
@@ -7309,6 +8236,7 @@ Respond ONLY with valid JSON in this exact format:
       patch.equipmentCostPercent = b.equipmentCostPercent == null ? null : Number(b.equipmentCostPercent);
     }
     return services.groups.updateMember(
+      await currentUserId(req),
       String(req.params.id),
       String(req.params.userId),
       patch,
@@ -7316,20 +8244,20 @@ Respond ONLY with valid JSON in this exact format:
   });
 
   app.delete("/admin/groups/:id/members/:userId", adminGuard, async (req: any) => {
-    return services.groups.removeMember(String(req.params.id), String(req.params.userId));
+    return services.groups.removeMember(await currentUserId(req), String(req.params.id), String(req.params.userId));
   });
 
   // Preferred equipment
   app.post("/admin/groups/:id/preferred-equipment", adminGuard, async (req: any) => {
     const b = req.body || {};
-    return services.groups.addPreferred(String(req.params.id), {
+    return services.groups.addPreferred(await currentUserId(req), String(req.params.id), {
       equipmentId: b.equipmentId != null ? String(b.equipmentId) : null,
       equipmentCollectionId: b.equipmentCollectionId != null ? String(b.equipmentCollectionId) : null,
     });
   });
 
   app.delete("/admin/groups/preferred-equipment/:preferredId", adminGuard, async (req: any) => {
-    return services.groups.removePreferred(String(req.params.preferredId));
+    return services.groups.removePreferred(await currentUserId(req), String(req.params.preferredId));
   });
 
   // Cascade preview for archiving a user — shows which groups they're in
@@ -7365,8 +8293,12 @@ Respond ONLY with valid JSON in this exact format:
 
   app.post("/admin/occurrences/:id/detach-group", adminGuard, async (req: any) => {
     const occurrenceId = String(req.params.id);
+    // Resolve the actor OUTSIDE the transaction — detach deletes every
+    // assignee row on the occurrence, and the audit needs to name who did
+    // it. Mirrors the attach handler above.
+    const actorUserId = await currentUserId(req);
     return prisma.$transaction(async (tx) => {
-      await services.groups.detachGroupFromOccurrence(tx, occurrenceId);
+      await services.groups.detachGroupFromOccurrence(tx, actorUserId, occurrenceId);
       return { detached: true };
     });
   });
@@ -8351,22 +9283,22 @@ Respond ONLY with valid JSON in this exact format:
 
   app.post("/super/vehicles", superGuard, async (req: any) => {
     const { createVehicle } = await import("../services/vehicles");
-    return createVehicle(req.body ?? {});
+    return createVehicle(await currentUserId(req), req.body ?? {});
   });
 
   app.patch("/super/vehicles/:id", superGuard, async (req: any) => {
     const { updateVehicle } = await import("../services/vehicles");
-    return updateVehicle(req.params.id, req.body ?? {});
+    return updateVehicle(await currentUserId(req), req.params.id, req.body ?? {});
   });
 
   app.post("/super/vehicles/:id/archive", superGuard, async (req: any) => {
     const { archiveVehicle } = await import("../services/vehicles");
-    return archiveVehicle(req.params.id);
+    return archiveVehicle(await currentUserId(req), req.params.id);
   });
 
   app.post("/super/vehicles/:id/unarchive", superGuard, async (req: any) => {
     const { unarchiveVehicle } = await import("../services/vehicles");
-    return unarchiveVehicle(req.params.id);
+    return unarchiveVehicle(await currentUserId(req), req.params.id);
   });
 
   // Assign / unassign — the body carries the userId; the URL carries
@@ -8375,14 +9307,14 @@ Respond ONLY with valid JSON in this exact format:
     const { assignUserToVehicle } = await import("../services/vehicles");
     const userId = String(req.body?.userId ?? "");
     if (!userId) throw app.httpErrors.badRequest("userId is required");
-    return assignUserToVehicle(req.params.id, userId);
+    return assignUserToVehicle(await currentUserId(req), req.params.id, userId);
   });
 
   app.post("/super/vehicles/:id/unassign", superGuard, async (req: any) => {
     const { unassignUserFromVehicle } = await import("../services/vehicles");
     const userId = String(req.body?.userId ?? "");
     if (!userId) throw app.httpErrors.badRequest("userId is required");
-    return unassignUserFromVehicle(req.params.id, userId);
+    return unassignUserFromVehicle(await currentUserId(req), req.params.id, userId);
   });
 
   // Backfill a mileage entry — Super override for the case where a
@@ -8400,6 +9332,9 @@ Respond ONLY with valid JSON in this exact format:
     if (b.endOdometer == null) throw app.httpErrors.badRequest("endOdometer is required");
     try {
       return await superCreateMileageEntry({
+        // Super is backfilling on someone else's behalf — the audit row
+        // has to name who did it, not just whose miles they are.
+        actorUserId: await currentUserId(req),
         vehicleId: req.params.id,
         driverUserId: String(b.driverUserId),
         startedAt: new Date(b.startedAt),
@@ -8431,13 +9366,14 @@ Respond ONLY with valid JSON in this exact format:
   app.patch("/super/mileage/:id", superGuard, async (req: any) => {
     const { adminEditEntry } = await import("../services/mileage");
     const b = req.body ?? {};
+    const actorUserId = await currentUserId(req);
     return adminEditEntry(req.params.id, {
       startOdometer: b.startOdometer != null ? Number(b.startOdometer) : undefined,
       endOdometer: b.endOdometer != null ? Number(b.endOdometer) : undefined,
       notes: b.notes,
       startedAt: b.startedAt ? new Date(b.startedAt) : undefined,
       endedAt: b.endedAt === null ? null : b.endedAt ? new Date(b.endedAt) : undefined,
-    });
+    }, actorUserId);
   });
 
   app.post("/super/mileage/:id/approve", superGuard, async (req: any) => {
@@ -8448,7 +9384,9 @@ Respond ONLY with valid JSON in this exact format:
 
   app.post("/super/mileage/:id/unapprove", superGuard, async (req: any) => {
     const { unapproveEntry } = await import("../services/mileage");
-    return unapproveEntry(req.params.id);
+    // Unapproving CLEARS approvedById — without the actor here, the only
+    // record of who undid an approval would be lost too.
+    return unapproveEntry(req.params.id, await currentUserId(req));
   });
 
   // Reject / discard a pending mileage entry. Hard-deletes the row.
@@ -8457,7 +9395,8 @@ Respond ONLY with valid JSON in this exact format:
   // count" — wrong vehicle left open, tester noise, etc.
   app.post("/super/mileage/:id/reject", superGuard, async (req: any) => {
     const { rejectEntry } = await import("../services/mileage");
-    return rejectEntry(req.params.id);
+    // Hard-deletes the worker's recorded miles — name the actor.
+    return rejectEntry(req.params.id, await currentUserId(req));
   });
 
   // Pending-mileage summary — parallel to /super/workdays/pending-summary.

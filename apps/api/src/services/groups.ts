@@ -1,8 +1,14 @@
 import { prisma } from "../db/prisma";
 import { Prisma } from "@prisma/client";
 import { ServiceError } from "../lib/errors";
+import { writeAudit } from "../lib/auditLogger";
+import { AUDIT } from "../lib/auditActions";
 
 type Tx = Prisma.TransactionClient;
+// Either the base client or an interactive-transaction client. Percent
+// validation has to run on both: inside a transaction it must see the
+// uncommitted member rows written moments earlier.
+type AnyClient = Tx | typeof prisma;
 
 const groupInclude = {
   claimer: { select: { id: true, displayName: true, email: true, workerType: true } },
@@ -82,6 +88,19 @@ function validatePercents(
   }
 }
 
+// Transaction-aware form of the group percent invariant. Reads through the
+// passed client so it can validate rows written inside the same
+// transaction (a plain `prisma` read would not see them).
+async function assertGroupPercentsValid(client: AnyClient, groupId: string): Promise<void> {
+  const members = await client.groupMember.findMany({
+    where: { groupId },
+    select: { role: true, equipmentCostPercent: true },
+  });
+  // Include the implicit claimer-as-worker slot. Claimer has no row in
+  // GroupMember but always counts as a worker with even share (null).
+  validatePercents([{ role: "worker", equipmentCostPercent: null }, ...members]);
+}
+
 export type GroupCreateInput = {
   name: string;
   description?: string | null;
@@ -153,7 +172,7 @@ export const groups = {
     });
   },
 
-  async create(input: GroupCreateInput) {
+  async create(currentUserId: string, input: GroupCreateInput) {
     const name = (input.name ?? "").trim();
     if (!name) throw new ServiceError("INVALID_INPUT", "Group name is required.", 400);
 
@@ -190,24 +209,45 @@ export const groups = {
       })),
     ]);
 
-    return prisma.group.create({
-      data: {
-        name,
-        description: input.description?.trim() || null,
-        claimerUserId: input.claimerUserId,
-        members: {
-          create: cleanedMembers.map((m) => ({
-            userId: m.userId,
-            role: m.role ?? "worker",
-            equipmentCostPercent: m.equipmentCostPercent ?? null,
-          })),
+    return prisma.$transaction(async (tx) => {
+      const created = await tx.group.create({
+        data: {
+          name,
+          description: input.description?.trim() || null,
+          claimerUserId: input.claimerUserId,
+          members: {
+            create: cleanedMembers.map((m) => ({
+              userId: m.userId,
+              role: m.role ?? "worker",
+              equipmentCostPercent: m.equipmentCostPercent ?? null,
+            })),
+          },
         },
-      },
-      include: groupInclude,
+        include: groupInclude,
+      });
+
+      // Money: the claimer plus each member's equipmentCostPercent are the
+      // two inputs writeCheckoutSplits (services/equipment.ts) uses to decide
+      // who is billed for this crew's equipment rentals. Snapshot the whole
+      // split as created so any later charge can be traced to a roster.
+      await writeAudit(tx, AUDIT.GROUP.CREATED, currentUserId, {
+        groupId: created.id,
+        name: created.name,
+        description: created.description,
+        claimerUserId: created.claimerUserId,
+        memberUserIds: created.members.map((m) => m.userId),
+        members: created.members.map((m) => ({
+          userId: m.userId,
+          role: m.role,
+          equipmentCostPercent: m.equipmentCostPercent,
+        })),
+      });
+
+      return created;
     });
   },
 
-  async update(id: string, input: GroupPatchInput) {
+  async update(currentUserId: string, id: string, input: GroupPatchInput) {
     const g = await this.getById(id);
     if (g.archivedAt) {
       throw new ServiceError("ARCHIVED", "Group is archived.", 400);
@@ -227,22 +267,55 @@ export const groups = {
         select: { id: true },
       });
       if (!claimerExists) throw new ServiceError("INVALID_INPUT", "Claimer user not found.", 400);
-      // Switching claimer: drop the new claimer from members (if present)
-      // — claimer is implicit, not a GroupMember row.
-      await prisma.groupMember.deleteMany({
-        where: { groupId: id, userId: input.claimerUserId },
-      });
       data.claimer = { connect: { id: input.claimerUserId } };
     }
 
-    return prisma.group.update({
-      where: { id },
-      data,
-      include: groupInclude,
+    return prisma.$transaction(async (tx) => {
+      // Switching claimer: drop the new claimer from members (if present)
+      // — claimer is implicit, not a GroupMember row.
+      let droppedMember: { userId: string; role: string; equipmentCostPercent: number | null } | null = null;
+      if (input.claimerUserId !== undefined) {
+        droppedMember = await tx.groupMember.findFirst({
+          where: { groupId: id, userId: input.claimerUserId },
+          select: { userId: true, role: true, equipmentCostPercent: true },
+        });
+        await tx.groupMember.deleteMany({
+          where: { groupId: id, userId: input.claimerUserId },
+        });
+      }
+
+      const updated = await tx.group.update({
+        where: { id },
+        data,
+        include: groupInclude,
+      });
+
+      // Money: the claimer is the worker who fronts a group rental and the
+      // pivot writeCheckoutSplits bills against, so swapping claimers moves
+      // real charges between people. Also records the GroupMember row (and
+      // its equipmentCostPercent) silently destroyed when the incoming
+      // claimer was already a member — that member's explicit share is gone.
+      await writeAudit(tx, AUDIT.GROUP.UPDATED, currentUserId, {
+        action: "group_updated",
+        groupId: id,
+        claimerChanged:
+          input.claimerUserId !== undefined && input.claimerUserId !== g.claimerUserId,
+        beforeClaimerUserId: g.claimerUserId,
+        afterClaimerUserId: updated.claimerUserId,
+        beforeName: g.name,
+        afterName: updated.name,
+        beforeDescription: g.description,
+        afterDescription: updated.description,
+        droppedMemberUserId: droppedMember?.userId ?? null,
+        droppedMemberRole: droppedMember?.role ?? null,
+        droppedMemberEquipmentCostPercent: droppedMember?.equipmentCostPercent ?? null,
+      });
+
+      return updated;
     });
   },
 
-  async archive(id: string) {
+  async archive(currentUserId: string, id: string) {
     const g = await this.getById(id);
     if (g.archivedAt) return g;
     await assertNotLocked(id);
@@ -270,26 +343,63 @@ export const groups = {
         409,
       );
     }
-    return prisma.group.update({
-      where: { id },
-      data: { archivedAt: new Date() },
-      include: groupInclude,
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.group.update({
+        where: { id },
+        data: { archivedAt: new Date() },
+        include: groupInclude,
+      });
+
+      // Money: an archived crew can't claim jobs or rent equipment, so this
+      // cost split stops applying to any new charge. Snapshot the roster and
+      // percents that were in force at archive time.
+      await writeAudit(tx, AUDIT.GROUP.ARCHIVED, currentUserId, {
+        groupId: id,
+        name: updated.name,
+        claimerUserId: updated.claimerUserId,
+        memberUserIds: updated.members.map((m) => m.userId),
+        members: updated.members.map((m) => ({
+          userId: m.userId,
+          role: m.role,
+          equipmentCostPercent: m.equipmentCostPercent,
+        })),
+      });
+
+      return updated;
     });
   },
 
-  async unarchive(id: string) {
+  async unarchive(currentUserId: string, id: string) {
     const g = await this.getById(id);
     if (!g.archivedAt) return g;
-    return prisma.group.update({
-      where: { id },
-      data: { archivedAt: null },
-      include: groupInclude,
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.group.update({
+        where: { id },
+        data: { archivedAt: null },
+        include: groupInclude,
+      });
+
+      // Money: restoring the crew puts this claimer + percent split back in
+      // force for future equipment rentals, so record who it re-enables.
+      await writeAudit(tx, AUDIT.GROUP.UNARCHIVED, currentUserId, {
+        groupId: id,
+        name: updated.name,
+        claimerUserId: updated.claimerUserId,
+        memberUserIds: updated.members.map((m) => m.userId),
+        members: updated.members.map((m) => ({
+          userId: m.userId,
+          role: m.role,
+          equipmentCostPercent: m.equipmentCostPercent,
+        })),
+      });
+
+      return updated;
     });
   },
 
   // ── Members ─────────────────────────────────────────────────────────────
 
-  async addMember(groupId: string, input: GroupMemberInput) {
+  async addMember(currentUserId: string, groupId: string, input: GroupMemberInput) {
     const g = await this.getById(groupId);
     if (g.archivedAt) throw new ServiceError("ARCHIVED", "Group is archived.", 400);
     await assertNotLocked(groupId);
@@ -302,20 +412,36 @@ export const groups = {
 
     const role = input.role === "observer" ? "observer" : "worker";
 
-    const created = await prisma.groupMember.create({
-      data: {
-        groupId,
-        userId: input.userId,
-        role,
-        equipmentCostPercent: input.equipmentCostPercent ?? null,
-      },
-    });
+    return prisma.$transaction(async (tx) => {
+      const created = await tx.groupMember.create({
+        data: {
+          groupId,
+          userId: input.userId,
+          role,
+          equipmentCostPercent: input.equipmentCostPercent ?? null,
+        },
+      });
 
-    await this.validateGroupPercents(groupId);
-    return created;
+      // Percent validation runs inside the transaction so an invalid split
+      // rolls the new member back instead of leaving a half-applied roster.
+      await assertGroupPercentsValid(tx, groupId);
+
+      // Money: adding a worker adds a payer to the crew's equipment rental
+      // split. With an explicit equipmentCostPercent they take exactly that
+      // share; with null every worker's even-split share shrinks instead.
+      await writeAudit(tx, AUDIT.GROUP.MEMBER_ADDED, currentUserId, {
+        groupId,
+        memberUserId: created.userId,
+        role: created.role,
+        equipmentCostPercent: created.equipmentCostPercent,
+        claimerUserId: g.claimerUserId,
+      });
+
+      return created;
+    });
   },
 
-  async removeMember(groupId: string, userId: string) {
+  async removeMember(currentUserId: string, groupId: string, userId: string) {
     const g = await this.getById(groupId);
     if (g.archivedAt) throw new ServiceError("ARCHIVED", "Group is archived.", 400);
     await assertNotLocked(groupId);
@@ -326,28 +452,63 @@ export const groups = {
         400,
       );
     }
-    await prisma.groupMember.deleteMany({ where: { groupId, userId } });
-
-    // Removing a member can invalidate the percent sum. Strategy: if the
-    // removed worker had a non-null percent, reset all percents to null
-    // (revert to even split) so the admin re-checks math.
-    const m = await prisma.groupMember.findMany({
-      where: { groupId },
-      select: { id: true, role: true, equipmentCostPercent: true },
-    });
-    const workers = m.filter((x) => x.role !== "observer");
-    const anySet = workers.some((x) => x.equipmentCostPercent != null);
-    const allSet = workers.length > 0 && workers.every((x) => x.equipmentCostPercent != null);
-    if (anySet && !allSet) {
-      await prisma.groupMember.updateMany({
-        where: { groupId },
-        data: { equipmentCostPercent: null },
+    return prisma.$transaction(async (tx) => {
+      // Snapshot the row before it's destroyed — its percent is the share
+      // that is about to stop being billed to anyone.
+      const removed = await tx.groupMember.findFirst({
+        where: { groupId, userId },
+        select: { userId: true, role: true, equipmentCostPercent: true },
       });
-    }
-    return { removed: true };
+
+      await tx.groupMember.deleteMany({ where: { groupId, userId } });
+
+      // Removing a member can invalidate the percent sum. Strategy: if the
+      // removed worker had a non-null percent, reset all percents to null
+      // (revert to even split) so the admin re-checks math.
+      const m = await tx.groupMember.findMany({
+        where: { groupId },
+        select: { id: true, userId: true, role: true, equipmentCostPercent: true },
+      });
+      const workers = m.filter((x) => x.role !== "observer");
+      const anySet = workers.some((x) => x.equipmentCostPercent != null);
+      const allSet = workers.length > 0 && workers.every((x) => x.equipmentCostPercent != null);
+      const percentResetApplied = anySet && !allSet;
+      if (percentResetApplied) {
+        await tx.groupMember.updateMany({
+          where: { groupId },
+          data: { equipmentCostPercent: null },
+        });
+      }
+
+      // Money: two charges move here. (1) The removed member stops being
+      // billed for this crew's equipment rentals at all. (2) When the reset
+      // fires, EVERY remaining member's explicit equipmentCostPercent is
+      // wiped to null and the crew silently reverts to an even split — a
+      // bulk re-pricing that was invisible before this audit row. Prior
+      // percents are snapshotted so the old split can be reconstructed.
+      await writeAudit(tx, AUDIT.GROUP.MEMBER_REMOVED, currentUserId, {
+        groupId,
+        claimerUserId: g.claimerUserId,
+        removedUserId: userId,
+        removedRole: removed?.role ?? null,
+        removedEquipmentCostPercent: removed?.equipmentCostPercent ?? null,
+        memberFound: !!removed,
+        percentResetApplied,
+        // Values as they stood AFTER the delete but BEFORE the reset.
+        priorPercents: m.map((x) => ({
+          userId: x.userId,
+          role: x.role,
+          equipmentCostPercent: x.equipmentCostPercent,
+        })),
+        resetUserIds: percentResetApplied ? m.map((x) => x.userId) : [],
+      });
+
+      return { removed: true };
+    });
   },
 
   async updateMember(
+    currentUserId: string,
     groupId: string,
     userId: string,
     patch: { role?: string; equipmentCostPercent?: number | null },
@@ -364,32 +525,58 @@ export const groups = {
       data.equipmentCostPercent = patch.equipmentCostPercent;
     }
 
-    const updated = await prisma.groupMember.updateMany({
-      where: { groupId, userId },
-      data,
+    return prisma.$transaction(async (tx) => {
+      const before = await tx.groupMember.findFirst({
+        where: { groupId, userId },
+        select: { role: true, equipmentCostPercent: true },
+      });
+
+      const updated = await tx.groupMember.updateMany({
+        where: { groupId, userId },
+        data,
+      });
+      if (updated.count === 0) {
+        throw new ServiceError("NOT_FOUND", "Member not found in group.", 404);
+      }
+      // Validate inside the transaction so an invalid split rolls the edit
+      // back rather than persisting a roster that fails the invariant.
+      await assertGroupPercentsValid(tx, groupId);
+      const after = await tx.groupMember.findFirst({ where: { groupId, userId } });
+
+      // Money: equipmentCostPercent IS this member's share of every group
+      // equipment rental, and flipping role to/from "observer" removes or
+      // adds them to the payer set entirely. Both before and after are
+      // recorded so a disputed charge can be tied to the split in force.
+      await writeAudit(tx, AUDIT.GROUP.MEMBER_UPDATED, currentUserId, {
+        groupId,
+        memberUserId: userId,
+        claimerUserId: g.claimerUserId,
+        beforeRole: before?.role ?? null,
+        afterRole: after?.role ?? null,
+        beforeEquipmentCostPercent: before?.equipmentCostPercent ?? null,
+        afterEquipmentCostPercent: after?.equipmentCostPercent ?? null,
+        roleChanged: (before?.role ?? null) !== (after?.role ?? null),
+        equipmentCostPercentChanged:
+          (before?.equipmentCostPercent ?? null) !== (after?.equipmentCostPercent ?? null),
+      });
+
+      return after;
     });
-    if (updated.count === 0) {
-      throw new ServiceError("NOT_FOUND", "Member not found in group.", 404);
-    }
-    await this.validateGroupPercents(groupId);
-    return prisma.groupMember.findFirst({ where: { groupId, userId } });
   },
 
   /** Validate equipmentCostPercent rule for the group. Throws on violation. */
   async validateGroupPercents(groupId: string): Promise<void> {
-    const members = await prisma.groupMember.findMany({
-      where: { groupId },
-      select: { role: true, equipmentCostPercent: true },
-    });
-    // Include the implicit claimer-as-worker slot. Claimer has no row in
-    // GroupMember but always counts as a worker with even share (null).
-    validatePercents([{ role: "worker", equipmentCostPercent: null }, ...members]);
+    return assertGroupPercentsValid(prisma, groupId);
   },
 
   // ── Preferred equipment ─────────────────────────────────────────────────
 
-  async addPreferred(groupId: string, input: GroupPreferredEquipmentInput) {
-    await this.getById(groupId);
+  async addPreferred(
+    currentUserId: string,
+    groupId: string,
+    input: GroupPreferredEquipmentInput,
+  ) {
+    const g = await this.getById(groupId);
     const hasEquip = !!input.equipmentId;
     const hasCol = !!input.equipmentCollectionId;
     if (hasEquip === hasCol) {
@@ -409,17 +596,58 @@ export const groups = {
       });
       if (!c) throw new ServiceError("INVALID_INPUT", "Collection not found.", 400);
     }
-    return prisma.groupPreferredEquipment.create({
-      data: {
+    return prisma.$transaction(async (tx) => {
+      const created = await tx.groupPreferredEquipment.create({
+        data: {
+          groupId,
+          equipmentId: input.equipmentId ?? null,
+          equipmentCollectionId: input.equipmentCollectionId ?? null,
+        },
+      });
+
+      // Money: preferred equipment steers which gear this crew checks out,
+      // and every checkout it leads to is a billable rental split across the
+      // claimer and members by equipmentCostPercent.
+      await writeAudit(tx, AUDIT.GROUP.UPDATED, currentUserId, {
+        action: "preferred_equipment_added",
         groupId,
-        equipmentId: input.equipmentId ?? null,
-        equipmentCollectionId: input.equipmentCollectionId ?? null,
-      },
+        claimerUserId: g.claimerUserId,
+        preferredId: created.id,
+        equipmentId: created.equipmentId,
+        equipmentCollectionId: created.equipmentCollectionId,
+      });
+
+      return created;
     });
   },
 
-  async removePreferred(preferredId: string) {
-    await prisma.groupPreferredEquipment.delete({ where: { id: preferredId } }).catch(() => {});
+  async removePreferred(currentUserId: string, preferredId: string) {
+    // Snapshot before the delete — the audit row is the only remaining
+    // record of what was removed. Missing row: keep today's silent success.
+    const existing = await prisma.groupPreferredEquipment.findUnique({
+      where: { id: preferredId },
+      select: { id: true, groupId: true, equipmentId: true, equipmentCollectionId: true },
+    });
+    if (!existing) return { removed: true };
+
+    await prisma
+      .$transaction(async (tx) => {
+        await tx.groupPreferredEquipment.delete({ where: { id: preferredId } });
+
+        // Money: drops a default piece of gear off this crew, changing which
+        // rentals get charged to the claimer and split across its members.
+        await writeAudit(tx, AUDIT.GROUP.UPDATED, currentUserId, {
+          action: "preferred_equipment_removed",
+          groupId: existing.groupId,
+          preferredId: existing.id,
+          equipmentId: existing.equipmentId,
+          equipmentCollectionId: existing.equipmentCollectionId,
+        });
+      })
+      // Preserve the existing swallow-on-failure behavior (e.g. the row was
+      // deleted concurrently); the audit row rolls back with the delete.
+      .catch(() => {});
+
     return { removed: true };
   },
 
@@ -456,6 +684,11 @@ export const groups = {
       })),
     ];
 
+    const occBefore = await tx.jobOccurrence.findUnique({
+      where: { id: occurrenceId },
+      select: { jobId: true, assignedGroupId: true },
+    });
+
     await tx.jobOccurrence.update({
       where: { id: occurrenceId },
       data: { assignedGroupId: groupId },
@@ -474,14 +707,59 @@ export const groups = {
         update: { role: r.role },
       });
     }
+
+    // Money: staffing an occurrence with a crew decides who gets paid for
+    // this job, and binds the occurrence to the group whose claimer +
+    // equipmentCostPercent split any equipment rented against it.
+    await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, actorUserId, {
+      action: "group_attached_to_occurrence",
+      occurrenceId,
+      jobId: occBefore?.jobId ?? null,
+      groupId,
+      beforeAssignedGroupId: occBefore?.assignedGroupId ?? null,
+      afterAssignedGroupId: groupId,
+      mode,
+      claimerUserId: g.claimerUserId,
+      assignedUserIds: rows.map((r) => r.userId),
+      assignees: rows.map((r) => ({ userId: r.userId, role: r.role })),
+    });
   },
 
   /** Detach a group from an occurrence: remove materialized members, clear assignedGroupId. */
-  async detachGroupFromOccurrence(tx: Tx, occurrenceId: string) {
+  async detachGroupFromOccurrence(tx: Tx, currentUserId: string, occurrenceId: string) {
+    // Snapshot every assignee before the wipe: deleteMany clears ALL rows on
+    // the occurrence, including any that did not come from the group.
+    const removedAssignees = await tx.jobOccurrenceAssignee.findMany({
+      where: { occurrenceId },
+      select: { userId: true, role: true, assignedById: true },
+    });
+    const occBefore = await tx.jobOccurrence.findUnique({
+      where: { id: occurrenceId },
+      select: { jobId: true, assignedGroupId: true },
+    });
+
     await tx.jobOccurrenceAssignee.deleteMany({ where: { occurrenceId } });
     await tx.jobOccurrence.update({
       where: { id: occurrenceId },
       data: { assignedGroupId: null },
+    });
+
+    // Money: un-staffs the job — everyone listed here stops being on the
+    // hook for (and paid for) this occurrence, and the crew whose
+    // equipmentCostPercent split governed its rentals is unbound.
+    await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, currentUserId, {
+      action: "group_detached_from_occurrence",
+      occurrenceId,
+      jobId: occBefore?.jobId ?? null,
+      beforeAssignedGroupId: occBefore?.assignedGroupId ?? null,
+      afterAssignedGroupId: null,
+      removedUserIds: removedAssignees.map((a) => a.userId),
+      removedAssignees: removedAssignees.map((a) => ({
+        userId: a.userId,
+        role: a.role,
+        assignedById: a.assignedById,
+      })),
+      removedCount: removedAssignees.length,
     });
   },
 

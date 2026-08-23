@@ -4,6 +4,8 @@ import { getDownloadUrl } from "../lib/r2";
 import { etMidnight, etEndOfDay, etToday, etStartOfMonth, etAddDays, etFormatDate, etFormatDateOpts, type EtDateKey } from "../lib/dates";
 import { effectiveClerkUserId } from "../plugins/clientImpersonation";
 import { buildPaymentUrl } from "../services/paymentRequests";
+import { writeAudit } from "../lib/auditLogger";
+import { AUDIT } from "../lib/auditActions";
 
 /**
  * Client-facing routes. Require Clerk auth but NOT worker/admin roles.
@@ -105,9 +107,22 @@ export default async function clientRoutes(app: FastifyInstance) {
       // Bind every matching contact to the same Clerk identity in
       // a single updateMany. Subsequent logins will resolve via the
       // clerkUserId index across all of them.
-      await prisma.clientContact.updateMany({
-        where: { id: { in: matches.map((m) => m.id) } },
-        data: { clerkUserId },
+      const matchedContactIds = matches.map((m) => m.id);
+      await prisma.$transaction(async (tx) => {
+        await tx.clientContact.updateMany({
+          where: { id: { in: matchedContactIds } },
+          data: { clerkUserId },
+        });
+        // Consequence: grants this Clerk identity portal access to every
+        // matched client's jobs, schedule, statements, and payment history.
+        await writeAudit(tx, AUDIT.CLIENT.CONTACT_LINKED, user.id, {
+          route: "POST /client/link",
+          linkMethod: "email_auto_match",
+          matchedEmail: user.email,
+          linkedClerkUserId: clerkUserId,
+          contactIds: matchedContactIds,
+          contactCount: matchedContactIds.length,
+        });
       });
       // The portal's existing flows assume a single contactId in
       // the response — return the first match (stable across
@@ -217,9 +232,29 @@ export default async function clientRoutes(app: FastifyInstance) {
     if (!candidate) {
       throw app.httpErrors.notFound("This proposal is no longer available — ask an admin to link you manually.");
     }
-    await prisma.clientContact.update({
-      where: { id: candidate.id },
-      data: { clerkUserId },
+    // Actor is the client themselves. The auth plugin auto-provisions a User
+    // row for every Clerk identity, but fall back to a null actor (allowed by
+    // writeAudit for client-self flows) rather than failing the link.
+    const actor = await prisma.user.findUnique({
+      where: { clerkUserId },
+      select: { id: true },
+    });
+    await prisma.$transaction(async (tx) => {
+      await tx.clientContact.update({
+        where: { id: candidate.id },
+        data: { clerkUserId },
+      });
+      // Consequence: grants this Clerk identity portal access to this
+      // client's jobs, schedule, statements, and payment history.
+      await writeAudit(tx, AUDIT.CLIENT.CONTACT_LINKED, actor?.id ?? null, {
+        route: "POST /client/link/confirm-candidate",
+        linkMethod: "smart_hint_confirmed",
+        linkedClerkUserId: clerkUserId,
+        clientId,
+        contactId: candidate.id,
+        contactEmail: candidate.email,
+        requestedContactId,
+      });
     });
     return { linked: true, contactId: candidate.id };
   });
@@ -1126,14 +1161,27 @@ export default async function clientRoutes(app: FastifyInstance) {
     if (proposed.getTime() < startOfToday.getTime()) {
       throw app.httpErrors.badRequest("The suggested date must be in the future.");
     }
-    const created = await prisma.occurrenceChangeRequest.create({
-      data: {
-        occurrenceId: id,
-        requestedById: me.id,
+    const created = await prisma.$transaction(async (tx) => {
+      const row = await tx.occurrenceChangeRequest.create({
+        data: {
+          occurrenceId: id,
+          requestedById: me.id,
+          kind: "RESCHEDULE",
+          proposedStartAt: proposed,
+          comment,
+        },
+      });
+      // Consequence: opens a PENDING request that locks out any further
+      // client change request on this occurrence until an admin resolves it.
+      await writeAudit(tx, AUDIT.CHANGE_REQUEST.CREATED, me.id, {
+        changeRequestId: row.id,
         kind: "RESCHEDULE",
-        proposedStartAt: proposed,
+        occurrenceId: id,
+        proposedStartAt: proposed.toISOString(),
         comment,
-      },
+        source: "client_portal",
+      });
+      return row;
     });
     const ctx = await buildChangeRequestContext(id, me.id);
     void notifyAdminsOfChangeRequest({
@@ -1173,13 +1221,25 @@ export default async function clientRoutes(app: FastifyInstance) {
     });
     if (existing) throw app.httpErrors.conflict("A change request is already pending for this job.");
     const comment = body.comment ? String(body.comment).trim() : null;
-    const created = await prisma.occurrenceChangeRequest.create({
-      data: {
-        occurrenceId: id,
-        requestedById: me.id,
+    const created = await prisma.$transaction(async (tx) => {
+      const row = await tx.occurrenceChangeRequest.create({
+        data: {
+          occurrenceId: id,
+          requestedById: me.id,
+          kind: "SKIP",
+          comment,
+        },
+      });
+      // Consequence: opens a PENDING request that locks out any further
+      // client change request on this occurrence until an admin resolves it.
+      await writeAudit(tx, AUDIT.CHANGE_REQUEST.CREATED, me.id, {
+        changeRequestId: row.id,
         kind: "SKIP",
+        occurrenceId: id,
         comment,
-      },
+        source: "client_portal",
+      });
+      return row;
     });
     const ctx = await buildChangeRequestContext(id, me.id);
     void notifyAdminsOfChangeRequest({
@@ -1201,9 +1261,23 @@ export default async function clientRoutes(app: FastifyInstance) {
     if (!cr) throw app.httpErrors.notFound("Request not found.");
     if (cr.requestedById !== me.id) throw app.httpErrors.forbidden("Not your request.");
     if (cr.status !== "PENDING") throw app.httpErrors.badRequest("Only pending requests can be canceled.");
-    await prisma.occurrenceChangeRequest.update({
-      where: { id },
-      data: { status: "CANCELED", resolvedAt: new Date() },
+    await prisma.$transaction(async (tx) => {
+      await tx.occurrenceChangeRequest.update({
+        where: { id },
+        data: { status: "CANCELED", resolvedAt: new Date() },
+      });
+      // Consequence: withdraws the request from the admin queue and frees the
+      // occurrence for a new client change request. Snapshot the pre-cancel
+      // row since the PENDING state is overwritten in place.
+      await writeAudit(tx, AUDIT.CHANGE_REQUEST.CANCELED, me.id, {
+        changeRequestId: id,
+        kind: cr.kind,
+        occurrenceId: cr.occurrenceId,
+        previousStatus: cr.status,
+        proposedStartAt: cr.proposedStartAt ? cr.proposedStartAt.toISOString() : null,
+        comment: cr.comment,
+        canceledBy: "client_self",
+      });
     });
     return { canceled: true };
   });

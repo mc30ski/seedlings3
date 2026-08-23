@@ -18,6 +18,19 @@ import { AUDIT } from "../lib/auditActions";
  */
 const RATE_LIMIT_PER_DAY = 20;
 
+// Template CRUD logs under AUDIT.NOTIFICATION.CREATED/UPDATED/DELETED, NOT
+// under .SENT: both the /admin/notify rate limiter and /admin/notify/history
+// query by scope NOTIFICATION + verb SENT, so template edits recorded as SENT
+// would consume the admin's 20-broadcasts-per-day budget and render as bogus
+// rows in the send-history view.
+
+/** Actor for template mutations. `adminGuard` (requireRole → requireApproved)
+ *  attaches the resolved User row to req.user, so the id is always present
+ *  by the time a handler body runs. */
+function actorId(req: any): string | null {
+  return (req?.user?.id as string | undefined) ?? null;
+}
+
 async function currentUser(req: any) {
   const clerkUserId = req.auth?.clerkUserId;
   if (!clerkUserId) return null;
@@ -47,13 +60,25 @@ export default async function notifyRoutes(app: FastifyInstance) {
     const body = String(b.body || "").trim();
     if (!name) return reply.code(400).send({ error: "name is required" });
     if (!body) return reply.code(400).send({ error: "body is required" });
-    return prisma.notificationTemplate.create({
-      data: {
-        name: name.slice(0, 80),
-        title: b.title ? String(b.title).slice(0, 120) : null,
-        body: body.slice(0, 1000),
-        sortOrder: typeof b.sortOrder === "number" ? b.sortOrder : 100,
-      },
+    return prisma.$transaction(async (tx) => {
+      const created = await tx.notificationTemplate.create({
+        data: {
+          name: name.slice(0, 80),
+          title: b.title ? String(b.title).slice(0, 120) : null,
+          body: body.slice(0, 1000),
+          sortOrder: typeof b.sortOrder === "number" ? b.sortOrder : 100,
+        },
+      });
+      // Consequence: adds a canned message any admin can broadcast to every
+      // approved worker in one tap.
+      await writeAudit(tx, AUDIT.NOTIFICATION.CREATED, actorId(req), {
+        templateId: created.id,
+        name: created.name,
+        title: created.title,
+        body: created.body,
+        sortOrder: created.sortOrder,
+      });
+      return created;
     });
   });
 
@@ -67,7 +92,26 @@ export default async function notifyRoutes(app: FastifyInstance) {
     if (typeof b.sortOrder === "number") data.sortOrder = b.sortOrder;
     if (Object.keys(data).length === 0) return reply.code(400).send({ error: "Nothing to update" });
     try {
-      return await prisma.notificationTemplate.update({ where: { id }, data });
+      return await prisma.$transaction(async (tx) => {
+        const before = await tx.notificationTemplate.findUnique({ where: { id } });
+        if (!before) throw new Error("TEMPLATE_NOT_FOUND");
+        const updated = await tx.notificationTemplate.update({ where: { id }, data });
+        // Consequence: rewrites the canned message every future broadcast
+        // built from this template will send.
+        const changedFields = Object.keys(data);
+        const beforeAfter: Record<string, unknown> = {};
+        for (const f of changedFields) {
+          beforeAfter[`${f}Before`] = (before as any)[f] ?? null;
+          beforeAfter[`${f}After`] = (updated as any)[f] ?? null;
+        }
+        await writeAudit(tx, AUDIT.NOTIFICATION.UPDATED, actorId(req), {
+          templateId: id,
+          name: updated.name,
+          changedFields,
+          ...beforeAfter,
+        });
+        return updated;
+      });
     } catch {
       return reply.code(404).send({ error: "Not found" });
     }
@@ -76,7 +120,22 @@ export default async function notifyRoutes(app: FastifyInstance) {
   app.delete("/admin/notification-templates/:id", adminGuard, async (req: any, reply) => {
     const id = String((req.params as any)?.id || "");
     try {
-      await prisma.notificationTemplate.delete({ where: { id } });
+      await prisma.$transaction(async (tx) => {
+        // Snapshot before the hard delete — the row is unrecoverable
+        // afterwards, so this audit entry is the only surviving record.
+        const before = await tx.notificationTemplate.findUnique({ where: { id } });
+        if (!before) throw new Error("TEMPLATE_NOT_FOUND");
+        await tx.notificationTemplate.delete({ where: { id } });
+        // Consequence: permanently removes the canned message from every
+        // admin's broadcast picker.
+        await writeAudit(tx, AUDIT.NOTIFICATION.DELETED, actorId(req), {
+          templateId: before.id,
+          name: before.name,
+          title: before.title,
+          body: before.body,
+          sortOrder: before.sortOrder,
+        });
+      });
       return { ok: true };
     } catch {
       return reply.code(404).send({ error: "Not found" });

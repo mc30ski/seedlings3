@@ -1,6 +1,8 @@
 import { prisma } from "../db/prisma";
 import { createClerkClient } from "@clerk/backend";
 import type { ServicesCurrentUser, Role } from "../types/services";
+import { writeAudit } from "../lib/auditLogger";
+import { AUDIT } from "../lib/auditActions";
 
 const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
@@ -40,13 +42,28 @@ export const currentUser: ServicesCurrentUser = {
         displayName = name || u.username || null;
       } catch {}
 
-      await prisma.user.create({
-        data: {
+      await prisma.$transaction(async (tx) => {
+        const created = await tx.user.create({
+          data: {
+            clerkUserId,
+            email: email ?? undefined,
+            displayName: displayName ?? undefined,
+            isApproved: false,
+          },
+        });
+        // Second, independent auto-provision path (this one runs from the
+        // rbac plugin). Same gap as users.me: USER.SIGN_IN covers the
+        // session, not the creation of the account row. Audited ONLY on
+        // the create branch — this runs on every authenticated request.
+        // Actor is the user themselves.
+        await writeAudit(tx, AUDIT.USER.CREATED, created.id, {
+          userId: created.id,
           clerkUserId,
-          email: email ?? undefined,
-          displayName: displayName ?? undefined,
+          email: created.email ?? null,
+          displayName: created.displayName ?? null,
           isApproved: false,
-        },
+          source: "auto_provision_rbac",
+        });
       });
 
       user = await prisma.user.findUnique({

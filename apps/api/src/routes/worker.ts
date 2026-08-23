@@ -19,6 +19,8 @@ import {
   occurrenceWorkDateCutoff,
 } from "../lib/businessStartCutoff";
 import { redactObserverFieldsForCaller, redactTraineeFieldsForCaller, redactPeekFieldsForCaller } from "../lib/observerRedaction";
+import { writeAudit } from "../lib/auditLogger";
+import { AUDIT } from "../lib/auditActions";
 
 async function currentUserId(req: any) {
   return (await services.currentUser.me(req.auth?.clerkUserId)).id;
@@ -1778,9 +1780,21 @@ export default async function workerRoutes(app: FastifyInstance) {
           const duration = occ.endAt.getTime() - occ.startAt.getTime();
           newEnd = new Date(newStart.getTime() + duration);
         }
-        await prisma.jobOccurrence.update({
-          where: { id: occ.id },
-          data: { startAt: newStart, ...(newEnd ? { endAt: newEnd } : {}) },
+        await prisma.$transaction(async (tx) => {
+          await tx.jobOccurrence.update({
+            where: { id: occ.id },
+            data: { startAt: newStart, ...(newEnd ? { endAt: newEnd } : {}) },
+          });
+          // Records the early-start shift of the scheduled window (startAt/endAt moved).
+          await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+            occurrenceId: occ.id,
+            jobId: occ.jobId ?? null,
+            action: "start_time_shifted",
+            beforeStartAt: occ.startAt?.toISOString() ?? null,
+            afterStartAt: newStart.toISOString(),
+            beforeEndAt: occ.endAt?.toISOString() ?? null,
+            afterEndAt: newEnd ? newEnd.toISOString() : (occ.endAt?.toISOString() ?? null),
+          });
         });
       }
     }
@@ -1913,7 +1927,7 @@ export default async function workerRoutes(app: FastifyInstance) {
           });
       } else {
         try {
-          await services.paymentRequests.generateTokenForOccurrence(occurrenceId);
+          await services.paymentRequests.generateTokenForOccurrence(occurrenceId, undefined, uid);
         } catch (err: any) {
           console.warn(`Payment token generation failed for ${occurrenceId}:`, err?.message);
         }
@@ -1951,7 +1965,7 @@ export default async function workerRoutes(app: FastifyInstance) {
     // piggyback selection per-contact during fanout.
     const prepared = await services.paymentRequests.generateTokenForOccurrence(occurrenceId, {
       writePendingPromoDeliveries: mode === "CLAIMER",
-    });
+    }, await currentUserId(req));
     // Strip down the contacts to what the icons actually need. The service
     // layer already filtered to the primary contact only — anything that
     // shows up here is the primary.
@@ -2038,7 +2052,7 @@ export default async function workerRoutes(app: FastifyInstance) {
       if (!isClaimer) throw app.httpErrors.forbidden("Only the claimer can set splits.");
     }
     await prisma.$transaction(async (tx: any) => {
-      await persistCompletionSplits(tx, occurrenceId, splits);
+      await persistCompletionSplits(tx, occurrenceId, splits, uid);
     });
     return { ok: true };
   });
@@ -2166,7 +2180,28 @@ export default async function workerRoutes(app: FastifyInstance) {
       data.hoursApprovedById = approval.hoursApprovedById;
     }
 
-    return prisma.jobOccurrence.update({ where: { id: occId }, data });
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.jobOccurrence.update({ where: { id: occId }, data });
+      // Records a payroll-hours rewrite plus the hours-approval stamp it re-evaluated.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+        occurrenceId: occId,
+        jobId: occ.jobId ?? null,
+        action: "time_edited",
+        byClaimer: !!isClaimer,
+        byAdmin: !!isAdmin,
+        beforeStartedAt: occ.startedAt?.toISOString() ?? null,
+        afterStartedAt: updated.startedAt?.toISOString() ?? null,
+        beforeCompletedAt: occ.completedAt?.toISOString() ?? null,
+        afterCompletedAt: updated.completedAt?.toISOString() ?? null,
+        beforeTotalPausedMs: occ.totalPausedMs ?? null,
+        afterTotalPausedMs: updated.totalPausedMs ?? null,
+        beforeHoursApprovedAt: occ.hoursApprovedAt?.toISOString() ?? null,
+        afterHoursApprovedAt: updated.hoursApprovedAt?.toISOString() ?? null,
+        beforeHoursApprovedById: occ.hoursApprovedById ?? null,
+        afterHoursApprovedById: updated.hoursApprovedById ?? null,
+      });
+      return updated;
+    });
   });
 
   // Estimate workflow: submit proposal
@@ -2180,12 +2215,29 @@ export default async function workerRoutes(app: FastifyInstance) {
 
     // First update the proposal fields
     if (body.proposalAmount != null || body.proposalNotes != null) {
-      await prisma.jobOccurrence.update({
+      const priorProposal = await prisma.jobOccurrence.findUnique({
         where: { id: String(req.params.id) },
-        data: {
-          ...(body.proposalAmount != null ? { proposalAmount: Number(body.proposalAmount) } : {}),
-          ...(body.proposalNotes != null ? { proposalNotes: String(body.proposalNotes) } : {}),
-        },
+        select: { id: true, jobId: true, proposalAmount: true, proposalNotes: true },
+      });
+      await prisma.$transaction(async (tx) => {
+        const proposed = await tx.jobOccurrence.update({
+          where: { id: String(req.params.id) },
+          data: {
+            ...(body.proposalAmount != null ? { proposalAmount: Number(body.proposalAmount) } : {}),
+            ...(body.proposalNotes != null ? { proposalNotes: String(body.proposalNotes) } : {}),
+          },
+          select: { id: true, jobId: true, proposalAmount: true, proposalNotes: true },
+        });
+        // Records the quoted price the client is about to be asked to accept.
+        await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+          occurrenceId: proposed.id,
+          jobId: proposed.jobId ?? null,
+          action: "proposal_priced",
+          beforeProposalAmount: priorProposal?.proposalAmount ?? null,
+          afterProposalAmount: proposed.proposalAmount ?? null,
+          beforeProposalNotes: priorProposal?.proposalNotes ?? null,
+          afterProposalNotes: proposed.proposalNotes ?? null,
+        });
       });
     }
 
@@ -2223,12 +2275,27 @@ export default async function workerRoutes(app: FastifyInstance) {
       throw app.httpErrors.badRequest("Estimates can only be accepted after completion.");
     }
 
-    await prisma.jobOccurrence.update({
-      where: { id: occurrenceId },
-      data: {
-        status: "ACCEPTED",
-        notes: body.comment ? `${occ.notes ? occ.notes + "\n" : ""}Accepted: ${String(body.comment)}` : occ.notes,
-      },
+    await prisma.$transaction(async (tx) => {
+      await tx.jobOccurrence.update({
+        where: { id: occurrenceId },
+        data: {
+          status: "ACCEPTED",
+          notes: body.comment ? `${occ.notes ? occ.notes + "\n" : ""}Accepted: ${String(body.comment)}` : occ.notes,
+        },
+      });
+      // Records the worker accepting the estimate on the client's behalf, which
+      // authorizes the quoted price to become billable work.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+        occurrenceId,
+        jobId: occ.jobId ?? null,
+        action: "estimate_accepted",
+        beforeStatus: occ.status,
+        afterStatus: "ACCEPTED",
+        beforePrice: occ.price ?? null,
+        afterPrice: (occ as any).proposalAmount ?? occ.price ?? null,
+        proposalAmount: (occ as any).proposalAmount ?? null,
+        comment: body.comment ? String(body.comment) : null,
+      });
     });
 
     return {
@@ -2270,12 +2337,25 @@ export default async function workerRoutes(app: FastifyInstance) {
       throw app.httpErrors.badRequest("Estimates can only be rejected after completion.");
     }
 
-    await prisma.jobOccurrence.update({
-      where: { id: occurrenceId },
-      data: {
-        status: "REJECTED",
-        rejectionReason: body.reason ? String(body.reason) : null,
-      },
+    await prisma.$transaction(async (tx) => {
+      await tx.jobOccurrence.update({
+        where: { id: occurrenceId },
+        data: {
+          status: "REJECTED",
+          rejectionReason: body.reason ? String(body.reason) : null,
+        },
+      });
+      // Records the worker rejecting the estimate, which kills the quoted work.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+        occurrenceId,
+        jobId: occ.jobId ?? null,
+        action: "estimate_rejected",
+        beforeStatus: occ.status,
+        afterStatus: "REJECTED",
+        beforeRejectionReason: (occ as any).rejectionReason ?? null,
+        afterRejectionReason: body.reason ? String(body.reason) : null,
+        proposalAmount: (occ as any).proposalAmount ?? null,
+      });
     });
 
     return { rejected: true };
@@ -3063,7 +3143,24 @@ export default async function workerRoutes(app: FastifyInstance) {
     if (body.notes !== undefined) data.notes = body.notes ? String(body.notes).trim() : null;
     if (body.startAt !== undefined) data.startAt = new Date(body.startAt);
     if (body.linkedOccurrenceId !== undefined) data.linkedOccurrenceId = body.linkedOccurrenceId || null;
-    return prisma.jobOccurrence.update({ where: { id }, data });
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.jobOccurrence.update({ where: { id }, data });
+      // Records an edit to a worker-created task (title / notes / when / link).
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+        occurrenceId: id,
+        jobId: occ.jobId ?? null,
+        workflow: "TASK",
+        action: "task_edited",
+        changedFields: Object.keys(data).join(","),
+        beforeTitle: occ.title ?? null,
+        afterTitle: updated.title ?? null,
+        beforeStartAt: occ.startAt?.toISOString() ?? null,
+        afterStartAt: updated.startAt?.toISOString() ?? null,
+        beforeLinkedOccurrenceId: occ.linkedOccurrenceId ?? null,
+        afterLinkedOccurrenceId: updated.linkedOccurrenceId ?? null,
+      });
+      return updated;
+    });
   });
 
   app.delete("/tasks/:id", workerGuard, async (req: any) => {
@@ -3078,7 +3175,22 @@ export default async function workerRoutes(app: FastifyInstance) {
       const isAdmin = user?.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
       if (!isAdmin) throw app.httpErrors.forbidden("Only the task creator or an admin can delete this task");
     }
-    await prisma.jobOccurrence.delete({ where: { id } });
+    await prisma.$transaction(async (tx) => {
+      // Records the hard delete of a task; the row is gone, so the snapshot
+      // below is the only surviving record of what it was.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_DELETED, uid, {
+        occurrenceId: id,
+        jobId: occ.jobId ?? null,
+        workflow: "TASK",
+        title: occ.title ?? null,
+        notes: occ.notes ?? null,
+        status: occ.status,
+        startAt: occ.startAt?.toISOString() ?? null,
+        linkedOccurrenceId: occ.linkedOccurrenceId ?? null,
+        assigneeUserIds: occ.assignees.map((a: any) => a.userId).join(","),
+      });
+      await tx.jobOccurrence.delete({ where: { id } });
+    });
     return { deleted: true };
   });
 
@@ -3127,7 +3239,24 @@ export default async function workerRoutes(app: FastifyInstance) {
     if (body.startAt !== undefined) data.startAt = new Date(body.startAt);
     if (body.linkedOccurrenceId !== undefined) data.linkedOccurrenceId = body.linkedOccurrenceId || null;
     if (body.isHighPriority !== undefined) data.isHighPriority = !!body.isHighPriority;
-    return prisma.jobOccurrence.update({ where: { id }, data });
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.jobOccurrence.update({ where: { id }, data });
+      // Records an edit to a standalone reminder (what fires, and when).
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+        occurrenceId: id,
+        jobId: occ.jobId ?? null,
+        workflow: "REMINDER",
+        action: "reminder_edited",
+        changedFields: Object.keys(data).join(","),
+        beforeTitle: occ.title ?? null,
+        afterTitle: updated.title ?? null,
+        beforeStartAt: occ.startAt?.toISOString() ?? null,
+        afterStartAt: updated.startAt?.toISOString() ?? null,
+        beforeIsHighPriority: occ.isHighPriority ?? null,
+        afterIsHighPriority: updated.isHighPriority ?? null,
+      });
+      return updated;
+    });
   });
 
   app.delete("/standalone-reminders/:id", workerGuard, async (req: any) => {
@@ -3142,7 +3271,22 @@ export default async function workerRoutes(app: FastifyInstance) {
       const isAdmin = user?.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
       if (!isAdmin) throw app.httpErrors.forbidden("Only the creator or an admin can delete this reminder");
     }
-    await prisma.jobOccurrence.delete({ where: { id } });
+    await prisma.$transaction(async (tx) => {
+      // Records the hard delete of a standalone reminder; nothing else survives it.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_DELETED, uid, {
+        occurrenceId: id,
+        jobId: occ.jobId ?? null,
+        workflow: "REMINDER",
+        title: occ.title ?? null,
+        notes: occ.notes ?? null,
+        status: occ.status,
+        startAt: occ.startAt?.toISOString() ?? null,
+        isHighPriority: occ.isHighPriority ?? null,
+        linkedOccurrenceId: occ.linkedOccurrenceId ?? null,
+        assigneeUserIds: occ.assignees.map((a: any) => a.userId).join(","),
+      });
+      await tx.jobOccurrence.delete({ where: { id } });
+    });
     return { deleted: true };
   });
 
@@ -3177,7 +3321,25 @@ export default async function workerRoutes(app: FastifyInstance) {
       const isAdmin = user?.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
       if (!isAdmin) throw app.httpErrors.forbidden("Only the claimer or an admin can delete this estimate");
     }
-    await prisma.jobOccurrence.delete({ where: { id } });
+    await prisma.$transaction(async (tx) => {
+      // Records the hard delete of a priced standalone estimate — the quoted
+      // price disappears with the row, so it is snapshotted here.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_DELETED, uid, {
+        occurrenceId: id,
+        jobId: occ.jobId ?? null,
+        workflow: "ESTIMATE",
+        title: occ.title ?? null,
+        notes: occ.notes ?? null,
+        status: occ.status,
+        startAt: occ.startAt?.toISOString() ?? null,
+        price: occ.price ?? null,
+        proposalAmount: occ.proposalAmount ?? null,
+        proposalNotes: occ.proposalNotes ?? null,
+        estimatedMinutes: occ.estimatedMinutes ?? null,
+        assigneeUserIds: occ.assignees.map((a: any) => a.userId).join(","),
+      });
+      await tx.jobOccurrence.delete({ where: { id } });
+    });
     return { deleted: true };
   });
 
@@ -3201,25 +3363,52 @@ export default async function workerRoutes(app: FastifyInstance) {
     if (body.notes !== undefined) data.notes = body.notes ? String(body.notes).trim() : null;
     if (body.startAt !== undefined) data.startAt = new Date(body.startAt);
     if (body.frequencyDays !== undefined) data.frequencyDays = body.frequencyDays != null ? Number(body.frequencyDays) : null;
-    if (Object.keys(data).length > 0) {
-      await prisma.jobOccurrence.update({ where: { id }, data });
-    }
-    if (Array.isArray(body.clientIds)) {
-      await prisma.followupClient.deleteMany({ where: { occurrenceId: id } });
-      if (body.clientIds.length > 0) {
-        await prisma.followupClient.createMany({
-          data: body.clientIds.map((clientId: string) => ({ occurrenceId: id, clientId })),
-        });
+    const priorClientIds = Array.isArray(body.clientIds)
+      ? (await prisma.followupClient.findMany({ where: { occurrenceId: id }, select: { clientId: true } })).map((r) => r.clientId)
+      : null;
+    const priorJobIds = Array.isArray(body.jobIds)
+      ? (await prisma.followupJob.findMany({ where: { occurrenceId: id }, select: { jobId: true } })).map((r) => r.jobId)
+      : null;
+    await prisma.$transaction(async (tx) => {
+      if (Object.keys(data).length > 0) {
+        await tx.jobOccurrence.update({ where: { id }, data });
       }
-    }
-    if (Array.isArray(body.jobIds)) {
-      await prisma.followupJob.deleteMany({ where: { occurrenceId: id } });
-      if (body.jobIds.length > 0) {
-        await prisma.followupJob.createMany({
-          data: body.jobIds.map((jobId: string) => ({ occurrenceId: id, jobId })),
-        });
+      if (Array.isArray(body.clientIds)) {
+        await tx.followupClient.deleteMany({ where: { occurrenceId: id } });
+        if (body.clientIds.length > 0) {
+          await tx.followupClient.createMany({
+            data: body.clientIds.map((clientId: string) => ({ occurrenceId: id, clientId })),
+          });
+        }
       }
-    }
+      if (Array.isArray(body.jobIds)) {
+        await tx.followupJob.deleteMany({ where: { occurrenceId: id } });
+        if (body.jobIds.length > 0) {
+          await tx.followupJob.createMany({
+            data: body.jobIds.map((jobId: string) => ({ occurrenceId: id, jobId })),
+          });
+        }
+      }
+      // Records a followup edit, including the wholesale replacement of which
+      // clients / jobs the followup targets.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+        occurrenceId: id,
+        jobId: occ.jobId ?? null,
+        workflow: "FOLLOWUP",
+        action: "followup_edited",
+        changedFields: Object.keys(data).join(","),
+        beforeTitle: occ.title ?? null,
+        afterTitle: data.title !== undefined ? data.title : (occ.title ?? null),
+        beforeStartAt: occ.startAt?.toISOString() ?? null,
+        afterStartAt: data.startAt !== undefined ? new Date(data.startAt).toISOString() : (occ.startAt?.toISOString() ?? null),
+        beforeFrequencyDays: occ.frequencyDays ?? null,
+        afterFrequencyDays: data.frequencyDays !== undefined ? data.frequencyDays : (occ.frequencyDays ?? null),
+        beforeClientIds: priorClientIds ? priorClientIds.join(",") : null,
+        afterClientIds: Array.isArray(body.clientIds) ? body.clientIds.map(String).join(",") : null,
+        beforeJobIds: priorJobIds ? priorJobIds.join(",") : null,
+        afterJobIds: Array.isArray(body.jobIds) ? body.jobIds.map(String).join(",") : null,
+      });
+    });
     return prisma.jobOccurrence.findUnique({ where: { id } });
   });
 
@@ -3250,7 +3439,26 @@ export default async function workerRoutes(app: FastifyInstance) {
       const isAdmin = user?.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
       if (!isAdmin) throw app.httpErrors.forbidden("Only the claimer or an admin can delete this followup");
     }
-    await prisma.jobOccurrence.delete({ where: { id } });
+    await prisma.$transaction(async (tx) => {
+      // Records the hard delete of a followup; the row and its client/job
+      // membership cascade away, so both are snapshotted here.
+      const doomedClientIds = await tx.followupClient.findMany({ where: { occurrenceId: id }, select: { clientId: true } });
+      const doomedJobIds = await tx.followupJob.findMany({ where: { occurrenceId: id }, select: { jobId: true } });
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_DELETED, uid, {
+        occurrenceId: id,
+        jobId: occ.jobId ?? null,
+        workflow: "FOLLOWUP",
+        title: occ.title ?? null,
+        notes: occ.notes ?? null,
+        status: occ.status,
+        startAt: occ.startAt?.toISOString() ?? null,
+        frequencyDays: occ.frequencyDays ?? null,
+        clientIds: doomedClientIds.map((r) => r.clientId).join(","),
+        jobIds: doomedJobIds.map((r) => r.jobId).join(","),
+        assigneeUserIds: occ.assignees.map((a: any) => a.userId).join(","),
+      });
+      await tx.jobOccurrence.delete({ where: { id } });
+    });
     return { deleted: true };
   });
 
@@ -3414,26 +3622,44 @@ export default async function workerRoutes(app: FastifyInstance) {
     }
     const prev = await prisma.businessExpense.findUnique({
       where: { id: beId },
-      select: { receiptR2Key: true },
+      select: { receiptR2Key: true, receiptFileName: true, cost: true, description: true, occurrenceId: true },
     });
     if (prev?.receiptR2Key && prev.receiptR2Key !== key) {
       await deleteObject(prev.receiptR2Key, "receipts").catch(() => {});
     }
-    return prisma.businessExpense.update({
-      where: { id: beId },
-      data: {
-        receiptR2Key: key,
-        receiptFileName: fileName || null,
-        receiptContentType: contentType || null,
-        receiptUploadedAt: new Date(),
-      },
-      select: {
-        id: true,
-        receiptR2Key: true,
-        receiptFileName: true,
-        receiptContentType: true,
-        receiptUploadedAt: true,
-      },
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.businessExpense.update({
+        where: { id: beId },
+        data: {
+          receiptR2Key: key,
+          receiptFileName: fileName || null,
+          receiptContentType: contentType || null,
+          receiptUploadedAt: new Date(),
+        },
+        select: {
+          id: true,
+          receiptR2Key: true,
+          receiptFileName: true,
+          receiptContentType: true,
+          receiptUploadedAt: true,
+        },
+      });
+      // Records attaching tax substantiation to an expense, and the prior
+      // receipt object it replaced (that R2 object was deleted above).
+      await writeAudit(tx, AUDIT.EXPENSE.RECEIPT_ATTACHED, uid, {
+        businessExpenseId: beId,
+        expenseId: String(req.params.expenseId),
+        occurrenceId: prev?.occurrenceId ?? null,
+        cost: prev?.cost ?? null,
+        description: prev?.description ?? null,
+        beforeReceiptR2Key: prev?.receiptR2Key ?? null,
+        afterReceiptR2Key: key,
+        beforeReceiptFileName: prev?.receiptFileName ?? null,
+        afterReceiptFileName: fileName || null,
+        replacedPriorReceipt: !!(prev?.receiptR2Key && prev.receiptR2Key !== key),
+        contentType: contentType || null,
+      });
+      return updated;
     });
   });
 
@@ -3454,17 +3680,40 @@ export default async function workerRoutes(app: FastifyInstance) {
     const beId = await resolveExpenseBe(uid, String(req.params.expenseId));
     const be = await prisma.businessExpense.findUnique({
       where: { id: beId },
-      select: { receiptR2Key: true },
+      select: {
+        receiptR2Key: true,
+        receiptFileName: true,
+        receiptContentType: true,
+        receiptUploadedAt: true,
+        cost: true,
+        description: true,
+        occurrenceId: true,
+      },
     });
     if (be?.receiptR2Key) await deleteObject(be.receiptR2Key, "receipts").catch(() => {});
-    await prisma.businessExpense.update({
-      where: { id: beId },
-      data: {
-        receiptR2Key: null,
-        receiptFileName: null,
-        receiptContentType: null,
-        receiptUploadedAt: null,
-      },
+    await prisma.$transaction(async (tx) => {
+      // Records destruction of an expense's tax substantiation — the R2 object
+      // is already gone, so this snapshot is all that remains of the receipt.
+      await writeAudit(tx, AUDIT.EXPENSE.RECEIPT_DELETED, uid, {
+        businessExpenseId: beId,
+        expenseId: String(req.params.expenseId),
+        occurrenceId: be?.occurrenceId ?? null,
+        cost: be?.cost ?? null,
+        description: be?.description ?? null,
+        deletedReceiptR2Key: be?.receiptR2Key ?? null,
+        deletedReceiptFileName: be?.receiptFileName ?? null,
+        deletedReceiptContentType: be?.receiptContentType ?? null,
+        deletedReceiptUploadedAt: be?.receiptUploadedAt?.toISOString() ?? null,
+      });
+      await tx.businessExpense.update({
+        where: { id: beId },
+        data: {
+          receiptR2Key: null,
+          receiptFileName: null,
+          receiptContentType: null,
+          receiptUploadedAt: null,
+        },
+      });
     });
     return { deleted: true };
   });
@@ -3517,6 +3766,7 @@ export default async function workerRoutes(app: FastifyInstance) {
       select: {
         status: true,
         workflow: true,
+        jobId: true,
         paymentRequestSentAt: true,
         payment: { select: { id: true } },
       },
@@ -3530,14 +3780,28 @@ export default async function workerRoutes(app: FastifyInstance) {
       throw app.httpErrors.badRequest("This workflow doesn't carry add-on services.");
     }
 
-    return prisma.occurrenceAddon.create({
-      data: {
+    return prisma.$transaction(async (tx) => {
+      const addon = await tx.occurrenceAddon.create({
+        data: {
+          occurrenceId,
+          tag: tag || null,
+          customLabel: customLabel?.trim() || null,
+          price: Number(price),
+          createdById: uid,
+        },
+      });
+      // Records a new add-on service, which directly increases what the client is billed.
+      await writeAudit(tx, AUDIT.JOB.ADDON_ADDED, uid, {
+        addonId: addon.id,
         occurrenceId,
-        tag: tag || null,
-        customLabel: customLabel?.trim() || null,
-        price: Number(price),
-        createdById: uid,
-      },
+        jobId: occ.jobId ?? null,
+        tag: addon.tag,
+        customLabel: addon.customLabel,
+        beforePrice: null,
+        afterPrice: addon.price,
+        occurrenceStatus: occ.status,
+      });
+      return addon;
     });
   });
 
@@ -3559,6 +3823,7 @@ export default async function workerRoutes(app: FastifyInstance) {
       where: { id: occurrenceId },
       select: {
         status: true,
+        jobId: true,
         paymentRequestSentAt: true,
         payment: { select: { id: true } },
       },
@@ -3568,7 +3833,26 @@ export default async function workerRoutes(app: FastifyInstance) {
       throw app.httpErrors.conflict("Services can't be changed once payment has been requested or accepted.");
     }
 
-    await prisma.occurrenceAddon.delete({ where: { id: addonId } });
+    const doomedAddon = await prisma.occurrenceAddon.findUnique({ where: { id: addonId } });
+    if (!doomedAddon) throw app.httpErrors.notFound("Service not found");
+
+    await prisma.$transaction(async (tx) => {
+      // Records removal of an add-on service, which lowers what the client is
+      // billed; the row is hard-deleted so its price is snapshotted here.
+      await writeAudit(tx, AUDIT.JOB.ADDON_REMOVED, uid, {
+        addonId,
+        occurrenceId,
+        jobId: occ.jobId ?? null,
+        tag: doomedAddon.tag,
+        customLabel: doomedAddon.customLabel,
+        beforePrice: doomedAddon.price,
+        afterPrice: null,
+        createdById: doomedAddon.createdById,
+        createdAt: doomedAddon.createdAt.toISOString(),
+        occurrenceStatus: occ.status,
+      });
+      await tx.occurrenceAddon.delete({ where: { id: addonId } });
+    });
     return { deleted: true };
   });
 
@@ -3637,14 +3921,26 @@ export default async function workerRoutes(app: FastifyInstance) {
     });
     if (existing) return existing;
 
-    const photo = await prisma.jobOccurrencePhoto.create({
-      data: {
+    const photo = await prisma.$transaction(async (tx) => {
+      const created = await tx.jobOccurrencePhoto.create({
+        data: {
+          occurrenceId,
+          r2Key,
+          fileName: body.fileName ? String(body.fileName) : null,
+          contentType: body.contentType ? String(body.contentType) : null,
+          uploadedById: uid,
+        },
+      });
+      // Records a new piece of job evidence being attached to the occurrence.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
         occurrenceId,
-        r2Key,
-        fileName: body.fileName ? String(body.fileName) : null,
-        contentType: body.contentType ? String(body.contentType) : null,
-        uploadedById: uid,
-      },
+        photoId: created.id,
+        action: "photo_added",
+        r2Key: created.r2Key,
+        fileName: created.fileName,
+        contentType: created.contentType,
+      });
+      return created;
     });
 
     return photo;
@@ -3682,7 +3978,20 @@ export default async function workerRoutes(app: FastifyInstance) {
     if (photo.uploadedById !== uid) throw app.httpErrors.forbidden("You can only delete your own photos");
 
     await deleteObject(photo.r2Key);
-    await prisma.jobOccurrencePhoto.delete({ where: { id: photoId } });
+    await prisma.$transaction(async (tx) => {
+      // Records destruction of job evidence — the R2 object is already gone,
+      // so this snapshot is the only remaining trace of the photo.
+      await writeAudit(tx, AUDIT.JOB.PHOTO_DELETED, uid, {
+        photoId,
+        occurrenceId: photo.occurrenceId,
+        r2Key: photo.r2Key,
+        fileName: photo.fileName,
+        contentType: photo.contentType,
+        uploadedById: photo.uploadedById,
+        uploadedAt: photo.createdAt.toISOString(),
+      });
+      await tx.jobOccurrencePhoto.delete({ where: { id: photoId } });
+    });
 
     return { ok: true };
   });
@@ -4397,9 +4706,24 @@ export default async function workerRoutes(app: FastifyInstance) {
   app.patch("/me/home-base", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const body = req.body || {};
-    await prisma.user.update({
+    const priorHomeBase = await prisma.user.findUnique({
       where: { id: uid },
-      data: { homeBaseAddress: body.address != null ? String(body.address).trim() || null : null },
+      select: { homeBaseAddress: true },
+    });
+    const nextHomeBase = body.address != null ? String(body.address).trim() || null : null;
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: uid },
+        data: { homeBaseAddress: nextHomeBase },
+      });
+      // Records the worker changing their own home base, which moves the origin
+      // every route/mileage calculation is measured from.
+      await writeAudit(tx, AUDIT.USER.PRIVILEGES_UPDATED, uid, {
+        userId: uid,
+        action: "home_base_updated",
+        beforeHomeBaseAddress: priorHomeBase?.homeBaseAddress ?? null,
+        afterHomeBaseAddress: nextHomeBase,
+      });
     });
     return { ok: true };
   });
@@ -4424,7 +4748,36 @@ export default async function workerRoutes(app: FastifyInstance) {
     if (body.firstName !== undefined) data.firstName = body.firstName ? String(body.firstName).trim() : null;
     if (body.lastName !== undefined) data.lastName = body.lastName ? String(body.lastName).trim() : null;
     if (body.displayName !== undefined) data.displayName = body.displayName ? String(body.displayName).trim() : null;
-    await prisma.user.update({ where: { id: uid }, data });
+    const priorProfile = await prisma.user.findUnique({
+      where: { id: uid },
+      select: {
+        homeBaseAddress: true,
+        availableDays: true,
+        availableHoursPerDay: true,
+        phone: true,
+        firstName: true,
+        lastName: true,
+        displayName: true,
+      },
+    });
+    const profileBefore: Record<string, unknown> = {};
+    const profileAfter: Record<string, unknown> = {};
+    for (const k of Object.keys(data)) {
+      profileBefore[`before_${k}`] = (priorProfile as any)?.[k] ?? null;
+      profileAfter[`after_${k}`] = data[k] ?? null;
+    }
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: uid }, data });
+      // Records the worker editing their own profile — name, phone, and the
+      // availability window that scheduling assigns work against.
+      await writeAudit(tx, AUDIT.USER.PRIVILEGES_UPDATED, uid, {
+        userId: uid,
+        action: "profile_updated",
+        changedFields: Object.keys(data).join(","),
+        ...profileBefore,
+        ...profileAfter,
+      });
+    });
     return { ok: true };
   });
 
@@ -4555,9 +4908,21 @@ export default async function workerRoutes(app: FastifyInstance) {
     const pinnedNote = body.pinnedNote != null ? String(body.pinnedNote).trim() || null : null;
     const data: any = { pinnedNote };
     if (body.pinnedNoteRepeats !== undefined) data.pinnedNoteRepeats = !!body.pinnedNoteRepeats;
-    await prisma.jobOccurrence.update({
-      where: { id: occurrenceId },
-      data,
+    await prisma.$transaction(async (tx) => {
+      await tx.jobOccurrence.update({
+        where: { id: occurrenceId },
+        data,
+      });
+      // Records a change to the pinned note shown to every worker on this job.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+        occurrenceId,
+        jobId: occ.jobId ?? null,
+        action: "pinned_note_updated",
+        beforePinnedNote: occ.pinnedNote ?? null,
+        afterPinnedNote: pinnedNote,
+        beforePinnedNoteRepeats: occ.pinnedNoteRepeats ?? null,
+        afterPinnedNoteRepeats: data.pinnedNoteRepeats !== undefined ? data.pinnedNoteRepeats : (occ.pinnedNoteRepeats ?? null),
+      });
     });
     return { ok: true, pinnedNote, pinnedNoteRepeats: data.pinnedNoteRepeats };
   });
@@ -4576,8 +4941,21 @@ export default async function workerRoutes(app: FastifyInstance) {
     const isAdmin = user?.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
     if (!isClaimer && !isAdmin) throw app.httpErrors.forbidden("Only the claimer or an admin can manage instructions");
     const count = await prisma.occurrenceInstruction.count({ where: { occurrenceId } });
-    return prisma.occurrenceInstruction.create({
-      data: { occurrenceId, text: text.trim(), isPreset: !!isPreset, repeats: repeats ?? true, sortOrder: count },
+    return prisma.$transaction(async (tx) => {
+      const instruction = await tx.occurrenceInstruction.create({
+        data: { occurrenceId, text: text.trim(), isPreset: !!isPreset, repeats: repeats ?? true, sortOrder: count },
+      });
+      // Records a new work instruction added to this occurrence.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+        occurrenceId,
+        jobId: occ.jobId ?? null,
+        instructionId: instruction.id,
+        action: "instruction_added",
+        text: instruction.text,
+        isPreset: instruction.isPreset,
+        repeats: instruction.repeats,
+      });
+      return instruction;
     });
   });
 
@@ -4596,7 +4974,22 @@ export default async function workerRoutes(app: FastifyInstance) {
     const data: any = {};
     if ("text" in body) data.text = String(body.text).trim();
     if ("repeats" in body) data.repeats = !!body.repeats;
-    return prisma.occurrenceInstruction.update({ where: { id: instructionId }, data });
+    const priorInstruction = await prisma.occurrenceInstruction.findUnique({ where: { id: instructionId } });
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.occurrenceInstruction.update({ where: { id: instructionId }, data });
+      // Records an edit to a work instruction other workers act on.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+        occurrenceId,
+        jobId: occ.jobId ?? null,
+        instructionId,
+        action: "instruction_edited",
+        beforeText: priorInstruction?.text ?? null,
+        afterText: updated.text,
+        beforeRepeats: priorInstruction?.repeats ?? null,
+        afterRepeats: updated.repeats,
+      });
+      return updated;
+    });
   });
 
   app.delete("/occurrences/:id/instructions/:instructionId", workerGuard, async (req: any) => {
@@ -4610,7 +5003,21 @@ export default async function workerRoutes(app: FastifyInstance) {
     const user = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
     const isAdmin = user?.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
     if (!isClaimer && !isAdmin) throw app.httpErrors.forbidden("Only the claimer or an admin can manage instructions");
-    await prisma.occurrenceInstruction.delete({ where: { id: instructionId } });
+    const doomedInstruction = await prisma.occurrenceInstruction.findUnique({ where: { id: instructionId } });
+    await prisma.$transaction(async (tx) => {
+      // Records removal of a work instruction; the row is hard-deleted so its
+      // text is snapshotted here.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+        occurrenceId,
+        jobId: occ.jobId ?? null,
+        instructionId,
+        action: "instruction_deleted",
+        text: doomedInstruction?.text ?? null,
+        isPreset: doomedInstruction?.isPreset ?? null,
+        repeats: doomedInstruction?.repeats ?? null,
+      });
+      await tx.occurrenceInstruction.delete({ where: { id: instructionId } });
+    });
     return { deleted: true };
   });
 
@@ -4628,9 +5035,23 @@ export default async function workerRoutes(app: FastifyInstance) {
     const user = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
     const isAdmin = user?.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
     if (!isClaimer && !isAdmin) throw app.httpErrors.forbidden("Only the claimer or an admin can confirm");
-    await prisma.jobOccurrence.update({
-      where: { id: occurrenceId },
-      data: { isClientConfirmed: true },
+    await prisma.$transaction(async (tx) => {
+      await tx.jobOccurrence.update({
+        where: { id: occurrenceId },
+        data: { isClientConfirmed: true },
+      });
+      // Records the worker asserting client consent — this flag is the gate
+      // that permits /start on the occurrence.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+        occurrenceId,
+        jobId: occ.jobId ?? null,
+        action: "client_confirmed",
+        beforeIsClientConfirmed: occ.isClientConfirmed ?? false,
+        afterIsClientConfirmed: true,
+        byClaimer: !!isClaimer,
+        byAdmin: !!isAdmin,
+        occurrenceStatus: occ.status,
+      });
     });
     return { confirmed: true };
   });
@@ -4722,9 +5143,20 @@ export default async function workerRoutes(app: FastifyInstance) {
     const body = (req.body?.body ?? "").trim();
     if (!body) throw app.httpErrors.badRequest("Comment body is required");
 
-    const comment = await prisma.occurrenceComment.create({
-      data: { occurrenceId, authorId: uid, body },
-      include: { author: { select: { id: true, displayName: true, email: true } } },
+    const comment = await prisma.$transaction(async (tx) => {
+      const created = await tx.occurrenceComment.create({
+        data: { occurrenceId, authorId: uid, body },
+        include: { author: { select: { id: true, displayName: true, email: true } } },
+      });
+      // Records a comment being posted to the occurrence's shared thread.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+        occurrenceId,
+        commentId: created.id,
+        action: "comment_created",
+        authorId: uid,
+        body: created.body,
+      });
+      return created;
     });
     return comment;
   });
@@ -4739,10 +5171,22 @@ export default async function workerRoutes(app: FastifyInstance) {
     if (!comment) throw app.httpErrors.notFound("Comment not found");
     if (comment.authorId !== uid) throw app.httpErrors.forbidden("Only the author can edit a comment");
 
-    const updated = await prisma.occurrenceComment.update({
-      where: { id: commentId },
-      data: { body },
-      include: { author: { select: { id: true, displayName: true, email: true } } },
+    const updated = await prisma.$transaction(async (tx) => {
+      const edited = await tx.occurrenceComment.update({
+        where: { id: commentId },
+        data: { body },
+        include: { author: { select: { id: true, displayName: true, email: true } } },
+      });
+      // Records an author rewriting their own comment in the shared thread.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+        occurrenceId: comment.occurrenceId,
+        commentId,
+        action: "comment_edited",
+        authorId: comment.authorId,
+        beforeBody: comment.body,
+        afterBody: edited.body,
+      });
+      return edited;
     });
     return updated;
   });
@@ -4768,7 +5212,22 @@ export default async function workerRoutes(app: FastifyInstance) {
       throw app.httpErrors.forbidden("You cannot delete this comment");
     }
 
-    await prisma.occurrenceComment.delete({ where: { id: commentId } });
+    await prisma.$transaction(async (tx) => {
+      // Records a comment being destroyed — a claimer or admin can delete
+      // someone else's comment, so the original author and body are snapshotted.
+      await writeAudit(tx, AUDIT.JOB.COMMENT_DELETED, uid, {
+        commentId,
+        occurrenceId: comment.occurrenceId,
+        jobId: comment.occurrence.jobId ?? null,
+        authorId: comment.authorId,
+        body: comment.body,
+        createdAt: comment.createdAt.toISOString(),
+        deletedByAuthor: isAuthor,
+        deletedByClaimer: isClaimer,
+        deletedByAdmin: isAdmin,
+      });
+      await tx.occurrenceComment.delete({ where: { id: commentId } });
+    });
     return { ok: true };
   });
 
@@ -4824,8 +5283,20 @@ export default async function workerRoutes(app: FastifyInstance) {
     const crypto = require("crypto");
     const token = crypto.randomBytes(32).toString("hex");
 
-    const record = await prisma.calendarFeedToken.create({
-      data: { userId: uid, token, label, filters },
+    const record = await prisma.$transaction(async (tx) => {
+      const created = await tx.calendarFeedToken.create({
+        data: { userId: uid, token, label, filters },
+      });
+      // Records minting a bearer token that grants UNAUTHENTICATED read access
+      // to this worker's schedule. The token value itself is deliberately not logged.
+      await writeAudit(tx, AUDIT.CALENDAR_FEED.CREATED, uid, {
+        calendarFeedTokenId: created.id,
+        userId: uid,
+        label: created.label,
+        filterSummary: JSON.stringify(created.filters ?? {}),
+        createdAt: created.createdAt.toISOString(),
+      });
+      return created;
     });
 
     return { id: record.id, token: record.token, label: record.label, filters: record.filters, createdAt: record.createdAt };
@@ -4834,8 +5305,26 @@ export default async function workerRoutes(app: FastifyInstance) {
   app.delete("/calendar-feeds/:id", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const id = String(req.params.id);
-    await prisma.calendarFeedToken.deleteMany({
+    const doomedFeed = await prisma.calendarFeedToken.findFirst({
       where: { id, userId: uid },
+      select: { id: true, label: true, filters: true, createdAt: true, lastAccessedAt: true },
+    });
+    await prisma.$transaction(async (tx) => {
+      if (doomedFeed) {
+        // Records revoking a calendar bearer token, ending unauthenticated read
+        // access to this worker's schedule. The token value is never logged.
+        await writeAudit(tx, AUDIT.CALENDAR_FEED.DELETED, uid, {
+          calendarFeedTokenId: doomedFeed.id,
+          userId: uid,
+          label: doomedFeed.label,
+          filterSummary: JSON.stringify(doomedFeed.filters ?? {}),
+          createdAt: doomedFeed.createdAt.toISOString(),
+          lastAccessedAt: doomedFeed.lastAccessedAt?.toISOString() ?? null,
+        });
+      }
+      await tx.calendarFeedToken.deleteMany({
+        where: { id, userId: uid },
+      });
     });
     return { ok: true };
   });

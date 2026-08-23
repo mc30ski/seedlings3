@@ -98,6 +98,8 @@ export default async function meRoutes(app: FastifyInstance) {
     if (lastName && user.lastName !== lastName) updates.lastName = lastName;
     if (displayName && user.displayName !== displayName) updates.displayName = displayName;
 
+    // audit-allow: mirrors Clerk's email/name onto our User row. A sync
+    // of an upstream identity, not a decision anyone made here.
     await prisma.user.update({ where: { id: user.id }, data: updates });
 
     return { ok: true, synced: Object.keys(updates).filter(k => k !== "updatedAt") };
@@ -144,6 +146,9 @@ export default async function meRoutes(app: FastifyInstance) {
 
     // Upsert on endpoint — same browser hitting subscribe() returns the same
     // endpoint, so re-subscribe-on-launch is a no-op when nothing changed.
+    // audit-allow: push subscriptions are tied to a browser install, not
+    // to any user-meaningful state. Registering a device is not an action
+    // anyone would audit.
     const sub = await prisma.pushSubscription.upsert({
       where: { endpoint },
       create: { userId: user.id, endpoint, p256dh, auth, userAgent, label },
@@ -164,6 +169,7 @@ export default async function meRoutes(app: FastifyInstance) {
     if (!sub) return reply.code(404).send({ error: "Not found" });
     if (sub.userId !== user.id) return reply.code(403).send({ error: "Forbidden" });
 
+    // audit-allow: unregistering a device — see the upsert above.
     await prisma.pushSubscription.delete({ where: { id } });
     return { ok: true };
   });

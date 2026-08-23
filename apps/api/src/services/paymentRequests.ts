@@ -232,8 +232,10 @@ export const paymentRequests = {
    * Ensure the occurrence has a payment-request token. Returns the token and
    * the prepared SMS/email message bodies so callers can either dispatch
    * server-side (sendForOccurrence) or hand off to a claimer device.
-   * No outbound network calls. No audit row — auditing belongs to the actor
-   * (server send / claimer tap), not the token mint.
+   * No outbound network calls. The dispatch itself is audited by the actor
+   * (server send / claimer tap); a token MINT or ROTATION is audited here,
+   * because rotating silently kills any pay link already in the client's
+   * hands. `currentUserId` is optional so existing callers keep compiling.
    */
   async generateTokenForOccurrence(
     occurrenceId: string,
@@ -249,6 +251,7 @@ export const paymentRequests = {
       // early write for click attribution to work.
       writePendingPromoDeliveries?: boolean;
     },
+    currentUserId?: string | null,
   ): Promise<{
     token: string;
     url: string;
@@ -280,9 +283,30 @@ export const paymentRequests = {
     let token = existing.paymentRequestToken;
     if (!token || isExpired || opts?.regenerateToken) {
       token = newToken();
-      await prisma.jobOccurrence.update({
-        where: { id: occurrenceId },
-        data: { paymentRequestToken: token, paymentRequestTokenCreatedAt: new Date() },
+      const rotated = !!existing.paymentRequestToken;
+      const mintedToken = token;
+      await prisma.$transaction(async (tx) => {
+        await tx.jobOccurrence.update({
+          where: { id: occurrenceId },
+          data: { paymentRequestToken: mintedToken, paymentRequestTokenCreatedAt: new Date() },
+        });
+        // Money: this token IS the client's pay link. Rotating it invalidates
+        // any live link already texted/emailed, so the client can no longer
+        // pay through it until a new request goes out. Mirrors the shape of
+        // cancelPaymentRequest's "request_canceled" audit.
+        await writeAudit(tx, AUDIT.PAYMENT.UPDATED, currentUserId ?? null, {
+          occurrenceId,
+          action: "request_token_rotated",
+          rotated,
+          reason: !existing.paymentRequestToken
+            ? "first_mint"
+            : opts?.regenerateToken
+              ? "explicit_regenerate"
+              : "expired",
+          expiryHours,
+          previousTokenCreatedAt:
+            existing.paymentRequestTokenCreatedAt?.toISOString() ?? null,
+        });
       });
     }
 
@@ -371,7 +395,7 @@ export const paymentRequests = {
     token: string;
     url: string;
   }> {
-    const prepared = await this.generateTokenForOccurrence(occurrenceId, opts);
+    const prepared = await this.generateTokenForOccurrence(occurrenceId, opts, currentUserId);
     const { token, url, amountDue, propertyLabel: propLabel, contacts } = prepared;
     // Re-fetch the occurrence's service date for per-contact body building.
     // generateTokenForOccurrence already loaded it via getContactsForOccurrence,
@@ -545,7 +569,7 @@ export const paymentRequests = {
       // claimer set splits in the Take Payment dialog. This is the same
       // canonical write path used by createPayment (Accept Now).
       if (Array.isArray(completionSplits) && completionSplits.length > 0) {
-        await persistCompletionSplits(tx, occurrenceId, completionSplits);
+        await persistCompletionSplits(tx, occurrenceId, completionSplits, currentUserId);
       }
       // Stamp the "request sent" timestamp so the job card flips to
       // in-flight state (hides Accept Payment, exposes Re-send + Cancel).

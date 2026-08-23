@@ -342,6 +342,9 @@ function PromotionDetail({
   const [testChannel, setTestChannel] = useState<"email" | "sms" | null>(null);
   const [previewInvoice, setPreviewInvoice] = useState(false);
   const [previewingLanding, setPreviewingLanding] = useState(false);
+  // Permanent delete. `escalated` flips on after the server answers
+  // NEEDS_APPROVE, swapping the plain confirm for the typed-APPROVE one.
+  const [deleting, setDeleting] = useState<null | { escalated: boolean; deliveryCount: number }>(null);
 
   useEffect(() => {
     void (async () => {
@@ -353,6 +356,28 @@ function PromotionDetail({
       setAudit(a);
     })();
   }, [promotion.id]);
+
+  async function doDelete(confirmText?: string) {
+    try {
+      await apiDelete(`/api/super/promotions/${promotion.id}`, confirmText ? { confirm: confirmText } : {});
+      publishInlineMessage({ type: "SUCCESS", text: `"${promotion.title}" permanently deleted.` });
+      setDeleting(null);
+      onClose();
+      onChanged();
+    } catch (err: any) {
+      // Server refuses a promotion with delivery history unless APPROVE
+      // was typed. Escalate the dialog rather than dead-ending — but only
+      // after the server has said so, so the strong warning always
+      // reflects a real count rather than a guess from the client.
+      const detail = String(err?.message ?? err);
+      if (detail.includes("NEEDS_APPROVE") || detail.includes("type APPROVE")) {
+        const m = detail.match(/has (\d+) delivery/);
+        setDeleting({ escalated: true, deliveryCount: m ? Number(m[1]) : 0 });
+        return;
+      }
+      publishInlineMessage({ type: "ERROR", text: detail });
+    }
+  }
 
   async function act(action: string) {
     setBusy(true);
@@ -450,12 +475,12 @@ function PromotionDetail({
             </Button>
           )}
           {promotion.status === "PAUSED" && (
-            <>
-              <Button size="xs" colorPalette="green" onClick={() => setConfirming("resume")} disabled={busy}>
-                Resume
-              </Button>
-              <Button size="xs" onClick={onEdit} disabled={busy}>Edit</Button>
-            </>
+            // No Edit button here — `editable` above already covers PAUSED,
+            // and a second one rendered a duplicate wired to the same
+            // handler. DRAFT showed one because it has no status block.
+            <Button size="xs" colorPalette="green" onClick={() => setConfirming("resume")} disabled={busy}>
+              Resume
+            </Button>
           )}
           {promotion.status === "ACTIVE" && (
             <>
@@ -474,6 +499,18 @@ function PromotionDetail({
               Retire
             </Button>
           )}
+          {/* Permanent delete — distinct from Retire, which keeps the
+              campaign as a closed record. Solid red and last in the row
+              so it never sits next to the routine actions. */}
+          <Button
+            size="xs"
+            colorPalette="red"
+            variant="outline"
+            onClick={() => setDeleting({ escalated: false, deliveryCount: 0 })}
+            disabled={busy}
+          >
+            Delete…
+          </Button>
           <Button size="xs" variant="outline" onClick={() => void act("duplicate")} disabled={busy}>
             Duplicate
           </Button>
@@ -562,7 +599,55 @@ function PromotionDetail({
             </Button>
           )}
         </HStack>
-        {previewInvoice && promotion.content?.invoice_page && (
+        {deleting && !deleting.escalated && (
+        <ConfirmDialog
+          open
+          title="Delete this promotion?"
+          message={`"${promotion.title}" and its landing page, items, and photos will be permanently removed. This can't be undone. If this campaign has already sent anything, you'll be asked to confirm again.`}
+          confirmLabel="Delete permanently"
+          confirmColorPalette="red"
+          onConfirm={() => void doDelete()}
+          onCancel={() => setDeleting(null)}
+        />
+      )}
+      {deleting?.escalated && (
+        <ConfirmDialog
+          open
+          title="This promotion has already been sent"
+          // messageNode supplies the real body; `message` is required by
+          // the component's props and used as the accessible fallback.
+          message={`${deleting.deliveryCount} delivery records will be permanently destroyed.`}
+          messageNode={
+            <VStack align="stretch" gap={2}>
+              <Box p={2} bg="red.50" borderWidth="1px" borderColor="red.300" rounded="md">
+                <Text fontSize="sm" color="red.900" fontWeight="semibold">
+                  {deleting.deliveryCount} delivery record
+                  {deleting.deliveryCount === 1 ? "" : "s"} will be destroyed.
+                </Text>
+                <Text fontSize="xs" color="red.900" mt={1}>
+                  Those rows are the record of which client contacts were
+                  messaged, and which were deliberately skipped. That history
+                  is what you would rely on in a CAN-SPAM dispute. Deleting it
+                  cannot be undone.
+                </Text>
+              </Box>
+              <Text fontSize="xs" color="fg.muted">
+                <b>Retire</b> is almost certainly what you want instead — it
+                closes the campaign and keeps the history. Only continue if
+                this promotion was created in error.
+              </Text>
+            </VStack>
+          }
+          confirmLabel="Permanently delete"
+          confirmColorPalette="red"
+          inputLabel="Type APPROVE to confirm"
+          inputPlaceholder="APPROVE"
+          requiredInputValue="APPROVE"
+          onConfirm={(typed) => void doDelete(typed.trim().toUpperCase())}
+          onCancel={() => setDeleting(null)}
+        />
+      )}
+      {previewInvoice && promotion.content?.invoice_page && (
           <InvoicePreviewDialog
             content={promotion.content.invoice_page}
             promoId={promotion.linkKind === "LANDING_PAGE" ? promotion.id : null}

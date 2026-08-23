@@ -19,6 +19,8 @@ export const AUDIT = {
     PRIVILEGES_UPDATED: [AuditScope.USER, AuditVerb.UPDATED] as const,
     PAYMENT_COMMS_MODE_UPDATED: [AuditScope.USER, AuditVerb.UPDATED] as const,
     OWNER_FLAG_UPDATED: [AuditScope.USER, AuditVerb.UPDATED] as const,
+    CREATED: [AuditScope.USER, AuditVerb.CREATED] as const,
+    WAGE_UPDATED: [AuditScope.USER, AuditVerb.WAGE_UPDATED] as const,
   },
   EQUIPMENT: {
     CREATED: [AuditScope.EQUIPMENT, AuditVerb.CREATED] as const,
@@ -83,6 +85,15 @@ export const AUDIT = {
     OCCURRENCE_ARCHIVED: [AuditScope.JOB, AuditVerb.RETIRED] as const,
     OCCURRENCES_GENERATED: [AuditScope.JOB, AuditVerb.CREATED] as const,
     ASSIGNEES_UPDATED: [AuditScope.JOB, AuditVerb.UPDATED] as const,
+    // OCCURRENCE_ARCHIVED maps to RETIRED and misrepresents a hard delete,
+    // so destructive paths get their own verb.
+    OCCURRENCE_DELETED: [AuditScope.JOB, AuditVerb.OCCURRENCE_DELETED] as const,
+    DELETED: [AuditScope.JOB, AuditVerb.DELETED] as const,
+    // Addons change what the client is billed.
+    ADDON_ADDED: [AuditScope.JOB, AuditVerb.ADDON_ADDED] as const,
+    ADDON_REMOVED: [AuditScope.JOB, AuditVerb.ADDON_REMOVED] as const,
+    PHOTO_DELETED: [AuditScope.JOB, AuditVerb.PHOTO_DELETED] as const,
+    COMMENT_DELETED: [AuditScope.JOB, AuditVerb.COMMENT_DELETED] as const,
   },
   SETTING: {
     UPDATED: [AuditScope.SETTING, AuditVerb.SETTING_UPDATED] as const,
@@ -90,6 +101,12 @@ export const AUDIT = {
   },
   NOTIFICATION: {
     SENT: [AuditScope.NOTIFICATION, AuditVerb.SENT] as const,
+    // Template CRUD — the scope previously only covered actually sending
+    // a notification, so edits to the templates that shape every outbound
+    // message were invisible.
+    CREATED: [AuditScope.NOTIFICATION, AuditVerb.CREATED] as const,
+    UPDATED: [AuditScope.NOTIFICATION, AuditVerb.UPDATED] as const,
+    DELETED: [AuditScope.NOTIFICATION, AuditVerb.DELETED] as const,
   },
   DOCUMENT: {
     CREATED: [AuditScope.DOCUMENT, AuditVerb.CREATED] as const,
@@ -225,6 +242,11 @@ export const AUDIT = {
     RETIRED: [AuditScope.PROMOTION, AuditVerb.PROMOTION_RETIRED] as const,
     EDITED: [AuditScope.PROMOTION, AuditVerb.PROMOTION_EDITED] as const,
     DUPLICATED: [AuditScope.PROMOTION, AuditVerb.PROMOTION_DUPLICATED] as const,
+    // Permanent hard delete. The promotion row is gone, so this entry is
+    // the only remaining record — its metadata carries the title, slug,
+    // status, and whether delivery history was destroyed via the
+    // type-APPROVE override.
+    DELETED: [AuditScope.PROMOTION, AuditVerb.DELETED] as const,
     DISPATCHED: [AuditScope.PROMOTION, AuditVerb.PROMOTION_DISPATCHED] as const,
     TEST_SENT: [AuditScope.PROMOTION, AuditVerb.PROMOTION_TEST_SENT] as const,
     // Rotation of the auto-managed PROMOTION_HMAC_SECRET. Rare admin
@@ -247,6 +269,80 @@ export const AUDIT = {
     //          client_self_invoice_page | super_manual | hard_bounce
     OPTED_OUT: [AuditScope.PROMO_OPT, AuditVerb.PROMO_OPTED_OUT] as const,
     OPTED_IN: [AuditScope.PROMO_OPT, AuditVerb.PROMO_OPTED_IN] as const,
+  },
+  // ── Added 2026-08-22 ────────────────────────────────────────────────
+  // A system-wide sweep found these domains mutating user-meaningful
+  // state with no audit trail whatsoever. Several are money paths.
+  EXPENSE: {
+    // Covers both the job-linked `Expense` and its paired tax-ledger
+    // `BusinessExpense` — they're written and deleted as a pair, so one
+    // scope with a metadata discriminator beats two that always co-fire.
+    CREATED: [AuditScope.EXPENSE, AuditVerb.CREATED] as const,
+    UPDATED: [AuditScope.EXPENSE, AuditVerb.UPDATED] as const,
+    DELETED: [AuditScope.EXPENSE, AuditVerb.DELETED] as const,
+    RECONCILED: [AuditScope.EXPENSE, AuditVerb.RECONCILED] as const,
+    RECEIPT_ATTACHED: [AuditScope.EXPENSE, AuditVerb.RECEIPT_ATTACHED] as const,
+    RECEIPT_DELETED: [AuditScope.EXPENSE, AuditVerb.RECEIPT_DELETED] as const,
+  },
+  SUPPLY: {
+    CREATED: [AuditScope.SUPPLY, AuditVerb.CREATED] as const,
+    UPDATED: [AuditScope.SUPPLY, AuditVerb.UPDATED] as const,
+    ARCHIVED: [AuditScope.SUPPLY, AuditVerb.RETIRED] as const,
+    UNARCHIVED: [AuditScope.SUPPLY, AuditVerb.UNRETIRED] as const,
+    PURCHASE_RECORDED: [AuditScope.SUPPLY, AuditVerb.PURCHASE_RECORDED] as const,
+    PURCHASE_REVERSED: [AuditScope.SUPPLY, AuditVerb.DELETED] as const,
+    ADJUSTED: [AuditScope.SUPPLY, AuditVerb.ADJUSTED] as const,
+    // Holds charge a job (and therefore reduce a worker's payout), so
+    // they get their own verbs rather than hiding inside UPDATED.
+    HOLD_CREATED: [AuditScope.SUPPLY, AuditVerb.HOLD_CREATED] as const,
+    HOLD_REMOVED: [AuditScope.SUPPLY, AuditVerb.HOLD_REMOVED] as const,
+    HOLD_ADJUSTED: [AuditScope.SUPPLY, AuditVerb.HOLD_ADJUSTED] as const,
+  },
+  MILEAGE: {
+    CREATED: [AuditScope.MILEAGE, AuditVerb.CREATED] as const,
+    UPDATED: [AuditScope.MILEAGE, AuditVerb.UPDATED] as const,
+    COMPLETED: [AuditScope.MILEAGE, AuditVerb.COMPLETED] as const,
+    DELETED: [AuditScope.MILEAGE, AuditVerb.DELETED] as const,
+    ADJUSTED: [AuditScope.MILEAGE, AuditVerb.ADJUSTED] as const,
+    APPROVED: [AuditScope.MILEAGE, AuditVerb.APPROVED] as const,
+    UNAPPROVED: [AuditScope.MILEAGE, AuditVerb.UNAPPROVED] as const,
+  },
+  GROUP: {
+    CREATED: [AuditScope.GROUP, AuditVerb.CREATED] as const,
+    UPDATED: [AuditScope.GROUP, AuditVerb.UPDATED] as const,
+    ARCHIVED: [AuditScope.GROUP, AuditVerb.RETIRED] as const,
+    UNARCHIVED: [AuditScope.GROUP, AuditVerb.UNRETIRED] as const,
+    // Membership drives equipmentCostPercent, which decides who is billed
+    // for a group equipment rental — money, not bookkeeping.
+    MEMBER_ADDED: [AuditScope.GROUP, AuditVerb.MEMBER_ADDED] as const,
+    MEMBER_REMOVED: [AuditScope.GROUP, AuditVerb.MEMBER_REMOVED] as const,
+    MEMBER_UPDATED: [AuditScope.GROUP, AuditVerb.MEMBER_UPDATED] as const,
+  },
+  VEHICLE: {
+    CREATED: [AuditScope.VEHICLE, AuditVerb.CREATED] as const,
+    UPDATED: [AuditScope.VEHICLE, AuditVerb.UPDATED] as const,
+    ARCHIVED: [AuditScope.VEHICLE, AuditVerb.RETIRED] as const,
+    UNARCHIVED: [AuditScope.VEHICLE, AuditVerb.UNRETIRED] as const,
+    // Assignment gates whether a worker can log deductible miles.
+    ASSIGNED: [AuditScope.VEHICLE, AuditVerb.ASSIGNED] as const,
+    UNASSIGNED: [AuditScope.VEHICLE, AuditVerb.UNASSIGNED] as const,
+  },
+  CHANGE_REQUEST: {
+    CREATED: [AuditScope.CHANGE_REQUEST, AuditVerb.CREATED] as const,
+    APPROVED: [AuditScope.CHANGE_REQUEST, AuditVerb.APPROVED] as const,
+    DENIED: [AuditScope.CHANGE_REQUEST, AuditVerb.DENIED] as const,
+    CANCELED: [AuditScope.CHANGE_REQUEST, AuditVerb.CANCELED] as const,
+  },
+  EQUIPMENT_COLLECTION: {
+    CREATED: [AuditScope.EQUIPMENT_COLLECTION, AuditVerb.CREATED] as const,
+    UPDATED: [AuditScope.EQUIPMENT_COLLECTION, AuditVerb.UPDATED] as const,
+    DELETED: [AuditScope.EQUIPMENT_COLLECTION, AuditVerb.DELETED] as const,
+  },
+  CALENDAR_FEED: {
+    // Minting one hands out a bearer token that reads a worker's schedule
+    // without authentication.
+    CREATED: [AuditScope.CALENDAR_FEED, AuditVerb.CREATED] as const,
+    DELETED: [AuditScope.CALENDAR_FEED, AuditVerb.DELETED] as const,
   },
 } as const;
 

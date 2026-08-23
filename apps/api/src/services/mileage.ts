@@ -20,6 +20,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { prisma } from "../db/prisma";
 import { etFormatDate, etToday } from "../lib/dates";
+import { writeAudit } from "../lib/auditLogger";
+import { AUDIT } from "../lib/auditActions";
 
 const DEFAULT_NOTE = "Using vehicle to service lawns";
 // When a worker Stops and Starts back on the same vehicle within
@@ -106,24 +108,58 @@ export async function startEntry(params: {
       // Continuation: reopen the previous entry. The eventual Stop
       // will recompute miles from the original startOdometer to the
       // final endOdometer, so nothing is lost.
-      return prisma.mileageEntry.update({
-        where: { id: lastClosed.id },
-        data: {
-          endedAt: null,
-          endOdometer: null,
-          miles: null,
-        },
+      return prisma.$transaction(async (tx) => {
+        const reopened = await tx.mileageEntry.update({
+          where: { id: lastClosed.id },
+          data: {
+            endedAt: null,
+            endOdometer: null,
+            miles: null,
+          },
+        });
+        // A reopen silently destroys an already-computed `miles` figure
+        // — the deductible number the entry carried a second ago. The
+        // row itself keeps no trace of that, so the audit metadata is
+        // the only place the discarded close survives.
+        await writeAudit(tx, AUDIT.MILEAGE.CREATED, params.driverUserId, {
+          mileageEntryId: reopened.id,
+          vehicleId: reopened.vehicleId,
+          driverUserId: reopened.driverUserId,
+          entryDate: reopened.entryDate,
+          reopenedContinuation: true,
+          startedAt: reopened.startedAt,
+          startOdometer: reopened.startOdometer,
+          clearedEndedAt: lastClosed.endedAt,
+          clearedEndOdometer: lastClosed.endOdometer,
+          clearedMiles: lastClosed.miles,
+        });
+        return reopened;
       });
     }
   }
-  return prisma.mileageEntry.create({
-    data: {
-      vehicleId: params.vehicleId,
-      driverUserId: params.driverUserId,
-      entryDate: etFormatDate(startedAt),
-      startedAt,
-      startOdometer: params.startOdometer,
-    },
+  return prisma.$transaction(async (tx) => {
+    const created = await tx.mileageEntry.create({
+      data: {
+        vehicleId: params.vehicleId,
+        driverUserId: params.driverUserId,
+        entryDate: etFormatDate(startedAt),
+        startedAt,
+        startOdometer: params.startOdometer,
+      },
+    });
+    // Miles are a tax deduction and a reimbursement basis, so a session
+    // needs provenance from the moment it opens — not just when it
+    // closes with a number attached.
+    await writeAudit(tx, AUDIT.MILEAGE.CREATED, params.driverUserId, {
+      mileageEntryId: created.id,
+      vehicleId: created.vehicleId,
+      driverUserId: created.driverUserId,
+      entryDate: created.entryDate,
+      reopenedContinuation: false,
+      startedAt: created.startedAt,
+      startOdometer: created.startOdometer,
+    });
+    return created;
   });
 }
 
@@ -134,6 +170,10 @@ export async function finalizeEntry(params: {
   endOdometer: number;
   endedAt?: Date;
   notes?: string | null;
+  /** Who tapped Stop. Defaults to the entry's own driver — the worker
+   *  route verifies ownership before calling. Pass explicitly if an
+   *  admin ever closes a session on a worker's behalf. */
+  actorUserId?: string;
 }) {
   const entry = await prisma.mileageEntry.findUnique({
     where: { id: params.entryId },
@@ -154,8 +194,8 @@ export async function finalizeEntry(params: {
   const notes =
     params.notes == null || params.notes.trim() === "" ? DEFAULT_NOTE : params.notes.trim();
 
-  const [updated] = await prisma.$transaction([
-    prisma.mileageEntry.update({
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.mileageEntry.update({
       where: { id: entry.id },
       data: {
         endedAt,
@@ -163,12 +203,12 @@ export async function finalizeEntry(params: {
         miles,
         notes,
       },
-    }),
+    });
     // Cache the odometer reading on the vehicle for next-session
     // prefill. Only overwrite when the new reading is at or past the
     // cached value — protects against out-of-order edits (rare, but
     // possible if Super retroactively adjusts an earlier entry).
-    prisma.vehicle.updateMany({
+    await tx.vehicle.updateMany({
       where: {
         id: entry.vehicleId,
         OR: [
@@ -177,9 +217,28 @@ export async function finalizeEntry(params: {
         ],
       },
       data: { currentOdometer: params.endOdometer },
-    }),
-  ]);
-  return updated;
+    });
+    // Stop is where `miles` first exists — the figure that flows into
+    // the mileage deduction and the worker's reimbursement. Record both
+    // odometer endpoints so the derivation can be re-checked later.
+    await writeAudit(
+      tx,
+      AUDIT.MILEAGE.COMPLETED,
+      params.actorUserId ?? entry.driverUserId,
+      {
+        mileageEntryId: updated.id,
+        vehicleId: updated.vehicleId,
+        driverUserId: updated.driverUserId,
+        entryDate: updated.entryDate,
+        startedAt: updated.startedAt,
+        endedAt: updated.endedAt,
+        startOdometer: updated.startOdometer,
+        endOdometer: updated.endOdometer,
+        miles: updated.miles,
+      },
+    );
+    return updated;
+  });
 }
 
 /**
@@ -202,6 +261,9 @@ export async function superCreateMileageEntry(params: {
   startOdometer: number;
   endOdometer: number;
   notes?: string | null;
+  /** The Super doing the backfill. Distinct from driverUserId — the
+   *  miles land on the worker's record but somebody else typed them. */
+  actorUserId?: string | null;
 }) {
   if (!Number.isFinite(params.startOdometer) || params.startOdometer < 0) {
     throw new Error("startOdometer must be a non-negative number");
@@ -222,8 +284,8 @@ export async function superCreateMileageEntry(params: {
     params.notes == null || params.notes.trim() === ""
       ? DEFAULT_NOTE
       : params.notes.trim();
-  const [created] = await prisma.$transaction([
-    prisma.mileageEntry.create({
+  return prisma.$transaction(async (tx) => {
+    const created = await tx.mileageEntry.create({
       data: {
         vehicleId: params.vehicleId,
         driverUserId: params.driverUserId,
@@ -235,12 +297,12 @@ export async function superCreateMileageEntry(params: {
         miles,
         notes,
       },
-    }),
+    });
     // Advance the vehicle's cached odometer if this entry ended past
     // the current value — same "only forward" rule finalizeEntry
     // uses, so an admin backfill from months ago doesn't rewind the
     // cache.
-    prisma.vehicle.updateMany({
+    await tx.vehicle.updateMany({
       where: {
         id: params.vehicleId,
         OR: [
@@ -249,18 +311,61 @@ export async function superCreateMileageEntry(params: {
         ],
       },
       data: { currentOdometer: params.endOdometer },
-    }),
-  ]);
-  return created;
+    });
+    // Deductible miles invented on someone else's behalf, with no
+    // worker action behind them. Both parties go in the metadata so
+    // "who claimed these miles?" is answerable.
+    await writeAudit(tx, AUDIT.MILEAGE.CREATED, params.actorUserId ?? null, {
+      mileageEntryId: created.id,
+      vehicleId: created.vehicleId,
+      driverUserId: created.driverUserId,
+      subjectUserId: created.driverUserId,
+      entryDate: created.entryDate,
+      superBackfill: true,
+      startedAt: created.startedAt,
+      endedAt: created.endedAt,
+      startOdometer: created.startOdometer,
+      endOdometer: created.endOdometer,
+      miles: created.miles,
+    });
+    return created;
+  });
 }
 
 /** Cancel an open entry without saving miles. Used by the driver when
  *  they tap Start by mistake. */
-export async function cancelEntry(entryId: string) {
+export async function cancelEntry(entryId: string, actorUserId?: string) {
   const entry = await prisma.mileageEntry.findUnique({ where: { id: entryId } });
   if (!entry) throw new Error("Mileage entry not found.");
   if (entry.endedAt) throw new Error("Can't cancel a closed entry.");
-  return prisma.mileageEntry.delete({ where: { id: entry.id } });
+  return prisma.$transaction(async (tx) => {
+    const deleted = await tx.mileageEntry.delete({ where: { id: entry.id } });
+    // Hard delete — the row is gone, so the snapshot below is the only
+    // surviving evidence that a session was ever opened against this
+    // vehicle.
+    await writeAudit(
+      tx,
+      AUDIT.MILEAGE.DELETED,
+      actorUserId ?? entry.driverUserId,
+      {
+        mileageEntryId: entry.id,
+        vehicleId: entry.vehicleId,
+        driverUserId: entry.driverUserId,
+        entryDate: entry.entryDate,
+        reason: "driver_cancelled_open_entry",
+        deletedRow: {
+          startedAt: entry.startedAt,
+          endedAt: entry.endedAt,
+          startOdometer: entry.startOdometer,
+          endOdometer: entry.endOdometer,
+          miles: entry.miles,
+          notes: entry.notes,
+          approvedAt: entry.approvedAt,
+        },
+      },
+    );
+    return deleted;
+  });
 }
 
 /** Driver-side edit — only allowed on entries the driver owns and only
@@ -278,7 +383,7 @@ export async function editEntryByDriver(
   if (entry.approvedAt) {
     throw new Error("Entry has been approved; ask an admin to make changes.");
   }
-  return applyEntryPatch(entry.id, patch);
+  return applyEntryPatch(entry.id, patch, driverUserId);
 }
 
 /** Super-side edit — overrides even approved entries. Use sparingly. */
@@ -291,6 +396,7 @@ export async function adminEditEntry(
     startedAt?: Date;
     endedAt?: Date | null;
   },
+  actorUserId?: string | null,
 ) {
   const entry = await prisma.mileageEntry.findUnique({ where: { id: entryId } });
   if (!entry) throw new Error("Mileage entry not found.");
@@ -302,17 +408,79 @@ export async function adminEditEntry(
   if (patch.endedAt !== undefined) {
     data.endedAt = patch.endedAt;
   }
-  return prisma.mileageEntry.update({ where: { id: entry.id }, data });
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.mileageEntry.update({
+      where: { id: entry.id },
+      data,
+    });
+    // The only path that can rewrite an APPROVED entry — i.e. change a
+    // deductible/reimbursable number after it was signed off. Full
+    // before/after so the edit is reconstructable at tax time.
+    await writeAudit(tx, AUDIT.MILEAGE.ADJUSTED, actorUserId ?? null, {
+      mileageEntryId: entry.id,
+      vehicleId: entry.vehicleId,
+      driverUserId: entry.driverUserId,
+      subjectUserId: entry.driverUserId,
+      wasApproved: entry.approvedAt != null,
+      before: {
+        startOdometer: entry.startOdometer,
+        endOdometer: entry.endOdometer,
+        miles: entry.miles,
+        startedAt: entry.startedAt,
+        endedAt: entry.endedAt,
+        entryDate: entry.entryDate,
+        notes: entry.notes,
+      },
+      after: {
+        startOdometer: updated.startOdometer,
+        endOdometer: updated.endOdometer,
+        miles: updated.miles,
+        startedAt: updated.startedAt,
+        endedAt: updated.endedAt,
+        entryDate: updated.entryDate,
+        notes: updated.notes,
+      },
+    });
+    return updated;
+  });
 }
 
 async function applyEntryPatch(
   entryId: string,
   patch: { startOdometer?: number; endOdometer?: number; notes?: string | null },
+  actorUserId: string,
 ) {
   const entry = await prisma.mileageEntry.findUnique({ where: { id: entryId } });
   if (!entry) throw new Error("Mileage entry not found.");
   const data = await applyEntryPatchData(entry, patch);
-  return prisma.mileageEntry.update({ where: { id: entry.id }, data });
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.mileageEntry.update({
+      where: { id: entry.id },
+      data,
+    });
+    // A driver correcting their own odometers recomputes `miles`, so
+    // this is a self-service edit to the number they'll be reimbursed
+    // for. Before/after keeps the pre-edit claim visible to review.
+    await writeAudit(tx, AUDIT.MILEAGE.UPDATED, actorUserId, {
+      mileageEntryId: entry.id,
+      vehicleId: entry.vehicleId,
+      driverUserId: entry.driverUserId,
+      entryDate: entry.entryDate,
+      before: {
+        startOdometer: entry.startOdometer,
+        endOdometer: entry.endOdometer,
+        miles: entry.miles,
+        notes: entry.notes,
+      },
+      after: {
+        startOdometer: updated.startOdometer,
+        endOdometer: updated.endOdometer,
+        miles: updated.miles,
+        notes: updated.notes,
+      },
+    });
+    return updated;
+  });
 }
 
 async function applyEntryPatchData(
@@ -401,9 +569,25 @@ export async function approveEntry(entryId: string, approverId: string) {
   if (!entry.endedAt) {
     throw new Error("Can't approve an open entry — stop the session first.");
   }
-  return prisma.mileageEntry.update({
-    where: { id: entry.id },
-    data: { approvedAt: new Date(), approvedById: approverId },
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.mileageEntry.update({
+      where: { id: entry.id },
+      data: { approvedAt: new Date(), approvedById: approverId },
+    });
+    // Approval is the sign-off that turns a claim into payable /
+    // deductible miles, and it locks the row against driver edits.
+    await writeAudit(tx, AUDIT.MILEAGE.APPROVED, approverId, {
+      mileageEntryId: updated.id,
+      vehicleId: updated.vehicleId,
+      driverUserId: updated.driverUserId,
+      subjectUserId: updated.driverUserId,
+      entryDate: updated.entryDate,
+      miles: updated.miles,
+      startOdometer: updated.startOdometer,
+      endOdometer: updated.endOdometer,
+      approvedAt: updated.approvedAt,
+    });
+    return updated;
   });
 }
 
@@ -416,24 +600,71 @@ export async function approveWorkerDay(
   approverId: string,
 ) {
   const now = new Date();
-  const result = await prisma.mileageEntry.updateMany({
+  // Snapshot the target set before the bulk update — afterwards the
+  // "unapproved on this date" filter no longer selects these rows, so
+  // this is the only chance to name what the batch covered.
+  const pending = await prisma.mileageEntry.findMany({
     where: {
       driverUserId: userId,
       entryDate,
       approvedAt: null,
       endedAt: { not: null },
     },
-    data: { approvedAt: now, approvedById: approverId },
+    select: { id: true, miles: true },
   });
-  return { approvedCount: result.count };
+  return prisma.$transaction(async (tx) => {
+    const result = await tx.mileageEntry.updateMany({
+      where: {
+        driverUserId: userId,
+        entryDate,
+        approvedAt: null,
+        endedAt: { not: null },
+      },
+      data: { approvedAt: now, approvedById: approverId },
+    });
+    // One row for the batch: a bulk sign-off is a single operator
+    // decision, but it can move a whole day of deductible miles.
+    if (result.count > 0) {
+      await writeAudit(tx, AUDIT.MILEAGE.APPROVED, approverId, {
+        driverUserId: userId,
+        subjectUserId: userId,
+        entryDate,
+        bulk: true,
+        approvedCount: result.count,
+        mileageEntryIds: pending.map((e) => e.id),
+        totalMiles: pending.reduce((sum, e) => sum + (e.miles ?? 0), 0),
+        approvedAt: now,
+      });
+    }
+    return { approvedCount: result.count };
+  });
 }
 
 /** Reverse an approval — Super only. Unlocks the row for further
  *  edits without deleting the underlying data. */
-export async function unapproveEntry(entryId: string) {
-  return prisma.mileageEntry.update({
-    where: { id: entryId },
-    data: { approvedAt: null, approvedById: null },
+export async function unapproveEntry(entryId: string, actorUserId?: string | null) {
+  // Read first: the update nulls approvedById, so who signed this off
+  // is unrecoverable from the row once the write lands.
+  const entry = await prisma.mileageEntry.findUnique({ where: { id: entryId } });
+  if (!entry) throw new Error("Mileage entry not found.");
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.mileageEntry.update({
+      where: { id: entry.id },
+      data: { approvedAt: null, approvedById: null },
+    });
+    // Reversing an approval reopens the row for edits and erases the
+    // prior approver — preserve both here.
+    await writeAudit(tx, AUDIT.MILEAGE.UNAPPROVED, actorUserId ?? null, {
+      mileageEntryId: entry.id,
+      vehicleId: entry.vehicleId,
+      driverUserId: entry.driverUserId,
+      subjectUserId: entry.driverUserId,
+      entryDate: entry.entryDate,
+      miles: entry.miles,
+      previousApprovedById: entry.approvedById,
+      previousApprovedAt: entry.approvedAt,
+    });
+    return updated;
   });
 }
 
@@ -444,13 +675,37 @@ export async function unapproveEntry(entryId: string) {
  *  can't be silently erased; unapprove first, then reject. Symmetric
  *  with the worker's own cancelEntry — same underlying delete, just
  *  gated for the super's use on both open AND closed rows. */
-export async function rejectEntry(entryId: string) {
+export async function rejectEntry(entryId: string, actorUserId?: string | null) {
   const entry = await prisma.mileageEntry.findUnique({ where: { id: entryId } });
   if (!entry) throw new Error("Mileage entry not found.");
   if (entry.approvedAt) {
     throw new Error("Entry is approved — Unapprove it first before rejecting.");
   }
-  return prisma.mileageEntry.delete({ where: { id: entry.id } });
+  return prisma.$transaction(async (tx) => {
+    const deleted = await tx.mileageEntry.delete({ where: { id: entry.id } });
+    // Destructive and unilateral: a worker's logged miles disappear
+    // without their involvement. The full destroyed row lives in the
+    // metadata so a disputed rejection can be reconstructed.
+    await writeAudit(tx, AUDIT.MILEAGE.DELETED, actorUserId ?? null, {
+      mileageEntryId: entry.id,
+      vehicleId: entry.vehicleId,
+      driverUserId: entry.driverUserId,
+      subjectUserId: entry.driverUserId,
+      entryDate: entry.entryDate,
+      reason: "super_rejected_entry",
+      deletedRow: {
+        startedAt: entry.startedAt,
+        endedAt: entry.endedAt,
+        startOdometer: entry.startOdometer,
+        endOdometer: entry.endOdometer,
+        miles: entry.miles,
+        notes: entry.notes,
+        approvedAt: entry.approvedAt,
+        approvedById: entry.approvedById,
+      },
+    });
+    return deleted;
+  });
 }
 
 /** Aggregate per-vehicle totals for a date range. Powers the admin

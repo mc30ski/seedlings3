@@ -45,17 +45,33 @@ const mocks = vi.hoisted(() => ({
     findUnique: (vi.fn as any)(),
   },
   promotionClick: { create: (vi.fn as any)() },
+  // Audit rows are written alongside the mutations these scenarios drive.
+  auditEvent: { create: (vi.fn as any)().mockResolvedValue({}) },
 }));
 
-vi.mock("../db/prisma", () => ({
-  prisma: {
+vi.mock("../db/prisma", () => {
+  // The mocked client needs `auditEvent` and `$transaction` because
+  // services now write audit rows inside the same transaction as the
+  // mutation (see feedback-audit-every-mutation). Without these the
+  // service under test throws "prisma.$transaction is not a function"
+  // and the audit call can't be exercised at all.
+  //
+  // `$transaction` supports BOTH shapes Prisma offers: the interactive
+  // callback form (fn(tx)) and the array form ([p1, p2]). Handing the
+  // callback the same mock object means a tx-scoped write and a direct
+  // write land on the same spies.
+  const client: any = {
     setting: mocks.setting,
     clientContact: mocks.clientContact,
     promotion: mocks.promotion,
     promotionDelivery: mocks.promotionDelivery,
     promotionClick: mocks.promotionClick,
-  },
-}));
+    auditEvent: mocks.auditEvent,
+  };
+  client.$transaction = async (arg: any) =>
+    typeof arg === "function" ? await arg(client) : await Promise.all(arg);
+  return { prisma: client };
+});
 
 // Mock socialLinks (dynamic-imported by loadLandingPageForPublic — not
 // tested here but the import path is walked by service module init).

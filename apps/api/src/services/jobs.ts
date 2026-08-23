@@ -1788,8 +1788,28 @@ export const jobs: ServicesJobs = {
               await tx.jobOccurrence.delete({ where: { id: nextOcc.id } });
             }
           }
+          // Snapshot the money rows BEFORE destroying them. The only audit
+          // this path used to write was OCCURRENCE_UPDATED, whose metadata
+          // is {occurrenceId, record} — so a deleted Payment and its splits
+          // left no trace of the amount, the method, or who was owed what.
+          // On a cash-basis book running real payroll, that's the trail you
+          // need most when a revert is questioned later.
+          const doomedSplits = await tx.paymentSplit.findMany({
+            where: { paymentId: existingPayment.id },
+            select: { userId: true, amount: true, netAmount: true, ownerEarnings: true },
+          });
           await tx.paymentSplit.deleteMany({ where: { paymentId: existingPayment.id } });
           await tx.payment.delete({ where: { id: existingPayment.id } });
+          await writeAudit(tx, AUDIT.PAYMENT.DELETED, currentUserId, {
+            paymentId: existingPayment.id,
+            occurrenceId,
+            reason: "occurrence_reverted_from_closed",
+            amountPaid: existingPayment.amountPaid,
+            method: existingPayment.method,
+            confirmed: existingPayment.confirmed,
+            receiptNumber: existingPayment.receiptNumber,
+            splits: doomedSplits,
+          });
           // DESIGN NOTE — we intentionally DO NOT delete any
           // GuaranteedPayoutAdvance rows tied to this occurrence here,
           // even though they reference a payment we just deleted. The
@@ -1837,11 +1857,6 @@ export const jobs: ServicesJobs = {
         });
       }
 
-      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, currentUserId, {
-        occurrenceId,
-        record: updated,
-      });
-
       // Cascade startAt change to linked occurrences — sync to same date
       let linkedUpdated: string[] = [];
       if (data.startAt && original?.linkGroupId) {
@@ -1861,6 +1876,24 @@ export const jobs: ServicesJobs = {
           linkedUpdated.push(l.id);
         }
       }
+
+      // Money: the service date anchors which reporting/payroll week an
+      // occurrence's payment lands in, and the linked siblings are moved
+      // with it — so the audit is emitted AFTER the cascade and folds the
+      // sibling ids in. Emitted once (not per sibling) because the operator
+      // performed one reschedule.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, currentUserId, {
+        occurrenceId,
+        record: updated,
+        ...(linkedUpdated.length > 0
+          ? {
+              linkGroupId: original?.linkGroupId ?? null,
+              linkedOccurrenceIds: linkedUpdated,
+              linkedOccurrenceCount: linkedUpdated.length,
+              linkedStartAt: (data.startAt as Date).toISOString(),
+            }
+          : {}),
+      });
 
       return { ...updated, _linkedUpdated: linkedUpdated };
     });
@@ -3274,8 +3307,25 @@ export const jobs: ServicesJobs = {
         // Delete payment and splits if they exist
         const existingPayment = await tx.payment.findFirst({ where: { occurrenceId } });
         if (existingPayment) {
+          // Same snapshot-before-destroy as the revert-from-CLOSED path
+          // above — see the comment there for why OCCURRENCE_UPDATED alone
+          // isn't an adequate trail for deleted money rows.
+          const doomedSplits = await tx.paymentSplit.findMany({
+            where: { paymentId: existingPayment.id },
+            select: { userId: true, amount: true, netAmount: true, ownerEarnings: true },
+          });
           await tx.paymentSplit.deleteMany({ where: { paymentId: existingPayment.id } });
           await tx.payment.delete({ where: { id: existingPayment.id } });
+          await writeAudit(tx, AUDIT.PAYMENT.DELETED, currentUserId, {
+            paymentId: existingPayment.id,
+            occurrenceId,
+            reason: "occurrence_reverted_to_scheduled",
+            amountPaid: existingPayment.amountPaid,
+            method: existingPayment.method,
+            confirmed: existingPayment.confirmed,
+            receiptNumber: existingPayment.receiptNumber,
+            splits: doomedSplits,
+          });
         }
       }
 
@@ -3587,8 +3637,16 @@ export const jobs: ServicesJobs = {
     };
   },
 
-  async deleteJob(jobId: string) {
-    const job = await prisma.job.findUnique({ where: { id: jobId } });
+  // `currentUserId` is optional so the existing admin route caller keeps
+  // compiling unchanged; pass it through to attribute the deletion.
+  async deleteJob(jobId: string, currentUserId?: string | null) {
+    const job = await prisma.job.findUnique({
+      where: { id: jobId },
+      include: {
+        schedule: true,
+        property: { select: { id: true, displayName: true, clientId: true } },
+      },
+    });
     if (!job) throw new ServiceError("NOT_FOUND", "Job not found.", 404);
     const occurrenceCount = await prisma.jobOccurrence.count({ where: { jobId } });
     if (occurrenceCount > 0) {
@@ -3598,16 +3656,66 @@ export const jobs: ServicesJobs = {
         409
       );
     }
-    await prisma.jobSchedule.deleteMany({ where: { jobId } });
-    await prisma.job.delete({ where: { id: jobId } });
-    return { deleted: true as const };
+    return prisma.$transaction(async (tx) => {
+      await tx.jobSchedule.deleteMany({ where: { jobId } });
+      await tx.job.delete({ where: { id: jobId } });
+      // Money: the Job row carries defaultPrice — the amount every future
+      // occurrence bills the client — and its schedule drives how often that
+      // charge recurs. Both rows are hard-deleted here, so this snapshot is
+      // the only surviving record of what the client was being billed.
+      await writeAudit(tx, AUDIT.JOB.DELETED, currentUserId ?? null, {
+        jobId,
+        propertyId: job.propertyId,
+        propertyName: job.property?.displayName ?? null,
+        clientId: job.property?.clientId ?? null,
+        kind: job.kind,
+        status: job.status,
+        description: job.description ?? null,
+        notes: job.notes ?? null,
+        defaultPrice: job.defaultPrice ?? null,
+        estimatedMinutes: job.estimatedMinutes ?? null,
+        frequencyDays: job.frequencyDays ?? null,
+        defaultGroupId: job.defaultGroupId ?? null,
+        scheduleDeleted: !!job.schedule,
+        scheduleCadence: job.schedule?.cadence ?? null,
+        scheduleInterval: job.schedule?.interval ?? null,
+        scheduleAutoRenew: job.schedule?.autoRenew ?? null,
+        scheduleActive: job.schedule?.active ?? null,
+        scheduleNextGenerateAt: job.schedule?.nextGenerateAt?.toISOString() ?? null,
+      });
+      return { deleted: true as const };
+    });
   },
 
-  async deleteOccurrence(occurrenceId) {
-    const occ = await prisma.jobOccurrence.findUnique({ where: { id: occurrenceId } });
+  // `currentUserId` is optional so the existing admin route caller keeps
+  // compiling unchanged; pass it through to attribute the deletion.
+  async deleteOccurrence(occurrenceId, currentUserId?: string | null) {
+    const occ = await prisma.jobOccurrence.findUnique({
+      where: { id: occurrenceId },
+      include: { assignees: { select: { userId: true, role: true } } },
+    });
     if (!occ) throw new ServiceError("NOT_FOUND", "Occurrence not found.", 404);
-    await prisma.jobOccurrenceAssignee.deleteMany({ where: { occurrenceId } });
-    await prisma.jobOccurrence.delete({ where: { id: occurrenceId } });
-    return { deleted: true as const };
+    return prisma.$transaction(async (tx) => {
+      await tx.jobOccurrenceAssignee.deleteMany({ where: { occurrenceId } });
+      await tx.jobOccurrence.delete({ where: { id: occurrenceId } });
+      // Money: destroys a billable occurrence — its price/addons (what the
+      // client owes) and its assignee roster (who would have been paid for
+      // it) are gone for good, so both are snapshotted here.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_DELETED, currentUserId ?? null, {
+        occurrenceId,
+        jobId: occ.jobId ?? null,
+        status: occ.status,
+        kind: occ.kind,
+        source: occ.source,
+        startAt: occ.startAt?.toISOString() ?? null,
+        endAt: occ.endAt?.toISOString() ?? null,
+        price: occ.price ?? null,
+        estimatedMinutes: occ.estimatedMinutes ?? null,
+        linkGroupId: occ.linkGroupId ?? null,
+        assigneeUserIds: occ.assignees.map((a) => a.userId),
+        assigneeCount: occ.assignees.length,
+      });
+      return { deleted: true as const };
+    });
   },
 };

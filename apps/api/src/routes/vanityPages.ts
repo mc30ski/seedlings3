@@ -1,6 +1,8 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { Role as RoleVal } from "@prisma/client";
 import { services } from "../services";
+import { writeAudit } from "../lib/auditLogger";
+import { AUDIT } from "../lib/auditActions";
 import {
   listVanityPages,
   getVanityPageById,
@@ -72,43 +74,59 @@ export default async function vanityPagesRoutes(app: FastifyInstance) {
         showHistory?: unknown;
       };
       const { prisma } = await import("../db/prisma");
-      const writes: Promise<unknown>[] = [];
+
+      // These two rows stay on a direct upsert rather than routing through
+      // services.settings.set: that helper's `create` clause carries only
+      // { key, value, updatedById }, so a first-write through it would drop
+      // the `section: "vanity"` grouping and the operator-facing description
+      // the Settings tab renders for these keys. Instead, the SETTING.UPDATED
+      // audit that settings.set would have written is emitted directly below —
+      // with before/after values, which settings.set does not capture.
+      const updates: { key: string; value: string; description: string }[] = [];
       if (typeof body.enabled === "boolean") {
-        writes.push(
-          prisma.setting.upsert({
-            where: { key: "VANITY_STARTUP_ANIMATION_ENABLED" },
-            create: {
-              key: "VANITY_STARTUP_ANIMATION_ENABLED",
-              value: body.enabled ? "true" : "false",
-              section: "vanity",
-              description:
-                "Master kill switch for the app's startup typing animation. When false the splash renders just the logo and fades (no fetch, no typing). Toggle from the Vanity tab or via the Neon SQL Editor as an escape hatch.",
-              updatedById: uid,
-            },
-            update: { value: body.enabled ? "true" : "false", updatedById: uid },
-          }),
-        );
+        updates.push({
+          key: "VANITY_STARTUP_ANIMATION_ENABLED",
+          value: body.enabled ? "true" : "false",
+          description:
+            "Master kill switch for the app's startup typing animation. When false the splash renders just the logo and fades (no fetch, no typing). Toggle from the Vanity tab or via the Neon SQL Editor as an escape hatch.",
+        });
       }
       if (typeof body.showHistory === "boolean") {
-        writes.push(
-          prisma.setting.upsert({
-            where: { key: "VANITY_STARTUP_ANIMATION_SHOW_HISTORY" },
-            create: {
-              key: "VANITY_STARTUP_ANIMATION_SHOW_HISTORY",
-              value: body.showHistory ? "true" : "false",
-              section: "vanity",
-              description:
-                "When true, the app's startup typing animation stacks previously-shown vanity slugs as a muted history below the current line. When false, the history is hidden and only the current line renders.",
-              updatedById: uid,
-            },
-            update: {
-              value: body.showHistory ? "true" : "false",
-              updatedById: uid,
-            },
-          }),
-        );
+        updates.push({
+          key: "VANITY_STARTUP_ANIMATION_SHOW_HISTORY",
+          value: body.showHistory ? "true" : "false",
+          description:
+            "When true, the app's startup typing animation stacks previously-shown vanity slugs as a muted history below the current line. When false, the history is hidden and only the current line renders.",
+        });
       }
-      await Promise.all(writes);
+      if (updates.length > 0) {
+        await prisma.$transaction(async (tx) => {
+          for (const u of updates) {
+            const before = await tx.setting.findUnique({ where: { key: u.key } });
+            await tx.setting.upsert({
+              where: { key: u.key },
+              create: {
+                key: u.key,
+                value: u.value,
+                section: "vanity",
+                description: u.description,
+                updatedById: uid,
+              },
+              update: { value: u.value, updatedById: uid },
+            });
+            // Consequence: org-wide change to what every user sees on app
+            // startup — the master switch suppresses the typing animation
+            // entirely, the history flag hides the stacked slug list.
+            await writeAudit(tx, AUDIT.SETTING.UPDATED, uid, {
+              key: u.key,
+              section: "vanity",
+              valueBefore: before?.value ?? null,
+              valueAfter: u.value,
+              createdRow: before == null,
+            });
+          }
+        });
+      }
       // Return current state (post-write) so the client doesn't need a
       // second GET after a save.
       const [enabledRow, historyRow] = await Promise.all([
