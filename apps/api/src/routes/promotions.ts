@@ -622,7 +622,12 @@ export default async function promotionsRoutes(app: FastifyInstance) {
       return reply.code(409).send({ error: "not_editable" });
     }
     const uid = await currentUserId(req);
-    const payload = (req.body ?? {}) as { slug?: string; headline?: string; intro?: string };
+    // M2: headline/intro are NO LONGER accepted here. They live on the
+    // promotion as shared offer copy now; the columns survive only as the
+    // read-time fallback for pre-collapse promotions. Continuing to accept
+    // them let a stale client overwrite a real headline with "".
+    const body = (req.body ?? {}) as { slug?: string };
+    const payload = { slug: body.slug };
     const page = await ensureLandingPageForPromotion({
       promotionId: promoId,
       actorUserId: uid,

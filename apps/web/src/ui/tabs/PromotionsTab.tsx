@@ -25,7 +25,7 @@ import { apiGet, apiPatch, apiPost, apiDelete } from "@/src/lib/api";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import MarkdownContent from "@/src/ui/components/MarkdownContent";
-import { fmtDate, fmtDateTime, bizInstantFromEtParts, type EtDateKey } from "@/src/lib/lib";
+import { fmtDate, fmtDateTime, bizDateKey, bizInstantFromEtParts, type EtDateKey } from "@/src/lib/lib";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Promotions tab — Super-only surface.
@@ -41,6 +41,71 @@ type PromotionStatus = "DRAFT" | "ACTIVE" | "PAUSED" | "CLOSED";
 type DispatchChannel = "email" | "sms";
 type DisplaySurface = "invoice_page";
 type TriggerKind = "on_invoice_sent" | "manual_send";
+
+/**
+ * What copy does this promotion actually show?
+ *
+ * Mirrors resolveChannelContent() in services/promotions.ts. Shared copy
+ * wins; a per-channel override is used when present; pre-collapse promos
+ * fall back to their legacy invoice_page/email content.
+ *
+ * EVERY preview and every "is there anything to show" check must go
+ * through this. Reading `content.invoice_page` directly is what made the
+ * Preview button render one thing while the editor showed another.
+ */
+export function resolveOfferCopy(
+  content: PromoContent | undefined,
+): { headline?: string; body: string; ctaText?: string } | null {
+  const c = content ?? {};
+  const own = c.invoice_page;
+  const ownBody = own?.body?.trim() ? own.body : undefined;
+  const sharedBody = c.shared?.body?.trim() ? c.shared.body : undefined;
+  const body = ownBody ?? sharedBody;
+  if (!body) return null;
+  return {
+    // `||` not `??` — must match resolveChannelContent on the server.
+    // With `??`, an override headline of "" made the PREVIEW drop the
+    // headline while the live invoice rendered the shared one.
+    headline: own?.headline || c.shared?.headline,
+    body,
+    ctaText: own?.ctaText?.trim() ? own.ctaText : c.shared?.ctaText,
+  };
+}
+
+/**
+ * Normalize content before it goes to the server.
+ *
+ * Two jobs, both bugs that shipped:
+ *
+ *  1. DROP EMPTY OVERRIDES. A blank `{ body: "" }` fails `min(1)` on save
+ *     and made it impossible to create a promotion with the invoice
+ *     surface at all — there is no UI that can fill that field any more.
+ *
+ *  2. RETIRE STALE OVERRIDES. A pre-collapse promo carries its copy in
+ *     `invoice_page`. The editor seeds "The offer" from it, but if the
+ *     override survives the save, the invoice keeps rendering the OLD text
+ *     (override wins) while the landing page renders the NEW shared text
+ *     (which ignores overrides). Same promotion, two client-facing
+ *     surfaces, different words. So an override that still matches what
+ *     shared was seeded from is dropped — it was inherited scaffolding,
+ *     not something the operator deliberately customized.
+ */
+function cleanContentForSave(content: PromoContent): PromoContent {
+  const out: PromoContent = { ...content };
+  const sharedBody = out.shared?.body?.trim();
+
+  for (const key of ["sms", "email", "invoice_page"] as const) {
+    const ov = out[key] as { body?: string } | undefined;
+    if (!ov) continue;
+    // (1) blank override — never a real customization.
+    if (!ov.body?.trim()) { delete out[key]; continue; }
+    // (2) override identical to the shared copy — inherited, not authored.
+    if (sharedBody && ov.body.trim() === sharedBody) { delete out[key]; }
+  }
+  // A shared block with no body is scaffolding too.
+  if (out.shared && !sharedBody) delete out.shared;
+  return out;
+}
 
 type PromoContent = {
   /** The ONE set of copy. Title + description, written once, rendered on
@@ -621,7 +686,7 @@ function PromotionDetail({
               Edit, which is the state an operator is usually in when
               they want to eyeball it. */}
           {(promotion.displaySurfaces ?? []).includes("invoice_page")
-            && promotion.content?.invoice_page && (
+            && resolveOfferCopy(promotion.content) && (
             <Button size="xs" variant="outline" colorPalette="blue" onClick={() => setPreviewInvoice(true)}>
               <Eye size={12} />
               <Text ml={1}>Preview invoice</Text>
@@ -676,9 +741,9 @@ function PromotionDetail({
           onCancel={() => setDeleting(null)}
         />
       )}
-      {previewInvoice && promotion.content?.invoice_page && (
+      {previewInvoice && resolveOfferCopy(promotion.content) && (
           <InvoicePreviewDialog
-            content={promotion.content.invoice_page}
+            content={resolveOfferCopy(promotion.content)!}
             promoId={promotion.linkKind === "LANDING_PAGE" ? promotion.id : null}
             onClose={() => setPreviewInvoice(false)}
           />
@@ -868,8 +933,18 @@ function PromotionEditor({
   const [displaySurfaces, setDisplaySurfaces] = useState<DisplaySurface[]>(initial?.displaySurfaces ?? []);
   const [triggerKind, setTriggerKind] = useState<TriggerKind | null>(initial?.triggerKind ?? null);
   const [cooldownDays, setCooldownDays] = useState(initial?.cooldownDays ?? 7);
-  const [startAt, setStartAt] = useState(initial?.startAt ? initial.startAt.slice(0, 10) : "");
-  const [endAt, setEndAt] = useState(initial?.endAt ? initial.endAt.slice(0, 10) : "");
+  // Slicing the first 10 chars off a UTC ISO string is NOT the ET calendar
+  // day. `endAt` is stored as end-of-day ET (23:59 → 04:59Z the NEXT day),
+  // so `.slice(0,10)` yielded tomorrow, and the next Save re-anchored that
+  // at 23:59 ET. The end date crept forward one day on EVERY edit —
+  // silently, forever. bizDateKey converts an instant to its ET calendar
+  // day, which is what these inputs mean.
+  const [startAt, setStartAt] = useState<string>(
+    initial?.startAt ? bizDateKey(initial.startAt) : "",
+  );
+  const [endAt, setEndAt] = useState<string>(
+    initial?.endAt ? bizDateKey(initial.endAt) : "",
+  );
   const [content, setContent] = useState<PromoContent>(() => {
     const c: PromoContent = initial?.content ?? {};
     if (c.shared?.body?.trim()) return c;
@@ -879,16 +954,29 @@ function PromotionEditor({
     // copy looks deleted, even though the page still renders it via the
     // server-side fallback. Seed the shared block from whichever channel
     // has content so they see their own words, and saving normalizes it.
-    const src = c.invoice_page ?? c.email ?? c.sms;
+    // Use the SAME resolver the previews use, so the editor can never show
+    // different copy than the Preview button does. Falling back to email or
+    // sms covers dispatch-only promos with no invoice content.
+    const resolved = resolveOfferCopy(c);
+    const src = resolved ?? c.email ?? c.sms;
     if (!src?.body?.trim()) return c;
-    return {
+    // Promote the legacy copy into `shared` AND retire the override it came
+    // from, in the same step. Leaving the override behind is what made an
+    // edited promo show old copy on the invoice (override wins) and new
+    // copy on the landing page (which ignores overrides) — the same
+    // campaign contradicting itself on two client-facing surfaces.
+    //
+    // cleanContentForSave drops any override whose body now equals the
+    // shared body, which is exactly the one we just seeded from. Overrides
+    // that genuinely differ (a hand-written short SMS) survive.
+    return cleanContentForSave({
       ...c,
       shared: {
-        headline: c.invoice_page?.headline ?? c.email?.subject,
+        headline: resolved?.headline ?? c.email?.subject,
         body: src.body,
         ctaText: src.ctaText ?? "",
       },
-    };
+    });
   });
   const [shortSlug, setShortSlug] = useState(initial?.shortSlug ?? "");
   const [baseDomain, setBaseDomain] = useState<string>(initial?.baseDomain ?? "");
@@ -964,23 +1052,22 @@ function PromotionEditor({
     ? `${previewSlug.length} characters — long for a text message. Every character counts toward the SMS segment, and going over bills as two.`
     : null;
 
+  // Enabling a channel or surface must NOT create a content shell.
+  //
+  // It used to seed `{ body: "", ctaText: "" }` so the old per-channel
+  // editor had something to bind to. After the copy collapse that shell is
+  // poison: an empty body fails `min(1)` on save, the panel reads it as a
+  // deliberate "Customized" override and hides the inherit state, and
+  // unticking never removed it — so trying Invoice page, changing your
+  // mind, and picking Email still 400'd on the surface you turned off.
+  //
+  // Channels inherit "The offer" now. An override exists ONLY when the
+  // operator clicks Customize, which seeds it from the shared copy.
   function toggleChannel(c: DispatchChannel) {
     setDispatchChannels((prev) => prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]);
-    // Seed empty content shell when a channel gets enabled so the panel renders.
-    setContent((prev) => {
-      if (prev[c]) return prev;
-      if (c === "sms") return { ...prev, sms: { body: "", ctaText: "" } };
-      if (c === "email") return { ...prev, email: { subject: "", body: "", ctaText: "" } };
-      return prev;
-    });
   }
   function toggleSurface(s: DisplaySurface) {
     setDisplaySurfaces((prev) => prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]);
-    setContent((prev) => {
-      if (prev[s]) return prev;
-      if (s === "invoice_page") return { ...prev, invoice_page: { body: "", ctaText: "" } };
-      return prev;
-    });
   }
 
   async function save() {
@@ -1004,7 +1091,7 @@ function PromotionEditor({
         // "endOfDay ET" semantics per docs/DATE_HANDLING.md.
         startAt: startAt ? bizInstantFromEtParts(startAt as EtDateKey, "00:00") : null,
         endAt: endAt ? bizInstantFromEtParts(endAt as EtDateKey, "23:59") : null,
-        content,
+        content: cleanContentForSave(content),
         // Short URL fields. Empty → null (fall back to legacy long URLs
         // for shortSlug; fall back to primary domain for baseDomain).
         shortSlug: shortSlug.trim() ? shortSlug.trim().toLowerCase() : null,
@@ -1037,7 +1124,16 @@ function PromotionEditor({
       }
       onSaved();
     } catch (err: any) {
-      publishInlineMessage({ type: "ERROR", text: err?.message ?? String(err) });
+      // The API returns { error:"validation", issues:[{path,message}] }.
+      // Rendering only err.message showed a bare "HTTP 400" with no clue
+      // which field was wrong — unfixable from the operator's side.
+      const issues = err?.body?.issues ?? err?.issues ?? err?.data?.issues;
+      const detail = Array.isArray(issues) && issues.length
+        ? issues
+            .map((i: any) => `${(i.path ?? []).join(".") || "form"}: ${i.message}`)
+            .join(" · ")
+        : (err?.body?.detail ?? err?.detail ?? err?.message ?? String(err));
+      publishInlineMessage({ type: "ERROR", text: `Couldn't save — ${detail}` });
     } finally {
       setBusy(false);
     }
