@@ -833,4 +833,92 @@ export default async function promotionsRoutes(app: FastifyInstance) {
       return { ok: true };
     },
   );
+
+  // ── Invoice photos ─────────────────────────────────────────────────────
+  // Uploaded independently of the landing page's items. The invoice used to
+  // borrow "the first photo of the first landing item", which coupled two
+  // unrelated surfaces — reordering landing items silently changed every
+  // client's invoice — and left EXTERNAL-link promos (no landing page)
+  // unable to show an image at all.
+
+  // List a promotion's invoice photos in display order, with signed URLs.
+  app.get("/super/promotions/:id/invoice-photos", superGuard, async (req: any) => {
+    const { listInvoicePhotos } = await import("../services/promotions");
+    return { photos: await listInvoicePhotos(String(req.params.id)) };
+  });
+
+  // Presigned PUT for a new invoice photo. Client uploads straight to R2,
+  // then calls confirm below with the returned key.
+  app.post(
+    "/super/promotions/:id/invoice-photos/upload-url",
+    superGuard,
+    async (req: any, reply: any) => {
+      const promotionId = String(req.params.id);
+      const body = (req.body ?? {}) as { contentType?: string };
+      const contentType = body.contentType || "image/jpeg";
+      // Verify the promotion exists before minting a presigned URL — an
+      // upload keyed to a nonexistent promotion strands bytes in R2 that
+      // nothing references and no cleanup path ever visits.
+      const promo = await prisma.promotion.findUnique({
+        where: { id: promotionId },
+        select: { id: true },
+      });
+      if (!promo) return reply.code(404).send({ error: "not_found" });
+      const { getInvoicePhotoUploadUrl } = await import("../services/promotions");
+      const res = await getInvoicePhotoUploadUrl({ promotionId, contentType });
+      return { ...res, contentType };
+    },
+  );
+
+  // Confirm after the client PUT to R2 succeeds. Appends to the promotion's
+  // invoice photos.
+  app.post(
+    "/super/promotions/:id/invoice-photos/confirm",
+    superGuard,
+    async (req: any, reply: any) => {
+      const body = (req.body ?? {}) as { key?: string; contentType?: string };
+      if (!body.key) return reply.code(400).send({ error: "key_required" });
+      const { confirmInvoicePhotoUpload } = await import("../services/promotions");
+      const created = await confirmInvoicePhotoUpload({
+        promotionId: String(req.params.id),
+        key: body.key,
+        contentType: body.contentType || "image/jpeg",
+        actorUserId: await currentUserId(req),
+      });
+      return { ok: true, photoId: created.id };
+    },
+  );
+
+  // Delete one invoice photo. Explicit action — uploading another appends
+  // rather than replacing, so removal has to be deliberate.
+  app.delete(
+    "/super/promotions/invoice-photos/:photoId",
+    superGuard,
+    async (req: any) => {
+      const { deleteInvoicePhoto } = await import("../services/promotions");
+      await deleteInvoicePhoto(String(req.params.photoId), await currentUserId(req));
+      return { ok: true };
+    },
+  );
+
+  // Reorder invoice photos. Body: { photoIds: string[] } in the desired
+  // order; position 0 becomes the cover beside the promo text. Ids not
+  // belonging to this promotion are ignored by the service.
+  app.post(
+    "/super/promotions/:id/invoice-photos/reorder",
+    superGuard,
+    async (req: any, reply: any) => {
+      const body = (req.body ?? {}) as { photoIds?: unknown };
+      if (!Array.isArray(body.photoIds)) {
+        return reply.code(400).send({ error: "photoIds_required" });
+      }
+      const { reorderInvoicePhotos } = await import("../services/promotions");
+      await reorderInvoicePhotos({
+        promotionId: String(req.params.id),
+        photoIds: body.photoIds.map((x) => String(x)),
+        actorUserId: await currentUserId(req),
+      });
+      return { ok: true };
+    },
+  );
 }

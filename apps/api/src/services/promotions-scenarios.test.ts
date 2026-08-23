@@ -45,6 +45,11 @@ const mocks = vi.hoisted(() => ({
     findUnique: (vi.fn as any)(),
   },
   promotionClick: { create: (vi.fn as any)() },
+  // Invoice photos are looked up per surviving promo by
+  // loadInvoicePagePromos. Defaults to [] so scenarios that don't care
+  // about images (opt-out suppression, surface gating) don't each have to
+  // stub it — the promo simply renders text-only.
+  promotionInvoicePhoto: { findMany: (vi.fn as any)().mockResolvedValue([]) },
   // Audit rows are written alongside the mutations these scenarios drive.
   auditEvent: { create: (vi.fn as any)().mockResolvedValue({}) },
 }));
@@ -66,12 +71,23 @@ vi.mock("../db/prisma", () => {
     promotion: mocks.promotion,
     promotionDelivery: mocks.promotionDelivery,
     promotionClick: mocks.promotionClick,
+    promotionInvoicePhoto: mocks.promotionInvoicePhoto,
     auditEvent: mocks.auditEvent,
   };
   client.$transaction = async (arg: any) =>
     typeof arg === "function" ? await arg(client) : await Promise.all(arg);
   return { prisma: client };
 });
+
+// Mock R2 so photo URLs are deterministic. Without this, getDownloadUrl
+// makes a real presign call, fails (no creds in test), and the service's
+// `.catch(() => null)` swallows it — leaving imageUrls empty and any
+// photo assertion passing for entirely the wrong reason.
+vi.mock("../lib/r2", () => ({
+  getDownloadUrl: (key: string) => Promise.resolve(`https://r2.test/${key}`),
+  getUploadUrl: (key: string) => Promise.resolve(`https://r2.test/upload/${key}`),
+  deleteObject: () => Promise.resolve(undefined),
+}));
 
 // Mock socialLinks (dynamic-imported by loadLandingPageForPublic — not
 // tested here but the import path is walked by service module init).
@@ -124,6 +140,12 @@ function resetMocks() {
   // this, tests that trigger auto-gen crash with "cannot read property
   // 'setting' of undefined" when the upsert returns undefined.
   mocks.setting.upsert.mockResolvedValue({});
+  // Same reasoning for invoice photos: loadInvoicePagePromos looks them up
+  // for every surviving promo, so a bare mockReset() leaves findMany
+  // returning undefined and the service dies on `.map` — in tests that are
+  // about opt-out suppression and have nothing to do with images. Default
+  // to "no photos"; tests that care stub their own rows.
+  mocks.promotionInvoicePhoto.findMany.mockResolvedValue([]);
 }
 
 // ── selectPromotionsForPiggyback — CAN-SPAM fail-closed ─────────────
@@ -639,5 +661,103 @@ describe("runManualSendBurst — pre-flight guard rejections", () => {
     mocks.promotion.findUnique.mockResolvedValue(null);
     await expect(runManualSendBurst({ promotionId: "promo_nonexistent", actorUserId: "u1" }))
       .rejects.toThrow(/not found/i);
+  });
+});
+
+// ── loadInvoicePagePromos — invoice photos ──────────────────────────
+//
+// Invoice photos are uploaded for the invoice surface specifically. They
+// used to be DERIVED from the landing page ("first photo of the first
+// item"), which meant reordering landing items or deleting one item's
+// photo silently changed what every client saw on their invoice, and left
+// EXTERNAL-link promos (no landing page) unable to show any image at all.
+//
+// These tests lock in the decoupling. If one breaks, do not relax it —
+// re-deriving the invoice image from landing content is the exact
+// regression they exist to prevent.
+
+describe("loadInvoicePagePromos — invoice photos are independent of landing items", () => {
+  beforeEach(() => {
+    resetMocks();
+    setSettings();
+  });
+
+  const promoRow = (extras: Partial<any> = {}) => ({
+    id: "p1",
+    status: "ACTIVE",
+    startAt: null,
+    endAt: null,
+    startedAt: new Date("2026-01-01"),
+    dispatchChannels: [] as string[],
+    displaySurfaces: ["invoice_page"],
+    content: { shared: { headline: "Fall", body: "Body", ctaText: "Go" } },
+    link: "https://example.com",
+    linkKind: "EXTERNAL",
+    landingPageId: null,
+    ...extras,
+  });
+
+  it("returns every invoice photo in sortOrder, with imageUrl as the cover", async () => {
+    mocks.promotion.findMany.mockResolvedValue([promoRow()]);
+    mocks.promotionInvoicePhoto.findMany.mockResolvedValue([
+      { r2Key: "promotions/p1/invoice/a" },
+      { r2Key: "promotions/p1/invoice/b" },
+      { r2Key: "promotions/p1/invoice/c" },
+    ]);
+    const out = await loadInvoicePagePromos({ contactId: null });
+    expect(out).toHaveLength(1);
+    expect(out[0].imageUrls).toEqual([
+      "https://r2.test/promotions/p1/invoice/a",
+      "https://r2.test/promotions/p1/invoice/b",
+      "https://r2.test/promotions/p1/invoice/c",
+    ]);
+    // imageUrl is the cover — the FIRST of imageUrls, not an independent
+    // lookup that could drift from it.
+    expect(out[0].imageUrl).toBe(out[0].imageUrls[0]);
+  });
+
+  it("queries PromotionInvoicePhoto by promotionId — never the landing page's items", async () => {
+    mocks.promotion.findMany.mockResolvedValue([
+      // Has a landing page, to prove the landing page is NOT consulted.
+      promoRow({ linkKind: "LANDING_PAGE", link: null, landingPageId: "page-1" }),
+    ]);
+    mocks.promotionInvoicePhoto.findMany.mockResolvedValue([]);
+    await loadInvoicePagePromos({ contactId: null });
+    const call = mocks.promotionInvoicePhoto.findMany.mock.calls[0][0];
+    expect(call.where).toEqual({ promotionId: "p1" });
+    // Ordering is what makes position 0 "the cover" — assert it explicitly
+    // so a silent switch to insertion order can't slip through.
+    expect(call.orderBy).toEqual({ sortOrder: "asc" });
+    // The old implementation reached for landing content here. If a future
+    // edit reintroduces that, this catches it.
+    expect(JSON.stringify(call.where)).not.toContain("pageId");
+    expect(JSON.stringify(call.where)).not.toContain("item");
+  });
+
+  it("EXTERNAL-link promos (no landing page) can now carry invoice photos", async () => {
+    // The regression this whole change exists to fix: under the old
+    // landing-derived rule this promo could never show an image, because
+    // landingPageId was null.
+    mocks.promotion.findMany.mockResolvedValue([
+      promoRow({ linkKind: "EXTERNAL", landingPageId: null }),
+    ]);
+    mocks.promotionInvoicePhoto.findMany.mockResolvedValue([
+      { r2Key: "promotions/p1/invoice/only" },
+    ]);
+    const out = await loadInvoicePagePromos({ contactId: null });
+    expect(out[0].imageUrl).toBe("https://r2.test/promotions/p1/invoice/only");
+    expect(out[0].imageUrls).toHaveLength(1);
+  });
+
+  it("a promo with no invoice photos renders text-only rather than being dropped", async () => {
+    mocks.promotion.findMany.mockResolvedValue([promoRow()]);
+    mocks.promotionInvoicePhoto.findMany.mockResolvedValue([]);
+    const out = await loadInvoicePagePromos({ contactId: null });
+    expect(out).toHaveLength(1);
+    expect(out[0].imageUrl).toBeNull();
+    expect(out[0].imageUrls).toEqual([]);
+    // The offer copy still has to be there — an image is an add-on, never
+    // a precondition for showing the promo.
+    expect(out[0].body).toBe("Body");
   });
 });

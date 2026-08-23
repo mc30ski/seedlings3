@@ -210,13 +210,19 @@ export default function PromotionLandingPage({ promotionSlug, page, ogTitle, ogD
                       : { base: "repeat(auto-fit, minmax(240px, 1fr))", sm: "repeat(auto-fit, minmax(260px, 1fr))" }
                   }
                   justifyContent={page.items.length === 1 ? "center" : "stretch"}
-                  // Cards in a row match heights. With the photo frame now
-                  // fixed (see ItemCard), the only variance left is
-                  // description length, and ragged bottoms look worse than
-                  // a little trailing space. The earlier "one card, mostly
-                  // empty white" problem came from the unbounded photo
-                  // block, not from stretch — the 320px track cap fixed it.
-                  alignItems="stretch"
+                  // Each card ends where its text ends.
+                  //
+                  // This was "stretch", on the theory that ragged bottoms
+                  // look worse than trailing space. They don't: description
+                  // lengths vary a lot (one line vs four), so a short entry
+                  // next to a long one grew a tall column of dead white
+                  // inside its border — the emptiness reads as a rendering
+                  // bug, not as alignment.
+                  //
+                  // The photo frame above is a fixed 4:3 block, so card TOPS
+                  // still line up across the row; only the bottoms differ,
+                  // and only by the height of the text itself.
+                  alignItems="start"
                   gap={{ base: 4, md: 6 }}
                 >
                   {page.items.map((item) => (
@@ -269,7 +275,15 @@ function ItemCard({
       shadow="sm"
       display="flex"
       flexDirection="column"
-      h="100%"
+      // NOT h="100%". A percentage height resolves against the PARENT's
+      // height, and the grid track is now auto-sized (alignItems="start"),
+      // so there is no definite height to resolve against. The spec leaves
+      // that case undefined and browsers split on it: Chrome falls back to
+      // auto and looks right, Safari does not — which is exactly why this
+      // card showed a tall column of dead white in Safari while rendering
+      // correctly in Chrome. `auto` states the result Chrome was reaching
+      // by accident, so both browsers agree.
+      h="auto"
     >
       {/* Photo grid. One photo fills the card's width; several tile into
           squares. Tapping any opens the carousel at that photo, so the

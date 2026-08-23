@@ -1919,8 +1919,50 @@ model Promotion {
   deliveries PromotionDelivery[]
   clicks     PromotionClick[]
 
+  // Photos shown with this promo on the invoice page. Deliberately hung
+  // off Promotion, NOT off the landing page: an EXTERNAL-link promo has
+  // no landing page at all, yet can still target invoice_page — under the
+  // old "first photo of the first landing item" rule those promos could
+  // never show an image. See PromotionInvoicePhoto.
+  invoicePhotos PromotionInvoicePhoto[]
+
   @@index([status])
   @@index([triggerKind, status])
+}
+
+// One photo shown alongside a promotion on the client's invoice page.
+//
+// WHY THIS EXISTS SEPARATELY FROM PromotionLandingPageItemPhoto:
+// the invoice cover used to be derived — "first photo of the first
+// landing-page item". That coupled two unrelated surfaces: reordering
+// landing items, or deleting an item's first photo, silently changed
+// what every client saw on their invoice. It also left EXTERNAL-link
+// promos (no landing page) with no image possible at all.
+//
+// Invoice photos are now uploaded independently and are the ONLY source
+// for the invoice surface. Landing items keep their own photos for the
+// landing page; neither reads the other.
+//
+// Shape mirrors PromotionLandingPageItemPhoto (r2Key + contentType +
+// sortOrder) so the presign → confirm → delete → reorder flow is the
+// same one used by every other photo surface in the app.
+model PromotionInvoicePhoto {
+  id          String    @id @default(cuid())
+  promotionId String
+  promotion   Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+
+  // R2 storage key in the promotion-images bucket. Any aspect ratio is
+  // accepted; the invoice square-crops the cover at render time.
+  r2Key       String
+  contentType String?
+
+  // Display order — lower first. sortOrder 0 is the cover rendered beside
+  // the promo text; the rest appear in a strip beneath it.
+  sortOrder Int @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([promotionId, sortOrder])
 }
 
 model PromotionDelivery {
