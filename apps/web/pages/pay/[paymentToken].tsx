@@ -76,9 +76,13 @@ type InvoicePagePromo = {
   body: string;
   ctaText: string;
   ctaUrl: string | null;
-  /** Cover photo from the promo's landing page. Null when the promo links
-   *  to an external URL, or its landing page has no photos yet. */
+  /** Cover photo — the first of `imageUrls`. Null when no invoice photos
+   *  have been uploaded for this promo. */
   imageUrl?: string | null;
+  /** Every invoice photo in display order. Uploaded specifically for the
+   *  invoice; the landing page's item photos are not used here. Index 0 is
+   *  the cover rendered beside the copy, the rest form the strip below. */
+  imageUrls?: string[];
 };
 
 type ResolveResponse = {
@@ -730,6 +734,45 @@ function PromoDisplaySection({ promos }: { promos: InvoicePagePromo[] }) {
               <MarkdownContent>{p.body}</MarkdownContent>
             </Box>
           </HStack>
+          {/* Extra photos — only when the operator uploaded more than the
+              cover. A horizontal strip keeps the offer compact: this page's
+              job is getting the invoice paid, so the promo must not grow
+              into a gallery that pushes the amount due off screen.
+              Scrolls sideways rather than wrapping into stacked rows. */}
+          {p.imageUrls && p.imageUrls.length > 1 && (
+            <HStack
+              gap={2}
+              mt={3}
+              overflowX="auto"
+              // Momentum scrolling on iOS, and the scrollbar stays out of
+              // the way on desktop until hovered.
+              css={{ scrollbarWidth: "thin", WebkitOverflowScrolling: "touch" }}
+            >
+              {p.imageUrls.slice(1).map((url, i) => (
+                <Box
+                  key={url}
+                  w={{ base: "56px", md: "64px" }}
+                  h={{ base: "56px", md: "64px" }}
+                  flexShrink={0}
+                  rounded="md"
+                  overflow="hidden"
+                  bg="blackAlpha.100"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={url}
+                    alt=""
+                    style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                    loading="lazy"
+                    // Decorative: the offer's meaning is carried entirely by
+                    // the headline and body above. Announcing "image 2 of 5"
+                    // to a screen reader adds noise, not information.
+                    aria-hidden="true"
+                  />
+                </Box>
+              ))}
+            </HStack>
+          )}
           {p.ctaUrl && (
             <Button
               as="a"

@@ -20,7 +20,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { Eye } from "lucide-react";
+import { ChevronRight, Eye } from "lucide-react";
 import { apiGet, apiPatch, apiPost, apiDelete } from "@/src/lib/api";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
@@ -379,6 +379,23 @@ function PromotionsList({
           >
             <HStack justify="space-between" wrap="wrap">
               <HStack>
+                {/* Expand/collapse affordance. The whole row is clickable,
+                    but with no marker nothing said so — the row read as a
+                    static summary. Rotates rather than swapping glyphs so
+                    the transition reads as one control opening. */}
+                <Box
+                  color="fg.muted"
+                  flexShrink={0}
+                  display="flex"
+                  alignItems="center"
+                  style={{
+                    transform: selectedId === p.id ? "rotate(90deg)" : undefined,
+                    transition: "transform 0.15s ease",
+                  }}
+                  aria-hidden
+                >
+                  <ChevronRight size={14} />
+                </Box>
                 <Text fontSize="sm" fontWeight="semibold">{p.title}</Text>
                 <StatusBadge status={p.status} />
               </HStack>
@@ -549,19 +566,21 @@ function PromotionDetail({
   const closed = promotion.status === "CLOSED";
 
   return (
-    <Card.Root mt={2}>
-      <Card.Body>
-        <HStack justify="space-between" wrap="wrap" mb={3}>
-          <HStack>
-            <Text fontSize="md" fontWeight="bold">{promotion.title}</Text>
-            <StatusBadge status={promotion.status} />
-          </HStack>
-          <Button size="xs" variant="ghost" onClick={onClose}>Close ✕</Button>
-        </HStack>
+    // Plain Box, NOT Card.Root — this already renders inside the selected
+    // row's bordered container (see PromotionsList), so a card here nested a
+    // bordered, shadowed box inside a bordered box, and its `mt={2}` pushed
+    // a visible gap between the row and the detail that was supposed to hang
+    // seamlessly off it.
+    //
+    // The title / status badge / description are NOT repeated here either:
+    // the row directly above shows all three, so the detail opened with a
+    // duplicate heading and a stripe of empty space around it.
+    <Box p={4}>
+      <HStack justify="flex-end" wrap="wrap" mb={2}>
+        <Button size="xs" variant="ghost" onClick={onClose}>Close ✕</Button>
+      </HStack>
 
-        <Text fontSize="sm" color="fg.muted" mb={3}>{promotion.description}</Text>
-
-        <HStack gap={2} wrap="wrap" mb={3}>
+      <HStack gap={2} wrap="wrap" mb={3}>
           {editable && <Button size="xs" onClick={onEdit} disabled={busy}>Edit</Button>}
           {promotion.status === "DRAFT" && (
             <Button size="xs" colorPalette="green" onClick={() => setConfirming("start")} disabled={busy}>
@@ -863,7 +882,7 @@ function PromotionDetail({
             </Table.Body>
           </Table.Root>
         </Box>
-      </Card.Body>
+
 
       <ConfirmDialog
         open={!!confirming}
@@ -904,7 +923,7 @@ function PromotionDetail({
         onConfirm={() => testChannel && void sendTest(testChannel)}
         onCancel={() => setTestChannel(null)}
       />
-    </Card.Root>
+    </Box>
   );
 }
 
@@ -1478,6 +1497,15 @@ function PromotionEditor({
                     link={link}
                     promoId={linkKind === "LANDING_PAGE" ? savedPromoId : null}
                   />
+                )}
+                {/* Invoice photos — uploaded for the invoice specifically.
+                    Needs a saved promotion first, since photos are keyed by
+                    promotion id. Deliberately NOT sourced from the landing
+                    page's items: that coupling meant reordering a landing
+                    item silently changed every client's invoice, and left
+                    EXTERNAL-link promos with no image option at all. */}
+                {displaySurfaces.includes("invoice_page") && savedPromoId && (
+                  <InvoicePhotosPanel promotionId={savedPromoId} />
                 )}
 
                 {/* Landing-page editor lives at the BOTTOM. It is by far
@@ -2825,3 +2853,249 @@ function StandaloneLandingPageDialog({
   );
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────
+// InvoicePhotosPanel — photos shown with this promotion on the client's
+// invoice page.
+//
+// These are uploaded INDEPENDENTLY of the landing page's items. The invoice
+// cover used to be derived — "first photo of the first landing item" — which
+// meant reordering landing items, or deleting one item's first photo,
+// silently changed what every client saw on their invoice with nothing in
+// the UI indicating the link. It also left EXTERNAL-link promos (which have
+// no landing page at all) unable to show any image.
+//
+// Position 0 is the cover rendered beside the offer copy; the rest appear as
+// a small strip beneath it. Reordering is done with ← → controls rather than
+// drag-and-drop, matching the rest of this tab and staying usable on a phone.
+// ─────────────────────────────────────────────────────────────────────────
+function InvoicePhotosPanel({ promotionId }: { promotionId: string }) {
+  type InvoicePhoto = { id: string; url: string | null; contentType: string | null; sortOrder: number };
+  const [photos, setPhotos] = useState<InvoicePhoto[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState<InvoicePhoto | null>(null);
+  const [busy, setBusy] = useState(false);
+  // Optimistic tiles so a slow upload doesn't read as "the button did
+  // nothing" — same treatment the landing-item uploader uses.
+  const [pending, setPending] = useState<{ id: string; previewUrl: string }[]>([]);
+  const seqRef = useRef(0);
+  const inFlightRef = useRef(0);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await apiGet<{ photos: InvoicePhoto[] }>(
+        `/api/super/promotions/${promotionId}/invoice-photos`,
+      );
+      setPhotos(res.photos ?? []);
+    } catch (err: any) {
+      publishInlineMessage({ type: "ERROR", text: err?.message ?? String(err) });
+    } finally {
+      setLoading(false);
+    }
+  }, [promotionId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  // Revoke any object URLs still alive when the panel unmounts mid-upload,
+  // so a closed dialog doesn't leak them.
+  useEffect(() => () => {
+    pending.forEach((p) => URL.revokeObjectURL(p.previewUrl));
+    // Unmount-only cleanup; `pending` is intentionally not a dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function uploadOne(file: File) {
+    const tempId = `pending-${seqRef.current++}`;
+    const previewUrl = URL.createObjectURL(file);
+    inFlightRef.current += 1;
+    setPending((prev) => [...prev, { id: tempId, previewUrl }]);
+    try {
+      const contentType = file.type || "image/jpeg";
+      const { uploadUrl, key } = await apiPost<{ uploadUrl: string; key: string }>(
+        `/api/super/promotions/${promotionId}/invoice-photos/upload-url`,
+        { contentType },
+      );
+      const put = await fetch(uploadUrl, {
+        method: "PUT",
+        headers: { "content-type": contentType },
+        body: file,
+      });
+      if (!put.ok) throw new Error(`Upload failed (${put.status})`);
+      await apiPost(`/api/super/promotions/${promotionId}/invoice-photos/confirm`, {
+        key,
+        contentType,
+      });
+    } catch (err: any) {
+      publishInlineMessage({ type: "ERROR", text: err?.message ?? String(err) });
+      // Drop just this tile — other uploads in the batch carry on.
+      URL.revokeObjectURL(previewUrl);
+      setPending((prev) => prev.filter((u) => u.id !== tempId));
+    } finally {
+      inFlightRef.current -= 1;
+      if (inFlightRef.current <= 0) {
+        // Last one home: fetch the real list, THEN clear the optimistic
+        // tiles. Clearing first would blink the strip empty in between.
+        await load();
+        setPending((prev) => {
+          prev.forEach((u) => URL.revokeObjectURL(u.previewUrl));
+          return [];
+        });
+      }
+    }
+  }
+
+  async function move(photoId: string, dir: -1 | 1) {
+    const idx = photos.findIndex((p) => p.id === photoId);
+    const next = idx + dir;
+    if (idx < 0 || next < 0 || next >= photos.length) return;
+    const reordered = [...photos];
+    [reordered[idx], reordered[next]] = [reordered[next], reordered[idx]];
+    setPhotos(reordered); // optimistic
+    setBusy(true);
+    try {
+      await apiPost(`/api/super/promotions/${promotionId}/invoice-photos/reorder`, {
+        photoIds: reordered.map((p) => p.id),
+      });
+      await load();
+    } catch (err: any) {
+      publishInlineMessage({ type: "ERROR", text: err?.message ?? String(err) });
+      await load(); // resync — the optimistic swap may not have stuck
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function doDelete() {
+    if (!deleting) return;
+    setBusy(true);
+    try {
+      await apiDelete(`/api/super/promotions/invoice-photos/${deleting.id}`);
+      setDeleting(null);
+      await load();
+    } catch (err: any) {
+      publishInlineMessage({ type: "ERROR", text: err?.message ?? String(err) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Box borderWidth="1px" borderColor="gray.200" rounded="md" p={3} bg="white">
+      <HStack justify="space-between" align="center" mb={1}>
+        <Text fontSize="sm" fontWeight="bold">Invoice photos</Text>
+        <Button
+          size="xs"
+          variant="outline"
+          onClick={() => fileRef.current?.click()}
+          disabled={busy}
+        >
+          Add photos
+        </Button>
+      </HStack>
+      <Text fontSize="xs" color="fg.muted" mb={3}>
+        Shown with this offer on the client&apos;s invoice. The first photo is the
+        cover that appears beside the text; any others show as a small strip
+        underneath. These are separate from the landing page&apos;s items.
+      </Text>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        multiple
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const files = Array.from(e.target.files ?? []);
+          // Reset first so picking the same file twice in a row still fires
+          // onChange the second time.
+          e.target.value = "";
+          files.forEach((f) => void uploadOne(f));
+        }}
+      />
+      {loading ? (
+        <HStack gap={2}><Spinner size="sm" /><Text fontSize="xs" color="fg.muted">Loading…</Text></HStack>
+      ) : photos.length === 0 && pending.length === 0 ? (
+        <Text fontSize="xs" color="fg.muted">
+          No invoice photos yet — the offer will show as text only.
+        </Text>
+      ) : (
+        <HStack gap={2} wrap="wrap" align="start">
+          {photos.map((p, i) => (
+            <VStack key={p.id} gap={1} align="center">
+              <Box
+                w="72px"
+                h="72px"
+                rounded="md"
+                overflow="hidden"
+                bg="blackAlpha.100"
+                borderWidth={i === 0 ? "2px" : "1px"}
+                borderColor={i === 0 ? "blue.500" : "gray.200"}
+                position="relative"
+              >
+                {p.url && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={p.url}
+                    alt=""
+                    style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                  />
+                )}
+              </Box>
+              {i === 0 ? (
+                <Badge size="xs" colorPalette="blue">Cover</Badge>
+              ) : (
+                <Box h="18px" />
+              )}
+              <HStack gap={1}>
+                <Button size="xs" variant="ghost" disabled={i === 0 || busy}
+                  onClick={() => void move(p.id, -1)} aria-label="Move earlier">←</Button>
+                <Button size="xs" variant="ghost" disabled={i === photos.length - 1 || busy}
+                  onClick={() => void move(p.id, 1)} aria-label="Move later">→</Button>
+                <Button size="xs" variant="ghost" colorPalette="red" disabled={busy}
+                  onClick={() => setDeleting(p)} aria-label="Remove photo">✕</Button>
+              </HStack>
+            </VStack>
+          ))}
+          {pending.map((u) => (
+            <Box
+              key={u.id}
+              w="72px"
+              h="72px"
+              rounded="md"
+              overflow="hidden"
+              bg="blackAlpha.100"
+              borderWidth="1px"
+              borderColor="gray.200"
+              position="relative"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={u.previewUrl}
+                alt=""
+                style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", opacity: 0.5 }}
+              />
+              <Box position="absolute" inset="0" display="flex" alignItems="center" justifyContent="center">
+                <Spinner size="sm" />
+              </Box>
+            </Box>
+          ))}
+        </HStack>
+      )}
+      {deleting && (
+        <ConfirmDialog
+          open
+          title="Remove this photo?"
+          message={
+            deleting.sortOrder === 0 && photos.length > 1
+              ? "This is the cover photo shown beside the offer on every client's invoice. The next photo will become the cover. This can't be undone."
+              : "This photo will be permanently removed from the invoice. This can't be undone."
+          }
+          confirmLabel="Remove"
+          confirmColorPalette="red"
+          onConfirm={() => void doDelete()}
+          onCancel={() => setDeleting(null)}
+        />
+      )}
+    </Box>
+  );
+}

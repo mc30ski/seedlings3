@@ -2053,10 +2053,14 @@ export async function loadInvoicePagePromos(params: {
     body: string;
     ctaText: string;
     ctaUrl: string | null;
-    /** First photo from the promo's landing page — the cover. Null for
-     *  EXTERNAL-link promos (no landing page) and for landing pages whose
-     *  items have no photos yet. */
+    /** Cover photo — the first of `imageUrls`. Null when the promo has no
+     *  invoice photos uploaded. Kept alongside `imageUrls` so consumers
+     *  that only ever wanted one image don't have to index. */
     imageUrl: string | null;
+    /** All invoice photos in display order. Uploaded specifically for the
+     *  invoice — independent of the landing page's items, which are no
+     *  longer consulted for this surface. */
+    imageUrls: string[];
   }[]
 > {
   // Load the viewing contact's opt-out state (if any) so we can apply
@@ -2096,6 +2100,7 @@ export async function loadInvoicePagePromos(params: {
     ctaText: string;
     ctaUrl: string | null;
     imageUrl: string | null;
+    imageUrls: string[];
   }[] = [];
   for (const p of promos) {
     const surfaces = Array.isArray(p.displaySurfaces)
@@ -2136,30 +2141,38 @@ export async function loadInvoicePagePromos(params: {
       channel: "invoice_page",
       unsubscribeLink: null,
     });
-    // Cover photo — first photo of the first item on the promo's landing
-    // page. Fetched per surviving promo rather than joined into the list
-    // query above, because the vast majority of promos are filtered out
-    // by the surface/opt-out checks before reaching here.
-    let imageUrl: string | null = null;
-    if (p.landingPageId) {
-      const cover = await prisma.promotionLandingPageItemPhoto.findFirst({
-        where: { item: { pageId: p.landingPageId } },
-        orderBy: [{ item: { ordinal: "asc" } }, { sortOrder: "asc" }],
-        select: { r2Key: true },
-      });
-      if (cover) {
-        imageUrl = await getDownloadUrl(cover.r2Key, 6 * 3600, "promotion-images").catch(
-          () => null,
-        );
-      }
-    }
+    // Invoice photos — uploaded for THIS surface specifically. Fetched per
+    // surviving promo rather than joined into the list query above, because
+    // the vast majority of promos are filtered out by the surface/opt-out
+    // checks before reaching here.
+    //
+    // These used to be derived from the landing page ("first photo of the
+    // first item"), which meant reordering landing items or deleting an
+    // item's photo silently changed every client's invoice, and left
+    // EXTERNAL-link promos (no landing page) unable to show any image at
+    // all. Landing item photos are NOT consulted any more.
+    const photoRows = await prisma.promotionInvoicePhoto.findMany({
+      where: { promotionId: p.id },
+      orderBy: { sortOrder: "asc" },
+      select: { r2Key: true },
+    });
+    const signed = await Promise.all(
+      photoRows.map((ph) =>
+        getDownloadUrl(ph.r2Key, 6 * 3600, "promotion-images").catch(() => null),
+      ),
+    );
+    // A presign failure drops that one image rather than the whole promo.
+    const imageUrls = signed.filter((u): u is string => !!u);
     out.push({
       id: p.id,
       headline: snap.headline,
       body: snap.body,
       ctaText: snap.ctaText,
       ctaUrl: snap.ctaUrl,
-      imageUrl,
+      // Kept so existing consumers keep working — it's simply the first
+      // of imageUrls now (sortOrder 0 = the cover).
+      imageUrl: imageUrls[0] ?? null,
+      imageUrls,
     });
   }
   return out;
@@ -2806,6 +2819,162 @@ export async function reorderLandingPageItemPhotos(params: {
       count: finalOrder.length,
     });
   });
+}
+
+// ── Invoice photos ───────────────────────────────────────────────────────
+//
+// Photos rendered with a promotion on the client's invoice page. These are
+// uploaded independently of the landing page's items.
+//
+// The invoice cover used to be derived — "first photo of the first landing
+// item". That made two unrelated surfaces move together: reordering landing
+// items, or deleting one item's first photo, silently changed what every
+// client saw on their invoice, with nothing in the UI saying so. It also
+// meant EXTERNAL-link promos (no landing page) could never show an image at
+// all. These four functions mirror the landing-item photo flow exactly, so
+// the presign → confirm → delete → reorder contract is identical.
+
+/**
+ * Presigned R2 PUT URL for a new invoice photo. Client uploads the
+ * resized blob straight to R2, then confirms with the returned key.
+ * 5-minute window, same as every other photo surface.
+ */
+export async function getInvoicePhotoUploadUrl(params: {
+  promotionId: string;
+  contentType: string;
+}): Promise<{ uploadUrl: string; key: string }> {
+  const key = `promotions/${params.promotionId}/invoice/${randomUUID()}`;
+  const uploadUrl = await getUploadUrl(key, params.contentType, 300, "promotion-images");
+  return { uploadUrl, key };
+}
+
+/**
+ * Persist a finished upload by APPENDING it to the promotion's invoice
+ * photos. Appends rather than replaces — removing a photo is an explicit
+ * action, never a side effect of adding one.
+ */
+export async function confirmInvoicePhotoUpload(params: {
+  promotionId: string;
+  key: string;
+  contentType: string;
+  actorUserId?: string | null;
+}): Promise<{ id: string }> {
+  // Aggregate rather than count() so a gap left by a delete can't collide
+  // with an existing sortOrder.
+  const max = await prisma.promotionInvoicePhoto.aggregate({
+    where: { promotionId: params.promotionId },
+    _max: { sortOrder: true },
+  });
+  const sortOrder = (max._max.sortOrder ?? -1) + 1;
+  return prisma.$transaction(async (tx) => {
+    const row = await tx.promotionInvoicePhoto.create({
+      data: {
+        promotionId: params.promotionId,
+        r2Key: params.key,
+        contentType: params.contentType,
+        sortOrder,
+      },
+      select: { id: true },
+    });
+    // Publishes an image onto a client-facing invoice.
+    await writeAudit(tx, AUDIT.PROMOTION.EDITED, params.actorUserId ?? null, {
+      action: "invoice_photo_added",
+      promotionId: params.promotionId,
+      photoId: row.id,
+      r2Key: params.key,
+      contentType: params.contentType,
+      sortOrder,
+      // sortOrder 0 is the cover rendered beside the promo text.
+      isCover: sortOrder === 0,
+    });
+    return row;
+  });
+}
+
+/** Delete one invoice photo, and its R2 object best-effort. */
+export async function deleteInvoicePhoto(
+  photoId: string,
+  actorUserId?: string | null,
+): Promise<void> {
+  const photo = await prisma.promotionInvoicePhoto.findUnique({
+    where: { id: photoId },
+    select: { r2Key: true, contentType: true, promotionId: true, sortOrder: true },
+  });
+  if (!photo) return;
+  await prisma.$transaction(async (tx) => {
+    await tx.promotionInvoicePhoto.delete({ where: { id: photoId } });
+    // Irreversible: the row goes and the R2 object is deleted below, so
+    // the key recorded here is the only remaining trace of the image.
+    await writeAudit(tx, AUDIT.PROMOTION.EDITED, actorUserId ?? null, {
+      action: "invoice_photo_deleted",
+      promotionId: photo.promotionId,
+      photoId,
+      r2Key: photo.r2Key,
+      contentType: photo.contentType,
+      sortOrder: photo.sortOrder,
+      wasCover: photo.sortOrder === 0,
+    });
+  });
+  // Best-effort: a stranded R2 object costs pennies, a failed request
+  // costs the operator their edit.
+  void deleteObject(photo.r2Key, "promotion-images").catch(() => {});
+}
+
+/**
+ * Reorder a promotion's invoice photos to exactly the given id sequence.
+ *
+ * Ignores ids belonging to another promotion, so a stale client can't
+ * reassign someone else's photo. Photos omitted from the list keep a
+ * stable position AFTER the listed ones rather than vanishing.
+ */
+export async function reorderInvoicePhotos(params: {
+  promotionId: string;
+  photoIds: string[];
+  actorUserId?: string | null;
+}): Promise<void> {
+  const owned = await prisma.promotionInvoicePhoto.findMany({
+    where: { promotionId: params.promotionId },
+    select: { id: true },
+    orderBy: { sortOrder: "asc" },
+  });
+  const ownedIds = new Set(owned.map((p) => p.id));
+  const ordered = params.photoIds.filter((id) => ownedIds.has(id));
+  const rest = owned.map((p) => p.id).filter((id) => !ordered.includes(id));
+  const finalOrder = [...ordered, ...rest];
+  await prisma.$transaction(async (tx) => {
+    for (let idx = 0; idx < finalOrder.length; idx++) {
+      await tx.promotionInvoicePhoto.update({
+        where: { id: finalOrder[idx] },
+        data: { sortOrder: idx },
+      });
+    }
+    // Changes which image leads on every client's invoice.
+    await writeAudit(tx, AUDIT.PROMOTION.EDITED, params.actorUserId ?? null, {
+      action: "invoice_photos_reordered",
+      promotionId: params.promotionId,
+      photoIds: finalOrder,
+      count: finalOrder.length,
+    });
+  });
+}
+
+/** All invoice photos for a promotion, in display order, with signed URLs. */
+export async function listInvoicePhotos(promotionId: string): Promise<
+  { id: string; url: string | null; contentType: string | null; sortOrder: number }[]
+> {
+  const rows = await prisma.promotionInvoicePhoto.findMany({
+    where: { promotionId },
+    orderBy: { sortOrder: "asc" },
+    select: { id: true, r2Key: true, contentType: true, sortOrder: true },
+  });
+  return Promise.all(
+    rows.map(async (r) => ({
+      id: r.id,
+      url: await getDownloadUrl(r.r2Key, 6 * 3600, "promotion-images").catch(() => null),
+      contentType: r.contentType,
+      sortOrder: r.sortOrder,
+    })),
+  );
 }
 
 // ── Click recorder ───────────────────────────────────────────────────────
