@@ -2153,7 +2153,9 @@ export async function loadInvoicePagePromos(params: {
     // all. Landing item photos are NOT consulted any more.
     const photoRows = await prisma.promotionInvoicePhoto.findMany({
       where: { promotionId: p.id },
-      orderBy: { sortOrder: "asc" },
+      // createdAt tiebreaks concurrent uploads that landed on the same
+      // sortOrder — see confirmInvoicePhotoUpload.
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
       select: { r2Key: true },
     });
     const signed = await Promise.all(
@@ -2345,7 +2347,7 @@ export async function loadLandingPageForEditor(params: {
     include: {
       items: {
         orderBy: { ordinal: "asc" },
-        include: { photos: { orderBy: { sortOrder: "asc" } } },
+        include: { photos: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] } },
       },
       // `content` is required so the editor resolves the SAME header the
       // public page does — see resolveLandingHeader. Omitting it is what
@@ -2508,6 +2510,10 @@ export async function hardDeletePromotion(params: {
       status: true,
       startedAt: true,
       landingPageId: true,
+      // Invoice photos cascade away with the promotion, but their R2
+      // objects don't — collect the keys or the files are orphaned
+      // forever. Missing this leaked storage on every hard delete.
+      invoicePhotos: { select: { r2Key: true } },
       landingPage: {
         select: {
           id: true,
@@ -2542,6 +2548,7 @@ export async function hardDeletePromotion(params: {
     for (const ph of item.photos) r2Keys.add(ph.r2Key);
     if (item.imageR2Key) r2Keys.add(item.imageR2Key);
   }
+  for (const ph of promo.invoicePhotos) r2Keys.add(ph.r2Key);
 
   await prisma.$transaction(async (tx) => {
     // The landingPageId FK is Restrict specifically to stop a page being
@@ -2575,8 +2582,14 @@ export async function hardDeletePromotion(params: {
 
   // Best-effort, outside the transaction: a stranded object costs pennies,
   // a failed request costs the operator their delete.
+  //
+  // Reference-checked: keys can be shared across records (the invoice-photo
+  // backfill seeded rows with landing-item keys, and nothing stops two
+  // promotions pointing at the same object). Deleting unconditionally here
+  // would destroy another promotion's image as a side effect of deleting
+  // this one.
   for (const key of r2Keys) {
-    void deleteObject(key, "promotion-images").catch(() => {});
+    await deleteR2ObjectIfUnreferenced(key);
   }
   return { deleted: true, deliveriesDestroyed: deliveryCount };
 }
@@ -2624,8 +2637,10 @@ export async function deleteLandingPageItem(params: {
     });
   });
   for (const key of new Set(keys)) {
-    // Fire-and-forget — R2 cleanup shouldn't block the delete.
-    void deleteObject(key, "promotion-images").catch(() => {});
+    // Reference-checked: an invoice photo may point at this same object
+    // (the backfill seeded them from landing-item keys), so deleting an
+    // item could otherwise blank out the invoice cover.
+    await deleteR2ObjectIfUnreferenced(key);
   }
 }
 
@@ -2701,18 +2716,25 @@ export async function confirmLandingPageImageUpload(params: {
   /** Optional so existing callers keep compiling; audit falls back to null. */
   actorUserId?: string | null;
 }): Promise<{ id: string }> {
-  // Append at the end. Aggregate rather than count() so a gap in
-  // sortOrder (left by a delete) can't collide with an existing row.
-  const max = await prisma.promotionLandingPageItemPhoto.aggregate({
-    where: { itemId: params.itemId },
-    _max: { sortOrder: true },
-  });
   const item = await prisma.promotionLandingPageItem.findUnique({
     where: { id: params.itemId },
     select: { pageId: true, page: { select: { promotion: { select: { id: true } } } } },
   });
-  const sortOrder = (max._max.sortOrder ?? -1) + 1;
   const created = await prisma.$transaction(async (tx) => {
+    // Append at the end. Aggregate rather than count() so a gap left by a
+    // delete can't collide with an existing row.
+    //
+    // Read INSIDE the transaction: the picker uploads every selected file
+    // concurrently, so reading it outside meant simultaneous confirms all
+    // saw the same max and all claimed the same sortOrder — making the
+    // first photo (the one used for og:image) arbitrary. Reads of these
+    // photos also tiebreak on createdAt so ties stay stable rather than
+    // shuffling between page loads. Same fix as the invoice photos.
+    const max = await tx.promotionLandingPageItemPhoto.aggregate({
+      where: { itemId: params.itemId },
+      _max: { sortOrder: true },
+    });
+    const sortOrder = (max._max.sortOrder ?? -1) + 1;
     const row = await tx.promotionLandingPageItemPhoto.create({
       data: {
         itemId: params.itemId,
@@ -2770,9 +2792,11 @@ export async function deleteLandingPageItemPhoto(
       contentType: photo.contentType,
     });
   });
-  // Best-effort: a stranded R2 object costs pennies, a failed request
-  // costs the operator their edit.
-  void deleteObject(photo.r2Key, "promotion-images").catch(() => {});
+  // Same shared-object hazard as deleteInvoicePhoto, in the other
+  // direction: the invoice-photo backfill copied landing item keys, so a
+  // landing photo's bytes may also be serving as an invoice cover. Only the
+  // last reference standing may destroy them.
+  await deleteR2ObjectIfUnreferenced(photo.r2Key);
 }
 
 /**
@@ -2791,7 +2815,9 @@ export async function reorderLandingPageItemPhotos(params: {
   const owned = await prisma.promotionLandingPageItemPhoto.findMany({
     where: { itemId: params.itemId },
     select: { id: true },
-    orderBy: { sortOrder: "asc" },
+    // createdAt tiebreaks concurrent uploads that landed on the same
+    // sortOrder — see confirmLandingPageImageUpload.
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
   });
   const ownedIds = new Set(owned.map((p) => p.id));
   const ordered = params.photoIds.filter((id) => ownedIds.has(id));
@@ -2859,14 +2885,22 @@ export async function confirmInvoicePhotoUpload(params: {
   contentType: string;
   actorUserId?: string | null;
 }): Promise<{ id: string }> {
-  // Aggregate rather than count() so a gap left by a delete can't collide
-  // with an existing sortOrder.
-  const max = await prisma.promotionInvoicePhoto.aggregate({
-    where: { promotionId: params.promotionId },
-    _max: { sortOrder: true },
-  });
-  const sortOrder = (max._max.sortOrder ?? -1) + 1;
   return prisma.$transaction(async (tx) => {
+    // Read the max INSIDE the transaction. The picker uploads every
+    // selected file concurrently, so reading it outside meant five
+    // simultaneous confirms all saw the same max and all claimed the same
+    // sortOrder — leaving "which photo is the cover" up to chance.
+    //
+    // This narrows the window but doesn't close it (no row lock), so every
+    // read of these photos also tiebreaks on createdAt. Ties are therefore
+    // stable rather than arbitrary, which is what actually matters here:
+    // an operator can always reorder, but the order must not shuffle on
+    // its own between page loads.
+    const max = await tx.promotionInvoicePhoto.aggregate({
+      where: { promotionId: params.promotionId },
+      _max: { sortOrder: true },
+    });
+    const sortOrder = (max._max.sortOrder ?? -1) + 1;
     const row = await tx.promotionInvoicePhoto.create({
       data: {
         promotionId: params.promotionId,
@@ -2915,9 +2949,36 @@ export async function deleteInvoicePhoto(
       wasCover: photo.sortOrder === 0,
     });
   });
-  // Best-effort: a stranded R2 object costs pennies, a failed request
-  // costs the operator their edit.
-  void deleteObject(photo.r2Key, "promotion-images").catch(() => {});
+  // Only destroy the stored object when NOTHING else points at it.
+  //
+  // r2Key is a pointer, not ownership. The add_promotion_invoice_photos
+  // backfill seeded invoice photos by copying the landing item's key, so a
+  // single R2 object is referenced by rows in BOTH tables. Deleting
+  // unconditionally here nuked the bytes out from under the landing page —
+  // the operator removed an invoice cover and their landing item photos
+  // went to broken-image icons.
+  //
+  // A stranded object costs pennies; a destroyed one costs the operator
+  // their photo. Bias to leaving it.
+  await deleteR2ObjectIfUnreferenced(photo.r2Key);
+}
+
+/**
+ * Delete an R2 object ONLY if no surviving row in either photo table still
+ * references its key. Call AFTER the owning row is deleted.
+ *
+ * Both tables can legitimately point at the same key (see the backfill in
+ * add_promotion_invoice_photos), so ownership of the bytes is shared and
+ * the last reference standing is the only one allowed to delete.
+ */
+async function deleteR2ObjectIfUnreferenced(r2Key: string): Promise<void> {
+  const [stillInvoice, stillLanding] = await Promise.all([
+    prisma.promotionInvoicePhoto.count({ where: { r2Key } }),
+    prisma.promotionLandingPageItemPhoto.count({ where: { r2Key } }),
+  ]);
+  if (stillInvoice > 0 || stillLanding > 0) return;
+  // Best-effort: a failed delete strands bytes, which is recoverable.
+  void deleteObject(r2Key, "promotion-images").catch(() => {});
 }
 
 /**
@@ -2935,7 +2996,7 @@ export async function reorderInvoicePhotos(params: {
   const owned = await prisma.promotionInvoicePhoto.findMany({
     where: { promotionId: params.promotionId },
     select: { id: true },
-    orderBy: { sortOrder: "asc" },
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
   });
   const ownedIds = new Set(owned.map((p) => p.id));
   const ordered = params.photoIds.filter((id) => ownedIds.has(id));
@@ -2964,7 +3025,7 @@ export async function listInvoicePhotos(promotionId: string): Promise<
 > {
   const rows = await prisma.promotionInvoicePhoto.findMany({
     where: { promotionId },
-    orderBy: { sortOrder: "asc" },
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
     select: { id: true, r2Key: true, contentType: true, sortOrder: true },
   });
   return Promise.all(
@@ -3328,7 +3389,7 @@ export async function loadLandingPageForPublic(
     include: {
       items: {
         orderBy: { ordinal: "asc" },
-        include: { photos: { orderBy: { sortOrder: "asc" } } },
+        include: { photos: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] } },
       },
       promotion: {
         // `content` carries the shared offer copy — the landing page header
