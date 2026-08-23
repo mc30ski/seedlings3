@@ -24,6 +24,7 @@ import { Eye } from "lucide-react";
 import { apiGet, apiPatch, apiPost, apiDelete } from "@/src/lib/api";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
+import MarkdownContent from "@/src/ui/components/MarkdownContent";
 import { fmtDate, fmtDateTime, bizInstantFromEtParts, type EtDateKey } from "@/src/lib/lib";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -42,6 +43,10 @@ type DisplaySurface = "invoice_page";
 type TriggerKind = "on_invoice_sent" | "manual_send";
 
 type PromoContent = {
+  /** The ONE set of copy. Title + description, written once, rendered on
+   *  the landing page header AND the invoice offer block. Channels below
+   *  are overrides that exist only when deliberately customized. */
+  shared?: { headline?: string; body: string; ctaText?: string };
   sms?: { body: string; ctaText?: string };
   email?: { subject: string; body: string; ctaText?: string };
   invoice_page?: { headline?: string; body: string; ctaText?: string };
@@ -193,7 +198,21 @@ function CampaignsView() {
 
   const active = promos.filter((p) => p.status !== "CLOSED");
   const closed = promos.filter((p) => p.status === "CLOSED");
-  const selected = promos.find((p) => p.id === selectedId) ?? null;
+  // One renderer, handed to both lists. Whichever list holds the selected
+  // promotion draws the detail directly under that row.
+  const renderDetail = (p: Promotion) => (
+    <PromotionDetail
+      promotion={p}
+      onEdit={() => setEditing(p)}
+      onEditLanding={() => {
+        if (p.landingPageId) {
+          setEditingLanding({ promoId: p.id, pageId: p.landingPageId, status: p.status });
+        }
+      }}
+      onClose={() => setSelectedId(null)}
+      onChanged={() => void load()}
+    />
+  );
 
   return (
     <VStack align="stretch" gap={4} mt={3}>
@@ -212,8 +231,9 @@ function CampaignsView() {
           <PromotionsList
             promos={active}
             heading="Active & drafts"
-            onSelect={setSelectedId}
+            onSelect={(id) => setSelectedId(id === selectedId ? null : id)}
             selectedId={selectedId}
+            renderDetail={renderDetail}
           />
           <Box>
             <Button size="xs" variant="ghost" onClick={() => setShowClosed((v) => !v)}>
@@ -223,30 +243,15 @@ function CampaignsView() {
               <PromotionsList
                 promos={closed}
                 heading=""
-                onSelect={setSelectedId}
+                onSelect={(id) => setSelectedId(id === selectedId ? null : id)}
                 selectedId={selectedId}
+                renderDetail={renderDetail}
               />
             )}
           </Box>
         </>
       )}
-      {selected && (
-        <PromotionDetail
-          promotion={selected}
-          onEdit={() => setEditing(selected)}
-          onEditLanding={() => {
-            if (selected.landingPageId) {
-              setEditingLanding({
-                promoId: selected.id,
-                pageId: selected.landingPageId,
-                status: selected.status,
-              });
-            }
-          }}
-          onClose={() => setSelectedId(null)}
-          onChanged={() => void load()}
-        />
-      )}
+
       {editingLanding && (
         <StandaloneLandingPageDialog
           promoId={editingLanding.promoId}
@@ -267,12 +272,17 @@ function CampaignsView() {
 }
 
 function PromotionsList({
-  promos, heading, onSelect, selectedId,
+  promos, heading, onSelect, selectedId, renderDetail,
 }: {
   promos: Promotion[];
   heading: string;
   onSelect: (id: string) => void;
   selectedId: string | null;
+  /** Renders the detail panel INLINE, directly beneath the selected row.
+   *  It used to render as a sibling after both lists, so clicking a row
+   *  near the top dropped the panel below the closed-promotions toggle,
+   *  visually detached from what you clicked. */
+  renderDetail?: (promo: Promotion) => React.ReactNode;
 }) {
   if (promos.length === 0) {
     return heading ? (
@@ -287,13 +297,18 @@ function PromotionsList({
       {heading && <Text fontSize="sm" fontWeight="semibold" mb={2}>{heading}</Text>}
       <VStack align="stretch" gap={1}>
         {promos.map((p) => (
+          <Box key={p.id}>
           <Box
-            key={p.id}
             p={3}
             borderWidth="1px"
             borderColor={selectedId === p.id ? "blue.400" : "gray.200"}
             bg={selectedId === p.id ? "blue.50" : "white"}
             rounded="md"
+            // When the detail hangs below, drop this row's bottom edge so
+            // the two read as one block instead of two stacked boxes.
+            {...(selectedId === p.id && renderDetail
+              ? { roundedBottom: 0, borderBottomWidth: 0 }
+              : {})}
             cursor="pointer"
             onClick={() => onSelect(p.id)}
           >
@@ -311,6 +326,20 @@ function PromotionsList({
             {p.description && (
               <Text fontSize="xs" color="fg.muted" mt={1} lineClamp={1}>{p.description}</Text>
             )}
+          </Box>
+          {/* Detail hangs off the row it belongs to — same blue border
+              continuing downward so the two read as one selected block. */}
+          {selectedId === p.id && renderDetail && (
+            <Box
+              borderWidth="1px"
+              borderTopWidth={0}
+              borderColor="blue.400"
+              roundedBottom="md"
+              bg="white"
+            >
+              {renderDetail(p)}
+            </Box>
+          )}
           </Box>
         ))}
       </VStack>
@@ -841,7 +870,26 @@ function PromotionEditor({
   const [cooldownDays, setCooldownDays] = useState(initial?.cooldownDays ?? 7);
   const [startAt, setStartAt] = useState(initial?.startAt ? initial.startAt.slice(0, 10) : "");
   const [endAt, setEndAt] = useState(initial?.endAt ? initial.endAt.slice(0, 10) : "");
-  const [content, setContent] = useState<PromoContent>(initial?.content ?? {});
+  const [content, setContent] = useState<PromoContent>(() => {
+    const c: PromoContent = initial?.content ?? {};
+    if (c.shared?.body?.trim()) return c;
+    // Promotions written before the copy collapse have their words in
+    // content.invoice_page / email / sms and no `shared`. Without this the
+    // operator opens an existing promo and "The offer" is blank — their
+    // copy looks deleted, even though the page still renders it via the
+    // server-side fallback. Seed the shared block from whichever channel
+    // has content so they see their own words, and saving normalizes it.
+    const src = c.invoice_page ?? c.email ?? c.sms;
+    if (!src?.body?.trim()) return c;
+    return {
+      ...c,
+      shared: {
+        headline: c.invoice_page?.headline ?? c.email?.subject,
+        body: src.body,
+        ctaText: src.ctaText ?? "",
+      },
+    };
+  });
   const [shortSlug, setShortSlug] = useState(initial?.shortSlug ?? "");
   const [baseDomain, setBaseDomain] = useState<string>(initial?.baseDomain ?? "");
   const [busy, setBusy] = useState(false);
@@ -1013,6 +1061,85 @@ function PromotionEditor({
                 <Box>
                   <Text fontSize="xs" fontWeight="semibold" mb={1}>Internal note</Text>
                   <Textarea size="sm" rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
+                  <Text fontSize="2xs" color="fg.muted" mt={1}>
+                    Only you see this. Not shown to clients anywhere.
+                  </Text>
+                </Box>
+
+                {/* ── THE OFFER ─────────────────────────────────────────
+                    One title + one description, written once. Renders on
+                    the landing page header and on the invoice offer block.
+                    Replaced four separate headline/body pairs (sms, email,
+                    invoice_page, and the landing page's own columns) that
+                    had nothing linking them — so the same offer read
+                    differently depending on where a client saw it. */}
+                <Box borderWidth="1px" borderColor="blue.200" bg="blue.50" rounded="md" p={3}>
+                  <Text fontSize="sm" fontWeight="semibold" mb={1}>The offer</Text>
+                  <Text fontSize="2xs" color="fg.muted" mb={3}>
+                    Written once. Shown on your landing page and on client
+                    invoices wherever this promotion appears.
+                  </Text>
+                  <VStack align="stretch" gap={2}>
+                    <Box>
+                      <Text fontSize="2xs" fontWeight="semibold" mb={1}>Offer title</Text>
+                      <Input
+                        size="sm"
+                        bg="white"
+                        placeholder="Don't Let Fall Get Away From You"
+                        value={content.shared?.headline ?? ""}
+                        onChange={(e) =>
+                          setContent((p) => ({
+                            ...p,
+                            shared: { ...(p.shared ?? { body: "" }), headline: e.target.value },
+                          }))
+                        }
+                      />
+                    </Box>
+                    <Box>
+                      <Text fontSize="2xs" fontWeight="semibold" mb={1}>Offer description (Markdown)</Text>
+                      <Textarea
+                        size="sm"
+                        bg="white"
+                        rows={6}
+                        placeholder={"Winter is coming. Is your property ready?\n\n**Seedlings Lawn & Home** is booking fall cleanups now."}
+                        value={content.shared?.body ?? ""}
+                        onChange={(e) =>
+                          setContent((p) => ({
+                            ...p,
+                            shared: { ...(p.shared ?? {}), body: e.target.value },
+                          }))
+                        }
+                      />
+                    </Box>
+                    <Box>
+                      <Text fontSize="2xs" fontWeight="semibold" mb={1}>Button label</Text>
+                      <Input
+                        size="sm"
+                        bg="white"
+                        placeholder="Get a quote"
+                        value={content.shared?.ctaText ?? ""}
+                        onChange={(e) =>
+                          setContent((p) => ({
+                            ...p,
+                            shared: { ...(p.shared ?? { body: "" }), ctaText: e.target.value },
+                          }))
+                        }
+                      />
+                    </Box>
+                    {content.shared?.body ? (
+                      <Box borderTopWidth="1px" borderColor="blue.200" pt={2} mt={1}>
+                        <Text fontSize="2xs" color="fg.muted" mb={1}>Preview</Text>
+                        <Box bg="white" rounded="md" p={2}>
+                          {content.shared.headline && (
+                            <Text fontSize="sm" fontWeight="bold" color="blue.900" mb={1}>
+                              {content.shared.headline}
+                            </Text>
+                          )}
+                          <MarkdownContent>{content.shared.body}</MarkdownContent>
+                        </Box>
+                      </Box>
+                    ) : null}
+                  </VStack>
                 </Box>
                 <Box>
                   <Text fontSize="xs" fontWeight="semibold" mb={1}>Link goes to</Text>
@@ -1039,22 +1166,6 @@ function PromotionEditor({
                   </Box>
                 )}
 
-                {linkKind === "LANDING_PAGE" && savedPromoId && initial?.landingPageId && (
-                  <LandingPageEditor
-                    pageId={initial.landingPageId}
-                    promoId={savedPromoId}
-                    promotionStatus={initial.status}
-                    registerSave={registerLandingSave}
-                    onSlugChange={onLandingSlugChange}
-                  />
-                )}
-                {linkKind === "LANDING_PAGE" && !initial?.landingPageId && (
-                  <Box p={3} bg="blue.50" borderWidth="1px" borderColor="blue.200" rounded="md" fontSize="xs" color="blue.900">
-                    Save this promotion first — the landing page editor will
-                    appear next time you open it. The landing page's public URL
-                    will be generated from the title (you can customize it).
-                  </Box>
-                )}
 
                 {/* Short URL (optional) — branded per-recipient URL for
                     outbound messages. Leaving both fields blank keeps the
@@ -1216,26 +1327,83 @@ function PromotionEditor({
                 </HStack>
 
                 {dispatchChannels.includes("sms") && (
-                  <ChannelPanelSms
-                    content={content.sms ?? { body: "", ctaText: "" }}
-                    link={link}
-                    onChange={(v) => setContent((p) => ({ ...p, sms: v }))}
-                  />
+                  <ChannelOverridePanel
+                    label="Text message"
+                    hint="160 characters is one segment — going over bills as two. This is the channel most worth customizing."
+                    shared={content.shared}
+                    override={content.sms}
+                    onCustomize={() =>
+                      setContent((p) => ({
+                        ...p,
+                        // Seed from the shared copy so customizing is an
+                        // edit, not a blank page.
+                        sms: { body: p.shared?.body ?? "", ctaText: p.shared?.ctaText ?? "" },
+                      }))
+                    }
+                    onReset={() => setContent((p) => { const { sms, ...rest } = p; return rest; })}
+                  >
+                    <ChannelPanelSms
+                      content={content.sms ?? { body: "", ctaText: "" }}
+                      link={link}
+                      onChange={(v) => setContent((p) => ({ ...p, sms: v }))}
+                    />
+                  </ChannelOverridePanel>
                 )}
                 {dispatchChannels.includes("email") && (
-                  <ChannelPanelEmail
-                    content={content.email ?? { subject: "", body: "", ctaText: "" }}
-                    link={link}
-                    onChange={(v) => setContent((p) => ({ ...p, email: v }))}
-                  />
+                  <ChannelOverridePanel
+                    label="Email"
+                    hint="Email uses the offer title as its subject line unless you customize."
+                    shared={content.shared}
+                    override={content.email}
+                    onCustomize={() =>
+                      setContent((p) => ({
+                        ...p,
+                        email: {
+                          subject: p.shared?.headline ?? "",
+                          body: p.shared?.body ?? "",
+                          ctaText: p.shared?.ctaText ?? "",
+                        },
+                      }))
+                    }
+                    onReset={() => setContent((p) => { const { email, ...rest } = p; return rest; })}
+                  >
+                    <ChannelPanelEmail
+                      content={content.email ?? { subject: "", body: "", ctaText: "" }}
+                      link={link}
+                      onChange={(v) => setContent((p) => ({ ...p, email: v }))}
+                    />
+                  </ChannelOverridePanel>
                 )}
                 {displaySurfaces.includes("invoice_page") && (
+                  // Reads the SHARED offer copy, not a per-surface override
+                  // — this panel is preview-only now.
                   <ChannelPanelInvoicePage
-                    content={content.invoice_page ?? { body: "", ctaText: "" }}
+                    content={content.shared ?? { body: "", ctaText: "" }}
                     link={link}
                     promoId={linkKind === "LANDING_PAGE" ? savedPromoId : null}
-                    onChange={(v) => setContent((p) => ({ ...p, invoice_page: v }))}
                   />
+                )}
+
+                {/* Landing-page editor lives at the BOTTOM. It is by far
+                    the tallest section (slug, items, per-item photo
+                    uploads), and sitting mid-form it pushed the channel
+                    panels below the fold — operators could not find the
+                    CTA field because it was buried under this. */}
+                {linkKind === "LANDING_PAGE" && savedPromoId && initial?.landingPageId && (
+                  <LandingPageEditor
+                    pageId={initial.landingPageId}
+                    promoId={savedPromoId}
+                    promotionStatus={initial.status}
+                    registerSave={registerLandingSave}
+                    onSlugChange={onLandingSlugChange}
+                  />
+                )}
+                {linkKind === "LANDING_PAGE" && !initial?.landingPageId && (
+                  <Box p={3} bg="blue.50" borderWidth="1px" borderColor="blue.200" rounded="md" fontSize="xs" color="blue.900">
+                    Save this promotion first — the landing page editor will
+                    appear next time you open it. The landing page's public URL
+                    will be generated from the title (you can customize it).
+                  </Box>
                 )}
 
                 <Box p={2} bg="gray.50" rounded="md" fontSize="xs" color="fg.muted">
@@ -1268,6 +1436,85 @@ function PromotionEditor({
 }
 
 // ── Channel content panels (with previews) ─────────────────────────────
+
+/**
+ * Wraps a channel's editor so the channel INHERITS the shared offer copy
+ * by default and only shows fields once the operator opts into
+ * customizing it.
+ *
+ * The point of the copy collapse: you write the offer once. A channel
+ * having its own wording should be a deliberate exception (SMS, where 160
+ * characters forces it), not the default that quietly leaves four
+ * headline/body pairs to keep in sync by hand.
+ */
+function ChannelOverridePanel({
+  label, hint, shared, override, onCustomize, onReset, children,
+}: {
+  label: string;
+  hint: string;
+  shared?: { headline?: string; body: string; ctaText?: string };
+  override?: unknown;
+  onCustomize: () => void;
+  onReset: () => void;
+  children: React.ReactNode;
+}) {
+  const [confirmReset, setConfirmReset] = useState(false);
+  if (override) {
+    return (
+      <Card.Root variant="outline">
+        <Card.Body>
+          <HStack justify="space-between" align="center" mb={2}>
+            <HStack gap={2}>
+              <Text fontSize="sm" fontWeight="semibold">{label}</Text>
+              <Badge size="xs" colorPalette="orange">Customized</Badge>
+            </HStack>
+            <Button size="xs" variant="ghost" colorPalette="red" onClick={() => setConfirmReset(true)}>
+              Use the offer copy instead
+            </Button>
+          </HStack>
+          {children}
+        </Card.Body>
+        <ConfirmDialog
+          open={confirmReset}
+          title={`Discard the custom ${label.toLowerCase()} copy?`}
+          message={`${label} will go back to using The offer. The wording you typed here is discarded.`}
+          confirmLabel="Discard and inherit"
+          confirmColorPalette="red"
+          onConfirm={() => { onReset(); setConfirmReset(false); }}
+          onCancel={() => setConfirmReset(false)}
+        />
+      </Card.Root>
+    );
+  }
+  return (
+    <Card.Root variant="outline">
+      <Card.Body>
+        <HStack justify="space-between" align="center" mb={1}>
+          <Text fontSize="sm" fontWeight="semibold">{label}</Text>
+          <Button size="xs" variant="outline" onClick={onCustomize}>Customize</Button>
+        </HStack>
+        <Text fontSize="2xs" color="fg.muted" mb={2}>
+          Uses <b>The offer</b>. {hint}
+        </Text>
+        {shared?.body ? (
+          <Box p={2} bg="gray.50" rounded="md">
+            {shared.headline && (
+              <Text fontSize="xs" fontWeight="semibold" mb={1}>{shared.headline}</Text>
+            )}
+            <Text fontSize="xs" color="fg.muted" lineClamp={3} whiteSpace="pre-wrap">
+              {shared.body}
+            </Text>
+          </Box>
+        ) : (
+          <Text fontSize="2xs" color="orange.700">
+            No offer copy written yet — fill in <b>The offer</b> above.
+          </Text>
+        )}
+      </Card.Body>
+    </Card.Root>
+  );
+}
+
 
 function ChannelPanelSms({
   content, link, onChange,
@@ -1459,9 +1706,9 @@ function InvoicePreviewDialog({
                               {content.headline}
                             </Text>
                           )}
-                          <Text fontSize="sm" color="fg.default" whiteSpace="pre-wrap">
-                            {content.body || "(no body text yet)"}
-                          </Text>
+                          {content.body
+                            ? <MarkdownContent>{content.body}</MarkdownContent>
+                            : <Text fontSize="sm" color="fg.muted">(no body text yet)</Text>}
                         </Box>
                       </HStack>
                       {/* CTA always renders. On the real page the URL is a
@@ -1500,14 +1747,15 @@ function InvoicePreviewDialog({
 }
 
 function ChannelPanelInvoicePage({
-  content, link, promoId, onChange,
+  content, link, promoId,
 }: {
+  /** The shared offer copy. Read-only here — this panel shows WHERE the
+   *  offer lands, not a second place to write it. */
   content: { headline?: string; body: string; ctaText?: string };
   link: string;
   /** Passed to the preview so it can load the same cover photo the real
    *  invoice shows. Null for external-link promos. */
   promoId?: string | null;
-  onChange: (v: { headline?: string; body: string; ctaText?: string }) => void;
 }) {
   const [previewOpen, setPreviewOpen] = useState(false);
   return (
@@ -1533,16 +1781,19 @@ function ChannelPanelInvoicePage({
           />
         )}
         <VStack align="stretch" gap={2}>
-          <Input size="sm" placeholder="Headline (optional, appears in bold)" value={content.headline ?? ""}
-            onChange={(e) => onChange({ ...content, headline: e.target.value })} />
-          <Textarea size="sm" rows={4} placeholder="Body (Markdown supported)" value={content.body}
-            onChange={(e) => onChange({ ...content, body: e.target.value })} />
-          <Input size="sm" placeholder="Call-to-action button label (e.g. Book now, Learn more)" value={content.ctaText ?? ""}
-            onChange={(e) => onChange({ ...content, ctaText: e.target.value })} />
+          {/* No copy fields here any more — the invoice renders "The offer"
+              from the top of this dialog. Duplicating them is what made the
+              invoice and the landing page disagree. */}
+          <Text fontSize="2xs" color="fg.muted">
+            Uses <b>The offer</b> from the top of this dialog — title,
+            description, and button label. Nothing extra to write.
+          </Text>
           <Box p={3} bg="blue.50" borderWidth="1px" borderColor="blue.200" borderLeftWidth="4px" borderLeftColor="blue.500" rounded="md">
             <Text fontSize="2xs" color="fg.muted" mb={1}>Preview (as shown on /pay/[token])</Text>
             {content.headline && <Text fontSize="md" fontWeight="bold" color="blue.900" mb={1}>{content.headline}</Text>}
-            <Text fontSize="sm" whiteSpace="pre-wrap">{content.body || "(body)"}</Text>
+            {content.body
+              ? <MarkdownContent>{content.body}</MarkdownContent>
+              : <Text fontSize="sm" color="fg.muted">(body)</Text>}
             {content.ctaText && link && (
               <Button size="sm" colorPalette="blue" mt={2}
                 as="a" {...({ href: link, target: "_blank", rel: "noopener noreferrer" } as any)}>
@@ -2179,18 +2430,23 @@ function LandingPageEditor({
               />
             </HStack>
           </Box>
-          <Box>
-            <Text fontSize="2xs" fontWeight="semibold" mb={1}>Headline (optional)</Text>
-            <Input size="sm" value={headline} onChange={(e) => setHeadline(e.target.value)} disabled={!contentEditable} />
-          </Box>
-          <Box>
-            <Text fontSize="2xs" fontWeight="semibold" mb={1}>Intro paragraph (Markdown OK)</Text>
-            <Textarea size="sm" rows={2} value={intro} onChange={(e) => setIntro(e.target.value)} disabled={!contentEditable} />
+          {/* Headline + intro used to live here as their own fields, which
+              is exactly why the landing page and the invoice could show
+              different words for the same offer. The page header now
+              renders "The offer" from the promotion editor. Items below
+              keep their own per-entry title and description. */}
+          <Box p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" rounded="md">
+            <Text fontSize="2xs" color="blue.900">
+              The heading and description at the top of this page come from{" "}
+              <b>The offer</b> in the promotion editor — written once, shown
+              here and on invoices. Each item below has its own title and
+              description.
+            </Text>
           </Box>
           {contentEditable && (
             <HStack>
               <Button size="xs" onClick={() => void saveMeta()} loading={savingMeta}>
-                Save {slugEditable ? "address / headline / intro" : "headline / intro"}
+                Save address
               </Button>
             </HStack>
           )}

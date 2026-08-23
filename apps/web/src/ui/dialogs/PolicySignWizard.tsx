@@ -18,7 +18,7 @@ import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, FileText, Uploa
 import { apiPost } from "@/src/lib/api";
 import { bizToday } from "@/src/lib/lib";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
-import PolicyMarkdown from "@/src/ui/components/PolicyMarkdown";
+import MarkdownContent from "@/src/ui/components/MarkdownContent";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types (mirror the shape returned by GET /me/policies)
@@ -456,7 +456,7 @@ function ReadStep({
         lineHeight="tall"
       >
         {contentIsMarkdown && version.contentMarkdown ? (
-          <PolicyMarkdown>{version.contentMarkdown}</PolicyMarkdown>
+          <MarkdownContent>{version.contentMarkdown}</MarkdownContent>
         ) : contentIsPdf ? (
           <VStack gap={2} py={6}>
             <FileText size={32} color="var(--chakra-colors-blue-400)" />

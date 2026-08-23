@@ -17,6 +17,11 @@
 //
 // INVARIANTS LOCKED IN
 //
+// (Invariants run A through R. The list below covers A-H; grep the
+// `describe(` block titles for the full current set — I..R were added
+// later for click-token namespace isolation, wrapper/short URL shapes,
+// the slug generator, verify-never-throws, and landing preview tokens.)
+//
 //   A. Opt-out URL is static — no HMAC tokens leak through message
 //      bodies; landing page collects identifier from the client.
 //   B. Zod content schema requires content for every enabled channel
@@ -96,6 +101,14 @@ describe("Invariant A — Opt-out URL is static (no tokens leak in message bodie
 
 // ── B. Zod schema requires content per enabled channel/surface ────────
 
+// POLICY CHANGE 2026-08-22 (the copy collapse): a channel/surface may be
+// satisfied by its OWN content OR by the shared offer copy. The invariant
+// itself is unchanged — every enabled destination must have something to
+// say — but content can now be inherited rather than duplicated.
+//
+// B4/B5 below are the cases that matter now: shared copy alone must be
+// ACCEPTED (that's the normal path), and truly-empty content must still be
+// REJECTED (that's the invariant).
 describe("Invariant B — content required for every enabled channel/surface", () => {
   const base = {
     title: "test",
@@ -130,6 +143,47 @@ describe("Invariant B — content required for every enabled channel/surface", (
       content: {},
     });
     expect(r.success).toBe(false);
+    // Assert WHY. Without the path check this passed even when the payload
+    // was rejected for an unrelated reason (a missing external link), which
+    // means it wasn't testing content at all.
+    if (!r.success) {
+      expect(r.error.issues.map((i) => i.path.join("."))).toContain("content.email");
+    }
+  });
+
+  it("B4: shared copy ALONE satisfies every enabled channel and surface", () => {
+    // The normal path after the collapse: write the offer once, enable
+    // three destinations, customize none of them. Rejecting this would
+    // make the shared-copy feature unusable.
+    const r = promotionSavePayloadSchema.safeParse({
+      ...base,
+      // linkKind defaults to EXTERNAL, which separately requires a link —
+      // without this the payload fails for the wrong reason and the test
+      // proves nothing about content inheritance.
+      link: "https://example.com",
+      dispatchChannels: ["sms", "email"],
+      displaySurfaces: ["invoice_page"],
+      triggerKind: "on_invoice_sent",
+      content: { shared: { headline: "Fall cleanups", body: "Book now.", ctaText: "Get a quote" } },
+    });
+    expect(r.success, JSON.stringify(r.success ? [] : r.error.issues)).toBe(true);
+  });
+
+  it("B5: shared copy with a blank body does NOT satisfy a channel", () => {
+    // Whitespace isn't content. Without this, an operator who enabled a
+    // channel and never typed anything would ship an empty message.
+    const r = promotionSavePayloadSchema.safeParse({
+      ...base,
+      link: "https://example.com",
+      dispatchChannels: ["sms"],
+      displaySurfaces: [],
+      triggerKind: "on_invoice_sent",
+      content: { shared: { body: "   " } },
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      expect(r.error.issues.map((i) => i.path.join("."))).toContain("content.sms");
+    }
   });
 
   it("B3: enabling invoice_page without content.invoice_page is rejected", () => {

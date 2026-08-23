@@ -18,6 +18,7 @@ import { useRouter } from "next/router";
 import { useAuth } from "@clerk/nextjs";
 import { useBranding } from "@/src/lib/useBranding";
 import PhotoLightbox from "@/src/ui/components/PhotoLightbox";
+import MarkdownContent from "@/src/ui/components/MarkdownContent";
 import { fmtDateOpts, bizMonth } from "@/src/lib/lib";
 import {
   Badge,
@@ -722,9 +723,11 @@ function PromoDisplaySection({ promos }: { promos: InvoicePagePromo[] }) {
                   {p.headline}
                 </Text>
               )}
-              <Text fontSize="sm" color="fg.default" whiteSpace="pre-wrap">
-                {p.body}
-              </Text>
+              {/* Markdown, not pre-wrap text. The editor field is labelled
+                  "Markdown supported" and the operator writes headings and
+                  bold — none of which rendered here, so clients were shown
+                  raw `#` and `**` syntax. */}
+              <MarkdownContent>{p.body}</MarkdownContent>
             </Box>
           </HStack>
           {p.ctaUrl && (

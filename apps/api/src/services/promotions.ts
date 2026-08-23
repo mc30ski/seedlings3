@@ -40,7 +40,26 @@ const invoicePageContentSchema = z.object({
   ctaText: z.string().max(200).optional().default(""),
 });
 
+// The ONE set of copy an operator writes. Every channel and surface uses
+// this unless it carries an explicit override below.
+//
+// Before this existed, a promotion held up to four independent
+// headline+body pairs (sms, email, invoice_page, and the landing page's
+// own headline/intro columns) with nothing linking them — so the same
+// offer read differently on the invoice and the landing page unless the
+// operator remembered to type it four times and keep it in sync by hand.
+const sharedContentSchema = z.object({
+  headline: z.string().max(200).optional(),
+  body: z.string().min(1).max(20000),
+  ctaText: z.string().max(200).optional().default(""),
+});
+
 export const promotionContentSchema = z.object({
+  /** Canonical copy. Channels inherit from here. */
+  shared: sharedContentSchema.optional(),
+  // Per-channel OVERRIDES. Present only when the operator deliberately
+  // customized that channel — SMS is the common case, since 160 characters
+  // needs its own wording. Absent = inherit `shared`.
   sms: smsContentSchema.optional(),
   email: emailContentSchema.optional(),
   invoice_page: invoicePageContentSchema.optional(),
@@ -112,21 +131,31 @@ export const promotionSavePayloadSchema = z
         message: "Trigger is required when dispatch channels are selected",
       });
     }
+    // A channel/surface is satisfied by its OWN override or by the shared
+    // offer copy. Before the copy collapse this demanded per-channel
+    // content, which would now reject the normal case: an operator writes
+    // "The offer" once and enables three surfaces without customizing any
+    // of them.
+    //
+    // The requirement itself is unchanged — every enabled destination must
+    // have SOMETHING to say, or the dispatcher throws at send time. Only
+    // where that content may come from has widened.
+    const hasShared = Boolean(val.content.shared?.body?.trim());
     for (const c of val.dispatchChannels) {
-      if (!val.content[c]) {
+      if (!val.content[c] && !hasShared) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["content", c],
-          message: `Missing content for enabled channel: ${c}`,
+          message: `Missing content for enabled channel: ${c}. Write the shared offer copy, or give ${c} its own.`,
         });
       }
     }
     for (const s of val.displaySurfaces) {
-      if (!val.content[s]) {
+      if (!val.content[s] && !hasShared) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["content", s],
-          message: `Missing content for enabled surface: ${s}`,
+          message: `Missing content for enabled surface: ${s}. Write the shared offer copy, or give ${s} its own.`,
         });
       }
     }
@@ -852,6 +881,42 @@ function normalizePhoneForLookup(raw: string): string {
 // Assembles the exact body that will ship for one (promotion, channel,
 // contact) tuple. Returned snapshot is what gets written to
 // PromotionDelivery.contentSnapshot so audit reconstruction is trivial.
+/**
+ * Resolve the copy a channel actually uses: its own override if it has
+ * one, otherwise the shared copy.
+ *
+ * This is THE place that answers "what does this surface say". Every
+ * renderer, dispatcher, and preview must go through it, or the operator's
+ * preview stops matching what the client receives.
+ *
+ * Returns null when neither exists — callers decide whether that's an
+ * error (dispatch) or simply nothing to show (display surface).
+ */
+export function resolveChannelContent(
+  content: PromotionContent,
+  channel: "email" | "sms" | "invoice_page",
+): { subject?: string; headline?: string; body: string; ctaText: string } | null {
+  const shared = content.shared;
+  const own = content[channel] as
+    | { subject?: string; headline?: string; body?: string; ctaText?: string }
+    | undefined;
+
+  // Body is what makes an override real. An entry with an empty body is
+  // treated as absent so a half-filled channel falls back rather than
+  // shipping a blank message.
+  const body = own?.body?.trim() ? own.body : shared?.body;
+  if (!body) return null;
+
+  return {
+    // Email subject has no shared equivalent — it's email-only. Fall back
+    // to the shared headline so a subject line is never empty.
+    subject: (own as any)?.subject ?? shared?.headline,
+    headline: (own as any)?.headline ?? shared?.headline,
+    body,
+    ctaText: own?.ctaText?.trim() ? own.ctaText : (shared?.ctaText ?? ""),
+  };
+}
+
 export function buildContentSnapshot(params: {
   promotion: {
     link: string | null;
@@ -873,7 +938,8 @@ export function buildContentSnapshot(params: {
   const { promotion, channel } = params;
   const ctaUrl = promotion.link ?? null;
   if (channel === "email") {
-    const c = promotion.content.email;
+    // Inherits `shared` unless email carries its own override.
+    const c = resolveChannelContent(promotion.content, "email");
     if (!c) throw new Error("Email content missing");
     const footer =
       params.unsubscribeLink && params.emailFooterTemplate
@@ -884,15 +950,17 @@ export function buildContentSnapshot(params: {
           })
         : undefined;
     return {
-      subject: c.subject,
+      // A subject is mandatory for email; resolveChannelContent falls back
+      // to the shared headline, and this is the last-resort default.
+      subject: c.subject || c.headline || "A note from us",
       body: c.body,
-      ctaText: c.ctaText ?? "",
+      ctaText: c.ctaText,
       ctaUrl,
       footer,
     };
   }
   if (channel === "sms") {
-    const c = promotion.content.sms;
+    const c = resolveChannelContent(promotion.content, "sms");
     if (!c) throw new Error("SMS content missing");
     const footer =
       params.unsubscribeLink && params.smsFooterTemplate
@@ -903,18 +971,18 @@ export function buildContentSnapshot(params: {
         : undefined;
     return {
       body: c.body,
-      ctaText: c.ctaText ?? "",
+      ctaText: c.ctaText,
       ctaUrl,
       footer,
     };
   }
   // invoice_page
-  const c = promotion.content.invoice_page;
+  const c = resolveChannelContent(promotion.content, "invoice_page");
   if (!c) throw new Error("Invoice-page content missing");
   return {
     headline: c.headline,
     body: c.body,
-    ctaText: c.ctaText ?? "",
+    ctaText: c.ctaText,
     ctaUrl,
   };
 }
@@ -3011,7 +3079,10 @@ export async function loadLandingPageForPublic(
         include: { photos: { orderBy: { sortOrder: "asc" } } },
       },
       promotion: {
-        select: { status: true, startAt: true, endAt: true },
+        // `content` carries the shared offer copy — the landing page header
+        // renders from it so the operator writes title/description ONCE and
+        // both this page and the invoice block show the same words.
+        select: { status: true, startAt: true, endAt: true, content: true },
       },
     },
   });
@@ -3098,9 +3169,12 @@ export async function loadLandingPageForPublic(
   const bizMap = new Map(bizRows.map((r) => [r.key, r.value ?? ""]));
   const { loadSocialLinks } = await import("./socialLinks");
   const socialLinks = await loadSocialLinks(prisma);
+  // Shared copy wins; the page's own headline/intro columns remain as a
+  // fallback so promotions authored before the collapse keep rendering.
+  const sharedCopy = ((page.promotion?.content ?? {}) as PromotionContent).shared;
   return {
-    headline: page.headline,
-    intro: page.intro,
+    headline: sharedCopy?.headline || page.headline,
+    intro: sharedCopy?.body || page.intro,
     items,
     promotionActive,
     inactiveReason,

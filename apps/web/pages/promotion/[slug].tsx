@@ -13,6 +13,7 @@ import { GetServerSideProps } from "next";
 import Head from "next/head";
 import { useState } from "react";
 import PhotoLightbox from "@/src/ui/components/PhotoLightbox";
+import MarkdownContent from "@/src/ui/components/MarkdownContent";
 import { Box, Container, Grid, Heading, HStack, Link as ChakraLink, SimpleGrid, Text, VStack } from "@chakra-ui/react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
@@ -151,9 +152,10 @@ export default function PromotionLandingPage({ slug, page, ogTitle, ogDescriptio
                 </Heading>
               )}
               {page.intro && (
-                <Text fontSize={{ base: "md", md: "lg" }} color="fg.muted" whiteSpace="pre-wrap">
-                  {page.intro}
-                </Text>
+                // The editor labels this "Intro paragraph (Markdown OK)".
+                <Box fontSize={{ base: "md", md: "lg" }} color="fg.muted">
+                  <MarkdownContent>{page.intro}</MarkdownContent>
+                </Box>
               )}
               {page.items.length === 0 ? (
                 <Text fontStyle="italic" color="fg.muted">
@@ -303,9 +305,10 @@ function ItemCard({
         <Text fontWeight="bold" fontSize="md" mb={1}>
           {item.title}
         </Text>
-        <Text fontSize="sm" color="fg.muted" whiteSpace="pre-wrap">
-          {item.description}
-        </Text>
+        {/* Editor labels this field "Description (Markdown)". */}
+        <Box fontSize="sm" color="fg.muted">
+          <MarkdownContent>{item.description}</MarkdownContent>
+        </Box>
       </Box>
     </Box>
   );
@@ -515,9 +518,24 @@ export const getServerSideProps: GetServerSideProps<Props> = async (ctx) => {
   }
 
   const ogTitle = page?.headline || "Promotion";
+  // og:description is plain text in a social card — it can't render
+  // markdown, so raw `#` and `**` would show verbatim in every shared
+  // link preview. Strip the syntax rather than the content.
+  const plain = (md: string) =>
+    md
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, "")        // images
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")     // links → their text
+      .replace(/^#{1,6}\s+/gm, "")                   // headings
+      .replace(/^\s*[-*+]\s+/gm, "")                 // bullets
+      .replace(/^\s*>\s?/gm, "")                     // blockquotes
+      .replace(/(\*\*|__)(.*?)\1/g, "$2")            // bold
+      .replace(/(\*|_)(.*?)\1/g, "$2")                // italics
+      .replace(/`{1,3}([^`]*)`{1,3}/g, "$1")          // code
+      .replace(/\s+/g, " ")
+      .trim();
   const ogDescription =
-    page?.intro?.slice(0, 200) ||
-    page?.items[0]?.description?.slice(0, 200) ||
+    plain(page?.intro ?? "").slice(0, 200) ||
+    plain(page?.items[0]?.description ?? "").slice(0, 200) ||
     "See our latest offers.";
   // First available photo across items — an item without photos shouldn't
   // cost the page its link preview.
