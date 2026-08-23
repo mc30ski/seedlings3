@@ -140,9 +140,14 @@ export const promotionSavePayloadSchema = z
     // The requirement itself is unchanged — every enabled destination must
     // have SOMETHING to say, or the dispatcher throws at send time. Only
     // where that content may come from has widened.
-    const hasShared = Boolean(val.content.shared?.body?.trim());
+    // Validate through the RESOLVER, not truthiness of the raw key. These
+    // must agree exactly: `body: z.string().min(1)` accepts "   ", so a
+    // whitespace-only override used to SAVE and then throw at every
+    // dispatch site — including inside the public /pay/:token render,
+    // which has no try/catch and would 500 the whole invoice page for a
+    // client trying to pay.
     for (const c of val.dispatchChannels) {
-      if (!val.content[c] && !hasShared) {
+      if (!resolveChannelContent(val.content as PromotionContent, c)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["content", c],
@@ -151,7 +156,7 @@ export const promotionSavePayloadSchema = z
       }
     }
     for (const s of val.displaySurfaces) {
-      if (!val.content[s] && !hasShared) {
+      if (!resolveChannelContent(val.content as PromotionContent, s)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["content", s],
@@ -159,11 +164,40 @@ export const promotionSavePayloadSchema = z
         });
       }
     }
-    if (val.linkKind === "EXTERNAL" && !val.link) {
+    // M1: email's subject comes from shared.headline when the channel has
+    // no override. Without this an operator enabling email with only a
+    // body silently ships every message titled "A note from us".
+    if (
+      val.dispatchChannels.includes("email") &&
+      !val.content.email &&
+      !val.content.shared?.headline?.trim()
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["content", "shared", "headline"],
+        message:
+          "Email needs an offer title — it becomes the subject line. Add one, or give email its own subject.",
+      });
+    }
+    // A destination is only REQUIRED when the promo actually sends
+    // something — a text or email whose whole point is a link to tap.
+    //
+    // A display-only promo (invoice surface, no dispatch channels) renders
+    // fine with no link: buildContentSnapshot sets ctaUrl: null and the
+    // invoice simply omits the button, showing the offer as text. But
+    // linkKind DEFAULTS to EXTERNAL, so this rule made it impossible to
+    // create an invoice-only promo without inventing a URL — the operator
+    // never chose EXTERNAL, it was just the default they never touched.
+    if (
+      val.linkKind === "EXTERNAL" &&
+      !val.link &&
+      val.dispatchChannels.length > 0
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["link"],
-        message: "External promotions require a link URL",
+        message:
+          "A promotion that sends email or SMS needs a destination — add an External URL, or switch to a Custom landing page.",
       });
     }
   });
@@ -892,6 +926,29 @@ function normalizePhoneForLookup(raw: string): string {
  * Returns null when neither exists — callers decide whether that's an
  * error (dispatch) or simply nothing to show (display surface).
  */
+/**
+ * The heading + body a landing page shows.
+ *
+ * Shared offer copy wins; the page's own headline/intro columns remain as
+ * the fallback for promotions authored before the copy collapse.
+ *
+ * Called by BOTH loadLandingPageForPublic and loadLandingPageForEditor.
+ * They previously computed this independently and the editor one never
+ * joined `promotion.content` at all — so the editor showed stale columns
+ * while the live page showed the real copy. Same offer, two answers.
+ */
+export function resolveLandingHeader(
+  page: { headline: string | null; intro: string | null },
+  promotionContent: PromotionContent | null | undefined,
+): { headline: string | null; intro: string | null } {
+  const shared = (promotionContent ?? {}).shared;
+  return {
+    // `||` not `??` — an empty string is "unset" here, same as null.
+    headline: shared?.headline || page.headline,
+    intro: shared?.body || page.intro,
+  };
+}
+
 export function resolveChannelContent(
   content: PromotionContent,
   channel: "email" | "sms" | "invoice_page",
@@ -901,19 +958,25 @@ export function resolveChannelContent(
     | { subject?: string; headline?: string; body?: string; ctaText?: string }
     | undefined;
 
-  // Body is what makes an override real. An entry with an empty body is
-  // treated as absent so a half-filled channel falls back rather than
-  // shipping a blank message.
-  const body = own?.body?.trim() ? own.body : shared?.body;
+  // Body is what makes content real. BOTH sides must be trim-checked: a
+  // whitespace-only body is "no content", whether it's an override or the
+  // shared copy. Checking only the override let `shared: { body: "   " }`
+  // resolve to a blank message that would ship to a client.
+  const ownBody = own?.body?.trim() ? own.body : undefined;
+  const sharedBody = shared?.body?.trim() ? shared.body : undefined;
+  const body = ownBody ?? sharedBody;
   if (!body) return null;
 
   return {
     // Email subject has no shared equivalent — it's email-only. Fall back
     // to the shared headline so a subject line is never empty.
-    subject: (own as any)?.subject ?? shared?.headline,
-    headline: (own as any)?.headline ?? shared?.headline,
+    // `||` not `??` throughout: an empty string means "unset", same as
+    // undefined. Mixing the two made the same input resolve two ways
+    // depending on which call site you asked.
+    subject: (own as any)?.subject || shared?.headline,
+    headline: (own as any)?.headline || shared?.headline,
     body,
-    ctaText: own?.ctaText?.trim() ? own.ctaText : (shared?.ctaText ?? ""),
+    ctaText: own?.ctaText?.trim() ? own.ctaText : (shared?.ctaText || ""),
   };
 }
 
@@ -1231,7 +1294,12 @@ export async function selectPromotionsForPiggyback(params: {
   for (const p of candidates) {
     const content = (p.content ?? {}) as PromotionContent;
     // Skip if no content for this channel (should have been caught at save).
-    if (!content[params.channel]) continue;
+    // Resolver gate — see loadInvoicePagePromos. This one was worse: the
+    // `continue` fires BEFORE the pending/surviving arrays, so a
+    // shared-only promo produced no PromotionDelivery row at all — not
+    // even a skip row with a reason. The operator saw zero deliveries and
+    // nothing explaining why.
+    if (!resolveChannelContent(content, params.channel)) continue;
 
     // Reuse the existing pending row's IDs when idempotency map has a
     // hit so the wrapper URL that shipped in the earlier /comms-handoff
@@ -1632,7 +1700,11 @@ export async function runManualSendBurst(params: {
 
   for (const contact of contacts) {
     for (const channel of dispatchChannels) {
-      const hasChannelContent = !!content[channel];
+      // Resolver gate — same fix as the invoice/piggyback gates. Gating on
+      // the raw key made "Send Now" silently no-op on a shared-only promo
+      // AFTER consuming the 5-minute dispatch lock, so the retry was
+      // blocked for five minutes with no explanation.
+      const hasChannelContent = !!resolveChannelContent(content, channel);
       if (!hasChannelContent) continue;
       // Cooldown / idempotency: skip if this (promotion, contact, channel)
       // has a successful delivery within cooldownDays. Same rule the
@@ -1858,7 +1930,10 @@ export async function sendPromotionTest(params: {
     return { ok: false, target: null, error: "no_target_on_file" };
   }
   const content = (promo.content ?? {}) as PromotionContent;
-  if (!content[params.channel]) throw new Error(`No content for ${params.channel}`);
+  // No raw-key check: buildContentSnapshot below resolves through the
+  // shared copy and throws its own accurate message when there genuinely
+  // is nothing to send. The raw check 500'd on valid shared-only promos —
+  // and this is the operator's own test-send affordance.
 
   // Resolve mode via the shared helper — dynamic import to keep the
   // module boundary clean (promotions.ts imported by paymentRequests.ts
@@ -2028,7 +2103,11 @@ export async function loadInvoicePagePromos(params: {
       : [];
     if (!surfaces.includes("invoice_page")) continue;
     const content = (p.content ?? {}) as PromotionContent;
-    if (!content.invoice_page) continue;
+    // Gate on the RESOLVER, not the raw key. Gating on `content.invoice_page`
+    // meant a promo written with only shared copy saved fine, passed
+    // validation, and then silently never appeared on ANY invoice.
+    const resolvedInvoice = resolveChannelContent(content, "invoice_page");
+    if (!resolvedInvoice) continue;
     // Per-promo suppression: only hide THIS promo if the viewing contact
     // is opted out of ALL of THIS promo's dispatch channels AND this
     // promo actually has dispatch channels. Display-only promos (empty
@@ -2255,7 +2334,10 @@ export async function loadLandingPageForEditor(params: {
         orderBy: { ordinal: "asc" },
         include: { photos: { orderBy: { sortOrder: "asc" } } },
       },
-      promotion: { select: { id: true } },
+      // `content` is required so the editor resolves the SAME header the
+      // public page does — see resolveLandingHeader. Omitting it is what
+      // made the editor show stale columns.
+      promotion: { select: { id: true, content: true } },
     },
   });
   if (!page) return null;
@@ -2284,8 +2366,7 @@ export async function loadLandingPageForEditor(params: {
   return {
     id: page.id,
     slug: page.slug,
-    headline: page.headline,
-    intro: page.intro,
+    ...resolveLandingHeader(page, page.promotion?.content as PromotionContent),
     viewCount: page.viewCount,
     slugLocked: shippedDeliveryCount > 0,
     shippedDeliveryCount,
@@ -3059,6 +3140,8 @@ export async function loadLandingPageForPublic(
   /** True when this content is being shown via an operator preview token
    *  rather than because the promotion is live. */
   preview: boolean;
+  /** Button label from the shared offer copy. Null when unset. */
+  ctaText: string | null;
   // Business contact block from Settings — always populated (fields
   // that aren't configured are empty strings / empty arrays). Rendered
   // as a "Get in touch" footer on the landing page so clients can
@@ -3135,6 +3218,7 @@ export async function loadLandingPageForPublic(
       promotionActive: false,
       inactiveReason,
       preview: false,
+      ctaText: null,
       business: { name: "", phone: "", email: "", address: "", socialLinks: [] },
     };
   }
@@ -3171,10 +3255,14 @@ export async function loadLandingPageForPublic(
   const socialLinks = await loadSocialLinks(prisma);
   // Shared copy wins; the page's own headline/intro columns remain as a
   // fallback so promotions authored before the collapse keep rendering.
-  const sharedCopy = ((page.promotion?.content ?? {}) as PromotionContent).shared;
+  const header = resolveLandingHeader(page, page.promotion?.content as PromotionContent);
+  const sharedCta = ((page.promotion?.content ?? {}) as PromotionContent).shared?.ctaText?.trim() || null;
   return {
-    headline: sharedCopy?.headline || page.headline,
-    intro: sharedCopy?.body || page.intro,
+    headline: header.headline,
+    intro: header.intro,
+    // "The offer" collects a Button label and says it shows on the landing
+    // page — but the page had no CTA at all, so it was silently discarded.
+    ctaText: sharedCta,
     items,
     promotionActive,
     inactiveReason,

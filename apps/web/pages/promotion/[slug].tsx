@@ -46,6 +46,8 @@ type LandingPageData = {
   /** True when the content is only visible via an operator preview token.
    *  Drives the "not live yet" banner. */
   preview?: boolean;
+  /** Button label from "The offer". Null when unset. */
+  ctaText?: string | null;
   business: BusinessBlock;
 };
 
@@ -155,6 +157,28 @@ export default function PromotionLandingPage({ slug, page, ogTitle, ogDescriptio
                 // The editor labels this "Intro paragraph (Markdown OK)".
                 <Box fontSize={{ base: "md", md: "lg" }} color="fg.muted">
                   <MarkdownContent>{page.intro}</MarkdownContent>
+                </Box>
+              )}
+              {/* The offer's Button label. Collected in the editor and
+                  promised on this page, but never rendered — so an
+                  operator's call-to-action silently vanished. Scrolls to
+                  the contact header, which is the action on this page. */}
+              {page.ctaText && (
+                <Box>
+                  <ChakraLink
+                    href={`mailto:${page.business.email || ""}`}
+                    display="inline-flex"
+                    alignItems="center"
+                    px={5}
+                    py={3}
+                    bg="green.600"
+                    color="white"
+                    fontWeight="semibold"
+                    rounded="md"
+                    _hover={{ bg: "green.700", textDecoration: "none" }}
+                  >
+                    {page.ctaText}
+                  </ChakraLink>
                 </Box>
               )}
               {page.items.length === 0 ? (

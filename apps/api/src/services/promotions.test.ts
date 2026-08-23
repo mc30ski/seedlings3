@@ -602,8 +602,27 @@ describe("promotionSavePayloadSchema — linkKind semantics", () => {
     content: { invoice_page: { body: "hi" } },
   };
 
-  it("EXTERNAL requires a link URL", () => {
-    const r = promotionSavePayloadSchema.safeParse({ ...base, linkKind: "EXTERNAL" });
+  // POLICY 2026-08-22: a destination is required only when the promo
+  // actually SENDS something. linkKind defaults to EXTERNAL, so demanding a
+  // URL from a display-only invoice promo made it impossible to create one
+  // without inventing a link — and the invoice renders text-only with no
+  // destination anyway (buildContentSnapshot sets ctaUrl: null).
+  it("EXTERNAL requires a link URL only when the promo dispatches", () => {
+    // Display-only (no dispatch channels): valid with no link.
+    const displayOnly = promotionSavePayloadSchema.safeParse({ ...base, linkKind: "EXTERNAL" });
+    expect(
+      displayOnly.success,
+      JSON.stringify(displayOnly.success ? [] : displayOnly.error.issues),
+    ).toBe(true);
+
+    // Dispatching: a message with no destination is still rejected.
+    const r = promotionSavePayloadSchema.safeParse({
+      ...base,
+      linkKind: "EXTERNAL",
+      dispatchChannels: ["email"],
+      triggerKind: "on_invoice_sent",
+      content: { shared: { headline: "Subject", body: "hi" } },
+    });
     expect(r.success).toBe(false);
     if (!r.success) {
       const paths = r.error.issues.map((i) => i.path.join("."));

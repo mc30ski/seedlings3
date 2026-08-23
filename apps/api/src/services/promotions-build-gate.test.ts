@@ -64,6 +64,8 @@ import {
   verifyPromoClickToken,
   signLandingPreviewToken,
   verifyLandingPreviewToken,
+  resolveChannelContent,
+  resolveLandingHeader,
   buildClickWrapperUrl,
   buildInvoicePageClickUrl,
   buildShortWrapperUrl,
@@ -782,5 +784,82 @@ describe("Invariant R — landing preview tokens", () => {
     for (const bad of ["", ".", "abc", "abc.def", ".sig", "99999999999999999999.sig"]) {
       expect(verifyLandingPreviewToken(SECRET, SLUG, bad, NOW)).toBe(false);
     }
+  });
+});
+
+
+// ── S. Shared offer copy resolves everywhere ─────────────────────────
+// THE REGRESSION THIS EXISTS FOR: the content model was collapsed so a
+// promotion carries ONE set of copy (`content.shared`) that every channel
+// and surface inherits. But four separate "does this promo have content?"
+// gates kept testing the raw per-channel key, UPSTREAM of the resolver.
+// Result: a promo that saved perfectly then silently never appeared on an
+// invoice, never piggybacked, no-opped on Send Now while burning the
+// dispatch lock, and 500'd the test-send.
+//
+// Nothing caught it because no test used a `shared` fixture at all. These
+// assert the resolver contract that every gate must now honour.
+
+describe("Invariant S — shared offer copy", () => {
+  const SHARED = { shared: { headline: "Fall cleanups", body: "Book now.", ctaText: "Get a quote" } };
+
+  it("S1: shared copy satisfies every channel with no override present", () => {
+    for (const ch of ["email", "sms", "invoice_page"] as const) {
+      const r = resolveChannelContent(SHARED as any, ch);
+      expect(r, `channel ${ch} resolved null from shared copy`).not.toBeNull();
+      expect(r!.body).toBe("Book now.");
+      expect(r!.ctaText).toBe("Get a quote");
+    }
+  });
+
+  it("S2: email inherits the offer title as its subject", () => {
+    expect(resolveChannelContent(SHARED as any, "email")!.subject).toBe("Fall cleanups");
+  });
+
+  it("S3: a per-channel override WINS over shared copy", () => {
+    const c = { ...SHARED, sms: { body: "Short version", ctaText: "Book" } };
+    expect(resolveChannelContent(c as any, "sms")!.body).toBe("Short version");
+    // ...and the other channels still inherit.
+    expect(resolveChannelContent(c as any, "email")!.body).toBe("Book now.");
+  });
+
+  it("S4: a whitespace-only override falls back instead of shipping blank", () => {
+    const c = { ...SHARED, sms: { body: "   ", ctaText: "" } };
+    expect(resolveChannelContent(c as any, "sms")!.body).toBe("Book now.");
+  });
+
+  it("S5: no shared copy and no override resolves to null, not a blank message", () => {
+    expect(resolveChannelContent({} as any, "sms")).toBeNull();
+    expect(resolveChannelContent({ shared: { body: "  " } } as any, "sms")).toBeNull();
+  });
+
+  it("S6: an empty-string headline is treated as unset, not as content", () => {
+    // `??` would keep "" and render an empty heading; `||` falls through.
+    const c = { shared: { headline: "Real title", body: "b" }, invoice_page: { headline: "", body: "x" } };
+    expect(resolveChannelContent(c as any, "invoice_page")!.headline).toBe("Real title");
+  });
+
+  it("S7: landing header resolves shared copy, falling back to legacy columns", () => {
+    // Live promo: shared wins.
+    expect(
+      resolveLandingHeader({ headline: "old", intro: "old body" }, SHARED as any),
+    ).toEqual({ headline: "Fall cleanups", intro: "Book now." });
+    // Pre-collapse promo with no shared copy: legacy columns still render.
+    expect(
+      resolveLandingHeader({ headline: "old", intro: "old body" }, {} as any),
+    ).toEqual({ headline: "old", intro: "old body" });
+  });
+
+  it("S8: the save schema and the resolver agree — nothing saves that can't send", () => {
+    // The exact mismatch that 500'd the public pay page: `min(1)` accepts
+    // "   ", so a whitespace override used to save and then throw at every
+    // dispatch site.
+    const r = promotionSavePayloadSchema.safeParse({
+      title: "t", description: "", link: "https://example.com",
+      audienceSpec: { kind: "all" as const }, triggerConfig: {}, cooldownDays: 7,
+      dispatchChannels: ["sms"], displaySurfaces: [], triggerKind: "on_invoice_sent",
+      content: { sms: { body: "   ", ctaText: "" } },
+    });
+    expect(r.success, "a whitespace-only body must not save").toBe(false);
   });
 });

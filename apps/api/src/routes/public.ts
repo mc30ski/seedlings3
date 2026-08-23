@@ -806,7 +806,17 @@ export default async function publicRoutes(app: FastifyInstance) {
     // marketing consent without their actual say-so. Re-opt-in now
     // requires the Super typed-APPROVE flow.
     const { loadInvoicePagePromos } = await import("../services/promotions");
-    const promos = await loadInvoicePagePromos({ contactId: primaryContact?.id ?? null });
+    // A promotion is an ADD-ON to this page. If loading one throws — bad
+    // content shape, a presign failure, anything — the client must still be
+    // able to see their invoice and pay it. Previously this was unguarded,
+    // so one malformed promo 500'd the entire pay page for every client
+    // whose invoice it targeted.
+    const promos = await loadInvoicePagePromos({
+      contactId: primaryContact?.id ?? null,
+    }).catch((err) => {
+      req.log?.error?.({ err }, "invoice-page promos failed to load; rendering without offers");
+      return [];
+    });
 
     return {
       occurrenceId: resolved.occurrenceId,

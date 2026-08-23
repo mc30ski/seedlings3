@@ -89,6 +89,21 @@ type Rule = {
 
 const FORBIDDEN_PATTERNS: Rule[] = [
   // 1. UTC YYYY-MM-DD slicing — the OG date bug in this codebase.
+  // 16. `.slice(0, 10)` on an ISO string that is ALREADY a string — the
+  //     variant rule #1 misses because there's no `.toISOString()` call on
+  //     the same line. Shipped bug (2026-08-22): the promotions editor did
+  //     `initial.endAt.slice(0, 10)` on a UTC instant. endAt is stored as
+  //     end-of-day ET (23:59 → 04:59Z the NEXT day), so the slice yielded
+  //     tomorrow and the next save re-anchored it — the campaign end date
+  //     crept forward one day on EVERY edit, silently, forever.
+  //     Use bizDateKey(x) / etFormatDate(x) to get the ET calendar day.
+  {
+    pattern: /\b[a-zA-Z_$][\w$]*(?:\.[a-zA-Z_$][\w$]*)*(?:At|Date|Time|Iso|ISO)\b\s*\.slice\(\s*0\s*,\s*10\s*\)/,
+    reason:
+      "`.slice(0, 10)` on an ISO instant is the UTC day, not the ET calendar day — off by one for anything anchored at end-of-day ET.",
+    fix: "Use bizDateKey(x) on the web side or etFormatDate(x) on the API side to get the ET calendar day.",
+  },
+
   {
     pattern: /\.toISOString\(\)\.slice\s*\(\s*0\s*,\s*10\s*\)/,
     reason: ".toISOString().slice(0, 10) emits UTC YYYY-MM-DD which is the wrong calendar day near midnight ET.",
