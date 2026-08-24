@@ -128,6 +128,10 @@ type Promotion = {
   link: string | null;
   landingPageId: string | null;
   landingPage?: { id: string; slug: string } | null;
+  /** Full public URL of the landing page, resolved SERVER-side. The host
+   *  and the path segment both depend on PROMOTION_LANDING_BASE_URL, which
+   *  the browser cannot see — so never rebuild this client-side. */
+  landingPublicUrl?: string | null;
   audienceSpec: { kind: "all" };
   dispatchChannels: DispatchChannel[];
   displaySurfaces: DisplaySurface[];
@@ -182,6 +186,9 @@ type LandingPage = {
   headline: string | null;
   intro: string | null;
   viewCount: number;
+  /** Full public URL of this page, resolved SERVER-side. See
+   *  landingPublicUrl on Promotion — same reasoning. */
+  publicUrl?: string | null;
   /** Server-computed: true once a delivery has actually shipped this URL.
    *  Authoritative — the same predicate gates the PATCH, so the input's
    *  enabled state and the server's guard can never disagree. */
@@ -649,7 +656,14 @@ function PromotionDetail({
                 colorPalette="purple"
                 as="a"
                 {...({
-                  href: `/promotion/${promotion.landingPage.slug}`,
+                  // Server-resolved. Landing pages can live on the marketing
+                  // domain, where the path is /motion/<slug> rather than
+                  // /promotion/<slug> — the browser can't know which, so it
+                  // must not guess. The fallback only covers an older API
+                  // response that predates this field.
+                  href:
+                    promotion.landingPublicUrl ??
+                    `/promotion/${promotion.landingPage.slug}`,
                   target: "_blank",
                   rel: "noopener noreferrer",
                 } as any)}
@@ -785,12 +799,18 @@ function PromotionDetail({
                     color="blue.600"
                     textDecoration="underline"
                     {...({
-                      href: `/promotion/${promotion.landingPage.slug}`,
+                      href:
+                        promotion.landingPublicUrl ??
+                        `/promotion/${promotion.landingPage.slug}`,
                       target: "_blank",
                       rel: "noopener noreferrer",
                     } as any)}
                   >
-                    /promotion/{promotion.landingPage.slug}
+                    {/* The address a client actually sees, host included —
+                        the operator needs to recognise it in the wild, and
+                        both the host and the path segment vary by setting. */}
+                    {promotion.landingPublicUrl ??
+                      `/promotion/${promotion.landingPage.slug}`}
                   </Text>
                 </Text>
               </>
@@ -2529,7 +2549,13 @@ function LandingPageEditor({
         <Text fontSize="sm" fontWeight="semibold" mb={2}>Custom landing page</Text>
         <Text fontSize="2xs" color="fg.muted" mb={3}>
           The page clients actually land on:{" "}
-          <Text as="span" fontFamily="mono">/promotion/{page.slug}</Text> · Views: {page.viewCount}
+          {/* Server-resolved. Landing pages can live on the marketing
+              domain, where the path is /motion/<slug> — a guessed
+              "/promotion/<slug>" showed the operator an address their
+              clients never visit. */}
+          <Text as="span" fontFamily="mono">
+            {page.publicUrl ?? `/promotion/${page.slug}`}
+          </Text> · Views: {page.viewCount}
         </Text>
         <VStack align="stretch" gap={2}>
           <Box>
@@ -2559,7 +2585,13 @@ function LandingPageEditor({
                 borderLeftRadius="md"
                 flexShrink={0}
               >
-                /promotion/
+                {/* Derived from the server-resolved publicUrl so the chip
+                    can't claim "/promotion/" while clients actually get
+                    "/motion/". Everything up to and including the last
+                    slash — i.e. the real prefix for this environment. */}
+                {page.publicUrl
+                  ? `/${page.publicUrl.split("/").slice(3, -1).join("/")}/`
+                  : "/promotion/"}
               </Box>
               <Input
                 size="sm"

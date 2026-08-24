@@ -212,6 +212,16 @@ const SETTING_SMS_FOOTER = "PROMOTION_OPT_OUT_FOOTER_SMS";
 const SETTING_BUSINESS_ADDRESS = "BUSINESS_ADDRESS";
 const SETTING_PAY_BASE_URL = "PAYMENT_REQUEST_BASE_URL";
 const SETTING_ALLOWED_DOMAINS = "ALLOWED_DOMAINS";
+// Where promotion LANDING pages live. Optional and opt-in: when unset,
+// landing URLs are built from the visitor's own host exactly as before, so
+// adding this key is the only thing that changes behavior.
+//
+// Exists because the marketing domain reads as the word: seedlings.pro +
+// /motion/ = "pro-motion". Landing pages are fully public — no login, no
+// stored browser state — so sending a client across domains for one costs
+// nothing. Do NOT point invoice or app links here: those DO depend on
+// login and per-domain browser storage.
+const SETTING_LANDING_BASE_URL = "PROMOTION_LANDING_BASE_URL";
 
 export async function loadPromotionSettings(): Promise<{
   hmacSecret: string;
@@ -219,6 +229,8 @@ export async function loadPromotionSettings(): Promise<{
   smsFooter: string;
   businessAddress: string;
   baseUrl: string;
+  /** Optional override used ONLY for landing-page URLs. Empty = use baseUrl. */
+  landingBaseUrl: string;
 }> {
   const rows = await prisma.setting.findMany({
     where: {
@@ -229,6 +241,7 @@ export async function loadPromotionSettings(): Promise<{
           SETTING_SMS_FOOTER,
           SETTING_BUSINESS_ADDRESS,
           SETTING_PAY_BASE_URL,
+          SETTING_LANDING_BASE_URL,
         ],
       },
     },
@@ -297,6 +310,7 @@ export async function loadPromotionSettings(): Promise<{
     smsFooter: map.get(SETTING_SMS_FOOTER) ?? "",
     businessAddress: map.get(SETTING_BUSINESS_ADDRESS) ?? "",
     baseUrl: map.get(SETTING_PAY_BASE_URL) ?? "https://www.seedlings.team",
+    landingBaseUrl: (map.get(SETTING_LANDING_BASE_URL) ?? "").trim(),
   };
 }
 
@@ -692,6 +706,35 @@ export function buildInvoicePageClickUrl(
 // page promotions build `${baseUrl}/promotion/${slug}`. Returns null when
 // the promo is misconfigured (no URL / no slug) — caller decides what
 // to do (redirect to base URL, 404, etc.).
+/**
+ * The ONE place that decides a landing page's public URL.
+ *
+ * Path segment depends on the host, so the address reads as a word on the
+ * marketing domain: seedlings.pro/motion/<slug> is "pro-motion". Anywhere
+ * else stays /promotion/<slug>.
+ *
+ * Both routes are real Next.js pages and both render the same component, so
+ * every URL ever sent to a client keeps working forever — nothing already
+ * in someone's inbox breaks when this changes.
+ *
+ * Deliberately NOT a redirect rule. Prod rewrites live in vercel.json and
+ * dev rewrites in next.config.js, and on 2026-08-23 those two silently
+ * disagreed for months — every promotion click URL 404'd in production
+ * while working perfectly in dev. A real page file cannot drift that way.
+ */
+export function buildLandingPageUrl(baseUrl: string, slug: string): string {
+  const trimmed = baseUrl.replace(/\/+$/, "");
+  let host = "";
+  try {
+    host = new URL(trimmed).hostname.toLowerCase();
+  } catch {
+    // Malformed base (bad Setting value) — fall back to the long form
+    // rather than throwing and killing the click.
+  }
+  const segment = /(^|\.)seedlings\.pro$/.test(host) ? "motion" : "promotion";
+  return `${trimmed}/${segment}/${slug}`;
+}
+
 export async function resolveDestinationUrl(
   baseUrl: string,
   promo: {
@@ -699,6 +742,16 @@ export async function resolveDestinationUrl(
     link: string | null;
     landingPageId: string | null;
   },
+  /**
+   * Optional host for LANDING pages only (PROMOTION_LANDING_BASE_URL).
+   * Empty/omitted keeps the visitor on the domain they arrived from —
+   * i.e. exactly the behavior before this option existed.
+   *
+   * Safe to cross domains here ONLY because landing pages are fully
+   * public: no login, no per-domain browser storage. Invoice and app
+   * links must never use this.
+   */
+  landingBaseUrl?: string,
 ): Promise<{ url: string; destination: "external" | "landing_page" } | null> {
   if (promo.linkKind === "EXTERNAL") {
     if (!promo.link) return null;
@@ -711,8 +764,8 @@ export async function resolveDestinationUrl(
       select: { slug: true },
     });
     if (!page) return null;
-    const trimmed = baseUrl.replace(/\/$/, "");
-    return { url: `${trimmed}/promotion/${page.slug}`, destination: "landing_page" };
+    const base = (landingBaseUrl ?? "").trim() || baseUrl;
+    return { url: buildLandingPageUrl(base, page.slug), destination: "landing_page" };
   }
   return null;
 }
@@ -2133,8 +2186,25 @@ export async function loadInvoicePagePromos(params: {
     // Build a wrapper URL for the CTA — logs the click before 302 to the
     // resolved destination. Skipped when HMAC secret isn't configured
     // (fail-closed on send-side; same on display-side).
+    //
+    // Honors the campaign's own domain, exactly like the two dispatch
+    // paths do (selectPromotionsForPiggyback and runManualSendBurst both
+    // use `baseDomain ?? settings.baseUrl`). This one used settings.baseUrl
+    // alone, so a campaign branded to the marketing domain still emitted
+    // an invoice CTA on the app domain — the short links in its texts said
+    // one host and the button on the invoice said another.
+    //
+    // Knock-on effect, and the reason this alone gets promos onto one
+    // domain end to end: the click handler derives its redirect target
+    // from the host the visitor arrived on. Send them to the marketing
+    // domain here and the landing page follows automatically — including
+    // the /motion/ path, which buildLandingPageUrl picks from the host.
+    //
+    // Pay links are untouched: those come from PAYMENT_REQUEST_BASE_URL
+    // via paymentRequests.ts and never consult baseDomain.
+    const clickBase = p.baseDomain ?? settings.baseUrl;
     const wrapperUrl = settings.hmacSecret
-      ? buildInvoicePageClickUrl(settings.baseUrl, settings.hmacSecret, p.id, params.contactId)
+      ? buildInvoicePageClickUrl(clickBase, settings.hmacSecret, p.id, params.contactId)
       : null;
     const snap = buildContentSnapshot({
       promotion: { link: wrapperUrl, content },
@@ -3146,7 +3216,7 @@ export async function recordClickAndResolve(params: {
       const anonBase = params.requestHost && params.requestProtocol
         ? `${params.requestProtocol}://${params.requestHost}`
         : settings.baseUrl;
-      const resolvedAnon = await resolveDestinationUrl(anonBase, claimedPromo);
+      const resolvedAnon = await resolveDestinationUrl(anonBase, claimedPromo, settings.landingBaseUrl);
       return {
         destinationUrl: resolvedAnon?.url ?? null,
         destination: resolvedAnon?.destination ?? null,
@@ -3173,7 +3243,7 @@ export async function recordClickAndResolve(params: {
   const destBase = params.requestHost && params.requestProtocol
     ? `${params.requestProtocol}://${params.requestHost}`
     : settings.baseUrl;
-  const resolved = await resolveDestinationUrl(destBase, promo);
+  const resolved = await resolveDestinationUrl(destBase, promo, settings.landingBaseUrl);
 
   await prisma.promotionClick.create({
     data: {
@@ -3310,11 +3380,19 @@ export async function recordShortClickAndResolve(params: {
   const destBase = params.requestHost
     ? `${params.requestProtocol}://${params.requestHost}`
     : "";
-  const resolved = await resolveDestinationUrl(destBase, {
-    linkKind: promo.linkKind,
-    link: promo.link,
-    landingPageId: promo.landingPageId,
-  });
+  // Landing-page host override (PROMOTION_LANDING_BASE_URL). Loaded here
+  // rather than threaded in, because this path doesn't otherwise need
+  // settings — and an unset key means "behave exactly as before".
+  const { landingBaseUrl } = await loadPromotionSettings();
+  const resolved = await resolveDestinationUrl(
+    destBase,
+    {
+      linkKind: promo.linkKind,
+      link: promo.link,
+      landingPageId: promo.landingPageId,
+    },
+    landingBaseUrl,
+  );
 
   await prisma.promotionClick.create({
     data: {

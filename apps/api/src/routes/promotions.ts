@@ -84,11 +84,26 @@ export default async function promotionsRoutes(app: FastifyInstance) {
       _count: true,
     });
     const shippedMap = new Map(shippedStats.map((s) => [s.promotionId, s._count]));
+    // Resolve each landing page's REAL public URL server-side.
+    //
+    // The detail panel used to build "/promotion/<slug>" itself, which is
+    // only correct while landing pages live on the app's own domain. With
+    // PROMOTION_LANDING_BASE_URL pointing at the marketing domain the path
+    // becomes /motion/<slug> — so the operator was reading an address their
+    // clients never visit. Settings are loaded ONCE for the whole list.
+    const { loadPromotionSettings, buildLandingPageUrl } = await import(
+      "../services/promotions"
+    );
+    const settings = await loadPromotionSettings();
+    const landingBase = settings.landingBaseUrl || settings.baseUrl;
     return rows.map((r) => ({
       ...r,
       deliveredCount: statMap.get(r.id)?.delivered ?? 0,
       skippedCount: statMap.get(r.id)?.skipped ?? 0,
       shippedCount: shippedMap.get(r.id) ?? 0,
+      landingPublicUrl: r.landingPage
+        ? buildLandingPageUrl(landingBase, r.landingPage.slug)
+        : null,
     }));
   });
 
@@ -605,7 +620,19 @@ export default async function promotionsRoutes(app: FastifyInstance) {
     if (!promo || !promo.landingPageId) return reply.code(404).send({ error: "not_found" });
     const page = await loadLandingPageForEditor({ pageId: promo.landingPageId });
     if (!page) return reply.code(404).send({ error: "not_found" });
-    return page;
+    // Resolve the REAL public URL server-side and hand it to the editor.
+    //
+    // The editor used to hardcode "/promotion/<slug>". That stopped being
+    // true once PROMOTION_LANDING_BASE_URL could move landing pages to the
+    // marketing domain, where the path is /motion/<slug> — so the operator
+    // was shown an address their clients never see. Only the server knows
+    // the setting, so only the server can answer this.
+    const { loadPromotionSettings, buildLandingPageUrl } = await import(
+      "../services/promotions"
+    );
+    const settings = await loadPromotionSettings();
+    const base = settings.landingBaseUrl || settings.baseUrl;
+    return { ...page, publicUrl: buildLandingPageUrl(base, page.slug) };
   });
 
   // Create-or-ensure landing page for a promotion. Also flips linkKind

@@ -842,3 +842,121 @@ describe("photo deletes never destroy an R2 object another row still uses", () =
     expect(r2Deletes).toEqual([LONE]);
   });
 });
+
+// ── Landing-page URL: host decides the path segment ─────────────────
+//
+// seedlings.pro/motion/<slug> reads as "pro-motion"; every other host
+// keeps /promotion/<slug>. Both are REAL Next.js pages (see
+// apps/web/pages/motion/[promotionSlug].tsx), never rewrites — rewrites
+// live in two files that must agree, and on 2026-08-23 they silently
+// didn't, 404ing every production promo click for months.
+//
+// The long form must keep working forever: it is already in customers'
+// inboxes and SMS threads.
+
+describe("buildLandingPageUrl — host picks the path segment", () => {
+  it("uses /motion/ on the marketing domain", async () => {
+    const { buildLandingPageUrl } = await import("./promotions");
+    expect(buildLandingPageUrl("https://seedlings.pro", "fall-cleanup"))
+      .toBe("https://seedlings.pro/motion/fall-cleanup");
+    // Subdomains of the marketing domain count too.
+    expect(buildLandingPageUrl("https://www.seedlings.pro", "fall-cleanup"))
+      .toBe("https://www.seedlings.pro/motion/fall-cleanup");
+  });
+
+  it("uses /promotion/ everywhere else", async () => {
+    const { buildLandingPageUrl } = await import("./promotions");
+    for (const host of [
+      "https://seedlings.team",
+      "https://www.seedlings.team",
+      "http://localhost:3000",
+    ]) {
+      expect(buildLandingPageUrl(host, "fall-cleanup"))
+        .toBe(`${host}/promotion/fall-cleanup`);
+    }
+  });
+
+  it("does NOT match a lookalike domain", async () => {
+    const { buildLandingPageUrl } = await import("./promotions");
+    // notseedlings.pro must not be treated as ours — the regex is
+    // anchored on a dot or start-of-host for exactly this reason.
+    expect(buildLandingPageUrl("https://notseedlings.pro", "x"))
+      .toBe("https://notseedlings.pro/promotion/x");
+    // ...and .pro appearing mid-host is not the marketing domain either.
+    expect(buildLandingPageUrl("https://seedlings.pro.evil.com", "x"))
+      .toBe("https://seedlings.pro.evil.com/promotion/x");
+  });
+
+  it("tolerates trailing slashes and a malformed base", async () => {
+    const { buildLandingPageUrl } = await import("./promotions");
+    expect(buildLandingPageUrl("https://seedlings.pro/", "x"))
+      .toBe("https://seedlings.pro/motion/x");
+    expect(buildLandingPageUrl("https://seedlings.pro///", "x"))
+      .toBe("https://seedlings.pro/motion/x");
+    // A bad Setting value must degrade to the long form, never throw —
+    // throwing here would kill the click instead of just picking a
+    // less-clever URL.
+    expect(() => buildLandingPageUrl("not a url", "x")).not.toThrow();
+    expect(buildLandingPageUrl("not a url", "x")).toContain("/promotion/x");
+  });
+});
+
+// ── Invoice CTA honors the campaign's own domain ────────────────────
+//
+// Three code paths build promo URLs. Two always honored the campaign's
+// baseDomain; loadInvoicePagePromos did not, so a campaign branded to the
+// marketing domain still emitted an invoice button on the app domain —
+// its texts said one host, its invoice button said another.
+//
+// This also drives the whole chain: the click handler derives its redirect
+// from the host the visitor arrived on, so getting THIS right is what puts
+// promos on one domain end to end.
+
+describe("loadInvoicePagePromos — invoice CTA uses the campaign's baseDomain", () => {
+  beforeEach(() => {
+    resetMocks();
+    setSettings({ baseUrl: "https://app.example.com" });
+  });
+
+  const promoRow = (extras: Partial<any> = {}) => ({
+    id: "p1",
+    status: "ACTIVE",
+    startAt: null,
+    endAt: null,
+    startedAt: new Date("2026-01-01"),
+    dispatchChannels: [] as string[],
+    displaySurfaces: ["invoice_page"],
+    content: { shared: { headline: "H", body: "B", ctaText: "Go" } },
+    link: "https://example.com",
+    linkKind: "EXTERNAL",
+    landingPageId: null,
+    baseDomain: null,
+    ...extras,
+  });
+
+  it("falls back to the app domain when the campaign has no baseDomain", async () => {
+    mocks.promotion.findMany.mockResolvedValue([promoRow({ baseDomain: null })]);
+    const out = await loadInvoicePagePromos({ contactId: null });
+    expect(out[0].ctaUrl).toContain("https://app.example.com/");
+  });
+
+  it("uses the campaign's baseDomain when set", async () => {
+    mocks.promotion.findMany.mockResolvedValue([
+      promoRow({ baseDomain: "https://promo.example.com" }),
+    ]);
+    const out = await loadInvoicePagePromos({ contactId: null });
+    expect(out[0].ctaUrl).toContain("https://promo.example.com/");
+    // And must NOT fall back to the app domain.
+    expect(out[0].ctaUrl).not.toContain("app.example.com");
+  });
+
+  it("keeps the /api/public/ prefix on whichever host it uses", async () => {
+    // The prefix is what makes the wrapper reachable at all — dropping it
+    // is the exact bug that 404'd every production promo click.
+    mocks.promotion.findMany.mockResolvedValue([
+      promoRow({ baseDomain: "https://promo.example.com" }),
+    ]);
+    const out = await loadInvoicePagePromos({ contactId: null });
+    expect(out[0].ctaUrl).toContain("/api/public/promotion/click/p/");
+  });
+});
