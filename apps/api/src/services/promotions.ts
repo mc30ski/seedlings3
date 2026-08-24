@@ -768,6 +768,8 @@ export async function buildTrackedLandingUrl(params: {
   base: string;
   hmacSecret: string;
   contactId: string | null;
+  /** Invoice URL for the back link. See loadInvoicePagePromos. */
+  returnUrl?: string | null;
 }): Promise<string | null> {
   const page = await prisma.promotionLandingPage.findUnique({
     where: { id: params.landingPageId },
@@ -781,6 +783,9 @@ export async function buildTrackedLandingUrl(params: {
   url.searchParams.set("p", params.promotionId);
   url.searchParams.set("t", signPromoClickToken(params.hmacSecret, params.promotionId, params.contactId));
   if (params.contactId) url.searchParams.set("c", params.contactId);
+  // Where the "Back to your invoice" button points. A plain link, because
+  // browser history proved unreliable here.
+  if (params.returnUrl) url.searchParams.set("ret", params.returnUrl);
   return url.toString();
 }
 
@@ -2148,6 +2153,20 @@ export async function sendPromotionTest(params: {
 // contact opts out later or view is unauthenticated).
 export async function loadInvoicePagePromos(params: {
   contactId: string | null;
+  /**
+   * The invoice's own URL, so the landing page can render a real link back
+   * to it. Optional — omitted, the landing page simply shows no back
+   * control.
+   *
+   * This carries the pay token, which IS the invoice's auth. That is a
+   * deliberate, bounded trade: the customer already holds this URL (it is
+   * how they reached the invoice, and it is sitting in their texts). The
+   * new exposure is that FORWARDING the promo link now also forwards
+   * invoice access. Accepted because three history-based attempts all
+   * failed on mobile and left the customer stranded, which is the worse
+   * outcome. Drop this param to undo it.
+   */
+  returnUrl?: string | null;
 }): Promise<
   {
     id: string;
@@ -2274,6 +2293,7 @@ export async function loadInvoicePagePromos(params: {
               base: (settings.landingBaseUrl || clickBase),
               hmacSecret: settings.hmacSecret,
               contactId: params.contactId,
+              returnUrl: params.returnUrl ?? null,
             })
           : null;
       wrapperUrl =
