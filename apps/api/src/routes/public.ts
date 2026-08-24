@@ -813,6 +813,12 @@ export default async function publicRoutes(app: FastifyInstance) {
     // whose invoice it targeted.
     const promos = await loadInvoicePagePromos({
       contactId: primaryContact?.id ?? null,
+      // The invoice's own address, so the promo page can offer a real link
+      // back to it instead of guessing with browser history. Three separate
+      // history-based attempts all failed on mobile — the page still ends up
+      // with an extra entry from Next's client routing, so `back` lands
+      // short and needs a second press. A plain link cannot miss.
+      returnUrl: `${(await loadPromotionSettings()).baseUrl.replace(/\/+$/, "")}/pay/${encodeURIComponent(token)}`,
     }).catch((err) => {
       req.log?.error?.({ err }, "invoice-page promos failed to load; rendering without offers");
       return [];

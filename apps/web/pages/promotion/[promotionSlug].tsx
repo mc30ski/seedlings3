@@ -53,18 +53,21 @@ type LandingPageData = {
 
 type Props = {
   promotionSlug: string;
-  /** True when this visit began on a client's invoice (?from=invoice,
-   *  forwarded by the click handler). Drives the "back to your invoice"
-   *  header — someone who opened this link straight from a text has no
-   *  invoice to return to, so they get no header. */
-  cameFromInvoice: boolean;
+  /** The invoice to go back to, or null. Server-validated against our own
+   *  hostnames — see getServerSideProps — so a crafted promo link can't
+   *  turn this button into an open redirect to somewhere else.
+   *
+   *  A real link, NOT browser history: three history-based attempts all
+   *  failed on mobile, where the page picks up an extra entry from Next's
+   *  client routing and `back` lands short. A link cannot miss. */
+  returnUrl: string | null;
   page: LandingPageData | null;
   ogImage: string | null;
   ogTitle: string;
   ogDescription: string;
 };
 
-export default function PromotionLandingPage({ promotionSlug, page, ogTitle, ogDescription, ogImage, cameFromInvoice }: Props) {
+export default function PromotionLandingPage({ promotionSlug, page, ogTitle, ogDescription, ogImage, returnUrl }: Props) {
   // Carousel state. Scoped to ONE item — a client browsing "Clean yard
   // debris" should page through that entry's photos, not slide into the
   // next service's. Null = closed.
@@ -136,7 +139,7 @@ export default function PromotionLandingPage({ promotionSlug, page, ogTitle, ogD
                   Uses history.back() rather than a URL: the invoice address
                   contains its payment token, which IS its auth, and that
                   must never be embedded in a shareable marketing link. */}
-              {cameFromInvoice && <BackToInvoiceBar />}
+              {returnUrl && <BackToInvoiceBar href={returnUrl} />}
               {/* Preview banner. Unmissable on purpose — this page looks
                   exactly like the live one, and mistaking a draft for
                   published is the failure mode worth designing against. */}
@@ -491,43 +494,29 @@ function ContactHeader({ business }: { business: BusinessBlock }) {
 
 // "Back to your invoice" bar.
 //
-// Rendered only when the visit began on an invoice — see cameFromInvoice.
+// A PLAIN LINK to the invoice — deliberately not window.history.back().
 //
-// WHY history.back() AND NOT A LINK
-// The invoice URL is /pay/<token>, and that token is the invoice's ONLY
-// auth: anyone holding it can read the amount and address and self-report
-// a payment. Promotion pages get forwarded and shared, so embedding the
-// token here would turn a marketing link into a credential leak. Browser
-// history knows where the client came from without us ever handling it.
+// Three history-based attempts failed on mobile. Even with the redirect
+// hop removed (verified hops=0 in production), the page still ends up with
+// an extra entry from Next's own client-side routing, so one press of back
+// lands short and the visitor has to press twice. An <a href> goes exactly
+// where it says, on every browser, with no history semantics involved.
 //
-// The bar hides itself if there is genuinely nothing to go back to (a
-// forged ?from=invoice, or a restored tab). Better to show nothing than a
-// button that does nothing.
-function BackToInvoiceBar() {
-  // Start hidden and reveal after mount: history length is a client-only
-  // fact, and rendering it server-side would flash a control that may then
-  // vanish. SSR emits nothing, so no hydration mismatch either.
-  const [canGoBack, setCanGoBack] = useState(false);
-  useEffect(() => {
-    try {
-      setCanGoBack(window.history.length > 1);
-    } catch {
-      setCanGoBack(false);
-    }
-  }, []);
-  if (!canGoBack) return null;
+// `href` is validated SERVER-side against our own hostnames before it ever
+// reaches this component — see getServerSideProps. Never render an
+// unvalidated URL here: this is a public page whose query string anyone
+// can craft, and a blind link would be an open redirect.
+function BackToInvoiceBar({ href }: { href: string }) {
   return (
-    // STICKY, not just top-of-page. This page can run long — several
-    // services, each with a photo grid — and the person we are rescuing
-    // already felt trapped once. A control that scrolls away recreates
-    // exactly that feeling halfway down. It stays put instead.
+    // Sticky: this page runs long (several services, each with a photo
+    // grid) and the person we are rescuing already felt trapped once. A
+    // control that scrolls away recreates that halfway down.
     <Box
       position="sticky"
       top={0}
       zIndex={10}
-      // Full-bleed background so content scrolling underneath never shows
-      // through the bar. mx/px cancel the Container's gutter so the bar
-      // spans edge to edge on a phone.
+      // Cancel the Container gutter so the bar spans edge to edge on a
+      // phone, with a solid backing so content never shows through.
       mx={{ base: -4, md: -6 }}
       px={{ base: 4, md: 6 }}
       py={3}
@@ -536,38 +525,29 @@ function BackToInvoiceBar() {
       borderColor="gray.200"
       shadow="sm"
     >
-      <Box
-        as="button"
-        onClick={() => {
-          try {
-            window.history.back();
-          } catch {
-            /* no history to return to — the bar simply does nothing */
-          }
-        }}
-        w="full"
+      <ChakraLink
+        href={href}
         display="flex"
         alignItems="center"
         justifyContent="center"
         gap={2}
-        // Full-width, filled, 44px min height: this is the phone-first
-        // escape hatch, so it gets a real button's weight and a tap
-        // target that meets the platform minimum.
+        w="full"
+        // 44px is the platform minimum tap target, and this is the escape
+        // hatch for someone who felt stuck.
         minH="44px"
         px={4}
-        // Blue to match the offer's own CTA on the invoice — the client
-        // just tapped a blue button to get here, so the way back reads as
-        // part of the same flow rather than a different site's chrome.
+        // Blue to match the offer button they tapped to get here, so the
+        // way back reads as part of the same flow.
         bg="blue.600"
         color="white"
         fontSize="md"
         fontWeight="semibold"
         rounded="md"
-        _hover={{ bg: "blue.700" }}
+        _hover={{ bg: "blue.700", textDecoration: "none" }}
         _active={{ bg: "blue.800" }}
       >
         <span aria-hidden="true">←</span> Back to your invoice
-      </Box>
+      </ChakraLink>
     </Box>
   );
 }
@@ -690,10 +670,29 @@ export const getServerSideProps: GetServerSideProps<Props> = async (ctx) => {
   // First available photo across items — an item without photos shouldn't
   // cost the page its link preview.
   const ogImage = page?.items.flatMap((i) => i.photos)[0]?.url ?? null;
-  // Did this visit start on an invoice? Set by the invoice CTA. A link
-  // opened straight from a text, or a shared URL, has no invoice behind
-  // it — and must not be shown a back control that leads nowhere.
-  const cameFromInvoice = ctx.query.from === "invoice";
+  // Where "Back to your invoice" should point, or null for no bar.
+  //
+  // VALIDATED, not trusted. This page is public and anyone can craft its
+  // query string, so a blind `href` here would be an open redirect —
+  // someone could mail out a seedlings.pro link whose button lands on a
+  // phishing page wearing our branding. Only absolute http(s) URLs whose
+  // hostname is one of ours are accepted; anything else is dropped and the
+  // bar simply doesn't render.
+  const rawReturn = typeof ctx.query.ret === "string" ? ctx.query.ret : "";
+  let returnUrl: string | null = null;
+  if (rawReturn) {
+    try {
+      const u = new URL(rawReturn);
+      const host = u.hostname.toLowerCase();
+      const ours =
+        /(^|\.)seedlings\.(team|pro)$/.test(host) || host === "localhost";
+      if ((u.protocol === "https:" || u.protocol === "http:") && ours) {
+        returnUrl = u.toString();
+      }
+    } catch {
+      /* unparseable — leave null, no bar */
+    }
+  }
 
   // Log the promotion click HERE rather than via a redirect endpoint.
   //
@@ -726,6 +725,6 @@ export const getServerSideProps: GetServerSideProps<Props> = async (ctx) => {
     }
   }
   return {
-    props: { promotionSlug, page, ogTitle, ogDescription, ogImage, cameFromInvoice },
+    props: { promotionSlug, page, ogTitle, ogDescription, ogImage, returnUrl },
   };
 };
