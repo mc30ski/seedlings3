@@ -744,6 +744,46 @@ export function buildLandingPageUrl(baseUrl: string, slug: string): string {
   return `${trimmed}/${segment}/${slug}`;
 }
 
+/**
+ * A landing-page URL that carries its own click-tracking payload.
+ *
+ * The invoice CTA uses this instead of the /promotion/click/ wrapper so a
+ * visitor's history is simply invoice -> landing, with no intermediate
+ * entry for the back button to bounce off (mobile Safari keeps redirect
+ * entries; desktop drops them, which is why this only ever broke on
+ * phones).
+ *
+ * The token is the SAME HMAC the wrapper carried, so attribution is
+ * unchanged and no new secret is exposed — it authenticates "this click
+ * belongs to this promotion + contact" and grants nothing else. The
+ * landing page's server render posts it back with ?record=1 and then
+ * strips these params from the address bar.
+ *
+ * Returns null when the page can't be resolved, so the caller falls back
+ * to the wrapper rather than emitting a dead link.
+ */
+export async function buildTrackedLandingUrl(params: {
+  promotionId: string;
+  landingPageId: string;
+  base: string;
+  hmacSecret: string;
+  contactId: string | null;
+}): Promise<string | null> {
+  const page = await prisma.promotionLandingPage.findUnique({
+    where: { id: params.landingPageId },
+    select: { slug: true },
+  });
+  if (!page) return null;
+  const url = new URL(buildLandingPageUrl(params.base, page.slug));
+  // Marks the visit as invoice-originated, which is what reveals the
+  // "Back to your invoice" bar.
+  url.searchParams.set("from", "invoice");
+  url.searchParams.set("p", params.promotionId);
+  url.searchParams.set("t", signPromoClickToken(params.hmacSecret, params.promotionId, params.contactId));
+  if (params.contactId) url.searchParams.set("c", params.contactId);
+  return url.toString();
+}
+
 export async function resolveDestinationUrl(
   baseUrl: string,
   promo: {
@@ -2212,9 +2252,34 @@ export async function loadInvoicePagePromos(params: {
     // Pay links are untouched: those come from PAYMENT_REQUEST_BASE_URL
     // via paymentRequests.ts and never consult baseDomain.
     const clickBase = p.baseDomain ?? settings.baseUrl;
-    const wrapperUrl = settings.hmacSecret
-      ? buildInvoicePageClickUrl(clickBase, settings.hmacSecret, p.id, params.contactId)
-      : null;
+    // For LANDING-PAGE promos, point the CTA STRAIGHT at the landing page
+    // and carry the tracking token along; the landing page's server render
+    // logs the click (see ?record=1 on the click route).
+    //
+    // The wrapper hop had to go. It occupied its own history entry on
+    // mobile Safari (desktop drops it), so pressing back landed on the
+    // wrapper, which fired forward again — the promo page appeared to
+    // reload and only a rapid double-press escaped. With no intermediate
+    // URL there is nothing to bounce off, on any browser.
+    //
+    // EXTERNAL promos keep the wrapper: we can't run a server render on
+    // someone else's site, so the redirect is the only place to record.
+    let wrapperUrl: string | null = null;
+    if (settings.hmacSecret) {
+      const direct =
+        p.linkKind === "LANDING_PAGE" && p.landingPageId
+          ? await buildTrackedLandingUrl({
+              promotionId: p.id,
+              landingPageId: p.landingPageId,
+              base: (settings.landingBaseUrl || clickBase),
+              hmacSecret: settings.hmacSecret,
+              contactId: params.contactId,
+            })
+          : null;
+      wrapperUrl =
+        direct ??
+        buildInvoicePageClickUrl(clickBase, settings.hmacSecret, p.id, params.contactId);
+    }
     const snap = buildContentSnapshot({
       promotion: { link: wrapperUrl, content },
       channel: "invoice_page",
