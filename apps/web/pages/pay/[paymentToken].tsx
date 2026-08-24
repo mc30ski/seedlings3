@@ -679,6 +679,22 @@ function PaymentPageInner() {
  *  soft-blue cards so they clearly read as "additional offer" content
  *  distinct from the payment flow above. Multiple promos stack. */
 function PromoDisplaySection({ promos }: { promos: InvoicePagePromo[] }) {
+  // Lightbox scoped to ONE promo, the same way the landing page scopes it
+  // to one item: a client paging through "Fall Cleanup" photos should not
+  // slide into a different offer's images. null = closed.
+  const [lightbox, setLightbox] = useState<{ promoId: string; index: number } | null>(null);
+
+  // Every image for a promo, cover first — the same order the card shows.
+  // imageUrl is just imageUrls[0], so prefer the array and fall back for
+  // older API responses that only carried the single cover.
+  const photosFor = (p: InvoicePagePromo): { url: string }[] => {
+    const urls = p.imageUrls?.length ? p.imageUrls : p.imageUrl ? [p.imageUrl] : [];
+    return urls.map((url) => ({ url }));
+  };
+  const lightboxPhotos = lightbox
+    ? photosFor(promos.find((p) => p.id === lightbox.promoId) ?? ({} as InvoicePagePromo))
+    : [];
+
   return (
     // Same shell as the Payment section: header sits on its own with
     // SectionHeader's mb={2}, an inner VStack handles the gap between
@@ -711,6 +727,20 @@ function PromoDisplaySection({ promos }: { promos: InvoicePagePromo[] }) {
                 rounded="md"
                 overflow="hidden"
                 bg="blackAlpha.100"
+                // Tap to enlarge, same as the job photos above. These are
+                // small tiles of what may be a detailed before/after shot,
+                // so the thumbnail alone often can't carry the offer.
+                cursor="pointer"
+                onClick={() => setLightbox({ promoId: p.id, index: 0 })}
+                role="button"
+                tabIndex={0}
+                aria-label="View offer photo"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setLightbox({ promoId: p.id, index: 0 });
+                  }
+                }}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
@@ -761,6 +791,19 @@ function PromoDisplaySection({ promos }: { promos: InvoicePagePromo[] }) {
                   rounded="md"
                   overflow="hidden"
                   bg="blackAlpha.100"
+                  // i is the index within slice(1), so the lightbox index
+                  // is i + 1 — the cover occupies position 0.
+                  cursor="pointer"
+                  onClick={() => setLightbox({ promoId: p.id, index: i + 1 })}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`View offer photo ${i + 2}`}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setLightbox({ promoId: p.id, index: i + 1 });
+                    }
+                  }}
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
@@ -780,8 +823,24 @@ function PromoDisplaySection({ promos }: { promos: InvoicePagePromo[] }) {
           {p.ctaUrl && (
             <Button
               as="a"
-              // Chakra v3 as="a" accepts HTMLAnchor props; cast keeps TS happy.
-              {...({ href: p.ctaUrl, target: "_blank", rel: "noopener noreferrer" } as any)}
+              // SAME TAB, deliberately — no target="_blank".
+              //
+              // A new tab on a phone has no history, and the landing page
+              // has no back affordance of its own, so tapping this opened
+              // a page with no way out: the back button did nothing and
+              // the only escape was closing the tab. A client who came
+              // from a text to pay a bill got stranded away from the
+              // invoice by an ad for more work.
+              //
+              // Navigating in place gives the phone's back button its
+              // normal meaning and returns them to the invoice. The click
+              // wrapper resolves server-side, so there is no intermediate
+              // redirect entry for back to bounce off.
+              //
+              // rel is kept: the destination can be an external site on
+              // EXTERNAL-link promos, and noopener/noreferrer still matter
+              // for a same-tab navigation to a third party.
+              {...({ href: p.ctaUrl, rel: "noopener noreferrer" } as any)}
               size="sm"
               colorPalette="blue"
               mt={1}
@@ -798,6 +857,24 @@ function PromoDisplaySection({ promos }: { promos: InvoicePagePromo[] }) {
         </Box>
       ))}
       </VStack>
+      {/* Same lightbox component the job photos use above — overlay,
+          swipe, arrow keys, close on backdrop. Scoped to ONE promo, so
+          paging never slides into a different offer's images. */}
+      {lightbox && lightboxPhotos.length > 0 && (
+        <PhotoLightbox
+          photos={lightboxPhotos}
+          index={lightbox.index}
+          onClose={() => setLightbox(null)}
+          onPrev={() =>
+            setLightbox((l) => (l && l.index > 0 ? { ...l, index: l.index - 1 } : l))
+          }
+          onNext={() =>
+            setLightbox((l) =>
+              l && l.index < lightboxPhotos.length - 1 ? { ...l, index: l.index + 1 } : l,
+            )
+          }
+        />
+      )}
     </Box>
   );
 }

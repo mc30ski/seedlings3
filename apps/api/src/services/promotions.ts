@@ -696,6 +696,15 @@ export function buildInvoicePageClickUrl(
   const trimmed = baseUrl.replace(/\/$/, "");
   const qs = new URLSearchParams({ t: token });
   if (contactId) qs.set("c", contactId);
+  // `s=inv` marks "this click started on an invoice", so the landing page
+  // can offer a way back to it. Deliberately NOT the payment token: that
+  // token IS the invoice's auth, and a marketing URL gets forwarded and
+  // shared. This is a boolean breadcrumb that grants nothing.
+  //
+  // Unsigned on purpose. It drives one navigation affordance, so forging
+  // it buys an attacker a back button that goes nowhere. Signing it would
+  // imply it gates something.
+  qs.set("s", "inv");
   return `${trimmed}/api/public/promotion/click/p/${promotionId}?${qs.toString()}`;
 }
 
