@@ -100,6 +100,23 @@ async function fetchFollowWithCookie(
   return fetch(currentUrl, { ...init, headers, redirect: "manual" });
 }
 
+/**
+ * Is this proxied path a LINK WRAPPER — an endpoint whose only job is to
+ * bounce the visitor's browser somewhere else?
+ *
+ * Only these get their 3xx handed to the browser. Everything else keeps
+ * following redirects server-side, which is what an XHR caller wants.
+ *
+ * DELIBERATELY NARROW. Anything matching here stops following redirects,
+ * so a caller expecting final JSON would receive a bare 3xx instead. The
+ * payment endpoints (api/public/pay/...) must NEVER match — the
+ * proxy-link-wrapper build gate asserts exactly that, because this file
+ * sits in front of the invoice and self-report calls.
+ */
+export function isBrowserLinkWrapper(parts: string[]): boolean {
+  return /^api\/public\/(promotion\/click|mo)\//.test(parts.join("/"));
+}
+
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
@@ -203,10 +220,31 @@ export default async function handler(
     (init as any).body = Buffer.concat(chunks);
   }
 
-  const upstream = await fetchFollowWithCookie(target.toString(), {
-    ...init,
-    headers: fwd,
-  });
+  // ── Redirect-following: transparent for APIs, NOT for link wrappers ──
+  //
+  // Most proxied calls are XHR from our own app, where following redirects
+  // server-side is exactly right — the caller wants the final JSON.
+  //
+  // Promotion click wrappers and /mo/ short links are the opposite. Their
+  // ENTIRE purpose is to bounce the visitor's browser somewhere else. When
+  // the proxy swallowed that redirect, the browser stayed parked on the
+  // wrapper URL while being served HTML rendered for the landing route.
+  // Next.js then hydrated, found the address bar didn't match the page it
+  // was handed, and reconciled — churning history entries. On a phone the
+  // back button landed on those entries and appeared to reload the promo
+  // page; only hammering it escaped. The address bar also showed an ugly
+  // tracker URL instead of the real landing page.
+  //
+  // Handing the 3xx to the browser is what these endpoints always meant:
+  // the visitor lands on the true URL, history is invoice → landing, and
+  // back behaves normally on every device.
+  const isLinkWrapper = isBrowserLinkWrapper(parts);
+  const upstream = isLinkWrapper
+    ? await fetch(target.toString(), { ...init, headers: fwd, redirect: "manual" })
+    : await fetchFollowWithCookie(target.toString(), {
+        ...init,
+        headers: fwd,
+      });
 
   // optional debug so you can see when redirects happened
   res.setHeader("x-proxy-final-url", upstream.url);
