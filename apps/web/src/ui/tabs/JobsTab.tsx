@@ -1770,7 +1770,7 @@ export default function JobsTab({
     };
   }, []);
 
-  // Check for Begin Work Day workflow date override
+  // Check for Prepare for Work Day workflow date override
   useEffect(() => {
     try {
       const d = localStorage.getItem("seedlings_beginWorkday_jobsDate");

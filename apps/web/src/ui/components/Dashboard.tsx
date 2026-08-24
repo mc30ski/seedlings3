@@ -12,6 +12,9 @@
 // (red > orange > blue). A small count badge on the header shows how
 // many are hidden.
 //
+// `pinnedContent` is the exception to the collapse: it renders below
+// the header and stays visible in both states.
+//
 // Children stay mounted while collapsed (via display:none) so their
 // glow registration keeps working — otherwise unmounting would drop
 // glow state and the collapsed frame wouldn't know anything's still
@@ -40,6 +43,7 @@ export function Dashboard({
   title = "Dashboard",
   icon: Icon = LayoutDashboard,
   children,
+  pinnedContent,
   forceGlow,
   summarySlot,
   count,
@@ -55,6 +59,13 @@ export function Dashboard({
    *  as different surfaces at a glance. */
   icon?: LucideIcon;
   children: React.ReactNode;
+  /** Content rendered inside the frame, below the header, that the
+   *  collapse toggle does NOT hide. Use when a section has a headline
+   *  surface that should stay on screen (Home's hero card) while the
+   *  individual rows underneath fold away. Unlike `children` it is not
+   *  wrapped in GlowContext — it isn't a CompactBanner and must not
+   *  contribute to the collapsed-state glow/count. */
+  pinnedContent?: React.ReactNode;
   /** Externally-driven glow for Dashboards whose children aren't
    *  CompactBanners (so GlowContext registration wouldn't fire).
    *  When set AND collapsed, the frame pulses. Pair with `count`
@@ -157,6 +168,12 @@ export function Dashboard({
   const chevronColor = isHero
     ? "var(--chakra-colors-green-700)"
     : undefined;
+  // Hero header reads as a tappable bar rather than a bare label: a tinted
+  // band a step darker than the frame, with its own hover shade. The
+  // default variant keeps the plain opacity hover — its gray frame is
+  // already darker than its surroundings, so a band would just muddy it.
+  const headerBg = isHero ? "green.200" : undefined;
+  const headerHoverBg = isHero ? "green.300" : undefined;
 
   return (
     <Box
@@ -178,10 +195,14 @@ export function Dashboard({
         onClick={toggle}
         gap={2}
         align="center"
-        mb={open ? 2 : 0}
+        mb={open || pinnedContent ? 2 : 0}
         w="full"
         cursor="pointer"
-        _hover={{ opacity: 0.85 }}
+        bg={headerBg}
+        px={isHero ? 2 : 0}
+        py={isHero ? 1.5 : 0}
+        borderRadius={isHero ? "md" : undefined}
+        _hover={isHero ? { bg: headerHoverBg } : { opacity: 0.85 }}
         textAlign="left"
       >
         {open
@@ -235,6 +256,9 @@ export function Dashboard({
           </HStack>
         )}
       </HStack>
+      {pinnedContent && (
+        <Box mb={open ? 2 : 0}>{pinnedContent}</Box>
+      )}
       {open && (
         <GlowContext.Provider value={registry}>
           <VStack align="stretch" gap={2}>

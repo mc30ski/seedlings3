@@ -122,6 +122,11 @@ import TasksPage from "@/src/ui/pages/TasksPage";
 const hasRole = (roles: Me["roles"] | undefined, role: Role) =>
   !!roles?.includes(role);
 
+/** Where the user was standing when they opened a workflow. Read by
+ *  "Return to Workflow" so stepping out to Equipment/Routes and coming
+ *  back lands on the launching tab. */
+const WORKFLOW_ORIGIN_KEY = "seedlings_workflow_origin";
+
 export default function HomePage() {
   const router = useRouter();
   const { isSignedIn, isLoaded: authLoaded } = useAuth();
@@ -383,12 +388,11 @@ export default function HomePage() {
     try { history.pushState({ seedlingsNav: true }, ""); } catch {}
   }
 
-  function restoreFromHistory() {
-    const h = navHistoryRef.current;
-    if (h.length === 0) return;
-    const prev = h.pop()!;
-    setCanGoBack(h.length > 0);
-    // Update refs immediately so the next pushNavHistory reads the restored state
+  /** Move the app to a saved nav position — refs first so a subsequent
+   *  pushNavHistory reads the restored state, then React state. Shared by
+   *  the back button and by "Return to Workflow", which needs to land the
+   *  user wherever they launched the workflow from. */
+  function applyNavState(prev: NavState) {
     topTabRef.current = prev.outer as any;
     if (prev.outer === "client") clientInnerTabRef.current = prev.inner as any;
     else if (prev.outer === "worker") { workerInnerTabRef.current = prev.inner as any; if (prev.category) workerCategoryRef.current = prev.category; }
@@ -400,6 +404,34 @@ export default function HomePage() {
     else if (prev.outer === "worker") { setWorkerInnerTab(prev.inner as any); if (prev.category) setWorkerCategory(prev.category); }
     else if (prev.outer === "admin") { setAdminInnerTab(prev.inner as any); if (prev.category) setAdminCategory(prev.category); }
     else if (prev.outer === "super") { setSuperInnerTab(prev.inner as any); if (prev.category) setSuperCategory(prev.category); }
+  }
+
+  function restoreFromHistory() {
+    const h = navHistoryRef.current;
+    if (h.length === 0) return;
+    const prev = h.pop()!;
+    setCanGoBack(h.length > 0);
+    applyNavState(prev);
+  }
+
+  /**
+   * Open a workflow, remembering where the user was when they opened it.
+   *
+   * Use this for every genuine LAUNCH. Do NOT use it to resume a paused
+   * workflow (the "Return to Workflow" button) — that would overwrite the
+   * origin with whatever tab the workflow had sent the user out to, which
+   * is exactly the tab they don't want to come back to.
+   */
+  function launchWorkflow(id: string) {
+    const origin = getCurrentNavState();
+    try {
+      localStorage.setItem(WORKFLOW_ORIGIN_KEY, JSON.stringify(origin));
+    } catch { /* non-fatal — return falls back to worker/tasks */ }
+    // Set state directly too. The reader effect only re-checks on mount and
+    // on storage/navigate events, so relying on it alone would leave the
+    // Return button reading a stale origin if the user stepped out fast.
+    setWorkflowOrigin(origin);
+    setActiveWorkflow(id);
   }
 
   function handleBackButton() {
@@ -421,8 +453,18 @@ export default function HomePage() {
 
   // Track paused workflow for banner display
   const [pausedWorkflow, setPausedWorkflow] = useState<string | null>(null);
+  // Where the paused workflow was launched from. A workflow step can send
+  // the user out to another tab (Equipment Check → Equipment, Today's Route
+  // → Routes); returning has to land them back where they started, not on a
+  // hardcoded tab. Without this, launching from Home and stepping out to
+  // Equipment dropped you on +Actions on the way back.
+  const [workflowOrigin, setWorkflowOrigin] = useState<NavState | null>(null);
   useEffect(() => {
     const check = () => {
+      try {
+        const rawOrigin = localStorage.getItem(WORKFLOW_ORIGIN_KEY);
+        setWorkflowOrigin(rawOrigin ? (JSON.parse(rawOrigin) as NavState) : null);
+      } catch { setWorkflowOrigin(null); }
       try {
         if (localStorage.getItem("seedlings_beginWorkday_paused") === "1") return setPausedWorkflow("begin-workday");
         if (localStorage.getItem("seedlings_planWorkday_paused") === "1") return setPausedWorkflow("plan-workday");
@@ -498,7 +540,7 @@ export default function HomePage() {
       icon: FiPlus,
       colorPalette: "green",
       bgColor: "green.50",
-      onClick: () => setActiveWorkflow("new-job-setup"),
+      onClick: () => launchWorkflow("new-job-setup"),
     },
     {
       id: "share-photos",
@@ -507,7 +549,7 @@ export default function HomePage() {
       icon: FiShare2,
       colorPalette: "orange",
       bgColor: "orange.50",
-      onClick: () => setActiveWorkflow("share-photos"),
+      onClick: () => launchWorkflow("share-photos"),
     },
     {
       id: "export-summary",
@@ -783,22 +825,22 @@ export default function HomePage() {
             message: "As a trainee, you can view your upcoming job summary but cannot confirm, release, or message clients. Contact your team lead to manage your schedule.",
             confirmLabel: "View Summary",
             colorPalette: "blue",
-            onConfirm: () => setActiveWorkflow("plan-workday-trainee"),
+            onConfirm: () => launchWorkflow("plan-workday-trainee"),
           });
         } else {
-          setActiveWorkflow("plan-workday");
+          launchWorkflow("plan-workday");
         }
       },
     },
     {
       id: "start-day",
-      label: "Begin Work Day",
+      label: "Prepare for Work Day",
       description: "Review today's schedule, confirm jobs, and start your first stop",
       icon: FiSun,
       colorPalette: "green",
       bgColor: "green.50",
       onClick: () => {
-        setActiveWorkflow("begin-workday");
+        launchWorkflow("begin-workday");
       },
     },
   ];
@@ -816,7 +858,7 @@ export default function HomePage() {
       content: wrapWithInlineMessage(
         <HomeTab
           me={me}
-          onLaunchWorkflow={(name) => setActiveWorkflow(name)}
+          onLaunchWorkflow={(name) => launchWorkflow(name)}
           scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }}
         />
       ),
@@ -1231,7 +1273,10 @@ export default function HomePage() {
             myId={me?.id}
             myWorkerType={me?.workerType ?? null}
           />
-          {pausedWorkflow && workerInnerTab !== "tasks" && (
+          {pausedWorkflow && !(
+            (workflowOrigin?.outer ?? "worker") === topTab &&
+            (workflowOrigin?.inner ?? "tasks") === workerInnerTab
+          ) && (
             <Box
               mb={3} p={4} rounded="lg"
               display="flex" justifyContent="space-between" alignItems="center" gap={3}
@@ -1248,7 +1293,7 @@ export default function HomePage() {
             >
               <Text fontSize="sm" fontWeight="semibold" color="white">
                 {pausedWorkflow === "begin-workday"
-                  ? "You're in the Begin Work Day workflow. Return when you're done here."
+                  ? "You're in the Prepare for Work Day workflow. Return when you're done here."
                   : "You're in the Plan Workday workflow. Return when you're done here."}
               </Text>
               <Button
@@ -1265,7 +1310,14 @@ export default function HomePage() {
                     localStorage.removeItem("seedlings_beginWorkday_paused");
                   } catch {}
                   setPausedWorkflow(null);
-                  window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "tasks" } }));
+                  // Land on whichever tab launched this workflow. The old
+                  // hardcoded "tasks" meant a workflow started from Home
+                  // dumped you on +Actions after any step that links out.
+                  // Falls back to worker/tasks when no origin was recorded
+                  // (older paused state, or a write that failed).
+                  applyNavState(workflowOrigin ?? { outer: "worker", inner: "tasks", category: "Work" });
+                  // trigger:workflow resumes WITHOUT re-recording an origin —
+                  // see launchWorkflow.
                   setTimeout(() => {
                     window.dispatchEvent(new CustomEvent("trigger:workflow", { detail: { id: pausedWorkflow } }));
                   }, 100);
@@ -3048,7 +3100,7 @@ chip: false, bucket: t.bucket }));
       const detail = (e as CustomEvent).detail;
       setWorkflowEstimateDefaults(detail ?? null);
       setTopTab("admin");
-      setActiveWorkflow("new-job-setup");
+      launchWorkflow("new-job-setup");
     };
     window.addEventListener("trigger:newJobSetupFromEstimate", handler);
     return () => window.removeEventListener("trigger:newJobSetupFromEstimate", handler);

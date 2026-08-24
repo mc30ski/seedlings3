@@ -6,18 +6,27 @@ import {
   Box,
   Button,
   Card,
+  createListCollection,
   Dialog,
   HStack,
+  Input,
   Portal,
+  Select,
   Spinner,
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { AlertCircle, CheckCircle, Eye, MapPin, Wrench } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle, Eye, MapPin, Truck, Wrench } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
 import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import { type WorkerOccurrence } from "@/src/lib/types";
+// Reuse the shared workday client, not a raw fetch: startWorkday() fires
+// bumpWorkday(), which broadcasts seedlings:workday-changed so the
+// WorkdayStrip on Worker Home re-renders. Hitting the endpoint directly
+// would start the day and leave the strip still showing "not started".
+import { fetchWorkdayToday, startWorkday, fmtWorkdayDate, type WorkdaySummary, type WorkdayTodayPayload } from "@/src/lib/workday";
+import { bumpWorkday } from "@/src/lib/bus";
 import { fmtDate, fmtDateOpts, bizDateKey } from "@/src/lib/dates";
 import { clientLabel, jobTypeLabel } from "@/src/lib/labels";
 import { resolveBillingMode, shortBillingChip } from "@/src/lib/equipmentBilling";
@@ -44,11 +53,127 @@ type Props = {
   myWorkerType?: string | null;
 };
 
+type WorkflowVehicle = {
+  id: string;
+  displayName: string;
+  currentOdometer?: number | null;
+};
+
 export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerType }: Props) {
   const today = bizDateKey(new Date());
 
   const equipmentBillingEnabled = useEquipmentBillingEnabled();
-  const [step, setStep] = useState<"idle" | "loading" | "overview" | "confirm" | "route" | "equipment" | "ready" | "no-jobs">("idle");
+  const [step, setStep] = useState<"idle" | "loading" | "overview" | "confirm" | "route" | "equipment" | "vehicle" | "prior-open" | "start-workday" | "ready" | "no-jobs">("idle");
+  const [startingWorkday, setStartingWorkday] = useState(false);
+  const [priorOpen, setPriorOpen] = useState<WorkdaySummary[]>([]);
+  const [vehicles, setVehicles] = useState<WorkflowVehicle[]>([]);
+  const [vehicleId, setVehicleId] = useState<string>("");
+  const [odometer, setOdometer] = useState<string>("");
+  const [startingDrive, setStartingDrive] = useState(false);
+  /** Workday payload fetched when leaving the route step, reused after the
+   *  vehicle step so the post-vehicle branch doesn't refetch. Starting a
+   *  mileage session touches neither `openPrior` nor `today.state`, so the
+   *  stashed copy is still accurate. */
+  const [pendingWorkday, setPendingWorkday] = useState<WorkdayTodayPayload | null>(null);
+  /** True while the vehicle step is a real stop in this run — drives where
+   *  the downstream Back buttons return to. Cleared once a drive starts,
+   *  since re-offering the step would suggest starting a second session. */
+  const [vehicleStepShown, setVehicleStepShown] = useState(false);
+
+  /**
+   * Decide whether to offer "start your workday" before the final step.
+   *
+   * The workflow walks a worker through preparing their day and then hands
+   * them a button to their first job — but nothing in it ever started the
+   * workday, so they could finish the whole flow still clocked out and not
+   * notice until hours were missing.
+   *
+   * ORDER MATTERS. A dangling prior workday takes precedence over today's
+   * state, matching WorkdayRequiredDialog. `assertWorkdayActiveOrPrompt`
+   * returns ok:false whenever `openPrior` is non-empty EVEN IF today is
+   * IN_PROGRESS, so starting today's day while yesterday is still open
+   * accomplishes nothing — the worker is still refused at the first job,
+   * now with two open rows and no idea why. Send them to close the old
+   * day instead of offering a start that cannot help.
+   *
+   * Otherwise ONLY NOT_STARTED gets the prompt. A day already IN_PROGRESS,
+   * PAUSED or COMPLETED skips straight through: re-asking someone already
+   * on the clock invites a double-start and would confuse a paused day.
+   *
+   * A failed lookup skips the prompt rather than blocking — the worker can
+   * still start from the Home strip, and a network blip must not trap them
+   * in the workflow.
+   */
+  function decideAfterVehicle(payload: WorkdayTodayPayload | null) {
+    if ((payload?.openPrior ?? []).length > 0) {
+      setPriorOpen(payload!.openPrior);
+      setStep("prior-open");
+      return;
+    }
+    setStep(payload?.today?.state === "NOT_STARTED" ? "start-workday" : "ready");
+  }
+
+  /**
+   * Leaving the route step. Offers to start a mileage session first when
+   * the worker has a vehicle assigned and isn't already driving — a worker
+   * who heads out without starting one loses the trip, and reconstructing
+   * odometer readings after the fact is guesswork.
+   *
+   * Skipped when there is nothing to offer: no assigned vehicle, or a
+   * session already open (`openMileageEntries`). A failed vehicle lookup
+   * degrades to skipping the step rather than blocking the workflow.
+   */
+  async function proceedFromRoute() {
+    try {
+      const [payload, list] = await Promise.all([
+        fetchWorkdayToday(),
+        apiGet<WorkflowVehicle[]>("/api/me/vehicles").catch(() => [] as WorkflowVehicle[]),
+      ]);
+      setPendingWorkday(payload ?? null);
+      const assigned = Array.isArray(list) ? list : [];
+      const alreadyDriving = (payload?.openMileageEntries ?? []).length > 0;
+      if (assigned.length > 0 && !alreadyDriving) {
+        setVehicles(assigned);
+        pickVehicle(assigned[0].id, assigned);
+        setVehicleStepShown(true);
+        setStep("vehicle");
+        return;
+      }
+      setVehicleStepShown(false);
+      decideAfterVehicle(payload ?? null);
+    } catch {
+      setStep("ready");
+    }
+  }
+
+  function pickVehicle(id: string, list: WorkflowVehicle[] = vehicles) {
+    setVehicleId(id);
+    const v = list.find((x) => x.id === id);
+    setOdometer(v?.currentOdometer != null ? String(v.currentOdometer) : "");
+  }
+
+  async function startDriving() {
+    if (!vehicleId || !/^\d+$/.test(odometer.trim())) return;
+    setStartingDrive(true);
+    try {
+      await apiPost("/api/me/mileage/start", {
+        vehicleId,
+        startOdometer: Number(odometer),
+      });
+      // Same broadcast the MileageBanner's own start fires, so the Home
+      // strip reflects the open session the moment the workflow closes.
+      bumpWorkday();
+      publishInlineMessage({ type: "SUCCESS", text: "Mileage session started." });
+      setVehicleStepShown(false);
+      decideAfterVehicle(pendingWorkday);
+    } catch (err) {
+      // Stay put so the worker can retry — advancing silently would leave
+      // them believing the trip is being recorded when it isn't.
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Couldn't start the mileage session.", err) });
+    } finally {
+      setStartingDrive(false);
+    }
+  }
   const [occurrences, setOccurrences] = useState<WorkerOccurrence[]>([]);
   const [confirmIndex, setConfirmIndex] = useState(0);
   const [confirmBusy, setConfirmBusy] = useState(false);
@@ -60,6 +185,18 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
       // Load today + any overdue
       const list = await apiGet<WorkerOccurrence[]>(`/api/occurrences?to=${today}`);
       const myJobs = (Array.isArray(list) ? list : []).filter((occ) => {
+        // Ghost rows (reminder-ghost, pinned-ghost, next-occurrence
+        // "Expiring" placeholder) are shallow copies of a real occurrence
+        // carrying `workflow: "STANDARD"`, `status: SCHEDULED`, and the
+        // real assignee list — so they pass every check below. Their id is
+        // synthetic (`ghost:<jobId>`), so Confirm Clients would POST it to
+        // /api/occurrences/:id/confirm and get "Occurrence not found".
+        // The next-occurrence ghost snaps its startAt forward to today when
+        // the projected date is past, so the date anchor doesn't screen it
+        // out either. Exclude them explicitly, as JobsTab does.
+        if ((occ as any)._isReminderGhost) return false;
+        if ((occ as any)._isPinnedGhost) return false;
+        if ((occ as any)._isNextOccurrenceGhost) return false;
         // Only real jobs — exclude TASK, REMINDER, EVENT, FOLLOWUP, ANNOUNCEMENT, ESTIMATE
         if (occ.workflow !== "STANDARD" && occ.workflow !== "ONE_OFF") return false;
         const isAssigned = (occ.assignees ?? []).some((a) => a.userId === myId);
@@ -196,11 +333,19 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
       <Portal>
         <Dialog.Backdrop />
         <Dialog.Positioner>
-          <Dialog.Content maxW="md" mx={{ base: "3", md: "4" }} w="full" rounded="2xl" p="4" shadow="lg">
+          {/* minW={0} is load-bearing. The positioner is a flex row, so the
+              content box defaults to min-width:auto — it refuses to shrink
+              below its own min-content width. Today's Overview has the
+              widest content of any step (min-content 441px), so on a 390px
+              phone it blew past the mx gutters and rendered edge-to-edge
+              while every other step sat inset by 12px. Zeroing the minimum
+              lets it shrink to the margin box; the cards inside already
+              truncate. */}
+          <Dialog.Content maxW="md" mx={{ base: "3", md: "4" }} w="full" minW={0} rounded="2xl" p="4" shadow="lg">
             {/* Loading */}
             {step === "loading" && (
               <>
-                <Dialog.Header><Dialog.Title>Begin Work Day</Dialog.Title></Dialog.Header>
+                <Dialog.Header><Dialog.Title>Prepare for work day</Dialog.Title></Dialog.Header>
                 <Dialog.Body>
                   <Box py={8} textAlign="center"><Spinner size="lg" /><Text mt={2} color="fg.muted">Loading today's schedule...</Text></Box>
                 </Dialog.Body>
@@ -210,7 +355,7 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
             {/* No jobs */}
             {step === "no-jobs" && (
               <>
-                <Dialog.Header><Dialog.Title>Begin Work Day</Dialog.Title></Dialog.Header>
+                <Dialog.Header><Dialog.Title>Prepare for work day</Dialog.Title></Dialog.Header>
                 <Dialog.Body>
                   <Box py={6} textAlign="center">
                     <CheckCircle size={48} style={{ margin: "0 auto", color: "var(--chakra-colors-green-500)" }} />
@@ -325,11 +470,14 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                 </Dialog.Body>
                 <Dialog.Footer>
                   <HStack justify="space-between" w="full" wrap="wrap" gap={2}>
-                    <Button variant="outline" size="sm" onClick={() => { goToTab("jobs", "overview"); }}>
-                      View in Jobs
-                    </Button>
+                    {/* Same footer shape as every other step: the leave
+                        action sits alone on the left, the link-out and the
+                        primary advance group on the right. */}
+                    <Button variant="ghost" size="sm" onClick={() => { setStep("idle"); onDone(); }}>Cancel</Button>
                     <HStack gap={2} wrap="wrap">
-                      <Button variant="ghost" size="sm" onClick={() => { setStep("idle"); onDone(); }}>Cancel</Button>
+                      <Button variant="outline" size="sm" onClick={() => { goToTab("jobs", "overview"); }}>
+                        View in Jobs
+                      </Button>
                       <Button size="sm" colorPalette="green" onClick={() => {
                         const unconfirmed = occurrences.filter((o) =>
                           o.jobId && !(o as any).isClientConfirmed && o.status === "SCHEDULED" &&
@@ -339,7 +487,7 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                           setConfirmIndex(0);
                           setStep("confirm");
                         } else {
-                          setStep("route");
+                          setStep("equipment");
                         }
                       }}>
                         Next
@@ -370,7 +518,7 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                     </Dialog.Body>
                     <Dialog.Footer>
                       <HStack justify="flex-end" w="full">
-                        <Button size="sm" colorPalette="green" onClick={() => setStep("route")}>Continue to Route</Button>
+                        <Button size="sm" colorPalette="green" onClick={() => setStep("equipment")}>Next</Button>
                       </HStack>
                     </Dialog.Footer>
                   </>
@@ -482,7 +630,7 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                       <HStack gap={2}>
                         <Button variant="ghost" size="sm" onClick={() => {
                           if (confirmIndex + 1 < unconfirmed.length) setConfirmIndex(confirmIndex + 1);
-                          else setStep("route");
+                          else setStep("equipment");
                         }}>
                           Skip
                         </Button>
@@ -492,7 +640,7 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                             await apiPost(`/api/occurrences/${current.id}/confirm`);
                             setOccurrences((prev) => prev.map((o) => o.id === current.id ? { ...o, isClientConfirmed: true } as any : o));
                             if (confirmIndex + 1 < unconfirmed.length) setConfirmIndex(confirmIndex + 1);
-                            else setStep("route");
+                            else setStep("equipment");
                           } catch (err) {
                             publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to confirm.", err) });
                           } finally { setConfirmBusy(false); }
@@ -506,7 +654,7 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
               );
             })()}
 
-            {/* Step 3: Route */}
+            {/* Step 4: Route */}
             {step === "route" && (
               <>
                 <Dialog.Header><Dialog.Title>Today's Route</Dialog.Title></Dialog.Header>
@@ -545,13 +693,13 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                 </Dialog.Body>
                 <Dialog.Footer>
                   <HStack justify="space-between" w="full" wrap="wrap" gap={2}>
-                    <Button variant="ghost" size="sm" onClick={() => setStep("overview")}>Back</Button>
+                    <Button variant="ghost" size="sm" onClick={() => setStep("equipment")}>Back</Button>
                     <HStack gap={2} wrap="wrap">
                       <Button variant="outline" size="sm" colorPalette="blue" onClick={() => goToTab("routes", "route")}>
-                        Open Full Route
+                        Open Route
                       </Button>
-                      <Button size="sm" colorPalette="green" onClick={() => setStep("equipment")}>
-                        Equipment
+                      <Button size="sm" colorPalette="green" onClick={() => void proceedFromRoute()}>
+                        Next
                       </Button>
                     </HStack>
                   </HStack>
@@ -631,13 +779,13 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                 </Dialog.Body>
                 <Dialog.Footer>
                   <HStack justify="space-between" w="full" wrap="wrap" gap={2}>
-                    <Button variant="ghost" size="sm" onClick={() => setStep("route")}>Back</Button>
+                    <Button variant="ghost" size="sm" onClick={() => setStep("overview")}>Back</Button>
                     <HStack gap={2} wrap="wrap">
                       <Button variant="outline" size="sm" colorPalette="orange" onClick={() => goToTab("equipment", "equipment")}>
-                        Manage Equipment
+                        Manage
                       </Button>
-                      <Button size="sm" colorPalette="green" onClick={() => setStep("ready")}>
-                        All Set
+                      <Button size="sm" colorPalette="green" onClick={() => setStep("route")}>
+                        Next
                       </Button>
                     </HStack>
                   </HStack>
@@ -645,7 +793,239 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
               </>
             )}
 
-            {/* Step 4: Ready */}
+            {/* Step 6: Start the workday (only when it hasn't been) */}
+            {/* Step 5: Start driving (only when a vehicle is assigned and
+                no session is already open). Suggested, never required — the
+                worker may be a passenger, or on a site they walked to. */}
+            {step === "vehicle" && (
+              <>
+                <Dialog.Header><Dialog.Title>Start driving?</Dialog.Title></Dialog.Header>
+                <Dialog.Body>
+                  <VStack align="stretch" gap={3}>
+                    <Box p={4} bg="orange.50" rounded="lg" textAlign="center">
+                      <Truck size={40} style={{ margin: "0 auto", color: "var(--chakra-colors-orange-500)" }} />
+                      <Text fontSize="lg" fontWeight="bold" color="orange.700" mt={2}>
+                        {vehicles.length === 1
+                          ? `You're assigned ${vehicles[0].displayName}`
+                          : "You have vehicles assigned"}
+                      </Text>
+                      <Text fontSize="sm" color="orange.600" mt={1}>
+                        Starting a mileage session now records the trip automatically.
+                      </Text>
+                    </Box>
+
+                    {vehicles.length > 1 && (
+                      <VStack align="stretch" gap={1}>
+                        <Text fontSize="sm" fontWeight="medium">Vehicle</Text>
+                        <Select.Root
+                          collection={createListCollection({
+                            items: vehicles.map((v) => ({ label: v.displayName, value: v.id })),
+                          })}
+                          value={vehicleId ? [vehicleId] : []}
+                          onValueChange={(e) => { const v = e.value?.[0]; if (v) pickVehicle(v); }}
+                          size="sm"
+                          positioning={{ strategy: "fixed", hideWhenDetached: true }}
+                        >
+                          <Select.Control>
+                            <Select.Trigger>
+                              <Select.ValueText placeholder="Choose a vehicle" />
+                              <Select.Indicator />
+                            </Select.Trigger>
+                          </Select.Control>
+                          <Select.Positioner>
+                            <Select.Content>
+                              {vehicles.map((v) => (
+                                <Select.Item key={v.id} item={v.id}>
+                                  <Select.ItemText>{v.displayName}</Select.ItemText>
+                                </Select.Item>
+                              ))}
+                            </Select.Content>
+                          </Select.Positioner>
+                        </Select.Root>
+                      </VStack>
+                    )}
+
+                    <VStack align="stretch" gap={1}>
+                      <Text fontSize="sm" fontWeight="medium">Starting odometer (mi)</Text>
+                      <Input
+                        value={odometer}
+                        onChange={(e) => setOdometer(e.target.value)}
+                        inputMode="numeric"
+                        placeholder="e.g. 48231"
+                        size="sm"
+                      />
+                    </VStack>
+
+                    <Text fontSize="xs" color="fg.muted" textAlign="center">
+                      You can skip this and start a session later from your Home screen.
+                    </Text>
+                  </VStack>
+                </Dialog.Body>
+                <Dialog.Footer>
+                  <HStack justify="space-between" w="full" wrap="wrap" gap={2}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={startingDrive}
+                      onClick={() => setStep("route")}
+                    >
+                      Back
+                    </Button>
+                    <HStack gap={2} wrap="wrap">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={startingDrive}
+                        onClick={() => { setVehicleStepShown(false); decideAfterVehicle(pendingWorkday); }}
+                      >
+                        Not driving
+                      </Button>
+                      <Button
+                        size="sm"
+                        colorPalette="orange"
+                        loading={startingDrive}
+                        disabled={!vehicleId || !/^\d+$/.test(odometer.trim())}
+                        onClick={() => void startDriving()}
+                      >
+                        Start Driving
+                      </Button>
+                    </HStack>
+                  </HStack>
+                </Dialog.Footer>
+              </>
+            )}
+
+            {/* Dangling prior workday — blocks before the start prompt.
+                Copy mirrors WorkdayRequiredDialog's openPrior branch so the
+                worker reads the same instruction wherever they hit this. No
+                "start anyway" affordance: the server refuses the first job
+                while a prior day is open, so offering one would only add a
+                second open row. */}
+            {step === "prior-open" && (
+              <>
+                <Dialog.Header>
+                  <Dialog.Title>Close out a previous workday first</Dialog.Title>
+                </Dialog.Header>
+                <Dialog.Body>
+                  <VStack align="stretch" gap={3}>
+                    <Text fontSize="sm">
+                      You didn&apos;t end your workday on{" "}
+                      <Text as="span" fontWeight="semibold">
+                        {priorOpen[0] ? fmtWorkdayDate(priorOpen[0].workdayDate) : ""}
+                      </Text>
+                      {priorOpen.length > 1 && (
+                        <Text as="span" color="fg.muted">
+                          {" "}(plus {priorOpen.length - 1} more)
+                        </Text>
+                      )}
+                      . Set the end time on the{" "}
+                      <Text as="span" fontWeight="semibold">Home</Text> tab
+                      (orange &quot;didn&apos;t end your workday&quot; banner) before
+                      starting any new jobs.
+                    </Text>
+                    <Box p={3} bg="orange.50" borderWidth="1px" borderColor="orange.300" borderRadius="md">
+                      <HStack gap={2} align="start">
+                        <Box color="orange.600" flexShrink={0} mt="2px">
+                          <AlertTriangle size={16} />
+                        </Box>
+                        <Text fontSize="xs" color="orange.900">
+                          Past workdays don&apos;t auto-close — they need an end time so your
+                          hours for that day are recorded correctly.
+                        </Text>
+                      </HStack>
+                    </Box>
+                  </VStack>
+                </Dialog.Body>
+                <Dialog.Footer>
+                  <HStack justify="space-between" w="full" wrap="wrap" gap={2}>
+                    <Button variant="ghost" size="sm" onClick={() => setStep(vehicleStepShown ? "vehicle" : "route")}>
+                      Back
+                    </Button>
+                    <Button
+                      colorPalette="orange"
+                      size="sm"
+                      onClick={() => { setStep("idle"); onDone(); }}
+                    >
+                      OK
+                    </Button>
+                  </HStack>
+                </Dialog.Footer>
+              </>
+            )}
+
+            {step === "start-workday" && (
+              <>
+                <Dialog.Header><Dialog.Title>Start your workday?</Dialog.Title></Dialog.Header>
+                <Dialog.Body>
+                  <VStack align="stretch" gap={3}>
+                    <Box p={4} bg="green.50" rounded="lg" textAlign="center">
+                      <CheckCircle size={40} style={{ margin: "0 auto", color: "var(--chakra-colors-green-500)" }} />
+                      <Text fontSize="lg" fontWeight="bold" color="green.700" mt={2}>
+                        You&apos;re prepared — but not clocked in
+                      </Text>
+                      <Text fontSize="sm" color="green.600" mt={1}>
+                        Starting your workday begins tracking your hours for today.
+                      </Text>
+                    </Box>
+                    {/* Says plainly what happens if they skip. Someone who
+                        finishes this flow assuming they are on the clock,
+                        and isn't, loses hours they have to reconstruct
+                        later. */}
+                    <Text fontSize="xs" color="fg.muted" textAlign="center">
+                      You can skip this and start later from your Home screen.
+                    </Text>
+                  </VStack>
+                </Dialog.Body>
+                <Dialog.Footer>
+                  <HStack justify="space-between" w="full" wrap="wrap" gap={2}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={startingWorkday}
+                      onClick={() => setStep(vehicleStepShown ? "vehicle" : "route")}
+                    >
+                      Back
+                    </Button>
+                    <HStack gap={2} wrap="wrap">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={startingWorkday}
+                        onClick={() => setStep("ready")}
+                      >
+                        Not yet
+                      </Button>
+                      <Button
+                        size="sm"
+                        colorPalette="green"
+                        loading={startingWorkday}
+                        onClick={async () => {
+                          setStartingWorkday(true);
+                          try {
+                            // startedAt null = server stamps "now", the same
+                            // as the Home strip's Start button.
+                            await startWorkday({ startedAt: null });
+                            publishInlineMessage({ type: "SUCCESS", text: "Workday started." });
+                            setStep("ready");
+                          } catch (err) {
+                            // Stay on this step so the worker can retry —
+                            // silently advancing would leave them believing
+                            // they were clocked in.
+                            publishInlineMessage({ type: "ERROR", text: getErrorMessage("Couldn't start your workday.", err) });
+                          } finally {
+                            setStartingWorkday(false);
+                          }
+                        }}
+                      >
+                        Start Workday
+                      </Button>
+                    </HStack>
+                  </HStack>
+                </Dialog.Footer>
+              </>
+            )}
+
+            {/* Step 7: Ready */}
             {step === "ready" && (
               <>
                 <Dialog.Header><Dialog.Title>Ready to Go!</Dialog.Title></Dialog.Header>
@@ -697,7 +1077,7 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                 </Dialog.Body>
                 <Dialog.Footer>
                   <HStack justify="space-between" w="full" wrap="wrap" gap={2}>
-                    <Button variant="ghost" size="sm" onClick={() => setStep("equipment")}>Back</Button>
+                    <Button variant="ghost" size="sm" onClick={() => setStep(vehicleStepShown ? "vehicle" : "route")}>Back</Button>
                     <HStack gap={2} wrap="wrap">
                       <Button variant="ghost" size="sm" onClick={() => { setStep("idle"); onDone(); }}>
                         Close
@@ -721,7 +1101,13 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                           }
                         }}
                       >
-                        Start First Job
+                        {/* "Go to", not "Start" — this button navigates and
+                            nothing more. It filters the Jobs tab down to the
+                            first occurrence and expands its card; no status
+                            changes and no API call. The worker still taps
+                            Start on the card itself. The old label promised
+                            the workday had begun. */}
+                        Go to First Job
                       </Button>
                     </HStack>
                   </HStack>

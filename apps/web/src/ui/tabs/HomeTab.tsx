@@ -34,7 +34,6 @@ import { OperationsPanel } from "@/src/ui/tabs/HomeTab.parts";
 import {
   AdminViewAsBadges,
   AdminViewAsSelector,
-  CompliancePromptBanner,
   type AdminWorker,
 } from "@/src/ui/tabs/JobsTab.parts";
 import { usePersistedState } from "@/src/lib/usePersistedState";
@@ -292,14 +291,35 @@ export default function HomeTab({
 
   // Effective props — either what the parent passed, or what the
   // internal picker derives. Downstream code reads these names.
-  const viewAsUserId = usingSelfViewAs
+  const rawViewAsUserId = usingSelfViewAs
     ? (selfViewAsIds.length === 1 ? selfViewAsIds[0] : undefined)
     : propViewAsUserId;
-  const viewAsDisplayName = usingSelfViewAs
+  const rawViewAsDisplayName = usingSelfViewAs
     ? (selfViewAsIds.length === 1
         ? (adminWorkers.find((w) => w.id === selfViewAsIds[0])?.displayName ?? undefined)
         : undefined)
     : propViewAsDisplayName;
+
+  // SELECTING YOURSELF IS NOT IMPERSONATION.
+  //
+  // The operator appears in their own /api/workers picker, so an admin can
+  // pick themselves as the single selected worker. Everything downstream
+  // keys off `isViewingOther = !!viewAsUserId`, which had no self-check —
+  // so choosing your own name put the page into full impersonation mode
+  // against yourself: third-person compliance copy with "Manage in
+  // Compliance" instead of Sign now, MileageBanner and the notification
+  // opt-in suppressed entirely, the hero CTA disabled, and the section
+  // titled "Workday: <your name>". You could see your own blockers and do
+  // nothing about them.
+  //
+  // Collapsing to self-view here fixes every one of those at once, because
+  // they all read these two names. It is also what the server already
+  // does: /api/me/* mutations are caller-scoped, so a self-targeted
+  // view-as call was resolving to the caller anyway — the UI was hiding
+  // controls that would have worked.
+  const isSelfSelection = !!rawViewAsUserId && rawViewAsUserId === me?.id;
+  const viewAsUserId = isSelfSelection ? undefined : rawViewAsUserId;
+  const viewAsDisplayName = isSelfSelection ? undefined : rawViewAsDisplayName;
   const subsetUserIds = usingSelfViewAs
     ? (selfViewAsIds.length > 1 ? selfViewAsIds : undefined)
     : propSubsetUserIds;
@@ -383,7 +403,7 @@ export default function HomeTab({
   // - Active work in progress → always "Resume" (regardless of time)
   // - Late evening (9pm+) and nothing left → calm "Wrap up", no aggressive CTA
   // - Evening (3pm+) → prioritize "Plan tomorrow" when tomorrow has jobs
-  // - Otherwise → "Begin work day" / "Finish remaining" / "Plan tomorrow" / "Wrap"
+  // - Otherwise → "Prepare for work day" / "Finish remaining" / "Plan tomorrow" / "Wrap"
   type HeroMode = "resume" | "begin" | "finish" | "planTomorrow" | "wrap";
   const heroMode: HeroMode = (() => {
     if (hasActive) return "resume";
@@ -443,7 +463,7 @@ export default function HomeTab({
         borderColor={c.border}
         overflow="hidden"
       >
-        <VStack align="center" gap={0} py={3} px={2}>
+        <VStack align="center" gap={0} py={2} px={2}>
           <Text
             fontSize="2xs"
             color={c.label}
@@ -454,14 +474,14 @@ export default function HomeTab({
           >
             Can make
           </Text>
-          <Text fontSize="xl" fontWeight="bold" color={c.value} lineHeight="1.1">
+          <Text fontSize="lg" fontWeight="bold" color={c.value} lineHeight="1.1">
             {fmtMoney(heroCanMake)}
           </Text>
         </VStack>
         <VStack
           align="center"
           gap={0}
-          py={3}
+          py={2}
           px={2}
           borderLeftWidth="1px"
           borderRightWidth="1px"
@@ -477,11 +497,11 @@ export default function HomeTab({
           >
             Made
           </Text>
-          <Text fontSize="xl" fontWeight="bold" color={c.value} lineHeight="1.1">
+          <Text fontSize="lg" fontWeight="bold" color={c.value} lineHeight="1.1">
             {fmtMoney(heroEarned)}
           </Text>
         </VStack>
-        <VStack align="center" gap={0} py={3} px={2}>
+        <VStack align="center" gap={0} py={2} px={2}>
           <Text
             fontSize="2xs"
             color={c.label}
@@ -492,7 +512,7 @@ export default function HomeTab({
           >
             Remaining
           </Text>
-          <Text fontSize="xl" fontWeight="bold" color={c.value} lineHeight="1.1">
+          <Text fontSize="lg" fontWeight="bold" color={c.value} lineHeight="1.1">
             {fmtMoney(heroRemaining)}
           </Text>
         </VStack>
@@ -531,6 +551,181 @@ export default function HomeTab({
         <FiRefreshCw size={14} />
       </Button>
     </Box>
+  );
+
+  // Hero card for the current mode. Declared here rather than inline in
+  // the tree because it is handed to MyDashboard as `leadContent` — the
+  // hero and the workday banners are ONE section ("My activities"), with
+  // the hero on top. Every branch is `!isAggregate`, matching
+  // MyDashboard's own render gate, so the two can never disagree about
+  // whether this worker-scoped content belongs on screen.
+  const heroSection = (
+    <>
+      {/* Hero CTA: Resume active work (any time) */}
+      {!isAggregate && heroMode === "resume" && (
+        <Card.Root
+          variant="elevated"
+          cursor="pointer"
+          onClick={() => navTo("jobs", { status: "IN_PROGRESS", datePreset: "lastMonth" })}
+          _hover={{ shadow: "lg" }}
+          bg="orange.500"
+          color="white"
+          position="relative"
+        >
+          {heroCornerRefresh}
+          <Card.Body px={4} py={2}>
+            <VStack align="stretch" gap={2}>
+              <HStack gap={3} align="center">
+                <Box bg="white" color="orange.600" p={2} borderRadius="full" flexShrink={0}>
+                  <FiPlay size={22} />
+                </Box>
+                <Box flex={1} minW={0}>
+                  <Text fontSize="md" fontWeight="bold">{greeting}{firstName ? `, ${firstName}` : ""}</Text>
+                  <Text fontSize="sm" opacity={0.9}>{greetingSubtitle}</Text>
+                </Box>
+              </HStack>
+              {todaysMoneyStrip("orange")}
+              <HStack gap={3}>
+                <VStack align="start" gap={0} flex={1} minW={0}>
+                  <Text fontSize="md" fontWeight="bold">Resume active work</Text>
+                  <Text fontSize="sm" opacity={0.9}>
+                    {s.activeWork} job{s.activeWork === 1 ? "" : "s"} in progress or paused
+                  </Text>
+                </VStack>
+                <Text fontSize="2xl">→</Text>
+              </HStack>
+            </VStack>
+          </Card.Body>
+        </Card.Root>
+      )}
+
+      {/* Hero CTA: Begin / Finish — same workflow, different framing by time-of-day.
+          Deliberately NOT clickable as a whole, unlike the other hero cards:
+          the button inside is the only way in. A card-wide onClick meant an
+          incidental tap anywhere in the hero (or on the money strip) opened a
+          multi-step workflow. */}
+      {!isAggregate && (heroMode === "begin" || heroMode === "finish") && (
+        <Card.Root
+          variant="outline"
+          bg="green.50"
+          borderColor="green.300"
+          position="relative"
+        >
+          {heroCornerRefresh}
+          <Card.Body px={4} py={2}>
+            <VStack align="stretch" gap={2}>
+              <HStack gap={3} align="center">
+                <Box bg="green.500" color="white" p={2} borderRadius="full" flexShrink={0}>
+                  <FiSun size={22} />
+                </Box>
+                <Box flex={1} minW={0}>
+                  <Text fontSize="md" fontWeight="bold" color="green.800">{greeting}{firstName ? `, ${firstName}` : ""}</Text>
+                  <Text fontSize="sm" color="green.700">{greetingSubtitle}</Text>
+                </Box>
+              </HStack>
+              {/* Money strip replaces the old "$X earned · $Y remaining
+                  potential" one-line subline — same numbers, bigger and
+                  split into three columns so the intent is legible at
+                  a glance. */}
+              {todaysMoneyStrip("green")}
+              {/* A real Button, not a text row with an arrow — and the
+                  ONLY launcher for this workflow now that the card
+                  itself no longer handles clicks. Sized to its label and
+                  centered rather than stretched full-width; it shared the
+                  top row with the greeting briefly, which crowded the text
+                  out at phone widths. */}
+              <HStack justify="center">
+                <Button
+                  size="md"
+                  colorPalette="green"
+                  disabled={isViewingOther}
+                  onClick={() => onLaunchWorkflow("begin-workday")}
+                >
+                  {heroMode === "begin" ? "Prepare for work day" : "Finish remaining jobs"}
+                </Button>
+              </HStack>
+            </VStack>
+          </Card.Body>
+        </Card.Root>
+      )}
+
+      {/* Hero CTA: Plan tomorrow — evening pivot, no work left today */}
+      {!isAggregate && heroMode === "planTomorrow" && (
+        <Card.Root
+          variant="outline"
+          cursor={isViewingOther ? "default" : "pointer"}
+          onClick={isViewingOther ? undefined : () => onLaunchWorkflow("plan-workday")}
+          _hover={isViewingOther ? undefined : { shadow: "md", borderColor: "blue.400" }}
+          bg="blue.50"
+          borderColor="blue.300"
+          position="relative"
+        >
+          {heroCornerRefresh}
+          <Card.Body px={4} py={2}>
+            <VStack align="stretch" gap={2}>
+              <HStack gap={3} align="center">
+                <Box bg="blue.500" color="white" p={2} borderRadius="full" flexShrink={0}>
+                  <FiMoon size={22} />
+                </Box>
+                <Box flex={1} minW={0}>
+                  <Text fontSize="md" fontWeight="bold" color="blue.800">{greeting}{firstName ? `, ${firstName}` : ""}</Text>
+                  <Text fontSize="sm" color="blue.700">{greetingSubtitle}</Text>
+                </Box>
+              </HStack>
+              <HStack gap={3}>
+                <VStack align="start" gap={0} flex={1} minW={0}>
+                  <Text fontSize="md" fontWeight="bold" color="blue.800">Plan tomorrow</Text>
+                  <Text fontSize="sm" color="blue.700">
+                    {s.tomorrow} job{s.tomorrow === 1 ? "" : "s"} scheduled
+                    {(s.tomorrowUnconfirmedClientCount ?? 0) > 0
+                      ? ` · confirm ${s.tomorrowUnconfirmedClientCount} client${s.tomorrowUnconfirmedClientCount === 1 ? "" : "s"}`
+                      : " · all clients confirmed"}
+                  </Text>
+                  {(s.tomorrowUnclaimedCount ?? 0) > 0 && (
+                    <Text
+                      fontSize="sm"
+                      color="blue.700"
+                      mt={1}
+                      textDecoration="underline"
+                      cursor="pointer"
+                      onClick={(e: any) => {
+                        e.stopPropagation();
+                        // Navigate to JobsTab filtered to tomorrow's unclaimed jobs.
+                        const tomorrowKey = bizTomorrow();
+                        navTo("jobs", { status: "UNCLAIMED", dateFrom: tomorrowKey, dateTo: tomorrowKey });
+                      }}
+                    >
+                      {s.tomorrowUnclaimedCount} unclaimed{s.tomorrowUnclaimedPotential > 0 ? ` · ${fmtMoney(s.tomorrowUnclaimedPotential)} potential` : ""} →
+                    </Text>
+                  )}
+                </VStack>
+                {!isViewingOther && <Text fontSize="2xl" color="blue.600">→</Text>}
+              </HStack>
+            </VStack>
+          </Card.Body>
+        </Card.Root>
+      )}
+
+      {/* Hero: Wrap up — quiet end-of-day state. Combines greeting + status into one card. */}
+      {!isAggregate && heroMode === "wrap" && (
+        <Card.Root variant="outline" bg="gray.50" borderColor="gray.200" position="relative">
+          {heroCornerRefresh}
+          <Card.Body px={4} py={2}>
+            <HStack gap={3}>
+              <Box bg="gray.200" color="gray.700" p={2} borderRadius="full">
+                <FiMoon size={22} />
+              </Box>
+              <VStack align="start" gap={0} flex={1}>
+                <Text fontSize="md" fontWeight="bold" color="gray.800">
+                  {greeting}{firstName ? `, ${firstName}` : ""}
+                </Text>
+                <Text fontSize="sm" color="gray.700">{greetingSubtitle}</Text>
+              </VStack>
+            </HStack>
+          </Card.Body>
+        </Card.Root>
+      )}
+    </>
   );
 
   return (
@@ -608,7 +803,8 @@ export default function HomeTab({
           </VStack>
         )}
 
-        {/* MY WORKDAY — self-view banners section. Reflects the
+        {/* MY ACTIVITIES — the day's hero card plus the self-view
+            banners, merged into one section. Reflects the
             currently-scoped user: logged-in user by default, or the
             impersonated worker when the admin picker has exactly
             one selection (WorkdayBanner + CompliancePromptBanner
@@ -616,25 +812,28 @@ export default function HomeTab({
             are inherently self-only and skip themselves in that
             mode — see MyDashboard). Hidden in subset (N workers)
             and aggregate (0 workers, admin scope) modes because
-            the banners are inherently single-user surfaces. */}
-        {(!scope.isAdmin || !!viewAsUserId || (!isAggregate && !isSubset)) ? (
+            everything in it is a single-user surface. */}
+        {(!scope.isAdmin || !!viewAsUserId || (!isAggregate && !isSubset)) && (
           <MyDashboard
             storageKey="seedlings:homeTab:myDashboardOpen"
             viewAsUserId={viewAsUserId ?? null}
             viewAsDisplayName={viewAsDisplayName ?? null}
+            leadContent={heroSection}
           />
-        ) : (
-          /* Team modes (aggregate / subset) suppress MyDashboard because
-             workday + mileage are single-user surfaces. COMPLIANCE is
-             different: it reports the logged-in admin's OWN unsigned
-             policies, which don't stop being pending because they're
-             looking at the team. Dropping it here meant an admin parked
-             in Team overview never saw their own BLOCK-level items — the
-             nudge vanished even though PolicyGateInterceptor still
-             blocked the action. Always self-scoped: these modes have no
-             single target worker, so never view-as. */
-          <CompliancePromptBanner viewAsUserId={null} />
         )}
+        {/* NOTHING self-scoped renders in team modes (aggregate / subset).
+            This previously kept a self-scoped CompliancePromptBanner alive
+            here, on the reasoning that an admin parked in Team overview
+            would otherwise never see their own BLOCK-level items before
+            PolicyGateInterceptor blocked them. That was reverted
+            deliberately (2026-08-24, product decision): the Admin surface
+            is for a TEAM overview, or for a single selected worker whose
+            view you are inspecting and acting on behalf of. The operator's
+            OWN items belong in MY WORKDAY — reachable via the Work role,
+            or on the Admin role by selecting yourself in the picker.
+            A self-scoped banner floating above a team roster reads as if
+            it describes the team, which is what prompted the revert.
+            Don't "restore" it without asking. */}
 
         {/* Aggregate mode: a single team-summary banner replaces the per-worker hero. */}
         {isAggregate && (
@@ -915,162 +1114,6 @@ export default function HomeTab({
                   </VStack>
                 )}
               </VStack>
-            </Card.Body>
-          </Card.Root>
-        )}
-
-        {/* Hero CTA: Resume active work (any time) */}
-        {!isAggregate && heroMode === "resume" && (
-          <Card.Root
-            variant="elevated"
-            cursor="pointer"
-            onClick={() => navTo("jobs", { status: "IN_PROGRESS", datePreset: "lastMonth" })}
-            _hover={{ shadow: "lg" }}
-            bg="orange.500"
-            color="white"
-            position="relative"
-          >
-            {heroCornerRefresh}
-            <Card.Body p={5}>
-              <VStack align="stretch" gap={3}>
-                <HStack gap={3} align="center">
-                  <Box bg="white" color="orange.600" p={3} borderRadius="full" flexShrink={0}>
-                    <FiPlay size={28} />
-                  </Box>
-                  <Box flex={1} minW={0}>
-                    <Text fontSize="lg" fontWeight="bold">{greeting}{firstName ? `, ${firstName}` : ""}</Text>
-                    <Text fontSize="sm" opacity={0.9}>{greetingSubtitle}</Text>
-                  </Box>
-                </HStack>
-                {todaysMoneyStrip("orange")}
-                <HStack gap={3}>
-                  <VStack align="start" gap={0} flex={1} minW={0}>
-                    <Text fontSize="md" fontWeight="bold">Resume active work</Text>
-                    <Text fontSize="sm" opacity={0.9}>
-                      {s.activeWork} job{s.activeWork === 1 ? "" : "s"} in progress or paused
-                    </Text>
-                  </VStack>
-                  <Text fontSize="2xl">→</Text>
-                </HStack>
-              </VStack>
-            </Card.Body>
-          </Card.Root>
-        )}
-
-        {/* Hero CTA: Begin / Finish — same workflow, different framing by time-of-day */}
-        {!isAggregate && (heroMode === "begin" || heroMode === "finish") && (
-          <Card.Root
-            variant="outline"
-            cursor={isViewingOther ? "default" : "pointer"}
-            onClick={isViewingOther ? undefined : () => onLaunchWorkflow("begin-workday")}
-            _hover={isViewingOther ? undefined : { shadow: "md", borderColor: "green.400" }}
-            bg="green.50"
-            borderColor="green.300"
-            position="relative"
-          >
-            {heroCornerRefresh}
-            <Card.Body p={5}>
-              <VStack align="stretch" gap={3}>
-                <HStack gap={3} align="center">
-                  <Box bg="green.500" color="white" p={3} borderRadius="full" flexShrink={0}>
-                    <FiSun size={28} />
-                  </Box>
-                  <Box flex={1} minW={0}>
-                    <Text fontSize="lg" fontWeight="bold" color="green.800">{greeting}{firstName ? `, ${firstName}` : ""}</Text>
-                    <Text fontSize="sm" color="green.700">{greetingSubtitle}</Text>
-                  </Box>
-                </HStack>
-                {/* Money strip replaces the old "$X earned · $Y remaining
-                    potential" one-line subline — same numbers, bigger and
-                    split into three columns so the intent is legible at
-                    a glance. */}
-                {todaysMoneyStrip("green")}
-                <HStack gap={3}>
-                  <VStack align="start" gap={0} flex={1} minW={0}>
-                    <Text fontSize="md" fontWeight="bold" color="green.800">
-                      {heroMode === "begin" ? "Begin work day" : "Finish remaining jobs"}
-                    </Text>
-                  </VStack>
-                  {!isViewingOther && <Text fontSize="2xl" color="green.600">→</Text>}
-                </HStack>
-              </VStack>
-            </Card.Body>
-          </Card.Root>
-        )}
-
-        {/* Hero CTA: Plan tomorrow — evening pivot, no work left today */}
-        {!isAggregate && heroMode === "planTomorrow" && (
-          <Card.Root
-            variant="outline"
-            cursor={isViewingOther ? "default" : "pointer"}
-            onClick={isViewingOther ? undefined : () => onLaunchWorkflow("plan-workday")}
-            _hover={isViewingOther ? undefined : { shadow: "md", borderColor: "blue.400" }}
-            bg="blue.50"
-            borderColor="blue.300"
-            position="relative"
-          >
-            {heroCornerRefresh}
-            <Card.Body p={5}>
-              <VStack align="stretch" gap={3}>
-                <HStack gap={3} align="center">
-                  <Box bg="blue.500" color="white" p={3} borderRadius="full" flexShrink={0}>
-                    <FiMoon size={28} />
-                  </Box>
-                  <Box flex={1} minW={0}>
-                    <Text fontSize="lg" fontWeight="bold" color="blue.800">{greeting}{firstName ? `, ${firstName}` : ""}</Text>
-                    <Text fontSize="sm" color="blue.700">{greetingSubtitle}</Text>
-                  </Box>
-                </HStack>
-                <HStack gap={3}>
-                  <VStack align="start" gap={0} flex={1} minW={0}>
-                    <Text fontSize="md" fontWeight="bold" color="blue.800">Plan tomorrow</Text>
-                    <Text fontSize="sm" color="blue.700">
-                      {s.tomorrow} job{s.tomorrow === 1 ? "" : "s"} scheduled
-                      {(s.tomorrowUnconfirmedClientCount ?? 0) > 0
-                        ? ` · confirm ${s.tomorrowUnconfirmedClientCount} client${s.tomorrowUnconfirmedClientCount === 1 ? "" : "s"}`
-                        : " · all clients confirmed"}
-                    </Text>
-                    {(s.tomorrowUnclaimedCount ?? 0) > 0 && (
-                      <Text
-                        fontSize="sm"
-                        color="blue.700"
-                        mt={1}
-                        textDecoration="underline"
-                        cursor="pointer"
-                        onClick={(e: any) => {
-                          e.stopPropagation();
-                          // Navigate to JobsTab filtered to tomorrow's unclaimed jobs.
-                          const tomorrowKey = bizTomorrow();
-                          navTo("jobs", { status: "UNCLAIMED", dateFrom: tomorrowKey, dateTo: tomorrowKey });
-                        }}
-                      >
-                        {s.tomorrowUnclaimedCount} unclaimed{s.tomorrowUnclaimedPotential > 0 ? ` · ${fmtMoney(s.tomorrowUnclaimedPotential)} potential` : ""} →
-                      </Text>
-                    )}
-                  </VStack>
-                  {!isViewingOther && <Text fontSize="2xl" color="blue.600">→</Text>}
-                </HStack>
-              </VStack>
-            </Card.Body>
-          </Card.Root>
-        )}
-
-        {/* Hero: Wrap up — quiet end-of-day state. Combines greeting + status into one card. */}
-        {!isAggregate && heroMode === "wrap" && (
-          <Card.Root variant="outline" bg="gray.50" borderColor="gray.200" position="relative">
-            {heroCornerRefresh}
-            <Card.Body p={5}>
-              <HStack gap={4}>
-                <Box bg="gray.200" color="gray.700" p={3} borderRadius="full">
-                  <FiMoon size={28} />
-                </Box>
-                <VStack align="start" gap={0} flex={1}>
-                  <Text fontSize="lg" fontWeight="bold" color="gray.800">
-                    {greeting}{firstName ? `, ${firstName}` : ""}
-                  </Text>
-                  <Text fontSize="sm" color="gray.700">{greetingSubtitle}</Text>
-                </VStack>
-              </HStack>
             </Card.Body>
           </Card.Root>
         )}
