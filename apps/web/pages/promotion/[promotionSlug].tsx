@@ -71,44 +71,6 @@ export default function PromotionLandingPage({ promotionSlug, page, ogTitle, ogD
   const [lightbox, setLightbox] = useState<{ itemId: string; index: number } | null>(null);
   const lightboxPhotos =
     (lightbox && page?.items.find((i) => i.id === lightbox.itemId)?.photos) || [];
-
-  // REMEMBER FIRST, THEN CLEAN. Order matters here and I got it wrong once.
-  //
-  // The CTA carries ?from=invoice&p=&t=&c= so the server render can log the
-  // click. Left in place they make an ugly address that gets copied when
-  // someone shares the page, and `c` would misattribute a forwarded link's
-  // click to the original recipient.
-  //
-  // Stripping them naively HID THE BACK BAR: its visibility is driven by
-  // `from=invoice`, and Next re-renders the page with the new param-free
-  // URL — so the bar decided the visit hadn't come from an invoice after
-  // all and vanished about a second after appearing. Latching the value
-  // into state on first render makes the bar independent of the URL, so
-  // the cleanup can't retract it.
-  //
-  // useState initialiser (not an effect) so the latch happens BEFORE any
-  // re-render can occur.
-  const [startedOnInvoice] = useState(cameFromInvoice);
-
-  // replaceState SWAPS the current history entry's address — it does not
-  // add one. History stays invoice -> landing, so a single back press still
-  // returns to the invoice. (A navigation would add an entry; that is the
-  // bug this whole flow was fighting, and is exactly what we avoid here.)
-  useEffect(() => {
-    try {
-      const url = new URL(window.location.href);
-      const TRACKING = ["from", "p", "t", "c"];
-      if (!TRACKING.some((k) => url.searchParams.has(k))) return;
-      for (const k of TRACKING) url.searchParams.delete(k);
-      window.history.replaceState(
-        window.history.state,
-        "",
-        url.pathname + (url.search || "") + url.hash,
-      );
-    } catch {
-      /* cosmetic only — worst case the params stay visible */
-    }
-  }, []);
   return (
     <>
       <Head>
@@ -174,7 +136,7 @@ export default function PromotionLandingPage({ promotionSlug, page, ogTitle, ogD
                   Uses history.back() rather than a URL: the invoice address
                   contains its payment token, which IS its auth, and that
                   must never be embedded in a shareable marketing link. */}
-              {startedOnInvoice && <BackToInvoiceBar />}
+              {cameFromInvoice && <BackToInvoiceBar />}
               {/* Preview banner. Unmissable on purpose — this page looks
                   exactly like the live one, and mistaking a draft for
                   published is the failure mode worth designing against. */}
