@@ -105,6 +105,26 @@ const SHIELD_REMOVER_JS = `
     removed = true;
     try { shield.parentNode && shield.parentNode.removeChild(shield); } catch (_) {}
   }
+  // ---- Routes with no splash drop the shield immediately ----
+  //
+  // The shield covers a HANDOFF: SSR'd app content paints for a frame
+  // or two before AppSplash's useEffect portals its overlay on top.
+  // That race exists ONLY where AppSplash actually mounts, which is
+  // exactly one place: pages/index.tsx (route "/"). The
+  // app-splash-single-mount build gate fails the build if a second
+  // mount is added, precisely because that would invalidate this check.
+  //
+  // Everywhere else no overlay is coming, so the observer below could
+  // never fire and the shield sat for the FULL 3s fallback - three
+  // seconds of white on every public, client-facing page: the promotion
+  // landing page, and the /pay invoice a client opens from an SMS link.
+  // Nothing was being protected; the content underneath was already the
+  // final state.
+  //
+  // This cannot reintroduce the flash: with no splash to hand off to,
+  // painting the content immediately IS the correct end state.
+  if (window.location.pathname !== '/') { drop(); return; }
+
   // Preferred trigger: AppSplash's overlay lands in DOM with the
   // data attribute. Fires the moment React commits the overlay.
   // We wait an extra HANDOFF_HOLD_MS after that to let the browser

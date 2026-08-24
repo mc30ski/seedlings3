@@ -721,9 +721,14 @@ function PromoDisplaySection({ promos }: { promos: InvoicePagePromo[] }) {
                 />
               </Box>
             )}
-            <Box flex="1" minW={0}>
+            {/* One column owning headline, body, extra photos AND the CTA.
+                Those last two used to be siblings of the HStack, so they
+                started at the card's left edge — under the image, out of
+                line with the text they belong to. A single shared left edge
+                reads as one offer instead of three stacked fragments. */}
+            <VStack align="stretch" flex="1" minW={0} gap={2}>
               {p.headline && (
-                <Text fontSize="sm" fontWeight="bold" color="blue.900" mb={2}>
+                <Text fontSize="sm" fontWeight="bold" color="blue.900">
                   {p.headline}
                 </Text>
               )}
@@ -731,9 +736,9 @@ function PromoDisplaySection({ promos }: { promos: InvoicePagePromo[] }) {
                   "Markdown supported" and the operator writes headings and
                   bold — none of which rendered here, so clients were shown
                   raw `#` and `**` syntax. */}
-              <MarkdownContent>{p.body}</MarkdownContent>
-            </Box>
-          </HStack>
+              <Box fontSize="sm">
+                <MarkdownContent>{p.body}</MarkdownContent>
+              </Box>
           {/* Extra photos — only when the operator uploaded more than the
               cover. A horizontal strip keeps the offer compact: this page's
               job is getting the invoice paid, so the promo must not grow
@@ -742,7 +747,6 @@ function PromoDisplaySection({ promos }: { promos: InvoicePagePromo[] }) {
           {p.imageUrls && p.imageUrls.length > 1 && (
             <HStack
               gap={2}
-              mt={3}
               overflowX="auto"
               // Momentum scrolling on iOS, and the scrollbar stays out of
               // the way on desktop until hovered.
@@ -780,11 +784,17 @@ function PromoDisplaySection({ promos }: { promos: InvoicePagePromo[] }) {
               {...({ href: p.ctaUrl, target: "_blank", rel: "noopener noreferrer" } as any)}
               size="sm"
               colorPalette="blue"
-              mt={3}
+              mt={1}
+              // Hug the label. Inside a stretch VStack a Button expands to
+              // the full column width, turning the offer's link into a slab
+              // that competes with the actual Pay button below it.
+              alignSelf="flex-start"
             >
               {p.ctaText || "Learn more →"}
             </Button>
           )}
+            </VStack>
+          </HStack>
         </Box>
       ))}
       </VStack>
