@@ -1126,6 +1126,20 @@ export default async function publicRoutes(app: FastifyInstance) {
       const { baseUrl } = await loadPromotionSettings();
       return reply.code(302).redirect(baseUrl);
     }
+    // RECORD-ONLY mode. The invoice CTA now links straight at the landing
+    // page rather than bouncing through here, so that the visitor's
+    // history is simply invoice -> landing with nothing in between. The
+    // landing page's server render calls this with ?record=1 to log the
+    // click and wants no redirect back.
+    //
+    // Why the hop had to go: a wrapper URL sits in history as its own
+    // entry on mobile Safari (desktop drops it). Pressing back landed on
+    // the wrapper, which fired forward again — the promo page appeared to
+    // reload and only rapid double-presses escaped. No intermediate URL,
+    // nothing to bounce off, on any browser.
+    if (String((req.query || {}).record ?? "") === "1") {
+      return reply.code(204).send();
+    }
     // Forward the "this click started on an invoice" breadcrumb so the
     // landing page can offer a way back to it.
     //

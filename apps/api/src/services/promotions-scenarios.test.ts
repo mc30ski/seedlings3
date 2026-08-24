@@ -49,6 +49,7 @@ const mocks = vi.hoisted(() => ({
   // loadInvoicePagePromos. Defaults to [] so scenarios that don't care
   // about images (opt-out suppression, surface gating) don't each have to
   // stub it — the promo simply renders text-only.
+  promotionLandingPage: { findUnique: (vi.fn as any)() },
   promotionInvoicePhoto: {
     findMany: (vi.fn as any)().mockResolvedValue([]),
     findUnique: (vi.fn as any)(),
@@ -83,6 +84,7 @@ vi.mock("../db/prisma", () => {
     promotion: mocks.promotion,
     promotionDelivery: mocks.promotionDelivery,
     promotionClick: mocks.promotionClick,
+    promotionLandingPage: mocks.promotionLandingPage,
     promotionInvoicePhoto: mocks.promotionInvoicePhoto,
     promotionLandingPageItemPhoto: mocks.promotionLandingPageItemPhoto,
     auditEvent: mocks.auditEvent,
@@ -484,9 +486,7 @@ describe("recordClickAndResolve — d-flavor delivery resolution", () => {
 });
 
 // ── loadLandingPageForPublic — non-ACTIVE returns empty shell ────────
-// Attaches promotionLandingPage lazily to the mocked prisma jar so
-// each test can inject a specific page shape (the model isn't part of
-// the default hoisted jar since only this suite uses it).
+// Each test injects a specific page shape through the shared mock jar.
 
 describe("loadLandingPageForPublic — non-ACTIVE promotions don't leak content", () => {
   beforeEach(async () => {
@@ -511,8 +511,12 @@ describe("loadLandingPageForPublic — non-ACTIVE promotions don't leak content"
   });
 
   async function withPage(page: any) {
-    const { prisma } = await import("../db/prisma");
-    (prisma as any).promotionLandingPage = { findUnique: vi.fn().mockResolvedValue(page) };
+    // Set the value ON the shared jar's spy — do NOT replace the model
+    // object. Replacing it detached prisma.promotionLandingPage from
+    // `mocks` for every test that ran afterwards, so their own
+    // mockResolvedValue calls silently did nothing and they got this
+    // suite's fixture instead. Cost an afternoon to spot.
+    mocks.promotionLandingPage.findUnique.mockResolvedValue(page);
   }
 
   it("DRAFT promotion → returns shell with promotionActive=false and NO items/business/intro/headline", async () => {
@@ -956,6 +960,89 @@ describe("loadInvoicePagePromos — invoice CTA uses the campaign's baseDomain",
     mocks.promotion.findMany.mockResolvedValue([
       promoRow({ baseDomain: "https://promo.example.com" }),
     ]);
+    const out = await loadInvoicePagePromos({ contactId: null });
+    expect(out[0].ctaUrl).toContain("/api/public/promotion/click/p/");
+  });
+});
+
+// ── Invoice CTA links DIRECTLY at the landing page ──────────────────
+//
+// The CTA used to point at /promotion/click/..., which redirected. That
+// wrapper occupied its own history entry on mobile Safari (desktop drops
+// it), so pressing back landed on the wrapper, which fired forward again —
+// the promo page appeared to reload and only a rapid double-press escaped.
+//
+// Linking straight at the landing page removes the hop: history is simply
+// invoice -> landing, and back works on every browser. The click is logged
+// by the landing page's server render instead.
+//
+// If one of these fails, do NOT "fix" it by restoring the wrapper for
+// landing-page promos — that reintroduces the trap on phones.
+
+describe("loadInvoicePagePromos — CTA has no redirect hop for landing pages", () => {
+  beforeEach(() => {
+    resetMocks();
+    setSettings({ baseUrl: "https://app.example.com" });
+  });
+
+  const landingPromo = (extras: Partial<any> = {}) => ({
+    id: "p1",
+    status: "ACTIVE",
+    startAt: null,
+    endAt: null,
+    startedAt: new Date("2026-01-01"),
+    dispatchChannels: [] as string[],
+    displaySurfaces: ["invoice_page"],
+    content: { shared: { headline: "H", body: "B", ctaText: "Go" } },
+    link: null,
+    linkKind: "LANDING_PAGE",
+    landingPageId: "page1",
+    baseDomain: null,
+    ...extras,
+  });
+
+  it("points straight at the landing page, NOT the click wrapper", async () => {
+    mocks.promotion.findMany.mockResolvedValue([landingPromo()]);
+    mocks.promotionLandingPage.findUnique.mockResolvedValue({ slug: "fall-cleanup" });
+    const out = await loadInvoicePagePromos({ contactId: null });
+    expect(out[0].ctaUrl).toContain("/promotion/fall-cleanup");
+    // The hop that broke mobile back must be gone.
+    expect(out[0].ctaUrl).not.toContain("/promotion/click/");
+  });
+
+  it("still carries the tracking token so the click can be recorded", async () => {
+    mocks.promotion.findMany.mockResolvedValue([landingPromo()]);
+    mocks.promotionLandingPage.findUnique.mockResolvedValue({ slug: "fall-cleanup" });
+    const out = await loadInvoicePagePromos({ contactId: "contact1" });
+    const u = new URL(out[0].ctaUrl!);
+    expect(u.searchParams.get("p")).toBe("p1");
+    expect(u.searchParams.get("t")).toBeTruthy();
+    expect(u.searchParams.get("c")).toBe("contact1");
+    // Drives the "Back to your invoice" bar.
+    expect(u.searchParams.get("from")).toBe("invoice");
+  });
+
+  it("uses /motion/ when the landing host is the marketing domain", async () => {
+    mocks.promotion.findMany.mockResolvedValue([
+      landingPromo({ baseDomain: "https://seedlings.pro" }),
+    ]);
+    mocks.promotionLandingPage.findUnique.mockResolvedValue({ slug: "fall-cleanup" });
+    const out = await loadInvoicePagePromos({ contactId: null });
+    expect(out[0].ctaUrl).toContain("https://seedlings.pro/motion/fall-cleanup");
+  });
+
+  it("EXTERNAL promos keep the wrapper — nowhere else to record the click", async () => {
+    mocks.promotion.findMany.mockResolvedValue([
+      landingPromo({ linkKind: "EXTERNAL", link: "https://example.com", landingPageId: null }),
+    ]);
+    const out = await loadInvoicePagePromos({ contactId: null });
+    expect(out[0].ctaUrl).toContain("/api/public/promotion/click/p/");
+  });
+
+  it("falls back to the wrapper if the landing page can't be resolved", async () => {
+    // A dangling landingPageId must not produce a dead link.
+    mocks.promotion.findMany.mockResolvedValue([landingPromo()]);
+    mocks.promotionLandingPage.findUnique.mockResolvedValue(null);
     const out = await loadInvoicePagePromos({ contactId: null });
     expect(out[0].ctaUrl).toContain("/api/public/promotion/click/p/");
   });

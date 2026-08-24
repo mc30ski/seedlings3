@@ -69,6 +69,27 @@ export default function PromotionLandingPage({ promotionSlug, page, ogTitle, ogD
   // debris" should page through that entry's photos, not slide into the
   // next service's. Null = closed.
   const [lightbox, setLightbox] = useState<{ itemId: string; index: number } | null>(null);
+
+  // Tidy the address bar after the server has logged the click.
+  //
+  // The CTA carries ?from/&p/&t/&c so this render can record the click
+  // without a redirect hop. None of it means anything to the visitor, and
+  // leaving it there makes an ugly URL that also gets copied when someone
+  // shares the page. replaceState swaps it for the clean address WITHOUT
+  // adding a history entry — so the back button still goes straight to the
+  // invoice, which is the whole point of removing the hop.
+  useEffect(() => {
+    try {
+      const url = new URL(window.location.href);
+      const hadTracking = ["from", "p", "t", "c"].some((k) => url.searchParams.has(k));
+      if (!hadTracking) return;
+      for (const k of ["from", "p", "t", "c"]) url.searchParams.delete(k);
+      const clean = url.pathname + (url.search || "") + url.hash;
+      window.history.replaceState(window.history.state, "", clean);
+    } catch {
+      /* cosmetic only — a failure here leaves the params visible, nothing more */
+    }
+  }, []);
   const lightboxPhotos =
     (lightbox && page?.items.find((i) => i.id === lightbox.itemId)?.photos) || [];
   return (
@@ -690,11 +711,41 @@ export const getServerSideProps: GetServerSideProps<Props> = async (ctx) => {
   // First available photo across items — an item without photos shouldn't
   // cost the page its link preview.
   const ogImage = page?.items.flatMap((i) => i.photos)[0]?.url ?? null;
-  // Did this visit start on an invoice? The click handler forwards
-  // ?from=invoice for invoice-originated clicks only. A link opened
-  // straight from a text, or a shared URL, has no invoice behind it — and
-  // must not be shown a back control that leads nowhere.
+  // Did this visit start on an invoice? Set by the invoice CTA. A link
+  // opened straight from a text, or a shared URL, has no invoice behind
+  // it — and must not be shown a back control that leads nowhere.
   const cameFromInvoice = ctx.query.from === "invoice";
+
+  // Log the promotion click HERE rather than via a redirect endpoint.
+  //
+  // The CTA used to bounce through /promotion/click/..., which occupied
+  // its own history entry on mobile Safari — back landed on it and fired
+  // forward again, so the promo page appeared to reload and only a rapid
+  // double-press escaped. Linking straight here removes the hop entirely;
+  // recording moves into this render.
+  //
+  // Fire-and-forget on purpose: a tracking failure must never cost the
+  // client the page they asked for. `record=1` makes the endpoint log and
+  // return 204 instead of redirecting.
+  const clickToken = typeof ctx.query.t === "string" ? ctx.query.t : "";
+  const clickPromoId = typeof ctx.query.p === "string" ? ctx.query.p : "";
+  if (clickToken && clickPromoId) {
+    const qs = new URLSearchParams({ t: clickToken, record: "1" });
+    if (typeof ctx.query.c === "string" && ctx.query.c) qs.set("c", ctx.query.c);
+    try {
+      await fetch(
+        `${origin}/api/public/promotion/click/p/${encodeURIComponent(clickPromoId)}?${qs.toString()}`,
+        {
+          // Pass the visitor's host through so the click is attributed to
+          // the domain they actually used, matching the wrapper's old
+          // sticky-domain behavior.
+          headers: { "x-original-host": String(ctx.req.headers.host ?? "") },
+        },
+      );
+    } catch {
+      /* tracking is best-effort — never block the render */
+    }
+  }
   return {
     props: { promotionSlug, page, ogTitle, ogDescription, ogImage, cameFromInvoice },
   };
