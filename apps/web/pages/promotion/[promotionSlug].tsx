@@ -69,29 +69,46 @@ export default function PromotionLandingPage({ promotionSlug, page, ogTitle, ogD
   // debris" should page through that entry's photos, not slide into the
   // next service's. Null = closed.
   const [lightbox, setLightbox] = useState<{ itemId: string; index: number } | null>(null);
+  const lightboxPhotos =
+    (lightbox && page?.items.find((i) => i.id === lightbox.itemId)?.photos) || [];
 
-  // Tidy the address bar after the server has logged the click.
+  // REMEMBER FIRST, THEN CLEAN. Order matters here and I got it wrong once.
   //
-  // The CTA carries ?from/&p/&t/&c so this render can record the click
-  // without a redirect hop. None of it means anything to the visitor, and
-  // leaving it there makes an ugly URL that also gets copied when someone
-  // shares the page. replaceState swaps it for the clean address WITHOUT
-  // adding a history entry — so the back button still goes straight to the
-  // invoice, which is the whole point of removing the hop.
+  // The CTA carries ?from=invoice&p=&t=&c= so the server render can log the
+  // click. Left in place they make an ugly address that gets copied when
+  // someone shares the page, and `c` would misattribute a forwarded link's
+  // click to the original recipient.
+  //
+  // Stripping them naively HID THE BACK BAR: its visibility is driven by
+  // `from=invoice`, and Next re-renders the page with the new param-free
+  // URL — so the bar decided the visit hadn't come from an invoice after
+  // all and vanished about a second after appearing. Latching the value
+  // into state on first render makes the bar independent of the URL, so
+  // the cleanup can't retract it.
+  //
+  // useState initialiser (not an effect) so the latch happens BEFORE any
+  // re-render can occur.
+  const [startedOnInvoice] = useState(cameFromInvoice);
+
+  // replaceState SWAPS the current history entry's address — it does not
+  // add one. History stays invoice -> landing, so a single back press still
+  // returns to the invoice. (A navigation would add an entry; that is the
+  // bug this whole flow was fighting, and is exactly what we avoid here.)
   useEffect(() => {
     try {
       const url = new URL(window.location.href);
-      const hadTracking = ["from", "p", "t", "c"].some((k) => url.searchParams.has(k));
-      if (!hadTracking) return;
-      for (const k of ["from", "p", "t", "c"]) url.searchParams.delete(k);
-      const clean = url.pathname + (url.search || "") + url.hash;
-      window.history.replaceState(window.history.state, "", clean);
+      const TRACKING = ["from", "p", "t", "c"];
+      if (!TRACKING.some((k) => url.searchParams.has(k))) return;
+      for (const k of TRACKING) url.searchParams.delete(k);
+      window.history.replaceState(
+        window.history.state,
+        "",
+        url.pathname + (url.search || "") + url.hash,
+      );
     } catch {
-      /* cosmetic only — a failure here leaves the params visible, nothing more */
+      /* cosmetic only — worst case the params stay visible */
     }
   }, []);
-  const lightboxPhotos =
-    (lightbox && page?.items.find((i) => i.id === lightbox.itemId)?.photos) || [];
   return (
     <>
       <Head>
@@ -157,7 +174,7 @@ export default function PromotionLandingPage({ promotionSlug, page, ogTitle, ogD
                   Uses history.back() rather than a URL: the invoice address
                   contains its payment token, which IS its auth, and that
                   must never be embedded in a shareable marketing link. */}
-              {cameFromInvoice && <BackToInvoiceBar />}
+              {startedOnInvoice && <BackToInvoiceBar />}
               {/* Preview banner. Unmissable on purpose — this page looks
                   exactly like the live one, and mistaking a draft for
                   published is the failure mode worth designing against. */}
