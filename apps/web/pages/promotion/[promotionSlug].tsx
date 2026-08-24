@@ -11,7 +11,7 @@
 
 import { GetServerSideProps } from "next";
 import Head from "next/head";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import PhotoLightbox from "@/src/ui/components/PhotoLightbox";
 import MarkdownContent from "@/src/ui/components/MarkdownContent";
 import { Box, Container, Grid, Heading, HStack, Link as ChakraLink, SimpleGrid, Text, VStack } from "@chakra-ui/react";
@@ -53,13 +53,18 @@ type LandingPageData = {
 
 type Props = {
   promotionSlug: string;
+  /** True when this visit began on a client's invoice (?from=invoice,
+   *  forwarded by the click handler). Drives the "back to your invoice"
+   *  header — someone who opened this link straight from a text has no
+   *  invoice to return to, so they get no header. */
+  cameFromInvoice: boolean;
   page: LandingPageData | null;
   ogImage: string | null;
   ogTitle: string;
   ogDescription: string;
 };
 
-export default function PromotionLandingPage({ promotionSlug, page, ogTitle, ogDescription, ogImage }: Props) {
+export default function PromotionLandingPage({ promotionSlug, page, ogTitle, ogDescription, ogImage, cameFromInvoice }: Props) {
   // Carousel state. Scoped to ONE item — a client browsing "Clean yard
   // debris" should page through that entry's photos, not slide into the
   // next service's. Null = closed.
@@ -123,6 +128,15 @@ export default function PromotionLandingPage({ promotionSlug, page, ogTitle, ogD
             })()
           ) : (
             <VStack align="stretch" gap={6}>
+              {/* Way back to the invoice.
+                  Shown ONLY for clicks that started on one (?from=invoice,
+                  forwarded by the click handler). A client who opened this
+                  from a text has no invoice behind them, and a back control
+                  that goes nowhere is worse than none.
+                  Uses history.back() rather than a URL: the invoice address
+                  contains its payment token, which IS its auth, and that
+                  must never be embedded in a shareable marketing link. */}
+              {cameFromInvoice && <BackToInvoiceBar />}
               {/* Preview banner. Unmissable on purpose — this page looks
                   exactly like the live one, and mistaking a draft for
                   published is the failure mode worth designing against. */}
@@ -475,6 +489,89 @@ function ContactHeader({ business }: { business: BusinessBlock }) {
   );
 }
 
+// "Back to your invoice" bar.
+//
+// Rendered only when the visit began on an invoice — see cameFromInvoice.
+//
+// WHY history.back() AND NOT A LINK
+// The invoice URL is /pay/<token>, and that token is the invoice's ONLY
+// auth: anyone holding it can read the amount and address and self-report
+// a payment. Promotion pages get forwarded and shared, so embedding the
+// token here would turn a marketing link into a credential leak. Browser
+// history knows where the client came from without us ever handling it.
+//
+// The bar hides itself if there is genuinely nothing to go back to (a
+// forged ?from=invoice, or a restored tab). Better to show nothing than a
+// button that does nothing.
+function BackToInvoiceBar() {
+  // Start hidden and reveal after mount: history length is a client-only
+  // fact, and rendering it server-side would flash a control that may then
+  // vanish. SSR emits nothing, so no hydration mismatch either.
+  const [canGoBack, setCanGoBack] = useState(false);
+  useEffect(() => {
+    try {
+      setCanGoBack(window.history.length > 1);
+    } catch {
+      setCanGoBack(false);
+    }
+  }, []);
+  if (!canGoBack) return null;
+  return (
+    // STICKY, not just top-of-page. This page can run long — several
+    // services, each with a photo grid — and the person we are rescuing
+    // already felt trapped once. A control that scrolls away recreates
+    // exactly that feeling halfway down. It stays put instead.
+    <Box
+      position="sticky"
+      top={0}
+      zIndex={10}
+      // Full-bleed background so content scrolling underneath never shows
+      // through the bar. mx/px cancel the Container's gutter so the bar
+      // spans edge to edge on a phone.
+      mx={{ base: -4, md: -6 }}
+      px={{ base: 4, md: 6 }}
+      py={3}
+      bg="white"
+      borderBottomWidth="1px"
+      borderColor="gray.200"
+      shadow="sm"
+    >
+      <Box
+        as="button"
+        onClick={() => {
+          try {
+            window.history.back();
+          } catch {
+            /* no history to return to — the bar simply does nothing */
+          }
+        }}
+        w="full"
+        display="flex"
+        alignItems="center"
+        justifyContent="center"
+        gap={2}
+        // Full-width, filled, 44px min height: this is the phone-first
+        // escape hatch, so it gets a real button's weight and a tap
+        // target that meets the platform minimum.
+        minH="44px"
+        px={4}
+        // Blue to match the offer's own CTA on the invoice — the client
+        // just tapped a blue button to get here, so the way back reads as
+        // part of the same flow rather than a different site's chrome.
+        bg="blue.600"
+        color="white"
+        fontSize="md"
+        fontWeight="semibold"
+        rounded="md"
+        _hover={{ bg: "blue.700" }}
+        _active={{ bg: "blue.800" }}
+      >
+        <span aria-hidden="true">←</span> Back to your invoice
+      </Box>
+    </Box>
+  );
+}
+
 // Subtle end-user-facing placeholder for items that don't yet have an
 // image. Reads as a deliberate "photo coming soon" tile — not a broken
 // image icon. Uses a light diagonal stripe pattern to distinguish it
@@ -593,7 +690,12 @@ export const getServerSideProps: GetServerSideProps<Props> = async (ctx) => {
   // First available photo across items — an item without photos shouldn't
   // cost the page its link preview.
   const ogImage = page?.items.flatMap((i) => i.photos)[0]?.url ?? null;
+  // Did this visit start on an invoice? The click handler forwards
+  // ?from=invoice for invoice-originated clicks only. A link opened
+  // straight from a text, or a shared URL, has no invoice behind it — and
+  // must not be shown a back control that leads nowhere.
+  const cameFromInvoice = ctx.query.from === "invoice";
   return {
-    props: { promotionSlug, page, ogTitle, ogDescription, ogImage },
+    props: { promotionSlug, page, ogTitle, ogDescription, ogImage, cameFromInvoice },
   };
 };

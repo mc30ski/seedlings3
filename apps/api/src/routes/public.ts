@@ -1126,7 +1126,20 @@ export default async function publicRoutes(app: FastifyInstance) {
       const { baseUrl } = await loadPromotionSettings();
       return reply.code(302).redirect(baseUrl);
     }
-    return reply.code(302).redirect(result.destinationUrl);
+    // Forward the "this click started on an invoice" breadcrumb so the
+    // landing page can offer a way back to it.
+    //
+    // Only onto OUR OWN landing pages. Appending it to an EXTERNAL
+    // destination would hand a third party a query parameter about our
+    // customer's session for no benefit to anyone.
+    let dest = result.destinationUrl;
+    if (
+      result.destination === "landing_page" &&
+      String((req.query || {}).s ?? "") === "inv"
+    ) {
+      dest += (dest.includes("?") ? "&" : "?") + "from=invoice";
+    }
+    return reply.code(302).redirect(dest);
   }
 
   app.get("/public/promotion/click/d/:id", async (req: any, reply: any) => {
