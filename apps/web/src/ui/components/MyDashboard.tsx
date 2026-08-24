@@ -1,11 +1,17 @@
 "use client";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MyDashboard — the "self-view banners" section rendered inside a
-// tab (Home tab). Groups four self-owned banners
+// MyDashboard — the "MY ACTIVITIES" section rendered inside a tab
+// (Home tab). Groups the day's hero card with four self-owned banners
 // (compliance, workday, mileage, notifications) under one bordered
-// hero-variant Dashboard frame so they read as one attention
-// surface.
+// hero-variant Dashboard frame so they read as one attention surface.
+//
+// The hero arrives via `leadContent` rather than being built here: it
+// needs the tab's summary fetch, greeting, money strip and workflow
+// launcher, none of which belong in a banner-grouping component. This
+// component just owns WHERE it sits — pinned under the header, above
+// the banners, and OUTSIDE the collapse: folding the section away hides
+// the activity rows, never the hero and its CTA.
 //
 // Owned by the tab (not the shell) because on Admin scope with a
 // worker selected the dashboard needs to reflect THAT worker's
@@ -18,6 +24,7 @@
 // mileage → notifications opt-in.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import type { ReactNode } from "react";
 import { UserCircle } from "lucide-react";
 import { Dashboard } from "@/src/ui/components/Dashboard";
 import { WorkdayBanner, MileageBanner } from "@/src/ui/tabs/JobsTab.workday";
@@ -30,6 +37,7 @@ export default function MyDashboard({
   storageKey = "seedlings:myDashboardOpen",
   viewAsUserId,
   viewAsDisplayName,
+  leadContent,
 }: {
   /** Persist collapse state per hosting page. */
   storageKey?: string;
@@ -42,17 +50,22 @@ export default function MyDashboard({
    *  title so an admin can see whose dashboard they're looking at
    *  ("Dashboard: Bob"). */
   viewAsDisplayName?: string | null;
+  /** The tab's hero card. Rendered inside the frame directly under the
+   *  header and PINNED — the collapse toggle folds away the banner rows
+   *  only, never the hero. Optional so the section still stands alone. */
+  leadContent?: ReactNode;
 }) {
   const isViewingOther = !!viewAsUserId;
   const title = isViewingOther && viewAsDisplayName
-    ? `Workday: ${viewAsDisplayName}`
-    : "My workday";
+    ? `Activities: ${viewAsDisplayName}`
+    : "My activities";
   return (
     <Dashboard
       storageKey={storageKey}
       title={title}
       icon={UserCircle}
       variant="hero"
+      pinnedContent={leadContent}
     >
       <CompliancePromptBanner viewAsUserId={viewAsUserId ?? null} />
       <WorkdayBanner viewAsUserId={viewAsUserId ?? null} />

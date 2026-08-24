@@ -106,6 +106,20 @@ The compliance state surfaces to workers in four places:
    - Positioned below `HomeBanners` (admin announcements) + the push-notification enablement card.
    - Hidden while impersonating (`disabled={isViewingOther}`).
    - Refetches on `policies:signed` and `policies:changed` events.
+   - **Never renders in Admin team modes.** On Admin → Work → Home the
+     view-as picker has three states: 0 workers selected (All Workers
+     aggregate), N selected (subset), and exactly 1 selected (view-as).
+     `MyDashboard` — and therefore this banner — mounts only in the
+     1-selected case, or when the operator is on the Work role. The
+     aggregate and subset modes are a view of the TEAM; the operator's own
+     pending policies are not a fact about the team, and a self-scoped
+     banner sitting above a team roster reads as though it describes the
+     roster. Operators reach their own items via the Work role, or by
+     selecting themselves in the picker.
+     <br/>Note the tradeoff, which was accepted deliberately: an operator
+     parked in Team overview gets no advance nudge and meets their BLOCK
+     items at `PolicyGateInterceptor` instead. See the history entry below
+     before changing this.
 
 2. **PolicyGateInterceptor** ([`apps/web/src/ui/components/PolicyGateInterceptor.tsx`](../../apps/web/src/ui/components/PolicyGateInterceptor.tsx))
    - Listens for `policies:required` custom events (dispatched by CompliancePromptBanner + button click failures).
@@ -263,6 +277,19 @@ so no passwords are stored anywhere. Storage state cached to
   but not built.
 
 ## Recent changes worth knowing about
+
+- **Team-mode banner removed** (2026-08-24) — Admin → Work → Home in
+  aggregate ("All Workers") or subset mode no longer renders a
+  self-scoped `CompliancePromptBanner`. It had been kept alive there
+  precisely so an admin parked in Team overview would still see their own
+  BLOCK-level items; that reasoning was overridden by a product decision.
+  The Admin surface is for a team overview, or for one selected worker
+  whose view you inspect and act on behalf of — the operator's own items
+  belong in MY WORKDAY (Work role, or Admin role with yourself selected).
+  A first-person banner above a team roster read as if it described the
+  roster. **Do not restore it without asking.** No e2e spec covers the
+  0-worker aggregate case, so nothing will fail either way — the
+  regression this trades away is invisible to the suite.
 
 - **Exception + no-sig fallback bug** (fixed in `policies.ts:getWorkerPoliciesView`) —
   the `required[]` filter's "no signature yet" fallback previously

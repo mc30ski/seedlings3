@@ -115,6 +115,14 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
 
   const [step, setStep] = useState<"idle" | "choose-date" | "routes" | "loading" | "confirm-jobs" | "no-jobs" | "equipment" | "summary" | "done">("idle");
   const [targetDate, setTargetDate] = useState(defaultTargetDate ?? tomorrow);
+  /** "Today" / "Tomorrow" / a date — used to build step titles that mirror
+   *  BeginWorkDayWorkflow's ("Today's Route", "Today's Overview") for
+   *  whichever day is being planned. */
+  const dayWord = targetDate === today
+    ? "Today"
+    : targetDate === tomorrow
+      ? "Tomorrow"
+      : fmtDate(targetDate + "T12:00:00Z");
   const [occurrences, setOccurrences] = useState<WorkerOccurrence[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [confirmedIds, setConfirmedIds] = useState<string[]>([]);
@@ -435,9 +443,9 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
         <Portal>
           <Dialog.Backdrop />
           <Dialog.Positioner style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
-            <Dialog.Content mx="4" maxW="sm" w="full" rounded="2xl" p="4" shadow="lg">
+            <Dialog.Content maxW="md" mx={{ base: "3", md: "4" }} w="full" minW={0} rounded="2xl" p="4" shadow="lg">
               <Dialog.Header>
-                <Dialog.Title fontSize="md">Plan Work Day</Dialog.Title>
+                <Dialog.Title>Plan Work Day</Dialog.Title>
               </Dialog.Header>
               <Dialog.Body>
                 <VStack align="stretch" gap={3}>
@@ -462,9 +470,9 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                 </VStack>
               </Dialog.Body>
               <Dialog.Footer>
-                <HStack justify="flex-end" w="full" gap={2}>
-                  <Button size="sm" variant="ghost" colorPalette="red" onClick={handleClose}>Cancel</Button>
-                  <Button size="sm" colorPalette="blue" onClick={startWithDate}>Start</Button>
+                <HStack justify="space-between" w="full" wrap="wrap" gap={2}>
+                  <Button size="sm" variant="ghost" onClick={handleClose}>Cancel</Button>
+                  <Button size="sm" colorPalette="green" onClick={startWithDate}>Start</Button>
                 </HStack>
               </Dialog.Footer>
             </Dialog.Content>
@@ -480,10 +488,10 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
         <Portal>
           <Dialog.Backdrop />
           <Dialog.Positioner style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
-            <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg">
+            <Dialog.Content maxW="md" mx={{ base: "3", md: "4" }} w="full" minW={0} rounded="2xl" p="4" shadow="lg">
               <Dialog.Header>
                 <VStack align="start" gap={1} w="full">
-                  <Dialog.Title fontSize="md">Review & Optimize Your Route</Dialog.Title>
+                  <Dialog.Title>{dayWord}&apos;s Route</Dialog.Title>
                   <Text fontSize="xs" color="fg.muted">
                     Planning for {fmtDate(targetDate + "T12:00:00Z")}
                   </Text>
@@ -516,7 +524,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                       window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "routes", autoAnalyze: true } }));
                     }}
                   >
-                    Open Routes
+                    Open Route
                   </Button>
                 </VStack>
               </Dialog.Body>
@@ -531,8 +539,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                     Back
                   </Button>
                   <HStack gap={2}>
-                    <Button size="sm" variant="ghost" colorPalette="red" onClick={handleClose}>Cancel</Button>
-                    <Button size="sm" colorPalette="blue" onClick={goToConfirmJobs}>Next</Button>
+                    <Button size="sm" colorPalette="green" onClick={goToConfirmJobs}>Next</Button>
                   </HStack>
                 </HStack>
               </Dialog.Footer>
@@ -549,11 +556,17 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
         <Portal>
           <Dialog.Backdrop />
           <Dialog.Positioner style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
-            <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="6">
-              <Box textAlign="center" py={6}>
-                <Spinner size="lg" />
-                <Text mt={3} color="fg.muted">Loading your jobs...</Text>
-              </Box>
+            <Dialog.Content maxW="md" mx={{ base: "3", md: "4" }} w="full" minW={0} rounded="2xl" p="4" shadow="lg">
+              {/* Titled + Header/Body shaped like every other step, and like
+                  BeginWorkDayWorkflow's loading step — an untitled spinner
+                  card read as a different dialog mid-flow. */}
+              <Dialog.Header><Dialog.Title>Plan Work Day</Dialog.Title></Dialog.Header>
+              <Dialog.Body>
+                <Box py={8} textAlign="center">
+                  <Spinner size="lg" />
+                  <Text mt={2} color="fg.muted">Loading your jobs...</Text>
+                </Box>
+              </Dialog.Body>
             </Dialog.Content>
           </Dialog.Positioner>
         </Portal>
@@ -567,10 +580,10 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
         <Portal>
           <Dialog.Backdrop />
           <Dialog.Positioner style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
-            <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg">
+            <Dialog.Content maxW="md" mx={{ base: "3", md: "4" }} w="full" minW={0} rounded="2xl" p="4" shadow="lg">
               <Dialog.Header>
                 <VStack align="start" gap={1} w="full">
-                  <Dialog.Title fontSize="md">Equipment for the Day</Dialog.Title>
+                  <Dialog.Title>Equipment Check</Dialog.Title>
                   <Text fontSize="xs" color="fg.muted">
                     Planning for {fmtDate(targetDate + "T12:00:00Z")}
                   </Text>
@@ -634,10 +647,9 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                     Back
                   </Button>
                   <HStack gap={2}>
-                    <Button size="sm" variant="ghost" colorPalette="red" onClick={handleClose}>Cancel</Button>
                     <Button
                       size="sm"
-                      colorPalette="blue"
+                      colorPalette="green"
                       onClick={() => {
                         setStep("summary");
                         persist({ step: "summary" });
@@ -662,9 +674,9 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
         <Portal>
           <Dialog.Backdrop />
           <Dialog.Positioner style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
-            <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg">
+            <Dialog.Content maxW="md" mx={{ base: "3", md: "4" }} w="full" minW={0} rounded="2xl" p="4" shadow="lg">
               <Dialog.Header>
-                <Dialog.Title fontSize="md">No Jobs Found</Dialog.Title>
+                <Dialog.Title>No jobs scheduled</Dialog.Title>
               </Dialog.Header>
               <Dialog.Body>
                 <Text fontSize="sm" color="fg.muted">
@@ -705,7 +717,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                   >
                     Go to Routes
                   </Button>
-                  <Button size="sm" colorPalette="blue" onClick={handleClose}>Done</Button>
+                  <Button size="sm" colorPalette="green" onClick={handleClose}>Done</Button>
                 </HStack>
               </Dialog.Footer>
             </Dialog.Content>
@@ -727,10 +739,10 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
         <Portal>
           <Dialog.Backdrop />
           <Dialog.Positioner style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
-            <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg">
+            <Dialog.Content maxW="md" mx={{ base: "3", md: "4" }} w="full" minW={0} rounded="2xl" p="4" shadow="lg">
               <Dialog.Header>
                 <VStack align="start" gap={1} w="full">
-                  <Dialog.Title fontSize="md">Day Summary</Dialog.Title>
+                  <Dialog.Title>Ready for {dayWord}</Dialog.Title>
                   <Text fontSize="xs" color="fg.muted">
                     {fmtDate(targetDate + "T12:00:00Z")}
                   </Text>
@@ -893,7 +905,6 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                     </Button>
                   )}
                   <HStack gap={2}>
-                    {!trainee && <Button size="sm" variant="ghost" colorPalette="red" onClick={handleClose}>Cancel</Button>}
                     <Button size="sm" colorPalette="green" onClick={handleClose}>Finish</Button>
                   </HStack>
                 </HStack>
@@ -933,11 +944,11 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
       <Portal>
         <Dialog.Backdrop />
         <Dialog.Positioner style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
-          <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg" maxH="90vh" overflow="auto">
+          <Dialog.Content maxW="md" mx={{ base: "3", md: "4" }} w="full" minW={0} rounded="2xl" p="4" shadow="lg" maxH="90vh" overflow="auto">
             <Dialog.Header>
               <VStack align="start" gap={1} w="full">
                 <HStack justify="space-between" w="full">
-                  <Dialog.Title fontSize="md">Confirm Job</Dialog.Title>
+                  <Dialog.Title>Confirm Clients</Dialog.Title>
                   <Badge colorPalette="blue" variant="subtle">{progress}</Badge>
                 </HStack>
                 <Text fontSize="xs" color="fg.muted">
@@ -1221,8 +1232,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                     Back
                   </Button>
                   <HStack gap={2}>
-                    <Button size="sm" variant="ghost" colorPalette="red" onClick={handleClose}>Cancel</Button>
-                    <Button size="sm" colorPalette="blue" onClick={advance}>
+                    <Button size="sm" colorPalette="green" onClick={advance}>
                       Next
                     </Button>
                   </HStack>
