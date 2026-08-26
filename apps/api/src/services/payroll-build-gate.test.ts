@@ -76,6 +76,24 @@ describe("payroll build gate — admin projection", () => {
     }
   });
 
+  it("the TEAM TOTAL employer cost is super-only too", () => {
+    // The per-entry projection withholds employerCost from an admin, but
+    // listPeriods also ships a period-level aggregate. Handing an admin the
+    // aggregate would have returned, through the back door, exactly the
+    // figure fieldsFor() withholds — and on a three-person payroll an
+    // aggregate is close enough to per-person to matter.
+    //
+    // Asserted against the source because the aggregate is built from the
+    // stored `totals` JSON, not from fieldsFor(), so it is NOT covered by
+    // any assertion above.
+    expect(
+      SERVICE_SRC,
+      "listPeriods must gate teamTotals.employerCost on viewer.kind === 'super'",
+    ).toMatch(
+      /\.\.\.\(viewer\.kind === "super"\s*\?\s*\{\s*employerCost:/,
+    );
+  });
+
   it("an admin does not receive the pay rate", () => {
     // Wage is already a worker-sensitive field elsewhere in the app; the
     // admin payroll view is about reconciling amounts, not rates.

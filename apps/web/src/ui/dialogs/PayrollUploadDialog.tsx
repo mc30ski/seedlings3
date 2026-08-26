@@ -77,13 +77,19 @@ export default function PayrollUploadDialog({
     try {
       const res = await importPayrollCsv(csvText, filename ?? "payroll.csv");
       setResult(res.periods);
-      const replaced = res.periods.filter((p) => p.replaced).length;
+      const replaced = res.periods.filter((p) => p.replaced);
+      const unchanged = replaced.filter((p) => !p.changed).length;
       publishInlineMessage({
         type: "SUCCESS",
         text:
-          replaced > 0
-            ? `Imported ${res.periods.length} period(s); ${replaced} replaced an existing one.`
-            : `Imported ${res.periods.length} pay period(s).`,
+          // "Replaced" alone reads as "something changed". When the same
+          // export is re-imported nothing moves, and saying so is the
+          // difference between a confusing no-op and a clear one.
+          unchanged > 0 && unchanged === replaced.length
+            ? `Already imported — the figures are unchanged.`
+            : replaced.length > 0
+              ? `Imported ${res.periods.length} period(s); ${replaced.length} replaced an existing one.`
+              : `Imported ${res.periods.length} pay period(s).`,
       });
       onImported(res.periods);
     } catch (err: any) {
@@ -214,8 +220,12 @@ export default function PayrollUploadDialog({
                           </Text>
                           <HStack gap={1} flexShrink={0}>
                             {p.replaced && (
-                              <Badge size="sm" colorPalette="orange" variant="subtle">
-                                replaced
+                              <Badge
+                                size="sm"
+                                colorPalette={p.changed ? "orange" : "gray"}
+                                variant="subtle"
+                              >
+                                {p.changed ? "replaced" : "no change"}
                               </Badge>
                             )}
                             {p.unmatched.length > 0 && (

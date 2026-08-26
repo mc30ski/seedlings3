@@ -115,6 +115,28 @@ test.describe("Payroll — admin projection", () => {
     }
   });
 
+  test("the period AGGREGATE carries no employer cost either", async ({ page }) => {
+    // The per-entry projection is built by fieldsFor(); the period-level
+    // `teamTotals` is built separately from the stored totals JSON, so it
+    // is a second, independent path to the same figure. Shipping it here
+    // would return through the back door exactly what the test above
+    // proves is withheld — and on a three-person payroll an aggregate is
+    // close enough to per-person to matter.
+    await gotoAdminPayroll(page);
+
+    const periods = await apiAs(page, "/api/payroll/periods");
+    expect(periods.status).toBe(200);
+    expect(periods.json.length).toBeGreaterThan(0);
+
+    for (const p of periods.json) {
+      expect(p.teamTotals, "admin should still get the team net/gross").toBeTruthy();
+      expect(
+        p.teamTotals,
+        `admin received teamTotals.employerCost for ${p.payDay} — this is a leak`,
+      ).not.toHaveProperty("employerCost");
+    }
+  });
+
   test("an admin payload carries exactly hours / gross / net / check", async ({ page }) => {
     await gotoAdminPayroll(page);
     const periods = await apiAs(page, "/api/payroll/periods");

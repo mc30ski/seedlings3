@@ -13,6 +13,7 @@
 import { test, expect } from "@playwright/test";
 import type { PrismaClient } from "@prisma/client";
 import { join } from "path";
+import { readFileSync } from "fs";
 import { makePrisma, USERS, cleanupScratchPayroll } from "../helpers/db";
 
 let prisma: PrismaClient;
@@ -86,6 +87,50 @@ async function uploadFixture(page: any) {
   await page.waitForTimeout(3000);
 }
 
+/** Same flow, but with CSV text built in the test rather than read from disk. */
+async function uploadCsv(page: any, csv: string) {
+  await page.getByRole("button", { name: /Upload payroll/i }).first().click();
+  await page.waitForTimeout(600);
+  await page.setInputFiles('input[type="file"]', {
+    name: "gusto-payroll-journal.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(csv, "utf8"),
+  });
+  await page.getByRole("button", { name: /^Import$/i }).click();
+  await page.waitForTimeout(3000);
+}
+
+/** Caleb's corrected net pay, and the totals that must move with it. */
+const CORRECTED_NET = 25;
+
+/**
+ * The fixture with ONE figure corrected — a real "Gusto re-ran it" export.
+ *
+ * Built by string surgery on the real file rather than kept as a second
+ * fixture, so it cannot drift away from the original: any change to the
+ * source file flows through, and if these anchors ever stop matching the
+ * assertion fires rather than silently testing the unmodified file.
+ */
+function correctedFixture(): string {
+  const original = readFileSync(FIXTURE, "utf8");
+  // Caleb: a zero-hours row, so his net/check/gross are all "0.00" —
+  // anchored on the tail of his line to hit net + check only.
+  const calebTail = '"0.00","0.00","0.00","0.00","0.00"\n';
+  const calebFixed = '"25.00","0.00","0.00","25.00","0.00"\n';
+  // And the "Payroll Totals" row, which must stay consistent or the
+  // import's conservation check rejects the file outright.
+  const totalsTail = '"1087.44","0.00","0.00","1087.44"';
+  const totalsFixed = '"1112.44","0.00","0.00","1112.44"';
+
+  const out = original
+    .replace(calebTail, calebFixed)
+    .replace(totalsTail, totalsFixed);
+  if (out === original) {
+    throw new Error("correctedFixture() anchors no longer match the fixture");
+  }
+  return out;
+}
+
 test.describe("Payroll — Super", () => {
   test("imports the real Gusto export and reads its dates from the file", async ({ page }) => {
     await gotoSuperPayroll(page);
@@ -116,7 +161,10 @@ test.describe("Payroll — Super", () => {
     await page.getByRole("button", { name: /^Done$/i }).click();
     await page.waitForTimeout(1500);
 
-    await uploadFixture(page);
+    // A CORRECTED export — the case a replace exists for. Caleb's net moves
+    // and the "Payroll Totals" row moves with it, because the import runs a
+    // conservation check and rejects a file whose rows don't sum.
+    await uploadCsv(page, correctedFixture());
     await expect(page.getByText(/replaced/i).first()).toBeVisible();
     await page.getByRole("button", { name: /^Done$/i }).click();
     await page.waitForTimeout(1500);
@@ -126,11 +174,58 @@ test.describe("Payroll — Super", () => {
     });
     expect(count, "re-upload created a duplicate period").toBe(1);
 
+    // Replaced means the FIGURES actually moved — not merely that a row
+    // with the same key still exists.
+    const caleb = await prisma.payrollEntry.findFirst({
+      where: {
+        rawLastName: "Serrano",
+        payrollPeriod: { periodStart: FIXTURE_START, periodEnd: FIXTURE_END },
+      },
+    });
+    expect(caleb?.netPay, "replace reported success but the data did not change").toBe(
+      CORRECTED_NET,
+    );
+
     // And it snapshotted what it displaced.
     const audits = await prisma.auditEvent.findMany({
       where: { scope: "PAYROLL" as any, verb: "PAYROLL_REPLACED" as any },
     });
     expect(audits.length).toBeGreaterThan(0);
+  });
+
+  test('re-uploading an IDENTICAL export reports "no change", not "replaced"', async ({
+    page,
+  }) => {
+    // Reported 2026-08-26: an operator re-imported an export they had
+    // already loaded, was told it was "replaced", and saw no number move —
+    // indistinguishable from a broken import. The replace was correct; the
+    // MESSAGE was not. A no-op has to announce itself as one.
+    await gotoSuperPayroll(page);
+    await uploadFixture(page);
+    await page.getByRole("button", { name: /^Done$/i }).click();
+    await page.waitForTimeout(1500);
+
+    await uploadFixture(page);
+    await expect(page.getByText(/no change/i).first()).toBeVisible();
+    await expect(
+      page.getByText(/^replaced$/i),
+      'an unchanged re-import must not claim "replaced"',
+    ).toHaveCount(0);
+    await page.getByRole("button", { name: /^Done$/i }).click();
+    await page.waitForTimeout(1500);
+
+    // Still exactly one period, and still the original figures.
+    const count = await prisma.payrollPeriod.count({
+      where: { periodStart: FIXTURE_START, periodEnd: FIXTURE_END },
+    });
+    expect(count).toBe(1);
+    const caleb = await prisma.payrollEntry.findFirst({
+      where: {
+        rawLastName: "Serrano",
+        payrollPeriod: { periodStart: FIXTURE_START, periodEnd: FIXTURE_END },
+      },
+    });
+    expect(caleb?.netPay).toBe(0);
   });
 
   test("unmatched names surface for review and block worker visibility", async ({ page }) => {

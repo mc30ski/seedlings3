@@ -114,6 +114,16 @@ export type ImportResult = {
   entryCount: number;
   /** True when this replaced an existing period rather than creating one. */
   replaced: boolean;
+  /**
+   * On a replace, whether the incoming file ACTUALLY differed from what was
+   * already stored.
+   *
+   * Re-importing the same export is a normal thing to do — you lose track
+   * of which file you already loaded. But "replaced" on its own reads as
+   * "something changed", so a no-op import looked like a broken one. This
+   * lets the UI say which happened. Always false for a fresh create.
+   */
+  changed: boolean;
   /** Rows whose name has no confirmed identity yet — the review queue. */
   unmatched: Array<{ lastName: string; firstName: string }>;
 };
@@ -203,9 +213,17 @@ async function persistPeriod(
 
     let periodId: string;
     let replaced = false;
+    let changed = true;
 
     if (existing) {
       replaced = true;
+      // Compare what is stored against what is arriving, using each row's
+      // verbatim source line. If the operator re-uploaded the same export,
+      // these are identical and nothing about the period moves.
+      changed =
+        existing.payDay !== parsed.payDay ||
+        entriesSignature(existing.entries.map((e) => [e.rawLastName, e.rawFirstName, e.raw])) !==
+          entriesSignature(rows.map((r) => [r.entry.rawLastName, r.entry.rawFirstName, r.entry.raw]));
       // Snapshot BEFORE destroying. Re-upload is the only edit path, so this
       // audit row is the only surviving record of the previous numbers.
       await writeAudit(tx, AUDIT.PAYROLL.REPLACED, actorUserId, {
@@ -216,6 +234,7 @@ async function persistPeriod(
         previousPayDay: existing.payDay,
         previousSourceR2Key: existing.sourceR2Key,
         entryCount: parsed.entries.length,
+        changed,
         displacedEntries: existing.entries.map((e) => ({
           userId: e.userId,
           rawLastName: e.rawLastName,
@@ -282,9 +301,33 @@ async function persistPeriod(
       label: parsed.label,
       entryCount: parsed.entries.length,
       replaced,
+      changed,
       unmatched,
     };
   });
+}
+
+/**
+ * Order-independent fingerprint of a period's rows, built from the verbatim
+ * source lines rather than the typed columns — so a difference in ANY field
+ * counts, including ones the UI never renders.
+ */
+function entriesSignature(rows: Array<[string, string, unknown]>): string {
+  return rows
+    .map(([last, first, raw]) => `${last}|${first}|${stableStringify(raw)}`)
+    .sort()
+    .join("\n");
+}
+
+/** JSON.stringify with sorted keys, so key order can't fake a difference. */
+function stableStringify(v: unknown): string {
+  if (v === null || typeof v !== "object") return JSON.stringify(v);
+  if (Array.isArray(v)) return `[${v.map(stableStringify).join(",")}]`;
+  const o = v as Record<string, unknown>;
+  return `{${Object.keys(o)
+    .sort()
+    .map((k) => `${JSON.stringify(k)}:${stableStringify(o[k])}`)
+    .join(",")}}`;
 }
 
 function entryToRow(
@@ -340,7 +383,12 @@ export type PayrollPeriodSummary = {
   payDay: string;
   label: string | null;
   /** Present only for admin/super. Workers get their own numbers, not the team's. */
-  teamTotals?: { grossEarnings: number | null; netPay: number | null; employerCost: number | null };
+  teamTotals?: {
+    grossEarnings: number | null;
+    netPay: number | null;
+    /** SUPER ONLY — absent from an admin payload. */
+    employerCost?: number | null;
+  };
   /** Worker view: their own figures for this period, if they have a row. */
   mine?: { grossEarnings: number | null; netPay: number | null };
   entryCount?: number;
@@ -401,9 +449,17 @@ export async function listPeriods(viewer: PayrollViewer): Promise<PayrollPeriodS
       teamTotals: {
         grossEarnings: t.values?.grossEarnings ?? null,
         netPay: t.values?.netPay ?? null,
-        // employerCost is shown to operators as an operational figure only.
-        // It is NOT an Expense row and never reaches a tax export.
-        employerCost: t.values?.employerCost ?? null,
+        // SUPER ONLY. `employerCost` is in TAX_AND_EMPLOYER_FIELDS — the
+        // list of everything an admin must not receive — so shipping it in
+        // the aggregate would have handed an admin, through the back door,
+        // the exact figure the per-entry projection withholds. A team of
+        // three makes an aggregate close enough to per-person.
+        //
+        // It is shown to the operator as an operational figure only: NOT an
+        // Expense row, and it never reaches a tax export.
+        ...(viewer.kind === "super"
+          ? { employerCost: t.values?.employerCost ?? null }
+          : {}),
       },
       entryCount: p.entries.length,
       unmatchedCount: p.entries.filter((e) => e.userId === null).length,

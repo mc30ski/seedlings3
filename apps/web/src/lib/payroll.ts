@@ -53,7 +53,12 @@ export type PayrollPeriodSummary = {
   teamTotals?: {
     grossEarnings: number | null;
     netPay: number | null;
-    employerCost: number | null;
+    /**
+     * SUPER ONLY. Optional because an admin payload genuinely omits it —
+     * the absence IS the access control, matching the per-entry
+     * projection. Never render this behind a role check alone.
+     */
+    employerCost?: number | null;
   };
   /** Worker view only — their own figures for the period. */
   mine?: { grossEarnings: number | null; netPay: number | null };
@@ -107,6 +112,8 @@ export type ImportedPeriod = {
   label: string | null;
   entryCount: number;
   replaced: boolean;
+  /** On a replace, whether the file actually differed from what was stored. */
+  changed: boolean;
   unmatched: Array<{ lastName: string; firstName: string }>;
 };
 
@@ -335,7 +342,11 @@ export function sumMine(
 /** Same, for the operator view's team totals. */
 export function sumTeam(
   periods: Array<{
-    teamTotals?: { grossEarnings: number | null; netPay: number | null; employerCost: number | null };
+    teamTotals?: {
+      grossEarnings: number | null;
+      netPay: number | null;
+      employerCost?: number | null;
+    };
   }>,
 ): { netPay: number; grossEarnings: number; employerCost: number; counted: number } {
   let netPay = 0;

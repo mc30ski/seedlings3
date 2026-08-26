@@ -238,15 +238,31 @@ export default function PayrollHomeSection({
           <Box>
             <HStack justify="space-between" align="start" gap={2} mb={2} wrap="wrap">
               <VStack align="start" gap={0} minW={0}>
-                <Text fontSize="sm" fontWeight="bold" color="blue.900">
-                  {shown.length === 1
-                    ? `Paid ${fmtDateKey(newest!.payDay)}`
-                    : `${shown.length} pay periods`}
-                </Text>
+                {/* "Paid" is a claim that money has MOVED. A period whose
+                    pay day is still ahead is final but undeposited, so the
+                    verb has to follow the date — same `payDayVerb` /
+                    Pending pair the Payroll tab rows use, because a figure
+                    that reads differently on two surfaces is the thing that
+                    makes an operator distrust both. */}
+                <HStack gap={1.5} align="center" wrap="wrap">
+                  <Text fontSize="sm" fontWeight="bold" color="blue.900">
+                    {shown.length === 1
+                      ? `${payDayVerb(newest!.payDay)} ${fmtDateKey(newest!.payDay)}`
+                      : `${shown.length} pay periods`}
+                  </Text>
+                  {/* One period: the chip is about THAT period. Several: it
+                      flags that the newest one hasn't landed, which is why
+                      the total is larger than what has actually arrived. */}
+                  {isPayDayPending(newest!.payDay) && (
+                    <Badge size="sm" colorPalette="blue" variant="subtle">
+                      Pending
+                    </Badge>
+                  )}
+                </HStack>
                 <Text fontSize="xs" color="blue.800">
                   {shown.length === 1
                     ? `for ${fmtDateKey(newest!.periodStart)} – ${fmtDateKey(newest!.periodEnd)}`
-                    : `most recent paid ${fmtDateKey(newest!.payDay)}`}
+                    : `most recent ${payDayVerb(newest!.payDay).toLowerCase()} ${fmtDateKey(newest!.payDay)}`}
                 </Text>
               </VStack>
             </HStack>
