@@ -50,6 +50,7 @@ import ClientStatementsTab from "@/src/ui/tabs/ClientStatementsTab";
 import PlanWorkdayWorkflow from "@/src/ui/workflows/PlanWorkdayWorkflow";
 import BeginWorkDayWorkflow from "@/src/ui/workflows/BeginWorkDayWorkflow";
 import PayrollTab from "@/src/ui/tabs/PayrollTab";
+import { fetchUnmatchedPayrollNames } from "@/src/lib/payroll";
 import AdminTasksTab, { type TaskDef, FiPlus, FiDownload, FiDatabase, FiShare2 } from "@/src/ui/tabs/AdminTasksTab";
 import SharePhotosWorkflow from "@/src/ui/workflows/SharePhotosWorkflow";
 // StatisticsTab is no longer wired into the worker or super shell (both tab
@@ -2670,6 +2671,73 @@ chip: false, bucket: t.bucket }));
     return () => window.removeEventListener("seedlings3:jobs-changed", onRefresh);
   }, [loadUnapprovedHoursCount]);
 
+  // Unlinked client accounts. This was a Tasks section with NO dropdown
+  // alert — the only such gap — so an operator who never opened Tasks had
+  // no signal at all. Added 2026-08-26 when the two surfaces were
+  // reconciled; see the alert-ordering build gate.
+  const [unlinkedAccountsCount, setUnlinkedAccountsCount] = useState(0);
+  const loadUnlinkedAccountsCount = useCallback(async () => {
+    if (!isAdmin) {
+      setUnlinkedAccountsCount(0);
+      markAlertLoaded("unlinkedAccounts");
+      return;
+    }
+    try {
+      const list = await apiGet<unknown[]>("/api/admin/clients/unlinked-accounts");
+      setUnlinkedAccountsCount(Array.isArray(list) ? list.length : 0);
+    } catch {
+      setUnlinkedAccountsCount(0);
+    }
+    markAlertLoaded("unlinkedAccounts");
+  }, [isAdmin]);
+  useEffect(() => {
+    void loadUnlinkedAccountsCount();
+    const onRefresh = () => void loadUnlinkedAccountsCount();
+    window.addEventListener("seedlings:client-accounts-changed", onRefresh);
+    return () => window.removeEventListener("seedlings:client-accounts-changed", onRefresh);
+  }, [loadUnlinkedAccountsCount]);
+
+  // Payroll names awaiting identity matching. SUPER-only: matching a name
+  // to a User is the one payroll action that changes who can see whose pay,
+  // so it sits behind the same guard as the import itself.
+  //
+  // This count is not cosmetic. Until a name is matched, THAT WORKER CANNOT
+  // SEE THEIR OWN PAY — and the worker's only signal is a passive "ask your
+  // admin" line, because they are deliberately never told whose row it is.
+  // Before this existed the queue was visible only inside the Payroll tab,
+  // so the one person who could fix it had to happen to go looking, while
+  // the person affected was told to go ask them.
+  const [payrollUnmatchedCount, setPayrollUnmatchedCount] = useState(0);
+  const loadPayrollUnmatchedCount = useCallback(async () => {
+    if (!isSuper) {
+      setPayrollUnmatchedCount(0);
+      markAlertLoaded("payrollUnmatched");
+      return;
+    }
+    try {
+      const rows = await fetchUnmatchedPayrollNames();
+      setPayrollUnmatchedCount(Array.isArray(rows) ? rows.length : 0);
+    } catch {
+      setPayrollUnmatchedCount(0);
+    }
+    markAlertLoaded("payrollUnmatched");
+  }, [isSuper]);
+  useEffect(() => {
+    void loadPayrollUnmatchedCount();
+    // An import adds names to the queue; a match removes one. Both fire
+    // this, so the badge settles without a manual refresh.
+    const onRefresh = () => void loadPayrollUnmatchedCount();
+    window.addEventListener("seedlings:payroll-changed", onRefresh);
+    return () => window.removeEventListener("seedlings:payroll-changed", onRefresh);
+  }, [loadPayrollUnmatchedCount]);
+
+  // Super → Money → Payroll, where the review queue lives.
+  const goToPayrollIdentities = useCallback(() => {
+    setTopTab("super");
+    setSuperCategory("Money");
+    setSuperInnerTab("payroll");
+  }, []);
+
   // Navigate to admin Jobs tab filtered to unapproved-hours occurrences.
   // Same handoff pattern as overdue / estimate-followups: localStorage flag
   // for mount-time pickup + dispatched event for already-mounted case.
@@ -2740,7 +2808,7 @@ chip: false, bucket: t.bucket }));
     return () => { clearTimeout(timer); document.removeEventListener("click", close); };
   }, [alertDropdownOpen]);
   const [alertsLoaded, setAlertsLoaded] = useState<Record<string, boolean>>({});
-  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests && alertsLoaded.estimateFollowups && alertsLoaded.unapprovedHours && alertsLoaded.guaranteedPayout && alertsLoaded.pendingWorkdays && alertsLoaded.ledgerFollowups && alertsLoaded.dueToRecord && alertsLoaded.streamPauseReminders && alertsLoaded.policyAdmin && alertsLoaded.policyWorker && alertsLoaded.timeline);
+  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests && alertsLoaded.estimateFollowups && alertsLoaded.unapprovedHours && alertsLoaded.guaranteedPayout && alertsLoaded.pendingWorkdays && alertsLoaded.ledgerFollowups && alertsLoaded.dueToRecord && alertsLoaded.streamPauseReminders && alertsLoaded.policyAdmin && alertsLoaded.policyWorker && alertsLoaded.timeline && alertsLoaded.payrollUnmatched && alertsLoaded.unlinkedAccounts);
   const markAlertLoaded = useCallback((key: string) => setAlertsLoaded((prev) => prev[key] ? prev : { ...prev, [key]: true }), []);
   const loadAnnouncementCount = useCallback(async () => {
     // Staff-only: /api/occurrences requires a worker/admin/super role.
@@ -2890,6 +2958,8 @@ chip: false, bucket: t.bucket }));
         // until they closed the browser tab. Reported on 2026-07-13.
         loadPolicyWorkerCount(),
         loadPolicyAdminCounts(),
+        loadPayrollUnmatchedCount(),
+        loadUnlinkedAccountsCount(),
       ]);
     } finally {
       setAlertsRefreshing(false);
@@ -4044,7 +4114,14 @@ chip: false, bucket: t.bucket }));
               // No scope gate.
               if (policyWorkerPendingCount > 0) alerts.push({ label: "Documents to sign", count: policyWorkerPendingCount, bg: "#FEE2E2", color: "#7F1D1D", dotColor: "#DC2626", onClick: goToWorkerCompliance });
               if (scopeIsAdmin && changeRequestCount > 0) alerts.push({ label: "Client requests", count: changeRequestCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToClientRequests });
+              if (scopeIsAdmin && unlinkedAccountsCount > 0) alerts.push({ label: "Unlinked client accounts", count: unlinkedAccountsCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToUnlinkedAccounts });
               if (scopeIsAdmin && estimateFollowupCount > 0) alerts.push({ label: "Estimate follow-ups", count: estimateFollowupCount, bg: "#FCE7F3", color: "#9D174D", dotColor: "#EC4899", onClick: goToEstimateFollowups });
+              // The two payroll queues sit together: this one blocks a
+              // worker from seeing their pay, the next holds hours back
+              // from the Gusto export. Purple matches the Payroll tab's
+              // employer-cost accent, so the colour reads as "payroll"
+              // rather than as a severity.
+              if (scopeIsSuper && payrollUnmatchedCount > 0) alerts.push({ label: "Payroll names to match", count: payrollUnmatchedCount, bg: "#F3E8FF", color: "#6B21A8", dotColor: "#A855F7", onClick: goToPayrollIdentities });
               if (scopeIsAdmin && unapprovedHoursCount > 0) alerts.push({ label: "Job hours awaiting review", count: unapprovedHoursCount, bg: "#FEF3C7", color: "#92400E", dotColor: "#F59E0B", onClick: goToUnapprovedHours });
               if (scopeIsAdmin && unclaimedCount > 0) alerts.push({ label: "Unclaimed", count: unclaimedCount, bg: "#FEF9C3", color: "#713F12", dotColor: "#FACC15", onClick: goToUnclaimed });
               // Announcements are worker-visible — gate on scopeIsWorker
@@ -4431,6 +4508,7 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
             policyPendingUploadsCount,
             policyPendingApprovalsCount,
             policyWorkerPendingCount,
+            payrollUnmatchedCount,
           }}
           handlers={{
             goToWorkdayApprovals,
@@ -4439,6 +4517,7 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
             goToDueToRecord,
             goToCompliance,
             goToWorkerCompliance,
+            goToPayrollIdentities,
             goToStreamPauseReminders,
             goToGuaranteedPayoutExpiring,
             goToApprovals,

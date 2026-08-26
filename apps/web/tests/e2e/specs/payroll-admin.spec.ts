@@ -228,6 +228,51 @@ test.describe("Payroll — Super", () => {
     expect(caleb?.netPay).toBe(0);
   });
 
+  test("a SUPER-role user on the ADMIN tab sees no employer cost", async ({ page }) => {
+    // Reported 2026-08-26. `operatorViewer` resolves by ROLE, so Michael
+    // (SUPER + ADMIN + WORKER) receives a super payload on EVERY tab — the
+    // server cannot know which tab he is on. Gating the UI on the presence
+    // of `employerCost` in the response was therefore not enough, and
+    // employer cost leaked onto the Admin tab.
+    //
+    // Same shape as the standing rule that `showSuperExtras` must never
+    // fall back to `forAdmin ||`. This is the assertion that catches it:
+    // it can only run as a SUPER-role user, so the admin-role project
+    // cannot cover it.
+    await gotoSuperPayroll(page);
+    await uploadFixture(page);
+    await page.getByRole("button", { name: /^Done$/i }).click();
+    await page.waitForTimeout(1500);
+
+    // Same person, same session, Admin tab.
+    await page.goto("/");
+    await page.evaluate(() => {
+      localStorage.setItem("seedlings_topTab", JSON.stringify("admin"));
+      localStorage.setItem("seedlings_adminTab", JSON.stringify("payroll"));
+      localStorage.setItem("seedlings_adminCategory", JSON.stringify("Money"));
+    });
+    await page.goto("/");
+    await page.waitForLoadState("networkidle");
+    await page.waitForTimeout(2500);
+
+    // Confirm we are actually on a rendered payroll surface — otherwise a
+    // blank page would pass every not-visible assertion below.
+    await expect(page.getByText(/TEAM NET/i).first()).toBeVisible({ timeout: 10_000 });
+
+    let body = (await page.locator("body").textContent()) ?? "";
+    expect(body, "employer cost leaked onto the Admin tab").not.toMatch(/EMPLOYER COST/i);
+
+    // And still absent once a period is expanded, where the per-worker and
+    // whole-run breakdowns live.
+    await page.getByText(/Paid |Pays /).first().click();
+    await page.waitForTimeout(2000);
+    body = (await page.locator("body").textContent()) ?? "";
+    expect(body, "employer breakdown leaked into an expanded Admin period").not.toMatch(
+      /EMPLOYER COST/i,
+    );
+    expect(body).not.toMatch(/FUTA/);
+  });
+
   test("unmatched names surface for review and block worker visibility", async ({ page }) => {
     await gotoSuperPayroll(page);
     await uploadFixture(page);

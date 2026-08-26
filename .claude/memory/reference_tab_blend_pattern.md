@@ -130,3 +130,25 @@ view-as — the server enforces on the picked worker.
 - Collections → `Package`
 - Equipment → `LayoutGrid`
 - Client Requests → `Inbox`
+
+## The server-payload variant of the same bug (2026-08-26)
+
+`showSuperExtras` is not only about buttons. Payroll's `operatorViewer`
+resolves the API viewer by **ROLE**, so Michael (SUPER + ADMIN + WORKER)
+receives a *super* payload on every tab — the server cannot know which tab
+is being rendered. Gating a super-only figure on "is the field present in
+the response?" therefore leaked employer cost onto the Admin tab.
+
+**Rule:** a super-only figure needs BOTH gates.
+
+- `showSuperExtras` — the SURFACE. Only the client knows the active tab.
+- a presence check on the field — the DATA. A genuine admin-only account
+  gets a payload without it, and rendering `$0.00` reads as a real zero
+  rather than "withheld".
+
+Neither substitutes for the other. And a role-based server projection must
+still narrow per kind: `fieldsFor` read `admin ? ADMIN : ALL`, which made
+"everything" the else-branch and silently gave `worker` the super
+projection. Never let "everything" be a fall-through default.
+
+See `docs/features/payroll.md` → "Employer cost — Super only".

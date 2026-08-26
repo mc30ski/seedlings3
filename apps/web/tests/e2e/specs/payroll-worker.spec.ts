@@ -159,6 +159,50 @@ test.describe("Payroll — worker view", () => {
     }
   });
 
+  test("a worker NEVER receives the employer side of their own row", async ({ page }) => {
+    // Their withholding is pay-stub data; what the company paid on top of
+    // their wages is the company's books. Gusto draws the same line.
+    //
+    // Asserted on the RESPONSE, not the page. Until 2026-08-26 `fieldsFor`
+    // read `admin ? ADMIN : ALL`, so worker and super shared a projection
+    // and these fields WERE in the worker's payload — invisible in the UI,
+    // one DevTools tab away in reality. A DOM assertion would have passed
+    // the whole time.
+    await gotoWorkerPayroll(page);
+
+    const list = await apiAs(page, "/api/me/payroll");
+    const mine = list.json.find((p: any) => p.payDay === SCRATCH_PAY_DAY);
+    const detail = await apiAs(page, `/api/me/payroll/${mine.id}`);
+    const values = detail.json.entries[0].values;
+
+    for (const f of [
+      "employerTaxes",
+      "socialSecurityEmployer",
+      "medicareEmployer",
+      "futaEmployer",
+      "stateUnemploymentEmployer",
+      "employerCost",
+    ]) {
+      expect(values, `worker received ${f} — that is the company's book`).not.toHaveProperty(f);
+    }
+
+    // Nor the run-level employer block, nor a team aggregate.
+    expect(detail.json).not.toHaveProperty("employerTotals");
+    expect(mine).not.toHaveProperty("teamTotals");
+  });
+
+  test("no employer figure reaches the worker's rendered page", async ({ page }) => {
+    // Belt and braces on the surface the worker actually looks at.
+    await gotoWorkerPayroll(page);
+    await page.getByText(/Paid 7\/17\/2026/).first().click();
+    await page.waitForTimeout(2000);
+
+    const body = (await page.locator("body").textContent()) ?? "";
+    expect(body, "employer cost section rendered for a worker").not.toMatch(/EMPLOYER COST/i);
+    expect(body, "FUTA is employer-side and must not appear").not.toMatch(/FUTA/);
+    expect(body).not.toMatch(/NC unemployment/i);
+  });
+
   test("a worker cannot read another worker's payroll via viewAsUserId", async ({ page }) => {
     // The parameter exists for ADMIN/SUPER. A plain worker passing it must
     // be refused, not quietly served.

@@ -59,6 +59,11 @@ import PendingWorkdaysSection from "@/src/ui/components/tasks/PendingWorkdaysSec
 import LedgerFollowupsSection from "@/src/ui/components/tasks/LedgerFollowupsSection";
 import TimelineUrgentSection from "@/src/ui/components/tasks/TimelineUrgentSection";
 import UnapprovedHoursSection from "@/src/ui/components/tasks/UnapprovedHoursSection";
+// Reused VERBATIM from the Payroll tab — same picker, same confirm, same
+// endpoint. Matching a name from here is the identical action, so it
+// deliberately is not a reimplementation.
+import PayrollIdentityReview from "@/src/ui/components/PayrollIdentityReview";
+import { fetchUnmatchedPayrollNames, notifyPayrollChanged } from "@/src/lib/payroll";
 import RepeatingPausesDueSection from "@/src/ui/components/tasks/RepeatingPausesDueSection";
 
 type ShortcutCounts = {
@@ -83,6 +88,8 @@ type ShortcutCounts = {
   policyPendingUploadsCount: number;
   policyPendingApprovalsCount: number;
   policyWorkerPendingCount: number;
+  /** Super-only: Gusto names with no confirmed User yet. */
+  payrollUnmatchedCount: number;
 };
 
 type ShortcutHandlers = {
@@ -92,6 +99,7 @@ type ShortcutHandlers = {
   goToDueToRecord: () => void;
   goToCompliance: () => void;
   goToWorkerCompliance: () => void;
+  goToPayrollIdentities: () => void;
   /** Optional occurrenceId — when the operator clicks Review on a
    *  specific row (not the section arrow), we jump to and highlight
    *  just that occurrence rather than expanding every reminder-due
@@ -218,6 +226,7 @@ export default function TasksPage({
       n += counts.pendingUsersCount;
       n += counts.policyPendingUploadsCount;
       n += counts.policyPendingApprovalsCount;
+      n += counts.payrollUnmatchedCount;
     }
     if (isAdmin) {
       n += counts.estimateFollowupCount;
@@ -280,10 +289,16 @@ export default function TasksPage({
               concepts that the dropdown collapses into "Payments to
               review" are split here into their own inline sections
               (PendingApprovalsSection + OutstandingRequestsSection)
-              since the page has the room for both. Unlinked client
-              accounts and Change requests have no dropdown alert
-              today; they're slotted with their nearest dropdown
-              neighbor (the admin-client-related cluster). */}
+              since the page has the room for both — that ONE-TO-MANY
+              mapping is the only sanctioned divergence, and the
+              alert-ordering build gate encodes it explicitly.
+
+              This order is no longer maintained by hand-matching: the
+              gate parses both files and fails the build if they drift.
+              The comment used to claim the two mirrored each other while
+              four entries were actually out of order and one section
+              ("Unlinked client accounts") had no dropdown alert at all —
+              a claim nothing checked, so it rotted. */}
 
           {isAdmin && counts.overdueCount > 0 && (
             <ShortcutCard
@@ -363,17 +378,20 @@ export default function TasksPage({
               onReview={wrap(handlers.goToDueToRecord)}
             />
           )}
-          {/* Worker-side "Documents to sign" — surfaces the compliance
-              sign wizard shortcut on the personal Tasks page. Rendered
-              first (above admin shortcuts) so a worker with pending
-              policies sees it before scrolling past admin queues. */}
-          {counts.policyWorkerPendingCount > 0 && (
-            <ShortcutCard
-              label="Documents to sign"
-              count={counts.policyWorkerPendingCount}
-              dotColor="#DC2626"
-              onReview={wrap(handlers.goToWorkerCompliance)}
-            />
+          {(isAdmin || isSuper) && (
+            <CollapsibleSectionCard
+              label="Paused repeating to review"
+              dotColor="#A855F7"
+              loadCount={countRepeatingPausesDue}
+              refreshEvents={["seedlings:stream-pauses-changed"]}
+              onGoto={wrap(handlers.goToStreamPauseReminders)}
+            >
+              <RepeatingPausesDueSection
+                onReview={(occurrenceId) =>
+                  wrap(() => handlers.goToStreamPauseReminders(occurrenceId))()
+                }
+              />
+            </CollapsibleSectionCard>
           )}
           {isSuper && counts.policyPendingUploadsCount > 0 && (
             <ShortcutCard
@@ -391,20 +409,17 @@ export default function TasksPage({
               onReview={wrap(handlers.goToCompliance)}
             />
           )}
-          {(isAdmin || isSuper) && (
-            <CollapsibleSectionCard
-              label="Paused repeating to review"
-              dotColor="#A855F7"
-              loadCount={countRepeatingPausesDue}
-              refreshEvents={["seedlings:stream-pauses-changed"]}
-              onGoto={wrap(handlers.goToStreamPauseReminders)}
-            >
-              <RepeatingPausesDueSection
-                onReview={(occurrenceId) =>
-                  wrap(() => handlers.goToStreamPauseReminders(occurrenceId))()
-                }
-              />
-            </CollapsibleSectionCard>
+          {/* Worker-side "Documents to sign" — surfaces the compliance
+              sign wizard shortcut on the personal Tasks page. Rendered
+              first (above admin shortcuts) so a worker with pending
+              policies sees it before scrolling past admin queues. */}
+          {counts.policyWorkerPendingCount > 0 && (
+            <ShortcutCard
+              label="Documents to sign"
+              count={counts.policyWorkerPendingCount}
+              dotColor="#DC2626"
+              onReview={wrap(handlers.goToWorkerCompliance)}
+            />
           )}
           {isAdmin && (
             <CollapsibleSectionCard
@@ -435,6 +450,23 @@ export default function TasksPage({
               onReview={wrap(handlers.goToEstimateFollowups)}
             />
           )}
+          {/* Super-only, and inline rather than a shortcut card: the whole
+              action is one picker plus a confirm, so bouncing the operator
+              to the Payroll tab to do it would be more steps than doing it
+              here. Sits directly above "Job hours awaiting payroll review"
+              — both are payroll, and this one blocks a worker from seeing
+              their own pay until it is cleared. */}
+          {isSuper && (
+            <CollapsibleSectionCard
+              label="Payroll names to match"
+              dotColor="#A855F7"
+              loadCount={countPayrollUnmatched}
+              refreshEvents={["seedlings:payroll-changed"]}
+              onGoto={wrap(handlers.goToPayrollIdentities)}
+            >
+              <PayrollIdentityReview onChanged={notifyPayrollChanged} />
+            </CollapsibleSectionCard>
+          )}
           {isAdmin && (
             <CollapsibleSectionCard
               label="Job hours awaiting payroll review"
@@ -454,6 +486,14 @@ export default function TasksPage({
               onReview={wrap(handlers.goToUnclaimed)}
             />
           )}
+          {counts.announcementCount > 0 && (
+            <ShortcutCard
+              label="Announcements"
+              count={counts.announcementCount}
+              dotColor="#6D28D9"
+              onReview={wrap(handlers.goToAnnouncements)}
+            />
+          )}
           {isAdmin && (
             <CollapsibleSectionCard
               label="Timeline"
@@ -464,14 +504,6 @@ export default function TasksPage({
             >
               <TimelineUrgentSection isSuper={isSuper} />
             </CollapsibleSectionCard>
-          )}
-          {counts.announcementCount > 0 && (
-            <ShortcutCard
-              label="Announcements"
-              count={counts.announcementCount}
-              dotColor="#6D28D9"
-              onReview={wrap(handlers.goToAnnouncements)}
-            />
           )}
         </VStack>
       )}
@@ -670,6 +702,11 @@ async function countTimelineUrgent(isSuper: boolean): Promise<number> {
   const r = await apiGet<{ urgent: number; soon: number }>(endpoint);
   return r?.urgent ?? 0;
 }
+async function countPayrollUnmatched(): Promise<number> {
+  const rows = await fetchUnmatchedPayrollNames();
+  return Array.isArray(rows) ? rows.length : 0;
+}
+
 async function countUnapprovedHours(): Promise<number> {
   const r = await apiGet<{ count: number }>("/api/admin/occurrences/unapproved-hours-count");
   return r?.count ?? 0;

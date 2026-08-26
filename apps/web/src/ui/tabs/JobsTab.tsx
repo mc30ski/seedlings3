@@ -4787,7 +4787,63 @@ export default function JobsTab({
             // action affordance on other workers' cards.
             // Paused-stream takes precedence over everything else — no
             // start / resume / complete button when the service is paused.
-            const quickActionButton = pauseIndicator ?? (isTrainee || isPeek ? null : (() => {
+            /**
+   * Occurrence instructions — the yellow "read this before you start" band.
+   *
+   * Rendered as the FIRST thing under the card's title row, in BOTH header
+   * branches (semi and expanded). It previously sat after `</Card.Header>`,
+   * which put it below the badge rows — and, on an expanded card, below the
+   * address and the View Property / View Client links too. That is three
+   * rows of context ahead of "park on street", which is the one line that
+   * changes what the worker does when they arrive.
+   *
+   * Defined once here rather than inlined twice so the two densities cannot
+   * drift apart — the same reason `quickActionButton` below is extracted.
+   *
+   * No density guard needed: both call sites are inside the non-ultra
+   * branch of the `cardMode` ternary, so this is structurally unreachable
+   * at ultra density (that row surfaces the same signal via the yellow
+   * AlertCircle chip).
+   *
+   * Distinct from `OccurrenceInstructions` at the bottom of the card —
+   * that is a details drawer for photos and guidance notes, not a warning.
+   */
+  const instructionsBanner =
+    ((occ as any).instructions ?? []).length > 0 ? (
+      <Box
+        mt="1"
+        mb="1"
+        px="3"
+        py="1.5"
+        bg="yellow.100"
+        borderWidth="1px"
+        borderColor="yellow.400"
+        borderRadius="md"
+      >
+        <VStack align="stretch" gap="0.5">
+          {((occ as any).instructions as { id: string; text: string; repeats: boolean }[]).map((inst) => (
+            <HStack key={inst.id} gap="1.5" align="center">
+              <AlertCircle
+                size={18}
+                color="var(--chakra-colors-yellow-900)"
+                fill="var(--chakra-colors-yellow-400)"
+                strokeWidth={2.5}
+              />
+              <Text fontSize="xs" fontWeight="semibold" color="yellow.700" flex="1">
+                {inst.text}
+              </Text>
+              {inst.repeats && (
+                <Box display="inline-flex" alignItems="center" title="Carries forward">
+                  <Repeat size={12} color="var(--chakra-colors-yellow-700)" />
+                </Box>
+              )}
+            </HStack>
+          ))}
+        </VStack>
+      </Box>
+    ) : null;
+
+  const quickActionButton = pauseIndicator ?? (isTrainee || isPeek ? null : (() => {
               if (needsConfirmation && (isClaimer || forAdmin)) {
                 return (
                   <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="orange.400" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "orange.500" }} title="Confirm Client" onClick={(e: any) => {
@@ -5472,6 +5528,10 @@ export default function JobsTab({
                           {moreActionsMenu}
                         </HStack>
                       </HStack>
+                      {/* Instructions come FIRST under the title — ahead of
+                          the confirmation banner and the badge rows. They
+                          change what the worker does on arrival. */}
+                      {instructionsBanner}
                       {/* Client confirmation banner — sits directly under
                           the title row, above status badges. Same callout
                           shape as before, just relocated. */}
@@ -5786,6 +5846,10 @@ export default function JobsTab({
                             {moreActionsMenu}
                           </HStack>
                         </HStack>
+                        {/* Instructions come FIRST under the title — ahead of
+                            the address, the View Property / View Client links
+                            and the badge rows. */}
+                        {instructionsBanner}
                         {/* Client confirmation banner — under the title row,
                             above sub-title and status badges. */}
                         {needsConfirmation && (
@@ -6026,41 +6090,6 @@ export default function JobsTab({
                       </Box>
                     )}
                 </Card.Header>
-
-                {/* Occurrence instructions — rendered directly BELOW the
-                    title bar (between Card.Header and the body), so the
-                    worker reads the job name first and the critical notes
-                    immediately under it. Ultra needs no density guard here:
-                    this sits inside the non-ultra branch of the cardMode
-                    ternary, so it's structurally unreachable at that
-                    density (the ultra row surfaces the same signal via the
-                    yellow AlertCircle chip). OccurrenceInstructions
-                    guidance (photos + notes) still renders at the bottom of
-                    the card — that's a details drawer, not a warning. */}
-                {((occ as any).instructions ?? []).length > 0 && (
-                  <Box mx="3" mt="2" mb="0" px="3" py="1.5" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
-                    <VStack align="stretch" gap="0.5">
-                      {((occ as any).instructions as { id: string; text: string; repeats: boolean }[]).map((inst) => (
-                        <HStack key={inst.id} gap="1.5" align="center">
-                          <AlertCircle
-                            size={18}
-                            color="var(--chakra-colors-yellow-900)"
-                            fill="var(--chakra-colors-yellow-400)"
-                            strokeWidth={2.5}
-                          />
-                          <Text fontSize="xs" fontWeight="semibold" color="yellow.700" flex="1">
-                            {inst.text}
-                          </Text>
-                          {inst.repeats && (
-                            <Box display="inline-flex" alignItems="center" title="Carries forward">
-                              <Repeat size={12} color="var(--chakra-colors-yellow-700)" />
-                            </Box>
-                          )}
-                        </HStack>
-                      ))}
-                    </VStack>
-                  </Box>
-                )}
 
                 {/* Peek strip — renders at the top of the card body
                     (immediately below the title bar) whenever the

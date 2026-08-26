@@ -23,6 +23,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { ChevronsUpDown, RefreshCw, Sparkles } from "lucide-react";
+import { Dashboard } from "@/src/ui/components/Dashboard";
 import { apiGet } from "@/src/lib/api";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import {
@@ -163,59 +164,100 @@ export default function AllWorkersHourlyPayCards({ periodOverride }: Props = {})
       });
   }, [workers, payByUser, payLoading]);
 
+  /**
+   * The single row worth seeing without opening the section.
+   *
+   * `rows` is already sorted by `sortRank`, which puts the highest
+   * $/hr first and sinks loading rows and anyone with no logged hours —
+   * so rows[0] IS the top earner, and re-sorting here would be a second
+   * source of truth for the same ordering.
+   *
+   * Null while loading or when nobody has hours yet: a header that says
+   * "Trainee Worker · $0.00/hr" because everyone is at zero reads as a
+   * real result rather than an empty period.
+   */
+  const topEarner = useMemo(() => {
+    const first = rows[0];
+    if (!first || first.loading || !first.data) return null;
+    if (first.data.hours <= 0) return null;
+    return first;
+  }, [rows]);
+
   if (workers === null) {
+    // Same frame while loading, so the section doesn't change colour or
+    // shape as the worker list settles.
     return (
-      <Card.Root variant="outline">
-        <Card.Body p={4}>
-          <HStack gap={2}>
-            <Spinner size="sm" />
-            <Text fontSize="sm" color="fg.muted">Loading worker list…</Text>
-          </HStack>
-        </Card.Body>
-      </Card.Root>
+      <Dashboard
+        storageKey="seedlings:homeTab:teamPayPerHourOpen"
+        title="Approximate pay per hour · team"
+        icon={Sparkles}
+        variant="pay"
+      >
+        <HStack gap={2}>
+          <Spinner size="sm" />
+          <Text fontSize="sm" color="fg.muted">Loading worker list…</Text>
+        </HStack>
+      </Dashboard>
     );
   }
 
   if (workers.length === 0) return null;
 
   return (
-    <Card.Root variant="outline">
-      <Card.Body p={4}>
-        <HStack justify="space-between" mb={3} align="start">
-          <Text
-            fontSize="xs"
-            fontWeight="semibold"
-            color="fg.default"
-            textTransform="uppercase"
-            letterSpacing="wide"
-          >
-            Approximate pay per hour · team
+    <Dashboard
+      storageKey="seedlings:homeTab:teamPayPerHourOpen"
+      title="Approximate pay per hour · team"
+      icon={Sparkles}
+      variant="pay"
+      /* Collapsed, the section still answers "who's earning most right
+         now" — the question the grid exists to answer. `collapsedSummarySlot`
+         (not `summarySlot`) so it doesn't duplicate the card that already
+         states it prominently when open. */
+      collapsedSummarySlot={
+        topEarner ? (
+          <Text fontSize="xs" color="pink.800" lineClamp={1}>
+            {/* `$${rate.toFixed(2)}`, matching the card below EXACTLY.
+                fmtUSD rounds to whole dollars, so the header read "$25"
+                over a card reading "$24.92" — two different numbers for
+                the same figure, one line apart. */}
+            Top: {topEarner.displayName ?? "(unnamed)"} ·{" "}
+            <Box as="span" fontWeight="bold">
+              ${topEarner.data!.ratePerHour.toFixed(2)}
+            </Box>
+            /hr
           </Text>
-          <HStack gap={1}>
-            {!externallyControlled && (
-              <Button
-                size="xs"
-                variant="outline"
-                px="2"
-                onClick={cyclePeriod}
-                title={cycleTitle}
-              >
-                {periodDisplay}
-                <Box as="span" ml={1} display="inline-flex" opacity={0.7}>
-                  <ChevronsUpDown size={11} />
-                </Box>
-              </Button>
-            )}
-            <IconButton
-              aria-label="Refresh"
+        ) : undefined
+      }
+    >
+      <Box>
+        {/* Period picker + refresh live in the BODY, not the header:
+            Dashboard's header row is itself a <button>, so a nested
+            button there would be invalid HTML (and would fight the
+            collapse toggle for the click). */}
+        <HStack justify="flex-end" gap={1} mb={3}>
+          {!externallyControlled && (
+            <Button
               size="xs"
-              variant="ghost"
-              onClick={() => void loadPay()}
-              loading={payLoading}
+              variant="outline"
+              px="2"
+              onClick={cyclePeriod}
+              title={cycleTitle}
             >
-              <RefreshCw size={12} />
-            </IconButton>
-          </HStack>
+              {periodDisplay}
+              <Box as="span" ml={1} display="inline-flex" opacity={0.7}>
+                <ChevronsUpDown size={11} />
+              </Box>
+            </Button>
+          )}
+          <IconButton
+            aria-label="Refresh"
+            size="xs"
+            variant="ghost"
+            onClick={() => void loadPay()}
+            loading={payLoading}
+          >
+            <RefreshCw size={12} />
+          </IconButton>
         </HStack>
 
         {/* Responsive grid — 1 card wide on phones, up to 4 across on
@@ -227,8 +269,8 @@ export default function AllWorkersHourlyPayCards({ periodOverride }: Props = {})
             <MiniPayCard key={row.id} row={row} />
           ))}
         </SimpleGrid>
-      </Card.Body>
-    </Card.Root>
+      </Box>
+    </Dashboard>
   );
 }
 
