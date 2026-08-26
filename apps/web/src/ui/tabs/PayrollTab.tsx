@@ -54,6 +54,9 @@ import {
   fmtPayrollMoney,
   fmtPayrollHours,
   filterPeriodsByRange,
+  payrollCadenceLabel,
+  isPayDayPending,
+  payDayVerb,
   sumMine,
   sumTeam,
   PAYROLL_RANGES,
@@ -415,14 +418,31 @@ export default function PayrollTab({
                   >
                     <VStack align="start" gap={0} flex={1} minW={0}>
                       <HStack gap={2} wrap="wrap">
+                        {/* "Pays" while the money is still ahead. Payroll is
+                            run days BEFORE the deposit, so a freshly
+                            imported period would otherwise claim it had
+                            already paid. */}
                         <Text fontSize="sm" fontWeight="semibold">
-                          Paid {fmtDateKey(p.payDay)}
+                          {payDayVerb(p.payDay)} {fmtDateKey(p.payDay)}
                         </Text>
-                        {p.label && (
-                          <Badge size="sm" colorPalette="gray" variant="subtle">
-                            {p.label}
+                        {isPayDayPending(p.payDay) && (
+                          <Badge size="sm" colorPalette="blue" variant="subtle">
+                            Pending
                           </Badge>
                         )}
+                        {/* Derived from the period dates, so every row gets
+                            a chip. Gusto's own label is inconsistent — the
+                            same weekly run exports as both "Weekly Payroll
+                            payroll period" and a bare "Payroll period", so
+                            identical runs used to render differently. */}
+                        {(() => {
+                          const chip = payrollCadenceLabel(p.periodStart, p.periodEnd, p.label);
+                          return chip ? (
+                            <Badge size="sm" colorPalette="gray" variant="subtle">
+                              {chip}
+                            </Badge>
+                          ) : null;
+                        })()}
                         {showSuperExtras && (p.unmatchedCount ?? 0) > 0 && (
                           <Badge size="sm" colorPalette="orange" variant="solid">
                             {p.unmatchedCount} unmatched
@@ -435,25 +455,47 @@ export default function PayrollTab({
                       </Text>
                     </VStack>
 
-                    <VStack align="end" gap={0} flexShrink={0}>
-                      {p.mine && (
+                    {/* NET and GROSS both labelled, on every row. A single
+                        unlabelled figure invited reading it as the other —
+                        they differ by withholding, and which one you are
+                        looking at matters when reconciling against a Gusto
+                        export. Net stays the emphasised number: it is what
+                        actually landed. */}
+                    <VStack align="end" gap={0.5} flexShrink={0}>
+                      {(p.mine || p.teamTotals) && (
                         <>
-                          <Text fontSize="sm" fontWeight="bold" color="green.700">
-                            {fmtPayrollMoney(p.mine.netPay)}
-                          </Text>
-                          <Text fontSize="2xs" color="fg.muted">
-                            net
-                          </Text>
-                        </>
-                      )}
-                      {p.teamTotals && (
-                        <>
-                          <Text fontSize="sm" fontWeight="bold" color="green.700">
-                            {fmtPayrollMoney(p.teamTotals.netPay)}
-                          </Text>
-                          <Text fontSize="2xs" color="fg.muted">
-                            team net
-                          </Text>
+                          <HStack gap={1.5} align="baseline">
+                            <Text fontSize="2xs" color="fg.muted">
+                              {p.teamTotals ? "TEAM NET" : "NET"}
+                            </Text>
+                            <Text
+                              fontSize="sm"
+                              fontWeight="bold"
+                              color="green.700"
+                              fontVariantNumeric="tabular-nums"
+                            >
+                              {fmtPayrollMoney(
+                                p.teamTotals ? p.teamTotals.netPay : p.mine!.netPay,
+                              )}
+                            </Text>
+                          </HStack>
+                          <HStack gap={1.5} align="baseline">
+                            <Text fontSize="2xs" color="fg.muted">
+                              GROSS
+                            </Text>
+                            <Text
+                              fontSize="xs"
+                              fontWeight="medium"
+                              color="fg.muted"
+                              fontVariantNumeric="tabular-nums"
+                            >
+                              {fmtPayrollMoney(
+                                p.teamTotals
+                                  ? p.teamTotals.grossEarnings
+                                  : p.mine!.grossEarnings,
+                              )}
+                            </Text>
+                          </HStack>
                         </>
                       )}
                     </VStack>
