@@ -168,6 +168,34 @@ export async function copyObject(
  * plain text) — the caller is responsible for not invoking this on binaries.
  * `maxBytes` guards against streaming an unexpectedly huge object.
  */
+/**
+ * Write a small text object directly from the server.
+ *
+ * The rest of this module hands out presigned URLs so the BROWSER uploads
+ * straight to R2 — right for photos and PDFs, which can be large. The
+ * payroll CSV import is the opposite case: the file is a few KB and the
+ * server must read it anyway to parse it, so a presigned round-trip would
+ * add a hop and leave the object unwritten if the client dropped between
+ * steps. See services/payroll.ts.
+ *
+ * Not for large payloads — the whole string is buffered.
+ */
+export async function putObjectText(
+  key: string,
+  text: string,
+  contentType = "text/plain",
+  bucket: BucketType = "docs",
+): Promise<void> {
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: bucketName(bucket),
+      Key: key,
+      Body: text,
+      ContentType: contentType,
+    }),
+  );
+}
+
 export async function getObjectText(
   key: string,
   bucket: BucketType = "photos",

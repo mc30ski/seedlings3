@@ -55,6 +55,11 @@ enum AuditScope {
   CHANGE_REQUEST
   EQUIPMENT_COLLECTION
   CALENDAR_FEED
+
+  // Added 2026-08-24 with the Payroll feature (docs/features/payroll.md).
+  // Covers CSV imports of Gusto payroll journals, whole-period replacement,
+  // archiving, and the name -> User identity mapping.
+  PAYROLL
 }
 
 enum AuditVerb {
@@ -160,6 +165,16 @@ enum AuditVerb {
   ASSIGNED
   UNASSIGNED
   CANCELED
+
+  // Payroll verbs. Scope: PAYROLL. See docs/features/payroll.md.
+  // PAYROLL_REPLACED carries a full snapshot of the entries it displaced —
+  // re-upload is the ONLY edit path, so the audit row is the sole record of
+  // what the numbers were before.
+  PAYROLL_UPLOADED
+  PAYROLL_REPLACED
+  PAYROLL_ARCHIVED
+  PAYROLL_IDENTITY_LINKED
+  PAYROLL_IDENTITY_UNLINKED
 }
 
 enum WorkerType {
@@ -177,22 +192,22 @@ enum WorkerType {
 // services/policies.ts. Full policy design memo lives with the PR.
 
 enum PolicyWorkerAction {
-  SIGN         // full typed-name + acknowledgment
-  ACKNOWLEDGE  // click-through "I've read this"
-  NONE         // admin-upload-on-behalf only (worker never touches it)
+  SIGN // full typed-name + acknowledgment
+  ACKNOWLEDGE // click-through "I've read this"
+  NONE // admin-upload-on-behalf only (worker never touches it)
 }
 
 enum PolicyEnforcement {
-  BLOCK  // gate services listed in gatesServices
-  WARN   // banner-only, no gate
-  INFO   // visible in compliance tab, no other surface
+  BLOCK // gate services listed in gatesServices
+  WARN // banner-only, no gate
+  INFO // visible in compliance tab, no other surface
 }
 
 enum PolicyResignTrigger {
   ONE_TIME
   DAYS_SINCE_SIGN
-  ANNIVERSARY       // 365 days from each worker's last sign (personal clock)
-  ANNUAL_ON_DATE    // everyone re-signs by a fixed calendar date (fleet clock)
+  ANNIVERSARY // 365 days from each worker's last sign (personal clock)
+  ANNUAL_ON_DATE // everyone re-signs by a fixed calendar date (fleet clock)
 }
 
 enum PolicyGateService {
@@ -256,7 +271,7 @@ model User {
   // Defaults to 0 so contractors (paid lump-sum) and unconfigured
   // workers render predictably — Regular Wages = 0, Additional
   // Earnings absorbs the full target gross.
-  hourlyWage           Decimal     @default(0) @db.Decimal(10, 2)
+  hourlyWage Decimal @default(0) @db.Decimal(10, 2)
 
   // Privilege overrides. Null = follow workerType default (resolved in app
   // code via DEFAULTS_BY_WORKERTYPE). True/false = explicit override.
@@ -298,16 +313,16 @@ model User {
   // contractor in a GP period at this occurrence's completedAt?" even
   // after the active columns have been cleared. Empty array on a fresh
   // user; never NULL once initialized.
-  guaranteedPayoutUntil      DateTime?
-  guaranteedPayoutStartedAt  DateTime?
-  guaranteedPayoutHistory    Json      @default("[]")
+  guaranteedPayoutUntil     DateTime?
+  guaranteedPayoutStartedAt DateTime?
+  guaranteedPayoutHistory   Json      @default("[]")
 
   // LLC-owner flag. At most one user may have this set to true (enforced via
   // partial unique index in the migration). Additive to ADMIN/SUPER role —
   // does not replace it. The owner participates in jobs like any worker;
   // their PaymentSplit rows get ownerEarnings=true, which the Gusto/payroll
   // exports filter out (the owner takes a draw, not a paycheck).
-  isOwner                  Boolean   @default(false)
+  isOwner Boolean @default(false)
 
   // Per-user override for payment-request delivery channel.
   // null = use the org-wide DEFAULT_PAYMENT_COMMUNICATIONS_MODE setting.
@@ -322,8 +337,8 @@ model User {
   // that produced a spurious SIGN_IN entry every time the SDK rotated
   // the token, even for idle tabs. `lastSignInAt` mirrors the most-
   // recent SIGN_IN audit row for fast card rendering.
-  lastSignInAt    DateTime?
-  lastSessionId   String?
+  lastSignInAt  DateTime?
+  lastSessionId String?
 
   roles          UserRole[]
   checkouts      Checkout[]
@@ -341,34 +356,34 @@ model User {
   jobOccurrenceAssignments JobOccurrenceAssignee[]
   jobAssignmentAuditActor  JobOccurrenceAssignee[] @relation("JobAssignActor")
 
-  paymentsCollected       Payment[]       @relation("PaymentCollector")
-  paymentsConfirmed       Payment[]       @relation("PaymentConfirmer")
-  paymentsAdjusted        Payment[]       @relation("PaymentAdjuster")
-  paymentsWrittenOff      Payment[]       @relation("PaymentWriteOff")
-  paymentsSkipped         Payment[]       @relation("PaymentSkip")
-  paymentSplits           PaymentSplit[]
-  guaranteedPayoutAdvances   GuaranteedPayoutAdvance[]
+  paymentsCollected                Payment[]                 @relation("PaymentCollector")
+  paymentsConfirmed                Payment[]                 @relation("PaymentConfirmer")
+  paymentsAdjusted                 Payment[]                 @relation("PaymentAdjuster")
+  paymentsWrittenOff               Payment[]                 @relation("PaymentWriteOff")
+  paymentsSkipped                  Payment[]                 @relation("PaymentSkip")
+  paymentSplits                    PaymentSplit[]
+  guaranteedPayoutAdvances         GuaranteedPayoutAdvance[]
   guaranteedPayoutAdvancesExported GuaranteedPayoutAdvance[] @relation("AdvanceExporter")
-  expenses                Expense[]
-  photos                  JobOccurrencePhoto[]
-  settingsUpdated         Setting[]
-  pinnedOccurrences       PinnedOccurrence[]
-  likedOccurrences        LikedOccurrence[]
-  reminders               Reminder[]
-  calendarFeedTokens      CalendarFeedToken[]
-  occurrenceComments      OccurrenceComment[]
-  propertyPhotosUploaded  PropertyPhoto[]
-  equipmentPhotosUploaded EquipmentPhoto[]
-  occurrenceAddons        OccurrenceAddon[]
-  pinnedEquipment         PinnedEquipment[]
-  likedEquipment          LikedEquipment[]
-  businessExpenses        BusinessExpense[]
-  businessExpensesReconciled BusinessExpense[] @relation("BusinessExpenseReconciler")
-  businessExpenseSeriesEnded BusinessExpense[] @relation("BusinessExpenseSeriesEnder")
-  changeRequestsCreated   OccurrenceChangeRequest[] @relation("ChangeRequestRequester")
-  changeRequestsResolved  OccurrenceChangeRequest[] @relation("ChangeRequestResolver")
-  hoursApproved           JobOccurrence[]           @relation("HoursApprover")
-  pushSubscriptions       PushSubscription[]
+  expenses                         Expense[]
+  photos                           JobOccurrencePhoto[]
+  settingsUpdated                  Setting[]
+  pinnedOccurrences                PinnedOccurrence[]
+  likedOccurrences                 LikedOccurrence[]
+  reminders                        Reminder[]
+  calendarFeedTokens               CalendarFeedToken[]
+  occurrenceComments               OccurrenceComment[]
+  propertyPhotosUploaded           PropertyPhoto[]
+  equipmentPhotosUploaded          EquipmentPhoto[]
+  occurrenceAddons                 OccurrenceAddon[]
+  pinnedEquipment                  PinnedEquipment[]
+  likedEquipment                   LikedEquipment[]
+  businessExpenses                 BusinessExpense[]
+  businessExpensesReconciled       BusinessExpense[]         @relation("BusinessExpenseReconciler")
+  businessExpenseSeriesEnded       BusinessExpense[]         @relation("BusinessExpenseSeriesEnder")
+  changeRequestsCreated            OccurrenceChangeRequest[] @relation("ChangeRequestRequester")
+  changeRequestsResolved           OccurrenceChangeRequest[] @relation("ChangeRequestResolver")
+  hoursApproved                    JobOccurrence[]           @relation("HoursApprover")
+  pushSubscriptions                PushSubscription[]
 
   suppliesCreated          Supply[]
   supplyPurchasesCreated   SupplyPurchase[]
@@ -378,18 +393,18 @@ model User {
   companyDocumentsCreated  CompanyDocument[]        @relation("CompanyDocCreator")
   documentVersionsUploaded CompanyDocumentVersion[] @relation("CompanyDocVersionUploader")
 
-  timelineEventsCreated    TimelineEvent[]          @relation("TimelineEventCreator")
+  timelineEventsCreated TimelineEvent[] @relation("TimelineEventCreator")
 
-  bannersCreated     BannerNotification[] @relation("BannerCreator")
-  bannerRecipients   BannerRecipient[]
-  bannerDismissals   BannerDismissal[]
+  bannersCreated   BannerNotification[] @relation("BannerCreator")
+  bannerRecipients BannerRecipient[]
+  bannerDismissals BannerDismissal[]
 
   // Workday tracking — per-worker daily clock-in/out for payroll. See
   // WorkerWorkday model. `workdaysApproved` is the back-relation for the
   // admin-approval phase (built later; the field exists now so the schema
   // doesn't need a follow-up migration).
-  workdays           WorkerWorkday[] @relation("WorkdayWorker")
-  workdaysApproved   WorkerWorkday[] @relation("WorkdayApprover")
+  workdays         WorkerWorkday[] @relation("WorkdayWorker")
+  workdaysApproved WorkerWorkday[] @relation("WorkdayApprover")
 
   // Money-Ledger followup flags this Super created and (separately) resolved.
   // Two relations because creator and resolver can differ — one Super flags,
@@ -401,45 +416,53 @@ model User {
   // Dual-use vehicle assignments — this worker can log mileage against
   // these vehicles. Super manages the assignment list. Same worker can
   // be assigned to multiple vehicles (one per row).
-  vehicleAssignments      VehicleAssignment[] @relation("VehicleAssignmentUser")
+  vehicleAssignments     VehicleAssignment[] @relation("VehicleAssignmentUser")
   // Mileage entries this user drove, and (separately) approved.
-  mileageEntriesAsDriver  MileageEntry[]      @relation("MileageEntryDriver")
-  mileageEntriesApproved  MileageEntry[]      @relation("MileageEntryApprover")
+  mileageEntriesAsDriver MileageEntry[]      @relation("MileageEntryDriver")
+  mileageEntriesApproved MileageEntry[]      @relation("MileageEntryApprover")
 
   // Compliance-policy relations. See PolicyDocument / PolicyDocumentVersion /
   // PolicySignature / PolicyException / PolicyReadingProgress models.
-  policiesCreated                PolicyDocument[]        @relation("PolicyCreator")
-  policiesArchived               PolicyDocument[]        @relation("PolicyArchiver")
-  policyVersionsCreated          PolicyDocumentVersion[] @relation("PolicyVersionCreator")
-  policyVersionsSubmitted        PolicyDocumentVersion[] @relation("PolicyVersionSubmitter")
-  policyVersionsApproved         PolicyDocumentVersion[] @relation("PolicyVersionApprover")
-  policyVersionsPublished        PolicyDocumentVersion[] @relation("PolicyVersionPublisher")
-  policyVersionsRolledBack       PolicyDocumentVersion[] @relation("PolicyVersionRollbacker")
-  policySignatures               PolicySignature[]       @relation("PolicySignatureUser")
-  policySignaturesSigned         PolicySignature[]       @relation("PolicySignatureActor")
-  policySignaturesOnBehalfOf     PolicySignature[]       @relation("PolicySignatureOnBehalfOf")
-  policySignaturesReviewed       PolicySignature[]       @relation("PolicySignatureReviewer")
-  policySignaturesRevoked        PolicySignature[]       @relation("PolicySignatureRevoker")
-  policyExceptionsAsSubject      PolicyException[]       @relation("PolicyExceptionUser")
-  policyExceptionsGranted        PolicyException[]       @relation("PolicyExceptionGranter")
-  policyExceptionsRevoked        PolicyException[]       @relation("PolicyExceptionRevoker")
-  policyReadingProgress          PolicyReadingProgress[]
+  policiesCreated            PolicyDocument[]        @relation("PolicyCreator")
+  policiesArchived           PolicyDocument[]        @relation("PolicyArchiver")
+  policyVersionsCreated      PolicyDocumentVersion[] @relation("PolicyVersionCreator")
+  policyVersionsSubmitted    PolicyDocumentVersion[] @relation("PolicyVersionSubmitter")
+  policyVersionsApproved     PolicyDocumentVersion[] @relation("PolicyVersionApprover")
+  policyVersionsPublished    PolicyDocumentVersion[] @relation("PolicyVersionPublisher")
+  policyVersionsRolledBack   PolicyDocumentVersion[] @relation("PolicyVersionRollbacker")
+  policySignatures           PolicySignature[]       @relation("PolicySignatureUser")
+  policySignaturesSigned     PolicySignature[]       @relation("PolicySignatureActor")
+  policySignaturesOnBehalfOf PolicySignature[]       @relation("PolicySignatureOnBehalfOf")
+  policySignaturesReviewed   PolicySignature[]       @relation("PolicySignatureReviewer")
+  policySignaturesRevoked    PolicySignature[]       @relation("PolicySignatureRevoker")
+  policyExceptionsAsSubject  PolicyException[]       @relation("PolicyExceptionUser")
+  policyExceptionsGranted    PolicyException[]       @relation("PolicyExceptionGranter")
+  policyExceptionsRevoked    PolicyException[]       @relation("PolicyExceptionRevoker")
+  policyReadingProgress      PolicyReadingProgress[]
 
   // Promotion audit-actor back-relations. All use onDelete:SetNull on
   // the forward side so hard-deleting a Super doesn't destroy audit
   // history — the row lingers with a null actor and the UI renders
   // "unknown" instead of a dangling FK.
-  promotionsCreated Promotion[] @relation("PromotionCreator")
-  promotionsUpdated Promotion[] @relation("PromotionUpdater")
-  promotionsStarted Promotion[] @relation("PromotionStarter")
-  promotionsClosed  Promotion[] @relation("PromotionCloser")
+  promotionsCreated            Promotion[]            @relation("PromotionCreator")
+  promotionsUpdated            Promotion[]            @relation("PromotionUpdater")
+  promotionsStarted            Promotion[]            @relation("PromotionStarter")
+  promotionsClosed             Promotion[]            @relation("PromotionCloser")
   promotionLandingPagesCreated PromotionLandingPage[] @relation("PromotionLandingCreator")
   promotionLandingPagesUpdated PromotionLandingPage[] @relation("PromotionLandingUpdater")
   // Vanity URL audit-actor back-relations — SetNull on the forward
   // side (see VanityPage) so hard-deleting a Super doesn't destroy
   // audit history.
-  vanityPagesCreated VanityPage[] @relation("VanityPageCreator")
-  vanityPagesUpdated VanityPage[] @relation("VanityPageUpdater")
+  vanityPagesCreated           VanityPage[]           @relation("VanityPageCreator")
+  vanityPagesUpdated           VanityPage[]           @relation("VanityPageUpdater")
+
+  // Payroll (docs/features/payroll.md). payrollEntries is the worker's OWN
+  // imported rows — the relation a worker-scoped query hangs off.
+  payrollPeriodsUploaded     PayrollPeriod[]   @relation("PayrollUploadedBy")
+  payrollPeriodsArchived     PayrollPeriod[]   @relation("PayrollArchivedBy")
+  payrollEntries             PayrollEntry[]    @relation("PayrollEntryUser")
+  payrollIdentities          PayrollIdentity[] @relation("PayrollIdentityUser")
+  payrollIdentitiesConfirmed PayrollIdentity[] @relation("PayrollIdentityConfirmedBy")
 }
 
 model NotificationTemplate {
@@ -494,7 +517,7 @@ model Equipment {
   issues    String?
   age       String?
 
-  dailyRate         Float?
+  dailyRate Float?
 
   // Per-job-with-daily-cap billing knob for contractors.
   //   NULL  → legacy flat-daily billing (rentalCost = rentalDays × dailyRate).
@@ -505,7 +528,7 @@ model Equipment {
   // Admin opts a piece into the new model by setting this column. See
   // services/equipment.ts computeRentalCost and the memo at
   // memory/feature_per_job_equipment_billing.md.
-  equivalentJobs    Int?
+  equivalentJobs Int?
 
   // Per-equipment policy requirements — array of PolicyDocument.id values.
   // At reserve/checkout time, the equipment service iterates this list plus
@@ -768,7 +791,7 @@ model ClientContact {
 
   // Backref from Property.pointOfContactId targets this model
 
-  jobContacts JobContact[]
+  jobContacts         JobContact[]
   promotionDeliveries PromotionDelivery[]
   promotionClicks     PromotionClick[]
 
@@ -945,8 +968,8 @@ model Job {
   // list stays empty) OR populate JobAssigneeDefault rows — not both. The
   // mode is enforced in app code (services/jobs.ts). When defaultGroupId
   // is set, new occurrences materialize the group's full roster.
-  defaultGroupId   String?
-  defaultGroup     Group?  @relation("JobDefaultGroup", fields: [defaultGroupId], references: [id], onDelete: SetNull)
+  defaultGroupId String?
+  defaultGroup   Group?  @relation("JobDefaultGroup", fields: [defaultGroupId], references: [id], onDelete: SetNull)
 
   contacts JobContact[]
   clients  JobClient[]
@@ -1080,17 +1103,17 @@ model JobOccurrence {
   // NOTE: this is the LAST-sent timestamp; it moves forward on every
   // re-send. For the immutable original-request time, see
   // paymentRequestFirstSentAt below.
-  paymentRequestSentAt DateTime?
+  paymentRequestSentAt         DateTime?
   // Preserved timestamp of the FIRST time this request went out. Written
   // once and never overwritten until the request is cancelled (which
   // clears all three payment-request timestamps, resetting the cycle).
   // Powers the "originally requested N days ago" display.
-  paymentRequestFirstSentAt DateTime?
+  paymentRequestFirstSentAt    DateTime?
   // Number of RE-sends since the original request went out (does not
   // count the initial send). Incremented by sendForOccurrence and
   // recordClaimerHandoff whenever paymentRequestFirstSentAt is already
   // set. Reset to 0 by cancelPaymentRequest.
-  paymentRequestResendCount Int      @default(0)
+  paymentRequestResendCount    Int       @default(0)
 
   // Reconciliation hint — the last method the client TAPPED on the
   // public /pay/[token] page (Venmo "Open" button or Zelle "Pay
@@ -1175,10 +1198,10 @@ model JobOccurrence {
   //
   // Distinct from `status = PAUSED` which is the WORKER TIMER paused
   // state during an in-progress job — completely different concept.
-  streamPausedAt          DateTime?
-  streamPausedById        String?
-  streamPauseReason       String?
-  streamResumeReminderAt  DateTime?
+  streamPausedAt         DateTime?
+  streamPausedById       String?
+  streamPauseReason      String?
+  streamResumeReminderAt DateTime?
 
   startedAt     DateTime?
   completedAt   DateTime?
@@ -1196,9 +1219,9 @@ model JobOccurrence {
   // is stamped immediately. Outside the threshold, it stays null and the
   // occurrence shows an "Hours awaiting approval" chip until an admin/super
   // explicitly approves (or adjusts startedAt/completedAt back into range).
-  hoursApprovedAt    DateTime?
-  hoursApprovedById  String?
-  hoursApprovedBy    User?     @relation("HoursApprover", fields: [hoursApprovedById], references: [id], onDelete: SetNull)
+  hoursApprovedAt   DateTime?
+  hoursApprovedById String?
+  hoursApprovedBy   User?     @relation("HoursApprover", fields: [hoursApprovedById], references: [id], onDelete: SetNull)
 
   startLat    Float?
   startLng    Float?
@@ -1221,23 +1244,23 @@ model JobOccurrence {
   assignedGroupId String?
   assignedGroup   Group?  @relation("OccurrenceGroup", fields: [assignedGroupId], references: [id], onDelete: SetNull)
 
-  assignees        JobOccurrenceAssignee[]
-  payment          Payment?
+  assignees                JobOccurrenceAssignee[]
+  payment                  Payment?
   guaranteedPayoutAdvances GuaranteedPayoutAdvance[]
-  expenses         Expense[]
-  businessExpenses BusinessExpense[]
-  supplyHolds      SupplyHold[]
-  addons           OccurrenceAddon[]
-  instructions     OccurrenceInstruction[]
-  photos           JobOccurrencePhoto[]
-  propertyPhotos   OccurrencePropertyPhoto[]
-  pins             PinnedOccurrence[]
-  likes            LikedOccurrence[]
-  reminders        Reminder[]
-  comments         OccurrenceComment[]
-  followupClients  FollowupClient[]
-  followupJobs     FollowupJob[]
-  changeRequests   OccurrenceChangeRequest[]
+  expenses                 Expense[]
+  businessExpenses         BusinessExpense[]
+  supplyHolds              SupplyHold[]
+  addons                   OccurrenceAddon[]
+  instructions             OccurrenceInstruction[]
+  photos                   JobOccurrencePhoto[]
+  propertyPhotos           OccurrencePropertyPhoto[]
+  pins                     PinnedOccurrence[]
+  likes                    LikedOccurrence[]
+  reminders                Reminder[]
+  comments                 OccurrenceComment[]
+  followupClients          FollowupClient[]
+  followupJobs             FollowupJob[]
+  changeRequests           OccurrenceChangeRequest[]
 
   @@index([linkGroupId])
   @@index([assignedGroupId])
@@ -1371,7 +1394,7 @@ model Payment {
   confirmedBy   User?     @relation("PaymentConfirmer", fields: [confirmedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
   // True when the row was created via /pay/[token] client action OR a worker
   // on-site report — distinguished from an admin-direct record for audit + UI.
-  selfReported Boolean @default(false)
+  selfReported  Boolean   @default(false)
 
   nextOccurrenceSkipReason String? // null = created successfully, "one_off" = expected, others = warning
 
@@ -1403,19 +1426,19 @@ model Payment {
   // Admin-adjusted amount at approval time (e.g. client wrote $100 but
   // actually paid $80). adjustedFromAmount preserves the originally-reported
   // value for audit.
-  adjustedAt          DateTime?
-  adjustedById        String?
-  adjustedBy          User?     @relation("PaymentAdjuster", fields: [adjustedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  adjustedFromAmount  Float?
+  adjustedAt         DateTime?
+  adjustedById       String?
+  adjustedBy         User?     @relation("PaymentAdjuster", fields: [adjustedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  adjustedFromAmount Float?
 
   // Write-off path: admin closes the books with collected=0 because client
   // never paid. Employees+trainees still get their promised net; contractors
   // get $0; full promised amount lands in shortfallAmount.
-  writtenOff      Boolean   @default(false)
-  writtenOffAt    DateTime?
-  writtenOffById  String?
-  writtenOffBy    User?     @relation("PaymentWriteOff", fields: [writtenOffById], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  writeOffReason  String?
+  writtenOff     Boolean   @default(false)
+  writtenOffAt   DateTime?
+  writtenOffById String?
+  writtenOffBy   User?     @relation("PaymentWriteOff", fields: [writtenOffById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  writeOffReason String?
 
   // Skip path: Super pretends the service financially never happened —
   // stronger than writeOff. `writeOff` = bad debt (still counts on
@@ -1425,10 +1448,10 @@ model Payment {
   // `skippedAt IS NULL`. Payment splits stay on the row for audit
   // history but are excluded from all payroll/1099 aggregations.
   // Gated to Super-only + type-APPROVE at the mutation layer.
-  skippedAt      DateTime?
-  skippedById    String?
-  skippedBy      User?     @relation("PaymentSkip", fields: [skippedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  skipReason     String?
+  skippedAt   DateTime?
+  skippedById String?
+  skippedBy   User?     @relation("PaymentSkip", fields: [skippedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  skipReason  String?
 
   splits PaymentSplit[]
 
@@ -1808,9 +1831,9 @@ model Promotion {
   //   LANDING_PAGE → `landingPageId` points at an in-app landing page,
   //                  rendered at /promotion/<slug>. `link` is left null.
   // Runtime resolver in services/promotions.ts picks the right destination.
-  linkKind      PromotionLinkKind @default(EXTERNAL)
+  linkKind      PromotionLinkKind     @default(EXTERNAL)
   link          String?
-  landingPageId String?           @unique
+  landingPageId String?               @unique
   // Restrict (not SetNull) so a Promotion referencing a LandingPage
   // can't have its FK silently nulled while linkKind stays LANDING_PAGE
   // (ghost state → resolveDestinationUrl returns null → click 302s to
@@ -1903,18 +1926,18 @@ model Promotion {
   // builder and the (existing) long wrapper URL builder.
   baseDomain String?
 
-  createdAt    DateTime @default(now())
-  createdById  String?
-  createdBy    User?    @relation("PromotionCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  updatedAt    DateTime @updatedAt
-  updatedById  String?
-  updatedBy    User?    @relation("PromotionUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
-  startedAt    DateTime?
-  startedById  String?
-  startedBy    User?    @relation("PromotionStarter", fields: [startedById], references: [id], onDelete: SetNull)
-  closedAt     DateTime?
-  closedById   String?
-  closedBy     User?    @relation("PromotionCloser", fields: [closedById], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now())
+  createdById String?
+  createdBy   User?     @relation("PromotionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedAt   DateTime  @updatedAt
+  updatedById String?
+  updatedBy   User?     @relation("PromotionUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  startedAt   DateTime?
+  startedById String?
+  startedBy   User?     @relation("PromotionStarter", fields: [startedById], references: [id], onDelete: SetNull)
+  closedAt    DateTime?
+  closedById  String?
+  closedBy    User?     @relation("PromotionCloser", fields: [closedById], references: [id], onDelete: SetNull)
 
   deliveries PromotionDelivery[]
   clicks     PromotionClick[]
@@ -1966,7 +1989,7 @@ model PromotionInvoicePhoto {
 }
 
 model PromotionDelivery {
-  id          String @id @default(cuid())
+  id          String    @id @default(cuid())
   promotionId String
   promotion   Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
 
@@ -1978,7 +2001,7 @@ model PromotionDelivery {
   // "(deleted contact)" in the delivery log — acceptable since the
   // promo body is already snapshotted on the row itself.
   clientId  String?
-  client    Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  client    Client?        @relation(fields: [clientId], references: [id], onDelete: SetNull)
   contactId String?
   contact   ClientContact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
 
@@ -2046,8 +2069,8 @@ model PromotionDelivery {
 // so already-shipped SMS/email links don't go dead.
 // ─────────────────────────────────────────────────────────────────────────────
 model PromotionLandingPage {
-  id       String @id @default(cuid())
-  slug     String @unique
+  id   String @id @default(cuid())
+  slug String @unique
 
   // Optional heading + intro paragraph rendered above the item grid.
   // Both Markdown-safe on the page but expected to be short.
@@ -2066,19 +2089,19 @@ model PromotionLandingPage {
   updatedById String?
   updatedBy   User?    @relation("PromotionLandingUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
 
-  items    PromotionLandingPageItem[]
+  items     PromotionLandingPageItem[]
   // Back-relation from Promotion.landingPageId. 1:1 — a landing page
   // belongs to exactly one Promotion, and vice versa.
   promotion Promotion?
 }
 
 model PromotionLandingPageItem {
-  id     String @id @default(cuid())
+  id     String               @id @default(cuid())
   pageId String
   page   PromotionLandingPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
 
   title       String
-  description String @db.Text  // Markdown
+  description String @db.Text // Markdown
 
   // DEPRECATED — superseded by the `photos` relation below, which
   // supports multiple images per item. Retained (not dropped) so the
@@ -2131,7 +2154,7 @@ model PromotionLandingPageItemPhoto {
 // deliveryId / contactId / clientId null. `reason` explains why.
 // ─────────────────────────────────────────────────────────────────────────────
 model PromotionClick {
-  id          String @id @default(cuid())
+  id          String    @id @default(cuid())
   promotionId String
   promotion   Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
 
@@ -2148,7 +2171,7 @@ model PromotionClick {
   // "external" | "landing_page" — where the redirect went. Kept even if
   // the promotion later flips linkKind so historical clicks stay honest.
   destination    String
-  destinationUrl String  // Snapshot of the URL the redirect resolved to
+  destinationUrl String // Snapshot of the URL the redirect resolved to
 
   // Why the click resolved as anonymous, when contactId is null.
   //   "forwarded_or_manual_share" — token missing or unverifiable
@@ -2656,9 +2679,9 @@ model Group {
   preferredEquipment GroupPreferredEquipment[]
 
   // Back-relations
-  occurrences JobOccurrence[] @relation("OccurrenceGroup")
-  checkouts   Checkout[]
-  defaultForJobs Job[]        @relation("JobDefaultGroup")
+  occurrences    JobOccurrence[] @relation("OccurrenceGroup")
+  checkouts      Checkout[]
+  defaultForJobs Job[]           @relation("JobDefaultGroup")
 
   archivedAt DateTime?
   createdAt  DateTime  @default(now())
@@ -2716,18 +2739,18 @@ model GroupPreferredEquipment {
 // be flagged singleton in the taxonomy — enforced at the API layer.
 // `currentVersionId` points at one of this doc's CompanyDocumentVersion rows.
 model CompanyDocument {
-  id          String  @id @default(cuid())
+  id          String    @id @default(cuid())
   type        String
   title       String
   description String?
   expiresAt   DateTime?
   // When true, Admins cannot see this document; only Super.
-  adminHidden Boolean @default(false)
+  adminHidden Boolean   @default(false)
 
   // Pointer to the currently-active version. Nullable while doc has no
   // uploaded version yet (e.g., metadata created but file not yet PUT).
-  currentVersionId String?                  @unique
-  currentVersion   CompanyDocumentVersion?  @relation("CompanyDocCurrent", fields: [currentVersionId], references: [id], onDelete: SetNull)
+  currentVersionId String?                 @unique
+  currentVersion   CompanyDocumentVersion? @relation("CompanyDocCurrent", fields: [currentVersionId], references: [id], onDelete: SetNull)
 
   versions CompanyDocumentVersion[] @relation("CompanyDocVersions")
 
@@ -2735,25 +2758,25 @@ model CompanyDocument {
   createdBy   User   @relation("CompanyDocCreator", fields: [createdById], references: [id], onDelete: Restrict)
 
   archivedAt DateTime?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 
   @@index([type, archivedAt])
   @@index([expiresAt])
 }
 
 model CompanyDocumentVersion {
-  id         String @id @default(cuid())
+  id         String          @id @default(cuid())
   documentId String
   document   CompanyDocument @relation("CompanyDocVersions", fields: [documentId], references: [id], onDelete: Cascade)
 
-  r2Key            String  @unique
+  r2Key            String @unique
   contentType      String
   originalFilename String
   sizeBytes        Int
 
   uploadedById String
-  uploadedBy   User   @relation("CompanyDocVersionUploader", fields: [uploadedById], references: [id], onDelete: Restrict)
+  uploadedBy   User     @relation("CompanyDocVersionUploader", fields: [uploadedById], references: [id], onDelete: Restrict)
   uploadedAt   DateTime @default(now())
 
   // Back-relation for the currentVersion pointer on CompanyDocument.
@@ -2805,21 +2828,21 @@ model DocumentSyncQueue {
 }
 
 model DocumentSyncState {
-  id            String   @id @default(cuid())
+  id           String   @id @default(cuid())
   // DOCUMENT (folder) | VERSION (file)
-  kind          String
+  kind         String
   // For DOCUMENT rows: the CompanyDocument.id (unique per doc).
   // For VERSION rows: the CompanyDocumentVersion.id (unique per version).
-  entityId      String   @unique
+  entityId     String   @unique
   // Grouping key for VERSION rows so the worker can find all files
   // belonging to a document at once (matches the doc's entityId).
   // Null for DOCUMENT rows.
-  documentId    String?
+  documentId   String?
   // The Drive resource id — folderId for DOCUMENT, fileId for VERSION.
-  driveId       String   @unique
-  lastSyncedAt  DateTime
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  driveId      String   @unique
+  lastSyncedAt DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@index([kind])
   @@index([documentId])
@@ -2830,15 +2853,15 @@ model DocumentSyncState {
 // (e.g., "FREQ=YEARLY;BYMONTH=4;BYMONTHDAY=15"); empty/null = one-time at
 // `anchorDate`. Hidden events (adminHidden=true) are visible to Super only.
 model TimelineEvent {
-  id          String   @id @default(cuid())
-  title       String
-  description String?
+  id              String    @id @default(cuid())
+  title           String
+  description     String?
   // String key into the TIMELINE_CATEGORIES setting taxonomy. Null = no
   // category (uncategorized in the UI).
-  category    String?
-  rrule       String?
+  category        String?
+  rrule           String?
   // First/canonical occurrence — used as RRULE DTSTART. Immutable reference.
-  anchorDate  DateTime
+  anchorDate      DateTime
   // The currently-active due date. Starts at anchorDate on create. The user
   // explicitly advances it via "mark complete," which sets it to the next
   // rrule occurrence after the current value. If it drifts into the past
@@ -2848,8 +2871,8 @@ model TimelineEvent {
   // Timestamp of the most recent "mark complete" action — used for display
   // ("last completed Jan 2026") and audit trail.
   lastCompletedAt DateTime?
-  adminHidden Boolean  @default(false)
-  archivedAt  DateTime?
+  adminHidden     Boolean   @default(false)
+  archivedAt      DateTime?
 
   createdById String
   createdBy   User     @relation("TimelineEventCreator", fields: [createdById], references: [id], onDelete: Restrict)
@@ -2867,25 +2890,25 @@ model TimelineEvent {
 // individually dismiss it. Dismissals are per-user — one person dismissing
 // has no effect on anyone else's view.
 model BannerNotification {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   title       String?
-  body        String   @db.Text
+  body        String    @db.Text
   createdById String
-  createdBy   User     @relation("BannerCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdBy   User      @relation("BannerCreator", fields: [createdById], references: [id], onDelete: Restrict)
   // Optional self-expire — past this date the banner stops being shown to
   // anyone regardless of dismissal state. Null = no expiry.
   expiresAt   DateTime?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime  @default(now())
 
-  recipients  BannerRecipient[]
-  dismissals  BannerDismissal[]
+  recipients BannerRecipient[]
+  dismissals BannerDismissal[]
 
   @@index([createdAt])
   @@index([expiresAt])
 }
 
 model BannerRecipient {
-  id       String @id @default(cuid())
+  id       String             @id @default(cuid())
   bannerId String
   userId   String
   banner   BannerNotification @relation(fields: [bannerId], references: [id], onDelete: Cascade)
@@ -2896,18 +2919,16 @@ model BannerRecipient {
 }
 
 model BannerDismissal {
-  id           String   @id @default(cuid())
-  bannerId     String
-  userId       String
-  dismissedAt  DateTime @default(now())
-  banner       BannerNotification @relation(fields: [bannerId], references: [id], onDelete: Cascade)
-  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id          String             @id @default(cuid())
+  bannerId    String
+  userId      String
+  dismissedAt DateTime           @default(now())
+  banner      BannerNotification @relation(fields: [bannerId], references: [id], onDelete: Cascade)
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([bannerId, userId])
   @@index([userId])
 }
-
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Worker workday tracking — per-worker daily clock-in/out for payroll.
@@ -2936,23 +2957,23 @@ model BannerDismissal {
 // them so the approval phase is purely additive.
 // ─────────────────────────────────────────────────────────────────────────────
 model WorkerWorkday {
-  id            String    @id @default(cuid())
-  userId        String
-  user          User      @relation("WorkdayWorker", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation("WorkdayWorker", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
-  workdayDate   String    // YYYY-MM-DD in ET
+  workdayDate String // YYYY-MM-DD in ET
 
   startedAt     DateTime
   endedAt       DateTime?
   pausedAt      DateTime?
   totalPausedMs Int       @default(0)
 
-  approvedAt    DateTime?
-  approvedById  String?
-  approvedBy    User?     @relation("WorkdayApprover", fields: [approvedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  approvedAt   DateTime?
+  approvedById String?
+  approvedBy   User?     @relation("WorkdayApprover", fields: [approvedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([userId, workdayDate])
   @@index([userId, startedAt])
@@ -2985,9 +3006,9 @@ model LedgerFollowup {
 
   note String? @db.Text
 
-  createdAt    DateTime @default(now())
-  createdById  String
-  createdBy    User     @relation("LedgerFollowupCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  createdAt   DateTime @default(now())
+  createdById String
+  createdBy   User     @relation("LedgerFollowupCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
   // Null = open. Stamped on resolve; the resolving Super may differ from
   // the creator (one flags, another resolves).
@@ -3002,7 +3023,6 @@ model LedgerFollowup {
   // Drives "is this row flagged?" lookups on the Ledger render path.
   @@index([entityType, entityId, resolvedAt])
 }
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Dual-use vehicles + business mileage tracking.
@@ -3021,16 +3041,16 @@ model LedgerFollowup {
 // row; unapproved rows stay editable by the driver.
 // ─────────────────────────────────────────────────────────────────────────────
 model Vehicle {
-  id            String    @id @default(cuid())
-  displayName   String    // "Mike's Ram 2500"
-  make          String?
-  vehicleModel  String?   // "model" is a Prisma reserved-ish word; use vehicleModel
-  year          Int?
-  plate         String?
+  id           String  @id @default(cuid())
+  displayName  String // "Mike's Ram 2500"
+  make         String?
+  vehicleModel String? // "model" is a Prisma reserved-ish word; use vehicleModel
+  year         Int?
+  plate        String?
 
   // ET calendar date business use began — used for depreciation and
   // as an anchor for the yearly business-miles rollup.
-  inServiceDate String?   // YYYY-MM-DD
+  inServiceDate String? // YYYY-MM-DD
 
   // Cached last-known odometer reading (from the most recent
   // MileageEntry.endOdometer). Used to prefill the next start-trip
@@ -3048,7 +3068,7 @@ model Vehicle {
 }
 
 model VehicleAssignment {
-  id        String  @id @default(cuid())
+  id        String @id @default(cuid())
   vehicleId String
   userId    String
 
@@ -3068,7 +3088,7 @@ model VehicleAssignment {
 // `entryDate` is the ET calendar date of `startedAt` — the anchor
 // used by the daily approval flow.
 model MileageEntry {
-  id           String    @id @default(cuid())
+  id           String @id @default(cuid())
   vehicleId    String
   driverUserId String
 
@@ -3116,86 +3136,86 @@ model MileageEntry {
 // Vehicle Policy, Photo Release, etc.). Versioned via PolicyDocumentVersion —
 // `currentVersionId` points at whichever version is live right now.
 model PolicyDocument {
-  id                            String   @id @default(cuid())
+  id                           String              @id @default(cuid())
   // Stable identifier — never changes. Used for logs, tests, and seed
   // idempotency. UI shows `title` instead.
-  key                           String   @unique
-  title                         String
-  description                   String?
+  key                          String              @unique
+  title                        String
+  description                  String?
   // Which worker types must satisfy this policy. Empty array = no gate ever
   // fires (but INFO-level docs may still show it universally).
-  targetWorkerTypes             WorkerType[]
-  enforcement                   PolicyEnforcement
+  targetWorkerTypes            WorkerType[]
+  enforcement                  PolicyEnforcement
   // Determines what the worker experience looks like. NONE = admin-uploads-
   // on-behalf is the only path; worker sees it as informational on their
   // compliance tab. SIGN + ACKNOWLEDGE both open the sign wizard.
-  workerAction                  PolicyWorkerAction
+  workerAction                 PolicyWorkerAction
   // Admin can upload an artifact on behalf of a worker (bypassing worker
   // sign). Required = true when workerAction = NONE. Optional otherwise;
   // some SIGN docs (like safety) shouldn't allow admin bypass — set false.
-  adminCanUploadOnBehalf        Boolean  @default(false)
+  adminCanUploadOnBehalf       Boolean             @default(false)
   // Worker attaches a personal document alongside their signature — e.g.
   // insurance certificate, W-9 PDF. When false, wizard is content-only.
-  requiresWorkerUpload          Boolean  @default(false)
+  requiresWorkerUpload         Boolean             @default(false)
   // UI label for the file input ("Certificate of Insurance", "IRS Form W-9").
-  workerUploadLabel             String?
+  workerUploadLabel            String?
   // Comma-separated MIME allowlist ("application/pdf,image/*"). Null = server
   // default ("application/pdf,image/*").
-  workerUploadAcceptedTypes     String?
+  workerUploadAcceptedTypes    String?
   // Worker also declares an expiration date on their upload (insurance yes,
   // W-9 no). When true, uploadExpiresAt on the signature is required and
   // gates re-fire when it lapses.
-  workerUploadRequiresExpiry    Boolean  @default(false)
+  workerUploadRequiresExpiry   Boolean             @default(false)
   // Uploaded artifact needs admin verification before the signature counts as
   // current. Closes the old-insurance-flow gap where worker upload was
   // immediately trusted. Uploads sit in PolicyUploadStatus.PENDING_REVIEW
   // until admin decides.
-  workerUploadRequiresApproval  Boolean  @default(false)
+  workerUploadRequiresApproval Boolean             @default(false)
   // When a signature stops being current on its own timing (independent of
   // version changes). resignParamDays: days-since-sign for DAYS_SINCE_SIGN.
   // resignParamMonthDay: MM-DD for ANNUAL_ON_DATE. ONE_TIME + ANNIVERSARY
   // ignore both.
-  resignTrigger                 PolicyResignTrigger
-  resignParamDays               Int?
-  resignParamMonthDay           String?
+  resignTrigger                PolicyResignTrigger
+  resignParamDays              Int?
+  resignParamMonthDay          String?
   // Which app actions this policy gates when enforcement = BLOCK. Iterated
   // by workday/jobs/equipment services at gate time.
-  gatesServices                 PolicyGateService[]
+  gatesServices                PolicyGateService[]
   // Additional job-price threshold — policy only gates JOB_CLAIM when the
   // job's effective price is at or above this value. Preserves today's
   // "insurance required on ≥$200 jobs" pattern; admin can create any
   // policy with any threshold.
-  gatesJobsAbovePrice           Float?
+  gatesJobsAbovePrice          Float?
   // Order in which multi-doc sign wizard presents pending policies. Lower
   // renders first.
-  sortOrder                     Int      @default(0)
+  sortOrder                    Int                 @default(0)
   // Whichever version is live right now. Null before first publish.
-  currentVersionId              String?  @unique
+  currentVersionId             String?             @unique
   // Whether publish sends push-only or full-channel notifications. Per-doc
   // so operators don't burn Twilio/Resend budget on low-priority publishes.
-  notifyOnPublish               PolicyNotifyChannel @default(PUSH_ONLY)
+  notifyOnPublish              PolicyNotifyChannel @default(PUSH_ONLY)
   // Optional per-document override for the publish-time grace window in
   // hours. Null → fall back to the global POLICY_DEFAULT_GRACE_HOURS
   // setting (24). Zero → no grace, BLOCK gate fires the instant the version
   // is published. Use zero for federally-mandated documents where any
   // uncovered window is unacceptable. Positive → that many hours.
-  graceHoursOverride            Int?
+  graceHoursOverride           Int?
 
   // Soft-delete. Archived policies stop firing gates and disappear from
   // worker "Required now" list, but historic signatures remain queryable.
-  archivedAt                    DateTime?
-  archivedById                  String?
-  archivedReason                String?
+  archivedAt     DateTime?
+  archivedById   String?
+  archivedReason String?
 
-  createdById                   String
-  createdAt                     DateTime @default(now())
-  updatedAt                     DateTime @updatedAt
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  currentVersion    PolicyDocumentVersion?  @relation("PolicyCurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  versions          PolicyDocumentVersion[] @relation("PolicyAllVersions")
-  exceptions        PolicyException[]
-  createdBy         User                    @relation("PolicyCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  archivedBy        User?                   @relation("PolicyArchiver", fields: [archivedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  currentVersion PolicyDocumentVersion?  @relation("PolicyCurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  versions       PolicyDocumentVersion[] @relation("PolicyAllVersions")
+  exceptions     PolicyException[]
+  createdBy      User                    @relation("PolicyCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  archivedBy     User?                   @relation("PolicyArchiver", fields: [archivedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   @@index([archivedAt])
   @@index([sortOrder])
@@ -3206,60 +3226,60 @@ model PolicyDocument {
 // workflow: DRAFT → PENDING_APPROVAL → APPROVED → PUBLISHED, with rollback to
 // ROLLED_BACK from PUBLISHED.
 model PolicyDocumentVersion {
-  id                      String   @id @default(cuid())
-  policyDocumentId        String
-  versionNumber           Int
-  contentFormat           PolicyContentFormat
+  id                 String              @id @default(cuid())
+  policyDocumentId   String
+  versionNumber      Int
+  contentFormat      PolicyContentFormat
   // Present when contentFormat = MARKDOWN. Rendered client-side in the sign
   // wizard.
-  contentMarkdown         String?
+  contentMarkdown    String?
   // Present when contentFormat = PDF. R2 object key + display metadata.
   // pdfPageCount is populated at upload via pdf-lib on the server so the
   // wizard can build the per-page dwell/ack flow without client-side
   // parsing.
-  contentR2Key            String?
-  contentFileName         String?
-  contentContentType      String?
-  pdfPageCount            Int?
+  contentR2Key       String?
+  contentFileName    String?
+  contentContentType String?
+  pdfPageCount       Int?
   // SHA-256 hex of the exact content that will be shown to workers.
   // Immutable once PUBLISHED. Copied to each PolicySignature at sign time
   // so every signature can prove exactly what was on file.
-  contentDigest           String
+  contentDigest      String
   // Admin's explanation of what changed vs prior version. Shown in the
   // approval queue and the compliance history.
-  changeNote              String
+  changeNote         String
   // Admin's explicit publish-time choice. True = existing signatures against
   // prior versions are treated as stale; workers must re-sign. False = typo
   // fix or trivial update; prior signatures still count.
-  forcesResign            Boolean  @default(false)
+  forcesResign       Boolean             @default(false)
   // Grace deadline. Signatures against superseded versions remain current
   // for THIS worker until graceUntil elapses. Default at publish is
   // publishedAt + POLICY_DEFAULT_GRACE_HOURS. Zero-grace requires admin to
   // type APPROVE.
-  graceUntil              DateTime?
-  status                  PolicyVersionStatus @default(DRAFT)
+  graceUntil         DateTime?
+  status             PolicyVersionStatus @default(DRAFT)
 
-  createdById             String
-  createdAt               DateTime @default(now())
-  submittedAt             DateTime?
-  submittedById           String?
-  approvedAt              DateTime?
-  approvedById            String?
-  publishedAt             DateTime?
-  publishedById           String?
-  rolledBackAt            DateTime?
-  rolledBackById          String?
-  rolledBackReason        String?
+  createdById      String
+  createdAt        DateTime  @default(now())
+  submittedAt      DateTime?
+  submittedById    String?
+  approvedAt       DateTime?
+  approvedById     String?
+  publishedAt      DateTime?
+  publishedById    String?
+  rolledBackAt     DateTime?
+  rolledBackById   String?
+  rolledBackReason String?
 
-  policyDocument   PolicyDocument         @relation("PolicyAllVersions", fields: [policyDocumentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  currentOnPolicy  PolicyDocument?        @relation("PolicyCurrentVersion")
-  signatures       PolicySignature[]
-  readingProgress  PolicyReadingProgress[]
-  createdBy        User                   @relation("PolicyVersionCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  submittedBy      User?                  @relation("PolicyVersionSubmitter", fields: [submittedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  approvedBy       User?                  @relation("PolicyVersionApprover", fields: [approvedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  publishedBy      User?                  @relation("PolicyVersionPublisher", fields: [publishedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  rolledBackBy     User?                  @relation("PolicyVersionRollbacker", fields: [rolledBackById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  policyDocument  PolicyDocument          @relation("PolicyAllVersions", fields: [policyDocumentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  currentOnPolicy PolicyDocument?         @relation("PolicyCurrentVersion")
+  signatures      PolicySignature[]
+  readingProgress PolicyReadingProgress[]
+  createdBy       User                    @relation("PolicyVersionCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  submittedBy     User?                   @relation("PolicyVersionSubmitter", fields: [submittedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  approvedBy      User?                   @relation("PolicyVersionApprover", fields: [approvedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  publishedBy     User?                   @relation("PolicyVersionPublisher", fields: [publishedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  rolledBackBy    User?                   @relation("PolicyVersionRollbacker", fields: [rolledBackById], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   @@unique([policyDocumentId, versionNumber])
   @@index([status])
@@ -3272,50 +3292,50 @@ model PolicyDocumentVersion {
 // self-sign, admin for on-behalf). onBehalfOfUserId is set only when actor
 // differs from subject.
 model PolicySignature {
-  id                          String   @id @default(cuid())
-  userId                      String
-  policyDocumentVersionId     String
+  id                      String             @id @default(cuid())
+  userId                  String
+  policyDocumentVersionId String
   // What actually happened. NONE = admin-upload-on-behalf (no worker action).
-  workerActionAtSign          PolicyWorkerAction
-  signedByUserId              String
-  onBehalfOfUserId            String?
-  signedAt                    DateTime @default(now())
+  workerActionAtSign      PolicyWorkerAction
+  signedByUserId          String
+  onBehalfOfUserId        String?
+  signedAt                DateTime           @default(now())
 
   // Filled when workerActionAtSign = SIGN. Both stored: raw for audit,
   // normalized for compare.
-  typedNameRaw                String?
-  typedNameNormalized         String?
+  typedNameRaw        String?
+  typedNameNormalized String?
   // Server-captured at write time. Admin actor for on-behalf uploads.
-  signatureIp                 String?
-  signatureUserAgent          String?
+  signatureIp         String?
+  signatureUserAgent  String?
   // Copied from PolicyDocumentVersion at write time. Survives any future
   // refactor of the version content — proves what was signed.
-  contentDigestAtSign         String
+  contentDigestAtSign String
 
   // Worker (or admin-on-behalf) uploaded artifact. Present when the policy
   // has requiresWorkerUpload = true.
-  uploadR2Key                 String?
-  uploadFileName              String?
-  uploadContentType           String?
-  uploadDigest                String?  // SHA-256 of uploaded bytes
-  uploadExpiresAt             DateTime?
-  uploadStatus                PolicyUploadStatus @default(NONE)
-  uploadReviewedAt            DateTime?
-  uploadReviewedById          String?
-  uploadRejectionReason       String?
+  uploadR2Key           String?
+  uploadFileName        String?
+  uploadContentType     String?
+  uploadDigest          String? // SHA-256 of uploaded bytes
+  uploadExpiresAt       DateTime?
+  uploadStatus          PolicyUploadStatus @default(NONE)
+  uploadReviewedAt      DateTime?
+  uploadReviewedById    String?
+  uploadRejectionReason String?
 
   // Revoked signatures remain in DB for audit but never count as current.
   // Set by admin action (POLICY_SIGNATURE_REVOKED, POLICY_FORCE_RESIGN).
-  revokedAt                   DateTime?
-  revokedById                 String?
-  revokedReason               String?
+  revokedAt     DateTime?
+  revokedById   String?
+  revokedReason String?
 
-  user                        User                  @relation("PolicySignatureUser", fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  version                     PolicyDocumentVersion @relation(fields: [policyDocumentVersionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  signedBy                    User                  @relation("PolicySignatureActor", fields: [signedByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  onBehalfOf                  User?                 @relation("PolicySignatureOnBehalfOf", fields: [onBehalfOfUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  reviewedBy                  User?                 @relation("PolicySignatureReviewer", fields: [uploadReviewedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  revokedBy                   User?                 @relation("PolicySignatureRevoker", fields: [revokedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  user       User                  @relation("PolicySignatureUser", fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  version    PolicyDocumentVersion @relation(fields: [policyDocumentVersionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  signedBy   User                  @relation("PolicySignatureActor", fields: [signedByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  onBehalfOf User?                 @relation("PolicySignatureOnBehalfOf", fields: [onBehalfOfUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  reviewedBy User?                 @relation("PolicySignatureReviewer", fields: [uploadReviewedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  revokedBy  User?                 @relation("PolicySignatureRevoker", fields: [revokedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   @@index([userId, signedAt])
   @@index([policyDocumentVersionId])
@@ -3328,21 +3348,21 @@ model PolicySignature {
 // `isSignatureCurrent` treats the worker as satisfying the policy regardless
 // of signature state. Used sparingly — every grant / revoke is audited.
 model PolicyException {
-  id                          String   @id @default(cuid())
-  userId                      String
-  policyDocumentId            String
-  grantedById                 String
-  grantedAt                   DateTime @default(now())
-  expiresAt                   DateTime
-  reason                      String
-  revokedAt                   DateTime?
-  revokedById                 String?
-  revokedReason               String?
+  id               String    @id @default(cuid())
+  userId           String
+  policyDocumentId String
+  grantedById      String
+  grantedAt        DateTime  @default(now())
+  expiresAt        DateTime
+  reason           String
+  revokedAt        DateTime?
+  revokedById      String?
+  revokedReason    String?
 
-  user            User            @relation("PolicyExceptionUser", fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  policyDocument  PolicyDocument  @relation(fields: [policyDocumentId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  grantedBy       User            @relation("PolicyExceptionGranter", fields: [grantedById], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  revokedBy       User?           @relation("PolicyExceptionRevoker", fields: [revokedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  user           User           @relation("PolicyExceptionUser", fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  policyDocument PolicyDocument @relation(fields: [policyDocumentId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  grantedBy      User           @relation("PolicyExceptionGranter", fields: [grantedById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  revokedBy      User?          @relation("PolicyExceptionRevoker", fields: [revokedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   @@index([userId, policyDocumentId])
   @@index([expiresAt])
@@ -3355,19 +3375,19 @@ model PolicyException {
 // so a compliance record includes a provable "worker viewed page X at time
 // T from IP Y" chain.
 model PolicyReadingProgress {
-  id                          String   @id @default(cuid())
-  userId                      String
-  policyDocumentVersionId     String
-  pageNumber                  Int
-  ipAddress                   String?
-  userAgent                   String?
-  createdAt                   DateTime @default(now())
+  id                      String   @id @default(cuid())
+  userId                  String
+  policyDocumentVersionId String
+  pageNumber              Int
+  ipAddress               String?
+  userAgent               String?
+  createdAt               DateTime @default(now())
   // Set once the resulting signature is created. Rows without a linked
   // signature after N days can be GC'd (Slice 6 nice-to-have).
-  policySignatureId           String?
+  policySignatureId       String?
 
-  user     User                  @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  version  PolicyDocumentVersion @relation(fields: [policyDocumentVersionId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  user    User                  @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  version PolicyDocumentVersion @relation(fields: [policyDocumentVersionId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
   @@index([userId, policyDocumentVersionId])
   @@index([policySignatureId])
@@ -3477,4 +3497,171 @@ model VanityPage {
   @@index([isDefault])
   @@index([sortOrder])
   @@index([aliasTargetId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PAYROLL — imported from Gusto, read-only, DECOUPLED from the financial system.
+//
+// Canonical spec: docs/features/payroll.md. Read it before changing anything
+// here; the visibility rules in particular are the whole point of the feature.
+//
+// Gusto is the source of truth for pay. This app imports the Payroll Journal
+// CSV so workers can see what they were ACTUALLY paid, alongside the estimates
+// payments.ts derives. The two disagree by design.
+//
+// Nothing in these tables feeds Expense, P&L, or any tax export — not even
+// employerCost, which is a real business cost but would double-count against
+// the worker-payment math already in payments.ts.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum PayrollSourceKind {
+  // A Gusto "Payroll Journal Report" — W-2 employees. The only kind today.
+  EMPLOYEE_PAYROLL
+  // Gusto pays 1099 contractors through a different report with a different
+  // shape. Declared now, while the table is empty, so adding it later is a
+  // new parser adapter rather than a migration plus a data backfill.
+  CONTRACTOR_PAYMENTS
+}
+
+model PayrollPeriod {
+  id String @id @default(cuid())
+
+  sourceKind PayrollSourceKind @default(EMPLOYEE_PAYROLL)
+
+  // ET date-keys (YYYY-MM-DD), parsed from the CSV's MM/DD/YYYY via the
+  // canonical helper in lib/dates.ts. Stored as strings, not DateTime: these
+  // are calendar days with no time component, and a DateTime would reintroduce
+  // exactly the timezone drift docs/DATE_HANDLING.md exists to prevent.
+  //
+  // NATURAL KEY IS (periodStart, periodEnd) — payDay is deliberately NOT part
+  // of it. Re-upload is the only edit path, so if payDay were in the key,
+  // correcting a wrong pay day would create a SECOND period for the same week
+  // instead of replacing the first.
+  periodStart String
+  periodEnd   String
+  payDay      String
+
+  /// Gusto's descriptive label, e.g. "Weekly Payroll". Display only — never
+  /// branch on it. Pay cadence can change and the label is not a contract.
+  label String?
+
+  /// R2 key of the original uploaded CSV, kept forever. These numbers are only
+  /// trustworthy because the source file they came from is still on disk.
+  sourceR2Key String
+
+  /// The parsed "Payroll Totals" row, verbatim. Entries must sum to this at
+  /// import time (cent precision — money is Float here, matching Payment).
+  totals Json
+
+  uploadedById String
+  uploadedBy   User   @relation("PayrollUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// Soft delete, matching the repo-wide archivedAt/retiredAt pattern. Super
+  /// only. Hard-deleting a payroll record should not be recoverable-from-
+  /// backup-only.
+  archivedAt   DateTime?
+  archivedById String?
+  archivedBy   User?     @relation("PayrollArchivedBy", fields: [archivedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  entries PayrollEntry[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Partial-unique is not expressible in Prisma, so the natural key is unique
+  // across archived rows too. Replacement mutates the existing row in place
+  // rather than archiving-and-inserting, so this holds.
+  @@unique([periodStart, periodEnd])
+  @@index([payDay])
+  @@index([archivedAt])
+  @@index([uploadedById])
+}
+
+model PayrollEntry {
+  id String @id @default(cuid())
+
+  payrollPeriodId String
+  payrollPeriod   PayrollPeriod @relation(fields: [payrollPeriodId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  /// NULL until a Super confirms who this row belongs to. The CSV carries no
+  /// employee identifier — only a first and last name — so rows are NEVER
+  /// auto-matched. Unmatched rows are still stored (or the totals stop
+  /// balancing) and are invisible to every worker.
+  userId String?
+  user   User?   @relation("PayrollEntryUser", fields: [userId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  rawLastName  String
+  rawFirstName String
+
+  employeeType  String?
+  paymentMethod String?
+  workAddress   String?
+
+  // Money + hours. NULLABLE ON PURPOSE: the CSV distinguishes "" (not
+  // applicable) from "0.00" (computed to zero) and so do we. Collapsing both
+  // to 0 would make "did we owe FUTA this period?" unanswerable.
+  regularHours  Float?
+  regularRate   Float?
+  regularAmount Float?
+
+  additionalEarnings Float?
+  grossEarnings      Float?
+
+  employeeTaxes              Float?
+  federalIncomeTax           Float?
+  socialSecurityEmployee     Float?
+  medicareEmployee           Float?
+  additionalMedicareEmployee Float?
+  /// Gusto names this column per-jurisdiction ("NC State Tax (Employee)"), so
+  /// the parser matches it by pattern, not literal. `raw` keeps the original
+  /// header if the state ever matters.
+  stateTaxEmployee           Float?
+
+  employerTaxes             Float?
+  socialSecurityEmployer    Float?
+  medicareEmployer          Float?
+  futaEmployer              Float?
+  /// Same per-jurisdiction naming as stateTaxEmployee.
+  stateUnemploymentEmployer Float?
+
+  netPay         Float?
+  reimbursements Float?
+  donations      Float?
+  checkAmount    Float?
+  employerCost   Float?
+
+  /// The complete source row, verbatim, keyed by original CSV header. Typed
+  /// columns above cover what the UI renders; this covers everything else —
+  /// a new state's tax line, a renamed Gusto column, a question nobody has
+  /// asked yet. Costs a query instead of a re-import.
+  raw Json
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([payrollPeriodId])
+  @@index([userId])
+  @@index([rawLastName, rawFirstName])
+}
+
+model PayrollIdentity {
+  id String @id @default(cuid())
+
+  // Matched case-insensitively by the service; stored as they appear in the
+  // CSV so the review UI can show a Super exactly what Gusto wrote.
+  lastName  String
+  firstName String
+
+  userId String
+  user   User   @relation("PayrollIdentityUser", fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  confirmedById String
+  confirmedBy   User     @relation("PayrollIdentityConfirmedBy", fields: [confirmedById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  confirmedAt   DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([lastName, firstName])
+  @@index([userId])
 }

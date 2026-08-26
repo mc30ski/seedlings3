@@ -3314,9 +3314,25 @@ Respond ONLY with valid JSON in this exact format:
     try {
       const response = await ai.messages.create({
         model: "claude-sonnet-5",
-        max_tokens: 1500,
+        // Two prose fields (an internal breakdown plus a client-facing
+        // message) wrapped in JSON. 1500 was tight enough that a wordy
+        // estimate could truncate — the same failure that hit the route
+        // planner in production on 2026-08-25, where the half-written JSON
+        // was shown to the operator. Output is billed by what's produced,
+        // so the higher ceiling costs nothing on a short reply.
+        max_tokens: 4000,
         messages: [{ role: "user", content: prompt }],
       });
+
+      // Truncation is not a parse problem. Without this check the only
+      // symptom is unparseable JSON, and the fallback below would quietly
+      // send a half-written message to a CLIENT.
+      if (response.stop_reason === "max_tokens") {
+        throw new Error(
+          "The estimate generator ran out of room before finishing. Try again, " +
+            "or shorten the job notes it was given.",
+        );
+      }
 
       const text = response.content
         .filter((b: any) => b.type === "text")

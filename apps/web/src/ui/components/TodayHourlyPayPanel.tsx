@@ -8,8 +8,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Box, Button, HStack, Text, VStack, Badge, IconButton } from "@chakra-ui/react";
-import { ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
-import { usePersistedState } from "@/src/lib/usePersistedState";
+import { Clock, RefreshCw } from "lucide-react";
+import { Dashboard } from "@/src/ui/components/Dashboard";
 import { apiGet } from "@/src/lib/api";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 
@@ -45,7 +45,6 @@ function fmtHours(n: number): string {
 }
 
 export default function TodayHourlyPayPanel({ workerIds, refreshNonce = 0 }: Props) {
-  const [open, setOpen] = usePersistedState<boolean>("adminHome_hourlyPayCollapsed", false);
   const [rows, setRows] = useState<WorkerEarningsToday[] | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -66,8 +65,16 @@ export default function TodayHourlyPayPanel({ workerIds, refreshNonce = 0 }: Pro
   }, [workerIds]);
 
   useEffect(() => {
-    if (open) void load();
-  }, [open, load, refreshNonce]);
+    // Load on mount, NOT gated on an open flag. Collapse is now owned by
+    // Dashboard, which keeps children mounted (display:none) — and the
+    // header's summary line shows the day's totals, so the data has to be
+    // fetched even while collapsed or that summary is permanently blank.
+    //
+    // This previously read `if (open)` against a local collapse flag. When
+    // collapse moved to Dashboard that flag was orphaned — nothing set it
+    // any more — and the panel silently rendered an empty body.
+    void load();
+  }, [load, refreshNonce]);
 
   // Roll-up totals for the header (only when we have data). Hours are
   // additive; the team-level $/hr uses total pay ÷ total hours (a true
@@ -86,51 +93,53 @@ export default function TodayHourlyPayPanel({ workerIds, refreshNonce = 0 }: Pro
   const teamRate = totals && totals.hours > 0 ? totals.netPaid / totals.hours : 0;
 
   return (
-    <Box
-      borderWidth={1}
-      borderColor="gray.200"
-      borderRadius="md"
-      bg="white"
-      overflow="hidden"
-    >
-      <HStack
-        justify="space-between"
-        px={3}
-        py={2}
-        cursor="pointer"
-        onClick={() => setOpen((v) => !v)}
-        _hover={{ bg: "gray.50" }}
-      >
-        <HStack gap={2}>
-          {open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-          <Text fontSize="sm" fontWeight="semibold">
-            Today's hourly pay
+    // Shared Dashboard chrome, matching the other Home sections: left accent
+    // stripe, collapse toggle, persisted open state. Previously this rolled
+    // its own frame and chevron, so it looked like a different kind of thing
+    // and forgot its collapse state on every visit.
+    //
+    // `team` (purple) — same shape as the yellow and blue sections: light
+    // frame, tinted header band, accent stripe. NOT `default`, which has
+    // neither band nor stripe and belongs to an older, unrelated surface.
+    //
+    // Purple because every nearer colour is taken or means something else:
+    // green is MY ACTIVITIES, yellow is the worker's ESTIMATE, blue is what
+    // they were ACTUALLY paid, orange is warnings, red is errors. This is an
+    // operator-side team snapshot and needs its own slot.
+    <Dashboard
+      storageKey="seedlings:homeTab:todayHourlyPayOpen"
+      // No name in the title, unlike the other Home sections: this is a
+      // team roster, never one person's figures. It is not rendered at all
+      // when a single worker is selected.
+      title="Today's hourly pay"
+      icon={Clock}
+      variant="team"
+      summarySlot={
+        totals ? (
+          <Text fontSize="xs" color="fg.muted" lineClamp={1}>
+            {totals.jobs} job{totals.jobs === 1 ? "" : "s"} · {fmtHours(totals.hours)} ·{" "}
+            {fmtUSD(totals.netPaid)}
+            {totals.hours > 0 && ` · ${fmtUSD(teamRate)}/hr`}
           </Text>
-          {totals && (
-            <Text fontSize="xs" color="fg.muted">
-              {totals.jobs} job{totals.jobs === 1 ? "" : "s"} · {fmtHours(totals.hours)} ·{" "}
-              {fmtUSD(totals.netPaid)}
-              {totals.hours > 0 && ` · ${fmtUSD(teamRate)}/hr`}
-            </Text>
-          )}
-        </HStack>
-        {open && (
+        ) : undefined
+      }
+    >
+      <Box>
+        {/* Refresh lives in the BODY, not the header: the Dashboard header
+            is itself a button, and nesting one inside would be invalid
+            markup and would fight the collapse toggle. */}
+        <HStack justify="flex-end" mb={1}>
           <IconButton
             aria-label="Refresh"
             size="xs"
             variant="ghost"
-            onClick={(e) => {
-              e.stopPropagation();
-              void load();
-            }}
+            onClick={() => void load()}
             loading={loading}
           >
             <RefreshCw size={12} />
           </IconButton>
-        )}
-      </HStack>
-      {open && (
-        <Box borderTopWidth={1} borderColor="gray.200" px={3} py={2}>
+        </HStack>
+        <Box>
           {loading && rows === null ? (
             <Text fontSize="xs" color="fg.muted">Loading…</Text>
           ) : rows && rows.length === 0 ? (
@@ -233,7 +242,7 @@ export default function TodayHourlyPayPanel({ workerIds, refreshNonce = 0 }: Pro
             </VStack>
           ) : null}
         </Box>
-      )}
-    </Box>
+      </Box>
+    </Dashboard>
   );
 }

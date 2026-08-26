@@ -46,7 +46,7 @@ export default defineConfig({
       // token, e.g. `foo-admin.spec.ts` or `foo-admin-bar.spec.ts`) run
       // under the `super` project — exclude them here so employee
       // doesn't try to load pages it can't access.
-      testMatch: /specs\/(?!.*-admin(?:-|\.)|mobile-).*\.spec\.ts$/,
+      testMatch: /specs\/(?!.*-admin(?:-|\.)|mobile-|adminrole-).*\.spec\.ts$/,
       use: {
         ...devices["Desktop Chrome"],
         storageState: "./playwright/.auth/employee.json",
@@ -60,6 +60,20 @@ export default defineConfig({
       use: {
         ...devices["iPhone 13"],
         storageState: "./playwright/.auth/employee.json",
+      },
+    },
+    {
+      // ADMIN-but-not-SUPER. The `super` project cannot stand in for this:
+      // SUPER outranks ADMIN and gets the full projection, so an
+      // admin-only restriction is invisible from a super session.
+      // Prefix convention mirrors `mobile-`.
+      name: "admin-role",
+      dependencies: ["auth-setup"],
+      testMatch: /specs\/adminrole-.*\.spec\.ts$/,
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: "./playwright/.auth/admin.json",
+        viewport: { width: 1280, height: 900 },
       },
     },
     {

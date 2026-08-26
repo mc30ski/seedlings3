@@ -113,6 +113,69 @@ export function toEtDateKey(s: string): EtDateKey {
   return s as EtDateKey;
 }
 
+/**
+ * Parse a US-format `MM/DD/YYYY` date into a branded `EtDateKey`.
+ *
+ * Exists because third-party CSV exports speak US dates and this codebase
+ * speaks ISO date-keys. The Gusto payroll journal
+ * (docs/features/payroll.md) writes `"Pay day"," 08/21/2026"` and
+ * `" 08/10/2026 - 08/16/2026"` — note the leading spaces, which are
+ * tolerated here so callers don't each reinvent a trim.
+ *
+ * Deliberately strict about everything else:
+ *   - No `new Date("08/21/2026")`. That parses in the RUNTIME's local
+ *     timezone, so on a UTC server it can land on the previous calendar
+ *     day — the exact class of bug docs/DATE_HANDLING.md exists to stop.
+ *     This builds the key from the digits and never constructs a local Date.
+ *   - Rejects 2-digit years. "08/21/26" is ambiguous and a silent
+ *     misparse to year 26 would be worse than a throw.
+ *   - Rejects impossible days (02/30) via toEtDateKey's calendar probe.
+ *
+ * Throws on anything it cannot parse unambiguously — an import that
+ * fails loudly beats a payroll period silently filed under the wrong week.
+ *
+ *   parseUsDateToEtDateKey("08/21/2026")   -> "2026-08-21"
+ *   parseUsDateToEtDateKey(" 8/1/2026 ")   -> "2026-08-01"
+ *   parseUsDateToEtDateKey("02/30/2026")   -> throws
+ *   parseUsDateToEtDateKey("08/21/26")     -> throws
+ */
+export function parseUsDateToEtDateKey(raw: string): EtDateKey {
+  const trimmed = String(raw ?? "").trim();
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(trimmed);
+  if (!m) {
+    throw new Error(`parseUsDateToEtDateKey: not an MM/DD/YYYY date: ${raw}`);
+  }
+  const [, mm, dd, yyyy] = m;
+  // toEtDateKey does the real-calendar-day check (rejects 02/30 etc).
+  return toEtDateKey(`${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`);
+}
+
+/**
+ * Parse a `MM/DD/YYYY - MM/DD/YYYY` range into a start/end pair of
+ * `EtDateKey`s. This is the shape Gusto writes its payroll period in:
+ *
+ *   "Weekly Payroll payroll period"," 08/10/2026 - 08/16/2026"
+ *
+ * Throws if either side fails to parse, or if the range runs backwards —
+ * a reversed period would produce a natural key that silently never
+ * matches the next upload of the same week.
+ */
+export function parseUsDateRangeToEtDateKeys(raw: string): {
+  start: EtDateKey;
+  end: EtDateKey;
+} {
+  const parts = String(raw ?? "").split("-");
+  if (parts.length !== 2) {
+    throw new Error(`parseUsDateRangeToEtDateKeys: not a MM/DD/YYYY - MM/DD/YYYY range: ${raw}`);
+  }
+  const start = parseUsDateToEtDateKey(parts[0]);
+  const end = parseUsDateToEtDateKey(parts[1]);
+  if (start > end) {
+    throw new Error(`parseUsDateRangeToEtDateKeys: range runs backwards: ${raw}`);
+  }
+  return { start, end };
+}
+
 /** Validate + brand a string as an IsoInstant. Throws on non-parseable
  *  input. Use at trusted boundaries where the string is guaranteed to
  *  be an ISO datetime. */

@@ -19,6 +19,8 @@ import {
   etStartOfMonth,
   etStartOfYear,
   parseUserDate,
+  parseUsDateToEtDateKey,
+  parseUsDateRangeToEtDateKeys,
   type EtDateKey,
 } from "./dates";
 
@@ -255,5 +257,107 @@ describe("etMidnight + etEndOfDay range invariant", () => {
     expect(end.getTime()).toBeGreaterThan(start.getTime());
     // Regular day = exactly 24 hours.
     expect(end.getTime() - start.getTime()).toBe(86_400_000 - 1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// US-format parsing — the CSV import boundary (docs/features/payroll.md).
+// These run on operator-supplied files, so every failure mode below is a
+// real thing a Gusto export or a hand-edited file can contain.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("parseUsDateToEtDateKey", () => {
+  it("parses the pay day from the real Gusto export", () => {
+    expect(parseUsDateToEtDateKey("08/21/2026")).toBe("2026-08-21");
+  });
+
+  it("tolerates the leading space Gusto writes", () => {
+    // Real file: "Pay day"," 08/21/2026"
+    expect(parseUsDateToEtDateKey(" 08/21/2026")).toBe("2026-08-21");
+    expect(parseUsDateToEtDateKey(" 08/21/2026 ")).toBe("2026-08-21");
+  });
+
+  it("accepts single-digit month and day, zero-padding the result", () => {
+    expect(parseUsDateToEtDateKey("8/1/2026")).toBe("2026-08-01");
+    expect(parseUsDateToEtDateKey("12/9/2026")).toBe("2026-12-09");
+  });
+
+  it("does NOT shift the calendar day regardless of runtime timezone", () => {
+    // The whole reason this helper exists instead of new Date("08/21/2026"),
+    // which parses in the runtime's local zone and can land a day earlier on
+    // a UTC server. Built from digits — no local Date is ever constructed.
+    expect(parseUsDateToEtDateKey("01/01/2026")).toBe("2026-01-01");
+    expect(parseUsDateToEtDateKey("12/31/2026")).toBe("2026-12-31");
+  });
+
+  it("handles leap day", () => {
+    expect(parseUsDateToEtDateKey("02/29/2028")).toBe("2028-02-29");
+  });
+
+  it("rejects a non-leap-year Feb 29 rather than rolling to Mar 1", () => {
+    expect(() => parseUsDateToEtDateKey("02/29/2026")).toThrow();
+  });
+
+  it("rejects impossible calendar days", () => {
+    expect(() => parseUsDateToEtDateKey("02/30/2026")).toThrow();
+    expect(() => parseUsDateToEtDateKey("04/31/2026")).toThrow();
+    expect(() => parseUsDateToEtDateKey("13/01/2026")).toThrow();
+    expect(() => parseUsDateToEtDateKey("00/15/2026")).toThrow();
+    expect(() => parseUsDateToEtDateKey("08/00/2026")).toThrow();
+  });
+
+  it("rejects 2-digit years instead of guessing a century", () => {
+    expect(() => parseUsDateToEtDateKey("08/21/26")).toThrow();
+  });
+
+  it("rejects ISO input — this helper is US-format only", () => {
+    // Guards against a caller wiring the wrong parser in and getting a
+    // plausible-looking wrong answer.
+    expect(() => parseUsDateToEtDateKey("2026-08-21")).toThrow();
+  });
+
+  it("rejects empty, junk, and nullish input", () => {
+    expect(() => parseUsDateToEtDateKey("")).toThrow();
+    expect(() => parseUsDateToEtDateKey("   ")).toThrow();
+    expect(() => parseUsDateToEtDateKey("not a date")).toThrow();
+    expect(() => parseUsDateToEtDateKey(undefined as any)).toThrow();
+    expect(() => parseUsDateToEtDateKey(null as any)).toThrow();
+  });
+});
+
+describe("parseUsDateRangeToEtDateKeys", () => {
+  it("parses the real Gusto payroll period line", () => {
+    // Real file: "Weekly Payroll payroll period"," 08/10/2026 - 08/16/2026"
+    expect(parseUsDateRangeToEtDateKeys(" 08/10/2026 - 08/16/2026")).toEqual({
+      start: "2026-08-10",
+      end: "2026-08-16",
+    });
+  });
+
+  it("accepts a single-day period", () => {
+    expect(parseUsDateRangeToEtDateKeys("08/21/2026 - 08/21/2026")).toEqual({
+      start: "2026-08-21",
+      end: "2026-08-21",
+    });
+  });
+
+  it("rejects a backwards range", () => {
+    // A reversed period would produce a natural key that never matches the
+    // next upload of the same week, silently duplicating the period.
+    expect(() => parseUsDateRangeToEtDateKeys("08/16/2026 - 08/10/2026")).toThrow();
+  });
+
+  it("rejects a range spanning a period that crosses a year correctly", () => {
+    expect(parseUsDateRangeToEtDateKeys("12/28/2026 - 01/03/2027")).toEqual({
+      start: "2026-12-28",
+      end: "2027-01-03",
+    });
+  });
+
+  it("rejects malformed ranges", () => {
+    expect(() => parseUsDateRangeToEtDateKeys("08/10/2026")).toThrow();
+    expect(() => parseUsDateRangeToEtDateKeys("08/10/2026 - ")).toThrow();
+    expect(() => parseUsDateRangeToEtDateKeys("")).toThrow();
+    expect(() => parseUsDateRangeToEtDateKeys("08/10/2026 - 08/16/2026 - 08/20/2026")).toThrow();
   });
 });

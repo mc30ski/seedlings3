@@ -46,6 +46,7 @@ export function Dashboard({
   pinnedContent,
   forceGlow,
   summarySlot,
+  collapsedSummarySlot,
   count,
   variant = "default",
 }: {
@@ -75,6 +76,11 @@ export function Dashboard({
    *  header row (both open and collapsed). Use for at-a-glance stats
    *  that should stay visible in the collapsed state. */
   summarySlot?: React.ReactNode;
+  /** Like `summarySlot`, but shown ONLY while collapsed. For a figure that
+   *  the open body already states prominently — repeating it in the header
+   *  is noise when you can see it, and the point of the header line when
+   *  you can't. */
+  collapsedSummarySlot?: React.ReactNode;
   /** Optional externally-supplied count for the header badge. When
    *  set, overrides the internally-computed glowing-child count.
    *  Use for Dashboards whose children aren't CompactBanners
@@ -84,7 +90,7 @@ export function Dashboard({
    *  Requests). "hero" = emerald + left accent stripe + elevation —
    *  used for MY DASHBOARD so it stands apart from every other
    *  section on the page. */
-  variant?: "default" | "hero";
+  variant?: "default" | "hero" | "info" | "estimate" | "team";
 }) {
   const [open, setOpen] = useState<boolean>(true);
   useEffect(() => {
@@ -153,27 +159,105 @@ export function Dashboard({
     </Box>
   );
 
-  // Variant styling — hero draws the eye (emerald surface, colored
-  // left accent stripe, subtle elevation, slightly bolder title);
-  // default keeps the neutral gray section frame.
-  const isHero = variant === "hero";
-  const frameBg = isHero ? "green.50" : "gray.200";
-  const frameBorderColor = isHero ? "green.400" : "gray.400";
-  const frameShadow = isHero ? "md" : undefined;
-  const titleColor = isHero ? "green.900" : "gray.700";
-  const titleSize = isHero ? "sm" : "xs";
-  const iconColor = isHero
-    ? "var(--chakra-colors-green-700)"
-    : "var(--chakra-colors-gray-700)";
-  const chevronColor = isHero
-    ? "var(--chakra-colors-green-700)"
-    : undefined;
-  // Hero header reads as a tappable bar rather than a bare label: a tinted
-  // band a step darker than the frame, with its own hover shade. The
-  // default variant keeps the plain opacity hover — its gray frame is
-  // already darker than its surroundings, so a band would just muddy it.
-  const headerBg = isHero ? "green.200" : undefined;
-  const headerHoverBg = isHero ? "green.300" : undefined;
+  // Variant palettes.
+  //   default — neutral gray section frame.
+  //   hero    — emerald surface + left accent stripe + elevation; draws the
+  //             eye. Its header is a tinted, tappable band (see headerBg).
+  //   info    — blue surface for a section that states facts rather than
+  //             prompting action (Home's PAYROLL summary). Same shape as
+  //             hero so its content sits DIRECTLY in the frame — no inner
+  //             card, which would read as a section inside a section.
+  //   estimate— amber, for a number the app DERIVED rather than received.
+  //   team    — purple, for an operator-side team snapshot that is neither
+  //             the worker's estimate nor what they were paid.
+  const PALETTES = {
+    default: {
+      frameBg: "gray.200",
+      border: "gray.400",
+      shadow: undefined as string | undefined,
+      title: "gray.700",
+      titleSize: "xs",
+      icon: "var(--chakra-colors-gray-700)",
+      chevron: undefined as string | undefined,
+      headerBg: undefined as string | undefined,
+      headerHoverBg: undefined as string | undefined,
+      // Intentionally NO stripe and no header band. `default` predates this
+      // family of palettes and is used by an unrelated tab; new sections
+      // that want the family look should use `neutral`, not restyle this.
+      stripe: undefined as string | undefined,
+    },
+    // Purple — the team-snapshot member of the family.
+    //
+    // Colour is nearly forced here. Home already spends green on MY
+    // ACTIVITIES, amber on the worker's ESTIMATE and blue on what was
+    // ACTUALLY paid; orange carries warnings elsewhere on the page
+    // (mileage, unmatched payroll) and red means error. Gray read as
+    // "disabled" beside three coloured neighbours, and teal just read as
+    // green again. Purple is the one distinct slot left.
+    team: {
+      frameBg: "purple.50",
+      border: "purple.300",
+      shadow: "sm",
+      title: "purple.900",
+      titleSize: "sm",
+      icon: "var(--chakra-colors-purple-700)",
+      chevron: "var(--chakra-colors-purple-700)",
+      headerBg: "purple.100",
+      headerHoverBg: "purple.200",
+      stripe: "purple.400",
+    },
+    hero: {
+      frameBg: "green.50",
+      border: "green.400",
+      shadow: "md",
+      title: "green.900",
+      titleSize: "sm",
+      icon: "var(--chakra-colors-green-700)",
+      chevron: "var(--chakra-colors-green-700)",
+      headerBg: "green.200",
+      headerHoverBg: "green.300",
+      stripe: "green.500",
+    },
+    // Amber. Marks a figure the app DERIVED rather than one it was told —
+    // Home's "Approximate pay per hour" sits in this, directly above the
+    // blue `info` PAYROLL section reporting what was actually paid.
+    estimate: {
+      frameBg: "yellow.50",
+      border: "yellow.300",
+      shadow: "sm",
+      title: "yellow.900",
+      titleSize: "sm",
+      icon: "var(--chakra-colors-yellow-800)",
+      chevron: "var(--chakra-colors-yellow-800)",
+      headerBg: "yellow.100",
+      headerHoverBg: "yellow.200",
+      stripe: "yellow.400",
+    },
+    info: {
+      frameBg: "blue.50",
+      border: "blue.300",
+      shadow: "sm",
+      title: "blue.900",
+      titleSize: "sm",
+      icon: "var(--chakra-colors-blue-700)",
+      chevron: "var(--chakra-colors-blue-700)",
+      headerBg: "blue.100",
+      headerHoverBg: "blue.200",
+      stripe: "blue.400",
+    },
+  } as const;
+
+  const pal = PALETTES[variant] ?? PALETTES.default;
+  const frameBg = pal.frameBg;
+  const frameBorderColor = pal.border;
+  const frameShadow = pal.shadow;
+  const titleColor = pal.title;
+  const titleSize = pal.titleSize;
+  const iconColor = pal.icon;
+  const chevronColor = pal.chevron;
+  const headerBg = pal.headerBg;
+  const headerHoverBg = pal.headerHoverBg;
+  const isHero = variant !== "default";
 
   return (
     <Box
@@ -185,8 +269,8 @@ export function Dashboard({
       // Left accent stripe (hero only) — 4px solid emerald band flush
       // to the left inner edge. Uses borderLeftWidth in place of the
       // 1px baseline so total frame width is preserved.
-      borderLeftWidth={isHero ? "4px" : "1px"}
-      borderLeftColor={isHero ? "green.500" : frameBorderColor}
+      borderLeftWidth={pal.stripe ? "4px" : "1px"}
+      borderLeftColor={pal.stripe ?? frameBorderColor}
       shadow={frameShadow}
       style={animation ? { animation } : undefined}
     >
@@ -215,7 +299,11 @@ export function Dashboard({
           color={titleColor}
           textTransform="uppercase"
           letterSpacing="wide"
-          flexShrink={0}
+          // Truncate rather than overflow — view-as titles carry a worker
+          // name ("Approximate pay per hour · Employee Worker") and ran off
+          // the right edge on a phone.
+          minW={0}
+          lineClamp={1}
         >
           {title}
         </Text>
@@ -228,12 +316,13 @@ export function Dashboard({
           if (displayCount <= 0) return null;
           return <RedCountBadge>{displayCount}</RedCountBadge>;
         })()}
-        {summarySlot && (
+        {(summarySlot || (!open && collapsedSummarySlot)) && (
           <Box flex="1" minW={0} overflow="hidden">
             {summarySlot}
+            {!open && collapsedSummarySlot}
           </Box>
         )}
-        {!summarySlot && <Box flex="1" />}
+        {!summarySlot && !(!open && collapsedSummarySlot) && <Box flex="1" />}
         {/* Right-aligned strip: preview icons of each registered
             child banner (only rendered when collapsed so the open
             header stays uncluttered). Each icon inherits its own

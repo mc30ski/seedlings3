@@ -1,6 +1,9 @@
 import { test, expect } from "@playwright/test";
 import type { PrismaClient } from "@prisma/client";
 import { makePrisma, USERS } from "../helpers/db";
+// Canonical ET helpers — the spec's date key MUST agree with the one the
+// app computes, or the seeded row lands on a day the tab isn't showing.
+import { bizToday, bizAddDays } from "../../../src/lib/dates";
 
 /**
  * Regression: on Super → Records → Workdays, a driver who has pending
@@ -34,11 +37,16 @@ test.describe("Workdays — 'Didn't work' surfaces pending mileage", () => {
     // yesterday lets us land on the right date without extra
     // navigation. Also matches the real prod incident (pending mileage
     // for a past day the operator hadn't visited yet).
-    // date-handling-allow: e2e-seed
-    const now = new Date();
-    // date-handling-allow: e2e-seed
-    const rowDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const entryDate = rowDate.toISOString().slice(0, 10);
+    //
+    // MUST use the ET helpers, not `new Date().toISOString()`. This
+    // previously derived the date in UTC, so after ~8pm ET — once UTC has
+    // rolled to the next day — the spec seeded mileage on one date while
+    // the tab rendered another, and the chip never appeared. It passed all
+    // morning and failed every evening.
+    const entryDate = bizAddDays(bizToday(), -1);
+    // date-handling-allow: e2e-seed — timestamps WITHIN the seeded day.
+    // Only the date key above has to agree with what the app renders.
+    const rowDate = new Date(`${entryDate}T00:00:00Z`);
 
     // Reuse the seed's truck (created in seed.ts). If it's missing
     // (fresh reseed race?), create one on the fly so the test is
@@ -76,6 +84,15 @@ test.describe("Workdays — 'Didn't work' surfaces pending mileage", () => {
     // Employee lands in the "Didn't work" section — the whole point.
     await prisma.workerWorkday.deleteMany({
       where: { userId: USERS.employee, workdayDate: entryDate },
+    });
+
+    // ...and any mileage the SEED already placed on this date for this
+    // worker. seed.ts creates "3 pending in last 30d" at dates relative to
+    // now, so after a reseed one can land here — making the pending count 2
+    // and failing the "1 pending" assertion below for a reason unrelated to
+    // the regression under test. Same isolation intent as the line above.
+    await prisma.mileageEntry.deleteMany({
+      where: { driverUserId: USERS.employee, entryDate },
     });
 
     // The pending mileage row itself: closed, un-approved, before today.

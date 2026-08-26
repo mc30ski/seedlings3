@@ -487,7 +487,17 @@ For jobs that need a date change, set dateChanged=true with originalDate and sug
     try {
       const response = await client.messages.create({
         model: "claude-sonnet-5",
-        max_tokens: 3000,
+        // A WEEK of routes, each stop carrying property, address and a
+        // prose `reason`. At 3000 this silently truncated in production
+        // (2026-08-25): the model stopped mid-word, JSON.parse threw into
+        // an empty catch, and the half-written JSON was rendered to the
+        // operator as-is. One day of five stops already costs ~450 tokens
+        // of `reason` text alone, so seven days never fit.
+        //
+        // Raise generously — output is billed by what's produced, not by
+        // the ceiling, so a high cap costs nothing on a request that ends
+        // early and prevents the failure that actually happened.
+        max_tokens: 16000,
         messages: [{ role: "user", content: prompt }],
       });
 
@@ -496,11 +506,36 @@ For jobs that need a date change, set dateChanged=true with originalDate and sug
         .map((b) => b.text)
         .join("");
 
+      // Truncation is NOT a parse problem and must not be reported as one.
+      // `stop_reason === "max_tokens"` is the model telling us plainly that
+      // it ran out of room; without this check the only symptom is
+      // unparseable JSON, which looks identical to the model returning
+      // nonsense and sends the next person debugging the wrong thing.
+      if (response.stop_reason === "max_tokens") {
+        app.log.error({
+          where: "preview/route-suggestions",
+          reason: "max_tokens",
+          chars: text.length,
+        });
+        return {
+          suggestions: null,
+          error:
+            "The route planner ran out of room before it finished the week. " +
+            "Try planning fewer days at a time, or run it again — if it keeps " +
+            "happening the output limit needs raising.",
+          jobs: allJobs,
+        };
+      }
+
       let parsed: any = null;
+      let parseError: string | null = null;
       try {
         const jsonMatch = text.match(/\{[\s\S]*\}/);
         if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
-      } catch {}
+        else parseError = "no JSON object found in the response";
+      } catch (e: any) {
+        parseError = e?.message ?? "invalid JSON";
+      }
 
       // Defense-in-depth: drop any AI-hallucinated stops whose occurrenceId
       // doesn't match a real job (e.g. a phantom "start point" stop with
@@ -518,6 +553,13 @@ For jobs that need a date change, set dateChanged=true with originalDate and sug
 
       return {
         suggestions: parsed,
+        // Always pair unparseable output with an `error`, so the client
+        // shows a banner explaining what happened instead of silently
+        // rendering raw model output and leaving the operator to work out
+        // that it failed at all.
+        error: parsed
+          ? undefined
+          : `The route planner returned output we couldn't read (${parseError}). Try again.`,
         raw: parsed ? undefined : text,
         jobs: allJobs,
         targetUser: { id: user.id, displayName: user.displayName },
