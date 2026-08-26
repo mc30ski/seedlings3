@@ -183,9 +183,24 @@ export default function PayrollTab({
   const shown = useMemo(() => filterPeriodsByRange(periods, range), [periods, range]);
   // Totals across the visible window, so the header answers "what did this
   // timeframe cost / earn" without opening every period.
+  const teamTotals = useMemo(() => sumTeam(shown), [shown]);
   const rangeTotals = useMemo(
-    () => (showAdminExtras ? sumTeam(shown) : sumMine(shown)),
-    [shown, showAdminExtras],
+    () => (showAdminExtras ? teamTotals : sumMine(shown)),
+    [shown, showAdminExtras, teamTotals],
+  );
+
+  /**
+   * Whether the payload carries employer cost at all.
+   *
+   * A PRESENCE check, deliberately — not `showSuperExtras`. The server
+   * omits `employerCost` from an admin payload entirely, so the absence is
+   * the access control and the UI simply follows the data. A role check
+   * here would render "$0.00" for an admin, which reads as "payroll cost
+   * the business nothing" rather than "you can't see this".
+   */
+  const hasEmployerCost = useMemo(
+    () => shown.some((p) => p.teamTotals?.employerCost != null),
+    [shown],
   );
 
   const totalUnmatched = useMemo(
@@ -365,6 +380,27 @@ export default function PayrollTab({
                   {fmtPayrollMoney(rangeTotals.grossEarnings)}
                 </Text>
               </VStack>
+              {/* What the business actually spent to run payroll: gross plus
+                  the employer half of the taxes. The owner's number, and the
+                  one that never appears anywhere else — the P&L carries an
+                  ESTIMATE of employer tax and stays an estimate on purpose.
+                  Presence-gated: an admin payload has no employerCost, so
+                  this disappears rather than rendering a false $0.00. */}
+              {hasEmployerCost && (
+                <VStack align="start" gap={0}>
+                  <Text fontSize="2xs" color="fg.muted" textTransform="uppercase" letterSpacing="wide">
+                    Employer cost
+                  </Text>
+                  <Text
+                    fontSize="sm"
+                    fontWeight="bold"
+                    color="purple.700"
+                    fontVariantNumeric="tabular-nums"
+                  >
+                    {fmtPayrollMoney(teamTotals.employerCost)}
+                  </Text>
+                </VStack>
+              )}
               <Text fontSize="2xs" color="fg.muted">
                 {shown.length} of {periods.length}
               </Text>
@@ -496,6 +532,26 @@ export default function PayrollTab({
                               )}
                             </Text>
                           </HStack>
+                          {/* Gross plus the employer half of the taxes —
+                              the real cost of this run to the business.
+                              Purple keeps it visibly a different KIND of
+                              number from the two above, which are both
+                              money paid TO people. */}
+                          {p.teamTotals?.employerCost != null && (
+                            <HStack gap={1.5} align="baseline">
+                              <Text fontSize="2xs" color="fg.muted">
+                                EMPLOYER COST
+                              </Text>
+                              <Text
+                                fontSize="xs"
+                                fontWeight="medium"
+                                color="purple.700"
+                                fontVariantNumeric="tabular-nums"
+                              >
+                                {fmtPayrollMoney(p.teamTotals.employerCost)}
+                              </Text>
+                            </HStack>
+                          )}
                         </>
                       )}
                     </VStack>
@@ -517,6 +573,7 @@ export default function PayrollTab({
                         <PeriodDetail
                           detail={detail}
                           showAdminExtras={showAdminExtras}
+                          showSuperExtras={showSuperExtras}
                           viewAsDisplayName={viewAsDisplayName ?? null}
                         />
                       )}
@@ -602,10 +659,12 @@ export default function PayrollTab({
 function PeriodDetail({
   detail,
   showAdminExtras,
+  showSuperExtras,
   viewAsDisplayName,
 }: {
   detail: PayrollPeriodDetail | null;
   showAdminExtras: boolean;
+  showSuperExtras: boolean;
   viewAsDisplayName: string | null;
 }) {
   if (!detail) return null;
@@ -622,7 +681,12 @@ function PeriodDetail({
   return (
     <VStack align="stretch" gap={3}>
       {detail.entries.map((e) => (
-        <EntryRow key={e.id} entry={e} showAdminExtras={showAdminExtras} />
+        <EntryRow
+          key={e.id}
+          entry={e}
+          showAdminExtras={showAdminExtras}
+          showSuperExtras={showSuperExtras}
+        />
       ))}
     </VStack>
   );
@@ -631,15 +695,23 @@ function PeriodDetail({
 function EntryRow({
   entry,
   showAdminExtras,
+  showSuperExtras,
 }: {
   entry: PayrollEntryView;
   showAdminExtras: boolean;
+  showSuperExtras: boolean;
 }) {
   const v = entry.values;
   // Present only when the server sent them. An admin payload genuinely has
   // no tax fields — the absence IS the access control, so this is a
   // presence check, not a role check.
   const hasTaxDetail = "federalIncomeTax" in v || "employeeTaxes" in v;
+  // A zero-hours row (Caleb Serrano in the fixture) costs the business
+  // nothing, and Gusto leaves its employer columns blank. Rendering an
+  // all-dashes block for it would be noise, so require at least one real
+  // figure before showing the section at all.
+  const hasEmployerDetail =
+    v.employerCost != null || v.employerTaxes != null || v.socialSecurityEmployer != null;
 
   return (
     <Box borderWidth="1px" borderColor="gray.200" rounded="md" p={3}>
@@ -692,6 +764,41 @@ function EntryRow({
           )}
         </>
       )}
+
+      {/* ── Employer side ────────────────────────────────────────────────
+          What this person cost the business on top of what they were paid.
+          SUPER ONLY, and role-gated rather than presence-gated: a WORKER's
+          own payload legitimately carries these fields (the spec gives them
+          their full row), but the employer's tax burden is not pay-stub
+          data and Gusto does not show it to employees either.
+
+          These are ACTUALS from the Gusto export. They are deliberately not
+          connected to the P&L's "Employer payroll taxes (est.)" line, which
+          stays an estimate — see docs/features/payroll.md. */}
+      {showSuperExtras && hasEmployerDetail && (
+        <>
+          <Separator my={3} />
+          <Text fontSize="2xs" fontWeight="bold" color="purple.600" mb={1} letterSpacing="wide">
+            EMPLOYER COST
+          </Text>
+          <SimpleGrid columns={{ base: 2, md: 3 }} gap={2}>
+            <Figure label="Social Security" value={fmtPayrollMoney(v.socialSecurityEmployer)} />
+            <Figure label="Medicare" value={fmtPayrollMoney(v.medicareEmployer)} />
+            <Figure label="FUTA" value={fmtPayrollMoney(v.futaEmployer)} />
+            <Figure label="NC unemployment" value={fmtPayrollMoney(v.stateUnemploymentEmployer)} />
+            <Figure label="Employer taxes" value={fmtPayrollMoney(v.employerTaxes)} />
+            {/* Gross + employer taxes. Emphasised in purple because it is
+                the bottom line of this block, the way net pay is the bottom
+                line of the block above. */}
+            <Figure
+              label="Total cost"
+              value={fmtPayrollMoney(v.employerCost)}
+              emphasis
+              tone="purple.700"
+            />
+          </SimpleGrid>
+        </>
+      )}
     </Box>
   );
 }
@@ -700,10 +807,13 @@ function Figure({
   label,
   value,
   emphasis,
+  tone,
 }: {
   label: string;
   value: string;
   emphasis?: boolean;
+  /** Overrides the emphasis colour — employer figures are purple, not green. */
+  tone?: string;
 }) {
   return (
     <VStack align="start" gap={0} minW={0}>
@@ -713,7 +823,7 @@ function Figure({
       <Text
         fontSize={emphasis ? "sm" : "xs"}
         fontWeight={emphasis ? "bold" : "medium"}
-        color={emphasis ? "green.700" : undefined}
+        color={tone ?? (emphasis ? "green.700" : undefined)}
         fontVariantNumeric="tabular-nums"
       >
         {value}

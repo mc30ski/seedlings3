@@ -191,7 +191,14 @@ test.describe("Payroll — worker view", () => {
         timeout: 10_000,
       });
       // Tells them WHICH period, so they can name it to their admin.
-      await expect(page.getByText(/8\/22\/2026/)).toBeVisible();
+      //
+      // Derived from the row we just detached, NEVER a literal. seed.ts
+      // generates its periods relative to TODAY, so a hardcoded date is
+      // correct for exactly one week and then fails for a reason that has
+      // nothing to do with the behaviour under test. This assertion used
+      // to read /8\/22\/2026/ and rotted exactly that way.
+      const [yy, mm, dd] = latest!.payDay.split("-").map(Number);
+      await expect(page.getByText(new RegExp(`${mm}/${dd}/${yy}`))).toBeVisible();
     } finally {
       await prisma.payrollEntry.update({
         where: { id: mine!.id },

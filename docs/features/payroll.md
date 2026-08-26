@@ -220,6 +220,28 @@ A worker's own tax breakdown is their own pay-stub data, so they get all
 of it. The hours/gross/net restriction is about **Admin looking at
 someone else**.
 
+**Employer cost is Super-only, and that includes the aggregate.** The
+Payroll tab shows the employer side — Social Security, Medicare, FUTA, NC
+unemployment, total employer taxes, and total employer cost — per worker
+and as a period/timeframe total. Three things follow:
+
+- `listPeriods` gates `teamTotals.employerCost` on `viewer.kind ===
+  "super"`. The per-entry projection already withholds `employerCost` from
+  an admin, so shipping the aggregate would have handed it back through
+  the back door; on a three-person payroll an aggregate is close enough to
+  per-person to matter. Enforced by `payroll-build-gate.test.ts`.
+- The per-worker block is gated on **role**, not presence. A worker's own
+  payload legitimately carries the employer columns, but the employer's
+  tax burden is not pay-stub data — Gusto does not show it to employees
+  either.
+- The period/timeframe totals are gated on **presence** (`employerCost !=
+  null`). An admin payload omits the field, so the figure disappears
+  rather than rendering `$0.00`, which would read as "payroll cost the
+  business nothing" instead of "you cannot see this".
+
+These are **actuals**. They are still not connected to the P&L's
+`"Employer payroll taxes (est.)"` line — see the firewall below.
+
 Admin's default view is the **combined period total**; per-worker figures
 appear only once a worker is selected.
 
@@ -239,6 +261,14 @@ appear only once a worker is selected.
 
 **Upload.** The file is a few KB, so the client POSTs the raw text; the
 server stores it in R2 and parses. No presigned two-step.
+
+**Replace reports whether anything actually changed.** Re-importing the
+same export is a normal thing to do — you lose track of which file you
+already loaded — and it is a genuine no-op. But a bare "replaced" reads as
+"something changed", so a no-op import looked like a broken one (reported
+2026-08-26). The import compares each row's verbatim source line against
+what is stored and returns `changed`, which the UI renders as **"no
+change"** rather than "replaced". The audit row records it too.
 
 **Replace (this is what "edit" means).** Re-uploading a period that
 already exists:
@@ -396,10 +426,10 @@ separately-labelled line** — not a substitution into the existing one.
 | Layer | Where | Proves |
 |---|---|---|
 | Parser | `payrollImport.test.ts` (36) | Real Gusto export parses; blank ≠ zero; rates aren't additive; totals conserve |
-| Projections + wiring | `payroll-build-gate.test.ts` (24) | Admin field list; worker `where` clause; route guards; estimate/actual firewall |
+| Projections + wiring | `payroll-build-gate.test.ts` (25) | Admin field list; worker `where` clause; route guards; estimate/actual firewall; employer-cost aggregate gating |
 | Worker isolation | `payroll-worker.spec.ts` (employee) | A worker sees ONLY their own row — **in a browser, against the real response** |
-| Admin projection | `adminrole-payroll.spec.ts` (admin-role) | An admin payload carries no tax field |
-| Super flows | `payroll-admin.spec.ts` (super) | Upload, replace-not-duplicate, identity match, archive |
+| Admin projection | `adminrole-payroll.spec.ts` (admin-role) | An admin payload carries no tax field, and no employer cost in the period aggregate either |
+| Super flows | `payroll-admin.spec.ts` (super) | Upload, replace-not-duplicate (figures actually move), no-op re-import reports "no change", identity match, archive |
 
 **The `admin-role` Playwright project exists for one reason.** SUPER
 outranks ADMIN and receives the full payload, so an admin-only restriction
@@ -415,6 +445,7 @@ that carried tax figures and hid them in the UI would still be a leak.
 | Invariant | Enforced by |
 |---|---|
 | Worker query cannot return another user's row | `payroll-build-gate.test.ts` |
+| Employer cost withheld from admin, aggregate included | `payroll-build-gate.test.ts` + `adminrole-payroll.spec.ts` |
 | Admin projection omits tax columns server-side | `payroll-build-gate.test.ts` |
 | Entries sum to the `"Payroll Totals"` row | import-time check + build gate |
 | Blank vs `0.00` preserved as null vs 0 | parser unit tests |
