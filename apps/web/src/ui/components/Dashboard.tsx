@@ -90,7 +90,7 @@ export function Dashboard({
    *  Requests). "hero" = emerald + left accent stripe + elevation —
    *  used for MY DASHBOARD so it stands apart from every other
    *  section on the page. */
-  variant?: "default" | "hero" | "info" | "estimate" | "team";
+  variant?: "default" | "hero" | "info" | "estimate" | "team" | "neutral" | "pay";
 }) {
   const [open, setOpen] = useState<boolean>(true);
   useEffect(() => {
@@ -244,6 +244,47 @@ export function Dashboard({
       headerBg: "blue.100",
       headerHoverBg: "blue.200",
       stripe: "blue.400",
+    },
+    // Gray — the family look WITHOUT a colour claim.
+    //
+    // The `default` palette above predates this family and deliberately has
+    // no stripe and no header band; restyling it would change an unrelated
+    // tab. `neutral` is the one to reach for when a section wants the
+    // family shape but must not imply a relationship to green / amber /
+    // blue / purple, each of which carries meaning on Home. Team overview
+    // uses it: it is a container for the whole team's state, not one of the
+    // colour-coded measures beside it.
+    neutral: {
+      frameBg: "gray.50",
+      border: "gray.300",
+      shadow: "sm",
+      title: "gray.800",
+      titleSize: "sm",
+      icon: "var(--chakra-colors-gray-700)",
+      chevron: "var(--chakra-colors-gray-700)",
+      headerBg: "gray.200",
+      headerHoverBg: "gray.300",
+      stripe: "gray.400",
+    },
+    // Pink — the team-wide ESTIMATED rate.
+    //
+    // The last unclaimed slot on Home. `estimate` (amber) is the worker's
+    // own derived rate and `team` (purple) is the operator's team snapshot;
+    // this section is both at once, so it can borrow neither without
+    // reading as the wrong one. Orange means warning elsewhere in the app
+    // and red means error, and teal beside a green hero just reads as green
+    // again — which leaves pink.
+    pay: {
+      frameBg: "pink.50",
+      border: "pink.200",
+      shadow: "sm",
+      title: "pink.800",
+      titleSize: "sm",
+      icon: "var(--chakra-colors-pink-600)",
+      chevron: "var(--chakra-colors-pink-600)",
+      headerBg: "pink.100",
+      headerHoverBg: "pink.200",
+      stripe: "pink.400",
     },
   } as const;
 

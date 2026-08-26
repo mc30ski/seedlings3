@@ -56,6 +56,7 @@ import {
   filterPeriodsByRange,
   payrollCadenceLabel,
   isPayDayPending,
+  notifyPayrollChanged,
   payDayVerb,
   sumMine,
   sumTeam,
@@ -190,17 +191,24 @@ export default function PayrollTab({
   );
 
   /**
-   * Whether the payload carries employer cost at all.
+   * Employer cost is a SUPER-TAB figure. Both halves are load-bearing:
    *
-   * A PRESENCE check, deliberately — not `showSuperExtras`. The server
-   * omits `employerCost` from an admin payload entirely, so the absence is
-   * the access control and the UI simply follows the data. A role check
-   * here would render "$0.00" for an admin, which reads as "payroll cost
-   * the business nothing" rather than "you can't see this".
+   * - `showSuperExtras` — the SURFACE. `operatorViewer` on the server
+   *   resolves by ROLE, so Michael (SUPER + ADMIN + WORKER) gets a super
+   *   payload on every tab; the server cannot know which tab he is on.
+   *   Presence alone therefore leaked employer cost onto the ADMIN tab.
+   *   This is the same shape as the standing rule that `showSuperExtras`
+   *   must not fall back to `forAdmin ||` — see reference-tab-blend-pattern.
+   * - the presence check — the DATA. A genuine admin-only account gets a
+   *   payload with no `employerCost` at all, and rendering "$0.00" for
+   *   them would read as "payroll cost the business nothing" rather than
+   *   "you cannot see this".
+   *
+   * Neither one substitutes for the other.
    */
   const hasEmployerCost = useMemo(
-    () => shown.some((p) => p.teamTotals?.employerCost != null),
-    [shown],
+    () => showSuperExtras && shown.some((p) => p.teamTotals?.employerCost != null),
+    [shown, showSuperExtras],
   );
 
   const totalUnmatched = useMemo(
@@ -326,6 +334,7 @@ export default function PayrollTab({
             setReviewNonce((n) => n + 1);
             void load();
             if (openId) void openPeriod(openId);
+            notifyPayrollChanged();
           }}
         />
       )}
@@ -384,8 +393,8 @@ export default function PayrollTab({
                   the employer half of the taxes. The owner's number, and the
                   one that never appears anywhere else — the P&L carries an
                   ESTIMATE of employer tax and stays an estimate on purpose.
-                  Presence-gated: an admin payload has no employerCost, so
-                  this disappears rather than rendering a false $0.00. */}
+                  Role AND presence gated; see `hasEmployerCost` above for
+                  why neither check substitutes for the other. */}
               {hasEmployerCost && (
                 <VStack align="start" gap={0}>
                   <Text fontSize="2xs" color="fg.muted" textTransform="uppercase" letterSpacing="wide">
@@ -537,7 +546,7 @@ export default function PayrollTab({
                               Purple keeps it visibly a different KIND of
                               number from the two above, which are both
                               money paid TO people. */}
-                          {p.teamTotals?.employerCost != null && (
+                          {showSuperExtras && p.teamTotals?.employerCost != null && (
                             <HStack gap={1.5} align="baseline">
                               <Text fontSize="2xs" color="fg.muted">
                                 EMPLOYER COST
@@ -616,6 +625,7 @@ export default function PayrollTab({
             // operator sees a period flagged unmatched while the queue
             // above it still shows the pre-import state.
             setReviewNonce((n) => n + 1);
+            notifyPayrollChanged();
           }}
         />
       )}
@@ -678,8 +688,48 @@ function PeriodDetail({
     );
   }
 
+  // Gusto's own "Payroll Totals" row, not a client-side sum — this is the
+  // figure an operator reconciles against. Role AND presence gated for the
+  // same reason as every other employer-cost surface: the server resolves
+  // the viewer by ROLE, so a SUPER-role user gets it on every tab and only
+  // `showSuperExtras` knows which tab is actually being rendered.
+  const et = showSuperExtras ? detail.employerTotals : undefined;
+
   return (
     <VStack align="stretch" gap={3}>
+      {et && (
+        <Box borderWidth="1px" borderColor="purple.200" bg="purple.50" rounded="md" p={3}>
+          <Text
+            fontSize="2xs"
+            fontWeight="bold"
+            color="purple.700"
+            mb={2}
+            letterSpacing="wide"
+          >
+            EMPLOYER COST — WHOLE RUN
+          </Text>
+          <SimpleGrid columns={{ base: 2, md: 4 }} gap={2}>
+            <Figure label="Gross wages" value={fmtPayrollMoney(et.grossEarnings)} />
+            <Figure label="Social Security" value={fmtPayrollMoney(et.socialSecurityEmployer)} />
+            <Figure label="Medicare" value={fmtPayrollMoney(et.medicareEmployer)} />
+            <Figure label="FUTA" value={fmtPayrollMoney(et.futaEmployer)} />
+            <Figure label="NC unemployment" value={fmtPayrollMoney(et.stateUnemploymentEmployer)} />
+            <Figure label="Employer taxes" value={fmtPayrollMoney(et.employerTaxes)} />
+            <Figure
+              label="Total cost"
+              value={fmtPayrollMoney(et.employerCost)}
+              emphasis
+              tone="purple.700"
+            />
+          </SimpleGrid>
+          <Text fontSize="2xs" color="purple.600" mt={2}>
+            {/* Says out loud what the number is made of, so nobody has to
+                reverse-engineer whether wages are included. */}
+            Gross wages plus the employer&apos;s share of taxes. Actuals from Gusto — unrelated
+            to the P&amp;L&apos;s estimated payroll-tax line.
+          </Text>
+        </Box>
+      )}
       {detail.entries.map((e) => (
         <EntryRow
           key={e.id}

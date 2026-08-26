@@ -175,6 +175,24 @@ test.describe("Payroll — admin projection", () => {
     expect(body).toContain("1234.56");
   });
 
+  test("an admin sees no payroll-identity alert or Tasks section", async ({ page }) => {
+    // Matching a name decides who can see whose pay, so the queue is
+    // SUPER-only — same gate as the endpoint and the in-tab banner. An
+    // admin must not even be told it exists.
+    await gotoAdminPayroll(page);
+
+    const res = await apiAs(page, "/api/payroll/identities/unmatched");
+    expect(res.status, "admin reached the super-only identity queue").toBe(403);
+
+    await page.locator("[data-alert-badge]").first().click();
+    await page.waitForTimeout(1200);
+    await expect(page.getByText(/Payroll names to match/)).toHaveCount(0);
+
+    await page.getByRole("button", { name: /Tasks$/ }).first().click();
+    await page.waitForTimeout(2500);
+    await expect(page.getByText(/Payroll names to match/)).toHaveCount(0);
+  });
+
   test("an admin cannot mutate payroll", async ({ page }) => {
     // Import, identity matching and archive are Super-only: each rewrites
     // what workers see about their own pay.

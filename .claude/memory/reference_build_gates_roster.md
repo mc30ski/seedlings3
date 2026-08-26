@@ -131,3 +131,28 @@ is itself stale):
 API edit (and after web edits, since the date-handling scan covers
 `apps/web` too). [[reference-feature-specs]] — the doc + gate + e2e
 triple that new features follow.
+
+## alert-ordering-build-gate (added 2026-08-26)
+
+`apps/api/src/services/alert-ordering-build-gate.test.ts` — 5 tests.
+
+The operator's pending work is listed TWICE: the header alerts dropdown
+(`apps/web/pages/index.tsx`) and the Tasks page
+(`apps/web/src/ui/pages/TasksPage.tsx`). Separate files, separate
+hand-maintained lists. TasksPage carried a comment claiming "Section order
+mirrors the alerts dropdown's push order" — it had been false for a long
+time: four entries were out of order and "Unlinked client accounts" was a
+Tasks section with NO dropdown alert at all.
+
+The gate parses both files and asserts they agree, in both directions,
+against each other's REAL source (not just against its own mapping table —
+an earlier draft did that and a mutation test showed deleting a dropdown
+push left it green).
+
+`ALERT_TO_TASKS` is the canonical order. Labels differ by design ("Overdue"
+vs "Overdue jobs"), so the mapping is explicit. `"Payments to review"` is
+the only sanctioned one-to-many entry (one dropdown row, two Tasks
+sections) and the gate asserts it stays the only one.
+
+**Adding a new alert means adding it to BOTH files and to `ALERT_TO_TASKS`.**
+That is the intended friction.

@@ -86,6 +86,12 @@ export type PayrollPeriodDetail = {
   payDay: string;
   label: string | null;
   archivedAt?: string | null;
+  /**
+   * SUPER ONLY — the employer's side of Gusto's "Payroll Totals" row for
+   * this whole run. Absent from any other payload, so render it behind a
+   * presence check as well as the role gate.
+   */
+  employerTotals?: PayrollValues;
   entries: PayrollEntryView[];
 };
 
@@ -437,4 +443,24 @@ export function isPayDayPending(payDay: string): boolean {
 /** "Paid" once the money has landed, "Pays" while it is still ahead. */
 export function payDayVerb(payDay: string): "Paid" | "Pays" {
   return isPayDayPending(payDay) ? "Pays" : "Paid";
+}
+
+/**
+ * Tell the rest of the app the payroll queue moved.
+ *
+ * Consumed by the header alerts dropdown and the Tasks page, both of which
+ * hold their own count of names awaiting a match. Without this, matching a
+ * name here left the header badge showing the pre-match number until a full
+ * reload — the classic "cross-tab auto-refresh" gap, where an event is
+ * emitted but nothing listens (or, here, nothing was emitted at all).
+ *
+ * Fired on BOTH edges: an import adds names to the queue, a match removes
+ * one.
+ */
+export function notifyPayrollChanged() {
+  try {
+    window.dispatchEvent(new CustomEvent("seedlings:payroll-changed"));
+  } catch {
+    // SSR / non-browser — nothing to notify.
+  }
 }

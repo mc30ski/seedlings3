@@ -64,7 +64,7 @@ export const ADMIN_VISIBLE_FIELDS = [
   "checkAmount",
 ] as const satisfies readonly NumericField[];
 
-/** Every numeric field, for worker-own and super views. */
+/** Every numeric field. SUPER only — the one view with nothing withheld. */
 export const ALL_NUMERIC_FIELDS: readonly NumericField[] = [
   "regularHours",
   "regularRate",
@@ -89,9 +89,60 @@ export const ALL_NUMERIC_FIELDS: readonly NumericField[] = [
   "employerCost",
 ];
 
-/** Which fields a given viewer may receive. */
+/**
+ * The employer's side of the ledger: what the BUSINESS paid on top of
+ * wages, and the resulting total cost of employing someone.
+ *
+ * SUPER ONLY. Not because it is more sensitive than a tax line — it is
+ * simply not the worker's information. A pay stub tells you what you
+ * earned and what was withheld from it; the employer's matching Social
+ * Security contribution, its FUTA and NC unemployment liability, and what
+ * you cost the company in total are the company's books. Gusto draws the
+ * same line: an employee's own Gusto account does not show these either.
+ *
+ * An ADMIN is already excluded from everything but hours/gross/net, so
+ * this list is really about narrowing the WORKER's own row.
+ */
+export const EMPLOYER_SIDE_FIELDS = [
+  "employerTaxes",
+  "socialSecurityEmployer",
+  "medicareEmployer",
+  "futaEmployer",
+  "stateUnemploymentEmployer",
+  "employerCost",
+] as const satisfies readonly NumericField[];
+
+/**
+ * A worker's own row: their full pay stub, minus the employer's side.
+ *
+ * DERIVED by subtraction rather than listed out, so a new column added to
+ * ALL_NUMERIC_FIELDS reaches the worker automatically UNLESS it is named
+ * employer-side. That is the safe default for pay-stub data — a new
+ * withholding line is theirs by right — while anything belonging to the
+ * company's books has to be declared above to be withheld.
+ */
+export const WORKER_VISIBLE_FIELDS: readonly NumericField[] = ALL_NUMERIC_FIELDS.filter(
+  (f) => !(EMPLOYER_SIDE_FIELDS as readonly NumericField[]).includes(f),
+);
+
+/**
+ * Which fields a given viewer may receive.
+ *
+ * Every branch is explicit. An earlier version read `admin ? ADMIN : ALL`,
+ * which made "everything" the default for anything that was not an admin
+ * — so `super` and `worker` shared one projection and a worker's payload
+ * carried the employer-side columns their UI never rendered. Client-side
+ * omission is not a control.
+ */
 export function fieldsFor(viewer: PayrollViewer): readonly NumericField[] {
-  return viewer.kind === "admin" ? ADMIN_VISIBLE_FIELDS : ALL_NUMERIC_FIELDS;
+  switch (viewer.kind) {
+    case "admin":
+      return ADMIN_VISIBLE_FIELDS;
+    case "worker":
+      return WORKER_VISIBLE_FIELDS;
+    case "super":
+      return ALL_NUMERIC_FIELDS;
+  }
 }
 
 // ── Import ───────────────────────────────────────────────────────────────────
@@ -465,6 +516,30 @@ export async function listPeriods(viewer: PayrollViewer): Promise<PayrollPeriodS
       unmatchedCount: p.entries.filter((e) => e.userId === null).length,
     };
   });
+}
+
+/**
+ * The employer's side of one period's "Payroll Totals" row.
+ *
+ * SUPER ONLY — returns undefined for anyone else, so the field is absent
+ * from the payload rather than present-and-zeroed. Same rule as
+ * `teamTotals.employerCost`: the absence IS the access control.
+ */
+export function employerTotalsFor(
+  period: { totals: unknown },
+  viewer: PayrollViewer,
+): Partial<Record<NumericField, number | null>> | undefined {
+  if (viewer.kind !== "super") return undefined;
+  const t = (period.totals ?? {}) as {
+    values?: Partial<Record<NumericField, number | null>>;
+  };
+  if (!t.values) return undefined;
+  const out: Partial<Record<NumericField, number | null>> = {};
+  for (const f of EMPLOYER_SIDE_FIELDS) out[f] = t.values[f] ?? null;
+  // Gross rides along so the block can show what the employer taxes sit on
+  // top of — "cost = gross + taxes" is the whole point of the section.
+  out.grossEarnings = t.values.grossEarnings ?? null;
+  return out;
 }
 
 export type PayrollEntryView = {

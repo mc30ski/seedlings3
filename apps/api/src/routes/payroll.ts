@@ -16,6 +16,7 @@ import {
   linkIdentity,
   unlinkIdentity,
   archivePeriod,
+  employerTotalsFor,
   PayrollConservationError,
   type PayrollViewer,
 } from "../services/payroll";
@@ -193,6 +194,12 @@ export default async function payrollRoutes(app: FastifyInstance) {
       payDay: period.payDay,
       label: period.label,
       archivedAt: viewer.kind === "super" ? period.archivedAt : undefined,
+      // The employer's side for the whole run, from Gusto's own "Payroll
+      // Totals" row rather than summed client-side. The import's
+      // conservation check already proved the entries sum to it, so the two
+      // agree — but the stored row is the figure Gusto reported, and that
+      // is what an operator reconciles against.
+      employerTotals: employerTotalsFor(period, viewer),
       entries: await listEntries(period.id, viewer, forUserId),
     };
   });

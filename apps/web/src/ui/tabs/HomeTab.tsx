@@ -18,7 +18,8 @@
 
 import { useEffect, useState } from "react";
 import { Box, Button, Card, HStack, SimpleGrid, Spinner, Text, VStack } from "@chakra-ui/react";
-import { BarChart3 } from "lucide-react";
+import { BarChart3, Users } from "lucide-react";
+import { Dashboard } from "@/src/ui/components/Dashboard";
 import { FiMoon, FiPlay, FiRefreshCw, FiSun } from "react-icons/fi";
 import { computeDatesFromPreset, type DatePreset } from "@/src/lib/datePresets";
 import { apiGet } from "@/src/lib/api";
@@ -560,8 +561,11 @@ export default function HomeTab({
   // gets `position="relative"` so this absolutely-positioned element
   // lands inside its border. stopPropagation because several hero
   // cards are themselves click-navigable.
-  const heroCornerRefresh = (
-    <Box position="absolute" top={2} right={2} zIndex={1}>
+  // The corner-anchored variant, for hero cards that have empty space at
+  // their top-right. Sections with a Dashboard title bar use
+  // `refreshButton` inline instead — absolutely positioning it under a
+  // header band drops it onto the first divider.
+  const refreshButton = (
       <Button
         size="sm"
         variant="ghost"
@@ -584,6 +588,11 @@ export default function HomeTab({
       >
         <FiRefreshCw size={14} />
       </Button>
+  );
+
+  const heroCornerRefresh = (
+    <Box position="absolute" top={2} right={2} zIndex={1}>
+      {refreshButton}
     </Box>
   );
 
@@ -879,19 +888,52 @@ export default function HomeTab({
             Don't "restore" it without asking. */}
 
         {/* Aggregate mode: a single team-summary banner replaces the per-worker hero. */}
+        {/* 4px left stripe, matching every Dashboard section on this page
+            (see PALETTES in Dashboard.tsx) so the team banner reads as one
+            of the family rather than a stray outlined card. Deliberately
+            GREY, not a palette colour: the coloured stripes each MEAN
+            something on Home — green MY ACTIVITIES, amber the derived
+            estimate, blue what was actually paid, purple the team snapshot
+            below — and giving this banner one of those would claim a
+            relationship it doesn't have. Grey is the family shape without
+            a colour claim.
+
+            borderLeftWidth replaces the 1px baseline rather than adding to
+            it, so the frame's total width is unchanged — same trick the
+            Dashboard stripe uses. */}
         {isAggregate && (
-          <Card.Root variant="outline" bg="gray.50" borderColor="gray.300" position="relative">
-            {heroCornerRefresh}
-            <Card.Body p={5}>
-              <VStack align="start" gap={1}>
-                <Text fontSize="lg" fontWeight="bold" color="gray.800">
-                  {isSubset ? `Selected workers (${subsetUserIds?.length ?? 0})` : "Team overview"}
-                </Text>
-                <Text fontSize="sm" color="gray.700">
-                  {s.today} job{s.today === 1 ? "" : "s"} scheduled today
-                  {s.activeWork > 0 ? ` · ${s.activeWork} in progress` : ""}
-                  {(s.tomorrow ?? 0) > 0 ? ` · ${s.tomorrow} tomorrow` : ""}
-                </Text>
+          <Dashboard
+            storageKey="seedlings:homeTab:teamOverviewOpen"
+            title={isSubset ? `Selected workers (${subsetUserIds?.length ?? 0})` : "Team overview"}
+            icon={Users}
+            variant="neutral"
+            /* The one-line count follows the title into the collapsed
+               header. Collapsing a section should cost you the detail, not
+               the headline — "13 jobs scheduled today · 2 in progress" is
+               the whole reason an operator opens this page. */
+            collapsedSummarySlot={
+              <Text fontSize="xs" color="gray.700" lineClamp={1}>
+                {s.today} job{s.today === 1 ? "" : "s"} today
+                {s.activeWork > 0 ? ` · ${s.activeWork} in progress` : ""}
+                {(s.tomorrow ?? 0) > 0 ? ` · ${s.tomorrow} tomorrow` : ""}
+              </Text>
+            }
+          >
+            {/* Refresh sits INLINE on the summary row, not corner-anchored:
+                the Dashboard title bar now occupies the top of the frame, so
+                an absolute top-right button lands on the first divider. It
+                also must not go in the header — that is a <button>, and
+                nesting one inside it is invalid HTML. */}
+            <Box>
+              <VStack align="stretch" gap={1}>
+                <HStack justify="space-between" align="center" gap={2}>
+                  <Text fontSize="sm" color="gray.700">
+                    {s.today} job{s.today === 1 ? "" : "s"} scheduled today
+                    {s.activeWork > 0 ? ` · ${s.activeWork} in progress` : ""}
+                    {(s.tomorrow ?? 0) > 0 ? ` · ${s.tomorrow} tomorrow` : ""}
+                  </Text>
+                  {refreshButton}
+                </HStack>
                 {/* "Workdays in progress" panel — one row per worker
                     currently on the clock (workday endedAt is null).
                     Rendered ABOVE "Jobs in progress now" because the
@@ -1157,8 +1199,8 @@ export default function HomeTab({
                   </VStack>
                 )}
               </VStack>
-            </Card.Body>
-          </Card.Root>
+            </Box>
+          </Dashboard>
         )}
 
         {/* Approximate pay-per-hour card — worker's own on their Home,

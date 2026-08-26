@@ -34,6 +34,8 @@ import {
   fieldsFor,
   ADMIN_VISIBLE_FIELDS,
   ALL_NUMERIC_FIELDS,
+  EMPLOYER_SIDE_FIELDS,
+  WORKER_VISIBLE_FIELDS,
 } from "./payroll";
 
 const REPO_ROOT = resolve(__dirname, "../../../..");
@@ -47,6 +49,19 @@ const ROUTES_SRC = readFileSync(join(REPO_ROOT, "apps/api/src/routes/payroll.ts"
  * ADMIN_VISIBLE_FIELDS by default and this list is the explicit record of
  * intent.
  */
+/**
+ * The withholding side — a worker's own pay-stub data. They see all of it;
+ * an admin sees none of it for someone else.
+ */
+const EMPLOYEE_SIDE_TAX_FIELDS = [
+  "employeeTaxes",
+  "federalIncomeTax",
+  "socialSecurityEmployee",
+  "medicareEmployee",
+  "additionalMedicareEmployee",
+  "stateTaxEmployee",
+] as const;
+
 const TAX_AND_EMPLOYER_FIELDS = [
   "employeeTaxes",
   "federalIncomeTax",
@@ -100,13 +115,55 @@ describe("payroll build gate — admin projection", () => {
     expect(fieldsFor({ kind: "admin" })).not.toContain("regularRate");
   });
 
-  it("a worker receives their OWN full breakdown", () => {
+  it("a worker receives their OWN full WITHHOLDING breakdown", () => {
     // It is their own pay-stub data. The hours/gross/net restriction is
     // about an ADMIN looking at someone else, not about a worker's own row.
     const worker = fieldsFor({ kind: "worker", userId: "u1" });
-    for (const f of TAX_AND_EMPLOYER_FIELDS) {
+    for (const f of EMPLOYEE_SIDE_TAX_FIELDS) {
       expect(worker, `worker must receive their own ${f}`).toContain(f);
     }
+  });
+
+  it("a worker receives NO employer-side field, ever", () => {
+    // Narrowed 2026-08-26. `fieldsFor` used to read `admin ? ADMIN : ALL`,
+    // so worker and super shared one projection: a worker's own payload
+    // carried employerTaxes, FUTA, NC unemployment and employerCost. The
+    // UI never rendered them, but client-side omission is not a control —
+    // the row was one DevTools tab away.
+    //
+    // These are the company's books, not a pay stub. Gusto draws the same
+    // line: an employee's own account does not show them either.
+    const worker = fieldsFor({ kind: "worker", userId: "u1" });
+    for (const f of EMPLOYER_SIDE_FIELDS) {
+      expect(worker, `worker must NOT receive ${f} — that is the company's book`).not.toContain(f);
+    }
+  });
+
+  it("the worker projection is derived, so a NEW column defaults to visible", () => {
+    // Subtraction, not a hand-maintained list. A new withholding line is
+    // the worker's by right and should reach them automatically; anything
+    // belonging to the employer has to be declared in EMPLOYER_SIDE_FIELDS
+    // to be withheld. The reverse default would silently hide pay-stub
+    // data every time the parser gained a column.
+    expect([...WORKER_VISIBLE_FIELDS].sort()).toEqual(
+      ALL_NUMERIC_FIELDS.filter(
+        (f) => !(EMPLOYER_SIDE_FIELDS as readonly string[]).includes(f),
+      ).sort(),
+    );
+  });
+
+  it("every viewer kind is projected explicitly, never by falling through", () => {
+    // The original bug was a default: `admin ? ADMIN : ALL` made
+    // "everything" the else-branch, so `super` and `worker` silently
+    // shared it. Each kind must name its own list.
+    const worker = fieldsFor({ kind: "worker", userId: "u1" });
+    const admin = fieldsFor({ kind: "admin" });
+    const su = fieldsFor({ kind: "super" });
+    expect(su).toEqual(ALL_NUMERIC_FIELDS);
+    expect(worker).not.toEqual(ALL_NUMERIC_FIELDS);
+    expect(admin).not.toEqual(ALL_NUMERIC_FIELDS);
+    expect(worker.length).toBeLessThan(su.length);
+    expect(admin.length).toBeLessThan(worker.length);
   });
 
   it("a super receives the full breakdown", () => {
