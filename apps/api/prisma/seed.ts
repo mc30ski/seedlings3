@@ -3645,7 +3645,11 @@ async function seedPayrollFixtures() {
   ];
 
   const ADDRESS = "225 Stony Branch Trl, Chapel Hill, NC 27516";
-  const WEEKS = 4;
+  // Five weeks, and the NEWEST one is deliberately still PENDING — its pay
+  // day is in the future. Payroll is run days before the deposit lands, so
+  // that state is normal, and without an example of it in the seed the
+  // "Pays <date> · Pending" treatment has nothing to render against.
+  const WEEKS = 5;
   const outDir = join(__dirname, "fixtures", "payroll");
   mkdirSync(outDir, { recursive: true });
 
@@ -3655,10 +3659,11 @@ async function seedPayrollFixtures() {
   // Oldest first, so the "replace" path is never exercised by the seed
   // itself and each import is a clean create.
   for (let i = WEEKS - 1; i >= 0; i--) {
-    // Period ends (i+1)*7 days ago, paid 5 days later — so even the newest
-    // pay day is in the PAST. Canonical ET helpers; a raw Date would drift
-    // a pay day across a boundary.
-    const periodEnd = etAddDays(etToday(), -((i + 1) * 7));
+    // Period ends (i*7 + 1) days ago, paid 5 days after it ends. That puts
+    // the newest week's pay day in the FUTURE (ends yesterday, pays in four
+    // days) and every earlier one in the past. Canonical ET helpers; a raw
+    // Date would drift a pay day across a boundary.
+    const periodEnd = etAddDays(etToday(), -(i * 7 + 1));
     const periodStart = etAddDays(periodEnd, -6);
     const payDay = etAddDays(periodEnd, 5);
 
@@ -3772,7 +3777,7 @@ async function seedPayrollFixtures() {
   }
 
   console.log(
-    `  ✓ Seeded ${imported} payroll week(s) via real CSV import for ${people.length} employee(s) + 1 unmatched row`,
+    `  ✓ Seeded ${imported} payroll week(s) via real CSV import for ${people.length} employee(s) + 1 unmatched row (newest week is still pending)`,
   );
   console.log(`    CSVs written to prisma/fixtures/payroll/ (${written.join(", ")})`);
 }

@@ -35,6 +35,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Badge,
   Box,
   Button,
   HStack,
@@ -57,6 +58,8 @@ import {
   fetchPayrollPendingMatch,
   fmtPayrollMoney,
   filterPeriodsByRange,
+  isPayDayPending,
+  payDayVerb,
   sumMine,
   PAYROLL_RANGES,
   type PayrollRangeKey,
@@ -254,7 +257,13 @@ export default function PayrollHomeSection({
             </SimpleGrid>
 
             <Text fontSize="2xs" color="blue.700" mt={2}>
-              Actual amounts paid · {periods.length}{" "}
+              {/* "Paid" is a claim about money that has moved. When the
+                  window includes a pay day still ahead, the figures are
+                  final but the deposit hasn't happened. */}
+              {shown.some((pp) => isPayDayPending(pp.payDay))
+                ? "Final amounts · includes a pay day still to come"
+                : "Actual amounts paid"}{" "}
+              · {periods.length}{" "}
               {periods.length === 1 ? "period" : "periods"} on record
             </Text>
           </Box>

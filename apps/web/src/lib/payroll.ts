@@ -3,6 +3,7 @@ import {
   bizToday,
   bizAddDays,
   bizAddMonths,
+  bizDaysBetween,
   bizStartOfYear,
   type EtDateKey,
 } from "@/src/lib/dates";
@@ -359,4 +360,70 @@ export function sumTeam(
 /** Money is Float in this schema; keep sums at cent precision. */
 function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
+// ── Cadence chip ─────────────────────────────────────────────────────────────
+
+/**
+ * The pay-cadence chip shown on a period row.
+ *
+ * DERIVED FROM THE DATES, not from Gusto's label. Real exports disagree
+ * with each other: the same operator's weekly runs came through as both
+ *   "Weekly Payroll payroll period"   -> label "Weekly Payroll"
+ * and
+ *   "Payroll period"                  -> label "" -> null, no chip at all
+ * so identical runs rendered differently. The period length is the one
+ * thing that is always present and always true.
+ *
+ * Gusto's own label still wins when it says something the dates CANNOT —
+ * "Off-Cycle Payroll", "Bonus" — because that is real information. It is
+ * only ignored when it merely restates the cadence, which is exactly the
+ * case that was inconsistent.
+ */
+export function payrollCadenceLabel(
+  periodStart: string,
+  periodEnd: string,
+  label?: string | null,
+): string | null {
+  const raw = (label ?? "").trim();
+
+  // A label that isn't just a cadence word carries information the dates
+  // can't (off-cycle, bonus, correction). Keep it.
+  if (raw && !/^(weekly|bi-?weekly|semi-?monthly|monthly)\s*payroll$/i.test(raw)) {
+    return raw;
+  }
+
+  // Inclusive span: a Mon–Sun week is 7 days, not 6.
+  const days = bizDaysBetween(periodStart as EtDateKey, periodEnd as EtDateKey) + 1;
+  if (!Number.isFinite(days) || days <= 0) return raw || null;
+
+  if (days === 7) return "Weekly";
+  if (days === 14) return "Bi-weekly";
+  if (days >= 15 && days <= 16) return "Semi-monthly";
+  if (days >= 28 && days <= 31) return "Monthly";
+  // Anything else is genuinely unusual — say the length rather than guess
+  // a cadence name for it.
+  return `${days}-day period`;
+}
+
+// ── Pending pay day ──────────────────────────────────────────────────────────
+
+/**
+ * Has this period's money not landed yet?
+ *
+ * A payroll is usually RUN before its pay day — Gusto's export exists days
+ * ahead of the deposit. Such a period is real and its figures are final,
+ * but calling it "Paid 8/28" on the 26th is simply false.
+ *
+ * Derived from today's date, never stored: the chip disappears on its own
+ * the morning the pay day arrives, with no job, no flag to flip, and no
+ * risk of a row being left permanently "pending".
+ */
+export function isPayDayPending(payDay: string): boolean {
+  return !!payDay && payDay > bizToday();
+}
+
+/** "Paid" once the money has landed, "Pays" while it is still ahead. */
+export function payDayVerb(payDay: string): "Paid" | "Pays" {
+  return isPayDayPending(payDay) ? "Pays" : "Paid";
 }
