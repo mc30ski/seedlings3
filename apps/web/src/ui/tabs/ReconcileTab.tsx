@@ -2,11 +2,12 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Badge, Box, Button, Card, Checkbox, HStack, Select, Spinner, Table, Text, VStack, createListCollection } from "@chakra-ui/react";
-import { FiDownload, FiInfo } from "react-icons/fi";
+import { FiDownload, FiInfo, FiUpload } from "react-icons/fi";
 import { ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
 import { apiGet, apiDownload, apiGetText } from "@/src/lib/api";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import DateInput from "@/src/ui/components/DateInput";
+import PayrollUploadDialog from "@/src/ui/dialogs/PayrollUploadDialog";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import { bizToday, bizAddDays, bizMondayOnOrBefore, bizStartOfMonth, bizStartOfYear, type EtDateKey } from "@/src/lib/dates";
 
@@ -661,6 +662,14 @@ async function copyToClipboard(text: string) {
 }
 
 export default function ReconcileTab() {
+  // Shortcut so the routine "payroll just ran, import it" case doesn't
+  // require navigating to Super → Money → Payroll. Same dialog, same
+  // Super-only endpoint. See docs/features/payroll.md.
+  //
+  // NOTE: this does NOT connect payroll to anything on this tab. The P&L's
+  // "Employer payroll taxes (est.)" line stays an estimate — see the
+  // estimate/actual firewall in the spec, enforced by payroll-build-gate.
+  const [payrollUploadOpen, setPayrollUploadOpen] = useState(false);
   const thisMondayDefault = bizMondayOnOrBefore();
   const [start, setStart] = useState(thisMondayDefault);
   const [end, setEnd] = useState(bizAddDays(thisMondayDefault, 6));
@@ -1191,6 +1200,13 @@ export default function ReconcileTab() {
           {/* Timeframe row — DateInput + dash + DateInput + green preset
               chip on a single line, matching the PaymentsTab layout. */}
           <HStack gap={2} wrap="wrap" align="center">
+              {/* Payroll import shortcut. Deliberately at the TOP LEVEL, not
+                  inside one of the collapsible cards — every section below
+                  is collapsed by default, so a shortcut buried in one is not
+                  a shortcut. It also does not belong in "Export Data": this
+                  is an import, and the direction matters to the operator.
+                  Ends the row so it never crowds the dates on a phone.
+                  Opens the same dialog as Money → Payroll. */}
               <DateInput
                 value={start}
                 onChange={(val) => {
@@ -1282,6 +1298,17 @@ export default function ReconcileTab() {
                   </VStack>
                 )}
               </Box>
+              <Button
+                size="sm"
+                colorPalette="green"
+                variant="outline"
+                flexShrink={0}
+                onClick={() => setPayrollUploadOpen(true)}
+                title="Import the latest Gusto payroll journal (also on Money → Payroll)."
+              >
+                <FiUpload />
+                <Text ml={2}>Upload payroll</Text>
+              </Button>
             </HStack>
             {/* By-category chip strip — same look as the Ledger tab. Sits
                 directly under the timeframe so the operator sees the spend
@@ -1869,6 +1896,15 @@ export default function ReconcileTab() {
         )}
       </Card.Root>
 
+      <PayrollUploadDialog
+        open={payrollUploadOpen}
+        onClose={() => setPayrollUploadOpen(false)}
+        onImported={() => {
+          /* Nothing on this tab depends on payroll — the P&L numbers are
+             unchanged by an import, by design. The dialog reports what it
+             did and the operator closes it. */
+        }}
+      />
     </VStack>
   );
 }

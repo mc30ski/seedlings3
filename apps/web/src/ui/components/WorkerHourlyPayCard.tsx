@@ -28,6 +28,7 @@ import {
 import { apiGet } from "@/src/lib/api";
 import { fmtDateOpts, fmtTimeOpts } from "@/src/lib/dates";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
+import { Dashboard } from "@/src/ui/components/Dashboard";
 
 export type BreakdownJob = {
   id: string;
@@ -72,7 +73,7 @@ type Props = {
   // instead of the caller's. Admin-only on the server side.
   viewAsUserId?: string | null;
   // Optional: display name of the impersonated worker for the header
-  // copy ("Approximate pay per hour for {name}").
+  // copy ("Earnings for {name}").
   viewAsDisplayName?: string | null;
   // Optional: when provided, embed a weekly-earnings trend chart at
   // the bottom of this card, filtered to whatever period the pay
@@ -434,28 +435,71 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName, w
   }
 
   const rate = data.ratePerHour;
-  const tier = tierFor(rate);
+  // Tier still drives the LABEL, tagline, icon and sparkle — the
+  // encouragement ladder. The PALETTE is deliberately FIXED (light yellow),
+  // per operator preference (2026-08-24).
+  //
+  // Two reasons it was tier-coloured before and shouldn't be:
+  //   1. The card sits directly above the PAYROLL section, which states
+  //      what someone was actually paid. Recolouring by rate reads as the
+  //      app passing judgement on their earnings.
+  //   2. The colour tracked the PERIOD DROPDOWN as much as the worker —
+  //      switching "last month" to "last 2 weeks" could flip the card from
+  //      gray to teal with no change in what anyone earned.
+  //
+  // NOTE: AllWorkersHourlyPayCards (Super aggregate) still uses tierFor's
+  // colours. Left alone deliberately; change both together if that should
+  // go neutral too.
+  // Yellow marks this as the ESTIMATE, distinct from the blue PAYROLL
+  // section directly below it, which reports what was actually paid.
+  const tier = {
+    ...tierFor(rate),
+    bg: "yellow.50",
+    border: "yellow.200",
+    fg: "yellow.900",
+    numberFg: "yellow.900",
+  };
   const Icon = tier.icon;
   const hasHours = data.hours > 0;
   const periodDisplay = buttonPeriodLabel(period.label);
   const cycleTitle = `Showing ${periodDisplay} — click to change period`;
 
   return (
-    <Card.Root
-      variant="outline"
-      bg={tier.bg}
-      borderColor={tier.border}
-      borderWidth={tier.animation ? "2px" : "1px"}
-      style={tier.animation ? { animation: tier.animation } : undefined}
-    >
-      <Card.Body p={4}>
-        <HStack justify="space-between" mb={2} align="start">
-          <Text fontSize="xs" fontWeight="semibold" color={tier.fg} textTransform="uppercase" letterSpacing="wide">
-            Approximate pay per hour
-            {viewAsUserId && viewAsDisplayName && (
-              <> · {viewAsDisplayName}</>
-            )}
+    // Same chrome as the other Home sections: collapsible, with the thicker
+    // left accent stripe. `estimate` is the amber palette — this is a number
+    // the app DERIVED, sitting above the blue PAYROLL section that reports
+    // what Gusto actually paid.
+    //
+    // The rate rides in `summarySlot` so a collapsed section still answers
+    // the question it exists for. The period picker stays in the BODY: the
+    // Dashboard header is itself a button, and nesting one inside would be
+    // invalid markup and would fight the collapse toggle.
+    <Dashboard
+      storageKey="seedlings:homeTab:hourlyPayOpen"
+      // "My earnings" for the worker's own card; "Earnings: Name" when an
+      // admin is viewing someone else, since "My" would then be wrong.
+      // Same shape as MY ACTIVITIES -> "Activities: Name", and the colon
+      // convention every Home section now shares.
+      title={
+        viewAsUserId && viewAsDisplayName
+          ? `Earnings: ${viewAsDisplayName}`
+          : "My earnings"
+      }
+      icon={Icon}
+      variant="estimate"
+      // Collapsed ONLY. Open, the rate is already the largest thing on the
+      // card — repeating it beside the title is redundant. Collapsed, it is
+      // the whole reason to have a header line.
+      collapsedSummarySlot={
+        hasHours ? (
+          <Text fontSize="xs" fontWeight="bold" color={tier.numberFg} whiteSpace="nowrap">
+            ${rate.toFixed(2)}/hr
           </Text>
+        ) : undefined
+      }
+    >
+      <Box>
+        <HStack justify="flex-end" mb={2} align="start">
           <HStack gap={1}>
             <Button
               size="xs"
@@ -625,8 +669,8 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName, w
             </Box>
           );
         })()}
-      </Card.Body>
-    </Card.Root>
+      </Box>
+    </Dashboard>
   );
 }
 

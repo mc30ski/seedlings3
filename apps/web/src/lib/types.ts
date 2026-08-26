@@ -22,7 +22,8 @@ export type AdminTabs =
   | "groups"
   | "pricing"
   | "documents"
-  | "timeline";
+  | "timeline"
+  | "payroll";
 
 export type SuperTabs =
   | "home"
@@ -48,7 +49,8 @@ export type SuperTabs =
   | "vehicles"
   | "promotions"
   | "tools-mowing"
-  | "tools-mulch";
+  | "tools-mulch"
+  | "payroll";
 
 // Client "Services" uses `client-services` (not just `services`) so
 // BreadcrumbNav's cross-role chip logic (matches inner-tab values
@@ -77,7 +79,8 @@ export type WorkerTabs =
   | "pricing"
   | "jobs"
   | "profile"
-  | "payments";
+  | "payments"
+  | "payroll";
 
 export type EventTypes =
   | "clientTabToPropertiesTabSearch"

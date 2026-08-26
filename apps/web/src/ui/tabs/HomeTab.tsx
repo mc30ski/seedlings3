@@ -26,6 +26,8 @@ import { bizToday, bizTomorrow, bizAddDays, bizHour, fmtDateOpts, fmtTimeOpts } 
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import HomeBanners from "@/src/ui/components/HomeBanners";
 import MyDashboard from "@/src/ui/components/MyDashboard";
+import PayrollHomeSection from "@/src/ui/components/PayrollHomeSection";
+import { fetchWorkdayToday } from "@/src/lib/workday";
 import TodayHourlyPayPanel from "@/src/ui/components/TodayHourlyPayPanel";
 import WorkerHourlyPayCard from "@/src/ui/components/WorkerHourlyPayCard";
 import AllWorkersHourlyPayCards from "@/src/ui/components/AllWorkersHourlyPayCards";
@@ -259,6 +261,13 @@ export default function HomeTab({
 }: Props) {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(true);
+  // Whether the scoped worker's workday has already begun. The hero CTA
+  // ("Prepare for work day") walks someone THROUGH starting their day, so
+  // it has nothing to offer once they're on the clock.
+  //
+  // `null` = not yet known. The button renders only on a definite `false`,
+  // so it never appears and then vanishes a moment later.
+  const [workdayStarted, setWorkdayStarted] = useState<boolean | null>(null);
   // Push-notification + compliance state is owned by MyDashboard's
   // inner banners (NotificationOptInBanner, CompliancePromptBanner) —
   // this file no longer needs to track any of it.
@@ -371,6 +380,31 @@ export default function HomeTab({
     window.addEventListener("visibilitychange", onVisible);
     return () => window.removeEventListener("visibilitychange", onVisible);
   }, [viewAsUserId, aggregate, subsetKey]);
+
+  // Workday state for the scoped worker. Refetched on the same broadcast
+  // the WorkdayStrip fires, so starting the day from the strip above hides
+  // this card's CTA immediately rather than on the next page load.
+  useEffect(() => {
+    let cancelled = false;
+    const read = async () => {
+      try {
+        const payload = await fetchWorkdayToday({ viewAsUserId: viewAsUserId ?? null });
+        if (cancelled) return;
+        const st = payload?.today?.state;
+        setWorkdayStarted(st === "IN_PROGRESS" || st === "PAUSED");
+      } catch {
+        // A workday lookup failing must not remove a working button.
+        if (!cancelled) setWorkdayStarted(false);
+      }
+    };
+    void read();
+    const onChanged = () => void read();
+    window.addEventListener("seedlings:workday-changed", onChanged);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("seedlings:workday-changed", onChanged);
+    };
+  }, [viewAsUserId]);
 
   // Hour in Eastern Time (the business timezone) — drives the hero CTA framing.
   const etHour = bizHour();
@@ -634,16 +668,25 @@ export default function HomeTab({
                   centered rather than stretched full-width; it shared the
                   top row with the greeting briefly, which crowded the text
                   out at phone widths. */}
-              <HStack justify="center">
-                <Button
-                  size="md"
-                  colorPalette="green"
-                  disabled={isViewingOther}
-                  onClick={() => onLaunchWorkflow("begin-workday")}
-                >
-                  {heroMode === "begin" ? "Prepare for work day" : "Finish remaining jobs"}
-                </Button>
-              </HStack>
+              {/* Hidden once the worker is on the clock. This launches the
+                  "prepare for work day" flow — review today's jobs, confirm
+                  clients, check equipment, look at the route, start the
+                  workday — and every one of those is either done or moot by
+                  the time someone is clocked in. Rendered only on a
+                  definite `false` so it doesn't appear and then vanish
+                  while the workday lookup is in flight. */}
+              {workdayStarted === false && (
+                <HStack justify="center">
+                  <Button
+                    size="md"
+                    colorPalette="green"
+                    disabled={isViewingOther}
+                    onClick={() => onLaunchWorkflow("begin-workday")}
+                  >
+                    {heroMode === "begin" ? "Prepare for work day" : "Finish remaining jobs"}
+                  </Button>
+                </HStack>
+              )}
             </VStack>
           </Card.Body>
         </Card.Root>
@@ -1132,30 +1175,43 @@ export default function HomeTab({
           />
         )}
 
+        {/* Today's hourly pay — admin-only TEAM roster for today, one row
+            per worker who has finished a job. Regular worker Home never
+            renders it.
+
+            NOT shown when a single worker is selected: a roster of one is
+            not a roster, and it duplicated the MY EARNINGS card directly
+            above it with a narrower window. `isAggregate` covers All
+            Workers and a subset of N — the two cases where comparing
+            workers side by side is the point. */}
+        {isAggregate && (
+          <TodayHourlyPayPanel
+            workerIds={isSubset ? (subsetUserIds ?? []).join(",") : ""}
+          />
+        )}
+
+        {/* MY PAYDAY — what Gusto actually paid, deliberately adjacent to the
+            approximate-pay card above. The two numbers disagree by design;
+            putting them side by side with clear labels is more honest than
+            separating them and letting the mismatch read as a bug. Same
+            single-user gate as that card — payroll is per-person, so it has
+            no meaning in the aggregate/subset team views. Renders nothing
+            when the worker has no payroll on record (every contractor,
+            today). */}
+        {!isAggregate && !isSubset && (
+          <PayrollHomeSection
+            viewAsUserId={viewAsUserId ?? null}
+            viewAsDisplayName={viewAsDisplayName ?? null}
+          />
+        )}
+
         {/* Aggregate / no-worker-selected variant of the pay-per-hour
             card — one mini card per approved worker, side by side. Only
             renders when we're actually in "all workers" mode (no
             view-as, no subset). Subset views can rely on the existing
-            TodayHourlyPayPanel below. */}
+            TodayHourlyPayPanel above. */}
         {isAggregate && !isSubset && <AllWorkersHourlyPayCards />}
 
-        {/* Today's hourly pay — admin-only, per-worker snapshot table.
-            Sits BELOW the Approximate pay-per-hour card so the admin
-            first sees the impersonated worker's number, then the
-            team-wide day-of-work rollup. Gated on any admin-view prop
-            (aggregate, subset, or view-as-single-worker); regular
-            worker Home never renders it. */}
-        {(isAggregate || viewAsUserId) && (
-          <TodayHourlyPayPanel
-            workerIds={
-              viewAsUserId
-                ? viewAsUserId
-                : isSubset
-                  ? (subsetUserIds ?? []).join(",")
-                  : ""
-            }
-          />
-        )}
 
 
 

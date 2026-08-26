@@ -9,8 +9,9 @@
 > work. If code and doc disagree, one of them is wrong — fix both, in the
 > same PR.
 >
-> **Status: SPEC ONLY.** No code exists yet. Sections below describe
-> intended behavior; the Build order at the bottom tracks what has landed.
+> **Status: SHIPPED.** All eight build steps complete.
+> Sections below describe intended behavior; the Build order at the
+> bottom tracks what has landed.
 
 ## Why this is different from everything else in the app
 
@@ -81,11 +82,15 @@ A Gusto **Payroll Journal Report**, exported as CSV. Real example
    period".
 6. **`"Payroll Totals"` is not an employee.** Exclude it from entries;
    use it for the conservation check below.
-7. **Multiple sections.** A journal can contain more than one
+7. **Rate columns are NOT additive.** `Regular (Rate)` reports 7.25 in the
+   totals row when two workers are both at 7.25 — it is a rate, not a sum.
+   Summing it and comparing to the totals row rejects every legitimate
+   upload. Each mapped column carries an `additive` flag for this reason.
+8. **Multiple sections.** A journal can contain more than one
    `"Employee Earnings"` block when the company runs multiple pay
    schedules. Parse **all** of them into separate periods in one upload
    and show them all in the review step. Never silently take the first.
-8. **Column names are jurisdiction-specific.** `NC State Tax (Employee)`,
+9. **Column names are jurisdiction-specific.** `NC State Tax (Employee)`,
    `NC Unemployment Tax (Employer)`. Hiring outside NC changes these
    headers. Match state tax/unemployment columns **by pattern**, not by
    literal string, and keep the untouched source row (see `raw` below).
@@ -172,6 +177,37 @@ another person's net pay.
 check against `"Payroll Totals"` stops balancing. They are invisible to
 every worker and appear only in Super's view, flagged as unmatched.
 
+### What the affected worker sees
+
+An unmatched row belongs to nobody, so no worker query returns it. Two
+situations, handled differently:
+
+**No history yet** (new hire, name never mapped) — they get the empty
+state. Its copy deliberately does NOT explain *why* it's empty: "nothing
+imported" and "imported but unattributed" are indistinguishable from the
+worker's side, so it points at the remedy instead ("payroll is matched to
+your account by name"). It previously claimed nothing had been imported
+and that contractors were the excluded ones — both false for an unmatched
+W-2 employee whose pay was sitting in the review queue.
+
+**History, then a gap** — the dangerous one. Payroll attaches by NAME, so
+a marriage, a Gusto typo, or "Mike" vs "Michael" imports as an
+unattributed row: older periods still render, the newest is simply absent,
+and the worker concludes payroll is late. `getPendingMatchNotice` gives
+them the only signal they get.
+
+It is **targeted, not broadcast**. All three must hold:
+
+1. the worker has payroll history (payroll demonstrably applies to them),
+2. they have no row in the most recent period (a real gap exists),
+3. that period contains at least one unmatched row.
+
+So a fully-matched worker is never told about someone else's pending row,
+and contractors — never in a Gusto payroll journal at all — are never told
+about a problem that cannot be theirs. The response carries a flag and a
+date only: a worker learns that *a* period is unattributed, never whose or
+how much.
+
 ## Visibility
 
 | Role | Whose rows | What they see |
@@ -227,7 +263,9 @@ same edit as the mutation. `AuditScope` is a Prisma enum, so the new
 
 ## Surfaces
 
-**Money → Payroll tab.** Blended additive-scope (`scope: { isWorker,
+**Money → Payroll tab.** Carries the same timeframe picker (defaulting to
+"all time" — this is the tab you open to go back through history), with
+running totals for the selected window. Blended additive-scope (`scope: { isWorker,
 isAdmin, isSuper }`) per
 [`reference_tab_blend_pattern`](file:///Users/michaelwanderski/.claude/projects/-Users-michaelwanderski-dev-seedlings3/memory/reference_tab_blend_pattern.md).
 `showSuperExtras` must **not** fall back to `forAdmin ||`. Periods listed
@@ -235,16 +273,69 @@ newest-first; a worker opens any past period. No fixed "1 week" range —
 periods are whatever was uploaded, filtered by date range or picked from
 the list.
 
-**Home → PAYROLL section.** Follows the `Dashboard` pattern used by MY
-ACTIVITIES, placed adjacent to the approximate-pay card. Shows last pay
-day, net pay, and the period covered.
+**Home → MY PAYDAY section.** Follows the `Dashboard` pattern used by MY
+ACTIVITIES, placed adjacent to the approximate-pay card. Carries a
+**timeframe picker** (latest period / 90 days / 6 months / this year / all
+time) and shows totals across the selection — one period reads as "Paid
+<date>" with net + gross; several read as "N pay periods" with totals.
+
+**Timeframes filter by PAY DAY, not by period dates.** A period worked in
+December and paid in January belongs to January for anyone reconciling
+against their bank. The UI never says "this week" — cadence can change and
+the app must not assume one.
+
+The section **renders even when empty**. An invisible section is
+indistinguishable from a missing feature, which is exactly how this was
+first reported.
+
+**Palette.** Uses `Dashboard`'s `info` (blue) variant — added for this
+section — with content sitting DIRECTLY in the frame; an inner tinted card
+would be a section inside a section. Blue rather than green because green
+reads as "good result", and payroll states what was paid rather than
+judging it. The neighbouring approximate-pay card was also fixed to a
+neutral gray (it previously recoloured by earnings tier, which tracked the
+period dropdown as much as the worker). The tab and section use a
+**banknote** icon, not the dollar glyph already carried by the Money
+category and the Payments tab.
 
 > **No "next payday".** Uploads are manual and sequential, so a predicted
 > next date would be inferred from history and wrong the first time a
 > schedule changes. Do not add it.
 
 **Super → Records → Reconcile.** Shortcut opening the same upload dialog,
-so the common case doesn't require navigating to Money → Payroll.
+so the common case doesn't require navigating to Money → Payroll. It sits
+on the **always-visible timeframe row**, not inside one of the collapsible
+cards — every card on that tab is collapsed by default, so a shortcut
+buried in one isn't a shortcut. It is also deliberately NOT in the "Export
+Data" card: this is an import, and the direction matters.
+
+Note the neighbouring surface: Reconcile already has a **"Worker Payroll"**
+card whose job is the opposite direction — it shows Gusto-copy fields the
+operator types INTO Gusto when running payroll. This feature is the return
+leg: what Gusto paid, coming back. They are complementary and share no
+code or data. Do not merge them.
+
+## Dev seed
+
+`seed.ts` generates **four weeks of Gusto-format CSVs and imports them
+through the real parser** (`importPayrollCsv`), rather than writing rows
+directly with Prisma. Writing rows would be shorter but would skip
+`parseGustoPayrollJournal` and `checkConservation` — so a parser regression
+could ship with a green seed. This way a broken importer fails the seed
+loudly, and seeded data is byte-identical to a genuine upload.
+
+The generated files are also written to **`apps/api/prisma/fixtures/payroll/`**
+so the upload dialog can be hand-tested: re-uploading one exercises the
+REPLACE path, and editing a number in one exercises the conservation
+check's rejection.
+
+Seeded people are **W-2 employees only** — the contractor is deliberately
+absent, leaving a live example of the contractor empty state. Their names
+are deliberately DIFFERENT from the ones in
+`__fixtures__/gusto-payroll-journal.csv`; if they collided, importing that
+fixture would auto-link against seeded identities and stop exercising the
+unmatched-name path it exists to demonstrate. One unmatched row is seeded
+on the newest period so the identity-review queue is never empty.
 
 ## Empty and edge states
 
@@ -255,13 +346,69 @@ so the common case doesn't require navigating to Money → Payroll.
 | Row not matched to any user | Super-only, flagged unmatched; invisible to workers |
 | Conservation check fails | Upload rejected with the offending column named; nothing persisted |
 
+## The estimate/actual firewall — do not cross it
+
+The app **already** estimates employer payroll tax, and it predates this
+feature:
+
+- [`services/payrollTaxEstimates.ts`](../../apps/api/src/services/payrollTaxEstimates.ts)
+  holds operator-tunable percentages (SS 6.2%, Medicare 1.45%, FUTA 0.6%,
+  SUTA 1.5%).
+- [`services/pnlReport.ts`](../../apps/api/src/services/pnlReport.ts)
+  surfaces them as a synthetic **`"Payroll:Employer payroll taxes (est.)"`**
+  line on the Reconcile P&L.
+
+This feature imports the *actual* figures for the same quantities —
+`socialSecurityEmployer`, `medicareEmployer`, `futaEmployer`,
+`stateUnemploymentEmployer`, `employerCost`.
+
+**These two must never be connected.** Not "not yet" — never. One is an
+estimate the operator tunes; the other is ground truth from the payroll
+provider. Entangling them means every future question about a P&L number
+starts with "is this period one where payroll was uploaded?", and the
+answer changes retroactively as periods are imported, replaced, or
+archived. A P&L line that silently changes meaning depending on unrelated
+upload activity is worse than one that is consistently an estimate.
+
+Concretely, and enforced by `payroll-build-gate.test.ts`:
+
+- No payroll module imports `pnlReport` or `payrollTaxEstimates`.
+- Neither of those imports payroll, or references `PayrollEntry` /
+  `PayrollPeriod`.
+- The P&L line keeps its `(est.)` suffix regardless of what has been
+  imported.
+
+If actuals should ever appear on an operator's P&L, that is a **new,
+separately-labelled line** — not a substitution into the existing one.
+
 ## Non-goals
 
 - **Not a tax document.** No 1099s, no W-2s, no tax-export columns.
 - **Not a payroll calculator.** The app never computes withholding.
 - **Not reconciliation** against estimated pay. The schema permits an
   estimated-vs-actual variance view later; it is deliberately not built.
+- **Not a P&L input.** See the firewall section above — the synthetic
+  "Employer payroll taxes (est.)" line stays an estimate, permanently.
 - **Not a Gusto integration.** Manual CSV upload only. No API, no sync.
+
+## Testing
+
+| Layer | Where | Proves |
+|---|---|---|
+| Parser | `payrollImport.test.ts` (36) | Real Gusto export parses; blank ≠ zero; rates aren't additive; totals conserve |
+| Projections + wiring | `payroll-build-gate.test.ts` (24) | Admin field list; worker `where` clause; route guards; estimate/actual firewall |
+| Worker isolation | `payroll-worker.spec.ts` (employee) | A worker sees ONLY their own row — **in a browser, against the real response** |
+| Admin projection | `adminrole-payroll.spec.ts` (admin-role) | An admin payload carries no tax field |
+| Super flows | `payroll-admin.spec.ts` (super) | Upload, replace-not-duplicate, identity match, archive |
+
+**The `admin-role` Playwright project exists for one reason.** SUPER
+outranks ADMIN and receives the full payload, so an admin-only restriction
+is invisible from a `super` session — testing it there would pass while
+proving nothing. The project uses an ADMIN-but-not-SUPER account, and its
+specs are named with the `adminrole-` prefix (mirroring `mobile-`).
+
+Both browser suites read the **API response**, not just the DOM. A payload
+that carried tax figures and hid them in the UI would still be a leak.
 
 ## Where invariants are enforced
 
@@ -278,14 +425,14 @@ so the common case doesn't require navigating to Money → Payroll.
 
 ## Build order
 
-- [ ] 1. Migration: `PayrollPeriod`, `PayrollEntry`, `PayrollIdentity`, `AuditScope.PAYROLL`
-- [ ] 2. `MM/DD/YYYY` → `EtDateKey` helper in `dates.ts` + unit tests
-- [ ] 3. Gusto Payroll Journal adapter + conservation check, unit-tested against the real file
-- [ ] 4. Service + routes, three-tier projection, view-as-aware
-- [ ] 5. `payroll-build-gate.test.ts`
-- [ ] 6. Money → Payroll tab + identity review UI
-- [ ] 7. Home PAYROLL section + Reconcile shortcut
-- [ ] 8. Playwright specs (`payroll-*.spec.ts`)
+- [x] 1. Migration: `PayrollPeriod`, `PayrollEntry`, `PayrollIdentity`, `AuditScope.PAYROLL` — `20260824192922_add_payroll`
+- [x] 2. `MM/DD/YYYY` → `EtDateKey` helper in `dates.ts` + unit tests — `parseUsDateToEtDateKey`, `parseUsDateRangeToEtDateKeys`
+- [x] 3. Gusto Payroll Journal adapter + conservation check — `services/payrollImport.ts`, 36 tests against the real export
+- [x] 4. Service + routes, three-tier projection, view-as-aware — `services/payroll.ts`, `routes/payroll.ts`
+- [x] 5. `payroll-build-gate.test.ts` — 21 tests, mutation-verified
+- [x] 6. Money → Payroll tab + identity review UI — `PayrollTab`, `PayrollUploadDialog`, `PayrollIdentityReview`
+- [x] 7. Home PAYROLL section + Reconcile shortcut — `PayrollHomeSection`, timeframe-row button on ReconcileTab
+- [x] 8. Playwright specs — `payroll-worker` (employee), `adminrole-payroll` (admin-role), `payroll-admin` (super)
 
 Migrations go through `prisma migrate dev` — never `db push` — and are
 applied to dev before any dependent code lands.

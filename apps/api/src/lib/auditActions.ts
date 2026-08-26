@@ -262,6 +262,25 @@ export const AUDIT = {
     UPDATED: [AuditScope.VANITY, AuditVerb.UPDATED] as const,
     DELETED: [AuditScope.VANITY, AuditVerb.DELETED] as const,
   },
+  PAYROLL: {
+    // Gusto payroll-journal imports. See services/payroll.ts and the
+    // canonical spec at docs/features/payroll.md.
+    //
+    // Metadata always carries { payrollPeriodId, periodStart, periodEnd,
+    // payDay, entryCount }.
+    //
+    // REPLACED additionally carries `displacedEntries` — a full snapshot of
+    // the rows it overwrote. Re-upload is the ONLY edit path for payroll, so
+    // this audit row is the sole record of what the numbers were before.
+    // ARCHIVED likewise snapshots what it hid.
+    UPLOADED: [AuditScope.PAYROLL, AuditVerb.PAYROLL_UPLOADED] as const,
+    REPLACED: [AuditScope.PAYROLL, AuditVerb.PAYROLL_REPLACED] as const,
+    ARCHIVED: [AuditScope.PAYROLL, AuditVerb.PAYROLL_ARCHIVED] as const,
+    // Name -> User mapping confirmed / removed by a Super. Metadata carries
+    // { lastName, firstName, userId, entriesRelinked }.
+    IDENTITY_LINKED: [AuditScope.PAYROLL, AuditVerb.PAYROLL_IDENTITY_LINKED] as const,
+    IDENTITY_UNLINKED: [AuditScope.PAYROLL, AuditVerb.PAYROLL_IDENTITY_UNLINKED] as const,
+  },
   PROMO_OPT: {
     // Per-contact promotional-message opt-out / opt-in events. Metadata
     // always includes { contactId, clientId, channel, source, reason? }.

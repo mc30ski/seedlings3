@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback, useRef, ReactNode } from "react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import { Badge, Box, Button, Container, Dialog, HStack, Portal, Spinner, Text, VStack } from "@chakra-ui/react";
-import { AlertTriangle, ArrowLeftCircle, Link2 } from "lucide-react";
+import { AlertTriangle, ArrowLeftCircle, Banknote, Link2 } from "lucide-react";
 import OnClockBubble from "@/src/ui/components/OnClockBubble";
 import { useOffline } from "@/src/lib/offline";
 import OfflineQueueDialog from "@/src/ui/dialogs/OfflineQueueDialog";
@@ -49,6 +49,7 @@ import ClientServicesTab from "@/src/ui/tabs/ClientServicesTab";
 import ClientStatementsTab from "@/src/ui/tabs/ClientStatementsTab";
 import PlanWorkdayWorkflow from "@/src/ui/workflows/PlanWorkdayWorkflow";
 import BeginWorkDayWorkflow from "@/src/ui/workflows/BeginWorkDayWorkflow";
+import PayrollTab from "@/src/ui/tabs/PayrollTab";
 import AdminTasksTab, { type TaskDef, FiPlus, FiDownload, FiDatabase, FiShare2 } from "@/src/ui/tabs/AdminTasksTab";
 import SharePhotosWorkflow from "@/src/ui/workflows/SharePhotosWorkflow";
 // StatisticsTab is no longer wired into the worker or super shell (both tab
@@ -982,6 +983,17 @@ export default function HomePage() {
       content: wrapWithInlineMessage(<PaymentsTab key={`wpay-${paymentsRemountKey}`} me={me} purpose="WORKER" scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }} />),
     },
     {
+      // Worker payroll is view-only and own-rows-only; the server enforces
+      // both, not this component. See docs/features/payroll.md.
+      value: "payroll",
+      label: "Payroll",
+      // Banknote, not TfiMoney — the Money CATEGORY and the Payments tab
+      // both use the dollar glyph, so repeating it here made three
+      // identical icons in one dropdown. Matches the Home PAYROLL section.
+      icon: Banknote,
+      content: wrapWithInlineMessage(<PayrollTab me={me} purpose="WORKER" scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }} />),
+    },
+    {
       value: "pricing",
       label: "Pricing",
       icon: FiTag,
@@ -1162,6 +1174,14 @@ export default function HomePage() {
       content: wrapWithInlineMessage(<PaymentsTab key={`apay-${adminPaymentsRemountKey}`} me={me} purpose="ADMIN" scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }} />),
     },
     {
+      // Admin sees the team total, or one worker's hours/gross/net when a
+      // worker is selected. The tax breakdown is withheld server-side.
+      value: "payroll",
+      label: "Payroll",
+      icon: Banknote,
+      content: wrapWithInlineMessage(<PayrollTab me={me} purpose="ADMIN" scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }} />),
+    },
+    {
       value: "pricing",
       label: "Pricing",
       icon: FiTag,
@@ -1337,7 +1357,7 @@ export default function HomePage() {
           home: "Work", jobs: "Work", routes: "Work", tasks: "Work",
           equipment: "Equipment", collections: "Equipment", vehicles: "Equipment",
           clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
-          payments: "Money", pricing: "Money", supplies: "Money",
+          payments: "Money", payroll: "Money", pricing: "Money", supplies: "Money",
           // statistics: "Records" — re-add when the Worker Statistics tab is restored.
           profile: "System",
         };
@@ -1386,7 +1406,7 @@ chip: false, bucket: t.bucket }));
           home: "Work", jobs: "Work", routes: "Work", services: "Work", tasks: "Work",
           equipment: "Equipment", collections: "Equipment", vehicles: "Equipment",
           clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
-          payments: "Money", pricing: "Money", supplies: "Money",
+          payments: "Money", payroll: "Money", pricing: "Money", supplies: "Money",
           activity: "Records", history: "Records", timeline: "Records", documents: "Records",
           notify: "System", settings: "System", profile: "System",
         };
@@ -1625,6 +1645,15 @@ chip: false, bucket: t.bucket }));
           label: "Payments",
           icon: TfiMoney,
           content: wrapWithInlineMessage(<PaymentsTab me={me} purpose="SUPER" scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }} />),
+          category: "Money",
+          categoryIcon: TfiMoney,
+        },
+        {
+          // Super: full detail, plus upload / identity matching / archive.
+          value: "payroll",
+          label: "Payroll",
+          icon: Banknote,
+          content: wrapWithInlineMessage(<PayrollTab me={me} purpose="SUPER" scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }} />),
           category: "Money",
           categoryIcon: TfiMoney,
         },
@@ -3022,7 +3051,7 @@ chip: false, bucket: t.bucket }));
       home: "Work", jobs: "Work", routes: "Work", services: "Work", tasks: "Work",
       equipment: "Equipment", collections: "Equipment", vehicles: "Equipment",
       clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
-      payments: "Money", pricing: "Money", supplies: "Money",
+      payments: "Money", payroll: "Money", pricing: "Money", supplies: "Money",
       activity: "Records", history: "Records", timeline: "Records", documents: "Records",
       notify: "System", settings: "System", profile: "System",
     };
@@ -3066,7 +3095,7 @@ chip: false, bucket: t.bucket }));
       home: "Work", jobs: "Work", routes: "Work", services: "Work", tasks: "Work",
       equipment: "Equipment", collections: "Equipment", vehicles: "Equipment",
       clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
-      payments: "Money", pricing: "Money", supplies: "Money", ledger: "Money", promotions: "Money",
+      payments: "Money", payroll: "Money", pricing: "Money", supplies: "Money", ledger: "Money", promotions: "Money",
       reconcile: "Records", workdays: "Records", compliance: "Records", activity: "Records",
       history: "Records", timeline: "Records", documents: "Records", audit: "Records",
       "tools-mowing": "Tools", "tools-mulch": "Tools",

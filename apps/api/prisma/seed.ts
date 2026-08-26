@@ -2,7 +2,7 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaNeon } from "@prisma/adapter-neon";
 import { neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
-import { etAddDays, etFormatDate, etInstantFromParts, etMidnight } from "../src/lib/dates";
+import { etAddDays, etFormatDate, etInstantFromParts, etMidnight, etToday } from "../src/lib/dates";
 import { legacyReceiptNumberFor } from "../src/lib/receiptNumber";
 import { createHash } from "crypto";
 
@@ -71,6 +71,14 @@ async function clearDatabase() {
   await prisma.occurrencePropertyPhoto.deleteMany();
   await prisma.jobPropertyPhoto.deleteMany();
   await prisma.paymentSplit.deleteMany();
+  // Payroll (docs/features/payroll.md). Imported Gusto data is dev-only
+  // scratch — without this, rows from an import survive every reseed and the
+  // Payroll tab shows stale periods that no seed fixture explains.
+  // Entries cascade from periods, but deleting them explicitly keeps the
+  // intent readable. PayrollIdentity is independent of both.
+  await prisma.payrollEntry.deleteMany();
+  await prisma.payrollPeriod.deleteMany();
+  await prisma.payrollIdentity.deleteMany();
   // Supply chain (step-3): clear holds + adjustments + purchases before
   // expenses/BEs so the FK dependencies unwind cleanly. Supplies themselves
   // get cleared after BusinessExpense (SupplyPurchase → BE is Restrict).
@@ -3546,6 +3554,7 @@ async function seedDatabase() {
   await seedPromotionFixtures();
 
   await seedVanityPageFixtures();
+  await seedPayrollFixtures();
 
   await applySettingSections();
 
@@ -3563,6 +3572,211 @@ async function seedDatabase() {
 // isn't reseedable, so on a fresh DB the reference would point to a
 // missing file. Existing DBs keep their image (upsert doesn't touch
 // fields on match via `update: {}`).
+/**
+ * Payroll history (docs/features/payroll.md).
+ *
+ * GENERATES REAL GUSTO-FORMAT CSVs AND IMPORTS THEM THROUGH THE REAL
+ * PARSER. Writing rows directly with Prisma would be shorter, but it would
+ * skip `parseGustoPayrollJournal` and `checkConservation` — so a parser
+ * regression could ship with a green seed. This way a broken importer
+ * fails the seed loudly, and the seeded data is byte-identical to what a
+ * genuine upload produces.
+ *
+ * The generated files are also written to `prisma/fixtures/payroll/` so the
+ * operator can hand-test the upload dialog: re-uploading one exercises the
+ * REPLACE path, and editing a number in one exercises the conservation
+ * check's rejection.
+ *
+ * W-2 EMPLOYEES ONLY. Gusto's payroll journal doesn't include 1099
+ * contractors, so CONTRACTOR_ID is deliberately absent — which also leaves
+ * a live example of the contractor empty state.
+ */
+async function seedPayrollFixtures() {
+  console.log("  Seeding Payroll fixtures...");
+
+  const { importPayrollCsv } = await import("../src/services/payroll");
+  const { writeFileSync, mkdirSync } = await import("fs");
+  const { join } = await import("path");
+
+  // MICHAEL_ID is deliberately ABSENT. The LLC owner takes draws, not
+  // wages, so he never appears in a Gusto payroll journal — see the wage
+  // table earlier in this file ("LLC owner — takes draws, not wages").
+  // Seeding him a W-2 line made the operator's own dev Home look nothing
+  // like production, which is exactly the surface they'd check first.
+  // He still UPLOADS payroll and CONFIRMS identities below; he just isn't
+  // paid through it.
+  const people = [
+    { userId: ADMIN_WORKER_ID, last: "Alvarez",   first: "Admin",   rate: 18.5, hours: 32 },
+    // Names deliberately DIFFERENT from the real Gusto fixture
+    // (__fixtures__/gusto-payroll-journal.csv uses Serrano/Torres/
+    // Wanderski-Jacob). If they collided, importing that fixture would
+    // auto-link against these seeded identities and stop exercising the
+    // unmatched-name path it exists to demonstrate.
+    { userId: EMPLOYEE_ID,     last: "Brooks",    first: "Jordan",  rate: 16.0, hours: 38 },
+    { userId: TRAINEE_ID,      last: "Chen",      first: "Riley",   rate: 12.0, hours: 15 },
+  ];
+
+  // Confirmed name -> user mappings BEFORE importing, so rows attribute on
+  // the way in and workers can see their pay immediately.
+  for (const p of people) {
+    await prisma.payrollIdentity.upsert({
+      where: { lastName_firstName: { lastName: p.last, firstName: p.first } },
+      create: { lastName: p.last, firstName: p.first, userId: p.userId, confirmedById: MICHAEL_ID },
+      update: { userId: p.userId },
+    });
+  }
+
+  const money = (n: number) => (Math.round(n * 100) / 100).toFixed(2);
+  const q = (v: string | number) => `"${v}"`;
+  /** MM/DD/YYYY — the format Gusto writes, and what the importer expects. */
+  const us = (key: string) => {
+    const [y, m, d] = key.split("-");
+    return `${m}/${d}/${y}`;
+  };
+
+  const HEADERS = [
+    "Last Name", "First Name", "Work Address", "Employee Type", "Payment",
+    "Regular (Hours)", "Regular (Rate)", "Regular (Amount)", "Additional Earnings",
+    "Gross Earnings", "Employee Taxes", "Federal Income Tax (Employee)",
+    "Social Security (Employee)", "Medicare (Employee)", "Additional Medicare (Employee)",
+    "NC State Tax (Employee)", "Employer Taxes", "Social Security (Employer)",
+    "Medicare (Employer)", "FUTA (Employer)", "NC Unemployment Tax (Employer)",
+    "Net Pay", "Reimbursements", "Donations", "Check Amount", "Employer Cost",
+  ];
+
+  const ADDRESS = "225 Stony Branch Trl, Chapel Hill, NC 27516";
+  const WEEKS = 4;
+  const outDir = join(__dirname, "fixtures", "payroll");
+  mkdirSync(outDir, { recursive: true });
+
+  let imported = 0;
+  const written: string[] = [];
+
+  // Oldest first, so the "replace" path is never exercised by the seed
+  // itself and each import is a clean create.
+  for (let i = WEEKS - 1; i >= 0; i--) {
+    // Period ends (i+1)*7 days ago, paid 5 days later — so even the newest
+    // pay day is in the PAST. Canonical ET helpers; a raw Date would drift
+    // a pay day across a boundary.
+    const periodEnd = etAddDays(etToday(), -((i + 1) * 7));
+    const periodStart = etAddDays(periodEnd, -6);
+    const payDay = etAddDays(periodEnd, 5);
+
+    // Deterministic wobble so the weeks aren't identical — a flat history
+    // makes the timeframe filter look broken.
+    const wobble = 1 + ((i % 3) - 1) * 0.08;
+
+    const rows = people.map((p) => {
+      const hours = Math.round(p.hours * wobble * 100) / 100;
+      const regular = Math.round(hours * p.rate * 100) / 100;
+      // A little variable overtime/bonus, so "Additional Earnings" isn't
+      // always zero and the gross isn't just hours x rate.
+      const additional = i === 0 && p.userId === EMPLOYEE_ID ? 75 : 0;
+      const gross = Math.round((regular + additional) * 100) / 100;
+      const fed = Math.round(gross * 0.08 * 100) / 100;
+      const state = Math.round(gross * 0.045 * 100) / 100;
+      const ss = Math.round(gross * 0.062 * 100) / 100;
+      const med = Math.round(gross * 0.0145 * 100) / 100;
+      const addlMed = 0;
+      const empTaxes = Math.round((fed + state + ss + med + addlMed) * 100) / 100;
+      const futa = Math.round(gross * 0.006 * 100) / 100;
+      const suta = Math.round(gross * 0.015 * 100) / 100;
+      const erTaxes = Math.round((ss + med + futa + suta) * 100) / 100;
+      const net = Math.round((gross - empTaxes) * 100) / 100;
+      const erCost = Math.round((gross + erTaxes) * 100) / 100;
+      return { p, hours, regular, additional, gross, fed, state, ss, med, addlMed,
+               empTaxes, futa, suta, erTaxes, net, erCost };
+    });
+
+    const sum = (f: (r: (typeof rows)[number]) => number) =>
+      Math.round(rows.reduce((a, r) => a + f(r), 0) * 100) / 100;
+
+    const dataLine = (r: (typeof rows)[number]) =>
+      [
+        q(r.p.last), q(r.p.first), q(ADDRESS), q("Paid by the hour"), q("Direct Deposit"),
+        q(money(r.hours)), q(money(r.p.rate)), q(money(r.regular)), q(money(r.additional)),
+        q(money(r.gross)), q(money(r.empTaxes)), q(money(r.fed)),
+        q(money(r.ss)), q(money(r.med)), q(money(r.addlMed)), q(money(r.state)),
+        q(money(r.erTaxes)), q(money(r.ss)), q(money(r.med)), q(money(r.futa)), q(money(r.suta)),
+        q(money(r.net)), q("0.00"), q("0.00"), q(money(r.net)), q(money(r.erCost)),
+      ].join(",");
+
+    // "Payroll Totals" must sum every ADDITIVE column exactly — the
+    // importer rejects the file otherwise. The RATE column is left blank
+    // on purpose: it is not additive (two workers at $18.50 total $18.50 in
+    // Gusto's own report, not $37.00), and these workers are on different
+    // rates so no single value is meaningful.
+    const totalsLine = [
+      q("Payroll Totals"), q(""), q(""), q(""), q(""),
+      q(money(sum((r) => r.hours))), q(""), q(money(sum((r) => r.regular))),
+      q(money(sum((r) => r.additional))), q(money(sum((r) => r.gross))),
+      q(money(sum((r) => r.empTaxes))), q(money(sum((r) => r.fed))),
+      q(money(sum((r) => r.ss))), q(money(sum((r) => r.med))), q(money(sum((r) => r.addlMed))),
+      q(money(sum((r) => r.state))), q(money(sum((r) => r.erTaxes))),
+      q(money(sum((r) => r.ss))), q(money(sum((r) => r.med))),
+      q(money(sum((r) => r.futa))), q(money(sum((r) => r.suta))),
+      q(money(sum((r) => r.net))), q("0.00"), q("0.00"),
+      q(money(sum((r) => r.net))), q(money(sum((r) => r.erCost))),
+    ].join(",");
+
+    const csv = [
+      q("Payroll Journal Report"),
+      "",
+      q("Seedlings Lawn Care, LLC"),
+      q("225 Stony Branch Trl"),
+      [q("Chapel Hill"), q("NC"), q("27516")].join(","),
+      "",
+      q("Employee Earnings"),
+      [q("Weekly Payroll payroll period"), q(` ${us(periodStart)} - ${us(periodEnd)}`)].join(","),
+      [q("Pay day"), q(` ${us(payDay)}`)].join(","),
+      HEADERS.map(q).join(","),
+      ...rows.map(dataLine),
+      totalsLine,
+      "",
+    ].join("\n");
+
+    const filename = `payroll-${payDay}.csv`;
+    writeFileSync(join(outDir, filename), csv, "utf8");
+    written.push(filename);
+
+    // Through the REAL importer: parse -> conservation check -> persist.
+    // Throws if the generated CSV doesn't balance, which is the point.
+    await importPayrollCsv({
+      csvText: csv,
+      sourceR2Key: `seed/payroll/${filename}`,
+      actorUserId: MICHAEL_ID,
+    });
+    imported++;
+  }
+
+  // One unmatched name on the most recent period, so the Super
+  // identity-review queue has something realistic to work.
+  const newest = await prisma.payrollPeriod.findFirst({ orderBy: { payDay: "desc" } });
+  if (newest) {
+    await prisma.payrollEntry.create({
+      data: {
+        payrollPeriodId: newest.id,
+        userId: null,
+        rawLastName: "Nguyen",
+        rawFirstName: "Bao",
+        employeeType: "Paid by the hour",
+        paymentMethod: "Direct Deposit",
+        regularHours: 22,
+        regularRate: 15,
+        grossEarnings: 330,
+        netPay: 271.4,
+        checkAmount: 271.4,
+        raw: { "Last Name": "Nguyen", "First Name": "Bao" },
+      },
+    });
+  }
+
+  console.log(
+    `  ✓ Seeded ${imported} payroll week(s) via real CSV import for ${people.length} employee(s) + 1 unmatched row`,
+  );
+  console.log(`    CSVs written to prisma/fixtures/payroll/ (${written.join(", ")})`);
+}
+
 async function seedVanityPageFixtures() {
   console.log("  Seeding Vanity URL fixtures...");
 

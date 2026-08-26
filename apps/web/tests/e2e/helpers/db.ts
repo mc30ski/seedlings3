@@ -311,3 +311,94 @@ export async function signPolicyDirect(
     },
   });
 }
+
+// ── Payroll (docs/features/payroll.md) ──────────────────────────────────────
+//
+// Payroll rows are created ONLY by importing a CSV, so these helpers seed
+// the DB directly rather than driving the upload UI. That keeps the
+// worker-facing specs independent of the Super upload spec — an ordering
+// dependency between spec files is exactly how a suite starts passing for
+// the wrong reason.
+//
+// Everything created here is namespaced with an E2E_ surname so cleanup can
+// never touch a real imported period.
+
+const E2E_PAYROLL_SURNAME = "E2E_Payroll";
+
+/**
+ * Create a payroll period with one row per supplied worker, plus one row
+ * that belongs to nobody (an unmatched name). Returns the period id.
+ *
+ * The numbers are deliberately DIFFERENT per worker so a spec asserting
+ * "this worker sees their own figure" can't pass by coincidence.
+ */
+export async function createScratchPayrollPeriod(
+  prisma: PrismaClient,
+  opts: {
+    periodStart: string;
+    periodEnd: string;
+    payDay: string;
+    uploadedById: string;
+    workers: Array<{ userId: string; firstName: string; netPay: number; grossEarnings: number }>;
+  },
+): Promise<string> {
+  const period = await prisma.payrollPeriod.create({
+    data: {
+      periodStart: opts.periodStart,
+      periodEnd: opts.periodEnd,
+      payDay: opts.payDay,
+      label: "E2E Weekly",
+      sourceR2Key: `e2e/${randomUUID()}.csv`,
+      totals: { values: { netPay: 0, grossEarnings: 0 } },
+      uploadedById: opts.uploadedById,
+    },
+  });
+
+  for (const w of opts.workers) {
+    await prisma.payrollEntry.create({
+      data: {
+        payrollPeriodId: period.id,
+        userId: w.userId,
+        rawLastName: E2E_PAYROLL_SURNAME,
+        rawFirstName: w.firstName,
+        employeeType: "Paid by the hour",
+        paymentMethod: "Direct Deposit",
+        regularHours: 10,
+        grossEarnings: w.grossEarnings,
+        netPay: w.netPay,
+        checkAmount: w.netPay,
+        // Tax lines — present so a spec can assert an ADMIN payload omits
+        // them while a worker's own payload includes them.
+        federalIncomeTax: 11.11,
+        stateTaxEmployee: 22.22,
+        socialSecurityEmployee: 33.33,
+        medicareEmployee: 44.44,
+        employeeTaxes: 111.1,
+        employerCost: w.grossEarnings + 50,
+        raw: { "Last Name": E2E_PAYROLL_SURNAME, "First Name": w.firstName },
+      },
+    });
+  }
+
+  // An unmatched row — visible to Super only, never to a worker or admin.
+  await prisma.payrollEntry.create({
+    data: {
+      payrollPeriodId: period.id,
+      userId: null,
+      rawLastName: E2E_PAYROLL_SURNAME,
+      rawFirstName: "Nobody",
+      grossEarnings: 999.99,
+      netPay: 888.88,
+      raw: { "Last Name": E2E_PAYROLL_SURNAME, "First Name": "Nobody" },
+    },
+  });
+
+  return period.id;
+}
+
+/** Remove every E2E payroll artifact. Safe to call unconditionally. */
+export async function cleanupScratchPayroll(prisma: PrismaClient) {
+  await prisma.payrollEntry.deleteMany({ where: { rawLastName: E2E_PAYROLL_SURNAME } });
+  await prisma.payrollIdentity.deleteMany({ where: { lastName: E2E_PAYROLL_SURNAME } });
+  await prisma.payrollPeriod.deleteMany({ where: { label: "E2E Weekly" } });
+}

@@ -1,0 +1,14 @@
+"Payroll Journal Report"
+
+"Seedlings Lawn Care, LLC"
+"225 Stony Branch Trl"
+"Chapel Hill","NC","27516"
+
+"Employee Earnings"
+"Weekly Payroll payroll period"," 08/06/2026 - 08/12/2026"
+"Pay day"," 08/17/2026"
+"Last Name","First Name","Work Address","Employee Type","Payment","Regular (Hours)","Regular (Rate)","Regular (Amount)","Additional Earnings","Gross Earnings","Employee Taxes","Federal Income Tax (Employee)","Social Security (Employee)","Medicare (Employee)","Additional Medicare (Employee)","NC State Tax (Employee)","Employer Taxes","Social Security (Employer)","Medicare (Employer)","FUTA (Employer)","NC Unemployment Tax (Employer)","Net Pay","Reimbursements","Donations","Check Amount","Employer Cost"
+"Alvarez","Admin","225 Stony Branch Trl, Chapel Hill, NC 27516","Paid by the hour","Direct Deposit","32.00","18.50","592.00","0.00","592.00","119.28","47.36","36.70","8.58","0.00","26.64","57.71","36.70","8.58","3.55","8.88","472.72","0.00","0.00","472.72","649.71"
+"Brooks","Jordan","225 Stony Branch Trl, Chapel Hill, NC 27516","Paid by the hour","Direct Deposit","38.00","16.00","608.00","0.00","608.00","122.52","48.64","37.70","8.82","0.00","27.36","59.29","37.70","8.82","3.65","9.12","485.48","0.00","0.00","485.48","667.29"
+"Chen","Riley","225 Stony Branch Trl, Chapel Hill, NC 27516","Paid by the hour","Direct Deposit","15.00","12.00","180.00","0.00","180.00","36.27","14.40","11.16","2.61","0.00","8.10","17.55","11.16","2.61","1.08","2.70","143.73","0.00","0.00","143.73","197.55"
+"Payroll Totals","","","","","85.00","","1380.00","0.00","1380.00","278.07","110.40","85.56","20.01","0.00","62.10","134.55","85.56","20.01","8.28","20.70","1101.93","0.00","0.00","1101.93","1514.55"
