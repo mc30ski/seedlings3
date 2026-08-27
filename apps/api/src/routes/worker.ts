@@ -4302,7 +4302,8 @@ export default async function workerRoutes(app: FastifyInstance) {
     const contractorFeePct = Number(feeSetting?.value ?? 0);
     const projectionRatePct = isContractor ? contractorFeePct : employeeMarginPct;
 
-    // Hours — active minutes from completed workdays in the window.
+    // Hours — active minutes from workdays in the window.
+    //
     // Deliberately workday-only (not augmented by job times) — workers
     // legitimately do drive time, prep, admin, restock etc. that isn't
     // on any single job. Payroll pays them for the clocked window. If a
@@ -4310,17 +4311,41 @@ export default async function workerRoutes(app: FastifyInstance) {
     // jobs outside the workday), the Workday Review flow is where that
     // gets fixed — either the workday gets extended, or the job times
     // get corrected.
+    //
+    // IN-PROGRESS WORKDAYS COUNT (changed 2026-08-27). This used to
+    // require `endedAt != null`, which meant a worker four hours into a
+    // shift contributed zero hours — so a "today" window showed no rate
+    // at all until they clocked out. `/admin/workers/earnings-today`
+    // already counted them, and the two endpoints powered two panels
+    // sitting on the same page showing different numbers for the same
+    // worker. That disagreement was the bug; this is the side that was
+    // wrong.
+    //
+    // Window membership is by START, matching `workdayDate` semantics on
+    // the other endpoint: a workday belongs to the day it began.
     const workdays = await prisma.workerWorkday.findMany({
       where: {
         userId: uid,
-        endedAt: { not: null, gte: effectiveStart, lte: effectiveEnd },
+        startedAt: { gte: effectiveStart, lte: effectiveEnd },
       },
-      select: { startedAt: true, endedAt: true, totalPausedMs: true },
+      select: { startedAt: true, endedAt: true, pausedAt: true, totalPausedMs: true },
     });
+    const nowMs = Date.now();
     let activeMs = 0;
     for (const w of workdays) {
-      const wallClock = w.endedAt!.getTime() - w.startedAt.getTime();
-      const active = Math.max(0, wallClock - w.totalPausedMs);
+      // Endpoint for the interval — identical rule to earnings-today:
+      //   • ended            → endedAt (day is closed)
+      //   • open, not paused → now (still ticking)
+      //   • open, paused     → pausedAt (frozen; the open pause segment
+      //     isn't in totalPausedMs yet, so clip rather than double-count)
+      const rawEnd = w.endedAt
+        ? w.endedAt.getTime()
+        : w.pausedAt
+          ? w.pausedAt.getTime()
+          : nowMs;
+      // Never let an open workday run past the requested window.
+      const endMs = Math.min(rawEnd, effectiveEnd.getTime());
+      const active = Math.max(0, endMs - w.startedAt.getTime() - w.totalPausedMs);
       activeMs += active;
     }
     const hours = activeMs / 3_600_000;

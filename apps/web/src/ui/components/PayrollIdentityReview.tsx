@@ -40,7 +40,18 @@ import {
 
 type WorkerOption = { id: string; displayName: string };
 
-export default function PayrollIdentityReview({ onChanged }: { onChanged: () => void }) {
+export default function PayrollIdentityReview({
+  onChanged,
+  onReady,
+}: {
+  onChanged: () => void;
+  /**
+   * Reports refresh / busy / count to the frame. Content-only, like the
+   * other queue sections — the host supplies the title bar, stripe,
+   * count badge, refresh and dim.
+   */
+  onReady?: (api: { refresh: () => void; loading: boolean; count: number }) => void;
+}) {
   const [names, setNames] = useState<UnmatchedName[]>([]);
   const [workers, setWorkers] = useState<WorkerOption[]>([]);
   const [picked, setPicked] = useState<Record<string, string>>({});
@@ -68,6 +79,10 @@ export default function PayrollIdentityReview({ onChanged }: { onChanged: () => 
     void load();
   }, [load]);
 
+  useEffect(() => {
+    onReady?.({ refresh: () => void load(), loading: busy, count: names.length });
+  }, [onReady, load, busy, names]);
+
   if (names.length === 0) return null;
 
   const collection = createListCollection({
@@ -75,15 +90,11 @@ export default function PayrollIdentityReview({ onChanged }: { onChanged: () => 
   });
 
   return (
-    <Box p={3} bg="orange.50" borderWidth="1px" borderColor="orange.300" rounded="md">
-      <HStack gap={2} mb={2} align="center">
-        <Box color="orange.600">
-          <FiAlertTriangle />
-        </Box>
-        <Text fontSize="sm" fontWeight="bold" color="orange.900">
-          {names.length} payroll {names.length === 1 ? "name needs" : "names need"} matching
-        </Text>
-      </HStack>
+    // Content only — the Dashboard frame at the host supplies the title
+    // bar, orange stripe, count badge, refresh and dim. The count and the
+    // "N names need matching" heading moved there; the explanation below
+    // stays, because it is the part that says WHY it matters.
+    <Box>
       <Text fontSize="xs" color="orange.900" mb={3}>
         Gusto&apos;s export doesn&apos;t identify people beyond their name. Until you confirm who
         each one is, <strong>that worker can&apos;t see their pay</strong>. Confirming applies to

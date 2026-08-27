@@ -78,6 +78,9 @@ export default function PayrollHomeSection({
 }) {
   const [periods, setPeriods] = useState<PayrollPeriodSummary[]>([]);
   const [loaded, setLoaded] = useState(false);
+  // Distinct from `loaded`: that gates the first-load skeleton, this
+  // drives the shared refresh overlay on every subsequent load.
+  const [busy, setBusy] = useState(false);
   // "A period of yours may be sitting unmatched." Without this a name
   // change makes a whole pay period vanish with no cue at all.
   const [pending, setPending] = useState<{ affected: boolean; payDay: string | null }>({
@@ -90,6 +93,7 @@ export default function PayrollHomeSection({
   );
 
   const load = useCallback(async () => {
+    setBusy(true);
     try {
       const [rows, notice] = await Promise.all([
         fetchMyPayrollPeriods({ viewAsUserId: viewAsUserId ?? null }),
@@ -106,6 +110,7 @@ export default function PayrollHomeSection({
       setPeriods([]);
     } finally {
       setLoaded(true);
+      setBusy(false);
     }
   }, [viewAsUserId]);
 
@@ -135,7 +140,26 @@ export default function PayrollHomeSection({
   if (!loaded) return <SkeletonBanner label="payroll" />;
 
   return (
-    <Dashboard storageKey={storageKey} title={title} icon={Banknote} variant="info">
+    <Dashboard
+      storageKey={storageKey}
+      title={title}
+      icon={Banknote}
+      variant="info"
+      /* Hidden when there is nothing to filter — the LLC owner takes draws
+         rather than wages, so "no periods ever" is a real steady state and
+         a dead picker would just be noise. */
+      timeframe={
+        periods.length > 0
+          ? {
+              options: PAYROLL_RANGES.map((r) => ({ label: r.label, value: r.key })),
+              value: range,
+              onChange: (k) => setRange(k as PayrollRangeKey),
+            }
+          : undefined
+      }
+      onRefresh={load}
+      refreshing={busy}
+    >
       <VStack align="stretch" gap={2}>
         {pending.affected && (
           <Box
@@ -161,40 +185,7 @@ export default function PayrollHomeSection({
               full-width trigger made the menu a narrow box under a very
               wide control, and on flip-up it covered the card above.
               Same treatment as the ReconcileTab pickers. */}
-          {/* No periods at all = nothing to filter. Hiding the picker here
-              matches PayrollTab, and stops it being a permanently dead
-              control for anyone never on payroll — the LLC owner takes
-              draws rather than wages, so this is their steady state. */}
-          {periods.length > 0 && (
-          <Box flexShrink={0}>
-            <Select.Root
-              collection={rangeCollection}
-              value={[range]}
-              onValueChange={(e) => {
-                const v = e.value?.[0] as PayrollRangeKey | undefined;
-                if (v) setRange(v);
-              }}
-              size="sm"
-              positioning={{ strategy: "fixed", hideWhenDetached: true }}
-            >
-              <Select.Control>
-                <Select.Trigger w="auto" minW="180px" px="2">
-                  <Select.ValueText placeholder="Timeframe" />
-                  <Select.Indicator />
-                </Select.Trigger>
-              </Select.Control>
-              <Select.Positioner>
-                <Select.Content minW="var(--reference-width)">
-                  {rangeCollection.items.map((item) => (
-                    <Select.Item key={item.value} item={item.value}>
-                      <Select.ItemText>{item.label}</Select.ItemText>
-                    </Select.Item>
-                  ))}
-                </Select.Content>
-              </Select.Positioner>
-            </Select.Root>
-          </Box>
-          )}
+
           <Button
             size="xs"
             variant="outline"

@@ -10,13 +10,13 @@
 //   • Admin  : adds the AdminViewAsSelector + badges above the hero,
 //              which drive `viewAsUserId`/`subsetUserIds`/`aggregate`
 //              — the same hero and pay card re-render scoped to the
-//              picker. TodayHourlyPayPanel appears alongside.
+//              picker. The team pay-per-hour section appears alongside.
 //   • Super  : adds the Operations rollup at the very top (money /
 //              jobs / equipment / team & clients) via the parts file.
 // Client role is walled off — HomeTab is worker-and-up only.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Box, Button, Card, HStack, SimpleGrid, Spinner, Text, VStack } from "@chakra-ui/react";
 import { BarChart3, Users } from "lucide-react";
 import { Dashboard } from "@/src/ui/components/Dashboard";
@@ -29,7 +29,6 @@ import HomeBanners from "@/src/ui/components/HomeBanners";
 import MyDashboard from "@/src/ui/components/MyDashboard";
 import PayrollHomeSection from "@/src/ui/components/PayrollHomeSection";
 import { fetchWorkdayToday } from "@/src/lib/workday";
-import TodayHourlyPayPanel from "@/src/ui/components/TodayHourlyPayPanel";
 import WorkerHourlyPayCard from "@/src/ui/components/WorkerHourlyPayCard";
 import AllWorkersHourlyPayCards from "@/src/ui/components/AllWorkersHourlyPayCards";
 import type { Me } from "@/src/lib/types";
@@ -284,12 +283,55 @@ export default function HomeTab({
     "homeTab_viewAsIds",
     [],
   );
-  // Super Insights (Operations rollup) collapse state — same
-  // pattern as the Equipment + Jobs Insights sections.
-  const [insightsCollapsed, setInsightsCollapsed] = usePersistedState<boolean>(
-    "homeTab_insightsCollapsed",
-    false,
-  );
+  /**
+   * Section-scoped refresh for MY ACTIVITIES.
+   *
+   * Its children fetch independently (compliance, workday, mileage), so
+   * "refresh this section" means re-running the summary AND firing the
+   * event those banners already listen for.
+   */
+  const [activitiesRefreshing, setActivitiesRefreshing] = useState(false);
+  const refreshActivities = useCallback(async () => {
+    setActivitiesRefreshing(true);
+    try {
+      await load({ silent: true });
+      window.dispatchEvent(new CustomEvent("seedlings:workday-changed"));
+    } finally {
+      setActivitiesRefreshing(false);
+    }
+  }, [load]);
+
+  /**
+   * Section-scoped refresh for TEAM OVERVIEW.
+   *
+   * It reads the same dashboard summary the hero and tiles do, so the
+   * FETCH is shared — but the busy state is not. Previously its refresh
+   * button reloaded every surface on the page at once; now only this
+   * section dims while the summary comes back.
+   */
+  const [teamRefreshing, setTeamRefreshing] = useState(false);
+  const refreshTeamOverview = useCallback(async () => {
+    setTeamRefreshing(true);
+    try {
+      await load({ silent: true });
+    } finally {
+      setTeamRefreshing(false);
+    }
+  }, [load]);
+
+  // Insights owns its own fetch; this lifts its loader + busy flag so the
+  // Dashboard wrapper can render the shared refresh control and overlay.
+  const [opsApi, setOpsApi] = useState<{
+    refresh: () => Promise<void>;
+    loading: boolean;
+    summary: React.ReactNode;
+    timeframe: {
+      options: ReadonlyArray<{ label: string; value: string }>;
+      value: string;
+      onChange: (value: string) => void;
+    };
+  } | null>(null);
+
   const usingSelfViewAs =
     scope.isAdmin && !propViewAsUserId && !propAggregate && !propSubsetUserIds?.length;
   useEffect(() => {
@@ -356,8 +398,18 @@ export default function HomeTab({
   const navTo = (tab: "jobs" | "equipment" | "payments", filter: TabFilter) =>
     navigateWithFilter(tab, filter, navOpts);
 
-  async function load() {
-    setLoading(true);
+  /**
+   * `silent` skips the TAB-WIDE `loading` flag.
+   *
+   * That flag drives a full-page dim + spinner further down this file, so
+   * a SECTION refresh that called plain `load()` greyed out the entire
+   * Home tab — reported 2026-08-27. Section-scoped callers pass
+   * `{ silent: true }` and render their own overlay via Dashboard; only
+   * the initial page load and the visibility-change refetch want the
+   * page-wide treatment.
+   */
+  async function load(opts?: { silent?: boolean }) {
+    if (!opts?.silent) setLoading(true);
     try {
       const url = isSubset
         ? `/api/dashboard-summary/aggregate?workerIds=${encodeURIComponent((subsetUserIds ?? []).join(","))}`
@@ -371,7 +423,7 @@ export default function HomeTab({
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load dashboard.", err) });
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }
 
@@ -561,40 +613,7 @@ export default function HomeTab({
   // gets `position="relative"` so this absolutely-positioned element
   // lands inside its border. stopPropagation because several hero
   // cards are themselves click-navigable.
-  // The corner-anchored variant, for hero cards that have empty space at
-  // their top-right. Sections with a Dashboard title bar use
-  // `refreshButton` inline instead — absolutely positioning it under a
-  // header band drops it onto the first divider.
-  const refreshButton = (
-      <Button
-        size="sm"
-        variant="ghost"
-        onClick={(e) => {
-          e.stopPropagation();
-          // Refresh every data-owning surface on this page:
-          //   • dashboard summary (drives hero + tiles)
-          //   • MyDashboard banners (workday, mileage, compliance)
-          //     — they already listen for seedlings:workday-changed
-          //   • WorkerHourlyPayCard — same event
-          // No full page reload; each component re-fetches its own data.
-          void load();
-          window.dispatchEvent(new CustomEvent("seedlings:workday-changed"));
-        }}
-        loading={loading}
-        px="2"
-        flexShrink={0}
-        aria-label="Refresh"
-        title="Refresh"
-      >
-        <FiRefreshCw size={14} />
-      </Button>
-  );
 
-  const heroCornerRefresh = (
-    <Box position="absolute" top={2} right={2} zIndex={1}>
-      {refreshButton}
-    </Box>
-  );
 
   // Hero card for the current mode. Declared here rather than inline in
   // the tree because it is handed to MyDashboard as `leadContent` — the
@@ -615,7 +634,6 @@ export default function HomeTab({
           color="white"
           position="relative"
         >
-          {heroCornerRefresh}
           <Card.Body px={4} py={2}>
             <VStack align="stretch" gap={2}>
               <HStack gap={3} align="center">
@@ -654,7 +672,6 @@ export default function HomeTab({
           borderColor="green.300"
           position="relative"
         >
-          {heroCornerRefresh}
           <Card.Body px={4} py={2}>
             <VStack align="stretch" gap={2}>
               <HStack gap={3} align="center">
@@ -712,7 +729,6 @@ export default function HomeTab({
           borderColor="blue.300"
           position="relative"
         >
-          {heroCornerRefresh}
           <Card.Body px={4} py={2}>
             <VStack align="stretch" gap={2}>
               <HStack gap={3} align="center">
@@ -761,7 +777,6 @@ export default function HomeTab({
       {/* Hero: Wrap up — quiet end-of-day state. Combines greeting + status into one card. */}
       {!isAggregate && heroMode === "wrap" && (
         <Card.Root variant="outline" bg="gray.50" borderColor="gray.200" position="relative">
-          {heroCornerRefresh}
           <Card.Body px={4} py={2}>
             <HStack gap={3}>
               <Box bg="gray.200" color="gray.700" p={2} borderRadius="full">
@@ -785,7 +800,9 @@ export default function HomeTab({
       {loading && summary && (
         <>
           <Box position="absolute" inset="0" bg="bg/80" zIndex="1" />
-          <Spinner size="lg" position="fixed" top="50%" left="50%" zIndex="2" />
+          <Box position="fixed" top="50%" left="50%" transform="translate(-50%, -50%)" zIndex="2">
+            <Spinner size="lg" />
+          </Box>
         </>
       )}
       <VStack align="stretch" gap={4}>
@@ -805,25 +822,18 @@ export default function HomeTab({
             Insights card that matches the Equipment + Jobs Insights
             sections for a consistent Super visual language. */}
         {scope.isSuper && (
-          <Card.Root variant="outline" bg="orange.50" borderColor="orange.200">
-            <Card.Body py={3} px={3}>
-              <HStack
-                gap={2}
-                align="center"
-                mb={insightsCollapsed ? 0 : 2}
-                cursor="pointer"
-                onClick={() => setInsightsCollapsed(!insightsCollapsed)}
-                _hover={{ opacity: 0.7 }}
-              >
-                <BarChart3 size={14} color="var(--chakra-colors-gray-600)" />
-                <Text fontSize="sm" fontWeight="bold" color="gray.600" textTransform="uppercase" letterSpacing="wide">
-                  Insights
-                </Text>
-                <Text fontSize="xs" color="gray.400">{insightsCollapsed ? "▶" : "▼"}</Text>
-              </HStack>
-              {!insightsCollapsed && <OperationsPanel />}
-            </Card.Body>
-          </Card.Root>
+          <Dashboard
+            storageKey="seedlings:homeTab:insightsOpen"
+            title="Insights"
+            icon={BarChart3}
+            variant="insights"
+            onRefresh={opsApi?.refresh}
+            refreshing={!!opsApi?.loading}
+            collapsedSummarySlot={opsApi?.summary}
+            timeframe={opsApi?.timeframe}
+          >
+            <OperationsPanel onReady={setOpsApi} />
+          </Dashboard>
         )}
 
         {/* Admin picker — mirrors the shipped Admin → Work → Home
@@ -867,6 +877,8 @@ export default function HomeTab({
             everything in it is a single-user surface. */}
         {(!scope.isAdmin || !!viewAsUserId || (!isAggregate && !isSubset)) && (
           <MyDashboard
+            onRefresh={refreshActivities}
+            refreshing={activitiesRefreshing}
             storageKey="seedlings:homeTab:myDashboardOpen"
             viewAsUserId={viewAsUserId ?? null}
             viewAsDisplayName={viewAsDisplayName ?? null}
@@ -904,9 +916,11 @@ export default function HomeTab({
         {isAggregate && (
           <Dashboard
             storageKey="seedlings:homeTab:teamOverviewOpen"
-            title={isSubset ? `Selected workers (${subsetUserIds?.length ?? 0})` : "Team overview"}
+            title={isSubset ? `Selected workers (${subsetUserIds?.length ?? 0})` : "Overview · team"}
             icon={Users}
             variant="neutral"
+            onRefresh={refreshTeamOverview}
+            refreshing={teamRefreshing}
             /* The one-line count follows the title into the collapsed
                header. Collapsing a section should cost you the detail, not
                the headline — "13 jobs scheduled today · 2 in progress" is
@@ -919,21 +933,15 @@ export default function HomeTab({
               </Text>
             }
           >
-            {/* Refresh sits INLINE on the summary row, not corner-anchored:
-                the Dashboard title bar now occupies the top of the frame, so
-                an absolute top-right button lands on the first divider. It
-                also must not go in the header — that is a <button>, and
-                nesting one inside it is invalid HTML. */}
+            {/* No refresh button here any more — the Dashboard title bar
+                renders the shared one for every section. */}
             <Box>
               <VStack align="stretch" gap={1}>
-                <HStack justify="space-between" align="center" gap={2}>
-                  <Text fontSize="sm" color="gray.700">
-                    {s.today} job{s.today === 1 ? "" : "s"} scheduled today
-                    {s.activeWork > 0 ? ` · ${s.activeWork} in progress` : ""}
-                    {(s.tomorrow ?? 0) > 0 ? ` · ${s.tomorrow} tomorrow` : ""}
-                  </Text>
-                  {refreshButton}
-                </HStack>
+                <Text fontSize="sm" color="gray.700">
+                  {s.today} job{s.today === 1 ? "" : "s"} scheduled today
+                  {s.activeWork > 0 ? ` · ${s.activeWork} in progress` : ""}
+                  {(s.tomorrow ?? 0) > 0 ? ` · ${s.tomorrow} tomorrow` : ""}
+                </Text>
                 {/* "Workdays in progress" panel — one row per worker
                     currently on the clock (workday endedAt is null).
                     Rendered ABOVE "Jobs in progress now" because the
@@ -1217,21 +1225,6 @@ export default function HomeTab({
           />
         )}
 
-        {/* Today's hourly pay — admin-only TEAM roster for today, one row
-            per worker who has finished a job. Regular worker Home never
-            renders it.
-
-            NOT shown when a single worker is selected: a roster of one is
-            not a roster, and it duplicated the MY EARNINGS card directly
-            above it with a narrower window. `isAggregate` covers All
-            Workers and a subset of N — the two cases where comparing
-            workers side by side is the point. */}
-        {isAggregate && (
-          <TodayHourlyPayPanel
-            workerIds={isSubset ? (subsetUserIds ?? []).join(",") : ""}
-          />
-        )}
-
         {/* MY PAYDAY — what Gusto actually paid, deliberately adjacent to the
             approximate-pay card above. The two numbers disagree by design;
             putting them side by side with clear labels is more honest than
@@ -1247,12 +1240,28 @@ export default function HomeTab({
           />
         )}
 
-        {/* Aggregate / no-worker-selected variant of the pay-per-hour
-            card — one mini card per approved worker, side by side. Only
-            renders when we're actually in "all workers" mode (no
-            view-as, no subset). Subset views can rely on the existing
-            TodayHourlyPayPanel above. */}
-        {isAggregate && !isSubset && <AllWorkersHourlyPayCards />}
+        {/* Team pay-per-hour — one mini card per worker, side by side,
+            over the timeframe chosen in its own picker.
+
+            THE one and only team pay surface. Two used to sit here: this,
+            and "Today's hourly pay" — same earnings math, different hours
+            rule, so they disagreed for anyone still on the clock. The
+            operator's read was right: if two panels showing one worker's
+            $/hr can disagree, that is a bug, not a feature. Merged
+            2026-08-27 — today became a value in this section's timeframe
+            picker, and the hours rule was unified server-side.
+
+            `isAggregate` covers BOTH All Workers and a subset of N — the
+            two cases where comparing workers side by side is the point.
+            The subset case came from the panel this replaced, which is why
+            `workerIds` exists. A single selected worker is excluded: a
+            roster of one is not a roster, and it would duplicate the MY
+            EARNINGS card directly above. */}
+        {isAggregate && (
+          <AllWorkersHourlyPayCards
+            workerIds={isSubset ? (subsetUserIds ?? []) : undefined}
+          />
+        )}
 
 
 

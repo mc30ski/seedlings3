@@ -59,7 +59,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { CheckCircle2, ChevronDown, ChevronUp, Eye, Flag, Info, Paperclip, Pencil, Plus, Repeat, Search, Trash2, X } from "lucide-react";
+import { CalendarClock, CheckCircle2, ChevronDown, ChevronUp, Eye, Flag, Info, Paperclip, Pencil, Plus, Repeat, Search, Trash2, X } from "lucide-react";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import { bizToday, bizAddDays, bizStartOfMonth, bizStartOfYear, fmtDate, fmtDateOpts } from "@/src/lib/dates";
 import {
@@ -71,6 +71,7 @@ import DateInput from "@/src/ui/components/DateInput";
 import ReceiptUpload from "@/src/ui/components/ReceiptUpload";
 import { compressOnly } from "@/src/lib/imageRedact";
 import { useExpenseCategories } from "@/src/lib/useExpenseCategories";
+import { Dashboard } from "@/src/ui/components/Dashboard";
 
 type EntryType = "EXPENSE" | "CAPITAL_CONTRIBUTION" | "OWNER_DRAW";
 
@@ -281,11 +282,35 @@ export default function BusinessExpensesTab() {
   // Default to last-30-days so the tab opens to a sensible, bounded window.
   const initialRange = rangeForExpensePreset("last30");
   const [q, setQ] = useState("");
-  const [filterFrom, setFilterFrom] = useState(initialRange.from);
-  const [filterTo, setFilterTo] = useState(initialRange.to);
+  // Persisted: the window you picked survives a reload or a trip to
+  // another tab. Stored as the two explicit dates rather than the preset
+  // name so a custom range round-trips too — the preset below is only a
+  // shortcut for filling these in.
+  const [filterFrom, setFilterFrom] = usePersistedState<string>(
+    "ledgerTab_filterFrom",
+    initialRange.from,
+  );
+  const [filterTo, setFilterTo] = usePersistedState<string>(
+    "ledgerTab_filterTo",
+    initialRange.to,
+  );
   const [filterCategory, setFilterCategory] = useState("");
   // "" = all types. EXPENSE | CAPITAL_CONTRIBUTION | OWNER_DRAW narrows.
   const [filterType, setFilterType] = useState<"" | EntryType>("");
+
+  /**
+   * Whether the operating-side summary figures apply to what's listed.
+   *
+   * The backend summary is EXPENSE-only, so under an equity filter its
+   * numbers would describe a different set of rows than the list below —
+   * hence hidden. This gates the FIGURES ONLY: the timeframe controls in
+   * the same card render unconditionally, because `filterFrom`/`filterTo`
+   * still scope the list and the export under every filter, and a filter
+   * you cannot see is worse than one you cannot use.
+   */
+  const isEquityFilter =
+    filterType === "CAPITAL_CONTRIBUTION" || filterType === "OWNER_DRAW";
+  const showSummaryFigures = !!summary && !isEquityFilter;
   // Followups-only filter — Super-only affordance. Server passes flagOnly=true,
   // which restricts the BE list to rows with an open LedgerFollowup.
   const [filterFollowupsOnly, setFilterFollowupsOnly] = useState(false);
@@ -297,7 +322,12 @@ export default function BusinessExpensesTab() {
   // stored `paymentFrom` string (populated from the same collection
   // the create/edit form uses).
   const [filterPaymentFrom, setFilterPaymentFrom] = useState("");
-  const [expensePreset, setExpensePreset] = useState<ExpensePreset>("last30");
+  // Persisted alongside the dates so the chip still reads "Last 30 days"
+  // (rather than "Custom dates") after a reload.
+  const [expensePreset, setExpensePreset] = usePersistedState<ExpensePreset>(
+    "ledgerTab_preset",
+    "last30",
+  );
   // Quick-date popover visibility. Matches PaymentsTab's pattern — the
   // active preset is shown in a green chip; clicking it toggles the
   // dropdown that lists every preset choice.
@@ -1116,7 +1146,9 @@ export default function BusinessExpensesTab() {
       {loading && (
         <>
           <Box position="absolute" inset="0" bg="bg/80" zIndex="1" />
-          <Spinner size="lg" position="fixed" top="50%" left="50%" zIndex="2" />
+          <Box position="fixed" top="50%" left="50%" transform="translate(-50%, -50%)" zIndex="2">
+            <Spinner size="lg" />
+          </Box>
         </>
       )}
       <HStack justify="space-between" mb={3} wrap="wrap" gap={2}>
@@ -1179,11 +1211,20 @@ export default function BusinessExpensesTab() {
           has arrived (or is within the lead window). Hidden when nothing
           is due so the panel doesn't nag with empty state. */}
       {dueSoon.length > 0 && (
-        <Card.Root variant="outline" mb={3} borderColor="orange.300" bg="orange.50">
-          <Card.Body p={3}>
-            <Text fontSize="xs" fontWeight="semibold" color="orange.800" textTransform="uppercase" mb={2}>
-              Due to record
-            </Text>
+        <Box mb={3}>
+          <Dashboard
+            storageKey="seedlings:ledgerTab:dueToRecordOpen"
+            title="Due to record"
+            icon={CalendarClock}
+            variant="attention"
+            count={dueSoon.length}
+            /* Only renders when something is actually due, and each row is
+               a bill the operator still has to enter — so it pulses, like
+               the other queues that are blocked on them. */
+            forceGlow="orange"
+            onRefresh={load}
+            refreshing={loading}
+          >
             <VStack align="stretch" gap={1}>
               {dueSoon.map((s) => {
                 const isOverdue = s.overdueDays > 0;
@@ -1260,20 +1301,31 @@ export default function BusinessExpensesTab() {
                 );
               })}
             </VStack>
-          </Card.Body>
-        </Card.Root>
+          </Dashboard>
+        </Box>
       )}
 
-      {/* Summary */}
-      {/* Summary + Cash Flow are operating-side by design. Hide them when
-          the user is filtered to an equity-only view — they'd be showing
-          operating numbers that don't match the list. */}
-      {summary && filterType !== "CAPITAL_CONTRIBUTION" && filterType !== "OWNER_DRAW" && (
-        <Card.Root variant="outline" mb={3}>
-          <Card.Body p={3}>
+      {/* Timeframe + Summary.
+          The CARD always renders; only the summary FIGURES are conditional.
+
+          The timeframe controls used to live inside the summary's
+          conditional, so filtering to Capital Contributions or Owner Draws
+          took the date range off screen with it (reported 2026-08-27) —
+          while `filterFrom`/`filterTo` stayed applied to the list and the
+          export underneath. That is the worst version of the bug: the
+          filter is still in force, the operator just can't see or change
+          it, so an equity list silently showed the last 30 days with no
+          visible reason.
+
+          The summary figures themselves stay operating-side by design:
+          they're EXPENSE-only on the backend, so showing them under an
+          equity filter would put numbers next to a list they don't
+          describe. */}
+      <Card.Root variant="outline" mb={3}>
+        <Card.Body p={3}>
             {/* Timeframe row — DateInput + dash + DateInput + green preset
                 chip on a single line, matching the PaymentsTab layout. */}
-            <HStack gap={2} wrap="wrap" align="center" mb={3}>
+            <HStack gap={2} wrap="wrap" align="center" mb={showSummaryFigures ? 3 : 0}>
               <DateInput
                 value={filterFrom}
                 onChange={(val) => {
@@ -1360,11 +1412,11 @@ export default function BusinessExpensesTab() {
                 )}
               </Box>
             </HStack>
-            {Object.keys(summary.byCategory).length > 0 && (
+            {showSummaryFigures && Object.keys(summary!.byCategory).length > 0 && (
               <Box>
                 <Text fontSize="xs" color="fg.muted" mb={1.5}>By Category {hasFilters ? "(filtered)" : ""}</Text>
                 <HStack gap={2} wrap="wrap">
-                  {Object.entries(summary.byCategory)
+                  {Object.entries(summary!.byCategory)
                     .sort((a, b) => b[1] - a[1])
                     .map(([cat, amt]) => (
                       <Badge key={cat} size="sm" colorPalette="gray" variant="subtle" borderRadius="full" px="2">
@@ -1374,9 +1426,8 @@ export default function BusinessExpensesTab() {
                 </HStack>
               </Box>
             )}
-          </Card.Body>
-        </Card.Root>
-      )}
+        </Card.Body>
+      </Card.Root>
 
 
       {/* Filters — Search, Type, Category share the row in equal thirds.

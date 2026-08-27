@@ -282,8 +282,12 @@ test.describe("Payroll — Super", () => {
     // The CSV has no employee identifier, so nothing auto-matches.
     // The fixture's three names are all new, so the review queue must gain
     // exactly three. Asserted as a count of THOSE names rather than the
-    // banner's total, which also includes seed.ts's deliberate unmatched row.
-    await expect(page.getByText(/names? need matching/i)).toBeVisible({ timeout: 10_000 });
+    // section's total, which also includes seed.ts's deliberate unmatched row.
+    //
+    // The heading moved from a hand-rolled banner ("N names need matching")
+    // into the section title when this became a Dashboard section
+    // (2026-08-27) — same information, one frame.
+    await expect(page.getByText(/payroll names? to match/i)).toBeVisible({ timeout: 10_000 });
 
     const unmatched = await prisma.payrollEntry.count({
       where: { userId: null, rawLastName: { in: FIXTURE_NAMES } },

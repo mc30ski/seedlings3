@@ -24,7 +24,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Badge, Box, Button, Card, HStack, IconButton, Input, SimpleGrid, Spinner, Text, VStack } from "@chakra-ui/react";
+import {
+  Badge, Box, Button, Card, HStack, IconButton, Input, SimpleGrid, Select,
+  Spinner, Text, VStack, createListCollection,
+} from "@chakra-ui/react";
 import {
   Activity,
   ChevronDown,
@@ -49,6 +52,8 @@ import {
   ADMIN_PERIODS,
   buttonPeriodLabel,
   periodKey,
+  periodTimeframe,
+  usePersistedPeriod,
   type Period,
 } from "@/src/ui/components/WorkerHourlyPayCard";
 
@@ -293,7 +298,11 @@ function fmtInt(n: number): string {
 }
 
 export function RoutesOperationsPanel() {
-  const [period, setPeriod] = useState<Period>(DEFAULT_ROUTES_OPS_PERIOD);
+  const [period, setPeriod] = usePersistedPeriod(
+    "routesOps_period",
+    ROUTES_OPS_PERIODS,
+    DEFAULT_ROUTES_OPS_PERIOD,
+  );
   const [data, setData] = useState<RoutesOpsResponse | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -319,15 +328,18 @@ export function RoutesOperationsPanel() {
 
   const periodDisplay = buttonPeriodLabel(period.label);
 
-  function cyclePeriod() {
-    const idx = ROUTES_OPS_PERIODS.findIndex((p) => periodKey(p) === periodKey(period));
-    const next = ROUTES_OPS_PERIODS[(idx + 1) % ROUTES_OPS_PERIODS.length];
-    setPeriod(next);
-  }
+  const periodCollection = useMemo(
+    () =>
+      createListCollection({
+        items: ROUTES_OPS_PERIODS.map((p) => ({ label: p.label, value: periodKey(p) })),
+      }),
+    [],
+  );
 
   return (
     <Dashboard
       storageKey="seedlings:routesTab:operationsOpen"
+      timeframe={periodTimeframe(ROUTES_OPS_PERIODS, period, setPeriod)}
       title="Operations"
       icon={Activity}
       summarySlot={
@@ -347,12 +359,7 @@ export function RoutesOperationsPanel() {
         {/* Period + refresh controls at the top of the expanded body
             (not in the header, to match MY WORKDAY collapsed height). */}
         <HStack justify="flex-end" gap={1}>
-          <Button size="xs" variant="outline" onClick={cyclePeriod} title="Change period">
-            {periodDisplay}
-            <Box as="span" ml={1} display="inline-flex" opacity={0.7}>
-              <ChevronsUpDown size={12} />
-            </Box>
-          </Button>
+
           <IconButton
             aria-label="Refresh routes operations"
             size="xs"

@@ -29,14 +29,7 @@
 // the alerts-dropdown "Tasks" link to call onClose.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  Box,
-  Button,
-  Card,
-  HStack,
-  Text,
-  VStack,
-} from "@chakra-ui/react";
+import { Box, Button, Card, HStack, IconButton, Text, VStack } from "@chakra-ui/react";
 import { ArrowUpRight, CheckCircle2, ChevronDown, ChevronUp, X } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
 // Every regular tab in pages/index.tsx renders an `<InlineMessage />`
@@ -65,6 +58,7 @@ import UnapprovedHoursSection from "@/src/ui/components/tasks/UnapprovedHoursSec
 import PayrollIdentityReview from "@/src/ui/components/PayrollIdentityReview";
 import { fetchUnmatchedPayrollNames, notifyPayrollChanged } from "@/src/lib/payroll";
 import RepeatingPausesDueSection from "@/src/ui/components/tasks/RepeatingPausesDueSection";
+import { Dashboard } from "@/src/ui/components/Dashboard";
 
 type ShortcutCounts = {
   // Super-only
@@ -564,15 +558,32 @@ function BackHeader({
 // and the self-hide-on-zero behavior; subscribe to `refreshEvents`
 // (browser CustomEvent names) so the count refreshes whenever an
 // underlying mutation fires — e.g. approve / mark paid / link.
+/**
+ * A Tasks row — now a thin wrapper over the shared `Dashboard` frame.
+ *
+ * This used to be a SECOND, independent implementation of the section
+ * pattern: its own card, its own chevron, its own expand state, no
+ * refresh, no dim, no persistence. Everything the Home/Jobs sections
+ * gained through 2026-08-27 had to be re-earned here or silently differ.
+ *
+ * Two things Tasks needs that the palettes don't give it, both now
+ * general Dashboard props:
+ *   • `accentColor` — each row's stripe deliberately matches its sibling
+ *     entry in the header alerts dropdown, so the per-section colour
+ *     coding survives instead of collapsing onto seven palettes.
+ *   • `headerAction` — the "Goto Task" arrow, rendered outside the
+ *     header <button>.
+ *
+ * The count chip goes in `summarySlot` rather than `count`: Dashboard's
+ * red badge shows only while collapsed, and on Tasks the number is the
+ * whole point of the row whether it is open or shut. A Badge is not a
+ * button, so it is safe inside the header button.
+ */
 function CollapsibleSectionCard({
   label,
   dotColor,
   loadCount,
   refreshEvents,
-  // Optional second affordance — when supplied, renders a small "Goto
-  // Task" icon button next to Expand/Collapse so the operator can
-  // jump to the section's home tab if they'd rather work there. Same
-  // close-Tasks-and-route pattern as ShortcutCard.
   onGoto,
   children,
 }: {
@@ -584,13 +595,16 @@ function CollapsibleSectionCard({
   children: React.ReactNode;
 }) {
   const [count, setCount] = useState<number | null>(null);
-  const [expanded, setExpanded] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
+    setLoading(true);
     try {
       setCount(await loadCount());
     } catch {
       setCount(0);
+    } finally {
+      setLoading(false);
     }
   }, [loadCount]);
 
@@ -610,49 +624,49 @@ function CollapsibleSectionCard({
   if (count === null || count === 0) return null;
 
   return (
-    <Box>
-      <Card.Root variant="outline" borderLeftWidth="4px" style={{ borderLeftColor: dotColor }}>
-        <Card.Body px={3} py={2}>
-          <HStack gap={3} align="center">
-            <Box
-              w="22px" h="22px" minW="22px" borderRadius="full"
-              fontSize="12px" fontWeight="bold"
-              display="flex" alignItems="center" justifyContent="center"
-              flexShrink={0}
-              style={{ background: dotColor, color: badgeTextColor(dotColor) }}
-            >
-              {count}
-            </Box>
-            <Text fontSize="sm" fontWeight="medium" flex={1}>{label}</Text>
-            {/* Vertical chevrons emphasize "expand below / collapse up"
-                — distinct from ShortcutCard's diagonal ArrowUpRight,
-                which signals navigation to another tab. The wording
-                ("Expand" / "Collapse") + chevron pair tells the
-                operator the action stays inline on Tasks. The
-                optional Goto Task button next to it is the escape
-                hatch when the operator prefers the source tab. */}
-            {onGoto && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={onGoto}
-                aria-label="Goto Task"
-                title="Goto Task — open the source tab"
-                px={2}
-                minW="32px"
-              >
-                <ArrowUpRight size={14} />
-              </Button>
-            )}
-            <Button size="sm" variant="outline" onClick={() => setExpanded((v) => !v)}>
-              {expanded ? "Collapse" : "Expand"}{" "}
-              {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-            </Button>
-          </HStack>
-        </Card.Body>
-      </Card.Root>
-      {expanded && <Box mt={2}>{children}</Box>}
-    </Box>
+    <Dashboard
+      // Keyed by label so each row remembers its own state; Tasks rows
+      // come and go as their counts change.
+      storageKey={`seedlings:tasks:${label.replace(/\s+/g, "-").toLowerCase()}Open`}
+      title={label}
+      icon={CheckCircle2}
+      variant="neutral"
+      accentColor={dotColor}
+      // Tasks is a scan list — a dozen queues at once. Rows start shut and
+      // the operator opens what they intend to work on.
+      defaultOpen={false}
+      onRefresh={load}
+      refreshing={loading}
+      summarySlot={
+        <Box
+          w="22px" h="22px" minW="22px" borderRadius="full"
+          fontSize="12px" fontWeight="bold"
+          display="flex" alignItems="center" justifyContent="center"
+          flexShrink={0}
+          style={{ background: dotColor, color: badgeTextColor(dotColor) }}
+        >
+          {count}
+        </Box>
+      }
+      headerAction={
+        onGoto ? (
+          <IconButton
+            size="xs"
+            variant="ghost"
+            onClick={(e) => {
+              e.stopPropagation();
+              onGoto();
+            }}
+            aria-label="Goto Task"
+            title="Goto Task — open the source tab"
+          >
+            <ArrowUpRight size={14} />
+          </IconButton>
+        ) : undefined
+      }
+    >
+      {children}
+    </Dashboard>
   );
 }
 

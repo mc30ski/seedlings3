@@ -38,7 +38,12 @@ export default function MyDashboard({
   viewAsUserId,
   viewAsDisplayName,
   leadContent,
+  onRefresh,
+  refreshing,
 }: {
+  /** Section-scoped refresh, rendered in the title bar by Dashboard. */
+  onRefresh?: () => void | Promise<void>;
+  refreshing?: boolean;
   /** Persist collapse state per hosting page. */
   storageKey?: string;
   /** When set, the section is scoped to this worker instead of the
@@ -66,6 +71,8 @@ export default function MyDashboard({
       icon={UserCircle}
       variant="hero"
       pinnedContent={leadContent}
+      onRefresh={onRefresh}
+      refreshing={refreshing}
     >
       <CompliancePromptBanner viewAsUserId={viewAsUserId ?? null} />
       <WorkdayBanner viewAsUserId={viewAsUserId ?? null} />

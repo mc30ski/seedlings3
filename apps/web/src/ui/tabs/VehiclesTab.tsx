@@ -46,6 +46,7 @@ import {
   UserPlus,
   X,
   Zap,
+  BarChart3,
 } from "lucide-react";
 import { apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import { bizToday, bizAddDays, bizInstantFromEtParts, type EtDateKey } from "@/src/lib/dates";
@@ -55,6 +56,7 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import { Dashboard } from "@/src/ui/components/Dashboard";
 
 type Vehicle = {
   id: string;
@@ -1037,13 +1039,12 @@ function VehiclesInsightsSection({ vehicles }: { vehicles: Vehicle[] }) {
   }, [vehicles]);
 
   return (
-    <Card.Root variant="outline" bg="orange.50" borderColor="orange.200">
-      <Card.Body py={3} px={3}>
-        <HStack gap={2} mb={2}>
-          <Badge size="sm" variant="subtle" colorPalette="orange">
-            <HStack gap={1}><Zap size={10} /><Text>Insights</Text></HStack>
-          </Badge>
-        </HStack>
+    <Dashboard
+      storageKey="seedlings:vehiclesTab:insightsOpen"
+      title="Insights"
+      icon={BarChart3}
+      variant="insights"
+    >
         <SimpleGrid columns={{ base: 2, md: 4 }} gap={2}>
           <InsightPanel
             title="Fleet"
@@ -1073,8 +1074,7 @@ function VehiclesInsightsSection({ vehicles }: { vehicles: Vehicle[] }) {
             palette={(fleetSummary.active - fleetSummary.assignedActive) > 0 ? "yellow" : "gray"}
           />
         </SimpleGrid>
-      </Card.Body>
-    </Card.Root>
+    </Dashboard>
   );
 }
 

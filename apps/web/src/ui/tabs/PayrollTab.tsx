@@ -37,7 +37,7 @@ import {
 import { FiUpload, FiChevronRight, FiAlertTriangle, FiArchive, FiInfo } from "react-icons/fi";
 // Banknote matches the Home PAYROLL section and the tab's own menu
 // icon; the dollar glyph is already the Money category + Payments tab.
-import { Banknote } from "lucide-react";
+import { AlertTriangle, Banknote } from "lucide-react";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { determineRoles } from "@/src/lib/roles";
@@ -68,6 +68,7 @@ import {
 } from "@/src/lib/payroll";
 import PayrollUploadDialog from "@/src/ui/dialogs/PayrollUploadDialog";
 import PayrollIdentityReview from "@/src/ui/components/PayrollIdentityReview";
+import { Dashboard } from "@/src/ui/components/Dashboard";
 
 type Props = {
   me: Me | null;
@@ -109,6 +110,11 @@ export default function PayrollTab({
   const [uploadOpen, setUploadOpen] = useState(false);
   const [archiveFor, setArchiveFor] = useState<PayrollPeriodSummary | null>(null);
   const [reviewNonce, setReviewNonce] = useState(0);
+  // Content-only review panel + host-supplied frame, same contract as
+  // the other queue sections.
+  const [identityApi, setIdentityApi] = useState<
+    { refresh: () => void; loading: boolean; count: number } | null
+  >(null);
   // Worker-side counterpart to the Super's identity queue: tells a worker
   // that a period may be theirs and is waiting to be matched. Without it a
   // name change makes a pay period vanish silently.
@@ -328,15 +334,36 @@ export default function PayrollTab({
 
       {/* ── Identity review (Super) ────────────────────────────────────── */}
       {showSuperExtras && totalUnmatched > 0 && (
-        <PayrollIdentityReview
-          key={reviewNonce}
-          onChanged={() => {
-            setReviewNonce((n) => n + 1);
-            void load();
-            if (openId) void openPeriod(openId);
-            notifyPayrollChanged();
-          }}
-        />
+        <Box mb={3}>
+          <Dashboard
+            storageKey="seedlings:payrollTab:identityReviewOpen"
+            title={
+              totalUnmatched === 1
+                ? "1 payroll name to match"
+                : `${totalUnmatched} payroll names to match`
+            }
+            icon={AlertTriangle}
+            variant="attention"
+            count={identityApi?.count ?? totalUnmatched}
+            /* Only rendered when something is unmatched, and every one of
+               them means a worker cannot see their own pay — so it pulses
+               unconditionally, like the other blocked-on-you queues. */
+            forceGlow="orange"
+            onRefresh={identityApi?.refresh}
+            refreshing={!!identityApi?.loading}
+          >
+            <PayrollIdentityReview
+              key={reviewNonce}
+              onReady={setIdentityApi}
+              onChanged={() => {
+                setReviewNonce((n) => n + 1);
+                void load();
+                if (openId) void openPeriod(openId);
+                notifyPayrollChanged();
+              }}
+            />
+          </Dashboard>
+        </Box>
       )}
 
       {/* ── Timeframe ──────────────────────────────────────────────────── */}

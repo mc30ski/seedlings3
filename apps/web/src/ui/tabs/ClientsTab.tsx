@@ -17,7 +17,7 @@ import {
   Accordion,
   createListCollection,
 } from "@chakra-ui/react";
-import { Filter, LayoutList, Mail, MessageCircle, PauseCircle, Plus, RefreshCw, Star, Tag, X } from "lucide-react";
+import { Filter, LayoutList, Link2, Mail, MessageCircle, PauseCircle, Plus, RefreshCw, Star, Tag, X } from "lucide-react";
 import { prettyStatus, clientLabel } from "@/src/lib/labels";
 import { determineRoles } from "@/src/lib/roles";
 import { clientStatusColor } from "@/src/lib/statusColors";
@@ -53,6 +53,7 @@ import { apiGet, apiDelete, apiPost } from "@/src/lib/api";
 import { parseAdminTags, adminTagLabel, adminTagColor, ADMIN_TAGS } from "@/src/ui/components/AdminTagPicker";
 import { MailLink, CallLink, MapLink } from "@/src/ui/helpers/Link";
 import { FiStar, FiMapPin, FiUsers } from "react-icons/fi";
+import { Dashboard } from "@/src/ui/components/Dashboard";
 
 // Constant representing the kind states for this entity.
 const kindStates = ["ALL", ...CLIENT_KIND] as const;
@@ -72,6 +73,9 @@ type ClientsTabProps = TabPropsType & {
 };
 
 export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTabProps) {
+  // See PaymentsTab — same content-only + host-frames-it contract.
+  const [unlinkedApi, setUnlinkedApi] = useState<{ refresh: () => void; loading: boolean; count: number } | null>(null);
+
   const { isSuper: hasSuperRole, isAvail, isAdmin, forAdmin } = determineRoles(me, purpose);
 
   // Effective scope: prefer the additive prop; fall back to a scope
@@ -456,7 +460,22 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
 
   return (
     <Box w="full">
-      {forAdmin && <UnlinkedClientAccountsSection />}
+      {forAdmin && (
+        <Box mb={3}>
+          <Dashboard
+            storageKey="seedlings:clientsTab:unlinkedAccountsOpen"
+            title="Unlinked client accounts"
+            icon={Link2}
+            variant="attention"
+            count={unlinkedApi?.count ?? 0}
+            forceGlow={(unlinkedApi?.count ?? 0) > 0 ? "orange" : undefined}
+            onRefresh={unlinkedApi?.refresh}
+            refreshing={!!unlinkedApi?.loading}
+          >
+            <UnlinkedClientAccountsSection onReady={setUnlinkedApi} />
+          </Dashboard>
+        </Box>
+      )}
       <HStack mb={2} gap={2}>
         <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)" }}>
           <RefreshCw size={14} />
@@ -644,7 +663,9 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
       <Box position="relative">
         {loading && items.length > 0 && (<>
           <Box position="absolute" inset="0" bg="bg/80" zIndex="1" />
-          <Spinner size="lg" position="fixed" top="50%" left="50%" zIndex="2" />
+          <Box position="fixed" top="50%" left="50%" transform="translate(-50%, -50%)" zIndex="2">
+            <Spinner size="lg" />
+          </Box>
         </>)}
       <VStack align="stretch" gap={3}>
         {filtered.length === 0 && (

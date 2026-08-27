@@ -748,7 +748,9 @@ export default function TimelineTab({ isSuper = false }: Props) {
         {loading && rows.length > 0 && (
           <>
             <Box position="absolute" inset="0" bg="bg/80" zIndex="1" />
-            <Spinner size="lg" position="fixed" top="50%" left="50%" zIndex="2" />
+            <Box position="fixed" top="50%" left="50%" transform="translate(-50%, -50%)" zIndex="2">
+            <Spinner size="lg" />
+          </Box>
           </>
         )}
         {loading && rows.length === 0 ? (

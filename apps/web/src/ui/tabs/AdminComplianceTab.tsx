@@ -15,13 +15,14 @@ import {
   Textarea,
   VStack,
 } from "@chakra-ui/react";
-import { AlertTriangle, Archive, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, Download, Eye, FileText, Info, Play, Plus, RotateCcw, Trash2, X, XCircle } from "lucide-react";
+import { AlertTriangle, Archive, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, Download, Eye, FileCheck, FileText, Info, Play, Plus, RotateCcw, Trash2, X, XCircle } from "lucide-react";
 import MarkdownContent from "@/src/ui/components/MarkdownContent";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import { bizDateKey, bizToday, fmtDate } from "@/src/lib/dates";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import WorkerPicker from "@/src/ui/components/WorkerPicker";
+import { Dashboard } from "@/src/ui/components/Dashboard";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Human-facing labels for the enum values the backend uses. The DB stores
@@ -300,25 +301,27 @@ export default function AdminComplianceTab() {
       {view === "list" && (
         <>
       {pendingUploadReviews.length > 0 && (
-        <Card.Root variant="outline" mb={3} borderColor="orange.400">
-          <Card.Body p={3}>
-            <HStack justify="space-between" mb={2}>
-              <HStack gap={2}>
-                <Text fontSize="sm" fontWeight="semibold">
-                  Uploads awaiting review
-                </Text>
-                <Badge size="sm" colorPalette="orange" variant="solid">
-                  {pendingUploadReviews.length}
-                </Badge>
-              </HStack>
-            </HStack>
+        <Box mb={3}>
+          <Dashboard
+            storageKey="seedlings:complianceTab:uploadReviewsOpen"
+            title="Uploads awaiting review"
+            icon={FileCheck}
+            variant="attention"
+            count={pendingUploadReviews.length}
+            /* Only renders when something is waiting, and each row is a
+               worker blocked until it is reviewed — so it pulses, like the
+               other queues blocked on the operator. */
+            forceGlow="orange"
+            onRefresh={load}
+            refreshing={loading}
+          >
             <VStack align="stretch" gap={1}>
               {pendingUploadReviews.map((r) => (
                 <UploadReviewRow key={r.id} row={r} onReviewed={() => void load()} />
               ))}
             </VStack>
-          </Card.Body>
-        </Card.Root>
+          </Dashboard>
+        </Box>
       )}
 
       {loading && policies.length === 0 ? (

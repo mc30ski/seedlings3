@@ -18,7 +18,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Box, Button, Card, HStack, IconButton, SimpleGrid, Spinner, Text, VStack } from "@chakra-ui/react";
+import { Box, Button, Card, HStack, IconButton, Select, SimpleGrid, Spinner, Text, VStack, createListCollection } from "@chakra-ui/react";
 import {
   Activity, AlertTriangle, Briefcase, Building2, Calendar, CheckCircle2,
   ChevronsUpDown, Clock, DollarSign, FileText, Hammer, Percent, RefreshCw,
@@ -28,11 +28,12 @@ import { apiGet } from "@/src/lib/api";
 import { bizAddDays, bizToday } from "@/src/lib/dates";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import MiniStatCard from "@/src/ui/components/MiniStatCard";
-import AllWorkersHourlyPayCards from "@/src/ui/components/AllWorkersHourlyPayCards";
 import {
-  ADMIN_PERIODS,
-  buttonPeriodLabel,
+  SUPER_PERIODS,
   periodKey,
+  periodTimeframe,
+  usePersistedPeriod,
+  periodToRange,
   type Period,
 } from "@/src/ui/components/WorkerHourlyPayCard";
 
@@ -110,28 +111,28 @@ function fmtInt(n: number): string {
   return n.toLocaleString("en-US", { maximumFractionDigits: 0 });
 }
 
-const SUPER_PERIODS: Period[] = ADMIN_PERIODS;
 const DEFAULT_SUPER_PERIOD: Period = { preset: "today", label: "today" };
 
-// Resolve a Period into the from/to ET-date-key range /admin/operations
-// expects.
-function periodToRange(p: Period): { from: string; to: string } {
-  if (p.preset === "today") {
-    const today = bizToday();
-    return { from: today, to: today };
-  }
-  if (p.preset === "yesterday") {
-    const y = bizAddDays(bizToday(), -1);
-    return { from: y, to: y };
-  }
-  const days = Math.max(1, p.days ?? 1);
-  const to = bizToday();
-  const from = bizAddDays(to, -(days - 1));
-  return { from, to };
-}
-
-export function OperationsPanel() {
-  const [period, setPeriod] = useState<Period>(DEFAULT_SUPER_PERIOD);
+export function OperationsPanel({
+  onReady,
+}: {
+  /**
+   * Hands the section's loader, busy flag and collapsed-header summary up
+   * to the Dashboard wrapper — the panel owns the data, the wrapper owns
+   * the frame.
+   */
+  onReady?: (api: {
+    refresh: () => Promise<void>;
+    loading: boolean;
+    summary: React.ReactNode;
+    timeframe: ReturnType<typeof periodTimeframe>;
+  }) => void;
+} = {}) {
+  const [period, setPeriod] = usePersistedPeriod(
+    "homeInsights_period",
+    SUPER_PERIODS,
+    DEFAULT_SUPER_PERIOD,
+  );
   const [data, setData] = useState<OperationsResponse | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -154,43 +155,62 @@ export function OperationsPanel() {
   }, [range.from, range.to]);
 
   useEffect(() => { void load(); }, [load]);
+  /**
+   * Collapsed-header summary: the timeframe plus the three figures an
+   * operator actually opens this section for.
+   *
+   * The timeframe LEADS and always shows — collapsing hides the picker, so
+   * "$3,125" with no window attached is unreadable. Same rule as the pay
+   * sections.
+   */
+  const summaryNode = useMemo(
+    () => (
+      <Text fontSize="xs" color="orange.900" lineClamp={1}>
+        {period.label}
+        {data ? (
+          <>
+            {" · "}
+            <Box as="span" fontWeight="bold">{fmtUSD(data.financial.totalRevenue)}</Box> rev
+            {" · "}
+            <Box as="span" fontWeight="bold">{fmtUSD(data.financial.netRevenue)}</Box> net
+            {" · "}
+            <Box as="span" fontWeight="bold">{fmtInt(data.jobs.completed)}</Box> done
+          </>
+        ) : null}
+      </Text>
+    ),
+    [period.label, data],
+  );
 
-  const periodDisplay = buttonPeriodLabel(period.label);
+  useEffect(() => {
+    onReady?.({
+      refresh: load,
+      loading,
+      summary: summaryNode,
+      timeframe: periodTimeframe(SUPER_PERIODS, period, setPeriod),
+    });
+  }, [onReady, load, loading, summaryNode, period]);
 
-  function cyclePeriod() {
-    const idx = SUPER_PERIODS.findIndex((p) => periodKey(p) === periodKey(period));
-    const next = SUPER_PERIODS[(idx + 1) % SUPER_PERIODS.length];
-    setPeriod(next);
-  }
+  // Chakra Select, never a native <select> — house rule. The collection is
+  // keyed by `periodKey` so "days:0" (all time) and "preset:today" are
+  // distinguishable; two entries could otherwise collide on label alone.
+  const periodCollection = useMemo(
+    () =>
+      createListCollection({
+        items: SUPER_PERIODS.map((p) => ({ label: p.label, value: periodKey(p) })),
+      }),
+    [],
+  );
 
   // Renders bare content — the caller (HomeTab) wraps this in the
   // orange Insights card so the Super visual language is consistent
   // across tabs (matches JobsTab + InventoryTab Insights sections).
   return (
     <VStack align="stretch" gap={3}>
-        {/* Period controls — cycle + refresh, live inside the expanded
-            body so the collapsed header stays the same height as MY
-            DASHBOARD. */}
-        <HStack justify="flex-end" gap={1}>
-          <Button size="xs" variant="outline" onClick={cyclePeriod} title="Change period">
-            {periodDisplay}
-            <Box as="span" ml={1} display="inline-flex" opacity={0.7}>
-              <ChevronsUpDown size={12} />
-            </Box>
-          </Button>
-          <IconButton
-            aria-label="Refresh operations"
-            size="xs"
-            variant="ghost"
-            onClick={() => void load()}
-            loading={loading}
-          >
-            <RefreshCw size={12} />
-          </IconButton>
-        </HStack>
+
 
         {/* Section 1 — Money. */}
-        <OpsSection title="Money · This period" loading={loading && !data}>
+        <OpsSection title="Money" loading={loading && !data}>
           {data && (
             <SimpleGrid columns={{ base: 2, sm: 3, md: 4 }} gap={2}>
               <MiniStatCard
@@ -255,7 +275,7 @@ export function OperationsPanel() {
         </OpsSection>
 
         {/* Section 2 — Jobs. */}
-        <OpsSection title="Jobs · This period" loading={loading && !data}>
+        <OpsSection title="Jobs" loading={loading && !data}>
           {data && (
             <SimpleGrid columns={{ base: 2, sm: 3, md: 4 }} gap={2}>
               <MiniStatCard
@@ -316,11 +336,19 @@ export function OperationsPanel() {
           )}
         </OpsSection>
 
-        {/* Section 3 — Pay per hour · team. Shares the same Period. */}
-        <AllWorkersHourlyPayCards periodOverride={period} />
+        {/* NOTE: "Pay per hour · team" is deliberately NOT a
+            section here. It lives on Home OUTSIDE this panel, where it has
+            always been, with its own timeframe picker. It was mounted here
+            as well, so on Super Home the section rendered TWICE the moment
+            Insights was expanded (2026-08-27).
+
+            Don't "restore" it as a section to make it follow the Insights
+            period — it is a per-worker pay view, not part of the
+            operations rollup, and the operator wants it standing on its
+            own. */}
 
         {/* Section 4 — Equipment. */}
-        <OpsSection title="Equipment · Now" loading={loading && !data}>
+        <OpsSection title="Equipment" loading={loading && !data}>
           {data && (
             <SimpleGrid columns={{ base: 2, sm: 3, md: 4 }} gap={2}>
               <MiniStatCard
@@ -398,7 +426,7 @@ export function OperationsPanel() {
         </OpsSection>
 
         {/* Section 5 — Team + Clients. */}
-        <OpsSection title="Team & Clients · This period" loading={loading && !data}>
+        <OpsSection title="Team & Clients" loading={loading && !data}>
           {data && (
             <SimpleGrid columns={{ base: 2, sm: 3, md: 4 }} gap={2}>
               <MiniStatCard
