@@ -32,9 +32,16 @@ type Props = {
   // CollapsibleSectionCard so every section there reads the same).
   // Default false preserves the existing ServicesTab behavior.
   bare?: boolean;
+
+  /**
+   * Reports refresh / busy / count to whatever frames this. Both hosts
+   * now pass `bare` and supply a Dashboard frame, so this component is
+   * content-only.
+   */
+  onReady?: (api: { refresh: () => void; loading: boolean; count: number }) => void;
 };
 
-export default function ChangeRequestsPanel({ bare = false }: Props = {}) {
+export default function ChangeRequestsPanel({ bare = false, onReady }: Props = {}) {
   const [items, setItems] = useState<ChangeRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(bare);
@@ -52,6 +59,10 @@ export default function ChangeRequestsPanel({ bare = false }: Props = {}) {
       setLoading(false);
     }
   }
+
+  useEffect(() => {
+    onReady?.({ refresh: () => void load(), loading, count: items.length });
+  }, [onReady, load, loading, items]);
 
   useEffect(() => {
     void load();
@@ -167,20 +178,10 @@ export default function ChangeRequestsPanel({ bare = false }: Props = {}) {
     </VStack>
   );
 
-  if (bare) return listBody;
+  // Always content-only. The framed branch that used to live here (its
+  // own orange card, chevron and count badge) was a fourth hand-rolled
+  // copy of the section pattern; ServicesTab and TasksPage both supply a
+  // real frame now, so `bare` is the only shape.
+  return listBody;
 
-  return (
-    <Card.Root variant="outline" borderColor="orange.300" mb={3}>
-      <Card.Body p={3}>
-        <HStack justify="space-between" cursor="pointer" onClick={() => setExpanded((v) => !v)}>
-          <HStack gap={2}>
-            <Text fontWeight="semibold" fontSize="sm" color="orange.800">Client Change Requests</Text>
-            <Badge colorPalette="orange" variant="solid" borderRadius="full" px="2" fontSize="xs">{items.length}</Badge>
-          </HStack>
-          {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-        </HStack>
-        {expanded && listBody}
-      </Card.Body>
-    </Card.Root>
-  );
 }

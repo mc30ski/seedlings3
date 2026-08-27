@@ -17,7 +17,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertCircle, AlertTriangle, Archive, Ban, CalendarRange, ChevronDown, ChevronUp, CircleAlert, Filter, Layers, LayoutList, Link2, Maximize2, MessageCircle, Plus, RefreshCw, Repeat, Star, Tag, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, Archive, Ban, CalendarRange, ChevronDown, ChevronUp, CircleAlert, Filter, Inbox, Layers, LayoutList, Link2, Maximize2, MessageCircle, Plus, RefreshCw, Repeat, Star, Tag, X } from "lucide-react";
 import ChangeRequestsPanel from "@/src/ui/components/ChangeRequestsPanel";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
@@ -72,6 +72,7 @@ import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/li
 import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
 import TruncatedText from "@/src/ui/components/TruncatedText";
 import { type JobOccurrenceAssigneeWithUser } from "@/src/lib/types";
+import { Dashboard } from "@/src/ui/components/Dashboard";
 
 // `localDate` removed — use `bizDateKey` directly.
 
@@ -113,6 +114,12 @@ export default function ServicesTab({
    *  initial ref value on mount). */
   streamReviewNonce?: number;
 }) {
+  // Content-only panel + host-supplied frame, same contract as the
+  // Payments and Clients queue sections.
+  const [changeReqApi, setChangeReqApi] = useState<
+    { refresh: () => void; loading: boolean; count: number } | null
+  >(null);
+
   const { isAvail, forAdmin, isSuper, isAdmin } = determineRoles(me, purpose);
   const { labelFor: methodLabel } = usePaymentMethodLabels();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -883,7 +890,22 @@ export default function ServicesTab({
 
   return (
     <Box w="full">
-      {forAdmin && <ChangeRequestsPanel />}
+      {forAdmin && (
+        <Box mb={3}>
+          <Dashboard
+            storageKey="seedlings:servicesTab:changeRequestsOpen"
+            title="Client change requests"
+            icon={Inbox}
+            variant="attention"
+            count={changeReqApi?.count ?? 0}
+            forceGlow={(changeReqApi?.count ?? 0) > 0 ? "orange" : undefined}
+            onRefresh={changeReqApi?.refresh}
+            refreshing={!!changeReqApi?.loading}
+          >
+            <ChangeRequestsPanel bare onReady={setChangeReqApi} />
+          </Dashboard>
+        </Box>
+      )}
       <HStack mb={2} gap={2}>
         <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)" }}>
           <RefreshCw size={14} />
@@ -1432,7 +1454,9 @@ export default function ServicesTab({
       <Box position="relative">
         {loading && items.length > 0 && (<>
           <Box position="absolute" inset="0" bg="bg/80" zIndex="1" />
-          <Spinner size="lg" position="fixed" top="50%" left="50%" zIndex="2" />
+          <Box position="fixed" top="50%" left="50%" transform="translate(-50%, -50%)" zIndex="2">
+            <Spinner size="lg" />
+          </Box>
         </>)}
       <VStack align="stretch" gap={3}>
         {filtered.length === 0 && (

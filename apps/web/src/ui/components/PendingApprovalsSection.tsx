@@ -112,7 +112,14 @@ function dollar(n: number): string {
   return `$${n.toFixed(2)}`;
 }
 
-export default function PendingApprovalsSection() {
+export default function PendingApprovalsSection({ onReady }: {
+  /**
+   * Hands this section's refresh, busy flag and row count to whatever
+   * frames it. The component renders CONTENT ONLY — Dashboard (or
+   * TasksPage's card) supplies the title bar, stripe, refresh and dim.
+   */
+  onReady?: (api: { refresh: () => void; loading: boolean; count: number }) => void;
+} = {}) {
   const [rows, setRows] = useState<PendingRow[]>([]);
   const [loading, setLoading] = useState(false);
   // Every mutating action (Approve / Reject / Adjust / Write-off) goes
@@ -134,6 +141,13 @@ export default function PendingApprovalsSection() {
       setLoading(false);
     }
   }, []);
+
+  // Report state to the frame (Dashboard at the tab host, the card in
+  // TasksPage). Kept in an effect rather than called during render so a
+  // parent setState never fires mid-render.
+  useEffect(() => {
+    onReady?.({ refresh: () => void load(), loading, count: rows.length });
+  }, [onReady, load, loading, rows]);
 
   useEffect(() => {
     void load();
@@ -264,30 +278,9 @@ export default function PendingApprovalsSection() {
   if (rows.length === 0 && !loading) return null;
 
   return (
-    <Card.Root variant="outline" borderColor="orange.300" borderLeftWidth="4px" borderLeftColor="orange.500" mb={3} position="relative">
-      {/* Refresh overlay — dims the section + shows a viewport-centered
-          spinner, matching the JobsTab refresh pattern. Only kicks in
-          while we have existing rows; the empty/initial state already
-          falls through the `if (rows.length === 0 && !loading)` guard
-          above so there's nothing to dim. */}
-      {loading && rows.length > 0 && (
-        <>
-          <Box position="absolute" inset="0" bg="bg/80" zIndex="1" borderRadius="md" />
-          <Spinner size="lg" position="fixed" top="50%" left="50%" zIndex="2" />
-        </>
-      )}
-      <Card.Body p={3}>
-        <HStack mb={2} justify="space-between">
-          <HStack gap={2}>
-            <Text fontSize="sm" fontWeight="semibold">Pending approval</Text>
-            <Badge size="sm" colorPalette="orange" variant="solid" px="2" borderRadius="full">
-              {rows.length}
-            </Badge>
-          </HStack>
-          <Button size="xs" variant="ghost" onClick={() => void load()} loading={loading}>
-            <RefreshCw size={12} />
-          </Button>
-        </HStack>
+    <Box>
+      {/* Content only — Dashboard at the host supplies the frame,
+          title bar, stripe, count badge, refresh and dim. */}
         {rows.length === 0 && (
           <Text fontSize="sm" color="fg.muted">No pending payments to approve.</Text>
         )}
@@ -372,7 +365,6 @@ export default function PendingApprovalsSection() {
             );
           })}
         </VStack>
-      </Card.Body>
       <ApprovePaymentDialog
         row={approvingRow}
         willScheduleNext={approvingRow ? willScheduleNext(approvingRow) : false}
@@ -437,7 +429,7 @@ export default function PendingApprovalsSection() {
         }}
         onCancel={() => setWritingOffRow(null)}
       />
-    </Card.Root>
+    </Box>
   );
 }
 

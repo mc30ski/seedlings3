@@ -78,6 +78,7 @@ import StatusButton from "@/src/ui/components/StatusButton";
 import AddAssigneeDialog from "@/src/ui/dialogs/AddAssigneeDialog";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import SendReceiptDialog from "@/src/ui/dialogs/SendReceiptDialog";
+import { Dashboard } from "@/src/ui/components/Dashboard";
 import { type ReceiptData } from "@/src/lib/receipt";
 import AcceptPaymentDialog from "@/src/ui/dialogs/AcceptPaymentDialog";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
@@ -398,13 +399,19 @@ export default function JobsTab({
   );
 
   const [statusFilter, setStatusFilter] = usePersistedState<string[]>(`${pfx}_status`, ["ALL"]);
+  // Client Requests frame state. The child owns the fetch and reports
+  // back, so refreshing is just "tell the app change-requests moved" —
+  // the same event the pending count above already listens for.
+  const [clientReqLoading, setClientReqLoading] = useState(false);
+  const refreshClientRequests = useCallback(() => {
+    window.dispatchEvent(new CustomEvent("seedlings:change-requests-updated"));
+  }, []);
+
   // Collapse state for the Insights + Client Requests section frames.
   // Match the Equipment tab pattern — outlined box, icon + UPPERCASE
   // title, chevron toggle. Insights defaults open (Super lands here),
   // Client Requests defaults open too since it only renders when
   // there's actionable content (count > 0).
-  const [insightsCollapsed, setInsightsCollapsed] = usePersistedState<boolean>(`${pfx}_insightsCollapsed`, false);
-  const [clientReqCollapsed, setClientReqCollapsed] = usePersistedState<boolean>(`${pfx}_clientReqCollapsed`, false);
   const statusItems = useMemo(
     () => [
       ...statusStates.map((s) => ({
@@ -2915,57 +2922,43 @@ export default function JobsTab({
             useEffect keeps polling behind the scenes so a new
             request pops the section in as soon as it lands. */}
         {showAdminExtras && clientRequestPending > 0 && (
-          <Box
-            borderWidth="1px"
-            borderColor="yellow.400"
-            borderRadius="md"
-            p={3}
-            bg="yellow.200"
-            css={{ animation: "seedlings-pulse-yellow 2.5s ease-in-out infinite" }}
+          /* Same section frame as Insights and the Home sections: title
+             bar, chevron, 4px left stripe, shared refresh + dim. It used
+             to be a hand-rolled pulsing yellow box with a ▶/▼ glyph.
+             The pending count moves to Dashboard's `count`, which renders
+             the red badge in the collapsed header. */
+          <Dashboard
+            storageKey={`seedlings:${pfx}:clientRequestsOpen`}
+            title="Client requests"
+            icon={Inbox}
+            /* Orange, not the yellow `estimate` palette — this section was
+               orange before the conversion and yellow made it read as an
+               estimate rather than a queue. */
+            variant="attention"
+            count={clientRequestPending}
+            /* Only renders when there IS a pending request, so the pulse is
+               unconditional here — it restores the animation the
+               hand-rolled yellow box had. */
+            forceGlow="orange"
+
+            onRefresh={refreshClientRequests}
+            refreshing={clientReqLoading}
           >
-            <HStack
-              gap={2}
-              align="center"
-              mb={clientReqCollapsed ? 0 : 2}
-              cursor="pointer"
-              onClick={() => setClientReqCollapsed(!clientReqCollapsed)}
-              _hover={{ opacity: 0.7 }}
-            >
-              <Inbox size={14} color="var(--chakra-colors-yellow-900)" />
-              <Text fontSize="sm" fontWeight="bold" color="yellow.900" textTransform="uppercase" letterSpacing="wide">
-                Client Requests
-              </Text>
-              <Badge size="sm" colorPalette="red" variant="solid" borderRadius="full" px="1.5" fontSize="2xs">
-                {clientRequestPending}
-              </Badge>
-              <Text fontSize="xs" color="yellow.800">{clientReqCollapsed ? "▶" : "▼"}</Text>
-            </HStack>
-            {!clientReqCollapsed && <ClientRequestsSection />}
-          </Box>
+            <ClientRequestsSection onLoadingChange={setClientReqLoading} />
+          </Dashboard>
         )}
         {/* Insights (Super only) — Ops summary strip wrapped in the
             same orange card as the Equipment Insights section, for a
             consistent Super visual language across tabs. */}
         {scope.isSuper && (
-          <Card.Root variant="outline" bg="orange.50" borderColor="orange.200">
-            <Card.Body py={3} px={3}>
-              <HStack
-                gap={2}
-                align="center"
-                mb={insightsCollapsed ? 0 : 2}
-                cursor="pointer"
-                onClick={() => setInsightsCollapsed(!insightsCollapsed)}
-                _hover={{ opacity: 0.7 }}
-              >
-                <BarChart3 size={14} color="var(--chakra-colors-gray-600)" />
-                <Text fontSize="sm" fontWeight="bold" color="gray.600" textTransform="uppercase" letterSpacing="wide">
-                  Insights
-                </Text>
-                <Text fontSize="xs" color="gray.400">{insightsCollapsed ? "▶" : "▼"}</Text>
-              </HStack>
-              {!insightsCollapsed && <OpsSummaryStrip rows={items} />}
-            </Card.Body>
-          </Card.Root>
+          <Dashboard
+            storageKey={`seedlings:${pfx}:insightsOpen`}
+            title="Insights"
+            icon={BarChart3}
+            variant="insights"
+          >
+            <OpsSummaryStrip rows={items} />
+          </Dashboard>
         )}
       </VStack>
       <HStack mb={2} gap={2} wrap="nowrap">
@@ -5706,10 +5699,18 @@ export default function JobsTab({
                             </Badge>
                           )}
                         </Box>
-                        {/* Info line for repeating-paused occurrences.
-                            Hidden when the occurrence isn't paused. */}
-                        <RepeatingPauseInfoLine occ={occ as any} />
                       </HStack>
+                      {/* Info line for repeating-paused occurrences. Hidden
+                          when the occurrence isn't paused.
+
+                          OUTSIDE the badges HStack. It used to sit inside
+                          it, which made this full-width panel a flex ITEM
+                          beside the badges — it rendered as a floating box
+                          to the right of "Repeating Paused / Repeating ·
+                          7d" with dead space around it. The expanded
+                          branch already had it in a column, so only the
+                          compact card showed the bug. */}
+                      <RepeatingPauseInfoLine occ={occ as any} />
                     </Box>
                     ) : (
                       /* ── EXPANDED HEADER: responsive — stacked on mobile, side-by-side on desktop ── */

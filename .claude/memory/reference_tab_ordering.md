@@ -25,7 +25,7 @@ lookups match this ordering.
 Work: Home, Jobs, Routes, Actions
 Equipment: Inventory, Collections, Vehicles
 Directory: Clients, Properties, Users, Groups
-Money: Payments, Pricing, Supplies
+Money: Payments, Payroll, Pricing, Supplies
 System: Profile
 
 (No Records or Tools categories for Worker.)
@@ -35,7 +35,7 @@ System: Profile
 Work: Home, Jobs, Routes, Services, Actions
 Equipment: Inventory, Collections, Vehicles
 Directory: Clients, Properties, Users, Groups
-Money: Payments, Pricing, Supplies
+Money: Payments, Payroll, Pricing, Supplies
 Records: Engagement, History, Timeline, Documents
 System: Profile, Notify, Settings
 
@@ -46,8 +46,13 @@ System: Profile, Notify, Settings
 - **Work**: Home, Jobs, Routes, Services, Actions
 - **Equipment**: Inventory, Collections, Vehicles
 - **Directory**: Clients, Properties, Users, Groups
-- **Money**: Payments, Pricing, Supplies, Ledger, Promotions
-  (Ledger + Promotions are Super-only.)
+- **Money**: Payments, Payroll, Ledger, Pricing, Supplies, Promotions
+  (Ledger + Promotions are Super-only; Payroll is shared but heavily
+  scoped per role.) Ledger sits directly under Payroll (2026-08-27,
+  operator request): the first three are the money-MOVEMENT surfaces —
+  what came in, what went out to people, what went out everywhere else —
+  while Pricing and Supplies are configuration rather than record-keeping
+  and follow after.
 - **Records**: Reconcile, Workdays, Compliance, Engagement, History,
   Timeline, Documents, Audit
 - **Tools**: Mowing, Mulch (calculators; Super-only)

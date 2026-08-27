@@ -79,18 +79,18 @@ test.describe("Payroll identity queue — operator surfaces", () => {
       timeout: 10_000,
     });
 
-    const card = page
-      .locator("div")
-      .filter({ hasText: /Payroll names to match/ })
-      .filter({ has: page.getByRole("button", { name: /Expand/i }) })
-      .last();
-    await card.getByRole("button", { name: /Expand/i }).first().click();
+    // Tasks rows became Dashboard sections (2026-08-27): the title bar
+    // itself is the toggle, replacing the old "Expand" button.
+    await page.getByText(/^Payroll names to match$/i).first().click();
     await page.waitForTimeout(2500);
 
     // The REAL component, not a stub or a summary — the operator can
     // resolve the queue without leaving Tasks.
     const body = (await page.locator("body").textContent()) ?? "";
     expect(body, "the embedded review is missing its worker picker").toMatch(/Choose worker/);
-    expect(body).toMatch(/payroll name.? needs? matching/i);
+    // The "N names need matching" heading now lives in the section TITLE;
+    // what remains inside is the explanation of why it matters, which is
+    // the part that must survive being embedded somewhere else.
+    expect(body).toMatch(/that worker can't see their pay/i);
   });
 });

@@ -1638,10 +1638,17 @@ chip: false, bucket: t.bucket }));
           categoryIcon: AiOutlineTeam,
         },
         {
-          // ── Money ── (Super sub-tab order: Payments → Pricing →
-          // Supplies → Ledger → Promotions. Payments/Pricing/Supplies
-          // are shared across all three roles via the additive scope
-          // prop; Ledger + Promotions are Super-only.)
+          // ── Money ── (Super sub-tab order: Payments → Payroll →
+          // Ledger → Pricing → Supplies → Promotions.
+          //
+          // The first three are the money-movement surfaces — what came
+          // in, what went out to people, what went out everywhere else —
+          // so they sit together; Pricing and Supplies are configuration
+          // rather than record-keeping and follow.
+          //
+          // Payments/Pricing/Supplies are shared across all three roles
+          // via the additive scope prop; Payroll is shared but heavily
+          // scoped, and Ledger + Promotions are Super-only.)
           value: "payments",
           label: "Payments",
           icon: TfiMoney,
@@ -1655,6 +1662,26 @@ chip: false, bucket: t.bucket }));
           label: "Payroll",
           icon: Banknote,
           content: wrapWithInlineMessage(<PayrollTab me={me} purpose="SUPER" scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }} />),
+          category: "Money",
+          categoryIcon: TfiMoney,
+        },
+        {
+          // Internally this tab is BusinessExpensesTab and the API/model
+          // is BusinessExpense — both kept for historical reasons. The
+          // visible label is "Ledger" because the tab is a hand-logged
+          // record of three money-movement categories: business expenses,
+          // capital contributions (equity in), and owner draws (equity
+          // out). See the EntryType discriminator on the BusinessExpense
+          // model. The URL key is "ledger" to match the visible name —
+          // deep links and localStorage handoffs (Supply badge, Job badge)
+          // need updating to match.
+          //
+          // Super-only — Ledger is intentionally NOT mounted for Admin or
+          // Worker.
+          value: "ledger",
+          label: "Ledger",
+          icon: FiBook,
+          content: wrapWithInlineMessage(<BusinessExpensesTab />),
           category: "Money",
           categoryIcon: TfiMoney,
         },
@@ -1676,26 +1703,6 @@ chip: false, bucket: t.bucket }));
           label: "Supplies",
           icon: FiPackage,
           content: wrapWithInlineMessage(<SuppliesTab scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }} />),
-          category: "Money",
-          categoryIcon: TfiMoney,
-        },
-        {
-          // Internally this tab is BusinessExpensesTab and the API/model
-          // is BusinessExpense — both kept for historical reasons. The
-          // visible label is "Ledger" because the tab is a hand-logged
-          // record of three money-movement categories: business expenses,
-          // capital contributions (equity in), and owner draws (equity
-          // out). See the EntryType discriminator on the BusinessExpense
-          // model. The URL key is "ledger" to match the visible name —
-          // deep links and localStorage handoffs (Supply badge, Job badge)
-          // need updating to match.
-          //
-          // Super-only — Ledger is intentionally NOT mounted for Admin or
-          // Worker.
-          value: "ledger",
-          label: "Ledger",
-          icon: FiBook,
-          content: wrapWithInlineMessage(<BusinessExpensesTab />),
           category: "Money",
           categoryIcon: TfiMoney,
         },
@@ -2741,17 +2748,51 @@ chip: false, bucket: t.bucket }));
   // Navigate to admin Jobs tab filtered to unapproved-hours occurrences.
   // Same handoff pattern as overdue / estimate-followups: localStorage flag
   // for mount-time pickup + dispatched event for already-mounted case.
+  /**
+   * Navigate to a surface that exists for BOTH Admin and Super, without
+   * changing the role the operator is acting as.
+   *
+   * Alert handlers used to hardcode `setTopTab("admin")`, so a Super who
+   * clicked "Overdue" or "Unclaimed" was silently demoted to the Admin
+   * tab — different sections, different affordances, and no way to tell
+   * why (reported 2026-08-27).
+   *
+   * Branches on the CURRENT top tab, not on which roles the user holds:
+   * a Super deliberately acting as Admin should stay on Admin too.
+   * `superTab` is optional because a few surfaces genuinely have no Super
+   * equivalent (Services is the one today), and those must fall through
+   * to Admin rather than land nowhere.
+   */
+  const gotoOperatorSurface = useCallback(
+    (opts: {
+      superTab?: string;
+      superCategory?: string;
+      adminTab: string;
+      adminCategory?: string;
+    }) => {
+      if (topTab === "super" && opts.superTab) {
+        setTopTab("super");
+        if (opts.superCategory) setSuperCategory(opts.superCategory as any);
+        setSuperInnerTab(opts.superTab as any);
+        return;
+      }
+      setTopTab("admin");
+      if (opts.adminCategory) setAdminCategory(opts.adminCategory as any);
+      setAdminInnerTab(opts.adminTab as any);
+    },
+    [topTab],
+  );
+
   const goToUnapprovedHours = useCallback(() => {
     try {
       localStorage.setItem("seedlings_adminJobs_showUnapprovedHours", "1");
       localStorage.setItem("seedlings_adminjobs_workers", JSON.stringify([]));
     } catch {}
-    setTopTab("admin");
-    setAdminInnerTab("jobs");
+    gotoOperatorSurface({ superTab: "jobs", superCategory: "Work", adminTab: "jobs" });
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent("adminJobs:showUnapprovedHours"));
     }, 100);
-  }, []);
+  }, [gotoOperatorSurface]);
 
   // Navigate to admin Jobs tab with the estimate-followup filter applied.
   // Mirrors goToOverdue / goToUnclaimed: writes a flag to localStorage so
@@ -2762,12 +2803,11 @@ chip: false, bucket: t.bucket }));
       localStorage.setItem("seedlings_adminJobs_showEstimateFollowups", "1");
       localStorage.setItem("seedlings_adminjobs_workers", JSON.stringify([]));
     } catch {}
-    setTopTab("admin");
-    setAdminInnerTab("jobs");
+    gotoOperatorSurface({ superTab: "jobs", superCategory: "Work", adminTab: "jobs" });
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent("adminJobs:showEstimateFollowups"));
     }, 100);
-  }, []);
+  }, [gotoOperatorSurface]);
 
   // Unclaimed count for admin header badge
   const [unclaimedCount, setUnclaimedCount] = useState(0);
@@ -2852,15 +2892,14 @@ chip: false, bucket: t.bucket }));
   }, []);
 
   const goToUnclaimed = useCallback(() => {
-    setTopTab("admin");
-    setAdminInnerTab("jobs");
+    gotoOperatorSurface({ superTab: "jobs", superCategory: "Work", adminTab: "jobs" });
     // Signal the Jobs tab to apply unclaimed filter
     try { localStorage.setItem("seedlings_adminJobs_showUnclaimed", "1"); } catch {}
     // Also dispatch event in case the tab is already mounted
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent("adminJobs:showUnclaimed"));
     }, 50);
-  }, []);
+  }, [gotoOperatorSurface]);
 
   const goToOverdue = useCallback(() => {
     try {
@@ -2868,35 +2907,36 @@ chip: false, bucket: t.bucket }));
       // Clear the "View as" user filter so all overdue jobs are shown
       localStorage.setItem("seedlings_adminjobs_workers", JSON.stringify([]));
     } catch {}
-    setTopTab("admin");
-    setAdminInnerTab("jobs");
+    gotoOperatorSurface({ superTab: "jobs", superCategory: "Work", adminTab: "jobs" });
     // Also dispatch event for when component is already mounted
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent("adminJobs:showOverdue"));
     }, 100);
-  }, []);
+  }, [gotoOperatorSurface]);
 
   // Jump to the admin Jobs tab and scroll to the Client Requests section.
   // The section is mounted at the top of the Jobs view for admins, so we
   // navigate there and then scroll-into-view its anchor.
   const goToClientRequests = useCallback(() => {
-    setTopTab("admin");
-    setAdminInnerTab("jobs");
+    gotoOperatorSurface({ superTab: "jobs", superCategory: "Work", adminTab: "jobs" });
     setTimeout(() => {
       const el = document.getElementById("client-requests-section");
       if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 150);
-  }, []);
+  }, [gotoOperatorSurface]);
 
   // Lands on Admin → Directory → Clients where the
   // UnlinkedClientAccountsSection is hosted. Used by Tasks page's
   // collapsible card's "Goto Task" icon button so the operator can
   // jump to the section's home tab if they prefer working there.
   const goToUnlinkedAccounts = useCallback(() => {
-    setTopTab("admin");
-    setAdminCategory("Directory");
-    setAdminInnerTab("clients");
-  }, []);
+    gotoOperatorSurface({
+      superTab: "clients",
+      superCategory: "Directory",
+      adminTab: "clients",
+      adminCategory: "Directory",
+    });
+  }, [gotoOperatorSurface]);
 
   // Timeline alert — merged count of urgent timeline events + expiring
   // documents (urgent = past or ≤7 days). Super uses /super/ for the full
@@ -2986,16 +3026,13 @@ chip: false, bucket: t.bucket }));
 
   const goToTimeline = useCallback(() => {
     try { sessionStorage.setItem("pendingTimelineUrgencyFilter", "urgent"); } catch {}
-    if (isSuper) {
-      setTopTab("super");
-      setSuperInnerTab("timeline" as any);
-      setSuperCategory("Records");
-    } else if (isAdmin) {
-      setTopTab("admin");
-      setAdminInnerTab("timeline" as any);
-      setAdminCategory("Records");
-    }
-  }, [isSuper, isAdmin]);
+    gotoOperatorSurface({
+      superTab: "timeline",
+      superCategory: "Records",
+      adminTab: "timeline",
+      adminCategory: "Records",
+    });
+  }, [gotoOperatorSurface]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -3009,8 +3046,16 @@ chip: false, bucket: t.bucket }));
         status === "pending" || status === "approved" || status === "all";
       if (!ok) return;
 
-      setTopTab("admin");
-      setAdminInnerTab("users");
+      // SUPER, not admin. User management is Super-only, and both
+      // dispatchers of this event already route there — this listener was
+      // the stale one, and because it fires on a 100ms timeout it ran
+      // AFTER the handler's own navigation and quietly overrode it. That
+      // is why the "Pending Users" alert landed on the Admin Users tab
+      // (reported 2026-08-27), which no longer even has the pending
+      // section.
+      setTopTab("super");
+      setSuperCategory("Directory");
+      setSuperInnerTab("users");
 
       window.sessionStorage.setItem(
         "admin:usersOpenOnce",
@@ -3661,6 +3706,13 @@ chip: false, bucket: t.bucket }));
     // despite the alert badge reading a positive count.
     window.sessionStorage.setItem("admin:usersOpenOnce", JSON.stringify({ status: "pending", role: "all" }));
     setTopTab("super");
+    // The CATEGORY has to move too. Without it the super category stayed
+    // wherever it was, "users" didn't resolve under it, and the app fell
+    // back — landing the operator on the Admin Users tab instead of the
+    // Super one (reported 2026-08-27). That got worse the moment PENDING
+    // SIGN-UPS became Super-only: the alert was routing to the one screen
+    // that no longer has the section it was pointing at.
+    setSuperCategory("Directory");
     setSuperInnerTab("users");
     // Also dispatch event for when component is already mounted
     setTimeout(() => {
@@ -3775,15 +3827,22 @@ chip: false, bucket: t.bucket }));
   // When absent (section arrow / title-bar alert), the tab expands
   // every reminder-due job.
   const goToStreamPauseReminders = useCallback((occurrenceId?: string) => {
-    setTopTab("admin");
-    setAdminInnerTab("services" as any);
+    // Super HAS a services tab (navTabs → super → "services", category
+    // Work). An older comment here claimed it didn't and hardcoded Admin;
+    // that was true once and stopped being true when the tab was added, so
+    // a Super clicking this alert kept getting demoted to Admin.
+    gotoOperatorSurface({
+      superTab: "services",
+      superCategory: "Work",
+      adminTab: "services",
+    });
     // Only accept string ids — some call sites pass this handler
     // directly to onClick, which forwards a MouseEvent. Guard against
     // that so we don't stuff a MouseEvent into the occurrenceId state.
     const cleanId = typeof occurrenceId === "string" ? occurrenceId : null;
     setStreamReviewOccId(cleanId);
     setStreamReviewNonce((n) => n + 1);
-  }, []);
+  }, [gotoOperatorSurface]);
 
   const isDev = process.env.NEXT_PUBLIC_VERCEL_ENV !== "production" && process.env.NODE_ENV !== "production";
 

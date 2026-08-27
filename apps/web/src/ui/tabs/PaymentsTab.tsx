@@ -18,7 +18,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { CalendarRange, ChevronDown, ChevronUp, CreditCard, Download, Filter, List, Maximize2, RefreshCw, User, X } from "lucide-react";
+import { CalendarRange, CheckCircle2, ChevronDown, ChevronUp, Clock, CreditCard, Download, Filter, List, Maximize2, RefreshCw, User, X } from "lucide-react";
 import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/lib/datePresets";
 import DateInput from "@/src/ui/components/DateInput";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
@@ -49,6 +49,7 @@ import { TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch, bumpAdminPayments } from "@/src/lib/bus";
 import PendingApprovalsSection from "@/src/ui/components/PendingApprovalsSection";
 import OutstandingRequestsSection from "@/src/ui/components/OutstandingRequestsSection";
+import { Dashboard } from "@/src/ui/components/Dashboard";
 
 // Date helpers come from @/src/lib/dates (bizToday, bizAddDays). NEVER
 // reinvent — see lib/dates.ts.
@@ -528,7 +529,9 @@ function WorkerPayments({
       <Box position="relative">
         {loading && (items.length > 0 || equipCharges.length > 0) && (<>
           <Box position="absolute" inset="0" bg="bg/80" zIndex="1" />
-          <Spinner size="lg" position="fixed" top="50%" left="50%" zIndex="2" />
+          <Box position="fixed" top="50%" left="50%" transform="translate(-50%, -50%)" zIndex="2">
+            <Spinner size="lg" />
+          </Box>
         </>)}
       {showJobs && filteredItems.length === 0 && filteredCharges.length === 0 && (
         <Text color="fg.muted" p="8">No payments found.</Text>
@@ -874,6 +877,12 @@ function WorkerPayments({
 // ─── Admin Payments ──────────────────────────────────────────────────
 
 function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: boolean }) {
+  // The queue sections render CONTENT ONLY now; they report refresh /
+  // busy / count up so the Dashboard frame here can supply the shared
+  // title bar, count badge, refresh control and dim.
+  const [approvalsApi, setApprovalsApi] = useState<{ refresh: () => void; loading: boolean; count: number } | null>(null);
+  const [outstandingApi, setOutstandingApi] = useState<{ refresh: () => void; loading: boolean; count: number } | null>(null);
+
   const equipmentBillingEnabled = useEquipmentBillingEnabled();
   const [items, setItems] = useState<PaymentListItem[]>([]);
   const [personTotals, setPersonTotals] = useState<Array<{ userId: string; displayName: string | null; total: number }>>([]);
@@ -1563,8 +1572,38 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
 
   return (
     <Box w="full">
-      {isSuper && <PendingApprovalsSection />}
-      {isSuper && <OutstandingRequestsSection />}
+      {isSuper && (
+        <Box mb={3}>
+          <Dashboard
+            storageKey="seedlings:paymentsTab:pendingApprovalsOpen"
+            title="Pending approval"
+            icon={CheckCircle2}
+            variant="attention"
+            count={approvalsApi?.count ?? 0}
+            forceGlow={(approvalsApi?.count ?? 0) > 0 ? "orange" : undefined}
+            onRefresh={approvalsApi?.refresh}
+            refreshing={!!approvalsApi?.loading}
+          >
+            <PendingApprovalsSection onReady={setApprovalsApi} />
+          </Dashboard>
+        </Box>
+      )}
+      {isSuper && (
+        <Box mb={3}>
+          <Dashboard
+            storageKey="seedlings:paymentsTab:awaitingPaymentOpen"
+            title="Awaiting payment"
+            icon={Clock}
+            variant="team"
+            count={outstandingApi?.count ?? 0}
+            forceGlow={(outstandingApi?.count ?? 0) > 0 ? "orange" : undefined}
+            onRefresh={outstandingApi?.refresh}
+            refreshing={!!outstandingApi?.loading}
+          >
+            <OutstandingRequestsSection onReady={setOutstandingApi} />
+          </Dashboard>
+        </Box>
+      )}
       <HStack mb={2} gap={2}>
         <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)" }}>
           <RefreshCw size={14} />
@@ -2212,7 +2251,9 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
       <Box position="relative">
         {loading && (items.length > 0 || equipCharges.length > 0) && (<>
           <Box position="absolute" inset="0" bg="bg/80" zIndex="1" />
-          <Spinner size="lg" position="fixed" top="50%" left="50%" zIndex="2" />
+          <Box position="fixed" top="50%" left="50%" transform="translate(-50%, -50%)" zIndex="2">
+            <Spinner size="lg" />
+          </Box>
         </>)}
       {typeFilter[0] === "JOBS" && filteredItems.length === 0 && (
         <Text color="fg.muted" p="8">No job payments found.</Text>

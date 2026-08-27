@@ -123,7 +123,14 @@ function lastResendFragment(days: number): string {
   return `${days} days ago`;
 }
 
-export default function OutstandingRequestsSection() {
+export default function OutstandingRequestsSection({ onReady }: {
+  /**
+   * Hands this section's refresh, busy flag and row count to whatever
+   * frames it. The component renders CONTENT ONLY — Dashboard (or
+   * TasksPage's card) supplies the title bar, stripe, refresh and dim.
+   */
+  onReady?: (api: { refresh: () => void; loading: boolean; count: number }) => void;
+} = {}) {
   const { labelFor: methodLabel } = usePaymentMethodLabels();
   const [rows, setRows] = useState<OutstandingRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -168,6 +175,13 @@ export default function OutstandingRequestsSection() {
     }
     setLoading(false);
   }, []);
+
+  // Report state to the frame (Dashboard at the tab host, the card in
+  // TasksPage). Kept in an effect rather than called during render so a
+  // parent setState never fires mid-render.
+  useEffect(() => {
+    onReady?.({ refresh: () => void load(), loading, count: rows.length });
+  }, [onReady, load, loading, rows]);
 
   useEffect(() => {
     void load();
@@ -380,37 +394,9 @@ export default function OutstandingRequestsSection() {
   const staleCount = rows.filter((r) => r.stale).length;
 
   return (
-    <Card.Root
-      variant="outline"
-      borderColor="purple.300"
-      borderLeftWidth="4px"
-      borderLeftColor="purple.500"
-      mb={3}
-      position="relative"
-    >
-      {loading && rows.length > 0 && (
-        <>
-          <Box position="absolute" inset="0" bg="bg/80" zIndex="1" borderRadius="md" />
-          <Spinner size="lg" position="fixed" top="50%" left="50%" zIndex="2" />
-        </>
-      )}
-      <Card.Body p={3}>
-        <HStack mb={1} justify="space-between">
-          <HStack gap={2}>
-            <Text fontSize="sm" fontWeight="semibold">Awaiting payment</Text>
-            <Badge size="sm" colorPalette="purple" variant="solid" px="2" borderRadius="full">
-              {rows.length}
-            </Badge>
-            {staleCount > 0 && (
-              <Badge size="sm" colorPalette="orange" variant="solid" px="2" borderRadius="full">
-                {staleCount} stale
-              </Badge>
-            )}
-          </HStack>
-          <Button size="xs" variant="ghost" onClick={() => void load()} loading={loading}>
-            <RefreshCw size={12} />
-          </Button>
-        </HStack>
+    <Box>
+      {/* Content only — Dashboard at the host supplies the frame,
+          title bar, stripe, count badge, refresh and dim. */}
         <Text fontSize="xs" color="fg.muted" mb={2}>
           Payment requests sent to a client but not yet paid. They enter the approval queue once the client pays.
         </Text>
@@ -556,7 +542,6 @@ export default function OutstandingRequestsSection() {
             </Box>
           ))}
         </VStack>
-      </Card.Body>
 
       {/* Mark Paid dialog — admin enters method + amount the client paid
           offline. Defaults amount to the invoice's amountDue. On submit,
@@ -873,6 +858,6 @@ export default function OutstandingRequestsSection() {
           onCancel={() => { if (!writeOffBusy) setWriteOffRow(null); }}
         />
       )}
-    </Card.Root>
+    </Box>
   );
 }

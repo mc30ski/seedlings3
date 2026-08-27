@@ -10,9 +10,10 @@
 
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Box, Button, Card, HStack, IconButton, Spinner, Text, VStack } from "@chakra-ui/react";
+import { Box, Button, Card, HStack, IconButton, Select, Spinner, Text, VStack, createListCollection } from "@chakra-ui/react";
 import { ComposedChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, LabelList } from "recharts";
-import { bizToday, bizAddDays } from "@/src/lib/dates";
+import { bizToday, bizAddDays, type EtDateKey } from "@/src/lib/dates";
+import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
   Award,
   ChevronDown,
@@ -123,6 +124,103 @@ export const ADMIN_EXTRA_PERIODS: Period[] = [
   { days: 365, label: "last year" },
 ];
 export const ADMIN_PERIODS = [...WORKER_PERIODS, ...ADMIN_EXTRA_PERIODS];
+
+/**
+ * Everything on record. SUPER surfaces only.
+ *
+ * `days: 0` is not a placeholder — it is the wire value the API already
+ * understands. `/me/hourly-pay` reads `days=0` and starts at `new Date(0)`
+ * (see routes/worker.ts), so this needed no backend change, and
+ * `periodQueryParams` emits it correctly with no special case.
+ *
+ * Deliberately NOT added to ADMIN_PERIODS: that list also drives the Admin
+ * Home pay cards, and all-time there would be a different (larger) claim
+ * than the operator asked for.
+ */
+export const ALL_TIME_PERIOD: Period = { days: 0, label: "all time" };
+
+/**
+ * A Period selection that survives reloads and tab switches.
+ *
+ * Persists the period KEY, not the Period object: if an entry is later
+ * renamed or dropped from a list, a stored key simply fails to resolve
+ * and falls back, whereas a stored object would keep rehydrating a
+ * period that no longer exists.
+ *
+ * Every timeframe picker on a section frame should use this — a window
+ * you chose deliberately reverting to the default because you looked at
+ * another tab is the kind of small betrayal that makes an operator stop
+ * trusting the control.
+ */
+export function usePersistedPeriod(
+  storageKey: string,
+  periods: readonly Period[],
+  fallback: Period,
+): [Period, (p: Period) => void] {
+  const [key, setKey] = usePersistedState<string>(storageKey, periodKey(fallback));
+  const fallbackKey = periodKey(fallback);
+  const period = useMemo(
+    () =>
+      periods.find((p) => periodKey(p) === key) ??
+      periods.find((p) => periodKey(p) === fallbackKey) ??
+      periods[0],
+    [periods, key, fallbackKey],
+  );
+  const set = useCallback((p: Period) => setKey(periodKey(p)), [setKey]);
+  return [period, set];
+}
+
+/**
+ * Build the `timeframe` prop Dashboard expects from a Period list.
+ *
+ * Dashboard takes plain {label, value} pairs on purpose (it cannot import
+ * `Period` without a circular import), so this is the one place that maps
+ * in and resolves back out. Five sections used to hand-write the whole
+ * Select.Root block instead.
+ */
+export function periodTimeframe(
+  periods: readonly Period[],
+  value: Period,
+  onChange: (p: Period) => void,
+) {
+  return {
+    options: periods.map((p) => ({ label: p.label, value: periodKey(p) })),
+    value: periodKey(value),
+    onChange: (k: string) => {
+      const next = periods.find((p) => periodKey(p) === k);
+      if (next) onChange(next);
+    },
+  };
+}
+
+/** Admin's list plus all-time — for the Super-only Insights sections. */
+export const SUPER_PERIODS: Period[] = [...ADMIN_PERIODS, ALL_TIME_PERIOD];
+
+/**
+ * Resolve a Period to the `from`/`to` ET date keys `/admin/operations`
+ * expects.
+ *
+ * The `days === 0` branch must come BEFORE the rolling-window maths below:
+ * that line reads `Math.max(1, p.days ?? 1)`, which would quietly turn
+ * all-time into a one-day window.
+ *
+ * Business Start Date still applies server-side (`resolveCutoff`), so an
+ * epoch floor here shows "everything on record", not "everything ever".
+ */
+export function periodToRange(p: Period): { from: EtDateKey; to: EtDateKey } {
+  const today = bizToday();
+  if (p.preset === "today") return { from: today, to: today };
+  if (p.preset === "yesterday") {
+    const y = bizAddDays(today, -1);
+    return { from: y, to: y };
+  }
+  if ((p.days ?? 0) === 0) {
+    // Matches the server's `new Date(0)` all-time floor.
+    return { from: "1970-01-01" as EtDateKey, to: today };
+  }
+  const days = Math.max(1, p.days ?? 1);
+  return { from: bizAddDays(today, -(days - 1)), to: today };
+}
 export const DEFAULT_DAYS = 30;
 /** Default period used by pickers that only accept days-based state.
  *  Matches the "last month" entry above. */
@@ -294,7 +392,11 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName, w
   // user last cycled to. Deliberate — the previous persisted-state
   // version confused users who came back the next day expecting the
   // default and saw a stale window.
-  const [periodKeyState, setPeriodKeyState] = useState<string>(periodKey(DEFAULT_PERIOD));
+  // Persisted: the chosen window survives reloads and tab switches.
+  const [periodKeyState, setPeriodKeyState] = usePersistedState<string>(
+    "hourlyPayCard_period",
+    periodKey(DEFAULT_PERIOD),
+  );
   const [data, setData] = useState<HourlyPay | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -415,11 +517,13 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName, w
   // Cycle-forward on click of the label chip — dead simple UI, no
   // dropdown mechanics. Long-press or the refresh icon handle the
   // rare "wait, I meant to go back" case (they can just click again).
-  function cyclePeriod() {
-    const idx = periods.findIndex((p) => periodKey(p) === effectiveKey);
-    const next = periods[(idx + 1) % periods.length];
-    setPeriodKeyState(periodKey(next));
-  }
+  const periodCollection = useMemo(
+    () =>
+      createListCollection({
+        items: periods.map((p) => ({ label: p.label, value: periodKey(p) })),
+      }),
+    [periods],
+  );
 
   if (!data) {
     return loading ? (
@@ -487,40 +591,33 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName, w
       }
       icon={Icon}
       variant="estimate"
+      timeframe={periodTimeframe(periods, effectivePeriod, (p) => setPeriodKeyState(periodKey(p)))}
+      onRefresh={load}
+      refreshing={loading}
       // Collapsed ONLY. Open, the rate is already the largest thing on the
       // card — repeating it beside the title is redundant. Collapsed, it is
       // the whole reason to have a header line.
+      //
+      // The TIMEFRAME rides along, same as the team section: collapsing
+      // hides the picker, and "$3.15/hr" means something very different
+      // over today than over last year. Shown even with no hours logged,
+      // because the window is still the answer to "what am I looking at".
       collapsedSummarySlot={
-        hasHours ? (
-          <Text fontSize="xs" fontWeight="bold" color={tier.numberFg} whiteSpace="nowrap">
-            ${rate.toFixed(2)}/hr
-          </Text>
-        ) : undefined
+        <Text fontSize="xs" color={tier.fg} whiteSpace="nowrap">
+          {effectivePeriod.label}
+          {hasHours ? (
+            <>
+              {" · "}
+              <Box as="span" fontWeight="bold" color={tier.numberFg}>
+                ${rate.toFixed(2)}/hr
+              </Box>
+            </>
+          ) : null}
+        </Text>
       }
     >
       <Box>
-        <HStack justify="flex-end" mb={2} align="start">
-          <HStack gap={1}>
-            <Button
-              size="xs"
-              variant="outline"
-              px="2"
-              onClick={cyclePeriod}
-              title={cycleTitle}
-              borderColor={tier.border}
-              bg="whiteAlpha.700"
-              css={{
-                color: `var(--chakra-colors-${tier.fg.replace(".", "-")})`,
-                "&:hover": { background: "white", borderColor: `var(--chakra-colors-${tier.numberFg.replace(".", "-")})` },
-              }}
-            >
-              {periodDisplay}
-              <Box as="span" ml={1} display="inline-flex" opacity={0.7}>
-                <ChevronsUpDown size={11} />
-              </Box>
-            </Button>
-          </HStack>
-        </HStack>
+        
 
         {hasHours ? (
           <>

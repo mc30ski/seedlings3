@@ -18,7 +18,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { ChevronDown, ChevronRight, Filter, Info, RefreshCw, Shield, Tag, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Filter, Info, RefreshCw, Shield, Tag, UserPlus, X } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { fmtDate, bizToday, bizAddDays, bizDateKey, bizDaysBetween } from "@/src/lib/dates";
 import { prettyStatus } from "@/src/lib/labels";
@@ -32,6 +32,7 @@ import ApproveAndLinkClientDialog from "@/src/ui/dialogs/ApproveAndLinkClientDia
 import UserActivitySection from "@/src/ui/components/UserActivitySection";
 import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
+import { Dashboard } from "@/src/ui/components/Dashboard";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -205,7 +206,6 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
   //   • Clients  — approved users with no operational role. Defaults to
   //                collapsed so admins don't accidentally interact with
   //                client rows during routine team management.
-  const [pendingSectionOpen, setPendingSectionOpen] = usePersistedState("users_pendingSectionOpen", true);
   const [teamSectionOpen, setTeamSectionOpen] = usePersistedState("users_teamSectionOpen", true);
   const [clientSectionOpen, setClientSectionOpen] = usePersistedState("users_clientSectionOpen", false);
 
@@ -950,6 +950,17 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
                           <>
                             <Button
                               size={{ base: "xs", md: "sm" }}
+                              // Dark orange, not the default black. It sits
+                              // inside the orange PENDING SIGN-UPS section,
+                              // and a black solid button read as unrelated
+                              // to the frame around it. orange.600 keeps it
+                              // clearly the primary action against the
+                              // section's orange.200 band.
+                              colorPalette="orange"
+                              variant="solid"
+                              bg="orange.600"
+                              _hover={{ bg: "orange.700" }}
+                              _active={{ bg: "orange.800" }}
                               onClick={() =>
                                 setApproveClientTarget({
                                   id: u.id,
@@ -1365,17 +1376,34 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
 
         return (
           <>
-            <SectionHeader
-              label="Pending"
-              count={pendingUsers.length}
-              open={pendingSectionOpen}
-              onToggle={() => setPendingSectionOpen((v) => !v)}
-              accent="orange.400"
-            />
-            {pendingSectionOpen && (
-              pendingUsers.length === 0
-                ? <Text fontSize="sm" color="fg.muted" pl={2} mb={3}>No pending sign-ups.</Text>
-                : pendingUsers.map(renderUserCard)
+            {/* Pending sign-ups — SUPER ONLY, and the shared section frame.
+                Approving an account is a Super action; showing an admin a
+                queue they cannot act on was an invitation to ask why the
+                buttons did nothing. Team and Clients below stay plain
+                SectionHeaders: those are groupings of the directory, not
+                work blocked on the operator. */}
+            {showSuperExtras && (
+              <Box mt={4} mb={3}>
+                <Dashboard
+                  storageKey="seedlings:usersTab:pendingOpen"
+                  title={`Pending sign-ups (${pendingUsers.length})`}
+                  icon={UserPlus}
+                  variant="attention"
+                  count={pendingUsers.length}
+                  /* Pulses only when someone is actually waiting — this
+                     section stays on screen at zero so the pile is still
+                     visibly part of the directory. */
+                  forceGlow={pendingUsers.length > 0 ? "orange" : undefined}
+                  onRefresh={load}
+                  refreshing={loading}
+                >
+                  {pendingUsers.length === 0 ? (
+                    <Text fontSize="sm" color="fg.muted">No pending sign-ups.</Text>
+                  ) : (
+                    pendingUsers.map(renderUserCard)
+                  )}
+                </Dashboard>
+              </Box>
             )}
             <SectionHeader
               label="Team"

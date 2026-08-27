@@ -1,5 +1,5 @@
-// Aggregate variant of WorkerHourlyPayCard — shows the "Approximate pay
-// per hour" figure for EVERY approved worker side-by-side. Rendered on
+// Aggregate variant of WorkerHourlyPayCard — shows the "Pay per hour"
+// figure for EVERY approved worker side-by-side. Rendered on
 // Admin → Work → Home when no specific worker is selected (aggregate
 // view / no viewAsUserId). The single-worker card handles the "one
 // worker at a time" surface; this handles the "team snapshot" surface.
@@ -13,26 +13,27 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Box,
-  Button,
   Card,
   HStack,
-  IconButton,
   SimpleGrid,
+  Select,
   Spinner,
   Text,
   VStack,
+  createListCollection,
 } from "@chakra-ui/react";
-import { ChevronsUpDown, RefreshCw, Sparkles } from "lucide-react";
+import { ChevronsUpDown, Sparkles } from "lucide-react";
 import { Dashboard } from "@/src/ui/components/Dashboard";
 import { apiGet } from "@/src/lib/api";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import {
-  ADMIN_PERIODS,
-  DEFAULT_PERIOD,
+  SUPER_PERIODS,
   buttonPeriodLabel,
   fmtHours,
   fmtUSD,
   periodKey,
+  periodTimeframe,
+  usePersistedPeriod,
   periodQueryParams,
   tierFor,
   type HourlyPay,
@@ -61,13 +62,35 @@ function sortRank(row: WorkerCardRow): number {
 
 type Props = {
   /** When set, the outer surface controls the period and the internal
-   *  cycle button is hidden. Used by HomeTab so a single
-   *  dashboard-wide period button drives every section at once. */
+   *  picker is hidden. */
   periodOverride?: Period;
+  /**
+   * Narrow to a specific set of workers (the Home picker's subset mode).
+   * Undefined / empty = every approved worker.
+   *
+   * Added when this section absorbed "Today's hourly pay", which was the
+   * only surface that handled subsets — without it, picking N workers
+   * would have left no team view at all.
+   */
+  workerIds?: string[];
 };
 
-export default function AllWorkersHourlyPayCards({ periodOverride }: Props = {}) {
-  const [internalPeriod, setInternalPeriod] = useState<Period>(DEFAULT_PERIOD);
+export default function AllWorkersHourlyPayCards({ periodOverride, workerIds }: Props = {}) {
+  /**
+   * Defaults to TODAY, not the shared DEFAULT_PERIOD ("last month").
+   *
+   * This section replaced the always-visible "Today's hourly pay" panel,
+   * and today's numbers are what an operator expects to find on Home
+   * without touching anything. Longer windows are one click away in the
+   * picker. The shared DEFAULT_PERIOD is left alone — it still governs a
+   * worker's own MY EARNINGS card, where "last month" is the right frame
+   * for a rate.
+   */
+  const [internalPeriod, setInternalPeriod] = usePersistedPeriod(
+    "teamPayPerHour_period",
+    SUPER_PERIODS,
+    { preset: "today", label: "today" },
+  );
   const period = periodOverride ?? internalPeriod;
   const externallyControlled = periodOverride != null;
   const [workers, setWorkers] = useState<WorkerListItem[] | null>(null);
@@ -91,7 +114,10 @@ export default function AllWorkersHourlyPayCards({ periodOverride }: Props = {})
           displayName: u.displayName ?? null,
           workerType: u.workerType ?? null,
         }));
-        setWorkers(mapped);
+        // Filter client-side: the subset comes from the Home picker, which
+        // already chose from this same approved-worker list.
+        const wanted = new Set(workerIds ?? []);
+        setWorkers(wanted.size > 0 ? mapped.filter((w) => wanted.has(w.id)) : mapped);
       } catch (err) {
         publishInlineMessage({
           type: "ERROR",
@@ -101,7 +127,7 @@ export default function AllWorkersHourlyPayCards({ periodOverride }: Props = {})
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [workerIds]);
 
   const loadPay = useCallback(async () => {
     if (!workers || workers.length === 0) return;
@@ -135,14 +161,15 @@ export default function AllWorkersHourlyPayCards({ periodOverride }: Props = {})
 
   useEffect(() => { void loadPay(); }, [loadPay]);
 
-  function cyclePeriod() {
-    const idx = ADMIN_PERIODS.findIndex((p) => periodKey(p) === periodKey(period));
-    const next = ADMIN_PERIODS[(idx + 1) % ADMIN_PERIODS.length];
-    setInternalPeriod(next);
-  }
-
-  const periodDisplay = buttonPeriodLabel(period.label);
-  const cycleTitle = `Showing ${periodDisplay} — click to change period`;
+  // Options for the timeframe dropdown. Keyed by `periodKey` so entries
+  // stay distinguishable by more than their label.
+  const periodCollection = useMemo(
+    () =>
+      createListCollection({
+        items: SUPER_PERIODS.map((p) => ({ label: p.label, value: periodKey(p) })),
+      }),
+    [],
+  );
 
   // Rows sorted highest → lowest $/hr, so the top earners lead. Workers
   // still loading OR with no hours sink to the bottom (they'd otherwise
@@ -189,9 +216,9 @@ export default function AllWorkersHourlyPayCards({ periodOverride }: Props = {})
     return (
       <Dashboard
         storageKey="seedlings:homeTab:teamPayPerHourOpen"
-        title="Approximate pay per hour · team"
+        title="Pay per hour · team"
         icon={Sparkles}
-        variant="pay"
+        variant="team"
       >
         <HStack gap={2}>
           <Spinner size="sm" />
@@ -206,59 +233,51 @@ export default function AllWorkersHourlyPayCards({ periodOverride }: Props = {})
   return (
     <Dashboard
       storageKey="seedlings:homeTab:teamPayPerHourOpen"
-      title="Approximate pay per hour · team"
+      title="Pay per hour · team"
       icon={Sparkles}
-      variant="pay"
-      /* Collapsed, the section still answers "who's earning most right
-         now" — the question the grid exists to answer. `collapsedSummarySlot`
-         (not `summarySlot`) so it doesn't duplicate the card that already
-         states it prominently when open. */
+      variant="team"
+      timeframe={
+        externallyControlled
+          ? undefined
+          : periodTimeframe(SUPER_PERIODS, period, setInternalPeriod)
+      }
+      onRefresh={loadPay}
+      refreshing={payLoading}
+      /* Collapsed, the section still answers "over what window, and who's
+         earning most" — the two questions the grid exists to answer.
+         `collapsedSummarySlot` (not `summarySlot`) so it doesn't duplicate
+         the cards that already state it prominently when open.
+
+         THE TIMEFRAME LEADS, and shows even when nobody has hours. A rate
+         with no window attached is ambiguous — "$24.92/hr" means something
+         very different over today than over last year — and collapsing the
+         section hides the picker that would otherwise tell you. */
       collapsedSummarySlot={
-        topEarner ? (
-          <Text fontSize="xs" color="pink.800" lineClamp={1}>
-            {/* `$${rate.toFixed(2)}`, matching the card below EXACTLY.
-                fmtUSD rounds to whole dollars, so the header read "$25"
-                over a card reading "$24.92" — two different numbers for
-                the same figure, one line apart. */}
-            Top: {topEarner.displayName ?? "(unnamed)"} ·{" "}
-            <Box as="span" fontWeight="bold">
-              ${topEarner.data!.ratePerHour.toFixed(2)}
-            </Box>
-            /hr
-          </Text>
-        ) : undefined
+        <Text fontSize="xs" color="purple.800" lineClamp={1}>
+          {period.label}
+          {topEarner ? (
+            <>
+              {" · top: "}
+              {topEarner.displayName ?? "(unnamed)"}{" "}
+              {/* `$${rate.toFixed(2)}`, matching the card below EXACTLY.
+                  fmtUSD rounds to whole dollars, so the header read "$25"
+                  over a card reading "$24.92" — two different numbers for
+                  the same figure, one line apart. */}
+              <Box as="span" fontWeight="bold">
+                ${topEarner.data!.ratePerHour.toFixed(2)}
+              </Box>
+              /hr
+            </>
+          ) : null}
+        </Text>
       }
     >
-      <Box>
-        {/* Period picker + refresh live in the BODY, not the header:
-            Dashboard's header row is itself a <button>, so a nested
-            button there would be invalid HTML (and would fight the
-            collapse toggle for the click). */}
-        <HStack justify="flex-end" gap={1} mb={3}>
-          {!externallyControlled && (
-            <Button
-              size="xs"
-              variant="outline"
-              px="2"
-              onClick={cyclePeriod}
-              title={cycleTitle}
-            >
-              {periodDisplay}
-              <Box as="span" ml={1} display="inline-flex" opacity={0.7}>
-                <ChevronsUpDown size={11} />
-              </Box>
-            </Button>
-          )}
-          <IconButton
-            aria-label="Refresh"
-            size="xs"
-            variant="ghost"
-            onClick={() => void loadPay()}
-            loading={payLoading}
-          >
-            <RefreshCw size={12} />
-          </IconButton>
-        </HStack>
+      <Box position="relative">
+        {/* Refreshing state, scoped to this section — same treatment as
+            Insights. Without it, hitting refresh spun only the icon while
+            stale figures sat there looking current. An overlay rather than
+            unmounting keeps the grid's height, so nothing below jumps. */}
+
 
         {/* Responsive grid — 1 card wide on phones, up to 4 across on
             desktop. Each card is small enough to scan at a glance but

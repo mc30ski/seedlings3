@@ -65,7 +65,14 @@ function daysAgoLabel(iso: string): string {
   return `${days} days ago`;
 }
 
-export default function UnlinkedClientAccountsSection() {
+export default function UnlinkedClientAccountsSection({ onReady }: {
+  /**
+   * Hands this section's refresh, busy flag and row count to whatever
+   * frames it. The component renders CONTENT ONLY — Dashboard (or
+   * TasksPage's card) supplies the title bar, stripe, refresh and dim.
+   */
+  onReady?: (api: { refresh: () => void; loading: boolean; count: number }) => void;
+} = {}) {
   const [users, setUsers] = useState<UnlinkedUser[]>([]);
   const [loading, setLoading] = useState(false);
   const [pickerFor, setPickerFor] = useState<UnlinkedUser | null>(null);
@@ -81,6 +88,13 @@ export default function UnlinkedClientAccountsSection() {
     setLoading(false);
   }, []);
 
+  // Report state to the frame (Dashboard at the tab host, the card in
+  // TasksPage). Kept in an effect rather than called during render so a
+  // parent setState never fires mid-render.
+  useEffect(() => {
+    onReady?.({ refresh: () => void load(), loading, count: users.length });
+  }, [onReady, load, loading, users]);
+
   useEffect(() => {
     void load();
   }, [load]);
@@ -94,32 +108,9 @@ export default function UnlinkedClientAccountsSection() {
 
   return (
     <>
-      <Card.Root
-        variant="outline"
-        borderColor="orange.300"
-        borderLeftWidth="4px"
-        borderLeftColor="orange.500"
-        mb={3}
-        position="relative"
-      >
-        {loading && users.length > 0 && (
-          <>
-            <Box position="absolute" inset="0" bg="bg/80" zIndex="1" borderRadius="md" />
-            <Spinner size="lg" position="fixed" top="50%" left="50%" zIndex="2" />
-          </>
-        )}
-        <Card.Body p={3}>
-          <HStack mb={1} justify="space-between">
-            <HStack gap={2}>
-              <Text fontSize="sm" fontWeight="semibold">Unlinked client accounts</Text>
-              <Badge size="sm" colorPalette="orange" variant="solid" px="2" borderRadius="full">
-                {users.length}
-              </Badge>
-            </HStack>
-            <Button size="xs" variant="ghost" onClick={() => void load()} loading={loading}>
-              <RefreshCw size={12} />
-            </Button>
-          </HStack>
+      {/* Content only — Dashboard at the host supplies the frame,
+          title bar, stripe, count badge, refresh and dim. */}
+      <Box>
           <Text fontSize="xs" color="fg.muted" mb={2}>
             These people signed in, but their Clerk email didn't match any client contact on file. Link each one to the right contact so they see their service history.
           </Text>
@@ -152,8 +143,7 @@ export default function UnlinkedClientAccountsSection() {
               </HStack>
             ))}
           </VStack>
-        </Card.Body>
-      </Card.Root>
+      </Box>
 
       {pickerFor && (
         <ContactPickerDialog

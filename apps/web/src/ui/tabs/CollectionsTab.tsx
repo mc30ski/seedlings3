@@ -21,6 +21,7 @@ import {
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
+import { Dashboard } from "@/src/ui/components/Dashboard";
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -394,13 +395,12 @@ function CollectionsInsightsSection({ collections }: { collections: Collection[]
   if (!hasAnyInsight) return null;
 
   return (
-    <Card.Root variant="outline" bg="orange.50" borderColor="orange.200">
-      <Card.Body py={3} px={3}>
-        <HStack gap={2} mb={2}>
-          <Badge size="sm" variant="subtle" colorPalette="orange">
-            <HStack gap={1}><Zap size={10} /><Text>Insights</Text></HStack>
-          </Badge>
-        </HStack>
+    <Dashboard
+      storageKey="seedlings:collectionsTab:insightsOpen"
+      title="Insights"
+      icon={BarChart3}
+      variant="insights"
+    >
         <SimpleGrid columns={{ base: 1, md: 3 }} gap={3}>
           {/* Kits with issues */}
           <InsightPanel
@@ -445,8 +445,7 @@ function CollectionsInsightsSection({ collections }: { collections: Collection[]
             }))}
           />
         </SimpleGrid>
-      </Card.Body>
-    </Card.Root>
+    </Dashboard>
   );
 }
 

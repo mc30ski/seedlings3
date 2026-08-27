@@ -53,6 +53,12 @@ import { AdminViewAsSelector, AdminViewAsBadges, type AdminWorker } from "@/src/
 
 import { EQUIPMENT_KIND, EQUIPMENT_STATUS } from "@/src/lib/types";
 import { parseEquipmentKindsConfig, type EquipmentKindConfig } from "@/src/lib/equipmentSuggestions";
+import { Dashboard } from "@/src/ui/components/Dashboard";
+import {
+  SUPER_PERIODS,
+  periodKey,
+  periodToRange,
+} from "@/src/ui/components/WorkerHourlyPayCard";
 
 // Kind states are now derived from loaded items (see useMemo below)
 
@@ -362,7 +368,6 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
   const [collectionsCollapsed, setCollectionsCollapsed] = usePersistedState<boolean>(`${pfx}_collectionsCollapsed`, false);
   const [usageCollapsed, setUsageCollapsed] = usePersistedState<boolean>(`${pfx}_usageCollapsed`, true);
   const [teamUsageCollapsed, setTeamUsageCollapsed] = usePersistedState<boolean>(`${pfx}_teamUsageCollapsed`, true);
-  const [insightsCollapsed, setInsightsCollapsed] = usePersistedState<boolean>(`${pfx}_insightsCollapsed`, false);
   const [highlightCollectionId, setHighlightCollectionId] = useState<string | null>(null);
   const [equipmentCollapsed, setEquipmentCollapsed] = usePersistedState<boolean>(`${pfx}_equipmentCollapsed`, false);
   // Track filter-active transitions so we can auto-collapse the Collections
@@ -1861,25 +1866,19 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
           reserved for company-operational metrics, not raw per-
           checkout logs). */}
       {showSuperExtras && (
-        <Card.Root variant="outline" bg="orange.50" borderColor="orange.200" mt={3}>
-          <Card.Body py={3} px={3}>
-            <HStack
-              gap={2}
-              align="center"
-              mb={insightsCollapsed ? 0 : 2}
-              cursor="pointer"
-              onClick={() => setInsightsCollapsed(!insightsCollapsed)}
-              _hover={{ opacity: 0.7 }}
-            >
-              <BarChart3 size={14} color="var(--chakra-colors-gray-600)" />
-              <Text fontSize="sm" fontWeight="bold" color="gray.600" textTransform="uppercase" letterSpacing="wide">
-                Insights
-              </Text>
-              <Text fontSize="xs" color="gray.400">{insightsCollapsed ? "▶" : "▼"}</Text>
-            </HStack>
-            {!insightsCollapsed && <EquipmentInsightsSection />}
-          </Card.Body>
-        </Card.Root>
+        /* Box carries the top margin — Dashboard styles its own frame and
+           takes no layout props. A {JSX comment} here would be a second
+           child of this parenthesised expression, which does not parse. */
+        <Box mt={3}>
+          <Dashboard
+            storageKey={`seedlings:${pfx}:insightsOpen`}
+            title="Insights"
+            icon={BarChart3}
+            variant="insights"
+          >
+            <EquipmentInsightsSection />
+          </Dashboard>
+        </Box>
       )}
       {/* Admin+ team-usage section — the raw per-checkout log
           from the retired Usage tab, scoped to the whole team.
@@ -2094,7 +2093,9 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
       <Box position="relative" mt={3} borderWidth="1px" borderColor="gray.300" borderRadius="md" p={3}>
         {loading && items.length > 0 && (<>
           <Box position="absolute" inset="0" bg="bg/80" zIndex="1" />
-          <Spinner size="lg" position="fixed" top="50%" left="50%" zIndex="2" />
+          <Box position="fixed" top="50%" left="50%" transform="translate(-50%, -50%)" zIndex="2">
+            <Spinner size="lg" />
+          </Box>
         </>)}
       <HStack
         gap={2}
@@ -3250,9 +3251,8 @@ function fmtMoney(n: number): string {
 }
 
 function EquipmentInsightsSection() {
-  // Section header + collapse toggle live on the parent (the outer
-  // orange Insights card), so this component always renders its body
-  // when mounted. Parent gates render via `insightsCollapsed`.
+  // Section header + collapse toggle live on the parent Dashboard, so
+  // this component always renders its body when mounted.
   const [dateFrom, setDateFrom] = usePersistedState<string>("equip_insights_from", bizAddDays(bizToday(), -30));
   const [dateTo, setDateTo] = usePersistedState<string>("equip_insights_to", bizToday());
   const [view, setView] = usePersistedState<"table" | "chart">("equip_insightsView", "table");
@@ -3262,6 +3262,14 @@ function EquipmentInsightsSection() {
   const [idleOpen, setIdleOpen] = useState(false);
   const [data, setData] = useState<InsightsEquipment | null>(null);
   const [loading, setLoading] = useState(false);
+
+  const periodCollection = useMemo(
+    () =>
+      createListCollection({
+        items: SUPER_PERIODS.map((p) => ({ label: p.label, value: periodKey(p) })),
+      }),
+    [],
+  );
 
   const [refreshTick, setRefreshTick] = useState(0);
   // Global "refresh all sections" event from the tab's top toolbar.
@@ -3303,28 +3311,50 @@ function EquipmentInsightsSection() {
               <Text fontSize="2xs" color="fg.muted" mb={1}>To</Text>
               <Input type="date" size="sm" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
             </Box>
-            <HStack gap={1}>
-              <Button
-                size="xs"
-                variant="outline"
-                onClick={() => {
-                  setDateFrom(bizAddDays(bizToday(), -30));
-                  setDateTo(bizToday());
+            {/* Timeframe dropdown — replaces the old "Last 30d" / "Last 7d"
+                pair. Two buttons could only ever offer two windows, and
+                widening the range meant typing dates by hand. The From/To
+                inputs stay for genuinely custom ranges; picking a preset
+                just fills them in, so there is one source of truth for the
+                window and the fetch below is unchanged. */}
+            <Box>
+              <Text fontSize="2xs" color="fg.muted" mb={1}>Timeframe</Text>
+              <Select.Root
+                collection={periodCollection}
+                value={[]}
+                onValueChange={(e) => {
+                  const k = e.value?.[0];
+                  const next = SUPER_PERIODS.find((p) => periodKey(p) === k);
+                  if (!next) return;
+                  const r = periodToRange(next);
+                  setDateFrom(r.from);
+                  setDateTo(r.to);
                 }}
+                size="sm"
+                positioning={{ strategy: "fixed", hideWhenDetached: true }}
               >
-                Last 30d
-              </Button>
-              <Button
-                size="xs"
-                variant="outline"
-                onClick={() => {
-                  setDateFrom(bizAddDays(bizToday(), -7));
-                  setDateTo(bizToday());
-                }}
-              >
-                Last 7d
-              </Button>
-            </HStack>
+                <Select.Control>
+                  <Select.Trigger w="auto" minW="150px" px="2">
+                    {/* No ValueText: the From/To inputs beside this ARE the
+                        current state, and a preset stops being true the
+                        moment either date is edited. Showing a stale
+                        "last week" next to contradicting dates would be
+                        worse than showing nothing. */}
+                    <Select.ValueText placeholder="Choose a range…" />
+                    <Select.Indicator />
+                  </Select.Trigger>
+                </Select.Control>
+                <Select.Positioner>
+                  <Select.Content minW="var(--reference-width)">
+                    {periodCollection.items.map((item) => (
+                      <Select.Item key={item.value} item={item.value}>
+                        <Select.ItemText>{item.label}</Select.ItemText>
+                      </Select.Item>
+                    ))}
+                  </Select.Content>
+                </Select.Positioner>
+              </Select.Root>
+            </Box>
           </HStack>
 
           {loading && <Box py={4} textAlign="center"><Spinner size="sm" /></Box>}

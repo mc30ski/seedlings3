@@ -156,3 +156,41 @@ sections) and the gate asserts it stays the only one.
 
 **Adding a new alert means adding it to BOTH files and to `ALERT_TO_TASKS`.**
 That is the intended friction.
+
+## Roster correction — 2026-08-27
+
+**This file listed EIGHT gates while FOURTEEN existed on disk.** The six it
+never named: `ai-truncation`, `app-splash-single-mount`, `audit-coverage`,
+`payroll`, `proxy-link-wrapper`, and `test-roster` (added the same day).
+
+Same failure as the one below, one level up: a hand-maintained list of a
+thing that lives on the filesystem, with nothing checking the two agree.
+
+**Don't trust a count in this file. Run:**
+
+```bash
+ls apps/api/src/services/*-build-gate.test.ts | wc -l
+```
+
+## test-roster-build-gate (added 2026-08-27)
+
+`apps/api/src/services/test-roster-build-gate.test.ts` — 4 tests. The gate
+that guards the gate list.
+
+`test:build-gate` is an EXPLICIT FILE LIST, not a glob — deliberately, so
+adding a gate is a conscious act. The cost is that the list and the
+filesystem drift, silently: **vitest treats those paths as FILTERS and
+exits non-zero only when NOTHING matches.** One dead entry among twenty
+live ones just runs one fewer file, green the whole way.
+
+Found because the list named `src/services/exports.test.ts`, deleted in
+`c9fe8a4`. The script had been reporting "22 passed (22)" against 23 listed
+files ever since. Nobody noticed because the number it prints is what it
+RAN, never what it was ASKED to run.
+
+Asserts: every listed path exists; every `*-build-gate.test.ts` on disk is
+listed; no duplicates (a duplicate inflates the count and can mask a
+deletion). Mutation-tested against all four.
+
+**Adding a gate now means: create the file, add it to `test:build-gate`,
+and add it here.** The middle step is enforced; this file is not.

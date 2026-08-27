@@ -31,7 +31,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { Calendar, Mail, Phone, RefreshCw, SkipForward, X } from "lucide-react";
+import { Calendar, Mail, Phone, SkipForward, X } from "lucide-react";
 import { apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import { bizDateKey, bizToday, fmtDateOpts } from "@/src/lib/dates";
 import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
@@ -136,7 +136,15 @@ function buildOutreachMessage(row: ChangeRequestRow): string {
   return `Hi ${firstName}, I got your ${verb} request for ${date}. Wanted to find a date that works for you.`;
 }
 
-export default function ClientRequestsSection() {
+export default function ClientRequestsSection({
+  onLoadingChange,
+}: {
+  /**
+   * Reports fetch state to the section frame so Dashboard can dim.
+   * The frame owns the refresh control; this owns the data.
+   */
+  onLoadingChange?: (loading: boolean) => void;
+} = {}) {
   const [rows, setRows] = useState<ChangeRequestRow[]>([]);
   const [loading, setLoading] = useState(false);
   // Reschedule combines "edit the occurrence date" and "mark the
@@ -167,6 +175,17 @@ export default function ClientRequestsSection() {
       setLoading(false);
     }
   }, []);
+
+  // Report fetch state to the section frame, and reload whenever anything
+  // in the app says change-requests moved — the same event the count in
+  // JobsTab already listens for. That is what makes the frame's refresh
+  // control work without this component knowing the frame exists.
+  useEffect(() => { onLoadingChange?.(loading); }, [loading, onLoadingChange]);
+  useEffect(() => {
+    const onChange = () => void load();
+    window.addEventListener("seedlings:change-requests-updated", onChange);
+    return () => window.removeEventListener("seedlings:change-requests-updated", onChange);
+  }, [load]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -247,14 +266,11 @@ export default function ClientRequestsSection() {
 
   return (
     <Box id="client-requests-section">
-      {/* Section header + count live on the outer JobsTab section
-          frame (icon + UPPERCASE title + red count badge). Only the
-          Refresh button remains here, right-aligned above the list. */}
-      <HStack mb={2} justify="flex-end">
-        <Button size="xs" variant="ghost" onClick={() => void load()} loading={loading}>
-          <RefreshCw size={12} /> Refresh
-        </Button>
-      </HStack>
+      {/* Header, count badge AND refresh all live on the outer Dashboard
+          frame now — this rendered a second Refresh button directly under
+          the frame's one. The frame drives this component's reload by
+          dispatching `seedlings:change-requests-updated`, which the effect
+          above listens for. */}
       <VStack gap={2} align="stretch">
         {rows.map((row) => {
           const contact = row.occurrence.job?.property?.client?.contacts?.[0] ?? null;
@@ -344,19 +360,19 @@ export default function ClientRequestsSection() {
                       <Text fontSize="xs" color="fg.muted" mb={1}>Reach out to {contact?.firstName ?? "client"}:</Text>
                       <HStack gap={1.5} wrap="wrap">
                         {openSms && (
-                          <Button size="xs" variant="outline" colorPalette="teal" onClick={() => void openSms()}>
+                          <Button size="xs" variant="outline" colorPalette="gray" onClick={() => void openSms()}>
                             <Mail size={12} /> Text
                           </Button>
                         )}
                         {telHref && (
-                          <Button size="xs" variant="outline" colorPalette="teal" asChild>
+                          <Button size="xs" variant="outline" colorPalette="gray" asChild>
                             <a href={telHref}>
                               <Phone size={12} /> Call
                             </a>
                           </Button>
                         )}
                         {openMail && (
-                          <Button size="xs" variant="outline" colorPalette="teal" onClick={() => void openMail()}>
+                          <Button size="xs" variant="outline" colorPalette="gray" onClick={() => void openMail()}>
                             <Mail size={12} /> Email
                           </Button>
                         )}
