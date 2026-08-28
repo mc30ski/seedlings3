@@ -43,7 +43,7 @@ import { bumpMyActivities } from "@/src/lib/bus";
 
 type Props = {
   me: Me | null | undefined;
-  onLaunchWorkflow: (name: string) => void;
+  onLaunchWorkflow: (name: string, opts?: { targetDate?: string }) => void;
   // Blended-role scope. Worker layer is the always-on self-view; Admin
   // adds the Team dashboard; Super adds Operations. Additive — never
   // subtractive — so a Super sees Worker + Admin + Super sections.
@@ -800,7 +800,14 @@ export default function HomeTab({
         <Card.Root
           variant="outline"
           cursor={isViewingOther ? "default" : "pointer"}
-          onClick={isViewingOther ? undefined : () => onLaunchWorkflow("plan-workday")}
+          onClick={
+            isViewingOther
+              ? undefined
+              : // This card says "Plan tomorrow" — pass that, rather than
+                // letting the workflow scan for the earliest upcoming job
+                // and open on some other day.
+                () => onLaunchWorkflow("plan-workday", { targetDate: bizTomorrow() })
+          }
           _hover={isViewingOther ? undefined : { shadow: "md", borderColor: "blue.400" }}
           bg="blue.50"
           borderColor="blue.300"
@@ -854,7 +861,7 @@ export default function HomeTab({
                     aria-label="Start"
                     onClick={(e) => {
                       e.stopPropagation();
-                      onLaunchWorkflow("plan-workday");
+                      onLaunchWorkflow("plan-workday", { targetDate: bizTomorrow() });
                     }}
                   >
                     {/* "Start" on anything wider than a phone, a bare

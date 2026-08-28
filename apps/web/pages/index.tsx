@@ -397,7 +397,12 @@ export default function HomePage() {
    * origin with whatever tab the workflow had sent the user out to, which
    * is exactly the tab they don't want to come back to.
    */
-  function launchWorkflow(id: string) {
+  /** Day the plan-workday picker should open on, set by whichever
+   *  launcher started it. Null = let the workflow pick. */
+  const [planWorkdayDate, setPlanWorkdayDate] = useState<string | null>(null);
+
+  function launchWorkflow(id: string, opts?: { targetDate?: string }) {
+    setPlanWorkdayDate(opts?.targetDate ?? null);
     const origin = getCurrentNavState();
     try {
       localStorage.setItem(WORKFLOW_ORIGIN_KEY, JSON.stringify(origin));
@@ -800,10 +805,10 @@ export default function HomePage() {
             message: "As a trainee, you can view your upcoming job summary but cannot confirm, release, or message clients. Contact your team lead to manage your schedule.",
             confirmLabel: "View Summary",
             colorPalette: "blue",
-            onConfirm: () => launchWorkflow("plan-workday-trainee"),
+            onConfirm: () => launchWorkflow("plan-workday-trainee", { targetDate: bizTomorrow() }),
           });
         } else {
-          launchWorkflow("plan-workday");
+          launchWorkflow("plan-workday", { targetDate: bizTomorrow() });
         }
       },
     },
@@ -833,7 +838,7 @@ export default function HomePage() {
       content: wrapWithInlineMessage(
         <HomeTab
           me={me}
-          onLaunchWorkflow={(name) => launchWorkflow(name)}
+          onLaunchWorkflow={(name, opts) => launchWorkflow(name, opts)}
           scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }}
         />
       ),
@@ -1286,6 +1291,7 @@ export default function HomePage() {
             active={activeWorkflow === "plan-workday" || activeWorkflow === "plan-workday-trainee"}
             onDone={() => setActiveWorkflow(null)}
             myId={me?.id}
+            defaultTargetDate={planWorkdayDate ?? undefined}
             trainee={activeWorkflow === "plan-workday-trainee"}
           />
           <BeginWorkDayWorkflow
