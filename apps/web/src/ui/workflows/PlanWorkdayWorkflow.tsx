@@ -180,8 +180,22 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
     } else if (trainee) {
       // Trainee mode — show date picker, then go to summary
       setStep("choose-date");
+    } else if (defaultTargetDate) {
+      // The launcher stated which day it means — honour it verbatim.
+      //
+      // The scan below picks the EARLIEST upcoming job, which is a
+      // different question and gave a different answer: open it from the
+      // "Plan tomorrow" hero and you could land on a date days out,
+      // because the earliest job the scan finds is not necessarily
+      // tomorrow's. The scan is also anchored on `from=tomorrow` in ET
+      // while the API filters on a timestamp, so a late job today can
+      // come back and sort FIRST — defaulting the picker to today on a
+      // flow whose own heading says tomorrow.
+      setTargetDate(defaultTargetDate);
+      setStep("choose-date");
     } else {
-      // Fresh start — find next day with jobs, defaulting to tomorrow
+      // No stated intent — find the next day with jobs, defaulting to
+      // tomorrow.
       setStep("loading");
       apiGet<WorkerOccurrence[]>(`/api/occurrences?from=${tomorrow}`)
         .then((list) => {
@@ -207,7 +221,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
           setStep("choose-date");
         });
     }
-  }, [active]);
+  }, [active, defaultTargetDate]);
 
   async function loadOccurrences(date: string): Promise<WorkerOccurrence[]> {
     try {
