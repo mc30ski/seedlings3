@@ -33,12 +33,14 @@ Complete list of external services the app integrates with. Detailed setup for e
 
 ### Object Storage
 
-- **Cloudflare R2** — S3-compatible, accessed via `@aws-sdk/client-s3`. Five buckets via these env vars:
+- **Cloudflare R2** — S3-compatible, accessed via `@aws-sdk/client-s3`. Seven buckets via these env vars:
   - `R2_BUCKET_NAME` — job-occurrence photos (photos bucket, auto-delete lifecycle)
   - `R2_PROPERTY_PHOTOS_BUCKET_NAME` — property photos (auto-delete lifecycle)
   - `R2_EQUIPMENT_PHOTOS_BUCKET_NAME` — equipment photos (auto-delete lifecycle)
   - `R2_DOCS_BUCKET_NAME` — company documents (permanent, no auto-delete)
   - `R2_RECEIPTS_BUCKET_NAME` — business expense receipts (permanent, no auto-delete)
+  - `R2_PROMOTION_IMAGES_BUCKET_NAME` — promotion images (permanent, no auto-delete)
+  - `R2_GUIDE_MEDIA_BUCKET_NAME` — education-guide images + video (permanent, no auto-delete)
 
 ### Hosting
 
@@ -184,12 +186,12 @@ You can run these promotion steps manually from your laptop or later automate th
 
 ## Object Storage (Cloudflare R2)
 
-Photos, documents, and receipts are stored in **Cloudflare R2** (S3-compatible object storage). The API is stateless with respect to bytes — it hands out presigned URLs and clients upload/download directly.
+Photos, documents, receipts, promotion images, and education-guide media are stored in **Cloudflare R2** (S3-compatible object storage). The API is stateless with respect to bytes — it hands out presigned URLs and clients upload/download directly.
 
 ### Setup
 
 - **Cloudflare account** with R2 enabled (free tier: 10GB storage, 10M reads, 1M writes/month).
-- **Five buckets** across two categories (each has a `-dev` and prod pair):
+- **Seven buckets** across two categories. **Each is a `-dev` and prod pair**, so fourteen buckets in total — the env var holds a different name per environment, and Vercel Preview points at the `-dev` bucket so throwaway deploys never write into production.
   - **Photos** (auto-delete lifecycle):
     - `R2_BUCKET_NAME` — job-occurrence photos (e.g. `seedlings-photos` / `seedlings-photos-dev`)
     - `R2_PROPERTY_PHOTOS_BUCKET_NAME` — property photos (e.g. `seedlings-property-photos` / `-dev`)
@@ -197,8 +199,12 @@ Photos, documents, and receipts are stored in **Cloudflare R2** (S3-compatible o
   - **Permanent** (no lifecycle):
     - `R2_DOCS_BUCKET_NAME` — company documents (e.g. `seedlings-documents` / `-dev`) — insurance certs, W-9s, tax records
     - `R2_RECEIPTS_BUCKET_NAME` — business expense receipts (e.g. `seedlings-receipts` / `-dev`)
-- **Lifecycle rules**: photo buckets auto-delete objects after their configured retention window; document + receipt buckets have NO lifecycle rules.
-- **API token**: created in Cloudflare dashboard → R2 → Manage R2 API Tokens → Object Read & Write, scoped to all five buckets.
+    - `R2_PROMOTION_IMAGES_BUCKET_NAME` — promotion images (e.g. `seedlings-promotions` / `-dev`)
+    - `R2_GUIDE_MEDIA_BUCKET_NAME` — education-guide images + video (e.g. `seedlings-guides` / `-dev`) — see `docs/features/education.md`
+  - Bucket names follow the feature noun and do NOT have to match the variable name (`R2_PROMOTION_IMAGES_BUCKET_NAME` → `seedlings-promotions`).
+- **Lifecycle rules**: photo buckets auto-delete objects after their configured retention window; document, receipt, promotion + guide buckets have NO lifecycle rules.
+- **API token**: created in Cloudflare dashboard → R2 → Manage R2 API Tokens → Object Read & Write. **It is scoped to an explicit bucket list** — adding a bucket without re-scoping the token fails every upload with `AccessDenied`. The key and secret do not change when you re-scope.
+- **CORS**: every bucket needs a CORS policy allowing `PUT` from the app origins, because browsers upload straight to R2. `npx tsx scripts/_r2-check-cors.ts` lists what each bucket has (it needs an admin-scoped token to read the config; an Object Read & Write token returns `AccessDenied`).
 
 ### Environment Variables
 
@@ -213,6 +219,8 @@ R2_DOCS_BUCKET_NAME=seedlings-documents-dev
 R2_PROPERTY_PHOTOS_BUCKET_NAME=seedlings-property-photos-dev
 R2_EQUIPMENT_PHOTOS_BUCKET_NAME=seedlings-equipment-photos-dev
 R2_RECEIPTS_BUCKET_NAME=seedlings-receipts-dev
+R2_PROMOTION_IMAGES_BUCKET_NAME=seedlings-promotions-dev
+R2_GUIDE_MEDIA_BUCKET_NAME=seedlings-guides-dev
 ```
 
 ### How It Works
@@ -347,7 +355,7 @@ All API environment variables live in `apps/api/.env` (gitignored). They must al
 | `DATABASE_URL`     | Neon Postgres connection string | [Neon Console](https://console.neon.tech) → Project → Connection Details |
 | `CLERK_SECRET_KEY` | Clerk backend secret key        | [Clerk Dashboard](https://dashboard.clerk.com) → API Keys                |
 
-### Cloudflare R2 (Photo, Document, and Receipt Storage)
+### Cloudflare R2 (Photo, Document, Receipt, Promotion, and Guide-Media Storage)
 
 | Variable                           | Description                                                | Where to get it                                                       |
 | ---------------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------- |
@@ -359,6 +367,8 @@ All API environment variables live in `apps/api/.env` (gitignored). They must al
 | `R2_EQUIPMENT_PHOTOS_BUCKET_NAME`  | Equipment photos (auto-delete lifecycle)                   | e.g. `seedlings-equipment-photos-dev`                                 |
 | `R2_DOCS_BUCKET_NAME`              | Company documents (permanent, no auto-delete)              | e.g. `seedlings-documents-dev`                                        |
 | `R2_RECEIPTS_BUCKET_NAME`          | Business expense receipts (permanent, no auto-delete)      | e.g. `seedlings-receipts-dev`                                         |
+| `R2_PROMOTION_IMAGES_BUCKET_NAME`  | Promotion images (permanent, no auto-delete)               | e.g. `seedlings-promotions-dev`                                       |
+| `R2_GUIDE_MEDIA_BUCKET_NAME`       | Education-guide images + video (permanent, no auto-delete) | e.g. `seedlings-guides-dev`                                           |
 
 ### AI & Routing
 
@@ -480,7 +490,7 @@ WEB_ORIGIN=https://seedlings.team,https://seedlingslawncare.com
 WEB_ORIGIN_REGEX=^https://seedlings3-web-git-.*\.vercel\.app$
 ADMIN_BOOTSTRAP_EMAILS=<comma-separated emails to auto-grant ADMIN on first sign-in>
 
-# R2 (5 buckets)
+# R2 (7 buckets — prod names; dev uses the same names with a -dev suffix)
 R2_ACCESS_KEY_ID=<your Cloudflare R2 access key>
 R2_SECRET_ACCESS_KEY=<your Cloudflare R2 secret key>
 R2_ENDPOINT=<your R2 endpoint URL>
@@ -489,6 +499,8 @@ R2_PROPERTY_PHOTOS_BUCKET_NAME=seedlings-property-photos
 R2_EQUIPMENT_PHOTOS_BUCKET_NAME=seedlings-equipment-photos
 R2_DOCS_BUCKET_NAME=seedlings-documents
 R2_RECEIPTS_BUCKET_NAME=seedlings-receipts
+R2_PROMOTION_IMAGES_BUCKET_NAME=seedlings-promotions
+R2_GUIDE_MEDIA_BUCKET_NAME=seedlings-guides
 
 # AI + routing + weather
 ANTHROPIC_API_KEY=<your Anthropic API key>

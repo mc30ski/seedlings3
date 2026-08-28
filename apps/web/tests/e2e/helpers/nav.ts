@@ -77,3 +77,88 @@ export async function gotoAdminClients(page: Page, opts: { path?: string } = {})
   await page.goto(path);
   await page.waitForLoadState("networkidle");
 }
+
+/**
+ * Navigate to the Education guides tab. Present for every role by
+ * design — training material is read by the people doing the work — so
+ * the role is a parameter rather than three near-identical helpers.
+ * Canonical spec: docs/features/education.md.
+ *
+ * NOTE: stamping both keys reaches the tab even when the role's `catMap`
+ * has no entry for it — which is exactly how a shipped bug hid here (a
+ * worker had no clickable route to Guides while this helper worked
+ * fine). `gotoGuidesByClicking` is the one that proves the nav exists;
+ * this one is for tests about the tab's contents.
+ */
+export async function gotoGuides(
+  page: Page,
+  role: "worker" | "admin" | "super",
+  opts: { path?: string } = {},
+) {
+  const path = opts.path ?? "/";
+  await page.goto(path);
+  await page.evaluate((r: string) => {
+    localStorage.setItem("seedlings_topTab", JSON.stringify(r));
+    localStorage.setItem(`seedlings_${r}Tab`, JSON.stringify("guides"));
+    localStorage.setItem(`seedlings_${r}Category`, JSON.stringify("Records"));
+  }, role);
+  await page.goto(path);
+  await page.waitForLoadState("networkidle");
+  await waitForGuidesRendered(page);
+}
+
+/**
+ * Wait until the Guides tab has actually painted its catalog.
+ *
+ * `networkidle` says the network went quiet, not that React rendered —
+ * and a fixed `waitForTimeout` after it is a guess that gets shorter as
+ * the machine gets busier. Under a three-project run with the dev server
+ * compiling, 2s stopped being enough and DOM assertions failed
+ * intermittently on content that arrived a moment later.
+ *
+ * The search box is the anchor: it renders with the tab regardless of
+ * how many guides come back, so this also works for an empty catalog.
+ */
+export async function waitForGuidesRendered(page: Page) {
+  await page.getByPlaceholder(/Search guides/i).waitFor({ state: "visible", timeout: 30_000 });
+}
+
+/**
+ * Reach Guides the way a person does: pick the category, then the tab.
+ *
+ * A tab can be registered in a role's tab list and still be unreachable
+ * if the role's `catMap` has no entry for it — it lands in no category
+ * and never renders in the nav. Stamped-localStorage navigation cannot
+ * see that class of bug; this can.
+ */
+export async function gotoGuidesByClicking(
+  page: Page,
+  role: "worker" | "admin" | "super",
+  opts: { path?: string } = {},
+) {
+  const path = opts.path ?? "/";
+  await page.goto(path);
+  await page.evaluate((r: string) => {
+    localStorage.setItem("seedlings_topTab", JSON.stringify(r));
+    // Deliberately NOT setting the inner tab or category — the point is
+    // to walk there through the UI.
+    localStorage.removeItem(`seedlings_${r}Tab`);
+    localStorage.removeItem(`seedlings_${r}Category`);
+  }, role);
+  await page.goto(path);
+  await page.waitForLoadState("networkidle");
+  await page.waitForTimeout(2500);
+
+  // The category nav is a dropdown showing the CURRENT category, so the
+  // first click opens the list rather than selecting anything.
+  await page.locator("[data-category-trigger], button").filter({ hasText: /^(Work|Records|Equipment|Directory|Money|System)$/ }).first().click();
+  await page.waitForTimeout(600);
+  await page.getByText("Records", { exact: true }).first().click();
+  await page.waitForTimeout(1200);
+
+  // Same again for the inner tab.
+  await page.locator("button").filter({ hasText: /^(Home|Guides|Documents|Timeline|History|Activity)$/ }).first().click();
+  await page.waitForTimeout(600);
+  await page.getByText("Guides", { exact: true }).first().click();
+  await waitForGuidesRendered(page);
+}

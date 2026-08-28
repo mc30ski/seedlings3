@@ -150,6 +150,12 @@ export default function OccurrenceDialog({
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [busy, setBusy] = useState(false);
   const dlgErr = useDialogError();
+  /** Saved add-on awaiting a delete confirmation. */
+  const [deleteAddon, setDeleteAddon] = useState<{ id: string; label: string } | null>(null);
+  /** Saved expense awaiting a delete confirmation. */
+  const [deleteExpense, setDeleteExpense] = useState<
+    { idx: number; id: string; label: string } | null
+  >(null);
   const [status, setStatus] = useState("");
   // Destructive-transition confirm: changing CLOSED → SCHEDULED / PENDING_PAYMENT
   // triggers the server's revert cascade in services/jobs.ts (deletes the
@@ -843,13 +849,18 @@ export default function OccurrenceDialog({
                             size="xs"
                             variant="ghost"
                             colorPalette="red"
-                            onClick={async () => {
-                              if (exp.id && !exp.isNew && isAdmin) {
-                                try {
-                                  await apiDelete(`/api/admin/expenses/${exp.id}`);
-                                } catch {}
+                            aria-label={`Remove expense: ${exp.description}`}
+                            onClick={() => {
+                              // A row that was never saved is just local state
+                              // — dropping it costs nothing, so no dialog.
+                              if (!(exp.id && !exp.isNew && isAdmin)) {
+                                setExpenses((prev) => prev.filter((_, i) => i !== idx));
+                                return;
                               }
-                              setExpenses((prev) => prev.filter((_, i) => i !== idx));
+                              // A saved expense is a Schedule C record. This is
+                              // a tiny ✕ next to a list row on a phone; it does
+                              // not get to delete a tax line on one tap.
+                              setDeleteExpense({ idx, id: exp.id, label: `$${exp.cost.toFixed(2)} — ${exp.description}` });
                             }}
                           >
                             ✕
@@ -1142,13 +1153,18 @@ export default function OccurrenceDialog({
                           <Text>{addon.tag ? jobTagLabel(addon.tag) : addon.customLabel}</Text>
                           <HStack gap={2}>
                             <Text fontWeight="semibold">+${addon.price.toFixed(2)}</Text>
-                            <Button size="xs" variant="ghost" colorPalette="red" px="1" minW="0" onClick={async () => {
-                              if (mode === "UPDATE" && addon.id && !addon.id.startsWith("_new_")) {
-                                try {
-                                  await apiDelete(`/api/admin/occurrences/${occurrenceId}/addons/${addon.id}`);
-                                } catch {}
+                            <Button size="xs" variant="ghost" colorPalette="red" px="1" minW="0"
+                              aria-label={`Remove add-on: ${addon.tag ? jobTagLabel(addon.tag) : addon.customLabel}`}
+                              onClick={() => {
+                              // Never-saved rows are local state only.
+                              if (!(mode === "UPDATE" && addon.id && !addon.id.startsWith("_new_"))) {
+                                setAddons((prev) => prev.filter((a) => a.id !== addon.id));
+                                return;
                               }
-                              setAddons((prev) => prev.filter((a) => a.id !== addon.id));
+                              setDeleteAddon({
+                                id: addon.id,
+                                label: `${addon.tag ? jobTagLabel(addon.tag) : addon.customLabel} (+$${addon.price.toFixed(2)})`,
+                              });
                             }}>
                               <X size={10} />
                             </Button>
@@ -1260,6 +1276,62 @@ export default function OccurrenceDialog({
         </Dialog.Positioner>
       </Portal>
     </Dialog.Root>
+    <ConfirmDialog
+      open={!!deleteAddon}
+      title="Remove this service?"
+      message={
+        deleteAddon
+          ? `${deleteAddon.label} comes off this job, and off what the client is billed.`
+          : ""
+      }
+      confirmLabel="Remove"
+      confirmColorPalette="red"
+      onConfirm={() => {
+        const target = deleteAddon;
+        setDeleteAddon(null);
+        if (!target) return;
+        void (async () => {
+          try {
+            await apiDelete(`/api/admin/occurrences/${occurrenceId}/addons/${target.id}`);
+            setAddons((prev) => prev.filter((a) => a.id !== target.id));
+          } catch (err: any) {
+            // Was `catch {}`, which dropped the row from the list regardless
+            // — the add-on stayed on the job and kept being billed.
+            dlgErr.setError(getErrorMessage("Could not remove the service.", err));
+          }
+        })();
+      }}
+      onCancel={() => setDeleteAddon(null)}
+    />
+    <ConfirmDialog
+      open={!!deleteExpense}
+      title="Delete this expense?"
+      message={
+        deleteExpense
+          ? `${deleteExpense.label} will be removed from this job and from the business expense records.`
+          : ""
+      }
+      warning="This also removes it from the Schedule C categorization. It cannot be undone from the UI."
+      confirmLabel="Delete expense"
+      confirmColorPalette="red"
+      onConfirm={() => {
+        const target = deleteExpense;
+        setDeleteExpense(null);
+        if (!target) return;
+        void (async () => {
+          try {
+            await apiDelete(`/api/admin/expenses/${target.id}`);
+            setExpenses((prev) => prev.filter((_, i) => i !== target.idx));
+          } catch (err: any) {
+            // Previously this was `catch {}` and the row was dropped from
+            // the list anyway — so a failed delete looked exactly like a
+            // successful one, and the expense quietly stayed on the books.
+            dlgErr.setError(getErrorMessage("Could not delete the expense.", err));
+          }
+        })();
+      }}
+      onCancel={() => setDeleteExpense(null)}
+    />
     <ConfirmDialog
       open={revertConfirmOpen}
       title="Revert this paid job?"

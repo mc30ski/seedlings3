@@ -2208,15 +2208,23 @@ export default function ServicesTab({
                                           px="1"
                                           minW="auto"
                                           title="Remove this service"
-                                          onClick={async (e) => {
+                                          onClick={(e) => {
                                             e.stopPropagation();
-                                            try {
-                                              await apiDelete(`/api/admin/occurrences/${occ.id}/addons/${addon.id}`);
-                                              publishInlineMessage({ type: "SUCCESS", text: "Service removed." });
-                                              void loadDetail(job.id, true);
-                                            } catch (err) {
-                                              publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to remove service.", err) });
-                                            }
+                                            setConfirmAction({
+                                              title: "Remove this service?",
+                                              message: `+$${addon.price.toFixed(2)} — ${addon.tag ? jobTagLabel(addon.tag) : addon.customLabel} comes off this job, and off what the client is billed.`,
+                                              confirmLabel: "Remove",
+                                              colorPalette: "red",
+                                              onConfirm: async () => {
+                                                try {
+                                                  await apiDelete(`/api/admin/occurrences/${occ.id}/addons/${addon.id}`);
+                                                  publishInlineMessage({ type: "SUCCESS", text: "Service removed." });
+                                                  void loadDetail(job.id, true);
+                                                } catch (err) {
+                                                  publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to remove service.", err) });
+                                                }
+                                              },
+                                            });
                                           }}
                                         >
                                           <X size={11} />

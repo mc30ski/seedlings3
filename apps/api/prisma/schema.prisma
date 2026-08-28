@@ -41,6 +41,8 @@ enum AuditScope {
   POLICY_DOCUMENT
   POLICY_SIGNATURE
   PROMOTION
+  GUIDE
+  GUIDE_ASSET
   PROMO_OPT
   VANITY
   // add more scopes as you expand the schema
@@ -175,6 +177,17 @@ enum AuditVerb {
   PAYROLL_ARCHIVED
   PAYROLL_IDENTITY_LINKED
   PAYROLL_IDENTITY_UNLINKED
+
+  // Education-guide verbs. Scopes: GUIDE, GUIDE_ASSET. See
+  // docs/features/education.md. PUBLISHED/UNPUBLISHED move what workers
+  // can see; PURGED is the irreversible one and carries a full snapshot
+  // of the guide and every version it destroyed.
+  SUBMITTED
+  PUBLISHED
+  UNPUBLISHED
+  ROLLED_BACK
+  PURGED
+  SIZE_LIMIT_OVERRIDDEN
 }
 
 enum WorkerType {
@@ -232,6 +245,27 @@ enum PolicyContentFormat {
 enum PolicyNotifyChannel {
   PUSH_ONLY
   ALL_CHANNELS
+}
+
+/// Education-guide version lifecycle. Mirrors PolicyVersionStatus — the
+/// same DRAFT → review → live shape — but kept SEPARATE because guides
+/// carry no signatures, compliance state or forced re-signing, and
+/// sharing the enum would invite sharing the semantics.
+enum GuideVersionStatus {
+  DRAFT
+  PENDING_APPROVAL
+  PUBLISHED
+  REJECTED
+  ROLLED_BACK
+}
+
+/// Media kind for a guide asset. Drives who may upload it: IMAGE is
+/// Admin+, VIDEO is Super-only (see docs/features/education.md — video is
+/// the only asset class that can quietly become expensive, and the only
+/// one with a format/playback trap worth concentrating in one person).
+enum GuideAssetKind {
+  IMAGE
+  VIDEO
 }
 
 enum PolicyVersionStatus {
@@ -463,6 +497,16 @@ model User {
   payrollEntries             PayrollEntry[]    @relation("PayrollEntryUser")
   payrollIdentities          PayrollIdentity[] @relation("PayrollIdentityUser")
   payrollIdentitiesConfirmed PayrollIdentity[] @relation("PayrollIdentityConfirmedBy")
+
+  // Education guides — see docs/features/education.md
+  guidesCreated          Guide[]        @relation("GuideCreator")
+  guidesArchived         Guide[]        @relation("GuideArchiver")
+  guideVersionsCreated   GuideVersion[] @relation("GuideVersionCreator")
+  guideVersionsSubmitted GuideVersion[] @relation("GuideVersionSubmitter")
+  guideVersionsApproved  GuideVersion[] @relation("GuideVersionApprover")
+  guideVersionsPublished GuideVersion[] @relation("GuideVersionPublisher")
+  guideVersionsRejected  GuideVersion[] @relation("GuideVersionRejecter")
+  guideAssetsUploaded    GuideAsset[]   @relation("GuideAssetUploader")
 }
 
 model NotificationTemplate {
@@ -3664,4 +3708,127 @@ model PayrollIdentity {
 
   @@unique([lastName, firstName])
   @@index([userId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Education guides — see docs/features/education.md
+//
+// Shape deliberately mirrors PolicyDocument / PolicyDocumentVersion: a
+// stable parent row, an append-only version chain, and a pointer to the
+// one version the audience sees. Copied rather than shared because
+// policies carry signatures, compliance state and forced re-signing, none
+// of which apply to training material.
+// ─────────────────────────────────────────────────────────────────────────
+
+model Guide {
+  id          String   @id @default(cuid())
+  /// URL-safe stable handle. Survives re-titling so deep links don't rot.
+  slug        String   @unique
+  title       String
+  /// One-line catalog blurb. Searchable; not part of the approved body.
+  summary     String?
+  /// Category KEY from the GUIDE_CATEGORIES setting — a settings-driven
+  /// taxonomy, not a DB enum, so adding "Irrigation" needs no migration.
+  categoryKey String
+  /// Free-form tags, lower-cased on write. Searched alongside title/body.
+  tags        String[]
+
+  /// The PUBLISHED version workers read. Null until first publish, which
+  /// is what keeps an unapproved guide invisible without a status flag on
+  /// the parent row.
+  currentVersionId String?        @unique
+  currentVersion   GuideVersion?  @relation("GuideCurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
+  versions         GuideVersion[] @relation("GuideAllVersions")
+  assets           GuideAsset[]   @relation("GuideAssets")
+
+  createdById String
+  createdBy   User   @relation("GuideCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  archivedAt   DateTime?
+  archivedById String?
+  archivedBy   User?     @relation("GuideArchiver", fields: [archivedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([categoryKey, archivedAt])
+  @@index([archivedAt])
+}
+
+model GuideVersion {
+  id            String @id @default(cuid())
+  guideId       String
+  versionNumber Int
+
+  contentMarkdown String
+  /// sha256 of contentMarkdown. Lets "did this actually change?" be
+  /// answered without diffing, the same way policy versions do it.
+  contentDigest   String
+  /// Required on submit — an approver seeing a new version with no
+  /// explanation has to diff it by eye.
+  changeNote      String
+
+  status GuideVersionStatus @default(DRAFT)
+
+  createdById   String
+  createdBy     User      @relation("GuideVersionCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt     DateTime  @default(now())
+  submittedAt   DateTime?
+  submittedById String?
+  submittedBy   User?     @relation("GuideVersionSubmitter", fields: [submittedById], references: [id], onDelete: SetNull)
+  approvedAt    DateTime?
+  approvedById  String?
+  approvedBy    User?     @relation("GuideVersionApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  publishedAt   DateTime?
+  publishedById String?
+  publishedBy   User?     @relation("GuideVersionPublisher", fields: [publishedById], references: [id], onDelete: SetNull)
+  /// REJECTED is ours, not policies' — "send it back with a note" is the
+  /// common review outcome for training content, and without it an
+  /// author's only signal is the version silently reverting to draft.
+  rejectedAt    DateTime?
+  rejectedById  String?
+  rejectedBy    User?     @relation("GuideVersionRejecter", fields: [rejectedById], references: [id], onDelete: SetNull)
+  rejectionNote String?
+
+  guide          Guide  @relation("GuideAllVersions", fields: [guideId], references: [id], onDelete: Cascade)
+  currentOnGuide Guide? @relation("GuideCurrentVersion")
+
+  @@unique([guideId, versionNumber])
+  @@index([status])
+  @@index([guideId, status])
+}
+
+model GuideAsset {
+  id   String         @id @default(cuid())
+  kind GuideAssetKind
+
+  /// Object key in the guide-media bucket. IMMUTABLE: an asset is never
+  /// re-uploaded in place, because a published page's media would then
+  /// change without an approver seeing it. "Replacing" an image means a
+  /// new asset plus a page edit, which re-enters review.
+  r2Key            String  @unique
+  contentType      String
+  originalFilename String
+  /// VERIFIED size read back from R2 after upload, not the size the
+  /// browser declared. A presigned PUT is signed on content-type only, so
+  /// the declared number is unenforceable — and an unchecked figure shown
+  /// as metadata is exactly the kind of number that is wrong for a year.
+  sizeBytes        Int
+  /// Alt text / caption. Required for images.
+  altText          String?
+  /// Set when a Super knowingly uploaded past GUIDE_MAX_VIDEO_MB.
+  sizeOverride     Boolean @default(false)
+
+  /// Optional owning guide — assets can also live unattached in the
+  /// library and be referenced by several guides.
+  guideId String?
+  guide   Guide?  @relation("GuideAssets", fields: [guideId], references: [id], onDelete: SetNull)
+
+  uploadedById String
+  uploadedBy   User     @relation("GuideAssetUploader", fields: [uploadedById], references: [id], onDelete: Restrict)
+  uploadedAt   DateTime @default(now())
+
+  @@index([kind, uploadedAt])
+  @@index([guideId])
+  @@index([uploadedById])
 }

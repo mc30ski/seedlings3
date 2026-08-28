@@ -881,7 +881,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
   // busy / count up so the Dashboard frame here can supply the shared
   // title bar, count badge, refresh control and dim.
   const [approvalsApi, setApprovalsApi] = useState<{ refresh: () => void; loading: boolean; count: number } | null>(null);
-  const [outstandingApi, setOutstandingApi] = useState<{ refresh: () => void; loading: boolean; count: number } | null>(null);
+  const [outstandingApi, setOutstandingApi] = useState<{ refresh: () => void; loading: boolean; count: number; staleCount: number } | null>(null);
 
   const equipmentBillingEnabled = useEquipmentBillingEnabled();
   const [items, setItems] = useState<PaymentListItem[]>([]);
@@ -1596,7 +1596,19 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
             icon={Clock}
             variant="team"
             count={outstandingApi?.count ?? 0}
-            forceGlow={(outstandingApi?.count ?? 0) > 0 ? "orange" : undefined}
+            /* Pulses only when something has gone STALE — not merely
+               because a request is outstanding. An invoice sent this
+               morning is outstanding and entirely fine; pulsing for it
+               made the section pulse essentially always, which is how a
+               signal stops being one. The header badge still counts
+               every outstanding row.
+
+               PURPLE, matching this section's own `team` palette. It was
+               orange, which is the attention palette used by other
+               queues — a purple card with an orange halo read as two
+               sections overlapping. Pulses track the section they
+               belong to. */
+            forceGlow={(outstandingApi?.staleCount ?? 0) > 0 ? "purple" : undefined}
             onRefresh={outstandingApi?.refresh}
             refreshing={!!outstandingApi?.loading}
           >

@@ -129,7 +129,17 @@ export default function OutstandingRequestsSection({ onReady }: {
    * frames it. The component renders CONTENT ONLY — Dashboard (or
    * TasksPage's card) supplies the title bar, stripe, refresh and dim.
    */
-  onReady?: (api: { refresh: () => void; loading: boolean; count: number }) => void;
+  onReady?: (api: {
+    refresh: () => void;
+    loading: boolean;
+    count: number;
+    /** Rows past the staleness threshold. Reported separately from
+     *  `count` because the two answer different questions: the count is
+     *  "how many are outstanding" (the header badge), staleCount is
+     *  "is any of this overdue" (whether the section pulses). An
+     *  invoice sent this morning is outstanding but not a problem. */
+    staleCount: number;
+  }) => void;
 } = {}) {
   const { labelFor: methodLabel } = usePaymentMethodLabels();
   const [rows, setRows] = useState<OutstandingRow[]>([]);
@@ -180,7 +190,12 @@ export default function OutstandingRequestsSection({ onReady }: {
   // TasksPage). Kept in an effect rather than called during render so a
   // parent setState never fires mid-render.
   useEffect(() => {
-    onReady?.({ refresh: () => void load(), loading, count: rows.length });
+    onReady?.({
+      refresh: () => void load(),
+      loading,
+      count: rows.length,
+      staleCount: rows.filter((r) => r.stale).length,
+    });
   }, [onReady, load, loading, rows]);
 
   useEffect(() => {
@@ -405,8 +420,17 @@ export default function OutstandingRequestsSection({ onReady }: {
             <Box
               key={r.occurrenceId}
               borderWidth="1px"
-              borderColor={r.stale ? "orange.300" : "gray.200"}
-              bg={r.stale ? "orange.50" : undefined}
+              /* Shades of the PARENT section, which is purple (`team`
+                 variant). Orange here was borrowed from the generic
+                 stale/attention language and read as a different feature
+                 dropped inside this one.
+
+                 Only the stale rows go darker — that is the whole signal.
+                 Everything else sits at the section's own purple.50, so
+                 the card is delineated by its border alone and the darker
+                 fill means exactly one thing: this has been waiting. */
+              borderColor={r.stale ? "purple.400" : "purple.200"}
+              bg={r.stale ? "purple.100" : "purple.50"}
               borderRadius="md"
               p={2}
             >
@@ -419,14 +443,26 @@ export default function OutstandingRequestsSection({ onReady }: {
                   <HStack gap={1.5} flexWrap="wrap">
                     {/* Age badge — anchored on the ORIGINAL request when
                         it's been re-sent, otherwise on the (single) send.
-                        The stale-orange color follows the same "days since
+                        The stale colour follows the same "days since
                         latest send" trigger as before; original age is
                         just a display anchor, not a staleness signal
                         (the client-facing pay link expiry is what actually
                         matters for stale). */}
                     <Badge
                       size="sm"
-                      colorPalette={r.stale ? "orange" : "gray"}
+                      /* Three rungs, deliberately:
+                           stale      → solid purple, the loud one
+                           not stale  → subtle purple (purple.100) on the
+                                        card's purple.50, so it reads as
+                                        present without competing
+                         Grey was the third option and it lost: on a
+                         purple card a grey chip is quieter than "quiet",
+                         it looks disabled. Solid on a stale row because
+                         the subtle fill is purple.100 — the exact fill
+                         the stale CARD now uses, so the chip vanished
+                         into the background it exists to warn about. */
+                      colorPalette="purple"
+                      variant={r.stale ? "solid" : "subtle"}
                       title={
                         r.resendCount > 0
                           ? `Original request sent ${r.daysSinceFirstSent}d ago; latest re-send ${lastResendFragment(r.daysSinceRequested)}.`
@@ -484,15 +520,33 @@ export default function OutstandingRequestsSection({ onReady }: {
                   occurrenceId={r.occurrenceId}
                   requestSentAt={r.requestedAt}
                   variant="outline"
+                  colorPalette="purple"
+                  hoverBg={r.stale ? "purple.200" : "purple.100"}
                   onRequestCanceled={() => void load()}
                 />
-                <Button size="xs" variant="ghost" onClick={() => openJob(r)} title="Open the job">
+                {/* Purple, and a shade darker than the card behind them.
+                    A ghost button with the default grey hover read as
+                    foreign inside the purple section — and the hover has
+                    to clear the STALE card's purple.100 too, or it
+                    vanishes on exactly the rows that matter most. */}
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  colorPalette="purple"
+                  color="purple.800"
+                  _hover={{ bg: r.stale ? "purple.200" : "purple.100" }}
+                  onClick={() => openJob(r)}
+                  title="Open the job"
+                >
                   <ExternalLink size={12} /> Open job
                 </Button>
                 {r.invoiceUrl && (
                   <Button
                     size="xs"
                     variant="ghost"
+                    colorPalette="purple"
+                    color="purple.800"
+                    _hover={{ bg: r.stale ? "purple.200" : "purple.100" }}
                     asChild
                     title="Open the client-facing invoice page (the same URL the client received)"
                   >
@@ -520,10 +574,30 @@ export default function OutstandingRequestsSection({ onReady }: {
                     The confirmation dialog requires typing APPROVE to
                     prevent accidental use. See services/payments.ts
                     skipOccurrence for the full behavior. */}
+                {/* Orange, and deliberately none of the three colours
+                    around it. Purple is now this row's NEUTRAL — Open
+                    job, Open invoice, Cancel Request — so a purple Write
+                    off read as another navigation link rather than the
+                    money decision it is. Green means "we got paid", red
+                    means "erase it".
+
+                    Write off is neither: the loss is acknowledged and
+                    KEPT on the books as bad debt, employees and trainees
+                    are still paid their promised net.
+
+                    DARK GREY, and the same in both places this action
+                    appears. Green, red, orange and purple are all spoken
+                    for across the two rows that carry a Write off button
+                    — orange in particular collides with Edit in the
+                    approvals row. Grey stays out of the hue conversation
+                    entirely, which also suits the action: a write-off is
+                    closing something out, not a warning. */}
                 <Button
                   size="xs"
                   variant="ghost"
-                  colorPalette="purple"
+                  colorPalette="gray"
+                  color="gray.700"
+                  _hover={{ bg: "gray.200" }}
                   onClick={() => setWriteOffRow(r)}
                   title="Super only — write off (client ghosted / never paid). Employees + trainees still get their promised net from business funds; contractors get $0; the loss appears as bad debt on the P&L."
                 >

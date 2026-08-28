@@ -1,8 +1,24 @@
 "use client";
 
 import { Box, Heading, Text, Link, Code } from "@chakra-ui/react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
+
+/**
+ * react-markdown sanitizes hrefs and blanks any scheme outside
+ * http/https/mailto/tel — which silently turns `guide:<slug>` into an
+ * empty href long before `linkRenderer` ever sees it.
+ *
+ * This lets that ONE extra scheme through, matched narrowly, and defers
+ * everything else to the library's own transform so `javascript:` and
+ * friends stay blocked. The href is never used as a real URL: the guide
+ * renderer intercepts it and navigates in-app.
+ */
+const GUIDE_SCHEME = /^guide:[a-z0-9][a-z0-9-]*$/i;
+function urlTransform(value: string): string {
+  if (GUIDE_SCHEME.test(value)) return value;
+  return defaultUrlTransform(value);
+}
 
 /**
  * Renders markdown content with Chakra-native styling.
@@ -21,7 +37,17 @@ import remarkGfm from "remark-gfm";
  *
  * (Renamed from PolicyMarkdown 2026-08-22 — it outgrew policies.)
  */
-export default function MarkdownContent({ children }: { children: string }) {
+export default function MarkdownContent({
+  children,
+  linkRenderer,
+}: {
+  children: string;
+  /** Optional per-link override. Return a node to render it yourself, or
+   *  null/undefined to fall through to the default external link. Guides
+   *  use this for in-app `guide:<slug>` cross-references; every other
+   *  caller leaves it unset and gets the plain behaviour. */
+  linkRenderer?: (args: { href?: string; children: React.ReactNode }) => React.ReactNode | null;
+}) {
   return (
     <Box
       fontSize="sm"
@@ -32,10 +58,41 @@ export default function MarkdownContent({ children }: { children: string }) {
       css={{
         "& > *:first-of-type": { marginTop: 0 },
         "& > *:last-of-type": { marginBottom: 0 },
+
+        // GFM tables. Chakra v3's reset zeroes border-collapse and cell
+        // padding, so an unstyled table renders as run-together text —
+        // "Apr–MayFirst feed once fully green" — which reads as a broken
+        // page, not as a table. Styled here rather than via a `components`
+        // override so nested tables and the `<tr>`/`<th>` elements
+        // react-markdown emits are all covered by one rule.
+        //
+        // The wrapper scrolls on its own so a wide table cannot push the
+        // page into horizontal scroll on a phone, which is where most of
+        // this content is read.
+        "& table": {
+          display: "block",
+          overflowX: "auto",
+          width: "100%",
+          borderCollapse: "collapse",
+          marginBottom: "0.75rem",
+          fontSize: "0.8125rem",
+        },
+        "& th, & td": {
+          border: "1px solid var(--chakra-colors-gray-200)",
+          padding: "0.375rem 0.625rem",
+          textAlign: "left",
+          verticalAlign: "top",
+        },
+        "& th": {
+          backgroundColor: "var(--chakra-colors-gray-50)",
+          fontWeight: 600,
+          whiteSpace: "nowrap",
+        },
       }}
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        urlTransform={urlTransform}
         components={{
           h1: ({ children: c }) => (
             <Heading as="h1" size="lg" mt={4} mb={2}>
@@ -85,17 +142,21 @@ export default function MarkdownContent({ children }: { children: string }) {
               {c}
             </Box>
           ),
-          a: ({ href, children: c }) => (
-            <Link
-              href={href}
-              target="_blank"
-              rel="noreferrer"
-              color="blue.600"
-              textDecoration="underline"
-            >
-              {c}
-            </Link>
-          ),
+          a: ({ href, children: c }) => {
+            const custom = linkRenderer?.({ href, children: c });
+            if (custom) return <>{custom}</>;
+            return (
+              <Link
+                href={href}
+                target="_blank"
+                rel="noreferrer"
+                color="blue.600"
+                textDecoration="underline"
+              >
+                {c}
+              </Link>
+            );
+          },
           code: ({ children: c }) => (
             <Code fontSize="xs" px={1}>
               {c}

@@ -19,6 +19,7 @@ import equipmentCollectionsRoutes from "./routes/equipmentCollections";
 import promotionsRoutes from "./routes/promotions";
 import vanityPagesRoutes from "./routes/vanityPages";
 import payrollRoutes from "./routes/payroll";
+import guideRoutes from "./routes/guides";
 
 // ---------- CORS Helpers
 
@@ -199,6 +200,7 @@ export async function registerRoutes(app: FastifyInstance) {
       await api.register(adminRoutes);
       await api.register(notifyRoutes);
       await api.register(payrollRoutes);
+      await api.register(guideRoutes);
       await api.register(equipmentCollectionsRoutes);
       await api.register(promotionsRoutes);
       await api.register(vanityPagesRoutes);

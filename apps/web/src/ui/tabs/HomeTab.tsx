@@ -17,10 +17,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useState } from "react";
-import { Box, Button, Card, HStack, SimpleGrid, Spinner, Text, VStack } from "@chakra-ui/react";
+import { Badge, Box, Button, Card, HStack, SimpleGrid, Spinner, Text, VStack } from "@chakra-ui/react";
 import { BarChart3, Users } from "lucide-react";
 import { Dashboard } from "@/src/ui/components/Dashboard";
-import { FiMoon, FiPlay, FiRefreshCw, FiSun } from "react-icons/fi";
+import { FiArrowRight, FiMoon, FiPlay, FiRefreshCw, FiSun } from "react-icons/fi";
 import { computeDatesFromPreset, type DatePreset } from "@/src/lib/datePresets";
 import { apiGet } from "@/src/lib/api";
 import { bizToday, bizTomorrow, bizAddDays, bizHour, fmtDateOpts, fmtTimeOpts } from "@/src/lib/dates";
@@ -39,6 +39,7 @@ import {
   type AdminWorker,
 } from "@/src/ui/tabs/JobsTab.parts";
 import { usePersistedState } from "@/src/lib/usePersistedState";
+import { bumpMyActivities } from "@/src/lib/bus";
 
 type Props = {
   me: Me | null | undefined;
@@ -295,7 +296,11 @@ export default function HomeTab({
     setActivitiesRefreshing(true);
     try {
       await load({ silent: true });
-      window.dispatchEvent(new CustomEvent("seedlings:workday-changed"));
+      // Scoped event, NOT bumpWorkday(). Broadcasting "the workday
+      // changed" from a refresh button made every other section that
+      // listens for it — PAY PER HOUR · TEAM among them — refresh at the
+      // same time, which is the opposite of a section-scoped refresh.
+      bumpMyActivities();
     } finally {
       setActivitiesRefreshing(false);
     }
@@ -542,6 +547,10 @@ export default function HomeTab({
       "Assumes equal split for jobs not yet completed. Actual splits kick in on completion.";
     return (
       <SimpleGrid
+        // Swallow clicks. The begin/finish hero is card-wide clickable, and
+        // this strip is the part people tap to read the numbers — letting
+        // that bubble is what got the card-wide click removed last time.
+        onClick={(e: React.MouseEvent) => e.stopPropagation()}
         columns={3}
         gap={0}
         bg={c.bg}
@@ -621,6 +630,25 @@ export default function HomeTab({
   // the hero on top. Every branch is `!isAggregate`, matching
   // MyDashboard's own render gate, so the two can never disagree about
   // whether this worker-scoped content belongs on screen.
+  /**
+   * Whether the begin/finish hero can actually launch its workflow.
+   *
+   *  - `workdayStarted === false` — a definite NO, not the `null` the
+   *    lookup starts on, so the affordance never appears and then
+   *    vanishes mid-render.
+   *  - not viewing another worker — an admin inspecting someone else's
+   *    day must not start it for them.
+   *
+   * Gates the card's click, its hover and its action row together, so the
+   * card cannot look interactive while doing nothing.
+   */
+  const canBeginWorkday = workdayStarted === false && !isViewingOther;
+
+  // Hero cards use px={3} to match CompactBanner, which is what the
+  // Compliance / Workday / Mileage strips stacked directly beneath them in
+  // MY ACTIVITIES use. At px={4} the hero's action button sat 4px inboard
+  // of every button below it — close enough to look like a rendering bug
+  // rather than a choice. Change both together or neither.
   const heroSection = (
     <>
       {/* Hero CTA: Resume active work (any time) */}
@@ -629,12 +657,12 @@ export default function HomeTab({
           variant="elevated"
           cursor="pointer"
           onClick={() => navTo("jobs", { status: "IN_PROGRESS", datePreset: "lastMonth" })}
-          _hover={{ shadow: "lg" }}
+          _hover={{ shadow: "lg", "& [data-hero-go]": { transform: "translateX(3px)" } }}
           bg="orange.500"
           color="white"
           position="relative"
         >
-          <Card.Body px={4} py={2}>
+          <Card.Body px={3} py={2}>
             <VStack align="stretch" gap={2}>
               <HStack gap={3} align="center">
                 <Box bg="white" color="orange.600" p={2} borderRadius="full" flexShrink={0}>
@@ -653,7 +681,22 @@ export default function HomeTab({
                     {s.activeWork} job{s.activeWork === 1 ? "" : "s"} in progress or paused
                   </Text>
                 </VStack>
-                <Text fontSize="2xl">→</Text>
+                <Box
+                  bg="white"
+                  color="orange.600"
+                  p={2}
+                  borderRadius="full"
+                  flexShrink={0}
+                  display="flex"
+                  alignItems="center"
+                  justifyContent="center"
+                  pointerEvents="none"
+                  aria-hidden
+                  data-hero-go
+                  transition="transform 0.15s ease"
+                >
+                  <FiArrowRight size={20} />
+                </Box>
               </HStack>
             </VStack>
           </Card.Body>
@@ -661,18 +704,26 @@ export default function HomeTab({
       )}
 
       {/* Hero CTA: Begin / Finish — same workflow, different framing by time-of-day.
-          Deliberately NOT clickable as a whole, unlike the other hero cards:
-          the button inside is the only way in. A card-wide onClick meant an
-          incidental tap anywhere in the hero (or on the money strip) opened a
-          multi-step workflow. */}
+          Rendered like the Plan-tomorrow hero: whole card clickable, action
+          row with an arrow, no standalone button.
+
+          This card was card-wide clickable once before and was changed to a
+          button because an incidental tap anywhere in the hero — including
+          on the money strip — opened a multi-step workflow. The strip now
+          stops propagation, so the numbers stay tappable-but-inert, and the
+          click is armed only when the workflow is actually available
+          (`canBeginWorkday`) rather than on every render of the card. */}
       {!isAggregate && (heroMode === "begin" || heroMode === "finish") && (
         <Card.Root
           variant="outline"
           bg="green.50"
           borderColor="green.300"
           position="relative"
+          cursor={canBeginWorkday ? "pointer" : "default"}
+          onClick={canBeginWorkday ? () => onLaunchWorkflow("begin-workday") : undefined}
+          _hover={canBeginWorkday ? { shadow: "md", borderColor: "green.400" } : undefined}
         >
-          <Card.Body px={4} py={2}>
+          <Card.Body px={3} py={2}>
             <VStack align="stretch" gap={2}>
               <HStack gap={3} align="center">
                 <Box bg="green.500" color="white" p={2} borderRadius="full" flexShrink={0}>
@@ -688,28 +739,54 @@ export default function HomeTab({
                   split into three columns so the intent is legible at
                   a glance. */}
               {todaysMoneyStrip("green")}
-              {/* A real Button, not a text row with an arrow — and the
-                  ONLY launcher for this workflow now that the card
-                  itself no longer handles clicks. Sized to its label and
-                  centered rather than stretched full-width; it shared the
-                  top row with the greeting briefly, which crowded the text
-                  out at phone widths. */}
-              {/* Hidden once the worker is on the clock. This launches the
+              {/* Action row, matching the Plan-tomorrow hero.
+                  Hidden once the worker is on the clock: this launches the
                   "prepare for work day" flow — review today's jobs, confirm
                   clients, check equipment, look at the route, start the
                   workday — and every one of those is either done or moot by
                   the time someone is clocked in. Rendered only on a
                   definite `false` so it doesn't appear and then vanish
                   while the workday lookup is in flight. */}
-              {workdayStarted === false && (
-                <HStack justify="center">
+              {canBeginWorkday && (
+                <HStack gap={3}>
+                  <VStack align="start" gap={0} flex={1} minW={0}>
+                    <Text fontSize="md" fontWeight="bold" color="green.800">
+                      {heroMode === "begin" ? "Prepare for work day" : "Finish remaining jobs"}
+                    </Text>
+                    <Text fontSize="sm" color="green.700">
+                      Review jobs, confirm clients, check equipment · start the day
+                    </Text>
+                  </VStack>
                   <Button
-                    size="md"
+                    size="sm"
                     colorPalette="green"
-                    disabled={isViewingOther}
-                    onClick={() => onLaunchWorkflow("begin-workday")}
+                    flexShrink={0}
+                    // The card is clickable too, so without this the tap
+                    // fires the button AND the card and launches the
+                    // workflow twice.
+                    aria-label="Start"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onLaunchWorkflow("begin-workday");
+                    }}
                   >
-                    {heroMode === "begin" ? "Prepare for work day" : "Finish remaining jobs"}
+                    {/* "Start" on anything wider than a phone, a bare
+                        arrow on narrow screens where the label competes
+                        with the text beside it. One Button either way —
+                        swapping the CONTENT rather than rendering two
+                        buttons keeps a single click handler and a single
+                        node for assistive tech, which is why the
+                        aria-label carries the real name. */}
+                    <Box as="span" display={{ base: "none", sm: "inline" }}>
+                      Start
+                    </Box>
+                    <Box
+                      as="span"
+                      display={{ base: "inline-flex", sm: "none" }}
+                      alignItems="center"
+                    >
+                      <FiArrowRight size={18} />
+                    </Box>
                   </Button>
                 </HStack>
               )}
@@ -729,7 +806,7 @@ export default function HomeTab({
           borderColor="blue.300"
           position="relative"
         >
-          <Card.Body px={4} py={2}>
+          <Card.Body px={3} py={2}>
             <VStack align="stretch" gap={2}>
               <HStack gap={3} align="center">
                 <Box bg="blue.500" color="white" p={2} borderRadius="full" flexShrink={0}>
@@ -767,7 +844,38 @@ export default function HomeTab({
                     </Text>
                   )}
                 </VStack>
-                {!isViewingOther && <Text fontSize="2xl" color="blue.600">→</Text>}
+                {!isViewingOther && (
+                  <Button
+                    size="sm"
+                    colorPalette="blue"
+                    flexShrink={0}
+                    // See the begin/finish hero — the card handles clicks
+                    // as well, so this must not bubble into it.
+                    aria-label="Start"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onLaunchWorkflow("plan-workday");
+                    }}
+                  >
+                    {/* "Start" on anything wider than a phone, a bare
+                        arrow on narrow screens where the label competes
+                        with the text beside it. One Button either way —
+                        swapping the CONTENT rather than rendering two
+                        buttons keeps a single click handler and a single
+                        node for assistive tech, which is why the
+                        aria-label carries the real name. */}
+                    <Box as="span" display={{ base: "none", sm: "inline" }}>
+                      Start
+                    </Box>
+                    <Box
+                      as="span"
+                      display={{ base: "inline-flex", sm: "none" }}
+                      alignItems="center"
+                    >
+                      <FiArrowRight size={18} />
+                    </Box>
+                  </Button>
+                )}
               </HStack>
             </VStack>
           </Card.Body>
@@ -777,7 +885,7 @@ export default function HomeTab({
       {/* Hero: Wrap up — quiet end-of-day state. Combines greeting + status into one card. */}
       {!isAggregate && heroMode === "wrap" && (
         <Card.Root variant="outline" bg="gray.50" borderColor="gray.200" position="relative">
-          <Card.Body px={4} py={2}>
+          <Card.Body px={3} py={2}>
             <HStack gap={3}>
               <Box bg="gray.200" color="gray.700" p={2} borderRadius="full">
                 <FiMoon size={22} />
@@ -860,6 +968,20 @@ export default function HomeTab({
                   workers={adminWorkers}
                   selected={selfViewAsIds}
                 />
+                {/* Same "✕ Clear" affordance the Jobs filter bar uses —
+                    red outline badge, sitting at the end of the chips it
+                    clears. Getting back to All Workers otherwise meant
+                    reopening the picker and deselecting each worker one
+                    at a time. */}
+                <Badge
+                  size="sm"
+                  colorPalette="red"
+                  variant="outline"
+                  cursor="pointer"
+                  onClick={() => setSelfViewAsIds([])}
+                >
+                  ✕ Clear
+                </Badge>
               </HStack>
             )}
           </VStack>

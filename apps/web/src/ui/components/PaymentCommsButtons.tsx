@@ -49,6 +49,8 @@ export default function PaymentCommsButtons({
   occurrenceId,
   requestSentAt,
   variant = "solid",
+  colorPalette,
+  hoverBg,
   onRequestCanceled,
 }: {
   occurrenceId: string;
@@ -59,6 +61,14 @@ export default function PaymentCommsButtons({
    *  is a primary action; "outline" inside dialogs where a louder solid
    *  would compete with the dialog's own primary action. */
   variant?: "solid" | "outline";
+  /** Override the button palette so these read as part of the section
+   *  that hosts them. Defaults to orange, which is right on the job card
+   *  but foreign inside e.g. the purple AWAITING PAYMENT list. */
+  colorPalette?: string;
+  /** Hover fill for the ghost Cancel button. Passed in because the
+   *  correct shade depends on the CARD behind it, which varies per row
+   *  (a stale row is already darker than its neighbours). */
+  hoverBg?: string;
   /** Fired after a successful Cancel Request OR after the worker
    *  commits a Request Payment / Re-send, so the parent can refresh
    *  the occurrence (paymentRequestSentAt rotates, token may change). */
@@ -191,7 +201,8 @@ export default function PaymentCommsButtons({
         <Button
           size="sm"
           variant={variant}
-          colorPalette="orange"
+          colorPalette={colorPalette ?? "orange"}
+          {...(hoverBg ? { _hover: { bg: hoverBg } } : {})}
           onClick={() => setConfirmOpen(true)}
         >
           <RequestIcon size={12} /> {requestLabel}
@@ -200,7 +211,9 @@ export default function PaymentCommsButtons({
           <Button
             size="sm"
             variant="ghost"
-            colorPalette="gray"
+            colorPalette={colorPalette ?? "gray"}
+            {...(colorPalette ? { color: `${colorPalette}.800` } : {})}
+            {...(hoverBg ? { _hover: { bg: hoverBg } } : {})}
             loading={busy}
             onClick={() => void handleCancel()}
           >

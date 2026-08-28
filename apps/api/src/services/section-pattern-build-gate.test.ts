@@ -140,3 +140,32 @@ describe("section pattern build gate — sections don't reinvent it", () => {
     }
   });
 });
+
+describe("section pattern — a section refresh refreshes only itself", () => {
+  // MY ACTIVITIES' children fetch independently, so its refresh button has
+  // to reach them by event. It originally fired `seedlings:workday-changed`
+  // — which means "the workday actually changed" and is listened to by
+  // OTHER sections (WorkerHourlyPayCard recomputes /api/me/hourly-pay off
+  // it). Pressing refresh on one section therefore refreshed several,
+  // which is the opposite of what a section-scoped refresh is for.
+  it("MY ACTIVITIES refresh uses the scoped event, not a workday change", () => {
+    const home = read("apps/web/src/ui/tabs/HomeTab.tsx");
+    const fn = home.slice(
+      home.indexOf("const refreshActivities"),
+      home.indexOf("const refreshTeamOverview"),
+    );
+    expect(fn, "refreshActivities must exist").toContain("setActivitiesRefreshing");
+    expect(fn, "it must use the section-scoped event").toMatch(/bumpMyActivities\(\)/);
+    expect(
+      fn,
+      "broadcasting workday-changed from a refresh button refreshes unrelated sections",
+    ).not.toMatch(/workday-changed/);
+  });
+
+  it("the pay-per-hour card does NOT listen to the scoped event", () => {
+    // It is a different section. If it ever subscribes here, the bug is
+    // back with extra steps.
+    const card = read("apps/web/src/ui/components/WorkerHourlyPayCard.tsx");
+    expect(card).not.toMatch(/my-activities-refresh/);
+  });
+});

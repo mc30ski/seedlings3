@@ -193,6 +193,36 @@ export const AUDIT = {
     RESOLVED: [AuditScope.LEDGER_FOLLOWUP, AuditVerb.COMPLETED] as const,
     DELETED: [AuditScope.LEDGER_FOLLOWUP, AuditVerb.DELETED] as const,
   },
+  GUIDE: {
+    // Education guide + version lifecycle. See models Guide /
+    // GuideVersion + services/guides.ts, spec at
+    // docs/features/education.md.
+    CREATED: [AuditScope.GUIDE, AuditVerb.CREATED] as const,
+    UPDATED: [AuditScope.GUIDE, AuditVerb.UPDATED] as const,
+    SUBMITTED: [AuditScope.GUIDE, AuditVerb.SUBMITTED] as const,
+    APPROVED: [AuditScope.GUIDE, AuditVerb.APPROVED] as const,
+    REJECTED: [AuditScope.GUIDE, AuditVerb.REJECTED] as const,
+    PUBLISHED: [AuditScope.GUIDE, AuditVerb.PUBLISHED] as const,
+    UNPUBLISHED: [AuditScope.GUIDE, AuditVerb.UNPUBLISHED] as const,
+    ROLLED_BACK: [AuditScope.GUIDE, AuditVerb.ROLLED_BACK] as const,
+    ARCHIVED: [AuditScope.GUIDE, AuditVerb.RETIRED] as const,
+    UNARCHIVED: [AuditScope.GUIDE, AuditVerb.UNRETIRED] as const,
+    /// Irreversible. Metadata MUST carry a snapshot of the guide and every
+    /// version destroyed — after this the audit row is the only record
+    /// that the guide ever existed.
+    PURGED: [AuditScope.GUIDE, AuditVerb.PURGED] as const,
+  },
+  GUIDE_ASSET: {
+    // Assets are immutable: uploaded once, never replaced in place. So
+    // there is no UPDATED verb here on purpose — a "replacement" is a new
+    // asset plus a guide edit, which re-enters approval.
+    CREATED: [AuditScope.GUIDE_ASSET, AuditVerb.CREATED] as const,
+    DELETED: [AuditScope.GUIDE_ASSET, AuditVerb.DELETED] as const,
+    /// A Super knowingly uploading past GUIDE_MAX_VIDEO_MB. Recorded
+    /// separately so "why is there a 900 MB file in the bucket" has an
+    /// answer with a name on it.
+    SIZE_LIMIT_OVERRIDDEN: [AuditScope.GUIDE_ASSET, AuditVerb.SIZE_LIMIT_OVERRIDDEN] as const,
+  },
   POLICY_DOCUMENT: {
     // Policy template + version lifecycle. See PolicyDocument /
     // PolicyDocumentVersion models + services/policies.ts.

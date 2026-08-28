@@ -74,6 +74,7 @@ const ALERT_TO_TASKS: ReadonlyArray<readonly [string, readonly string[]]> = [
   ["Unlinked client accounts", ["Unlinked client accounts"]],
   ["Estimate follow-ups", ["Estimate follow-ups"]],
   ["Payroll names to match", ["Payroll names to match"]],
+  ["Guides awaiting approval", ["Guides awaiting approval"]],
   ["Job hours awaiting review", ["Job hours awaiting payroll review"]],
   ["Unclaimed", ["Unclaimed jobs"]],
   ["Announcements", ["Announcements"]],

@@ -24,6 +24,8 @@ const BUCKETS = [
   "seedlings-equipment-photos-dev",
   "seedlings-promotions",
   "seedlings-promotions-dev",
+  "seedlings-guides",
+  "seedlings-guides-dev",
 ];
 
 (async () => {

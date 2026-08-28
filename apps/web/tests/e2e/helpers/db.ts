@@ -402,3 +402,123 @@ export async function cleanupScratchPayroll(prisma: PrismaClient) {
   await prisma.payrollIdentity.deleteMany({ where: { lastName: E2E_PAYROLL_SURNAME } });
   await prisma.payrollPeriod.deleteMany({ where: { label: "E2E Weekly" } });
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Education guides. Canonical spec: docs/features/education.md.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Every scratch guide's slug starts with this, so cleanup is one prefix
+ *  match and can never touch a seeded guide. */
+export const E2E_GUIDE_SLUG_PREFIX = "e2e-scratch-guide-";
+
+/** Create a guide with ONE version in the requested state.
+ *
+ *  `published` wires `currentVersionId`, which is the whole ballgame for
+ *  visibility: a worker's query filters on that column, so a guide left
+ *  in any other state is invisible by construction rather than by a flag
+ *  someone has to remember to check. */
+export async function createScratchGuide(
+  prisma: PrismaClient,
+  opts: {
+    title: string;
+    summary?: string;
+    categoryKey?: string;
+    tags?: string[];
+    contentMarkdown: string;
+    status: "DRAFT" | "PENDING_APPROVAL" | "PUBLISHED";
+    createdById: string;
+    archived?: boolean;
+  },
+): Promise<{ guideId: string; versionId: string; slug: string }> {
+  const uid = randomUUID().slice(0, 8);
+  const slug = `${E2E_GUIDE_SLUG_PREFIX}${uid}`;
+
+  const guide = await prisma.guide.create({
+    data: {
+      slug,
+      title: opts.title,
+      summary: opts.summary ?? null,
+      categoryKey: opts.categoryKey ?? "lawn-care",
+      tags: opts.tags ?? [],
+      createdById: opts.createdById,
+      archivedAt: opts.archived ? new Date() : null,
+      archivedById: opts.archived ? opts.createdById : null,
+    },
+  });
+
+  const now = new Date();
+  const version = await prisma.guideVersion.create({
+    data: {
+      guideId: guide.id,
+      versionNumber: 1,
+      contentMarkdown: opts.contentMarkdown,
+      contentDigest: createHash("sha256").update(opts.contentMarkdown).digest("hex"),
+      changeNote: "E2E fixture",
+      status: opts.status,
+      createdById: opts.createdById,
+      submittedAt: opts.status === "DRAFT" ? null : now,
+      submittedById: opts.status === "DRAFT" ? null : opts.createdById,
+      approvedAt: opts.status === "PUBLISHED" ? now : null,
+      approvedById: opts.status === "PUBLISHED" ? USERS.super : null,
+      publishedAt: opts.status === "PUBLISHED" ? now : null,
+      publishedById: opts.status === "PUBLISHED" ? USERS.super : null,
+    },
+  });
+
+  if (opts.status === "PUBLISHED") {
+    await prisma.guide.update({
+      where: { id: guide.id },
+      data: { currentVersionId: version.id },
+    });
+  }
+
+  return { guideId: guide.id, versionId: version.id, slug };
+}
+
+/** Remove every E2E guide artifact. Safe to call unconditionally.
+ *
+ *  `currentVersionId` has to be cleared first — it's a FK onto the very
+ *  versions we're about to delete. */
+export async function cleanupScratchGuides(prisma: PrismaClient) {
+  const guides = await prisma.guide.findMany({
+    where: { slug: { startsWith: E2E_GUIDE_SLUG_PREFIX } },
+    select: { id: true },
+  });
+  if (guides.length === 0) return;
+  const ids = guides.map((g) => g.id);
+
+  await prisma.guide.updateMany({ where: { id: { in: ids } }, data: { currentVersionId: null } });
+  await prisma.guideAsset.deleteMany({ where: { guideId: { in: ids } } });
+  await prisma.guideVersion.deleteMany({ where: { guideId: { in: ids } } });
+  await prisma.guide.deleteMany({ where: { id: { in: ids } } });
+}
+
+/** Scratch media rows for exercising the library pager. Metadata only —
+ *  no R2 objects, because the list endpoint never touches storage. */
+export const E2E_ASSET_PREFIX = "e2e-pager-";
+
+export async function createScratchAssets(
+  prisma: PrismaClient,
+  count: number,
+  uploadedById: string,
+): Promise<void> {
+  for (let i = 0; i < count; i++) {
+    await prisma.guideAsset.create({
+      data: {
+        kind: "IMAGE",
+        r2Key: `guides/_e2e/${E2E_ASSET_PREFIX}${randomUUID()}.png`,
+        contentType: "image/png",
+        originalFilename: `${E2E_ASSET_PREFIX}${String(i).padStart(3, "0")}.png`,
+        sizeBytes: 1000 + i,
+        altText: "pager fixture",
+        uploadedById,
+      },
+    });
+  }
+}
+
+export async function cleanupScratchAssets(prisma: PrismaClient) {
+  await prisma.guideAsset.deleteMany({
+    where: { originalFilename: { startsWith: E2E_ASSET_PREFIX } },
+  });
+}

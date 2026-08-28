@@ -360,19 +360,19 @@ export default function ClientRequestsSection({
                       <Text fontSize="xs" color="fg.muted" mb={1}>Reach out to {contact?.firstName ?? "client"}:</Text>
                       <HStack gap={1.5} wrap="wrap">
                         {openSms && (
-                          <Button size="xs" variant="outline" colorPalette="gray" onClick={() => void openSms()}>
+                          <Button size="xs" variant="outline" colorPalette="orange" _hover={{ bg: "orange.100" }} onClick={() => void openSms()}>
                             <Mail size={12} /> Text
                           </Button>
                         )}
                         {telHref && (
-                          <Button size="xs" variant="outline" colorPalette="gray" asChild>
+                          <Button size="xs" variant="outline" colorPalette="orange" _hover={{ bg: "orange.100" }} asChild>
                             <a href={telHref}>
                               <Phone size={12} /> Call
                             </a>
                           </Button>
                         )}
                         {openMail && (
-                          <Button size="xs" variant="outline" colorPalette="gray" onClick={() => void openMail()}>
+                          <Button size="xs" variant="outline" colorPalette="orange" _hover={{ bg: "orange.100" }} onClick={() => void openMail()}>
                             <Mail size={12} /> Email
                           </Button>
                         )}
@@ -415,7 +415,10 @@ export default function ClientRequestsSection({
                       <Button
                         size="xs"
                         variant="ghost"
-                        colorPalette="gray"
+                        // Orange like its neighbours — a zinc hover inside
+                        // the orange card reads as light blue.
+                        colorPalette="orange"
+                        _hover={{ bg: "orange.100" }}
                         onClick={() => setDismissingRow(row)}
                       >
                         <X size={12} /> Dismiss
