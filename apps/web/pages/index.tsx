@@ -50,6 +50,8 @@ import ClientStatementsTab from "@/src/ui/tabs/ClientStatementsTab";
 import PlanWorkdayWorkflow from "@/src/ui/workflows/PlanWorkdayWorkflow";
 import BeginWorkDayWorkflow from "@/src/ui/workflows/BeginWorkDayWorkflow";
 import PayrollTab from "@/src/ui/tabs/PayrollTab";
+import GuidesTab from "@/src/ui/tabs/GuidesTab";
+import { fetchPendingApprovalCount as fetchGuidePendingCount } from "@/src/lib/guides";
 import { fetchUnmatchedPayrollNames } from "@/src/lib/payroll";
 import AdminTasksTab, { type TaskDef, FiPlus, FiDownload, FiDatabase, FiShare2 } from "@/src/ui/tabs/AdminTasksTab";
 import SharePhotosWorkflow from "@/src/ui/workflows/SharePhotosWorkflow";
@@ -80,36 +82,7 @@ import NewJobSetupWorkflow from "@/src/ui/components/NewJobSetupWorkflow";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
 import { Me, Role, AdminTabs, ClientTabs, WorkerTabs, SuperTabs, EventTypes } from "@/src/lib/types";
-import {
-  FiBriefcase,
-  FiClipboard,
-  FiTool,
-  FiPackage,
-  FiUser,
-  FiUsers,
-  FiFileText,
-  FiMapPin,
-  FiActivity,
-  FiHome,
-  FiBarChart2,
-  FiBell,
-  FiNavigation,
-  FiSettings,
-  FiShield,
-  FiAlertCircle,
-  FiSun,
-  FiSearch,
-  FiFolder,
-  FiCalendar,
-  FiBook,
-  FiClock,
-  FiTag,
-  FiRefreshCw,
-  FiTruck,
-  FiUserCheck,
-  FiSpeaker,
-  FiLink,
-} from "react-icons/fi";
+import { FiActivity, FiAlertCircle, FiBarChart2, FiBell, FiBook, FiBookOpen, FiBriefcase, FiCalendar, FiClipboard, FiClock, FiFileText, FiFolder, FiHome, FiLink, FiMapPin, FiNavigation, FiPackage, FiRefreshCw, FiSearch, FiSettings, FiShield, FiSpeaker, FiSun, FiTag, FiTool, FiTruck, FiUser, FiUserCheck, FiUsers } from "react-icons/fi";
 import { GrUserAdmin } from "react-icons/gr";
 import { AiOutlineTeam } from "react-icons/ai";
 import { TfiMoney } from "react-icons/tfi";
@@ -1013,6 +986,19 @@ export default function HomePage() {
     // tab block here with visible: () => !!me?.workerType and
     // content: <StatisticsTab myId={me?.id} />, plus the catMap entry
     // `statistics: "Records"` below.
+    {
+      // ── Records ──
+      // Education guides. Present for EVERY role by design: the whole
+      // point is that workers can read the material. Authoring and
+      // approval are gated inside the tab by `scope`, not by hiding it.
+      // See docs/features/education.md.
+      value: "guides",
+      label: "Guides",
+      icon: FiBookOpen,
+      content: wrapWithInlineMessage(
+        <GuidesTab me={me} purpose="WORKER" scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }} />,
+      ),
+    },
     // ── System ──
     {
       value: "profile",
@@ -1223,6 +1209,20 @@ export default function HomePage() {
       content: wrapWithInlineMessage(<DocumentsTab />),
     },
     {
+      // Education guides — see docs/features/education.md. Admin authors
+      // drafts and manages their own images; approval and video are Super.
+      value: "guides",
+      label: "Guides",
+      icon: FiBookOpen,
+      content: wrapWithInlineMessage(
+        <GuidesTab
+          me={me}
+          purpose="ADMIN"
+          scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }}
+        />,
+      ),
+    },
+    {
       // ── System ── (order: Profile → Notify → Settings)
       value: "profile",
       label: "Profile",
@@ -1360,6 +1360,7 @@ export default function HomePage() {
           clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
           payments: "Money", payroll: "Money", pricing: "Money", supplies: "Money",
           // statistics: "Records" — re-add when the Worker Statistics tab is restored.
+          guides: "Records",
           profile: "System",
         };
         const catIconMap: Record<string, React.ElementType> = {
@@ -1408,7 +1409,7 @@ chip: false, bucket: t.bucket }));
           equipment: "Equipment", collections: "Equipment", vehicles: "Equipment",
           clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
           payments: "Money", payroll: "Money", pricing: "Money", supplies: "Money",
-          activity: "Records", history: "Records", timeline: "Records", documents: "Records",
+          activity: "Records", history: "Records", timeline: "Records", documents: "Records", guides: "Records",
           notify: "System", settings: "System", profile: "System",
         };
         const catIconMap: Record<string, React.ElementType> = {
@@ -1804,6 +1805,22 @@ chip: false, bucket: t.bucket }));
           label: "Documents",
           icon: FiFolder,
           content: wrapWithInlineMessage(<DocumentsTab isSuper />),
+          category: "Records",
+          categoryIcon: FiBarChart2,
+        },
+        {
+          // Education guides — see docs/features/education.md. Super is the
+          // only role that approves content or touches video.
+          value: "guides",
+          label: "Guides",
+          icon: FiBookOpen,
+          content: wrapWithInlineMessage(
+            <GuidesTab
+              me={me}
+              purpose="SUPER"
+              scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }}
+            />,
+          ),
           category: "Records",
           categoryIcon: FiBarChart2,
         },
@@ -2678,6 +2695,38 @@ chip: false, bucket: t.bucket }));
     return () => window.removeEventListener("seedlings3:jobs-changed", onRefresh);
   }, [loadUnapprovedHoursCount]);
 
+  // Education guides awaiting approval. SUPER-only: approving is the only
+  // way material becomes readable, so a pending guide is work blocked on
+  // the Super and nobody else can clear it.
+  const [guideApprovalCount, setGuideApprovalCount] = useState(0);
+  const loadGuideApprovalCount = useCallback(async () => {
+    if (!isSuper) {
+      setGuideApprovalCount(0);
+      markAlertLoaded("guideApprovals");
+      return;
+    }
+    try {
+      const r = await fetchGuidePendingCount();
+      setGuideApprovalCount(r?.count ?? 0);
+    } catch {
+      setGuideApprovalCount(0);
+    }
+    markAlertLoaded("guideApprovals");
+  }, [isSuper]);
+  useEffect(() => {
+    void loadGuideApprovalCount();
+    const onRefresh = () => void loadGuideApprovalCount();
+    window.addEventListener("seedlings:guides-changed", onRefresh);
+    return () => window.removeEventListener("seedlings:guides-changed", onRefresh);
+  }, [loadGuideApprovalCount]);
+
+  // Super → Records → Guides, where the review queue lives.
+  const goToGuideApprovals = useCallback(() => {
+    setTopTab("super");
+    setSuperCategory("Records");
+    setSuperInnerTab("guides");
+  }, []);
+
   // Unlinked client accounts. This was a Tasks section with NO dropdown
   // alert — the only such gap — so an operator who never opened Tasks had
   // no signal at all. Added 2026-08-26 when the two surfaces were
@@ -2848,7 +2897,7 @@ chip: false, bucket: t.bucket }));
     return () => { clearTimeout(timer); document.removeEventListener("click", close); };
   }, [alertDropdownOpen]);
   const [alertsLoaded, setAlertsLoaded] = useState<Record<string, boolean>>({});
-  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests && alertsLoaded.estimateFollowups && alertsLoaded.unapprovedHours && alertsLoaded.guaranteedPayout && alertsLoaded.pendingWorkdays && alertsLoaded.ledgerFollowups && alertsLoaded.dueToRecord && alertsLoaded.streamPauseReminders && alertsLoaded.policyAdmin && alertsLoaded.policyWorker && alertsLoaded.timeline && alertsLoaded.payrollUnmatched && alertsLoaded.unlinkedAccounts);
+  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests && alertsLoaded.estimateFollowups && alertsLoaded.unapprovedHours && alertsLoaded.guaranteedPayout && alertsLoaded.pendingWorkdays && alertsLoaded.ledgerFollowups && alertsLoaded.dueToRecord && alertsLoaded.streamPauseReminders && alertsLoaded.policyAdmin && alertsLoaded.policyWorker && alertsLoaded.timeline && alertsLoaded.payrollUnmatched && alertsLoaded.unlinkedAccounts && alertsLoaded.guideApprovals);
   const markAlertLoaded = useCallback((key: string) => setAlertsLoaded((prev) => prev[key] ? prev : { ...prev, [key]: true }), []);
   const loadAnnouncementCount = useCallback(async () => {
     // Staff-only: /api/occurrences requires a worker/admin/super role.
@@ -3000,6 +3049,7 @@ chip: false, bucket: t.bucket }));
         loadPolicyAdminCounts(),
         loadPayrollUnmatchedCount(),
         loadUnlinkedAccountsCount(),
+        loadGuideApprovalCount(),
       ]);
     } finally {
       setAlertsRefreshing(false);
@@ -3167,7 +3217,7 @@ chip: false, bucket: t.bucket }));
       equipment: "Equipment", collections: "Equipment", vehicles: "Equipment",
       clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
       payments: "Money", payroll: "Money", pricing: "Money", supplies: "Money",
-      activity: "Records", history: "Records", timeline: "Records", documents: "Records",
+      activity: "Records", history: "Records", timeline: "Records", documents: "Records", guides: "Records",
       notify: "System", settings: "System", profile: "System",
     };
     const onNav = (e: Event) => {
@@ -3212,7 +3262,7 @@ chip: false, bucket: t.bucket }));
       clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
       payments: "Money", payroll: "Money", pricing: "Money", supplies: "Money", ledger: "Money", promotions: "Money",
       reconcile: "Records", workdays: "Records", compliance: "Records", activity: "Records",
-      history: "Records", timeline: "Records", documents: "Records", audit: "Records",
+      history: "Records", timeline: "Records", documents: "Records", guides: "Records", audit: "Records",
       "tools-mowing": "Tools", "tools-mulch": "Tools",
       notify: "System", settings: "System", profile: "System", vanity: "System",
     };
@@ -4181,6 +4231,10 @@ chip: false, bucket: t.bucket }));
               // employer-cost accent, so the colour reads as "payroll"
               // rather than as a severity.
               if (scopeIsSuper && payrollUnmatchedCount > 0) alerts.push({ label: "Payroll names to match", count: payrollUnmatchedCount, bg: "#F3E8FF", color: "#6B21A8", dotColor: "#A855F7", onClick: goToPayrollIdentities });
+              // Blue: reviewing training material is a content task, not an
+              // operational warning — orange is spoken for by the queues that
+              // block someone from being paid or doing their job.
+              if (scopeIsSuper && guideApprovalCount > 0) alerts.push({ label: "Guides awaiting approval", count: guideApprovalCount, bg: "#DBEAFE", color: "#1E3A8A", dotColor: "#3B82F6", onClick: goToGuideApprovals });
               if (scopeIsAdmin && unapprovedHoursCount > 0) alerts.push({ label: "Job hours awaiting review", count: unapprovedHoursCount, bg: "#FEF3C7", color: "#92400E", dotColor: "#F59E0B", onClick: goToUnapprovedHours });
               if (scopeIsAdmin && unclaimedCount > 0) alerts.push({ label: "Unclaimed", count: unclaimedCount, bg: "#FEF9C3", color: "#713F12", dotColor: "#FACC15", onClick: goToUnclaimed });
               // Announcements are worker-visible — gate on scopeIsWorker
@@ -4568,6 +4622,7 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
             policyPendingApprovalsCount,
             policyWorkerPendingCount,
             payrollUnmatchedCount,
+            guideApprovalCount,
           }}
           handlers={{
             goToWorkdayApprovals,
@@ -4577,6 +4632,7 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
             goToCompliance,
             goToWorkerCompliance,
             goToPayrollIdentities,
+            goToGuideApprovals,
             goToStreamPauseReminders,
             goToGuaranteedPayoutExpiring,
             goToApprovals,

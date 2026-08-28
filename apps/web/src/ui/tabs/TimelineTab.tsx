@@ -782,11 +782,33 @@ export default function TimelineTab({ isSuper = false }: Props) {
                     borderRadius="md"
                     _hover={{ bg: `${section.color}.100` }}
                     transition="background 0.15s"
+                    /* OVERDUE pulses. It is the only bucket here that is
+                       work already late — everything else is a forecast,
+                       and a forecast that pulses is just noise. Uses the
+                       shared `seedlings-pulse-*` keyframes so it matches
+                       every other pulsing section in the app, in this
+                       section's OWN colour (red). */
+                    css={
+                      section.key === "overdue"
+                        ? { animation: `seedlings-pulse-${section.color} 2.5s ease-in-out infinite` }
+                        : undefined
+                    }
                   >
                     <Box color={`${section.color}.700`} flexShrink={0}>
                       {collapsed ? <ChevronRight size={18} /> : <ChevronDown size={18} />}
                     </Box>
-                    <Text fontSize="sm" fontWeight="bold" color={`${section.color}.900`} flex="1">
+                    {/* Uppercase + wide tracking, matching the section
+                        titles Dashboard renders everywhere else. These
+                        headers were sentence case, which read as row
+                        labels rather than section headings. */}
+                    <Text
+                      fontSize="sm"
+                      fontWeight="bold"
+                      color={`${section.color}.900`}
+                      textTransform="uppercase"
+                      letterSpacing="wide"
+                      flex="1"
+                    >
                       {section.label}
                     </Text>
                     <Badge size="sm" colorPalette={section.color} variant="solid" borderRadius="full" px="2">

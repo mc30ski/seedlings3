@@ -874,7 +874,22 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
                     <Text fontSize="sm" fontWeight="semibold">
                       {displayName || "(no name)"}
                     </Text>
-                    {displayName !== u.email && <Badge>{u.email}</Badge>}
+                    {displayName !== u.email && (
+                      // Orange inside PENDING SIGN-UPS, default elsewhere.
+                      // The unapproved rows are exactly what that orange
+                      // section renders, so `!u.isApproved` IS "in the
+                      // pending section" — a default blue-grey chip read
+                      // as foreign against the orange frame, the same
+                      // clash the Approve button was already fixed for.
+                      <Badge
+                        colorPalette={u.isApproved ? undefined : "orange"}
+                        variant={u.isApproved ? undefined : "solid"}
+                        bg={u.isApproved ? undefined : "orange.200"}
+                        color={u.isApproved ? undefined : "orange.900"}
+                      >
+                        {u.email}
+                      </Badge>
+                    )}
                   </HStack>
 
                   <HStack gap="2" mt={2} flexWrap="wrap">

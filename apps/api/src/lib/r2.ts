@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, CopyObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, CopyObjectCommand, ListObjectsV2Command, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const R2_ENDPOINT = process.env.R2_ENDPOINT!;
@@ -14,6 +14,7 @@ const R2_RECEIPTS_BUCKET = process.env.R2_RECEIPTS_BUCKET_NAME!;
 // expire — closed promotions preserve their images indefinitely so the
 // audit story ("what did clients actually see?") stays truthful.
 // Configure Cloudflare with NO lifecycle rules on this bucket.
+const R2_GUIDE_MEDIA_BUCKET = process.env.R2_GUIDE_MEDIA_BUCKET_NAME!;
 const R2_PROMOTION_IMAGES_BUCKET = process.env.R2_PROMOTION_IMAGES_BUCKET_NAME!;
 
 const s3 = new S3Client({
@@ -28,7 +29,7 @@ const s3 = new S3Client({
   responseChecksumValidation: "WHEN_REQUIRED",
 });
 
-type BucketType = "photos" | "docs" | "property-photos" | "equipment-photos" | "receipts" | "promotion-images";
+type BucketType = "photos" | "docs" | "property-photos" | "equipment-photos" | "receipts" | "promotion-images" | "guide-media";
 
 function bucketName(type: BucketType): string {
   if (type === "docs") return R2_DOCS_BUCKET;
@@ -36,6 +37,11 @@ function bucketName(type: BucketType): string {
   if (type === "equipment-photos") return R2_EQUIPMENT_PHOTOS_BUCKET;
   if (type === "receipts") return R2_RECEIPTS_BUCKET;
   if (type === "promotion-images") return R2_PROMOTION_IMAGES_BUCKET;
+  // Education-guide images + video. Its own bucket, following the
+  // per-purpose split already used here: video lifecycle rules differ from
+  // receipts and policy PDFs, and a stray cleanup script cannot reach
+  // across content types.
+  if (type === "guide-media") return R2_GUIDE_MEDIA_BUCKET;
   return R2_BUCKET;
 }
 
@@ -237,4 +243,26 @@ export async function getObjectBuffer(
   }
   const arr = await body.transformToByteArray();
   return { bytes: Buffer.from(arr), contentType: res.ContentType };
+}
+
+/** Read an object's true size + content type WITHOUT downloading it.
+ *
+ * Presigned PUT is signed on content-type only, so the size a browser
+ * declares at presign time is unenforceable — a client can claim 5 MB and
+ * upload 5 GB. Anything that stores a byte count as metadata, or enforces
+ * a ceiling, has to read the real value back from R2 afterwards.
+ *
+ * Returns null when the object is missing, so a caller can distinguish
+ * "never landed" from "landed and is too big".
+ */
+export async function headObject(
+  key: string,
+  bucket: BucketType = "photos",
+): Promise<{ sizeBytes: number; contentType: string | undefined } | null> {
+  try {
+    const res = await s3.send(new HeadObjectCommand({ Bucket: bucketName(bucket), Key: key }));
+    return { sizeBytes: Number(res.ContentLength ?? 0), contentType: res.ContentType };
+  } catch {
+    return null;
+  }
 }

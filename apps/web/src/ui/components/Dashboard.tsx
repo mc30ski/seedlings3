@@ -57,6 +57,7 @@ export function Dashboard({
   onRefresh,
   refreshing = false,
   timeframe,
+  timeframeSlot,
   accentColor,
   headerAction,
   defaultOpen = true,
@@ -132,6 +133,11 @@ export function Dashboard({
    * only in which state they set. That is the duplication that produced
    * the click-through/dropdown inconsistency in the first place.
    */
+  /** Rendered on the SAME right-aligned row as the timeframe picker.
+   *  Sections that have both a timeframe and their own control (a "View
+   *  all" link, say) otherwise stack two right-aligned rows of controls,
+   *  which reads as two unrelated toolbars. */
+  timeframeSlot?: React.ReactNode;
   timeframe?: {
     options: ReadonlyArray<{ label: string; value: string }>;
     value: string;
@@ -655,10 +661,11 @@ export function Dashboard({
             visibility={busy ? "hidden" : undefined}
             aria-hidden={busy || undefined}
           >
-            {timeframe && (
+            {(timeframe || timeframeSlot) && (
               // flexShrink={0} on the wrapper — Select.Root stretches to
               // fill a flex row otherwise, which strands anything beside it.
-              <HStack justify="flex-end" gap={1}>
+              <HStack justify="flex-end" gap={2} wrap="wrap" align="center">
+                {timeframe && (
                 <Box flexShrink={0}>
                   <Select.Root
                     collection={createListCollection({ items: [...timeframe.options] })}
@@ -687,6 +694,8 @@ export function Dashboard({
                     </Select.Positioner>
                   </Select.Root>
                 </Box>
+                )}
+                {timeframeSlot}
               </HStack>
             )}
             {children}

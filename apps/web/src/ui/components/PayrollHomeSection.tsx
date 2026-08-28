@@ -57,6 +57,7 @@ import {
   fetchMyPayrollPeriods,
   fetchPayrollPendingMatch,
   fmtPayrollMoney,
+  payrollRangeLabel,
   filterPeriodsByRange,
   isPayDayPending,
   payDayVerb,
@@ -157,6 +158,55 @@ export default function PayrollHomeSection({
             }
           : undefined
       }
+      // Same row as the timeframe picker — both are controls for this
+      // section, and stacking them as two right-aligned rows read as two
+      // unrelated toolbars.
+      timeframeSlot={
+        <Button
+          size="xs"
+          variant="outline"
+          colorPalette="blue"
+          flexShrink={0}
+          onClick={() =>
+            window.dispatchEvent(
+              new CustomEvent("navigate:workerTab", { detail: { tab: "payroll" } }),
+            )
+          }
+        >
+          View all
+        </Button>
+      }
+      // Collapsed ONLY — open, all of this is already the biggest thing on
+      // the card. Collapsed, the section previously showed nothing but its
+      // title, hiding the two facts it exists to answer: how much, and
+      // when. Mirrors the MY EARNINGS treatment so the Home sections read
+      // consistently.
+      //
+      // The TIMEFRAME rides along for the same reason it does there:
+      // collapsing hides the picker, and a net-pay figure means something
+      // very different over the latest period than over the year. Shown
+      // even when there is nothing to total, because the window is still
+      // the answer to "what am I looking at".
+      collapsedSummarySlot={
+        <Text fontSize="xs" color="blue.800" whiteSpace="nowrap">
+          {payrollRangeLabel(range)}
+          {shown.length > 0 && (
+            <>
+              {" · "}
+              <Box as="span" fontWeight="bold" color="blue.900">
+                {fmtPayrollMoney(totals.netPay)}
+              </Box>
+              {" net"}
+              {/* The pay DATE only makes sense for a single period; over a
+                  range the total spans several, and naming one of them
+                  would read as the date the whole figure landed. */}
+              {shown.length === 1 && newest
+                ? ` · ${payDayVerb(newest.payDay).toLowerCase()} ${fmtDateKey(newest.payDay)}`
+                : ` · ${shown.length} periods`}
+            </>
+          )}
+        </Text>
+      }
       onRefresh={load}
       refreshing={busy}
     >
@@ -177,30 +227,6 @@ export default function PayrollHomeSection({
             </Text>
           </Box>
         )}
-        {/* Picker and "View all" grouped on the RIGHT — they are both
-            controls, and splitting them to opposite edges made the row read
-            as two unrelated things. */}
-        <HStack justify="flex-end" gap={2} wrap="wrap" align="center">
-          {/* Sized to its longest option rather than stretched. A
-              full-width trigger made the menu a narrow box under a very
-              wide control, and on flip-up it covered the card above.
-              Same treatment as the ReconcileTab pickers. */}
-
-          <Button
-            size="xs"
-            variant="outline"
-            colorPalette="blue"
-            flexShrink={0}
-            onClick={() =>
-              window.dispatchEvent(
-                new CustomEvent("navigate:workerTab", { detail: { tab: "payroll" } }),
-              )
-            }
-          >
-            View all
-          </Button>
-        </HStack>
-
         {shown.length === 0 ? (
           // Rendered, not hidden. A worker who has never been on a Gusto
           // payroll run (every contractor today) still gets told why this

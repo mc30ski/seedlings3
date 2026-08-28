@@ -6959,8 +6959,14 @@ export default function JobsTab({
                                   px="1"
                                   minW="auto"
                                   title="Remove this service"
-                                  onClick={async (e) => {
+                                  onClick={(e) => {
                                     e.stopPropagation();
+                                    setConfirmAction({
+                                    title: "Remove this service?",
+                                    message: `+$${addon.price.toFixed(2)} — ${addon.tag ? jobTagLabel(addon.tag) : addon.customLabel} comes off this job, and off what the client is billed.`,
+                                    confirmLabel: "Remove",
+                                    colorPalette: "red",
+                                    onConfirm: async () => {
                                     try {
                                       await apiDelete(`/api/${forAdmin ? "admin/" : ""}occurrences/${occ.id}/addons/${addon.id}`);
                                       setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, addons: (o.addons ?? []).filter((a: any) => a.id !== addon.id) } : o));
@@ -6968,6 +6974,8 @@ export default function JobsTab({
                                     } catch (err) {
                                       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to remove service.", err) });
                                     }
+                                    },
+                                    });
                                   }}
                                 >
                                   <X size={11} />
@@ -7635,17 +7643,23 @@ export default function JobsTab({
                         disabled={isOffline}
                         title={isOffline ? "Requires internet" : undefined}
                         loading={busyOccId === occ.id}
-                        onClick={async () => {
-                          setBusyOccId(occ.id);
-                          try {
-                            await apiPost(`/api/tasks/${occ.id}/close`);
-                            publishInlineMessage({ type: "SUCCESS", text: "Task completed." });
-                            await load(false);
-                          } catch (err) {
-                            publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to complete task.", err) });
-                          }
-                          setBusyOccId(null);
-                        }}
+                        onClick={() => setConfirmAction({
+                          title: "Complete this task?",
+                          message: `"${occ.title}" moves out of the active list. Reopen Task puts it back if you tap this by mistake.`,
+                          confirmLabel: "Complete",
+                          colorPalette: "blue",
+                          onConfirm: async () => {
+                            setBusyOccId(occ.id);
+                            try {
+                              await apiPost(`/api/tasks/${occ.id}/close`);
+                              publishInlineMessage({ type: "SUCCESS", text: "Task completed." });
+                              await load(false);
+                            } catch (err) {
+                              publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to complete task.", err) });
+                            }
+                            setBusyOccId(null);
+                          },
+                        })}
                       >
                         Complete
                       </Button>
@@ -7732,21 +7746,29 @@ export default function JobsTab({
                           size="sm"
                           variant="solid"
                           colorPalette="purple"
-                          onClick={async () => {
-                            if (isOffline) {
-                              await enqueueAction("DISMISS_REMINDER", occ.id, queueLabel(occ, "Dismiss reminder"), {});
-                              setItems((prev) => prev.filter((o) => o.id !== occ.id));
-                              publishInlineMessage({ type: "INFO", text: "Dismiss queued for sync." });
-                              return;
-                            }
-                            try {
-                              await apiPost(`/api/standalone-reminders/${occ.id}/dismiss`);
-                              publishInlineMessage({ type: "SUCCESS", text: "Reminder dismissed." });
-                              await load(false);
-                            } catch (err) {
-                              publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to dismiss reminder.", err) });
-                            }
-                          }}
+                          onClick={() => setConfirmAction({
+                            title: "Dismiss this reminder?",
+                            message: `"${occ.title}" will stop appearing in the list.`,
+                            confirmLabel: "Dismiss",
+                            colorPalette: "purple",
+                            onConfirm: async () => {
+                              // Offline still queues rather than posting — the
+                              // confirm gates the intent, not the transport.
+                              if (isOffline) {
+                                await enqueueAction("DISMISS_REMINDER", occ.id, queueLabel(occ, "Dismiss reminder"), {});
+                                setItems((prev) => prev.filter((o) => o.id !== occ.id));
+                                publishInlineMessage({ type: "INFO", text: "Dismiss queued for sync." });
+                                return;
+                              }
+                              try {
+                                await apiPost(`/api/standalone-reminders/${occ.id}/dismiss`);
+                                publishInlineMessage({ type: "SUCCESS", text: "Reminder dismissed." });
+                                await load(false);
+                              } catch (err) {
+                                publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to dismiss reminder.", err) });
+                              }
+                            },
+                          })}
                         >
                           Dismiss
                         </Button>
@@ -7797,17 +7819,23 @@ export default function JobsTab({
                           colorPalette="yellow"
                           disabled={isOffline}
                           loading={busyOccId === occ.id}
-                          onClick={async () => {
-                            setBusyOccId(occ.id);
-                            try {
-                              await apiPost(`/api/admin/events/${occ.id}/complete`);
-                              publishInlineMessage({ type: "SUCCESS", text: "Event completed." });
-                              await load(false);
-                            } catch (err) {
-                              publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to complete event.", err) });
-                            }
-                            setBusyOccId(null);
-                          }}
+                          onClick={() => setConfirmAction({
+                            title: "Complete this event?",
+                            message: `"${occ.title}" moves out of the active list.`,
+                            confirmLabel: "Complete",
+                            colorPalette: "yellow",
+                            onConfirm: async () => {
+                              setBusyOccId(occ.id);
+                              try {
+                                await apiPost(`/api/admin/events/${occ.id}/complete`);
+                                publishInlineMessage({ type: "SUCCESS", text: "Event completed." });
+                                await load(false);
+                              } catch (err) {
+                                publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to complete event.", err) });
+                              }
+                              setBusyOccId(null);
+                            },
+                          })}
                         >
                           Complete
                         </Button>
@@ -7856,17 +7884,23 @@ export default function JobsTab({
                           colorPalette="red"
                           disabled={isOffline}
                           loading={busyOccId === occ.id}
-                          onClick={async () => {
-                            setBusyOccId(occ.id);
-                            try {
-                              await apiPost(`/api/followups/${occ.id}/complete`);
-                              publishInlineMessage({ type: "SUCCESS", text: "Followup completed." });
-                              await load(false);
-                            } catch (err) {
-                              publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to complete followup.", err) });
-                            }
-                            setBusyOccId(null);
-                          }}
+                          onClick={() => setConfirmAction({
+                            title: "Complete this followup?",
+                            message: `"${occ.title}" moves out of the active list.`,
+                            confirmLabel: "Complete",
+                            colorPalette: "red",
+                            onConfirm: async () => {
+                              setBusyOccId(occ.id);
+                              try {
+                                await apiPost(`/api/followups/${occ.id}/complete`);
+                                publishInlineMessage({ type: "SUCCESS", text: "Followup completed." });
+                                await load(false);
+                              } catch (err) {
+                                publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to complete followup.", err) });
+                              }
+                              setBusyOccId(null);
+                            },
+                          })}
                         >
                           Complete
                         </Button>

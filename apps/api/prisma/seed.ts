@@ -76,6 +76,11 @@ async function clearDatabase() {
   // Payroll tab shows stale periods that no seed fixture explains.
   // Entries cascade from periods, but deleting them explicitly keeps the
   // intent readable. PayrollIdentity is independent of both.
+  // Education guides — assets reference guides, versions cascade.
+  await prisma.guideAsset.deleteMany();
+  await prisma.guide.updateMany({ data: { currentVersionId: null } });
+  await prisma.guideVersion.deleteMany();
+  await prisma.guide.deleteMany();
   await prisma.payrollEntry.deleteMany();
   await prisma.payrollPeriod.deleteMany();
   await prisma.payrollIdentity.deleteMany();
@@ -206,11 +211,18 @@ const SETTING_SECTIONS: Record<string, string> = {
   TIMELINE_CATEGORIES: "catalogs",
   EXPENSE_CATEGORIES: "catalogs",
   EQUIPMENT_RENTAL_INCOME_CONFIG: "catalogs",
+  GUIDE_CATEGORIES: "catalogs",
   // Photos & Documents
   MAX_PHOTOS_PER_JOB: "media",
   PHOTO_JPEG_QUALITY: "media",
   PHOTO_MAX_EDGE_PX: "media",
   DOCUMENT_MAX_SIZE_MB: "media",
+  // Education-guide media. See docs/features/education.md.
+  GUIDE_MAX_IMAGE_MB: "media",
+  GUIDE_MAX_VIDEO_MB: "media",
+  GUIDE_VIDEO_HARD_CEILING_MB: "media",
+  GUIDE_MEDIA_ALLOWED_TYPES: "media",
+  GUIDE_ALLOWED_EMBED_DOMAINS: "media",
   // Compliance
   POLICY_STRICT_TWO_EYES: "compliance",
   POLICY_DEFAULT_GRACE_HOURS: "compliance",
@@ -1524,6 +1536,31 @@ async function seedDatabase() {
     [{ userId: MICHAEL_ID, role: "primary" }],
   );
 
+  // ── Michael: a job TOMORROW ──────────────────────────────────────────
+  // Guarantees the operator account has real work on both today and
+  // tomorrow, so the Jobs timeline and the "next up" surfaces have
+  // something to show past the end of today.
+  //
+  // Deliberately TOMORROW and not today: the nudge fixture above depends
+  // on Michael having exactly ONE non-observer assignment today, so that
+  // completing it takes his remaining count 1 → 0 and fires the "end your
+  // workday?" prompt. A second job today would silently break that.
+  await occ(
+    {
+      jobId: kimMow.id,
+      kind: "SINGLE_ADDRESS",
+      startAt: daysFromNow(1, 9),
+      endAt: addMinutes(daysFromNow(1, 9), 30),
+      status: "SCHEDULED",
+      workflow: "STANDARD",
+      jobTags: '["MOW","TRIM"]',
+      price: 70.0,
+      estimatedMinutes: 30,
+      isClientConfirmed: true,
+    },
+    [{ userId: MICHAEL_ID, role: "primary" }],
+  );
+
   // ── Team workday gate fixture ────────────────────────────────────────
   // A job scheduled for today on a property/job that isn't used
   // anywhere else today, with a claimer who's clocked in and a helper
@@ -2502,6 +2539,46 @@ async function seedDatabase() {
     where: { key: "DOCUMENT_MAX_SIZE_MB" },
     create: { key: "DOCUMENT_MAX_SIZE_MB", value: "25", description: "Max file size (MB) for a single CompanyDocument version upload.", updatedById: MICHAEL_ID },
     update: { description: "Max file size (MB) for a single CompanyDocument version upload.", updatedById: MICHAEL_ID },
+  });
+
+  // ── Education guide fixtures ──────────────────────────────────────────────
+  // Three guides covering the states an operator needs to SEE working:
+  // published (what a worker reads), pending (what sits in the Super
+  // review queue and drives the alert), and a bare draft.
+  await seedGuides();
+
+  // ── Education guides ──────────────────────────────────────────────────────
+  // Categories are a SETTING, not a DB enum — adding "Irrigation" should
+  // not need a migration. See docs/features/education.md.
+  await prisma.setting.upsert({
+    where: { key: "GUIDE_CATEGORIES" },
+    create: { key: "GUIDE_CATEGORIES", value: "[{\"key\": \"lawn-care\", \"label\": \"Lawn care\"}, {\"key\": \"equipment\", \"label\": \"Equipment\"}, {\"key\": \"safety\", \"label\": \"Safety\"}, {\"key\": \"customer-service\", \"label\": \"Customer service\"}, {\"key\": \"admin\", \"label\": \"Admin & process\"}]", description: "Education guide categories. Array of {key, label}.", updatedById: MICHAEL_ID },
+    update: { description: "Education guide categories. Array of {key, label}.", updatedById: MICHAEL_ID },
+  });
+  await prisma.setting.upsert({
+    where: { key: "GUIDE_MAX_IMAGE_MB" },
+    create: { key: "GUIDE_MAX_IMAGE_MB", value: "10", description: "HARD limit (MB) for a guide image upload. Admins are many; this is a real ceiling and an over-size upload is rejected.", updatedById: MICHAEL_ID },
+    update: { description: "HARD limit (MB) for a guide image upload. Admins are many; this is a real ceiling and an over-size upload is rejected.", updatedById: MICHAEL_ID },
+  });
+  await prisma.setting.upsert({
+    where: { key: "GUIDE_MAX_VIDEO_MB" },
+    create: { key: "GUIDE_MAX_VIDEO_MB", value: "200", description: "SOFT limit (MB) for a guide video. Video is Super-only, so this catches accidents rather than abuse — a Super may override with an audited confirmation.", updatedById: MICHAEL_ID },
+    update: { description: "SOFT limit (MB) for a guide video. Video is Super-only, so this catches accidents rather than abuse — a Super may override with an audited confirmation.", updatedById: MICHAEL_ID },
+  });
+  await prisma.setting.upsert({
+    where: { key: "GUIDE_VIDEO_HARD_CEILING_MB" },
+    create: { key: "GUIDE_VIDEO_HARD_CEILING_MB", value: "2048", description: "Absolute cap (MB) for a guide video — NOT overridable. Catches selecting the wrong file, which an override prompt would not.", updatedById: MICHAEL_ID },
+    update: { description: "Absolute cap (MB) for a guide video — NOT overridable. Catches selecting the wrong file, which an override prompt would not.", updatedById: MICHAEL_ID },
+  });
+  await prisma.setting.upsert({
+    where: { key: "GUIDE_MEDIA_ALLOWED_TYPES" },
+    create: { key: "GUIDE_MEDIA_ALLOWED_TYPES", value: "[\"image/jpeg\", \"image/png\", \"image/webp\", \"video/mp4\", \"video/webm\"]", description: "Allowlisted content types for guide media. Allowlist, not blocklist.", updatedById: MICHAEL_ID },
+    update: { description: "Allowlisted content types for guide media. Allowlist, not blocklist.", updatedById: MICHAEL_ID },
+  });
+  await prisma.setting.upsert({
+    where: { key: "GUIDE_ALLOWED_EMBED_DOMAINS" },
+    create: { key: "GUIDE_ALLOWED_EMBED_DOMAINS", value: "[\"youtube.com\", \"www.youtube.com\", \"youtu.be\", \"player.vimeo.com\", \"vimeo.com\"]", description: "Domains a guide may embed external video from. Anything else renders as a plain link.", updatedById: MICHAEL_ID },
+    update: { description: "Domains a guide may embed external video from. Anything else renders as a plain link.", updatedById: MICHAEL_ID },
   });
 
   // ── Payment request settings ──────────────────────────────────────────────
@@ -5087,14 +5164,22 @@ async function seedVehicleFixtures() {
  *                    today row started ~3h ago and gives the Admin Home
  *                    Team Overview "Workdays in progress" panel a third
  *                    row alongside Michael + Contractor)
- *   MICHAEL_ID     → IN_PROGRESS started ~90m ago (with a 12m prior pause
- *                    already resolved). Drives the title-bar on-clock
- *                    bubble in a visibly ticked state (1:2x:xx) plus the
- *                    end-of-day nudge test — completing Michael's one
- *                    scheduled today job trips the "all jobs done"
- *                    dialog since remaining hits 0. If NOT_STARTED
- *                    coverage is needed, EMPLOYEE_ID's fixture already
- *                    exercises it for the team-workday-gate demo.
+ *   MICHAEL_ID     → NOT_STARTED (no row today). The operator account
+ *                    starts the day clocked OUT so Work → Home opens on
+ *                    the "Prepare for work day" hero, which is hidden
+ *                    once someone is on the clock.
+ *
+ *                    The end-of-day nudge test still works, it just runs
+ *                    from the top: start the workday (via the hero or the
+ *                    strip), then complete Michael's one scheduled today
+ *                    job and remaining hits 0.
+ *
+ *                    COST OF THIS CHOICE: the title-bar on-the-clock
+ *                    bubble no longer opens in a ticking state for the
+ *                    signed-in user, and Admin Home → Team Overview
+ *                    "Workdays in progress" drops from three rows to two
+ *                    (CONTRACTOR paused + ADMIN_WORKER in progress).
+ *                    Start the workday to get both back.
  */
 async function seedWorkdayFixtures() {
   console.log("  Workday fixtures (one row per state for each seed worker)...");
@@ -5172,24 +5257,21 @@ async function seedWorkdayFixtures() {
     },
   });
 
-  // ── MICHAEL_ID: IN_PROGRESS ────────────────────────────────────────
-  // Started ~90 minutes ago with a 12m prior pause already resolved
-  // into totalPausedMs. Chosen specifically so the title-bar
-  // on-the-clock bubble shows a visible ticking duration in
-  // H:MM:SS format (~1:2x:xx) rather than a fresh-start "0:00:00"
-  // that would be indistinguishable from a paused clock. Also lets
-  // the end-of-day nudge test run without needing the "Start workday"
-  // preamble — Michael's single scheduled today job (Harrington Lake
-  // 2 PM) can be completed straight from IN_PROGRESS, tripping the
-  // "all jobs done for today" prompt.
-  await prisma.workerWorkday.create({
-    data: {
-      userId: MICHAEL_ID,
-      workdayDate: today,
-      startedAt: new Date(now.getTime() - hrs(1) - mins(30)),
-      totalPausedMs: mins(12),
-    },
-  });
+  // ── MICHAEL_ID: NOT_STARTED ────────────────────────────────────────
+  // Deliberately NO row today, so the operator account lands on Work →
+  // Home clocked out and the "Prepare for work day" hero is reachable —
+  // it is hidden the moment someone is on the clock.
+  //
+  // This row used to be IN_PROGRESS (started ~90m ago) to give the
+  // title-bar bubble a visibly ticking duration and to let the
+  // end-of-day nudge test skip the start-workday preamble. Both still
+  // work; they just need the workday started first, which is the path a
+  // real worker takes anyway.
+  //
+  // Michael's open mileage entry (seeded above, "still driving") is left
+  // alone: mileage is not gated on an active workday server-side, and
+  // an already-open session is what exercises the workflow's
+  // `prior-open` step.
 
   // ─── Super Workdays tab fixtures ──────────────────────────────────────
   // Past-day rows for the Super approval surface. Two days back is well
@@ -6624,3 +6706,344 @@ main()
     process.exit(1);
   })
   .finally(() => prisma.$disconnect());
+
+/**
+ * Education-guide fixtures. See docs/features/education.md.
+ *
+ * Deliberately exercises all three visible states so the review queue,
+ * the alert badge and the worker catalog all have something in them on a
+ * fresh seed — an empty feature is indistinguishable from a broken one.
+ */
+/**
+ * Upload the guide-media fixtures to R2 and create their GuideAsset rows.
+ *
+ * Deterministic keys (`guides/seed/<filename>`) rather than a UUID per
+ * run: a reseed overwrites the same five objects instead of leaving the
+ * previous run's bytes orphaned in the bucket, since seed cleanup drops
+ * the GuideAsset rows and nothing would ever point at the old keys again.
+ *
+ * Returns filename → asset id so the markdown below can reference the
+ * real ids. Guide bodies store `guide-asset:<id>` tokens, never URLs, so
+ * they have to be built AFTER the rows exist.
+ *
+ * Returns an empty map when R2 isn't configured. Guides then seed as
+ * text-only rather than failing the whole seed — a new dev environment
+ * should come up before its object storage does.
+ */
+async function seedGuideAssets(): Promise<Map<string, string>> {
+  const ids = new Map<string, string>();
+  if (!process.env.R2_GUIDE_MEDIA_BUCKET_NAME) {
+    console.log("  guides: R2_GUIDE_MEDIA_BUCKET_NAME unset — seeding guides without media");
+    return ids;
+  }
+
+  const { readFileSync } = require("fs") as typeof import("fs");
+  const { join } = require("path") as typeof import("path");
+  const { getUploadUrl } = require("../src/lib/r2") as typeof import("../src/lib/r2");
+
+  const FIXTURES: Array<{ file: string; type: string; kind: "IMAGE" | "VIDEO"; alt: string }> = [
+    { file: "mowing-heights.png", type: "image/png", kind: "IMAGE", alt: "Bar chart of cutting heights by grass type" },
+    { file: "fertilizer-calendar.png", type: "image/png", kind: "IMAGE", alt: "Twelve-month feeding calendar for warm-season grass" },
+    { file: "trimmer-line.png", type: "image/png", kind: "IMAGE", alt: "Five steps for replacing bump-feed trimmer line" },
+    { file: "ppe-checklist.png", type: "image/png", kind: "IMAGE", alt: "Pre-start safety checklist" },
+    { file: "striping-demo.webm", type: "video/webm", kind: "VIDEO", alt: "Two-pass striping demonstration" },
+  ];
+
+  for (const f of FIXTURES) {
+    const bytes = readFileSync(join(__dirname, "fixtures", "guides", f.file));
+    const r2Key = `guides/seed/${f.file}`;
+    try {
+      const url = await getUploadUrl(r2Key, f.type, 900, "guide-media");
+      const res = await fetch(url, {
+        method: "PUT",
+        headers: { "Content-Type": f.type },
+        body: new Uint8Array(bytes),
+      });
+      if (!res.ok) throw new Error(`R2 PUT ${res.status}`);
+    } catch (err: any) {
+      console.log(`  guides: upload of ${f.file} failed (${err?.message ?? err}) — skipping its media`);
+      continue;
+    }
+    const asset = await prisma.guideAsset.create({
+      data: {
+        kind: f.kind,
+        r2Key,
+        contentType: f.type,
+        originalFilename: f.file,
+        // The real byte count, same as the app stores after reading it
+        // back from R2. Nothing here is guessed.
+        sizeBytes: bytes.length,
+        altText: f.alt,
+        uploadedById: MICHAEL_ID,
+      },
+    });
+    ids.set(f.file, asset.id);
+  }
+  console.log(`  guides: ${ids.size} media asset(s) uploaded`);
+  return ids;
+}
+
+async function seedGuides() {
+  const digest = (md: string) =>
+    require("crypto").createHash("sha256").update(md, "utf8").digest("hex");
+
+  const media = await seedGuideAssets();
+  /** Image markdown for a fixture, or "" when media isn't available. */
+  const img = (file: string, caption: string) => {
+    const id = media.get(file);
+    return id ? `![${caption}](guide-asset:${id})\n\n` : "";
+  };
+  /** Video directive for a fixture, or "" when media isn't available. */
+  const vid = (file: string) => {
+    const id = media.get(file);
+    return id ? `:::video guide-asset:${id}\n\n` : "";
+  };
+
+  const bermuda = `# Fertilizing Bermuda grass
+
+Bermuda is a **warm-season** grass. Feed it when it is actively growing —
+not before green-up, or you are feeding the weeds.
+
+## When
+
+${img("fertilizer-calendar.png", "Feeding calendar for warm-season grass")}| Month | What |
+| --- | --- |
+| Apr–May | First feed once fully green |
+| Jun–Aug | Every 4–6 weeks |
+| Sep | Last feed — stop 6 weeks before first frost |
+
+## Rate
+
+Aim for **1 lb of nitrogen per 1,000 sq ft** per application. More is not
+better: excess nitrogen produces soft growth that scalps easily and invites
+disease.
+
+## On the job
+
+1. Mow first, and bag the clippings if the lawn is thatchy.
+2. Spread in two passes at right angles — one heavy pass stripes the lawn.
+3. Water in with about a quarter inch unless rain is due.
+
+Mow before you feed — see [mowing heights by grass type](guide:mowing-heights-by-grass-type),
+and run the [pre-start check](guide:before-you-start-the-mower) first.
+
+> Never apply to a drought-stressed lawn. Water it, wait a day, then feed.
+
+## Two passes, not one
+
+${vid("striping-demo.webm")}The second pass runs at right angles to the first. Stripes show because
+the blades end up lying in opposite directions — not because the grass is
+a different height.
+`;
+
+  const mowing = `# Mowing heights by grass type
+
+Cutting too short is the most common cause of a lawn we get called back to.
+
+${img("mowing-heights.png", "Cutting height by grass type")}- **Bermuda** — 1 to 2 inches
+- **Zoysia** — 1 to 2.5 inches
+- **Tall fescue** — 3 to 4 inches
+- **St. Augustine** — 3.5 to 4 inches
+
+Never remove more than **one third** of the blade in a single cut. If the
+lawn got away from you, come down over two visits.
+`;
+
+  const trimmer = `# Trimmer line replacement
+
+Bump-feed head, 0.095" line, about 20 feet.
+
+${img("trimmer-line.png", "Five steps for replacing bump-feed trimmer line")}Wind in the direction of the arrow on the spool. Winding it backwards is
+why line jams on the next bump, and it is the mistake almost everyone
+makes once.
+
+> If the line welds itself together inside the head, it was wound too
+> tight.
+`;
+
+  const safety = `# Before you start the mower
+
+${img("ppe-checklist.png", "Pre-start safety checklist")}Walk the yard first. A stone thrown by a mower deck travels faster than a
+golf ball off a driver, and the things that get thrown are almost always
+the things nobody looked for: a hose fitting, a dog's chew toy, the head
+of a sprinkler.
+
+## If you are not sure
+
+Stop and ask. Nothing on a lawn is worth an eye.
+`;
+
+  const overseeding = `# Winter overseeding
+
+Ryegrass over dormant Bermuda keeps a lawn green through the winter.
+
+Seed at 5 to 10 lbs per 1,000 sq ft once soil temperatures are steadily
+below 65°F.
+
+Mow low and bag the clippings first so the seed reaches soil.
+`;
+
+  const g1 = await prisma.guide.create({
+    data: {
+      slug: "fertilizing-bermuda-grass",
+      title: "Fertilizing Bermuda grass",
+      summary: "When to feed, how much, and the mistakes that burn a lawn.",
+      categoryKey: "lawn-care",
+      tags: ["bermuda", "fertilizer", "warm-season"],
+      createdById: MICHAEL_ID,
+      versions: {
+        create: {
+          versionNumber: 1,
+          contentMarkdown: bermuda,
+          contentDigest: digest(bermuda),
+          changeNote: "Initial guide",
+          status: "PUBLISHED",
+          createdById: MICHAEL_ID,
+          approvedById: MICHAEL_ID,
+          approvedAt: new Date(),
+          publishedById: MICHAEL_ID,
+          publishedAt: new Date(),
+        },
+      },
+    },
+    include: { versions: true },
+  });
+  await prisma.guide.update({
+    where: { id: g1.id },
+    data: { currentVersionId: g1.versions[0].id },
+  });
+
+  // Pending — this is what puts a row in the Super review queue and a
+  // count on the alert badge.
+  await prisma.guide.create({
+    data: {
+      slug: "mowing-heights-by-grass-type",
+      title: "Mowing heights by grass type",
+      summary: "How low to go, per species — and why scalping causes callbacks.",
+      categoryKey: "lawn-care",
+      tags: ["mowing", "heights"],
+      createdById: ADMIN_WORKER_ID,
+      versions: {
+        create: {
+          versionNumber: 1,
+          contentMarkdown: mowing,
+          contentDigest: digest(mowing),
+          changeNote: "First draft for review",
+          status: "PENDING_APPROVAL",
+          createdById: ADMIN_WORKER_ID,
+          submittedById: ADMIN_WORKER_ID,
+          submittedAt: new Date(),
+        },
+      },
+    },
+  });
+
+  // Bare draft — never submitted. Visible to authors, invisible to workers.
+  await prisma.guide.create({
+    data: {
+      slug: "trimmer-line-replacement",
+      title: "Trimmer line replacement",
+      summary: null,
+      categoryKey: "equipment",
+      tags: ["trimmer"],
+      createdById: ADMIN_WORKER_ID,
+      versions: {
+        create: {
+          versionNumber: 1,
+          contentMarkdown: trimmer,
+          contentDigest: digest(trimmer),
+          changeNote: "Initial draft",
+          status: "DRAFT",
+          createdById: ADMIN_WORKER_ID,
+        },
+      },
+    },
+  });
+
+  // Published safety guide — a second published page, so the worker
+  // catalog has more than one row and the category grouping is visible.
+  const g2 = await prisma.guide.create({
+    data: {
+      slug: "before-you-start-the-mower",
+      title: "Before you start the mower",
+      summary: "The pre-start check, every job, every time.",
+      categoryKey: "safety",
+      tags: ["safety", "ppe", "mower"],
+      createdById: MICHAEL_ID,
+      versions: {
+        create: {
+          versionNumber: 1,
+          contentMarkdown: safety,
+          contentDigest: digest(safety),
+          changeNote: "Initial guide",
+          status: "PUBLISHED",
+          createdById: MICHAEL_ID,
+          approvedById: MICHAEL_ID,
+          approvedAt: new Date(),
+          publishedById: MICHAEL_ID,
+          publishedAt: new Date(),
+        },
+      },
+    },
+    include: { versions: true },
+  });
+  await prisma.guide.update({
+    where: { id: g2.id },
+    data: { currentVersionId: g2.versions[0].id },
+  });
+
+  // Sent back by a Super — the REJECTED state, which is ours and not
+  // policies'. Without a fixture the author-facing rejection note and its
+  // "edit to return to draft" path never get exercised.
+  await prisma.guide.create({
+    data: {
+      slug: "winter-overseeding",
+      title: "Winter overseeding",
+      summary: "Ryegrass over dormant Bermuda.",
+      categoryKey: "lawn-care",
+      tags: ["overseeding", "ryegrass"],
+      createdById: ADMIN_WORKER_ID,
+      versions: {
+        create: {
+          versionNumber: 1,
+          contentMarkdown: overseeding,
+          contentDigest: digest(overseeding),
+          changeNote: "First pass",
+          status: "REJECTED",
+          createdById: ADMIN_WORKER_ID,
+          submittedById: ADMIN_WORKER_ID,
+          submittedAt: new Date(),
+          rejectedById: MICHAEL_ID,
+          rejectedAt: new Date(),
+          rejectionNote:
+            "Seeding rate is for the transition zone — use the NC number, and say what happens to the Bermuda underneath.",
+        },
+      },
+    },
+  });
+
+  // Archived — the only state from which a permanent delete is allowed,
+  // so without one the purge path can't be reached in the UI at all.
+  await prisma.guide.create({
+    data: {
+      slug: "old-billing-walkthrough",
+      title: "Old billing walkthrough",
+      summary: "Superseded by the current invoicing flow.",
+      categoryKey: "admin",
+      tags: ["billing"],
+      createdById: MICHAEL_ID,
+      archivedById: MICHAEL_ID,
+      archivedAt: new Date(),
+      versions: {
+        create: {
+          versionNumber: 1,
+          contentMarkdown: "# Old billing walkthrough\n\nSuperseded. Kept only so the archive has something in it.\n",
+          contentDigest: digest("# Old billing walkthrough\n\nSuperseded. Kept only so the archive has something in it.\n"),
+          changeNote: "Archived",
+          status: "ROLLED_BACK",
+          createdById: MICHAEL_ID,
+        },
+      },
+    },
+  });
+}

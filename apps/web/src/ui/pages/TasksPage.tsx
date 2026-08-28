@@ -56,6 +56,7 @@ import UnapprovedHoursSection from "@/src/ui/components/tasks/UnapprovedHoursSec
 // endpoint. Matching a name from here is the identical action, so it
 // deliberately is not a reimplementation.
 import PayrollIdentityReview from "@/src/ui/components/PayrollIdentityReview";
+import GuideApprovalsSection from "@/src/ui/components/GuideApprovalsSection";
 import { fetchUnmatchedPayrollNames, notifyPayrollChanged } from "@/src/lib/payroll";
 import RepeatingPausesDueSection from "@/src/ui/components/tasks/RepeatingPausesDueSection";
 import { Dashboard } from "@/src/ui/components/Dashboard";
@@ -84,6 +85,8 @@ type ShortcutCounts = {
   policyWorkerPendingCount: number;
   /** Super-only: Gusto names with no confirmed User yet. */
   payrollUnmatchedCount: number;
+  /** Super-only: education guides awaiting approval. */
+  guideApprovalCount: number;
 };
 
 type ShortcutHandlers = {
@@ -94,6 +97,7 @@ type ShortcutHandlers = {
   goToCompliance: () => void;
   goToWorkerCompliance: () => void;
   goToPayrollIdentities: () => void;
+  goToGuideApprovals: () => void;
   /** Optional occurrenceId — when the operator clicks Review on a
    *  specific row (not the section arrow), we jump to and highlight
    *  just that occurrence rather than expanding every reminder-due
@@ -221,6 +225,7 @@ export default function TasksPage({
       n += counts.policyPendingUploadsCount;
       n += counts.policyPendingApprovalsCount;
       n += counts.payrollUnmatchedCount;
+      n += counts.guideApprovalCount;
     }
     if (isAdmin) {
       n += counts.estimateFollowupCount;
@@ -459,6 +464,20 @@ export default function TasksPage({
               onGoto={wrap(handlers.goToPayrollIdentities)}
             >
               <PayrollIdentityReview onChanged={notifyPayrollChanged} />
+            </CollapsibleSectionCard>
+          )}
+          {/* Education guides pending approval — Super only. Sits with the
+              other review queues; approving is the only way material
+              becomes readable by a worker. */}
+          {isSuper && (
+            <CollapsibleSectionCard
+              label="Guides awaiting approval"
+              dotColor="#3B82F6"
+              loadCount={countGuideApprovals}
+              refreshEvents={["seedlings:guides-changed"]}
+              onGoto={wrap(handlers.goToGuideApprovals)}
+            >
+              <GuideApprovalsSection />
             </CollapsibleSectionCard>
           )}
           {isAdmin && (
@@ -716,6 +735,11 @@ async function countTimelineUrgent(isSuper: boolean): Promise<number> {
   const r = await apiGet<{ urgent: number; soon: number }>(endpoint);
   return r?.urgent ?? 0;
 }
+async function countGuideApprovals(): Promise<number> {
+  const r = await apiGet<{ count: number }>("/api/guides/pending-approvals/count");
+  return r?.count ?? 0;
+}
+
 async function countPayrollUnmatched(): Promise<number> {
   const rows = await fetchUnmatchedPayrollNames();
   return Array.isArray(rows) ? rows.length : 0;

@@ -51,6 +51,22 @@ export function bumpWorkday() {
   window.dispatchEvent(new CustomEvent("seedlings:workday-changed"));
 }
 
+/**
+ * Refresh the MY ACTIVITIES section and nothing else.
+ *
+ * Its children fetch independently, so "refresh this section" has to
+ * reach them somehow — but it must not claim the workday CHANGED.
+ * `bumpWorkday()` means real state moved, and other sections
+ * legitimately react to it (WorkerHourlyPayCard recomputes pay-per-hour
+ * off it). Firing that from a section's refresh button made every one of
+ * those sections refresh too, which is exactly what a section-scoped
+ * refresh is not supposed to do.
+ */
+export function bumpMyActivities() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent("seedlings:my-activities-refresh"));
+}
+
 export function onEventSearchRun(
   eventName: EventTypes,
   setQ: (q: string) => void,

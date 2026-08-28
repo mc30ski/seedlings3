@@ -93,9 +93,14 @@ function useWorkdayToday(viewAsUserId?: string | null) {
   useEffect(() => {
     const onChange = () => load();
     window.addEventListener("seedlings:workday-changed", onChange);
+    // Also refresh when MY ACTIVITIES is refreshed — this banner lives
+    // inside it. Scoped separately from workday-changed so a section
+    // refresh does not masquerade as a real state change.
+    window.addEventListener("seedlings:my-activities-refresh", onChange);
     window.addEventListener("focus", onChange);
     return () => {
       window.removeEventListener("seedlings:workday-changed", onChange);
+      window.removeEventListener("seedlings:my-activities-refresh", onChange);
       window.removeEventListener("focus", onChange);
     };
   }, [load]);
@@ -815,9 +820,12 @@ export function MileageBanner() {
   useEffect(() => {
     const onChange = () => loadVehicles();
     window.addEventListener("seedlings:workday-changed", onChange);
+    // See WorkdayBanner — this strip is also inside MY ACTIVITIES.
+    window.addEventListener("seedlings:my-activities-refresh", onChange);
     window.addEventListener("focus", onChange);
     return () => {
       window.removeEventListener("seedlings:workday-changed", onChange);
+      window.removeEventListener("seedlings:my-activities-refresh", onChange);
       window.removeEventListener("focus", onChange);
     };
   }, [loadVehicles]);

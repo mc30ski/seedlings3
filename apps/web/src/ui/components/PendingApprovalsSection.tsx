@@ -303,7 +303,21 @@ export default function PendingApprovalsSection({ onReady }: {
                 <VStack align="stretch" gap={1.5}>
                   <VStack align="start" gap={0.5}>
                     <HStack gap={1.5} wrap="wrap" align="center">
-                      <Badge size="sm" colorPalette="orange" variant="subtle" px="1.5">{r.method}</Badge>
+                      {/* Solid, not subtle. The subtle variant renders
+                          orange.100 on a card that is already orange —
+                          the method was legible only if you went looking
+                          for it, and it is the first thing you check when
+                          reconciling a payment. */}
+                      <Badge
+                        size="sm"
+                        colorPalette="orange"
+                        variant="solid"
+                        bg="orange.500"
+                        color="white"
+                        px="1.5"
+                      >
+                        {r.method}
+                      </Badge>
                       <Text fontSize="sm" fontWeight="semibold">{dollar(r.amountPaid)}</Text>
                       {amountDiffers && (
                         <Badge size="xs" colorPalette="yellow" variant="subtle" px="1.5">
@@ -348,16 +362,41 @@ export default function PendingApprovalsSection({ onReady }: {
                     <Button size="xs" colorPalette="red" onClick={() => setRejectingRow(r)} title="Reject (the worker will need to re-record)">
                       <Slash size={12} /> Reject
                     </Button>
+                    {/* Dark grey, matching the Write off in AWAITING
+                        PAYMENT — one action, one colour, wherever it
+                        appears. It is neither Approve (green: we got
+                        paid) nor Reject (red: undo it); a write-off
+                        acknowledges the loss and keeps it on the books.
+
+                        Not orange: that is Edit, sitting two buttons
+                        away. */}
                     <Button
                       size="xs"
-                      colorPalette="purple"
+                      colorPalette="gray"
+                      bg="gray.600"
+                      _hover={{ bg: "gray.700" }}
+                      _active={{ bg: "gray.800" }}
                       onClick={() => setWritingOffRow(r)}
                       title="Write off (client never paid — employees are still paid their promised amount from business funds)"
                     >
                       <XCircle size={12} /> Write off
                     </Button>
-                    <Button size="xs" variant="ghost" onClick={() => openJob(r)} title="Open the job">
-                      <ExternalLink size={12} />
+                    {/* Labelled, not icon-only. Every other button in this
+                        row says what it does; a bare arrow-out glyph made
+                        the one navigational action the hardest to
+                        identify. Hover is a darker shade of the card
+                        rather than the default grey, which read as a
+                        different component sitting on top of the row. */}
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      colorPalette="orange"
+                      color="orange.800"
+                      _hover={{ bg: "orange.200" }}
+                      onClick={() => openJob(r)}
+                      title="Open the job"
+                    >
+                      <ExternalLink size={12} /> Open job
                     </Button>
                   </HStack>
                 </VStack>
