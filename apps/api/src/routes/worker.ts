@@ -4279,9 +4279,33 @@ export default async function workerRoutes(app: FastifyInstance) {
     } else {
       const daysParam = req.query?.days ? Number(req.query.days) : 30;
       const days = daysParam > 0 ? Math.min(3650, Math.max(1, Math.floor(daysParam))) : 0;
-      start = days > 0
-        ? new Date(now.getTime() - days * 24 * 60 * 60 * 1000) // date-handling-allow: rolling window
-        : new Date(0);
+      // ANCHORED ON ET MIDNIGHT, not `now - N×24h`.
+      //
+      // The numerator and denominator are filtered on different columns —
+      // jobs on `completedAt`, workdays on `startedAt` — and for the same
+      // day's work the clock-in is hours EARLIER than the completion. An
+      // hour-rolling boundary sweeps mid-afternoon, so it passes the
+      // workday first and the job second. In the gap between the two the
+      // window holds a day's earnings WITHOUT the hours that earned
+      // them, and the rate spikes before crashing back:
+      //
+      //   12:10  3 jobs $155.75 17.00h  $9.16/hr   ← hours aged out
+      //   14:10  2 jobs  $96.25 17.00h  $5.66/hr   ← job aged out
+      //
+      // A midnight boundary lands where neither a clock-in nor a
+      // completion sits, so the pair ages out together and the figure
+      // steps once, cleanly, at the start of the day:
+      //
+      //   00:00  2 jobs  $96.25 17.00h  $5.66/hr   ← both aged out
+      //
+      // This also makes `days=N` consistent with the `today` /
+      // `yesterday` presets above, which were already ET-midnight
+      // anchored for the same reason: a window that disagrees with the
+      // operator's calendar reads as a bug.
+      //
+      // The window is [midnight N days back, now] — N whole calendar
+      // days plus today so far, rather than N×24h ending mid-afternoon.
+      start = days > 0 ? etMidnight(etAddDays(etToday(), -(days - 1))) : new Date(0);
     }
 
     const cutoff = await resolveCutoff(req);
@@ -4545,6 +4569,15 @@ export default async function workerRoutes(app: FastifyInstance) {
                 : "Employee business margin",
               jobs: breakdownJobs,
               workdays: breakdownWorkdays,
+              // The window this figure covers, as ET date keys. Surfaced
+              // because "last month" is ambiguous until you can see the
+              // boundary — and the boundary is what makes the number
+              // move on a day with no work at all, as things age out of
+              // it. Both the jobs and the hours above use exactly this
+              // range; that they share one boundary is the whole reason
+              // the rate no longer spikes mid-afternoon.
+              windowStart: etFormatDate(effectiveStart),
+              windowEnd: etFormatDate(effectiveEnd),
             },
           }
         : {}),

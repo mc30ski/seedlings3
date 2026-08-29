@@ -20,7 +20,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Badge, Box, Button, Card, HStack, SimpleGrid, Spinner, Text, VStack } from "@chakra-ui/react";
 import { BarChart3, Users } from "lucide-react";
 import { Dashboard } from "@/src/ui/components/Dashboard";
-import { FiArrowRight, FiMoon, FiPlay, FiRefreshCw, FiSun } from "react-icons/fi";
+import { FiArrowRight, FiCalendar, FiCheckCircle, FiMoon, FiPlay, FiRefreshCw, FiSun } from "react-icons/fi";
 import { computeDatesFromPreset, type DatePreset } from "@/src/lib/datePresets";
 import { apiGet } from "@/src/lib/api";
 import { bizToday, bizTomorrow, bizAddDays, bizHour, fmtDateOpts, fmtTimeOpts } from "@/src/lib/dates";
@@ -472,6 +472,16 @@ export default function HomeTab({
   const greeting = etHour < 12 ? "Good morning"
     : etHour < 17 ? "Good afternoon"
     : "Good evening";
+  /**
+   * Is the greeting saying "Good evening"?
+   *
+   * Deliberately the GREETING's 5pm boundary, not `isEvening`'s 3pm one.
+   * `isEvening` decides which hero MODE you get; this decides whether the
+   * icon may show a moon. Tying the moon to the mode pivot is what put a
+   * moon next to "Good afternoon" at 3pm — the icon and the words beside
+   * it have to flip on the same hour or they contradict each other.
+   */
+  const isEveningGreeting = etHour >= 17;
   // When impersonating, the greeting names the viewed worker, not the admin.
   const firstName = isViewingOther
     ? (viewAsDisplayName?.split(" ")[0] || "")
@@ -496,6 +506,22 @@ export default function HomeTab({
   // - Late evening (9pm+) and nothing left → calm "Wrap up", no aggressive CTA
   // - Evening (3pm+) → prioritize "Plan tomorrow" when tomorrow has jobs
   // - Otherwise → "Prepare for work day" / "Finish remaining" / "Plan tomorrow" / "Wrap"
+  // ICON RULES
+  //
+  //   resume       ▶  play      — there is work in progress, any hour
+  //   begin/finish ☀  sun       — the working day itself
+  //   planTomorrow 🗓  calendar  → 🌙 moon after 5pm
+  //   wrap         ✓  check     → 🌙 moon after 5pm
+  //
+  // The moon is genuinely right in the evening — it just has to be driven
+  // by the CLOCK, not by the mode. It was keyed to planTomorrow/wrap,
+  // both of which are reachable before 3pm (nothing left today, or
+  // nothing either day), so it turned up beside "Good morning".
+  //
+  // So: the two day-is-winding-down cards show a moon once the greeting
+  // says "Good evening", and their semantic icon before that. `resume`
+  // and `begin`/`finish` never take the moon — there is still work to do
+  // on those, which is a statement about the work, not the hour.
   type HeroMode = "resume" | "begin" | "finish" | "planTomorrow" | "wrap";
   const heroMode: HeroMode = (() => {
     if (hasActive) return "resume";
@@ -816,8 +842,10 @@ export default function HomeTab({
           <Card.Body px={3} py={2}>
             <VStack align="stretch" gap={2}>
               <HStack gap={3} align="center">
+                {/* Moon once the greeting says evening, calendar before
+                    that. See the icon rules above the hero cards. */}
                 <Box bg="blue.500" color="white" p={2} borderRadius="full" flexShrink={0}>
-                  <FiMoon size={22} />
+                  {isEveningGreeting ? <FiMoon size={22} /> : <FiCalendar size={22} />}
                 </Box>
                 <Box flex={1} minW={0}>
                   <Text fontSize="md" fontWeight="bold" color="blue.800">{greeting}{firstName ? `, ${firstName}` : ""}</Text>
@@ -894,8 +922,10 @@ export default function HomeTab({
         <Card.Root variant="outline" bg="gray.50" borderColor="gray.200" position="relative">
           <Card.Body px={3} py={2}>
             <HStack gap={3}>
+              {/* Moon in the evening; a tick before that — "you are caught
+                  up" is just as true at 10am, it just isn't night yet. */}
               <Box bg="gray.200" color="gray.700" p={2} borderRadius="full">
-                <FiMoon size={22} />
+                {isEveningGreeting ? <FiMoon size={22} /> : <FiCheckCircle size={22} />}
               </Box>
               <VStack align="start" gap={0} flex={1}>
                 <Text fontSize="md" fontWeight="bold" color="gray.800">
