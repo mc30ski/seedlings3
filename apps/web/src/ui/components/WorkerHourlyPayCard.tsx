@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Box, Button, Card, HStack, IconButton, Select, Spinner, Text, VStack, createListCollection } from "@chakra-ui/react";
 import { ComposedChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, LabelList } from "recharts";
-import { bizToday, bizAddDays, type EtDateKey } from "@/src/lib/dates";
+import { bizToday, bizAddDays, fmtDateKey, type EtDateKey } from "@/src/lib/dates";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
   Award,
@@ -58,6 +58,9 @@ export type HourlyPayDetails = {
   rateLabel: string;
   jobs: BreakdownJob[];
   workdays: BreakdownWorkday[];
+  /** ET date keys bounding the window this figure covers. */
+  windowStart?: string;
+  windowEnd?: string;
 };
 export type HourlyPay = {
   dollars: number;
@@ -678,6 +681,20 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName, w
             justifyContent="space-between"
             onClick={toggleExpanded}
             aria-expanded={expanded}
+            /* Hover in the SECTION's colour, a shade darker than the
+               frame it sits on. This card is wrapped in Dashboard's
+               `estimate` palette (yellow.50 frame, yellow.100 header), so
+               a ghost button's default grey hover read as a foreign
+               control dropped onto the card. yellow.200 is the same shade
+               the section uses for its own header hover. */
+            _hover={{ bg: "yellow.200" }}
+            _active={{ bg: "yellow.300" }}
+            /* Chakra's Button recipe gives the OPEN state its own resting
+               background — zinc grey — which sat there the whole time the
+               panel was expanded, not just on hover. yellow.100 is the
+               section's header band, so an open expander reads as part of
+               the card instead of a grey bar across it. */
+            _expanded={{ bg: "yellow.100" }}
             css={{ color: `var(--chakra-colors-${tier.fg.replace(".", "-")})` }}
           >
             <Text fontSize="xs" fontWeight="medium">
@@ -857,6 +874,23 @@ function BreakdownPanel({
           <Text mt={2}>
             rate% = <b>{details.ratePct}%</b> ({details.rateLabel})
           </Text>
+          {/* The window, spelled out. "Last month" is ambiguous until you
+              can see the boundary — and the boundary is what moves this
+              number on a day you did no work, as older jobs and hours
+              drop out of it. */}
+          {details.windowStart && details.windowEnd && (
+            <>
+              <Text mt={2}>
+                window = <b>{fmtDateKey(details.windowStart)}</b> →{" "}
+                <b>{fmtDateKey(details.windowEnd)}</b>
+              </Text>
+              <Text mt={1} opacity={0.8}>
+                Whole calendar days (ET). Jobs and hours use the same
+                boundary, so both leave the window together — the figure
+                changes once a day, not through it.
+              </Text>
+            </>
+          )}
         </Box>
       </Box>
 
