@@ -18,9 +18,16 @@ import {
   OccurrenceWorkflow,
 } from "@prisma/client";
 import type { ServicesJobs } from "../types/services";
+/**
+ * How long an EXPIRED next-visit ghost stays listed before dropping out
+ * silently. A week is long enough to notice and chase; beyond that the
+ * visit is water under the bridge and the card is just clutter.
+ */
+export const GHOST_EXPIRED_GRACE_DAYS = 7;
+
 import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
-import { etMidnight, etEndOfDay, etToday, etFormatDate, etDaysBetween , type EtDateKey } from "../lib/dates";
+import { etMidnight, etEndOfDay, etToday, etFormatDate, etDaysBetween, etAddDays, type EtDateKey } from "../lib/dates";
 import { ServiceError } from "../lib/errors";
 import {
   occurrenceWorkDateCutoff,
@@ -2178,6 +2185,9 @@ export const jobs: ServicesJobs = {
    * hasn't reached CLOSED (payment landed) and therefore the auto-
    * generation of the next one hasn't fired.
    *
+   * Expired ghosts stay listed for GHOST_EXPIRED_GRACE_DAYS and then
+   * disappear on their own.
+   *
    * Purpose: gives the operator/worker a visible reminder to chase
    * the blocking occurrence (usually a payment) instead of just
    * silently having gaps in their timeline where the next visit
@@ -2211,9 +2221,19 @@ export const jobs: ServicesJobs = {
     to?: string;
     assigneeUserId?: string | null;
     cutoff?: Date | null;
+    /**
+     * "Ghost expiry search" mode, set when the caller is explicitly
+     * filtering the Jobs tab to expiring/expired next-visit ghosts.
+     *
+     * Lifts the GHOST_EXPIRED_GRACE_DAYS drop, so a range reaching back
+     * further than a week actually finds the older ones. Without it they
+     * fade out of the normal feed on their own after a week.
+     */
+    matchRangeOnExpiry?: boolean;
   }) {
     const fromDate = params?.from ? etMidnight(params.from as EtDateKey) : null;
     const toDate = params?.to ? etEndOfDay(params.to as EtDateKey) : null;
+    const byExpiry = !!params?.matchRangeOnExpiry;
 
     // Load all candidate jobs. Small scale (<a few hundred per business);
     // Prisma handles the include tree without a materially large query.
@@ -2290,17 +2310,48 @@ export const jobs: ServicesJobs = {
       // Compute what the next occurrence's startAt would be. Snaps
       // forward to today when the raw value is past — so overdue ghosts
       // land in the operator's "today" view.
-      const { startAt: wouldBeStart, endAt: wouldBeEnd } = computeNextOccurrenceStart(
-        latest.startAt,
-        latest.endAt,
-        effectiveFreq,
-        (latest as any).nextStartOverride ?? null,
-      );
+      const { startAt: wouldBeStart, endAt: wouldBeEnd, rawStartAt } =
+        computeNextOccurrenceStart(
+          latest.startAt,
+          latest.endAt,
+          effectiveFreq,
+          (latest as any).nextStartOverride ?? null,
+        );
+
+      // EXPIRY. The ghost exists for the window in which the next visit is
+      // still viable; `rawStartAt` is the day it was due. `wouldBeStart` is
+      // a DISPLAY date — an overdue ghost is snapped to today so it isn't
+      // invisible in a forward-looking view — so expiry must read the raw
+      // date or nothing would ever expire.
+      //
+      //   daysUntilExpiry > 0   still upcoming
+      //   0                     due today
+      //   < 0                   expired that many days ago
+      const expiresOn = etFormatDate(rawStartAt);
+      // The ghost is DATED on the day the visit was actually due, not on
+      // the snapped-to-today display date the renewer uses. An overdue
+      // ghost therefore sits in a past day-group where it belongs; the
+      // "Expired N" chip on the Today header is what tells the operator
+      // some have slipped into the past (see countExpiredGhosts).
+      const rawEndAt = wouldBeEnd
+        ? new Date(rawStartAt.getTime() + (wouldBeEnd.getTime() - wouldBeStart.getTime()))
+        : null;
+      const daysUntilExpiry = etDaysBetween(etToday(), expiresOn);
+      const isExpired = daysUntilExpiry < 0;
+
+      // An expired ghost is worth chasing for a week; after that the visit
+      // is water under the bridge and the card would just be permanent
+      // clutter. It drops out silently — no notification, no count.
+      if (!byExpiry && isExpired && daysUntilExpiry < -GHOST_EXPIRED_GRACE_DAYS) continue;
 
       // Date-range filter (matches the caller's from/to on the real
-      // occurrences query).
-      if (fromDate && wouldBeStart.getTime() < fromDate.getTime()) continue;
-      if (toDate && wouldBeStart.getTime() > toDate.getTime()) continue;
+      // occurrences query). Always anchored on the ghost's own date,
+      // which is its expiry date — so a forward-looking range simply
+      // won't contain the expired ones. That's intentional: the Today
+      // header's "Expired N" chip is the affordance that says some have
+      // slipped into the past, and clicking it widens the range.
+      if (fromDate && rawStartAt.getTime() < fromDate.getTime()) continue;
+      if (toDate && rawStartAt.getTime() > toDate.getTime()) continue;
 
       // Assignee filter for worker view — only ghost cards for jobs the
       // caller was on. Admin caller omits `assigneeUserId` and gets all.
@@ -2321,8 +2372,8 @@ export const jobs: ServicesJobs = {
         kind: latest.kind,
         title: null,
         status: JobOccurrenceStatus.SCHEDULED,
-        startAt: wouldBeStart.toISOString(),
-        endAt: wouldBeEnd ? wouldBeEnd.toISOString() : null,
+        startAt: rawStartAt.toISOString(),
+        endAt: rawEndAt ? rawEndAt.toISOString() : null,
         notes: null,
         price: latest.price ?? job.defaultPrice ?? null,
         estimatedMinutes: latest.estimatedMinutes ?? job.estimatedMinutes ?? null,
@@ -2340,7 +2391,12 @@ export const jobs: ServicesJobs = {
         // occurrence link lets the ghost card open the actual occurrence
         // that needs chasing (usually to accept payment).
         _isNextOccurrenceGhost: true,
-        _ghostDate: wouldBeStart.toISOString(),
+        /** ET date key the visit was due — the ghost's expiry. */
+        _expiresOn: expiresOn,
+        /** Positive = days remaining; 0 = today; negative = days overdue. */
+        _daysUntilExpiry: daysUntilExpiry,
+        _isExpired: isExpired,
+        _ghostDate: rawStartAt.toISOString(),
         _blockingOccurrenceId: latest.id,
         _blockingOccurrenceStatus: latest.status,
       });
@@ -2349,6 +2405,29 @@ export const jobs: ServicesJobs = {
     return ghosts;
   },
 
+
+  /**
+   * How many next-visit ghosts expired inside the grace window.
+   *
+   * Deliberately independent of the caller's date range. Ghosts are dated
+   * on the day the visit was due, so a forward-looking Jobs range contains
+   * none of the expired ones — this count is what the "Expired N" chip on
+   * the Today group header reports, telling the operator some have slipped
+   * into the past. Clicking that chip widens the range to reveal them.
+   */
+  async countExpiredGhosts(params: {
+    assigneeUserId?: string | null;
+    cutoff?: Date | null;
+  }) {
+    const today = etToday();
+    const ghosts = await this.listNextOccurrenceGhosts({
+      from: etAddDays(today, -GHOST_EXPIRED_GRACE_DAYS),
+      to: etAddDays(today, -1),
+      assigneeUserId: params.assigneeUserId ?? null,
+      cutoff: params.cutoff ?? null,
+    });
+    return ghosts.length;
+  },
   async getOccurrencesByIds(ids: string[], cutoff?: Date | null) {
     if (ids.length === 0) return [];
     return prisma.jobOccurrence.findMany({

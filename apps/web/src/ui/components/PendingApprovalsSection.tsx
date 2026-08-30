@@ -275,14 +275,19 @@ export default function PendingApprovalsSection({ onReady }: {
     );
   }
 
-  if (rows.length === 0 && !loading) return null;
-
   return (
     <Box>
       {/* Content only — Dashboard at the host supplies the frame,
-          title bar, stripe, count badge, refresh and dim. */}
-        {rows.length === 0 && (
-          <Text fontSize="sm" color="fg.muted">No pending payments to approve.</Text>
+          title bar, stripe, count badge, refresh and dim.
+          
+          Empty renders a MESSAGE, not nothing. Both hosts draw the frame
+          unconditionally, so returning null here left an expanded section
+          with a blank body — indistinguishable from a section that failed
+          to load. */}
+        {rows.length === 0 && !loading && (
+          <Text fontSize="sm" color="fg.muted" py={1}>
+            Nothing to approve — every reported payment has been reviewed.
+          </Text>
         )}
         <VStack align="stretch" gap={2}>
           {rows.map((r) => {

@@ -69,6 +69,7 @@ import {
 import PayrollUploadDialog from "@/src/ui/dialogs/PayrollUploadDialog";
 import PayrollIdentityReview from "@/src/ui/components/PayrollIdentityReview";
 import { Dashboard } from "@/src/ui/components/Dashboard";
+import OwnerEquityPanel, { useOwnerEquity } from "@/src/ui/components/OwnerEquityPanel";
 
 type Props = {
   me: Me | null;
@@ -126,10 +127,19 @@ export default function PayrollTab({
   // change, so this filters BY PAY DAY rather than assuming a week length.
   // Defaults to "all" here (unlike Home, which defaults to the latest) —
   // this is the tab you open to go back through history.
+  // The LLC owner is never on payroll — they take draws and capital
+  // contributions. Rather than leave them staring at an empty tab, show
+  // their equity movement above it, on the tab's own timeframe. The rest
+  // of the tab (the TEAM's payroll, upload, matching) is untouched: a
+  // Super still needs all of it.
+  const isOwner = !!me?.isOwner;
   const [range, setRange] = usePersistedState<PayrollRangeKey>(
     showAdminExtras ? "payrollTab_rangeAdmin" : "payrollTab_range",
     "all",
   );
+
+  const ownerRange: PayrollRangeKey = range === "latest" ? "ytd" : range;
+  const ownerEquity = useOwnerEquity(ownerRange, isOwner);
 
   const load = useCallback(async () => {
     try {
@@ -248,9 +258,13 @@ export default function PayrollTab({
           <Text fontSize="xs" color="fg.muted">
             {showAdminExtras
               ? "What Gusto paid, per pay period."
-              // The Gusto attribution below carries the provenance now, so
-              // repeating it here was redundant.
-              : "What you were actually paid."}
+              : isOwner
+                // The owner is never in a payroll run, so "what you were
+                // actually paid" is not just unhelpful, it's untrue.
+                ? "You're the LLC Owner — your equity is above; payroll below is the team's."
+                // The Gusto attribution below carries the provenance now, so
+                // repeating it here was redundant.
+                : "What you were actually paid."}
           </Text>
           {/* Attribution for the system of record. Every figure on this tab
               came out of a Gusto export — this app never computes pay — so
@@ -262,6 +276,12 @@ export default function PayrollTab({
               aggregator, whose copies go stale and aren't licensed to
               redistribute. Drop the real asset in and swap the Box below
               for an <img>. */}
+          {/* Provenance for the payroll figures. Hidden when the owner is
+              looking at a tab that holds no payroll of theirs — Gusto is
+              not the source of record for owner draws, and claiming it is
+              would be wrong. Admins still see it: they ARE looking at
+              Gusto data. */}
+          {(showAdminExtras || !isOwner) && (
           <HStack gap={1.5} mt={1} align="center">
             <Box
               px={1.5}
@@ -280,6 +300,7 @@ export default function PayrollTab({
               Powered by Gusto · source of record for pay
             </Text>
           </HStack>
+          )}
         </VStack>
         {showSuperExtras && (
           <Button size="sm" colorPalette="green" onClick={() => setUploadOpen(true)}>
@@ -295,7 +316,11 @@ export default function PayrollTab({
           that stops a worker reading two different numbers for their own
           pay as a bug. An icon, a bold lead, sm text and a left accent —
           still informational blue, not a warning. */}
-      {!showAdminExtras && (
+      {/* Reconciles the Home estimate against real payroll. The owner has
+          neither side of that comparison — no payroll, and their Home card
+          shows equity — so the note would be explaining a mismatch that
+          cannot occur. */}
+      {!showAdminExtras && !isOwner && (
         <Box
           p={3}
           bg="blue.50"
@@ -329,6 +354,22 @@ export default function PayrollTab({
             been matched to an account yet. If it&apos;s yours, ask your admin to match it —
             payroll is matched by name, so a name change can leave it unlinked.
           </Text>
+        </Box>
+      )}
+
+      {/* ── Owner equity (LLC owner only) ──────────────────────────────── */}
+      {isOwner && (
+        <Box mb={3}>
+          <Dashboard
+            storageKey="seedlings:payrollTab:ownerEquityOpen"
+            title="My owner equity"
+            icon={Banknote}
+            variant="info"
+            onRefresh={ownerEquity.load}
+            refreshing={ownerEquity.loading}
+          >
+            <OwnerEquityPanel range={ownerRange} equity={ownerEquity} full />
+          </Dashboard>
         </Box>
       )}
 
@@ -450,16 +491,22 @@ export default function PayrollTab({
         <Card.Root variant="outline">
           <Card.Body p={6} textAlign="center">
             <Text fontSize="sm" fontWeight="medium">
-              {showAdminExtras ? "No payroll imported yet" : "No payroll records for you yet"}
+              {showAdminExtras
+                ? "No payroll imported yet"
+                : isOwner
+                  ? "You're not on payroll — you're the LLC Owner"
+                  : "No payroll records for you yet"}
             </Text>
             <Text fontSize="xs" color="fg.muted" mt={1}>
               {showAdminExtras
                 ? "Upload a Gusto Payroll Journal export to get started."
-                : // Same reasoning as PayrollHomeSection: an unmatched row
-                  // is indistinguishable from "nothing imported" at this
-                  // end, so don't claim a cause. Naming how matching works
-                  // is what actually helps them get it resolved.
-                  "If you're expecting pay here, check with your admin — payroll is matched to your account by name."}
+                : isOwner
+                  ? "Owner draws and capital contributions are recorded on the Ledger, and summarised above. They are equity, not wages, so they never appear in a payroll run."
+                  : // Same reasoning as PayrollHomeSection: an unmatched row
+                    // is indistinguishable from "nothing imported" at this
+                    // end, so don't claim a cause. Naming how matching works
+                    // is what actually helps them get it resolved.
+                    "If you're expecting pay here, check with your admin — payroll is matched to your account by name."}
             </Text>
           </Card.Body>
         </Card.Root>

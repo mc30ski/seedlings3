@@ -222,7 +222,19 @@ export function computeNextOccurrenceStart(
   baseEndAt: Date | null | undefined,
   freq: number,
   overrideDate?: string | null,
-): { startAt: Date; endAt: Date | null; snappedForward: boolean; overrideUsed: boolean } {
+): {
+  startAt: Date;
+  endAt: Date | null;
+  snappedForward: boolean;
+  overrideUsed: boolean;
+  /**
+   * The next start BEFORE the snap-forward — i.e. the date the visit was
+   * actually due. `startAt` is a DISPLAY date (an overdue visit is pulled
+   * to today so it isn't invisible in a forward-looking view), so anything
+   * asking "is this late, and by how much?" has to read this instead.
+   */
+  rawStartAt: Date;
+} {
   const base = baseStartAt ? new Date(baseStartAt) : new Date();
 
   // Naive cycle math — computed even when an override is in play, so
@@ -263,7 +275,7 @@ export function computeNextOccurrenceStart(
   const todayKey = etToday();
   const nextStartKey = etFormatDate(nextStart);
   if (nextStartKey >= todayKey) {
-    return { startAt: nextStart, endAt: nextEnd, snappedForward: false, overrideUsed };
+    return { startAt: nextStart, endAt: nextEnd, snappedForward: false, overrideUsed, rawStartAt: nextStart };
   }
 
   // Reconstruct today's version of the same time-of-day, then shift
@@ -279,7 +291,7 @@ export function computeNextOccurrenceStart(
     const durationMs = nextEnd.getTime() - nextStart.getTime();
     snappedEnd = new Date(snappedStart.getTime() + durationMs);
   }
-  return { startAt: snappedStart, endAt: snappedEnd, snappedForward: true, overrideUsed };
+  return { startAt: snappedStart, endAt: snappedEnd, snappedForward: true, overrideUsed, rawStartAt: nextStart };
 }
 
 // Canonical per-worker breakdown for a given collected amount + expenses.

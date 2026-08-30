@@ -399,6 +399,17 @@ export default function JobsTab({
   );
 
   const [statusFilter, setStatusFilter] = usePersistedState<string[]>(`${pfx}_status`, ["ALL"]);
+  // True while the status filter is one of the synthetic ghost-card
+  // options. Changes the API query, not just the client-side filter,
+  // so it's a `load()` dependency.
+  const ghostExpiryMode =
+    statusFilter[0] === "GHOST_EXPIRING" || statusFilter[0] === "GHOST_EXPIRED";
+  // Count of next-visit ghosts that expired in the last week. Fetched
+  // separately from the feed on purpose: ghosts are dated on the day the
+  // visit was due, so a forward-looking date range contains none of the
+  // expired ones. This number is the heads-up that some slipped into the
+  // past — the feed can't supply it.
+  const [expiredGhostCount, setExpiredGhostCount] = useState(0);
   // Client Requests frame state. The child owns the fetch and reports
   // back, so refreshing is just "tell the app change-requests moved" —
   // the same event the pending count above already listens for.
@@ -424,6 +435,14 @@ export default function JobsTab({
         value: s as string,
       })),
       { label: "Finished", value: "FINISHED" },
+      // Synthetic ghost-card filters. These aren't occurrence statuses —
+      // they narrow the feed to the dashed "next visit not scheduled"
+      // placeholder cards. Picking one also flips the API to search the
+      // ghost's EXPIRY date with the date range (see `load`), so the
+      // range picker can reach ghosts whose display date was snapped
+      // forward to today.
+      { label: "Expiring next visits", value: "GHOST_EXPIRING" },
+      { label: "Expired next visits", value: "GHOST_EXPIRED" },
     ].map((s) => ({ label: s.label, value: s.value })),
     []
   );
@@ -1541,6 +1560,13 @@ export default function JobsTab({
       // point of the Team toggle is to give workers a view-only peek).
       // Admin tab omits this param → normal admin-full-view behavior.
       if (isWorkerView) qs.set("workerView", "1");
+      // Ghost-expiry search mode. Tells the API to match from/to against
+      // the ghost's expiry date rather than its (snapped-to-today)
+      // display date, and to stop hiding ghosts that expired more than
+      // a week ago — otherwise a backward-looking range finds nothing.
+      if (statusFilter[0] === "GHOST_EXPIRING" || statusFilter[0] === "GHOST_EXPIRED") {
+        qs.set("ghostExpiry", "1");
+      }
       // When admin is impersonating a single worker, ask the API to attach that
       // worker's reminders/pins/likes instead of the admin's. Without this the DUE
       // filter (which keys off attached reminders) would show the admin's reminders
@@ -1548,6 +1574,17 @@ export default function JobsTab({
       if (forAdmin && viewAsUserIds?.length === 1) {
         qs.set("viewAsUserId", viewAsUserIds[0]);
       }
+      // Same scoping params as the feed (workerView / viewAsUserId), minus
+      // the date range — see `expiredGhostCount`.
+      const countQs = new URLSearchParams();
+      if (isWorkerView) countQs.set("workerView", "1");
+      if (forAdmin && viewAsUserIds?.length === 1) countQs.set("viewAsUserId", viewAsUserIds[0]);
+      void apiGet<{ count: number }>(
+        `/api/occurrences/expired-ghost-count${countQs.toString() ? `?${countQs}` : ""}`,
+      )
+        .then((r) => { if (seq === loadSeqRef.current) setExpiredGhostCount(r?.count ?? 0); })
+        .catch(() => {});
+
       const url = `/api/occurrences${qs.toString() ? `?${qs}` : ""}`;
       let list = await apiGet<WorkerOccurrence[]>(url);
       // If a newer load() started while this one was in flight, drop these results.
@@ -1734,7 +1771,9 @@ export default function JobsTab({
     // filter runs inside load() and would otherwise keep the
     // previously-scoped items in place, showing e.g. team cards to
     // a worker after they'd been visible to admin.
-  }, [dateFrom, dateTo, viewAsUserIds, isTrainee, peekActive, showAdminExtras]);
+    // ghostExpiryMode included because it changes the API query itself
+    // (see `ghostExpiry` in load()), not just client-side row filtering.
+  }, [dateFrom, dateTo, viewAsUserIds, isTrainee, peekActive, showAdminExtras, ghostExpiryMode]);
 
   // Re-fetch data after offline queue syncs
   const loadRef = useRef(load);
@@ -2551,6 +2590,15 @@ export default function JobsTab({
         // repeating") reads correctly while the filter still hits
         // the right row.
         if (sf === "PAUSED_REPEATING") return (occ.status as string) === "STREAM_PAUSED";
+        // Ghost-card filters — "expiring" is every ghost still inside
+        // its window (the ghost only exists because the next visit is
+        // still viable), "expired" is the ones already past due.
+        if (sf === "GHOST_EXPIRING") {
+          return !!(occ as any)._isNextOccurrenceGhost && !(occ as any)._isExpired;
+        }
+        if (sf === "GHOST_EXPIRED") {
+          return !!(occ as any)._isNextOccurrenceGhost && !!(occ as any)._isExpired;
+        }
         return occ.status === sf;
       });
     } else {
@@ -3813,6 +3861,54 @@ export default function JobsTab({
                       Route →
                     </Badge>
                   )}
+                  {/* Dark "Expired N" chip on the TODAY group — counts the
+                      next-visit ghost cards whose due date has already
+                      passed. Ghost cards sit on the day the visit was
+                      actually due, so with a forward-looking range the
+                      expired ones aren't on screen at all. This chip is
+                      the affordance that says so; the count comes from a
+                      separate range-independent fetch (see
+                      `expiredGhostCount`), NOT from this group's rows.
+
+                      The server only keeps expired ghosts for a week
+                      (GHOST_EXPIRED_GRACE_DAYS), so this count is
+                      inherently "expired in the last week" — older ones
+                      have already faded out. Clicking narrows to the
+                      matching filter over that same window; from there
+                      the date range can be widened to find older ones. */}
+                  {group.label === "Today" && (() => {
+                    const expiredGhosts = expiredGhostCount;
+                    if (expiredGhosts === 0) return null;
+                    return (
+                      <Badge
+                        size="sm"
+                        variant="solid"
+                        colorPalette="gray"
+                        bg="gray.700"
+                        color="gray.50"
+                        px="2"
+                        py="0.5"
+                        borderRadius="full"
+                        cursor="pointer"
+                        fontSize="2xs"
+                        lineHeight="1.3"
+                        whiteSpace="nowrap"
+                        _hover={{ bg: "gray.800" }}
+                        css={{ animation: "seedlings-pulse-ghost-chip 2s ease-in-out infinite" }}
+                        title="Filter to next visits that expired in the last week"
+                        onClick={(e: any) => {
+                          e.stopPropagation();
+                          setStatusFilter(["GHOST_EXPIRED"]);
+                          setDatePreset("lastWeek");
+                          const d = computeDatesFromPreset("lastWeek");
+                          setDateFrom(d.from);
+                          setDateTo(d.to);
+                        }}
+                      >
+                        Expired {expiredGhosts} →
+                      </Badge>
+                    );
+                  })()}
                   {/* Orange "Unconfirmed" chip on the TOMORROW group —
                       counts the group's items still needing client
                       confirmation. Clicking narrows the tab to just
@@ -4343,7 +4439,14 @@ export default function JobsTab({
             if ((occ as any)._isNextOccurrenceGhost) {
               const propName = occ.job?.property?.displayName ?? "Job";
               const clientName = occ.job?.property?.client?.displayName ?? null;
-              const wouldBeDateKey = occ.startAt ? bizDateKey(occ.startAt) : null;
+              // `startAt` on a ghost is a DISPLAY date — the server snaps an
+              // overdue one forward to today so it isn't invisible in a
+              // forward-looking feed. `_expiresOn` is the day the visit was
+              // actually due, so it's what "would post on" has to show or an
+              // expired ghost claims it's posting today.
+              const wouldBeDateKey =
+                ((occ as any)._expiresOn as string | undefined)
+                ?? (occ.startAt ? bizDateKey(occ.startAt) : null);
               const blockerStatus = (occ as any)._blockingOccurrenceStatus as string | undefined;
               // Every status the blocking occurrence can actually be in.
               // CLOSED and STREAM_PAUSED were missing and fell through to
@@ -4364,11 +4467,36 @@ export default function JobsTab({
                 ? [occ.job.property.street1, occ.job.property.city, occ.job.property.state]
                     .filter(Boolean).join(", ")
                 : "";
+              // EXPIRY. The ghost only exists while the next visit is
+              // still viable; `_expiresOn` is the day it was due.
+              //   > 0  still upcoming
+              //     0  due today
+              //   < 0  expired that many days ago (the server drops it
+              //        entirely once it's more than a week past)
+              const ghostDaysLeft = (occ as any)._daysUntilExpiry as number | undefined;
+              const ghostExpired = !!(occ as any)._isExpired;
+              // Pulse once the window is closing — the user's threshold is
+              // "within 3 days of expiring", and an already-expired card is
+              // past that line, so it keeps pulsing rather than going quiet
+              // exactly when it most needs chasing.
+              const ghostUrgent = typeof ghostDaysLeft === "number" && ghostDaysLeft <= 3;
+              const ghostChipLabel = typeof ghostDaysLeft !== "number"
+                ? "Expiring"
+                : ghostDaysLeft < 0
+                  ? (ghostDaysLeft === -1 ? "Expired yesterday" : `Expired ${Math.abs(ghostDaysLeft)}d ago`)
+                  : ghostDaysLeft === 0
+                    ? "Expires today"
+                    : ghostDaysLeft === 1
+                      ? "Expires tomorrow"
+                      : `Expires in ${ghostDaysLeft}d`;
               const cardStyle = {
                 borderLeft: "4px dashed var(--chakra-colors-gray-400)",
                 borderStyle: "dashed",
-                borderColor: "var(--chakra-colors-gray-500)",
+                borderColor: "var(--chakra-colors-gray-400)",
                 borderWidth: "1px",
+                ...(ghostUrgent
+                  ? { animation: "seedlings-pulse-ghost 1.8s ease-out infinite" }
+                  : {}),
               } as const;
 
               // Ultra — single scan row, matches the ~44px height the
@@ -4379,16 +4507,16 @@ export default function JobsTab({
                     key={`ghost-next-${occ.id}-${occIdx}`}
                     variant="outline"
                     overflow="hidden"
-                    bg="gray.600"
+                    bg="gray.500"
                     color="gray.50"
                     cursor="pointer"
                     onClick={toggleCard}
                     style={cardStyle}
                   >
                     <HStack px="3" py="1" gap={2} h="44px" align="center" fontSize="xs">
-                      <Clock size={13} style={{ color: "var(--chakra-colors-gray-300)", flexShrink: 0 }} />
-                      <Badge size="xs" variant="solid" colorPalette="gray" bg="gray.100" color="gray.900" flexShrink={0}>
-                        Expiring
+                      <Clock size={13} style={{ color: "var(--chakra-colors-gray-200)", flexShrink: 0 }} />
+                      <Badge size="xs" variant="solid" colorPalette="gray" bg={ghostExpired ? "gray.900" : "gray.100"} color={ghostExpired ? "gray.50" : "gray.900"} flexShrink={0}>
+                        {ghostChipLabel}
                       </Badge>
                       <Text fontWeight="medium" color="white" flex="1" minW={0} overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
                         {propName}{clientName ? ` — ${clientLabel(clientName)}` : ""}
@@ -4405,7 +4533,7 @@ export default function JobsTab({
                 <Card.Root
                   key={`ghost-next-${occ.id}-${occIdx}`}
                   size="sm"
-                  bg="gray.600"
+                  bg="gray.500"
                   color="gray.50"
                   cursor="pointer"
                   onClick={toggleCard}
@@ -4414,7 +4542,7 @@ export default function JobsTab({
                   <Card.Body p={3}>
                     <HStack justify="space-between" align="start" gap={2}>
                       <VStack align="start" gap={0.5} flex="1" minW={0}>
-                        <HStack gap={1.5} color="gray.300">
+                        <HStack gap={1.5} color="gray.100">
                           <Clock size={13} />
                           <Text fontSize="xs" fontWeight="medium" textTransform="uppercase" letterSpacing="wide">
                             Next visit not scheduled
@@ -4424,25 +4552,28 @@ export default function JobsTab({
                           {propName}
                           {clientName ? ` — ${clientLabel(clientName)}` : ""}
                         </Text>
-                        <Text fontSize="xs" color="gray.200">
-                          Would post on {wouldBeDateKey ? fmtDate(wouldBeDateKey) : "—"} · {blockerLabel}
+                        <Text fontSize="xs" color="gray.100">
+                          {ghostExpired ? "Was due" : "Would post on"} {wouldBeDateKey ? fmtDate(wouldBeDateKey) : "—"} · {blockerLabel}
                         </Text>
                         {cardMode === "expanded" && (
-                          <VStack align="start" gap={0.5} pt={2} borderTopWidth="1px" borderColor="gray.500" mt={2} w="full">
+                          <VStack align="start" gap={0.5} pt={2} borderTopWidth="1px" borderColor="gray.400" mt={2} w="full">
                             {propAddress && (
-                              <Text fontSize="xs" color="gray.200">
+                              <Text fontSize="xs" color="gray.100">
                                 {propAddress}
                               </Text>
                             )}
-                            <Text fontSize="xs" color="gray.300">
+                            <Text fontSize="xs" color="gray.100">
                               This card will disappear once the prior visit is
                               closed and the next occurrence is generated.
+                              {ghostExpired
+                                ? " It has already passed its due date and will stop showing a week after it expired."
+                                : ""}
                             </Text>
                           </VStack>
                         )}
                       </VStack>
-                      <Badge size="xs" variant="solid" colorPalette="gray" bg="gray.100" color="gray.900">
-                        Expiring
+                      <Badge size="xs" variant="solid" colorPalette="gray" bg={ghostExpired ? "gray.900" : "gray.100"} color={ghostExpired ? "gray.50" : "gray.900"} flexShrink={0} whiteSpace="nowrap">
+                        {ghostChipLabel}
                       </Badge>
                     </HStack>
                   </Card.Body>
@@ -9843,21 +9974,30 @@ export default function JobsTab({
                     </Text>
                   </Box>
 
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="gray.500" bg="gray.600">
-                    <Badge variant="solid" colorPalette="gray" bg="gray.100" color="gray.900" mb={1}>Expiring</Badge>
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="gray.400" bg="gray.500">
+                    <Badge variant="solid" colorPalette="gray" bg="gray.100" color="gray.900" mb={1}>Expires in 5d</Badge>
                     <Text fontSize="sm" fontWeight="semibold" color="white">Next visit not scheduled</Text>
-                    <Text fontSize="xs" color="gray.200" mt={1}>
-                      A repeating job whose next visit should have posted by now but
-                      hasn&apos;t, because the previous visit isn&apos;t closed out —
-                      most often it&apos;s <b>waiting on payment</b>. The card names the
-                      blocker and the date the visit would have landed on, and
-                      disappears by itself once the prior visit closes and the real
-                      occurrence is generated. Tap it to open the occurrence that needs
-                      chasing.
+                    <Text fontSize="xs" color="gray.100" mt={1}>
+                      A repeating job whose next visit hasn&apos;t posted, because the
+                      previous visit isn&apos;t closed out — most often it&apos;s
+                      <b> waiting on payment</b>. The card names the blocker and the
+                      date the visit is due, and disappears by itself once the prior
+                      visit closes and the real occurrence is generated. Tap it to
+                      open the occurrence that needs chasing.
                     </Text>
-                    <Text fontSize="xs" color="gray.300" mt={1}>
-                      Only appears for jobs that are Accepted and auto-renewing, with no
-                      future visit already on the books.
+                    <Text fontSize="xs" color="gray.100" mt={2}>
+                      <b>Expiry.</b> The chip counts down to the day the visit was due.
+                      Inside three days the card pulses. Past that day it reads
+                      &ldquo;Expired N ago&rdquo; and stays for one more week before
+                      fading away on its own — the <b>Expired N</b> chip on the Today
+                      header counts those and filters to them. To look further back,
+                      use the status filter (<i>Expiring / Expired next visits</i>) with
+                      any date range.
+                    </Text>
+                    <Text fontSize="xs" color="gray.200" mt={2}>
+                      Only appears for repeating jobs that are Accepted, with no future
+                      visit already on the books. One-offs, canceled and paused-repeating
+                      streams never get one.
                     </Text>
                   </Box>
 

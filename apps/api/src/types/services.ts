@@ -564,7 +564,13 @@ export type ServicesJobs = {
     to?: string;
     assigneeUserId?: string | null;
     cutoff?: Date | null;
+    /** Lift the week-old expired-ghost drop so a wider range finds them. */
+    matchRangeOnExpiry?: boolean;
   }): Promise<any[]>;
+  countExpiredGhosts(params: {
+    assigneeUserId?: string | null;
+    cutoff?: Date | null;
+  }): Promise<number>;
   getOccurrencesByIds(ids: string[], cutoff?: Date | null): Promise<any[]>;
   listMyOccurrences(
     userId: string,

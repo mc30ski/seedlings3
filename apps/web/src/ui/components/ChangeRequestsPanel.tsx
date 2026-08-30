@@ -95,8 +95,20 @@ export default function ChangeRequestsPanel({ bare = false, onReady }: Props = {
     }
   }
 
+  // Nothing until the first load resolves — avoids flashing the panel
+  // in and out on mount. After that, empty gets a message rather than a
+  // blank body: in `bare` mode the host (ServicesTab) draws the frame
+  // regardless, so returning null leaves an expanded section showing
+  // nothing at all.
   if (loading && items.length === 0) return null;
-  if (items.length === 0) return null;
+  if (items.length === 0) {
+    const empty = (
+      <Text fontSize="sm" color="fg.muted" py={1}>
+        No change requests — nothing is waiting on a reschedule decision.
+      </Text>
+    );
+    return bare ? empty : null;
+  }
 
   // List body is identical in both modes — only the outer chrome
   // differs. Extract it once so the two return branches don't drift.

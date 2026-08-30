@@ -74,6 +74,34 @@ html, body {
    doesn't imply severity via color. Used by the JobsNext Dashboard
    sections so the collapsed frame can pulsate without competing
    with per-row status colors. */
+/* Ghost-card pulse — the "next visit is about to expire (or already
+   has)" placeholder on the Jobs tab. Deliberately louder than the other
+   pulses: the card is itself mid-gray, so the usual gray halo washed out
+   against it and read as almost nothing. This one uses near-black at
+   high alpha, throws a wider ring, and holds a permanent inner rim so
+   the card never looks completely at rest between beats. Tint from
+   Chakra gray.900 (#111827). */
+@keyframes seedlings-pulse-ghost {
+  0% {
+    box-shadow: 0 0 0 0 rgba(17, 24, 39, 0.9), inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+  }
+  60% {
+    box-shadow: 0 0 0 14px rgba(17, 24, 39, 0), inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(17, 24, 39, 0), inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+  }
+}
+
+/* Ghost-chip pulse — the "Expired N" chip on the Jobs tab's Today group
+   header. Deliberately gentler than seedlings-pulse-ghost above: the chip
+   is small and dark on a plain background, so it only needs a soft ring to
+   catch the eye. Same gray.900 tint as the card pulse it points at. */
+@keyframes seedlings-pulse-ghost-chip {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(17, 24, 39, 0.7); }
+  50% { box-shadow: 0 0 0 9px rgba(17, 24, 39, 0); }
+}
+
 @keyframes seedlings-pulse-gray {
   0%, 100% { box-shadow: 0 0 0 0 rgba(107, 114, 128, 0.5); }
   50% { box-shadow: 0 0 0 8px rgba(107, 114, 128, 0); }

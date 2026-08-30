@@ -1526,6 +1526,10 @@ export default async function workerRoutes(app: FastifyInstance) {
       const ghosts = await services.jobs.listNextOccurrenceGhosts({
         from, to, cutoff,
         assigneeUserId: ghostAssigneeUserId,
+        // Set by the Jobs tab when the status filter is narrowed to
+        // expiring/expired ghosts — makes from/to search the expiry
+        // date and lifts the "older than a week fades away" drop.
+        matchRangeOnExpiry: String((req.query as any)?.ghostExpiry ?? "") === "1",
       });
       return [...filtered, ...ghosts];
     } catch (err: any) {
@@ -1533,6 +1537,34 @@ export default async function workerRoutes(app: FastifyInstance) {
       // and continue with just the real occurrences.
       req.log.warn({ where: "occurrences.ghosts", err: err?.message }, "ghost list failed");
       return filtered;
+    }
+  });
+
+  /**
+   * Count of next-visit ghosts that expired within the grace window.
+   *
+   * Its own endpoint because the number is deliberately independent of
+   * the Jobs tab's date range: ghosts are dated on the day the visit was
+   * due, so a forward-looking range contains none of the expired ones.
+   * This is what the "Expired N" chip on the Today group header reports.
+   */
+  // view-as-allow: not a /me/* route; scoping comes from workerView/viewAsUserId
+  //   exactly as the sibling /occurrences ghost query does.
+  app.get("/occurrences/expired-ghost-count", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const q = (req.query || {}) as Record<string, string>;
+    const viewAsUserId = q.viewAsUserId || null;
+    const isWorkerViewRequest = String(q.workerView ?? "") === "1";
+    const cutoff = await resolveCutoff(req);
+    try {
+      const count = await services.jobs.countExpiredGhosts({
+        assigneeUserId: isWorkerViewRequest || viewAsUserId ? uid : null,
+        cutoff,
+      });
+      return { count };
+    } catch (err: any) {
+      req.log.warn({ where: "occurrences.expiredGhostCount", err: err?.message }, "count failed");
+      return { count: 0 };
     }
   });
 

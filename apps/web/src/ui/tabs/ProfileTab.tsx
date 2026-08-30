@@ -480,6 +480,29 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
                     {workerTypeLabel(targetUser?.workerType)}
                   </Badge>
                 </HStack>
+                {/* LLC Owner — its own row rather than a chip tacked onto
+                    Type, because it is not a worker classification: the
+                    owner is also an EMPLOYEE or CONTRACTOR and both facts
+                    matter. Same purple solid badge the Users directory
+                    uses, so the two surfaces agree.
+
+                    Self-view only. `isOwner` rides on /me; the
+                    /api/workers list an admin picks from does not carry
+                    it, so an admin viewing someone else's profile can't
+                    render this without widening that payload. */}
+                {isSelf && me?.isOwner && (
+                  <HStack fontSize="sm" align="flex-start">
+                    <Text color="fg.muted" w="80px">Owner:</Text>
+                    <Box flex="1">
+                      <Badge colorPalette="purple" variant="solid">LLC Owner</Badge>
+                      <Text fontSize="xs" color="fg.muted" mt="0.5">
+                        You are the registered owner of the business. Owner
+                        draws and capital contributions are recorded on the
+                        Ledger, not through payroll.
+                      </Text>
+                    </Box>
+                  </HStack>
+                )}
                 {/* Self-view only: contractor's guaranteed payout period.
                     During the window, the contractor is paid for completed
                     work regardless of client payment timing. Only renders

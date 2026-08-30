@@ -53,6 +53,7 @@ import { Dashboard } from "@/src/ui/components/Dashboard";
 import { SkeletonBanner } from "@/src/ui/tabs/JobsTab.parts";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import { fmtDateKey } from "@/src/lib/dates";
+import OwnerEquityPanel, { OwnerBadge, useOwnerEquity } from "@/src/ui/components/OwnerEquityPanel";
 import {
   fetchMyPayrollPeriods,
   fetchPayrollPendingMatch,
@@ -70,11 +71,24 @@ import {
 export default function PayrollHomeSection({
   viewAsUserId,
   viewAsDisplayName,
+  isOwner = false,
   storageKey = "seedlings:homeTab:payrollOpen",
 }: {
   /** Set when an admin is viewing a single worker. Server-gated. */
   viewAsUserId?: string | null;
   viewAsDisplayName?: string | null;
+  /**
+   * The signed-in user is the LLC owner, viewing their OWN section.
+   *
+   * The owner takes draws and capital contributions, never wages, so no
+   * PayrollPeriod will ever exist for them and this card would read "No
+   * payroll records yet" forever. In owner mode the same frame and the
+   * same timeframe picker show equity movement instead.
+   *
+   * A deliberate special case for exactly one account — `User.isOwner`
+   * is unique by a partial index. Everyone else is untouched.
+   */
+  isOwner?: boolean;
   storageKey?: string;
 }) {
   const [periods, setPeriods] = useState<PayrollPeriodSummary[]>([]);
@@ -128,6 +142,16 @@ export default function PayrollHomeSection({
   });
 
   const isViewingOther = !!viewAsUserId;
+  // Owner mode applies only to the owner looking at their OWN card — an
+  // admin viewing someone else is looking at a worker, by definition.
+  const ownerMode = isOwner && !isViewingOther;
+  // "Latest pay period" is meaningless without pay periods — and worse,
+  // `payrollRangeStart("latest")` is null, so it would fetch ALL-TIME
+  // equity under a label promising the latest period. Owner mode drops
+  // that option and treats a persisted "latest" as this year.
+  const ownerRange: PayrollRangeKey = range === "latest" ? "ytd" : range;
+  const effectiveRange = ownerMode ? ownerRange : range;
+  const equity = useOwnerEquity(effectiveRange, ownerMode);
   // "My payday" for the worker's own section; "Payday: Name" when an admin
   // is viewing someone else, since "My" would then be wrong. Same shape as
   // MY ACTIVITIES / MY EARNINGS, and the colon convention every Home
@@ -135,10 +159,16 @@ export default function PayrollHomeSection({
   //
   // The TAB is still called Payroll (Money → Payroll) — that surface is
   // also the operator's team view, where "My payday" would be nonsense.
-  const title =
-    isViewingOther && viewAsDisplayName ? `Payday: ${viewAsDisplayName}` : "My payday";
+  const title = ownerMode
+    // Named for what it actually shows. "My payday" over a list of draws
+    // would be wrong twice: they are not a payday, and the owner does not
+    // have one.
+    ? "My owner equity"
+    : isViewingOther && viewAsDisplayName
+      ? `Payday: ${viewAsDisplayName}`
+      : "My payday";
 
-  if (!loaded) return <SkeletonBanner label="payroll" />;
+  if (!loaded && !ownerMode) return <SkeletonBanner label="payroll" />;
 
   return (
     <Dashboard
@@ -150,10 +180,13 @@ export default function PayrollHomeSection({
          rather than wages, so "no periods ever" is a real steady state and
          a dead picker would just be noise. */
       timeframe={
-        periods.length > 0
+        periods.length > 0 || ownerMode
           ? {
-              options: PAYROLL_RANGES.map((r) => ({ label: r.label, value: r.key })),
-              value: range,
+              options: (ownerMode
+                ? PAYROLL_RANGES.filter((r) => r.key !== "latest")
+                : PAYROLL_RANGES
+              ).map((r) => ({ label: r.label, value: r.key })),
+              value: effectiveRange,
               onChange: (k) => setRange(k as PayrollRangeKey),
             }
           : undefined
@@ -189,6 +222,18 @@ export default function PayrollHomeSection({
       // the answer to "what am I looking at".
       collapsedSummarySlot={
         <Text fontSize="xs" color="blue.800" whiteSpace="nowrap">
+          {ownerMode ? (
+            <>
+              {"LLC Owner · "}
+              <Box as="span" fontWeight="bold" color="blue.900">
+                {equity.net >= 0 ? "+" : "−"}$
+                {Math.abs(equity.net).toFixed(2)}
+              </Box>
+              {" net · "}
+              {payrollRangeLabel(effectiveRange)}
+            </>
+          ) : (
+            <>
           {payrollRangeLabel(range)}
           {shown.length > 0 && (
             <>
@@ -205,11 +250,19 @@ export default function PayrollHomeSection({
                 : ` · ${shown.length} periods`}
             </>
           )}
+            </>
+          )}
         </Text>
       }
-      onRefresh={load}
-      refreshing={busy}
+      onRefresh={ownerMode ? equity.load : load}
+      refreshing={ownerMode ? equity.loading : busy}
     >
+      {/* Owner mode replaces the BODY only — same frame, same timeframe
+          picker, same "View all". Everything below this branch is the
+          payroll view every other worker sees, untouched. */}
+      {ownerMode ? (
+        <OwnerEquityPanel range={effectiveRange} equity={equity} />
+      ) : (
       <VStack align="stretch" gap={2}>
         {pending.affected && (
           <Box
@@ -302,6 +355,7 @@ export default function PayrollHomeSection({
           </Box>
         )}
       </VStack>
+      )}
     </Dashboard>
   );
 }
