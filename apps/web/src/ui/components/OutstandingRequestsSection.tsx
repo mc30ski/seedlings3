@@ -404,8 +404,6 @@ export default function OutstandingRequestsSection({ onReady }: {
     );
   }
 
-  if (rows.length === 0 && !loading) return null;
-
   const staleCount = rows.filter((r) => r.stale).length;
 
   return (
@@ -415,6 +413,15 @@ export default function OutstandingRequestsSection({ onReady }: {
         <Text fontSize="xs" color="fg.muted" mb={2}>
           Payment requests sent to a client but not yet paid. They enter the approval queue once the client pays.
         </Text>
+        {/* Empty renders a MESSAGE, not nothing. Both hosts draw the
+            frame unconditionally, so returning null left an expanded
+            section with a blank body — indistinguishable from one that
+            failed to load. */}
+        {rows.length === 0 && !loading && (
+          <Text fontSize="sm" color="fg.muted" py={1}>
+            No outstanding requests — every invoice sent has been paid or closed out.
+          </Text>
+        )}
         <VStack align="stretch" gap={2}>
           {rows.map((r) => (
             <Box

@@ -99,12 +99,12 @@ export default function UnlinkedClientAccountsSection({ onReady }: {
     void load();
   }, [load]);
 
-  // Hide the section entirely whenever there are no unlinked users —
-  // previously we kept it visible during the initial load and only
-  // hid it after `loading` flipped false, which flashed the section
-  // in and back out on every mount. Rendering nothing until real
-  // data arrives avoids the flicker; empty responses stay hidden.
-  if (users.length === 0) return null;
+  // Render nothing until the first load resolves. This avoids the
+  // flicker of showing the section and pulling it back out on mount;
+  // once data has arrived an empty result gets a real message below,
+  // because the host draws the frame either way and a blank expanded
+  // body is indistinguishable from a section that failed to load.
+  if (loading && users.length === 0) return null;
 
   return (
     <>
@@ -114,6 +114,11 @@ export default function UnlinkedClientAccountsSection({ onReady }: {
           <Text fontSize="xs" color="fg.muted" mb={2}>
             These people signed in, but their Clerk email didn't match any client contact on file. Link each one to the right contact so they see their service history.
           </Text>
+          {users.length === 0 && (
+            <Text fontSize="sm" color="fg.muted" py={1}>
+              No unlinked accounts — every signed-in client matches a contact on file.
+            </Text>
+          )}
           <VStack align="stretch" gap={2}>
             {users.map((u) => (
               <HStack

@@ -1113,27 +1113,6 @@ async function seedDatabase() {
     await prisma.jobContact.create({ data: { jobId: job.id, clientContactId: contact.id, role: "decision_maker" } });
   }
 
-  console.log("  Creating schedules...");
-
-  const schedules: { jobId: string; cadence: "WEEKLY" | "BIWEEKLY" | "MONTHLY"; interval: number; dayOfWeek: number; startH: number; endH: number; horizon?: number }[] = [
-    { jobId: harringtonMow.id, cadence: "WEEKLY", interval: 1, dayOfWeek: 1, startH: 8, endH: 12 },
-    { jobId: harringtonLakeMow.id, cadence: "WEEKLY", interval: 1, dayOfWeek: 1, startH: 13, endH: 17 },
-    { jobId: martinezBiweekly.id, cadence: "BIWEEKLY", interval: 2, dayOfWeek: 3, startH: 8, endH: 12 },
-    { jobId: willowbrookWeekly.id, cadence: "WEEKLY", interval: 1, dayOfWeek: 2, startH: 7, endH: 15 },
-    { jobId: willowbrookPoolMow.id, cadence: "BIWEEKLY", interval: 2, dayOfWeek: 4, startH: 8, endH: 10 },
-    { jobId: thompsonMow.id, cadence: "WEEKLY", interval: 1, dayOfWeek: 3, startH: 9, endH: 13 },
-    { jobId: thompsonGuestMow.id, cadence: "BIWEEKLY", interval: 2, dayOfWeek: 3, startH: 14, endH: 16 },
-    { jobId: obrienMow.id, cadence: "WEEKLY", interval: 1, dayOfWeek: 4, startH: 8, endH: 11 },
-    { jobId: sunriseWeekly.id, cadence: "WEEKLY", interval: 1, dayOfWeek: 5, startH: 7, endH: 14 },
-    { jobId: patelMow.id, cadence: "WEEKLY", interval: 1, dayOfWeek: 2, startH: 15, endH: 17 },
-    { jobId: riverBendWeekly.id, cadence: "WEEKLY", interval: 1, dayOfWeek: 1, startH: 6, endH: 12 },
-    { jobId: kimMow.id, cadence: "BIWEEKLY", interval: 2, dayOfWeek: 5, startH: 10, endH: 12 },
-    { jobId: churchWeekly.id, cadence: "WEEKLY", interval: 1, dayOfWeek: 2, startH: 14, endH: 17 },
-  ];
-
-  for (const s of schedules) {
-  }
-
   // ── JobAssigneeDefaults ───────────────────────────────────────────────────
   console.log("  Creating default assignees...");
 
@@ -1731,6 +1710,70 @@ async function seedDatabase() {
     { jobId: ghostJob3.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(4, 9), endAt: addMinutes(daysAgo(4, 9), 60), status: "PENDING_PAYMENT", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 125.0, estimatedMinutes: 60, startedAt: daysAgo(4, 9), completedAt: addMinutes(daysAgo(4, 9), 55) },
     [{ userId: MICHAEL_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
   );
+
+  // ─── EXPIRED GHOST FIXTURES ───────────────────────────────────────────
+  // Same shape as the ghosts above, but the last visit is far enough back
+  // that `lastVisit + frequencyDays` already PASSED. That's what makes a
+  // ghost "expired": the visit it was holding a place for never happened.
+  //
+  // Spread deliberately across the boundary the UI cares about:
+  //   -1d / -4d / -6d  → inside the one-week grace, so they still render
+  //                      (dark "Expired Nd ago" chip) and are counted by
+  //                      the "Expired N" chip on the Today group header.
+  //   -11d             → PAST the grace, so it must NOT render and must
+  //                      NOT be counted — proves the silent fade-away.
+  //                      It reappears only via the "Expired next visits"
+  //                      status filter with a wider date range.
+  console.log("  Creating expired-ghost test fixtures...");
+
+  const expiredGhostSpecs: {
+    propertyId: string;
+    lastVisitDaysAgo: number;
+    frequencyDays: number;
+    price: number;
+    status: "PENDING_PAYMENT" | "COMPLETED" | "CLOSED";
+    note: string;
+    assignees: { userId: string; role: string }[];
+  }[] = [
+    // 8 ago + 7 = expired yesterday
+    { propertyId: harringtonMain.id, lastVisitDaysAgo: 8, frequencyDays: 7, price: 85.0, status: "PENDING_PAYMENT",
+      note: "EXPIRED GHOST TEST — expired 1 day ago", assignees: [{ userId: MICHAEL_ID, role: "primary" }] },
+    // 18 ago + 14 = expired 4 days ago
+    { propertyId: martinezHome.id, lastVisitDaysAgo: 18, frequencyDays: 14, price: 55.0, status: "PENDING_PAYMENT",
+      note: "EXPIRED GHOST TEST — expired 4 days ago", assignees: [{ userId: EMPLOYEE_ID, role: "primary" }] },
+    // 13 ago + 7 = expired 6 days ago (last day inside the grace)
+    { propertyId: thompsonMain.id, lastVisitDaysAgo: 13, frequencyDays: 7, price: 125.0, status: "COMPLETED",
+      note: "EXPIRED GHOST TEST — expired 6 days ago, edge of the 7d grace",
+      assignees: [{ userId: MICHAEL_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }] },
+    // 18 ago + 7 = expired 11 days ago → dropped from the feed entirely
+    { propertyId: obrienHome.id, lastVisitDaysAgo: 18, frequencyDays: 7, price: 70.0, status: "CLOSED",
+      note: "EXPIRED GHOST TEST — expired 11 days ago, PAST the grace (must not render)",
+      assignees: [{ userId: EMPLOYEE_ID, role: "primary" }] },
+  ];
+
+  for (const spec of expiredGhostSpecs) {
+    const j = await prisma.job.create({
+      data: {
+        propertyId: spec.propertyId,
+        kind: "SINGLE_ADDRESS",
+        status: "ACCEPTED",
+        frequencyDays: spec.frequencyDays,
+        defaultPrice: spec.price,
+        estimatedMinutes: 45,
+        notes: spec.note,
+      },
+    });
+    const start = daysAgo(spec.lastVisitDaysAgo, 9);
+    await occ(
+      {
+        jobId: j.id, kind: "SINGLE_ADDRESS", startAt: start, endAt: addMinutes(start, 45),
+        status: spec.status, workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]',
+        price: spec.price, estimatedMinutes: 45,
+        startedAt: start, completedAt: addMinutes(start, 40),
+      },
+      spec.assignees,
+    );
+  }
 
   // ── Payments (for completed occurrences) ──────────────────────────────────
   console.log("  Creating payments...");
@@ -3444,7 +3487,10 @@ async function seedDatabase() {
   console.log("  Creating alert-dropdown fixtures...");
 
   const alertAnchorJob = await prisma.job.findFirst({
-    where: { schedule: { is: { active: true } } },
+    // "Repeating" is Job.frequencyDays — the JobSchedule table was dropped
+    // (it had zero rows in production, which is why next-visit ghost cards
+    // never appeared there).
+    where: { status: "ACCEPTED", frequencyDays: { not: null } },
     orderBy: { createdAt: "asc" },
     include: { property: { include: { client: true } } },
   });
@@ -4516,7 +4562,10 @@ async function seedStreamPauseFixtures() {
     where: {
       status: "SCHEDULED",
       workflow: "STANDARD",
-      job: { schedule: { isNot: null } }, // repeating jobs only
+      // Repeating jobs only. Was `schedule: { isNot: null }` before the
+      // JobSchedule table was dropped; Job.frequencyDays is the real
+      // repeating signal now.
+      job: { frequencyDays: { not: null } },
     },
     orderBy: { startAt: "asc" },
     select: { id: true, jobId: true },

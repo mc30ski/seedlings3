@@ -1396,6 +1396,7 @@ export default function HomeTab({
           <PayrollHomeSection
             viewAsUserId={viewAsUserId ?? null}
             viewAsDisplayName={viewAsDisplayName ?? null}
+            isOwner={!!me?.isOwner}
           />
         )}
 
