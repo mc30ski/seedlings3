@@ -24,7 +24,6 @@ import { Role as RoleVal } from "@prisma/client";
 import {
   JobKind,
   JobStatus,
-  Cadence,
   JobOccurrenceStatus,
 } from "@prisma/client";
 import { normalizePhone } from "../lib/phone";
@@ -2104,93 +2103,6 @@ export default async function adminRoutes(app: FastifyInstance) {
       return updated;
     });
   });
-
-  // Job schedule: upsert schedule + generate occurrences
-
-  app.put("/admin/jobs/:id/schedule", adminGuard, async (req: any) => {
-    const jobId = String(req.params.id);
-    const body = req.body || {};
-
-    // autoRenew required for upsert in our service plan
-    const autoRenew = !!body.autoRenew;
-
-    const patch: any = { autoRenew };
-
-    if (body.cadence != null) {
-      const cadence = String(body.cadence || "").toUpperCase();
-      if (
-        cadence !== "WEEKLY" &&
-        cadence !== "BIWEEKLY" &&
-        cadence !== "MONTHLY"
-      ) {
-        throw app.httpErrors.badRequest("Invalid cadence");
-      }
-      patch.cadence = cadence as Cadence;
-    }
-
-    if (body.interval != null) {
-      const interval = Number(body.interval);
-      if (!Number.isFinite(interval) || interval < 1) {
-        throw app.httpErrors.badRequest("interval must be >= 1");
-      }
-      patch.interval = interval;
-    }
-
-    if (body.dayOfWeek != null) {
-      const dayOfWeek = Number(body.dayOfWeek);
-      if (!Number.isFinite(dayOfWeek) || dayOfWeek < 0 || dayOfWeek > 6) {
-        throw app.httpErrors.badRequest("dayOfWeek must be 0-6");
-      }
-      patch.dayOfWeek = dayOfWeek;
-    }
-
-    if (body.dayOfMonth != null) {
-      const dayOfMonth = Number(body.dayOfMonth);
-      if (!Number.isFinite(dayOfMonth) || dayOfMonth < 1 || dayOfMonth > 31) {
-        throw app.httpErrors.badRequest("dayOfMonth must be 1-31");
-      }
-      patch.dayOfMonth = dayOfMonth;
-    }
-
-    if (body.preferredStartHour != null) {
-      const h = Number(body.preferredStartHour);
-      if (!Number.isFinite(h) || h < 0 || h > 23) {
-        throw app.httpErrors.badRequest("preferredStartHour must be 0-23");
-      }
-      patch.preferredStartHour = h;
-    }
-
-    if (body.preferredEndHour != null) {
-      const h = Number(body.preferredEndHour);
-      if (!Number.isFinite(h) || h < 0 || h > 23) {
-        throw app.httpErrors.badRequest("preferredEndHour must be 0-23");
-      }
-      patch.preferredEndHour = h;
-    }
-
-    if (body.horizonDays != null) {
-      const d = Number(body.horizonDays);
-      if (!Number.isFinite(d) || d < 1 || d > 365) {
-        throw app.httpErrors.badRequest("horizonDays must be 1-365");
-      }
-      patch.horizonDays = d;
-    }
-
-    if (body.active != null) patch.active = !!body.active;
-
-    return services.jobs.upsertSchedule(await currentUserId(req), jobId, patch);
-  });
-
-  app.post(
-    "/admin/jobs/:id/occurrences/generate",
-    adminGuard,
-    async (req: any) => {
-      return services.jobs.generateOccurrences(
-        await currentUserId(req),
-        String(req.params.id)
-      );
-    }
-  );
 
   // Occurrences: create one-off + set assignees + patch occurrence (kind/status/times)
 
@@ -7687,7 +7599,6 @@ Respond ONLY with valid JSON in this exact format:
             jobs: {
               orderBy: { createdAt: "asc" },
               include: {
-                schedule: true,
                 defaultAssignees: { include: { user: true } },
                 occurrences: {
                   orderBy: { startAt: "asc" },
@@ -7819,12 +7730,6 @@ Respond ONLY with valid JSON in this exact format:
           lines.push("");
           lines.push(`    JOB: ${job.kind}  [${job.status}]${job.frequencyDays ? "  Every " + job.frequencyDays + " days" : ""}${job.defaultPrice != null ? "  Default price: " + money(job.defaultPrice) : ""}`);
           if (job.notes) lines.push(`      Notes: ${job.notes}`);
-
-          // Schedule
-          if (job.schedule) {
-            const s = job.schedule;
-            lines.push(`      Schedule: ${s.cadence || "custom"}${s.autoRenew ? " (auto-renew)" : ""}${s.active ? "" : " [INACTIVE]"}  Horizon: ${s.horizonDays} days`);
-          }
 
           // Default assignees
           if (job.defaultAssignees.length > 0) {

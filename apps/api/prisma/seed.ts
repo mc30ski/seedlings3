@@ -110,7 +110,6 @@ async function clearDatabase() {
   await prisma.jobAssigneeDefault.deleteMany();
   await prisma.jobContact.deleteMany();
   await prisma.jobClient.deleteMany();
-  await prisma.jobSchedule.deleteMany();
 
   console.log("  Clearing jobs...");
   await prisma.job.deleteMany();
@@ -1114,7 +1113,6 @@ async function seedDatabase() {
     await prisma.jobContact.create({ data: { jobId: job.id, clientContactId: contact.id, role: "decision_maker" } });
   }
 
-  // ── JobSchedules (recurring jobs only) ────────────────────────────────────
   console.log("  Creating schedules...");
 
   const schedules: { jobId: string; cadence: "WEEKLY" | "BIWEEKLY" | "MONTHLY"; interval: number; dayOfWeek: number; startH: number; endH: number; horizon?: number }[] = [
@@ -1134,20 +1132,6 @@ async function seedDatabase() {
   ];
 
   for (const s of schedules) {
-    await prisma.jobSchedule.create({
-      data: {
-        jobId: s.jobId,
-        cadence: s.cadence,
-        interval: s.interval,
-        dayOfWeek: s.dayOfWeek,
-        preferredStartHour: s.startH,
-        preferredEndHour: s.endH,
-        autoRenew: true,
-        horizonDays: s.horizon ?? 21,
-        nextGenerateAt: daysFromNow(s.interval === 1 ? 7 : 14),
-        active: true,
-      },
-    });
   }
 
   // ── JobAssigneeDefaults ───────────────────────────────────────────────────
@@ -1727,9 +1711,6 @@ async function seedDatabase() {
   const ghostJob1 = await prisma.job.create({
     data: { propertyId: harringtonMain.id, kind: "SINGLE_ADDRESS", status: "ACCEPTED", frequencyDays: 7, defaultPrice: 85.0, estimatedMinutes: 45, notes: "GHOST TEST — weekly mow; last occurrence pending payment (Michael assigned)" },
   });
-  await prisma.jobSchedule.create({
-    data: { jobId: ghostJob1.id, cadence: "WEEKLY", interval: 1, dayOfWeek: 1, autoRenew: true, active: true, horizonDays: 21 },
-  });
   await occ(
     { jobId: ghostJob1.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(5, 9), endAt: addMinutes(daysAgo(5, 9), 45), status: "PENDING_PAYMENT", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 85.0, estimatedMinutes: 45, startedAt: daysAgo(5, 9), completedAt: addMinutes(daysAgo(5, 9), 40) },
     [{ userId: MICHAEL_ID, role: "primary" }],
@@ -1738,9 +1719,6 @@ async function seedDatabase() {
   const ghostJob2 = await prisma.job.create({
     data: { propertyId: martinezHome.id, kind: "SINGLE_ADDRESS", status: "ACCEPTED", frequencyDays: 14, defaultPrice: 55.0, estimatedMinutes: 40, notes: "GHOST TEST — biweekly, assigned to worker only (no Michael)" },
   });
-  await prisma.jobSchedule.create({
-    data: { jobId: ghostJob2.id, cadence: "BIWEEKLY", interval: 2, dayOfWeek: 3, autoRenew: true, active: true, horizonDays: 21 },
-  });
   await occ(
     { jobId: ghostJob2.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(12, 9), endAt: addMinutes(daysAgo(12, 9), 40), status: "PENDING_PAYMENT", workflow: "STANDARD", jobTags: '["MOW"]', price: 55.0, estimatedMinutes: 40, startedAt: daysAgo(12, 9), completedAt: addMinutes(daysAgo(12, 9), 38) },
     [{ userId: EMPLOYEE_ID, role: "primary" }],
@@ -1748,9 +1726,6 @@ async function seedDatabase() {
 
   const ghostJob3 = await prisma.job.create({
     data: { propertyId: thompsonMain.id, kind: "SINGLE_ADDRESS", status: "ACCEPTED", frequencyDays: 7, defaultPrice: 125.0, estimatedMinutes: 60, notes: "GHOST TEST — weekly, team of two (Michael + Employee)" },
-  });
-  await prisma.jobSchedule.create({
-    data: { jobId: ghostJob3.id, cadence: "WEEKLY", interval: 1, dayOfWeek: 2, autoRenew: true, active: true, horizonDays: 21 },
   });
   await occ(
     { jobId: ghostJob3.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(4, 9), endAt: addMinutes(daysAgo(4, 9), 60), status: "PENDING_PAYMENT", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 125.0, estimatedMinutes: 60, startedAt: daysAgo(4, 9), completedAt: addMinutes(daysAgo(4, 9), 55) },
