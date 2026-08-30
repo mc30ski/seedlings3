@@ -73,7 +73,7 @@ const BASELINE: Record<string, number> = {
   // writes (createPayment = 1 Payment + N PaymentSplits under one
   // PAYMENT.CREATED row), so a count well below the mutation total is
   // expected and healthy here.
-  "apps/api/src/services/jobs.ts": 48,
+  "apps/api/src/services/jobs.ts": 44,
   "apps/api/src/routes/admin.ts": 32,
   "apps/api/src/services/payments.ts": 20,
   "apps/api/src/routes/worker.ts": 18,

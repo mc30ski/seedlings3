@@ -4345,12 +4345,20 @@ export default function JobsTab({
               const clientName = occ.job?.property?.client?.displayName ?? null;
               const wouldBeDateKey = occ.startAt ? bizDateKey(occ.startAt) : null;
               const blockerStatus = (occ as any)._blockingOccurrenceStatus as string | undefined;
+              // Every status the blocking occurrence can actually be in.
+              // CLOSED and STREAM_PAUSED were missing and fell through to
+              // "prior visit not closed" — which flatly contradicts a
+              // CLOSED prior visit, and says nothing useful for a paused
+              // stream. Both occur in production today.
               const blockerLabel =
                 blockerStatus === "PENDING_PAYMENT" ? "waiting on payment"
                 : blockerStatus === "COMPLETED" ? "waiting on payment"
                 : blockerStatus === "IN_PROGRESS" ? "prior visit in progress"
                 : blockerStatus === "PAUSED" ? "prior visit paused"
                 : blockerStatus === "SCHEDULED" ? "prior visit not yet complete"
+                : blockerStatus === "CLOSED" ? "prior visit closed — next was never created"
+                : blockerStatus === "STREAM_PAUSED" ? "repeating paused"
+                : blockerStatus === "CANCELED" ? "prior visit canceled"
                 : "prior visit not closed";
               const propAddress = occ.job?.property
                 ? [occ.job.property.street1, occ.job.property.city, occ.job.property.state]
@@ -9804,9 +9812,64 @@ export default function JobsTab({
                     </HStack>
                     <HStack p={2} bg="gray.50" borderWidth="1px" borderColor="gray.200" rounded="md" gap={2}>
                       <Badge colorPalette="gray" variant="subtle" fontSize="xs" flexShrink={0}>Gray</Badge>
-                      <Text fontSize="xs">Assigned to others, or closed/completed</Text>
+                      <Text fontSize="xs">Assigned to someone else — waiting on their action</Text>
+                    </HStack>
+                    {/* Closed jobs were folded in with "assigned to others"
+                        until both resolved to gray.50 and became
+                        indistinguishable. They are now a plain white card;
+                        this entry has to say so or the legend contradicts
+                        the feed. */}
+                    <HStack p={2} bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" gap={2}>
+                      <Badge colorPalette="gray" variant="outline" fontSize="xs" flexShrink={0}>White</Badge>
+                      <Text fontSize="xs">Closed / completed, or an accepted or rejected estimate — done, moved on</Text>
+                    </HStack>
+                    <HStack p={2} bg="orange.100" borderWidth="1px" borderColor="orange.400" rounded="md" gap={2}>
+                      <Badge colorPalette="orange" variant="solid" fontSize="xs" flexShrink={0}>Deep orange</Badge>
+                      <Text fontSize="xs">Paused — work started then stopped; darker than Tentative</Text>
+                    </HStack>
+                    <HStack p={2} bg="purple.100" borderWidth="1px" borderColor="purple.500" rounded="md" gap={2}>
+                      <Badge colorPalette="purple" variant="solid" fontSize="xs" flexShrink={0}>High priority</Badge>
+                      <Text fontSize="xs">Flagged high priority — overrides every other card colour</Text>
                     </HStack>
                   </VStack>
+
+                  {/* ── Placeholder (ghost) cards ── */}
+                  <Box>
+                    <Text fontWeight="bold" fontSize="md" mb={1}>Placeholder Cards</Text>
+                    <Text fontSize="xs" color="fg.muted" mb={2}>
+                      Not real occurrences — reference cards the app synthesizes so
+                      something you need to know about doesn&apos;t leave a silent gap
+                      in the timeline. They can&apos;t be started, claimed or edited.
+                    </Text>
+                  </Box>
+
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="gray.500" bg="gray.600">
+                    <Badge variant="solid" colorPalette="gray" bg="gray.100" color="gray.900" mb={1}>Expiring</Badge>
+                    <Text fontSize="sm" fontWeight="semibold" color="white">Next visit not scheduled</Text>
+                    <Text fontSize="xs" color="gray.200" mt={1}>
+                      A repeating job whose next visit should have posted by now but
+                      hasn&apos;t, because the previous visit isn&apos;t closed out —
+                      most often it&apos;s <b>waiting on payment</b>. The card names the
+                      blocker and the date the visit would have landed on, and
+                      disappears by itself once the prior visit closes and the real
+                      occurrence is generated. Tap it to open the occurrence that needs
+                      chasing.
+                    </Text>
+                    <Text fontSize="xs" color="gray.300" mt={1}>
+                      Only appears for jobs that are Accepted and auto-renewing, with no
+                      future visit already on the books.
+                    </Text>
+                  </Box>
+
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="gray.300" borderStyle="dashed">
+                    <Text fontWeight="semibold" fontSize="sm" mb={1}>Reminder &amp; Pinned ghosts</Text>
+                    <Text fontSize="xs" color="fg.muted">
+                      A second, dashed copy of a card shown on a future date — where a
+                      reminder falls due, or where a pinned job sits in the regular
+                      feed. Same colour as the original card so it reads as the same
+                      job, not a new one.
+                    </Text>
+                  </Box>
                 </VStack>
               </Dialog.Body>
               <Dialog.Footer>

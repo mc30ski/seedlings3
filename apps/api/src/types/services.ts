@@ -12,8 +12,6 @@ import type {
   Job,
   JobKind,
   JobStatus,
-  JobSchedule,
-  Cadence,
   JobOccurrence,
   JobOccurrenceStatus,
   JobOccurrenceSource,
@@ -500,7 +498,6 @@ export type ServicesProperties = {
 
 export type JobListItem = Job & {
   property: Pick<Property, "id" | "displayName" | "city" | "state" | "status">;
-  schedule?: JobSchedule | null;
   nextOccurrence?: Pick<
     JobOccurrence,
     "id" | "startAt" | "status" | "kind"
@@ -514,17 +511,6 @@ export type JobUpsert = Pick<Job, "propertyId" | "kind" | "status"> & {
   defaultPrice?: number | null;
 };
 
-export type JobScheduleUpsert = {
-  autoRenew: boolean;
-  cadence?: Cadence | null;
-  interval?: number | null;
-  dayOfWeek?: number | null;
-  dayOfMonth?: number | null;
-  preferredStartHour?: number | null;
-  preferredEndHour?: number | null;
-  horizonDays?: number | null;
-  active?: boolean | null;
-};
 
 export type CreateOccurrenceInput = {
   // one-off or manual scheduling
@@ -610,8 +596,7 @@ export type ServicesJobs = {
   ): Promise<
     Job & {
       property: Property;
-      schedule?: JobSchedule | null;
-      occurrences: JobOccurrence[];
+          occurrences: JobOccurrence[];
       defaultAssignees: (JobOccurrenceAssignee | any)[]; // or define a better type for JobAssigneeDefault
     }
   >;
@@ -620,15 +605,6 @@ export type ServicesJobs = {
   update(currentUserId: string, id: string, payload: JobUpsert): Promise<Job>;
 
   // schedule acts like “calendar rules” for generating occurrences
-  upsertSchedule(
-    currentUserId: string,
-    jobId: string,
-    patch: JobScheduleUpsert,
-  ): Promise<JobSchedule>;
-  generateOccurrences(
-    currentUserId: string,
-    jobId: string,
-  ): Promise<{ generated: number }>;
 
   // “create a one-off from the job” (manual instance, can act like template usage)
   createOccurrence(

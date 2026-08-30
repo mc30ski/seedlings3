@@ -939,11 +939,6 @@ enum JobStatus {
   ARCHIVED
 }
 
-enum Cadence {
-  WEEKLY
-  BIWEEKLY
-  MONTHLY
-}
 
 enum JobOccurrenceStatus {
   SCHEDULED
@@ -1018,7 +1013,6 @@ model Job {
   contacts JobContact[]
   clients  JobClient[]
 
-  schedule               JobSchedule?
   occurrences            JobOccurrence[]
   defaultAssignees       JobAssigneeDefault[]
   defaultPropertyPhotos  JobPropertyPhoto[]
@@ -1061,30 +1055,6 @@ model JobClient {
   @@index([clientId])
 }
 
-model JobSchedule {
-  id String @id @default(cuid())
-
-  jobId String @unique
-  job   Job    @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-
-  autoRenew Boolean @default(false)
-
-  cadence  Cadence?
-  interval Int? // every N weeks/months (simple)
-
-  dayOfWeek  Int? // 0-6 for weekly-ish schedules
-  dayOfMonth Int? // 1-31 for monthly-ish schedules
-
-  preferredStartHour Int?
-  preferredEndHour   Int?
-
-  horizonDays    Int       @default(21)
-  nextGenerateAt DateTime?
-  active         Boolean   @default(true)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
 
 model JobOccurrence {
   id String @id @default(cuid())

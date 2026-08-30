@@ -1,10 +1,8 @@
 /*
 Summary: how it all works together
  - You create a Job for a Property (template) with required kind and status.
- - Optionally attach a JobSchedule with autoRenew=true and a simple cadence.
  - The system creates JobOccurrences (instances) either:
    - manually (createOccurrence → source=MANUAL), or
-   - by your generator (generateOccurrences → source=GENERATED)
  - Each occurrence can be assigned to one or more workers using JobOccurrenceAssignee.
    -The service enforces “assignable only if Role.WORKER” by checking UserRole before writing assignment rows.
  - Default assignees on the Job template get copied to the occurrence when you create/generate it, but you can override on the occurrence at any time.
@@ -527,7 +525,6 @@ export const jobs: ServicesJobs = {
             client: { select: { id: true, displayName: true, isVip: true, vipReason: true, adminTags: true } },
           },
         },
-        schedule: true,
         defaultAssignees: {
           orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
           include: { user: { select: { id: true, displayName: true, email: true } } },
@@ -574,7 +571,6 @@ export const jobs: ServicesJobs = {
       where: { id },
       include: {
         property: true,
-        schedule: true,
         defaultAssignees: {
           orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
           include: { user: { select: { id: true, displayName: true, email: true } } },
@@ -725,46 +721,6 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async upsertSchedule(currentUserId, jobId, patch) {
-    return prisma.$transaction(async (tx) => {
-      const record = await tx.jobSchedule.upsert({
-        where: { jobId },
-        create: {
-          jobId,
-          autoRenew: !!patch.autoRenew,
-          cadence: patch.cadence ?? null,
-          interval: patch.interval ?? null,
-          dayOfWeek: patch.dayOfWeek ?? null,
-          dayOfMonth: patch.dayOfMonth ?? null,
-          preferredStartHour: patch.preferredStartHour ?? null,
-          preferredEndHour: patch.preferredEndHour ?? null,
-          horizonDays: patch.horizonDays ?? 21,
-          active: patch.active ?? true,
-          nextGenerateAt: new Date(),
-        },
-        update: {
-          autoRenew: patch.autoRenew ?? undefined,
-          cadence: patch.cadence ?? undefined,
-          interval: patch.interval ?? undefined,
-          dayOfWeek: patch.dayOfWeek ?? undefined,
-          dayOfMonth: patch.dayOfMonth ?? undefined,
-          preferredStartHour: patch.preferredStartHour ?? undefined,
-          preferredEndHour: patch.preferredEndHour ?? undefined,
-          horizonDays: patch.horizonDays ?? undefined,
-          active: patch.active ?? undefined,
-          // bump generator so “turn it on” creates occurrences promptly
-          nextGenerateAt: patch.autoRenew ? new Date() : undefined,
-        },
-      });
-
-      await writeAudit(tx, AUDIT.JOB.SCHEDULE_UPDATED, currentUserId, {
-        jobId,
-        record,
-      });
-
-      return record;
-    });
-  },
 
   async createOccurrence(currentUserId, jobId, input) {
     return prisma.$transaction(async (tx) => {
@@ -2228,7 +2184,7 @@ export const jobs: ServicesJobs = {
    * would have been.
    *
    * Selection rule:
-   *   1. Job is auto-renewing (JobSchedule.autoRenew AND active).
+   *   1. Job has a resolvable frequency — i.e. it repeats at all.
    *   2. Job.status = ACCEPTED (no ghosts for paused / archived jobs).
    *   3. There is NO future-scheduled occurrence (max(startAt) is in
    *      the past).
@@ -2264,10 +2220,18 @@ export const jobs: ServicesJobs = {
     const jobs = await prisma.job.findMany({
       where: {
         status: JobStatus.ACCEPTED,
-        schedule: { autoRenew: true, active: true },
+        // "Repeating" is Job.frequencyDays, resolved below as
+        // `occurrence.frequencyDays ?? job.frequencyDays` — the same
+        // resolution used to date the ghost.
+        //
+        // This once required a JobSchedule row with autoRenew+active.
+        // Production had none — that table was never populated by any
+        // reachable code path — so every repeating job was excluded and
+        // this card had never appeared in production at all. It looked
+        // healthy in dev only because seed.ts created the rows.
+        // JobSchedule has since been removed entirely.
       },
       include: {
-        schedule: true,
         property: {
           select: {
             id: true, displayName: true, street1: true, city: true, state: true,
@@ -2307,6 +2271,18 @@ export const jobs: ServicesJobs = {
       // Terminal states that end the series → no ghost.
       if (latest.status === JobOccurrenceStatus.CANCELED) continue;
       if (latest.status === JobOccurrenceStatus.ARCHIVED) continue;
+      // A one-off has no "next" — that is what the workflow means. It
+      // ghosted anyway because the frequency resolution below falls back
+      // to `job.frequencyDays`, and a job that USED to repeat still
+      // carries one: a ONE_OFF occurrence with frequencyDays=null on a
+      // job with frequencyDays=14 resolved to 14 and advertised a visit
+      // that was never going to happen. Every non-STANDARD workflow is
+      // excluded for the same reason — none is a repeating service visit.
+      if (latest.workflow !== "STANDARD" || (latest as any).isOneOff) continue;
+      // A paused stream is a DELIBERATE stop, not a gap — and the
+      // "Paused repeating to review" queue already surfaces these, so a
+      // ghost here reports the same job in two places.
+      if (latest.status === JobOccurrenceStatus.STREAM_PAUSED) continue;
 
       const effectiveFreq = latest.frequencyDays ?? job.frequencyDays;
       if (!effectiveFreq || effectiveFreq <= 0) continue;
@@ -3393,105 +3369,6 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async generateOccurrences(currentUserId, jobId) {
-    // Keep it simple for MVP: generate N occurrences into the future
-    // based on cadence fields. You can make this smarter later.
-    return prisma.$transaction(async (tx) => {
-      const job = await tx.job.findUniqueOrThrow({
-        where: { id: jobId },
-        include: {
-          schedule: true,
-          // Order by sortOrder so the chosen claimer is honored when
-          // generating new occurrences from the schedule.
-          defaultAssignees: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] },
-        },
-      });
-
-      const sch = job.schedule;
-      if (!sch || !sch.active || !sch.autoRenew || !sch.cadence) {
-        return { generated: 0 };
-      }
-
-      // naive generator: create one occurrence “now + cadence”
-      // (You can replace with a real horizon loop later.)
-      const now = new Date();
-      const occ = await tx.jobOccurrence.create({
-        data: {
-          jobId,
-          kind: job.kind,
-          startAt: now,
-          status: JobOccurrenceStatus.SCHEDULED,
-          source: JobOccurrenceSource.GENERATED,
-          notes: (job as any).notes ?? null,
-          price: (job as any).defaultPrice ?? null,
-          estimatedMinutes: (job as any).estimatedMinutes ?? null,
-        } as any,
-      });
-
-      // Default-crew resolution mirrors createOccurrence: group default
-      // takes precedence over individual defaults; archived groups leave
-      // the occurrence unassigned (admin can fix manually).
-      const assigneeSource: { userId: string; role: string | null }[] = [];
-      let attachedGroupId: string | null = null;
-      if ((job as any).defaultGroupId) {
-        const group = await tx.group.findUnique({
-          where: { id: (job as any).defaultGroupId },
-          include: { members: { select: { userId: true, role: true } } },
-        });
-        if (group && !group.archivedAt) {
-          attachedGroupId = group.id;
-          assigneeSource.push({ userId: group.claimerUserId, role: null });
-          for (const m of group.members) {
-            assigneeSource.push({
-              userId: m.userId,
-              role: m.role === "observer" ? "observer" : null,
-            });
-          }
-        }
-      } else {
-        for (const d of job.defaultAssignees.filter((d) => d.active)) {
-          assigneeSource.push({ userId: d.userId, role: d.role ?? null });
-        }
-      }
-
-      for (const a of assigneeSource) {
-        await assertWorkerAssignable(tx, a.userId);
-      }
-
-      if (attachedGroupId) {
-        await tx.jobOccurrence.update({
-          where: { id: occ.id },
-          data: { assignedGroupId: attachedGroupId },
-        });
-      }
-
-      if (assigneeSource.length) {
-        const claimerId = assigneeSource[0].userId;
-        await tx.jobOccurrenceAssignee.createMany({
-          data: assigneeSource.map((a, i) => ({
-            occurrenceId: occ.id,
-            userId: a.userId,
-            role: a.role ?? null,
-            assignedById: i === 0 ? a.userId : claimerId,
-          })),
-          skipDuplicates: true,
-        });
-      }
-
-      await tx.jobSchedule.update({
-        where: { id: sch.id },
-        data: { nextGenerateAt: now }, // placeholder: compute real next time later
-      });
-
-      await writeAudit(tx, AUDIT.JOB.OCCURRENCES_GENERATED, currentUserId, {
-        jobId,
-        generated: 1,
-        occurrenceId: occ.id,
-      });
-
-      return { generated: 1 };
-    });
-  },
 
   async archiveJob(
     currentUserId: string,
@@ -3618,8 +3495,7 @@ export const jobs: ServicesJobs = {
               status: true,
             },
           },
-          schedule: true,
-          _count: { select: { defaultAssignees: true } },
+            _count: { select: { defaultAssignees: true } },
         },
       }),
       prisma.job.count({ where }),
@@ -3643,7 +3519,6 @@ export const jobs: ServicesJobs = {
     const job = await prisma.job.findUnique({
       where: { id: jobId },
       include: {
-        schedule: true,
         property: { select: { id: true, displayName: true, clientId: true } },
       },
     });
@@ -3657,12 +3532,12 @@ export const jobs: ServicesJobs = {
       );
     }
     return prisma.$transaction(async (tx) => {
-      await tx.jobSchedule.deleteMany({ where: { jobId } });
       await tx.job.delete({ where: { id: jobId } });
       // Money: the Job row carries defaultPrice — the amount every future
-      // occurrence bills the client — and its schedule drives how often that
-      // charge recurs. Both rows are hard-deleted here, so this snapshot is
-      // the only surviving record of what the client was being billed.
+      // occurrence bills the client — and frequencyDays, which drives how
+      // often that charge recurs. The row is hard-deleted here, so this
+      // snapshot is the only surviving record of what the client was
+      // being billed.
       await writeAudit(tx, AUDIT.JOB.DELETED, currentUserId ?? null, {
         jobId,
         propertyId: job.propertyId,
@@ -3676,12 +3551,6 @@ export const jobs: ServicesJobs = {
         estimatedMinutes: job.estimatedMinutes ?? null,
         frequencyDays: job.frequencyDays ?? null,
         defaultGroupId: job.defaultGroupId ?? null,
-        scheduleDeleted: !!job.schedule,
-        scheduleCadence: job.schedule?.cadence ?? null,
-        scheduleInterval: job.schedule?.interval ?? null,
-        scheduleAutoRenew: job.schedule?.autoRenew ?? null,
-        scheduleActive: job.schedule?.active ?? null,
-        scheduleNextGenerateAt: job.schedule?.nextGenerateAt?.toISOString() ?? null,
       });
       return { deleted: true as const };
     });

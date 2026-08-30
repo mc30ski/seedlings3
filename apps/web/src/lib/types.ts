@@ -410,18 +410,7 @@ export const JOB_TYPE_OPTIONS = [
   { value: "OTHER", label: "Other" },
 ] as const;
 
-export const JOB_CADENCE = ["WEEKLY", "BIWEEKLY", "MONTHLY"] as const;
-export type JobCadence = (typeof JOB_CADENCE)[number];
 
-export type JobSchedule = {
-  id: string;
-  jobId: string;
-  autoRenew: boolean;
-  cadence?: string | null;
-  dayOfWeek?: number | null;
-  dayOfMonth?: number | null;
-  active: boolean;
-};
 
 export type JobOccurrenceAssigneeWithUser = {
   id: string;
@@ -488,7 +477,6 @@ export type JobListItem = {
   kind: JobKind;
   status: JobStatus;
   frequencyDays?: number | null;
-  schedule?: JobSchedule | null;
   nextOccurrence?: {
     id: string;
     startAt?: string | null;

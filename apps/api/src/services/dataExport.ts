@@ -38,7 +38,6 @@ export type DataSnapshot = {
   jobs: unknown[];
   jobContacts: unknown[];
   jobClients: unknown[];
-  jobSchedules: unknown[];
   jobOccurrences: unknown[];
   jobAssigneeDefaults: unknown[];
   jobOccurrenceAssignees: unknown[];
@@ -72,7 +71,6 @@ export async function buildDataSnapshot(cutoff: Date | null): Promise<DataSnapsh
     jobs,
     jobContacts,
     jobClients,
-    jobSchedules,
     jobOccurrences,
     jobAssigneeDefaults,
     jobOccurrenceAssignees,
@@ -92,7 +90,6 @@ export async function buildDataSnapshot(cutoff: Date | null): Promise<DataSnapsh
     prisma.job.findMany({ orderBy: { createdAt: "asc" } }),
     prisma.jobContact.findMany(),
     prisma.jobClient.findMany(),
-    prisma.jobSchedule.findMany({ orderBy: { createdAt: "asc" } }),
     prisma.jobOccurrence.findMany({ orderBy: { createdAt: "asc" } }),
     prisma.jobAssigneeDefault.findMany({ orderBy: { createdAt: "asc" } }),
     prisma.jobOccurrenceAssignee.findMany(),
@@ -127,7 +124,6 @@ export async function buildDataSnapshot(cutoff: Date | null): Promise<DataSnapsh
     jobs,
     jobContacts,
     jobClients,
-    jobSchedules,
     jobOccurrences,
     jobAssigneeDefaults,
     jobOccurrenceAssignees,
