@@ -8462,6 +8462,11 @@ Respond ONLY with valid JSON in this exact format:
       note?: string | null;
       processorFeeAmount?: number;
       paidAt?: Date;
+      tip?: {
+        amount: number;
+        businessPercent: number;
+        workerPercents: Array<{ userId: string; percent: number }>;
+      } | null;
     } = {};
     if (body.amountPaid !== undefined) overrides.amountPaid = Number(body.amountPaid);
     if (body.method) overrides.method = String(body.method);
@@ -8476,6 +8481,36 @@ Respond ONLY with valid JSON in this exact format:
         throw app.httpErrors.badRequest("paidAt must be YYYY-MM-DD");
       }
       overrides.paidAt = etInstantFromParts(key as EtDateKey, "12:00");
+    }
+    // Tip designation. Validated here rather than trusted: the percentages
+    // decide how real money is divided, so a malformed body must be
+    // rejected rather than silently allocated somewhere.
+    if (body.tip) {
+      const t = body.tip;
+      const amount = Number(t.amount);
+      const businessPercent = Number(t.businessPercent);
+      const workerPercents = Array.isArray(t.workerPercents)
+        ? (t.workerPercents as any[]).map((w: any) => ({
+            userId: String(w.userId),
+            percent: Number(w.percent),
+          }))
+        : [];
+      if (!Number.isFinite(amount) || amount <= 0) {
+        throw app.httpErrors.badRequest("tip.amount must be a positive number");
+      }
+      const pcts = [businessPercent, ...workerPercents.map((w) => w.percent)];
+      if (pcts.some((p) => !Number.isFinite(p) || p < 0)) {
+        throw app.httpErrors.badRequest("tip percentages must be non-negative numbers");
+      }
+      const total = pcts.reduce((a, b) => a + b, 0);
+      // Same ±0.01 tolerance the splits editor uses — operators type
+      // 33.33/33.33/33.34 and that has to be accepted.
+      if (Math.abs(total - 100) > 0.01) {
+        throw app.httpErrors.badRequest(
+          `tip percentages must total 100 (got ${total.toFixed(2)})`,
+        );
+      }
+      overrides.tip = { amount, businessPercent, workerPercents };
     }
     return services.payments.approvePayment(uid, String(req.params.id), overrides);
   });

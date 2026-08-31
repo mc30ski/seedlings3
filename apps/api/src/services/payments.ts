@@ -55,7 +55,62 @@ type FinalSplitRow = {
   netAmount: number;
   topUpAmount: number;
   amount: number; // final payout = netAmount + topUpAmount
+  /** This worker's share of a designated tip. Separate from `amount` on
+   *  purpose — see PaymentSplit.tipAmount in schema.prisma. */
+  tipAmount: number;
 };
+
+/**
+ * Operator's designation of an overpayment as a tip.
+ *
+ * `businessPercent` + every `workerPercents[].percent` must total 100.
+ * The UI defaults the worker percentages to the job's `completionSplits`
+ * with the business at 0, and validates the total before submitting.
+ */
+export type TipDesignation = {
+  /** Total to designate. Clamped to the computed overage — you cannot tip
+   *  money the client didn't actually overpay. */
+  amount: number;
+  businessPercent: number;
+  workerPercents: Array<{ userId: string; percent: number }>;
+};
+
+/**
+ * Split `total` across `percents` so the parts sum to EXACTLY `total`.
+ *
+ * Independent `round2` calls drift — two workers at 50% of $0.01 each
+ * round to $0.01 and sum to $0.02. That would break the payment-row
+ * conservation identity (build gate C), which is checked to the cent.
+ *
+ * Largest-remainder method: floor everyone to cents, then hand the
+ * leftover cents out one at a time in descending fractional-part order.
+ */
+function allocateExact(
+  total: number,
+  percents: Array<{ key: string; percent: number }>,
+): Map<string, number> {
+  const out = new Map<string, number>();
+  if (percents.length === 0) return out;
+  const totalCents = Math.round(total * 100);
+  const raw = percents.map((p) => ({
+    key: p.key,
+    exact: (totalCents * p.percent) / 100,
+  }));
+  let assigned = 0;
+  const floored = raw.map((r) => {
+    const f = Math.floor(r.exact);
+    assigned += f;
+    return { key: r.key, cents: f, frac: r.exact - f };
+  });
+  let remainder = totalCents - assigned;
+  // Ties broken by the original order, which is stable across runs.
+  const order = [...floored].sort((a, b) => b.frac - a.frac);
+  for (let i = 0; i < order.length && remainder > 0; i++, remainder--) {
+    order[i].cents += 1;
+  }
+  for (const f of floored) out.set(f.key, f.cents / 100);
+  return out;
+}
 
 function isEmployeeClass(wt: WorkerType | null): boolean {
   return wt === "EMPLOYEE" || wt === "TRAINEE";
@@ -253,12 +308,15 @@ export function reconcileApproval(
   workers: WorkerInput[],
   promised: PromisedRow[],
   rates: Rates,
+  tip?: TipDesignation | null,
 ): {
   splits: FinalSplitRow[];
   platformFeeAmount: number;
   businessMarginAmount: number;
   shortfallAmount: number;
   overageAmount: number;
+  tipAmount: number;
+  tipToBusinessAmount: number;
 } {
   const actual = computeBreakdown(collected, expenses, workers, rates);
   const promisedById = new Map(promised.map((p) => [p.userId, p]));
@@ -277,6 +335,7 @@ export function reconcileApproval(
         netAmount: a.net,
         topUpAmount: 0,
         amount: a.net,
+        tipAmount: 0,
       };
     }
 
@@ -294,6 +353,7 @@ export function reconcileApproval(
         netAmount: a.net,
         topUpAmount: topUp,
         amount: round2(finalAmount),
+        tipAmount: 0,
       };
     }
 
@@ -309,6 +369,7 @@ export function reconcileApproval(
       netAmount: a.net,
       topUpAmount: 0,
       amount: round2(finalAmount),
+      tipAmount: 0,
     };
   });
 
@@ -339,12 +400,48 @@ export function reconcileApproval(
   const actualRetained = collected - expenses - totalPayouts;
   const delta = actualRetained - promisedRetained;
 
+  const shortfallAmount = delta < 0 ? round2(-delta) : 0;
+  let overageAmount = delta > 0 ? round2(delta) : 0;
+
+  // TIP DESIGNATION. A tip is carved OUT of the overage — you cannot tip
+  // money the client didn't overpay, so the request is clamped to it.
+  // Whatever is left stays `overageAmount`: an overpayment nobody called a
+  // tip. The two are mutually exclusive by construction.
+  //
+  // Tips deliberately bypass platform fee and business margin: the
+  // business's cut is exactly `businessPercent`, not that plus a rate on
+  // the workers' shares.
+  let tipAmount = 0;
+  let tipToBusinessAmount = 0;
+  if (tip && tip.amount > 0 && overageAmount > 0) {
+    tipAmount = round2(Math.min(tip.amount, overageAmount));
+    const parts = [
+      { key: "__business", percent: tip.businessPercent },
+      ...tip.workerPercents.map((w) => ({ key: w.userId, percent: w.percent })),
+    ];
+    const alloc = allocateExact(tipAmount, parts);
+    tipToBusinessAmount = alloc.get("__business") ?? 0;
+    for (const sp of splits) sp.tipAmount = alloc.get(sp.userId) ?? 0;
+    // A percentage aimed at someone who has no split row would silently
+    // vanish and break the identity — fold it into the business share,
+    // which is where unattributed money belongs.
+    const attributed = round2(
+      tipToBusinessAmount + splits.reduce((sum, sp) => sum + sp.tipAmount, 0),
+    );
+    if (attributed !== tipAmount) {
+      tipToBusinessAmount = round2(tipToBusinessAmount + (tipAmount - attributed));
+    }
+    overageAmount = round2(overageAmount - tipAmount);
+  }
+
   return {
     splits,
     platformFeeAmount,
     businessMarginAmount,
-    shortfallAmount: delta < 0 ? round2(-delta) : 0,
-    overageAmount: delta > 0 ? round2(delta) : 0,
+    shortfallAmount,
+    overageAmount,
+    tipAmount,
+    tipToBusinessAmount,
   };
 }
 
@@ -679,6 +776,8 @@ export const payments: ServicesPayments = {
           businessMarginAmount: hasEmployees ? recon.businessMarginAmount : null,
           shortfallAmount: recon.shortfallAmount,
           overageAmount: recon.overageAmount,
+          tipAmount: recon.tipAmount,
+          tipToBusinessAmount: recon.tipToBusinessAmount,
           // Processor-fee snapshot. Null fields = legacy/zero-fee. Stored on
           // every Payment for reporting + tax export integrity.
           processorFeePercent: feeCfg.feePercent,
@@ -699,6 +798,7 @@ export const payments: ServicesPayments = {
               feeAmount: s.feeAmount,
               netAmount: s.netAmount,
               topUpAmount: s.topUpAmount,
+              tipAmount: s.tipAmount,
               ownerEarnings: ownerSet.has(s.userId),
             })),
           },
@@ -1380,12 +1480,20 @@ export const payments: ServicesPayments = {
 
       if (input.splits) {
         const ownerSet = await loadOwnerSet(tx, input.splits.map((sp) => sp.userId));
+        // Snapshot tips BEFORE the delete. The splits are delete+recreated
+        // here, so without carrying tipAmount forward the per-worker tips
+        // would zero out while Payment.tipAmount stayed — breaking the
+        // conservation identity.
+        const priorTipByUser = new Map<string, number>(
+          (existing.splits ?? []).map((x: any) => [String(x.userId), Number(x.tipAmount ?? 0)] as [string, number]),
+        );
         await tx.paymentSplit.deleteMany({ where: { paymentId } });
         await tx.paymentSplit.createMany({
           data: input.splits.map((sp) => ({
             paymentId,
             userId: sp.userId,
             amount: sp.amount,
+            tipAmount: priorTipByUser.get(sp.userId) ?? 0,
             ownerEarnings: ownerSet.has(sp.userId),
           })),
         });
@@ -1507,19 +1615,30 @@ export const payments: ServicesPayments = {
       }
 
       // Even split across current assignees — deduct expenses, commission, and margin first
+      // Tip money is excluded from the pot being redistributed. Tips were
+      // designated to specific people at specific percentages; folding them
+      // into an even split would silently reassign them, and the business's
+      // share of the tip isn't payout money at all.
       const totalPayout = payment.amountPaid
         - (payment.platformFeeAmount ?? 0)
         - (payment.businessMarginAmount ?? 0)
+        - (payment.tipAmount ?? 0)
         - ((await tx.expense.aggregate({ where: { occurrenceId }, _sum: { cost: true } }))._sum.cost ?? 0);
       const splitAmount = Math.round((Math.max(0, totalPayout) / assigneeIds.length) * 100) / 100;
 
       const ownerSet = await loadOwnerSet(tx, assigneeIds);
+      // Carry each worker's designated tip through the rewrite — see the
+      // same guard in updatePayment.
+      const priorTipByUser = new Map<string, number>(
+        ((payment as any).splits ?? []).map((x: any) => [String(x.userId), Number(x.tipAmount ?? 0)] as [string, number]),
+      );
       await tx.paymentSplit.deleteMany({ where: { paymentId: payment.id } });
       await tx.paymentSplit.createMany({
         data: assigneeIds.map((uid) => ({
           paymentId: payment.id,
           userId: uid,
           amount: splitAmount,
+          tipAmount: priorTipByUser.get(uid) ?? 0,
           ownerEarnings: ownerSet.has(uid),
         })),
       });
@@ -1748,10 +1867,24 @@ export const payments: ServicesPayments = {
 
     const promised = (existing.occurrence as any).promisedPayouts as PromisedRow[] | null;
     const recon = Array.isArray(promised) && promised.length > 0
-      ? reconcileApproval(finalAmount, totalExpenses, workersList, promised, rates)
+      ? reconcileApproval(finalAmount, totalExpenses, workersList, promised, rates, overrides?.tip ?? null)
       : (() => {
-          // Legacy path: compute against final amount only; no top-ups.
-          const rows = computeBreakdown(finalAmount, totalExpenses, workersList, rates);
+          // LEGACY PATH — no promised snapshot (about a third of historical
+          // occurrences). There's nothing to compare against, so shortfall
+          // and overage can't be derived here.
+          //
+          // A tip still has to work: the operator EXPLICITLY designated an
+          // amount, so we don't need to derive it. Carve it off the top
+          // first, then run the job math on what's left — otherwise
+          // computeBreakdown would hand the tip money out as job pay AND
+          // we'd allocate it again as tips, double-counting it.
+          const tipReq = overrides?.tip ?? null;
+          const tipTotal =
+            tipReq && tipReq.amount > 0
+              ? round2(Math.min(tipReq.amount, finalAmount))
+              : 0;
+          const jobPortion = round2(finalAmount - tipTotal);
+          const rows = computeBreakdown(jobPortion, totalExpenses, workersList, rates);
           const splits: FinalSplitRow[] = rows.map((r) => ({
             userId: r.userId,
             workerType: r.workerType,
@@ -1762,6 +1895,7 @@ export const payments: ServicesPayments = {
             netAmount: r.net,
             topUpAmount: 0,
             amount: r.net,
+            tipAmount: 0,
           }));
           const platformFeeAmount = round2(
             splits.filter((s) => !isEmployeeClass(s.workerType)).reduce((sum, s) => sum + s.feeAmount, 0),
@@ -1769,7 +1903,26 @@ export const payments: ServicesPayments = {
           const businessMarginAmount = round2(
             splits.filter((s) => isEmployeeClass(s.workerType)).reduce((sum, s) => sum + s.feeAmount, 0),
           );
-          return { splits, platformFeeAmount, businessMarginAmount, shortfallAmount: 0, overageAmount: 0 };
+          let tipToBusinessAmount = 0;
+          if (tipTotal > 0 && tipReq) {
+            const alloc = allocateExact(tipTotal, [
+              { key: "__business", percent: tipReq.businessPercent },
+              ...tipReq.workerPercents.map((w) => ({ key: w.userId, percent: w.percent })),
+            ]);
+            tipToBusinessAmount = alloc.get("__business") ?? 0;
+            for (const sp of splits) sp.tipAmount = alloc.get(sp.userId) ?? 0;
+            const attributed = round2(
+              tipToBusinessAmount + splits.reduce((sum, sp) => sum + sp.tipAmount, 0),
+            );
+            if (attributed !== tipTotal) {
+              tipToBusinessAmount = round2(tipToBusinessAmount + (tipTotal - attributed));
+            }
+          }
+          return {
+            splits, platformFeeAmount, businessMarginAmount,
+            shortfallAmount: 0, overageAmount: 0,
+            tipAmount: tipTotal, tipToBusinessAmount,
+          };
         })();
 
     const hasContractors = workersList.some((w) => !isEmployeeClass(w.workerType));
@@ -1790,6 +1943,7 @@ export const payments: ServicesPayments = {
             feeAmount: s.feeAmount,
             netAmount: s.netAmount,
             topUpAmount: s.topUpAmount,
+            tipAmount: s.tipAmount,
             ownerEarnings: ownerSet.has(s.userId),
           })),
         });
@@ -1819,6 +1973,8 @@ export const payments: ServicesPayments = {
           businessMarginAmount: hasEmployees ? recon.businessMarginAmount : null,
           shortfallAmount: recon.shortfallAmount,
           overageAmount: recon.overageAmount,
+          tipAmount: recon.tipAmount,
+          tipToBusinessAmount: recon.tipToBusinessAmount,
           processorFeePercent: feeCfg.feePercent,
           processorFeeFixed: feeCfg.feeFixed,
           processorFeeAmount: processorFeeAmount,
@@ -1867,6 +2023,9 @@ export const payments: ServicesPayments = {
         adjustedFromAmount: wasAdjusted ? existing.amountPaid : undefined,
         shortfallAmount: recon.shortfallAmount,
         overageAmount: recon.overageAmount,
+        tipAmount: recon.tipAmount,
+        tipToBusinessAmount: recon.tipToBusinessAmount,
+        tipSplits: recon.splits.filter((s) => s.tipAmount > 0).map((s) => ({ userId: s.userId, amount: s.tipAmount })),
       });
       if (wasAdjusted) {
         await writeAudit(tx, AUDIT.PAYMENT.ADJUSTED, currentUserId, {
@@ -2513,8 +2672,17 @@ export const payments: ServicesPayments = {
             assignees: {
               // SQL NULL-safety on role (see equipment.ts comment).
               where: { OR: [{ role: null }, { role: { not: "observer" } }] },
-              select: { userId: true, user: { select: { displayName: true, email: true } } },
+              select: {
+                userId: true,
+                // isOwner drives the tip editor's "Business keeps X%" note —
+                // an owner's share is business money even though it renders
+                // as a worker row.
+                user: { select: { displayName: true, email: true, isOwner: true } },
+              },
             },
+            // Seeds the tip editor's default percentages: a trainee credited
+            // 20% of the job defaults to 20% of the tip.
+            completionSplits: true,
           },
         },
       },

@@ -2625,6 +2625,9 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                     const hasDeductions = expTotal > 0 || fee > 0 || margin > 0;
                     const shortfall = (p as any).shortfallAmount ?? 0;
                     const overage = (p as any).overageAmount ?? 0;
+                    const tipTotal = (p as any).tipAmount ?? 0;
+                    const tipToBusiness = (p as any).tipToBusinessAmount ?? 0;
+                    const tipToWorkers = Math.max(0, Math.round((tipTotal - tipToBusiness) * 100) / 100);
                     const adjustedFrom = (p as any).adjustedFromAmount as number | null | undefined;
                     return (
                       // Headline = worker payout (what the workers actually
@@ -2637,7 +2640,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                         {/* Status badges stack ABOVE the WORKER PAYOUT
                             headline so the headline number remains the
                             tallest, most prominent element in the row. */}
-                        {(isPending || writtenOff || skipped || overage > 0 || (adjustedFrom != null && adjustedFrom !== p.amountPaid)) && (
+                        {(isPending || writtenOff || skipped || overage > 0 || tipTotal > 0 || (adjustedFrom != null && adjustedFrom !== p.amountPaid)) && (
                           <HStack gap={1} align="center" wrap="wrap" justify={{ base: "flex-start", sm: "flex-end" }} mb={1}>
                             {isPending && (
                               <Badge size="sm" colorPalette="orange" variant="subtle" title="Awaiting admin approval in the Pending Approvals queue.">
@@ -2694,12 +2697,22 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                                 `overageAmount` is the server's own
                                 collected-minus-promised delta, stamped at
                                 approval from the promised snapshot. */}
+                            {tipTotal > 0 && (
+                              <Badge
+                                size="sm"
+                                colorPalette="green"
+                                variant="subtle"
+                                title={`Client tipped $${tipTotal.toFixed(2)} — $${tipToWorkers.toFixed(2)} to the crew, $${tipToBusiness.toFixed(2)} to the business. Tips skip commission and margin, and are paid on the payroll covering the date the client paid (not the date of the job).`}
+                              >
+                                Tip ${tipTotal.toFixed(2)}
+                              </Badge>
+                            )}
                             {overage > 0 && (
                               <Badge
                                 size="sm"
                                 colorPalette="purple"
                                 variant="subtle"
-                                title={`Client paid $${overage.toFixed(2)} more than the promised total. Workers were paid their promised amounts; the extra was retained by the business and counts as income. If this was a typo, use Adjust to correct it.`}
+                                title={`Client paid $${overage.toFixed(2)} more than the promised total and it was NOT designated a tip. Workers were paid their promised amounts; the extra was retained by the business and counts as income. If this was a typo, use Adjust to correct it.`}
                               >
                                 Overpaid ${overage.toFixed(2)}
                               </Badge>
@@ -2763,6 +2776,16 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                         {!skipped && overage > 0 && (
                           <Text fontSize="xs" color="green.600" mt={1}>
                             Business kept ${overage.toFixed(2)} overage
+                          </Text>
+                        )}
+                        {/* Tip line — always broken out, never summed into
+                            the payout figures above. The split matters:
+                            the crew's share is wages/1099 income while the
+                            business's share is ordinary revenue. */}
+                        {!skipped && tipTotal > 0 && (
+                          <Text fontSize="xs" color="green.700" fontWeight="medium" mt={1}>
+                            Tip ${tipTotal.toFixed(2)} — ${tipToWorkers.toFixed(2)} to workers,
+                            {" "}${tipToBusiness.toFixed(2)} to business
                           </Text>
                         )}
                       </VStack>

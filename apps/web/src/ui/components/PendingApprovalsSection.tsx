@@ -82,7 +82,11 @@ type PendingRow = {
         } | null;
       } | null;
     } | null;
-    assignees: { userId: string; user: { displayName: string | null; email: string | null } | null }[];
+    assignees: {
+      userId: string;
+      user: { displayName: string | null; email: string | null; isOwner: boolean } | null;
+    }[];
+    completionSplits: Array<{ userId: string; percent: number }> | null;
   };
 };
 
@@ -172,6 +176,14 @@ export default function PendingApprovalsSection({ onReady }: {
      *  Payment.createdAt and Payment.confirmedAt so cash-basis reports
      *  bucket the payment on the correct day. */
     paidAt?: string,
+    /** Tip designation from the approve dialog — divides an overpayment
+     *  between the business and the workers. Absent = the overpayment
+     *  stays with the business as overage (today's behavior). */
+    tip?: {
+      amount: number;
+      businessPercent: number;
+      workerPercents: Array<{ userId: string; percent: number }>;
+    } | null,
   ) {
     try {
       const body: {
@@ -180,6 +192,11 @@ export default function PendingApprovalsSection({ onReady }: {
         method?: string;
         note?: string | null;
         paidAt?: string;
+        tip?: {
+          amount: number;
+          businessPercent: number;
+          workerPercents: Array<{ userId: string; percent: number }>;
+        };
       } = {};
       if (overrideAmount !== undefined) body.amountPaid = overrideAmount;
       if (feeOverride !== undefined) body.processorFeeAmount = feeOverride;
@@ -191,6 +208,7 @@ export default function PendingApprovalsSection({ onReady }: {
       if (overrideMethod && overrideMethod !== row.method) body.method = overrideMethod;
       if (overrideNote !== undefined) body.note = overrideNote;
       if (paidAt) body.paidAt = paidAt;
+      if (tip) body.tip = tip;
       // Server returns the next-occurrence outcome on the approval path
       // (a populated `nextOccurrence` when the cycle advanced, or
       // `nextOccurrenceSkipReason` when it didn't). composePaymentMessage
@@ -410,12 +428,32 @@ export default function PendingApprovalsSection({ onReady }: {
           })}
         </VStack>
       <ApprovePaymentDialog
-        row={approvingRow}
+        row={
+          approvingRow
+            ? {
+                id: approvingRow.id,
+                amountPaid: approvingRow.amountPaid,
+                method: approvingRow.method,
+                processorFeeAmount: approvingRow.processorFeeAmount,
+                // Invoice total = base price + add-ons. Anything above it
+                // is the overpayment the tip can be carved from.
+                invoiceTotal:
+                  (approvingRow.occurrence.price ?? 0) +
+                  (approvingRow.occurrence.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0),
+                assignees: (approvingRow.occurrence.assignees ?? []).map((a) => ({
+                  userId: a.userId,
+                  displayName: a.user?.displayName ?? a.user?.email ?? "Worker",
+                  isOwner: !!a.user?.isOwner,
+                })),
+                completionSplits: approvingRow.occurrence.completionSplits ?? null,
+              }
+            : null
+        }
         willScheduleNext={approvingRow ? willScheduleNext(approvingRow) : false}
-        onConfirm={(feeOverride?: number, paidAt?: string) => {
+        onConfirm={(feeOverride?: number, paidAt?: string, tip?: any) => {
           const r = approvingRow;
           setApprovingRow(null);
-          if (r) void approve(r, undefined, feeOverride, undefined, undefined, paidAt);
+          if (r) void approve(r, undefined, feeOverride, undefined, undefined, paidAt, tip);
         }}
         onCancel={() => setApprovingRow(null)}
       />

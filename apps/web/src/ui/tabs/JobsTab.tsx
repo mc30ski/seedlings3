@@ -6533,6 +6533,41 @@ export default function JobsTab({
                             </Badge>
                           );
                         })()}
+                        {/* Tip — its OWN badge, never summed into the payout
+                            above. Job pay and tip pay on different payroll
+                            periods (job pay is work-anchored, a tip is
+                            payment-anchored), so merging them would produce a
+                            number that matches neither paycheck. */}
+                        {(() => {
+                          const pay = (occ as any).payment;
+                          const tipTotal = pay?.tipAmount ?? 0;
+                          if (!(tipTotal > 0)) return null;
+                          const tipSplits = (pay?.splits ?? []) as Array<{ userId: string; tipAmount?: number }>;
+                          const toWorkers = tipSplits.reduce((sum, sp) => sum + (sp.tipAmount ?? 0), 0);
+                          // Operators see the whole tip and how it split.
+                          // A worker sees ONLY their own share — and nothing
+                          // at all when they have none, so the card never
+                          // tells one worker what the crew was tipped.
+                          const mine = myId ? (tipSplits.find((sp) => sp.userId === myId)?.tipAmount ?? 0) : 0;
+                          const showMine = !showAdminExtras;
+                          if (showMine && !(mine > 0)) return null;
+                          return (
+                            <Badge
+                              colorPalette="green"
+                              variant="solid"
+                              fontSize="xs"
+                              px="2"
+                              borderRadius="full"
+                              title={
+                                showMine
+                                  ? `Your share of the client's tip. Paid on the payroll covering the date the client paid, which may differ from this job's payroll.`
+                                  : `Client tipped $${tipTotal.toFixed(2)} — $${toWorkers.toFixed(2)} to the crew, $${(tipTotal - toWorkers).toFixed(2)} to the business. Paid on the payroll covering the date the client paid, which may differ from this job's payroll.`
+                              }
+                            >
+                              {showMine ? `Your tip: $${mine.toFixed(2)}` : `Tip: $${tipTotal.toFixed(2)}`}
+                            </Badge>
+                          );
+                        })()}
                         {!isTaskOrReminder && !isEstimateOcc && !isEvent && !isFollowup && !isAnnouncement && (() => {
                           const actual = effectiveMinutes(occ);
                           const workerCount = Math.max(1, (occ.assignees ?? []).filter((a) => a.role !== "observer").length);

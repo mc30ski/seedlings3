@@ -38,8 +38,9 @@
 //      For every (amountPaid, expenses, workers, rates) tuple, what came
 //      in is fully accounted for by splits + business + overage − shortfall
 //      + expenses (expenses are reimbursed out of the customer payment):
-//        amountPaid = sum(split.amount) + platformFeeAmount
-//                     + businessMarginAmount + overageAmount
+//        amountPaid = sum(split.amount) + sum(split.tipAmount)
+//                     + platformFeeAmount + businessMarginAmount
+//                     + tipToBusinessAmount + overageAmount
 //                     − shortfallAmount + expenses
 //      Same identity as `payments.test.ts > Payment-row aggregate identity`,
 //      but fuzzed across the parameter space.
@@ -347,14 +348,24 @@ describe("[build-gate] worker-classification policy", () => {
 //   - QuickBooks ledger doesn't reconcile against the bank statement
 // ──────────────────────────────────────────────────────────────────────────
 describe("[build-gate] payment-row aggregate identity", () => {
-  function drift(collected: number, expenses: number, workers: ReturnType<typeof W>[]) {
+  function drift(
+    collected: number,
+    expenses: number,
+    workers: ReturnType<typeof W>[],
+    tip?: Parameters<typeof reconcileApproval>[5],
+  ) {
     const promised = computeBreakdown(collected, expenses, workers, PRODUCTION_RATES);
-    const r = reconcileApproval(collected, expenses, workers, promised, PRODUCTION_RATES);
+    const r = reconcileApproval(collected, expenses, workers, promised, PRODUCTION_RATES, tip);
     const payoutsSum = r.splits.reduce((s, sp) => s + sp.amount, 0);
+    // Tips are part of the money that came in, so they belong in the
+    // identity: the worker-side shares plus the business's cut of the tip.
+    const tipsSum = r.splits.reduce((s, sp) => s + sp.tipAmount, 0);
     const accounted =
       payoutsSum +
+      tipsSum +
       r.platformFeeAmount +
       r.businessMarginAmount +
+      r.tipToBusinessAmount +
       r.overageAmount -
       r.shortfallAmount +
       expenses;
@@ -381,6 +392,75 @@ describe("[build-gate] payment-row aggregate identity", () => {
 
   it("overpay: balances within a penny", () => {
     expect(drift(140, 0, [W("c1", "CONTRACTOR", 100)])).toBeLessThanOrEqual(PENNY);
+  });
+
+  // TIPS. A designated tip moves money out of `overageAmount` into the
+  // tip buckets — it must never create or destroy a cent in the process.
+  // Independent round2() calls WOULD drift here (two workers at 50% of a
+  // penny both round up), which is why the allocator uses largest-remainder.
+  it("tip designation: balances EXACTLY, not just within a penny", () => {
+    const workers = [W("e1", "EMPLOYEE", 80), W("t1", "TRAINEE", 20)];
+    const tip = {
+      amount: 20,
+      businessPercent: 0,
+      workerPercents: [
+        { userId: "e1", percent: 80 },
+        { userId: "t1", percent: 20 },
+      ],
+    };
+    expect(drift(120, 0, workers, tip)).toBe(0);
+  });
+
+  it("tip with awkward percentages balances exactly", () => {
+    const workers = [W("e1", "EMPLOYEE", 50), W("t1", "TRAINEE", 50)];
+    const tip = {
+      amount: 10,
+      businessPercent: 33.33,
+      workerPercents: [
+        { userId: "e1", percent: 33.33 },
+        { userId: "t1", percent: 33.34 },
+      ],
+    };
+    expect(drift(110, 0, workers, tip)).toBe(0);
+  });
+
+  it("tip is clamped to the overage — you cannot tip money nobody overpaid", () => {
+    const workers = [W("e1", "EMPLOYEE", 100)];
+    const promised = computeBreakdown(100, 0, workers, PRODUCTION_RATES);
+    const r = reconcileApproval(110, 0, workers, promised, PRODUCTION_RATES, {
+      amount: 9999,
+      businessPercent: 0,
+      workerPercents: [{ userId: "e1", percent: 100 }],
+    });
+    expect(r.tipAmount).toBe(10);
+    expect(r.overageAmount).toBe(0);
+  });
+
+  it("tip and overage are mutually exclusive", () => {
+    const workers = [W("e1", "EMPLOYEE", 100)];
+    const promised = computeBreakdown(100, 0, workers, PRODUCTION_RATES);
+    // Designate only half the $20 overpayment.
+    const r = reconcileApproval(120, 0, workers, promised, PRODUCTION_RATES, {
+      amount: 10,
+      businessPercent: 0,
+      workerPercents: [{ userId: "e1", percent: 100 }],
+    });
+    expect(r.tipAmount).toBe(10);
+    expect(r.overageAmount).toBe(10);
+  });
+
+  it("tips bypass platform fee and business margin entirely", () => {
+    // The business's cut of a tip is exactly businessPercent — NOT that
+    // plus a 20%/30% rate skimmed off the workers' shares.
+    const workers = [W("c1", "CONTRACTOR", 100)];
+    const promised = computeBreakdown(100, 0, workers, PRODUCTION_RATES);
+    const r = reconcileApproval(150, 0, workers, promised, PRODUCTION_RATES, {
+      amount: 50,
+      businessPercent: 40,
+      workerPercents: [{ userId: "c1", percent: 60 }],
+    });
+    expect(r.tipToBusinessAmount).toBe(20);
+    expect(r.splits[0].tipAmount).toBe(30);
   });
 
   it("underpay with employee top-up: balances within a penny", () => {

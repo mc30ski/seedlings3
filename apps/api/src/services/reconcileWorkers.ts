@@ -149,7 +149,12 @@ export type PayrollRow = {
   hours: number;
   hourlyWage: number;
   regularWages: number;       // hours × hourlyWage
-  additionalEarnings: number; // totalGross − regularWages
+  /** Tips earned in the window — PAYMENT-anchored, unlike the rest of this
+   *  row. Its own field (and its own CSV column) because Gusto treats tips
+   *  as a distinct earning type; folding them into additionalEarnings
+   *  loses the FICA tip credit and the cash-vs-paycheck distinction. */
+  tips: number;
+  additionalEarnings: number; // totalGross − regularWages − tips
   totalGross: number;         // worker's target take-home for the period
   equivalentHourlyRate: number | null; // totalGross ÷ hours (null when hours = 0)
 };
@@ -263,7 +268,7 @@ export async function buildReconcileWorkers(
   const fromKey = opts.fromKey;
   const toKey = opts.toKey;
 
-  const [workdays, occurrences, payments, rentals, minWage, rates] = await Promise.all([
+  const [workdays, occurrences, payments, rentals, minWage, rates, tipSplits] = await Promise.all([
     prisma.workerWorkday.findMany({
       where: { workdayDate: { gte: fromKey, lte: toKey } },
       include: {
@@ -360,6 +365,23 @@ export async function buildReconcileWorkers(
     }),
     loadMinWagePerHour(),
     loadRates(prisma),
+    // TIPS — the one PAYMENT-anchored figure on this surface. Everything
+    // else here buckets by JobOccurrence.completedAt (work-anchored), but
+    // a tip doesn't exist until the client pays it, so it belongs to the
+    // period the payment confirmed in. That's why a worker can legitimately
+    // see the job payout on one payroll and its tip on another.
+    prisma.paymentSplit.findMany({
+      where: {
+        tipAmount: { gt: 0 },
+        payment: {
+          confirmed: true,
+          confirmedAt: { gte: start, lte: end },
+          writtenOff: false,
+          skippedAt: null,
+        },
+      },
+      select: { userId: true, tipAmount: true, ownerEarnings: true },
+    }),
   ]);
 
   // ── Per-worker accumulator ─────────────────────────────────────────────
@@ -378,6 +400,9 @@ export async function buildReconcileWorkers(
     grossEarnings: number;
     feesOrMargin: number;
     topUps: number;
+    /** Tips received in the window. PAYMENT-anchored, unlike every other
+     *  figure on this row — see the tips query below. */
+    tips: number;
     ownerEarnings: number;
     // Set of occurrence IDs that fed owner-earnings to this user.
     // Used ONLY for owner-row display so the headline jobs count
@@ -444,6 +469,7 @@ export async function buildReconcileWorkers(
         grossEarnings: 0,
         feesOrMargin: 0,
         topUps: 0,
+        tips: 0,
         ownerEarnings: 0,
         ownerEarningOccurrenceIds: new Set(),
         byDay: new Map(),
@@ -757,6 +783,17 @@ export async function buildReconcileWorkers(
   }
 
   // ── Build per-worker rows + anomalies ──────────────────────────────────
+  // Fold the payment-anchored tips into their accumulators. Owner tips go
+  // to `ownerEarnings` for the same reason owner job pay does — it's
+  // business money, not a personal wage — which keeps them out of Gusto
+  // W-2 / Contractors automatically.
+  for (const t of tipSplits) {
+    const a = acc.get(t.userId);
+    if (!a) continue;
+    if (t.ownerEarnings) a.ownerEarnings += t.tipAmount ?? 0;
+    else a.tips += t.tipAmount ?? 0;
+  }
+
   const workers: ReconcileWorkerRow[] = [];
   const payroll: PayrollRow[] = [];
   let totalAnomalies = 0;
@@ -766,6 +803,13 @@ export async function buildReconcileWorkers(
     const grossEarnings = round2(a.grossEarnings);
     const feesOrMargin = round2(a.feesOrMargin);
     const topUps = round2(a.topUps);
+    const tips = round2(a.tips);
+    // Tips stay OUT of netPaid / displayNet on purpose. `effectiveHourly`
+    // is derived from displayNet, and the operator's rule is that tips
+    // don't count toward the effective rate — including them would flatter
+    // the number and could mask a genuinely below-floor base rate.
+    // `preTopUpHourly` (the min-wage check) reads grossEarnings, which
+    // tips never enter either. They surface as their own payroll column.
     const netPaid = round2(grossEarnings - feesOrMargin + topUps);
     const ownerEarnings = round2(a.ownerEarnings);
 
@@ -882,10 +926,14 @@ export async function buildReconcileWorkers(
     // netPaid as before.
     const hourlyWage = round2(a.user.hourlyWage);
     const regularWages = round2(hoursActive * hourlyWage);
+    // Tips ARE part of what the worker is paid for the period, so they're
+    // in totalGross — but they must reach Gusto in their own Tips column,
+    // never folded into additionalEarnings (Gusto treats tips as a
+    // distinct earning type, and cash vs paycheck tips differ).
     const totalGross = a.user.isOwner
       ? round2(netPaid + ownerEarnings)
-      : netPaid;
-    const additionalEarnings = round2(totalGross - regularWages);
+      : round2(netPaid + tips);
+    const additionalEarnings = round2(totalGross - regularWages - tips);
     const equivalentHourlyRate = hoursActive > 0 ? round2(totalGross / hoursActive) : null;
     payroll.push({
       userId: a.user.id,
@@ -896,6 +944,7 @@ export async function buildReconcileWorkers(
       hours: hoursActive,
       hourlyWage,
       regularWages,
+      tips,
       additionalEarnings,
       totalGross,
       equivalentHourlyRate,
@@ -952,6 +1001,7 @@ export async function buildReconcileWorkers(
       hours: 0,
       hourlyWage: round2(Number.isFinite(wageNum) ? wageNum : 0),
       regularWages: 0,
+      tips: 0,
       additionalEarnings: 0,
       totalGross: 0,
       equivalentHourlyRate: null,
@@ -1139,6 +1189,7 @@ export async function payrollCsv(
     let transferHours = 0;
     let transferRegularWages = 0;
     let transferAdditional = 0;
+    let transferTips = 0;
     let transferTotalGross = 0;
     for (const r of reshapedPayroll) {
       if (r.userId === ownerOut.userId) continue;
@@ -1146,16 +1197,19 @@ export async function payrollCsv(
       transferHours += r.hours;
       transferRegularWages += r.regularWages;
       transferAdditional += r.additionalEarnings;
+      transferTips += r.tips;
       transferTotalGross += r.totalGross;
       r.hours = 0;
       r.regularWages = 0;
       r.additionalEarnings = 0;
+      r.tips = 0;
       r.totalGross = 0;
       r.equivalentHourlyRate = null;
     }
     ownerOut.hours = round2(ownerOut.hours + transferHours);
     ownerOut.regularWages = round2(ownerOut.regularWages + transferRegularWages);
     ownerOut.additionalEarnings = round2(ownerOut.additionalEarnings + transferAdditional);
+    ownerOut.tips = round2(ownerOut.tips + transferTips);
     ownerOut.totalGross = round2(ownerOut.totalGross + transferTotalGross);
     ownerOut.equivalentHourlyRate =
       ownerOut.hours > 0 ? round2(ownerOut.totalGross / ownerOut.hours) : null;
@@ -1177,6 +1231,7 @@ export async function payrollCsv(
     "Hours",
     "Hourly Wage",
     "Regular Wages",
+    "Tips",
     "Additional Earnings",
     "Total Gross",
     "Equivalent Hourly Rate",
@@ -1188,12 +1243,14 @@ export async function payrollCsv(
     p.hours.toFixed(2),
     p.hourlyWage.toFixed(2),
     p.regularWages.toFixed(2),
+    p.tips.toFixed(2),
     p.additionalEarnings.toFixed(2),
     p.totalGross.toFixed(2),
     p.equivalentHourlyRate == null ? "" : p.equivalentHourlyRate.toFixed(2),
   ]);
   const totalGross = filteredPayroll.reduce((s, p) => s + p.totalGross, 0);
   const totalHours = filteredPayroll.reduce((s, p) => s + p.hours, 0);
+  const totalTips = filteredPayroll.reduce((s, p) => s + p.tips, 0);
   const totalsRow = [
     "TOTALS",
     "",
@@ -1201,6 +1258,7 @@ export async function payrollCsv(
     totalHours.toFixed(2),
     "",
     "",
+    totalTips.toFixed(2),
     "",
     totalGross.toFixed(2),
     "",
