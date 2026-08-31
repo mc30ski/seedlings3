@@ -880,7 +880,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
 
   const equipmentBillingEnabled = useEquipmentBillingEnabled();
   const [items, setItems] = useState<PaymentListItem[]>([]);
-  const [personTotals, setPersonTotals] = useState<Array<{ userId: string; displayName: string | null; total: number }>>([]);
+  const [personTotals, setPersonTotals] = useState<Array<{ userId: string; displayName: string | null; total: number; tips?: number }>>([]);
   const [totalPlatformFees, setTotalPlatformFees] = useState(0);
   const [totalBusinessMargin, setTotalBusinessMargin] = useState(0);
   // Method labels + configs from the PAYMENT_METHODS taxonomy (Super →
@@ -911,6 +911,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
     [editMethodItems],
   );
   const [totalOverage, setTotalOverage] = useState(0);
+  const [totalTipToBusiness, setTotalTipToBusiness] = useState(0);
   const [totalShortfall, setTotalShortfall] = useState(0);
   // Money-flow total revenue = sum of (amountPaid − worker payouts − expenses)
   // across all payments in the filtered range. Always correct regardless
@@ -1065,10 +1066,11 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
       const [res, charges] = await Promise.all([
         apiGet<{
           items: PaymentListItem[];
-          personTotals: Array<{ userId: string; displayName: string | null; total: number }>;
+          personTotals: Array<{ userId: string; displayName: string | null; total: number; tips?: number }>;
           totalPlatformFees: number;
           totalBusinessMargin: number;
           totalOverage?: number;
+          totalTipToBusiness?: number;
           totalShortfall?: number;
           totalRevenue?: number;
         }>(`/api/admin/payments${qs.toString() ? `?${qs}` : ""}`),
@@ -1081,6 +1083,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
       setTotalPlatformFees(res.totalPlatformFees ?? 0);
       setTotalBusinessMargin(res.totalBusinessMargin ?? 0);
       setTotalOverage(res.totalOverage ?? 0);
+      setTotalTipToBusiness(res.totalTipToBusiness ?? 0);
       setTotalShortfall(res.totalShortfall ?? 0);
       setTotalRevenue(res.totalRevenue ?? 0);
       setEquipCharges(charges ?? []);
@@ -1277,6 +1280,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
     let totalPlatformFees = 0;
     let totalBusinessMargin = 0;
     let totalOverage = 0;
+    let totalTipToBusiness = 0;
     let totalShortfall = 0;
     let totalRevenue = 0;
     // `hasPendingProjection` lights up the "Projection" chip in the summary
@@ -1284,7 +1288,10 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
     // on the pending-payment reconcileApproval projection (which can shift
     // when admin actually approves with a possibly-adjusted amount).
     let hasPendingProjection = false;
-    const personMap = new Map<string, { displayName: string | null; total: number }>();
+    // `tips` tracked alongside `total` rather than folded in, so the row
+    // can show "incl. $X tips" — a worker's tip is paid on the payroll for
+    // the date the CLIENT paid, which can differ from the job's period.
+    const personMap = new Map<string, { displayName: string | null; total: number; tips: number }>();
     const selectedPersons = personFilter.length > 0 ? new Set(personFilter) : null;
     for (const p of filteredItems) {
       const expensesSum = (p.occurrence?.expenses ?? []).reduce((s, e) => s + e.cost, 0);
@@ -1350,10 +1357,17 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
       } else {
         // Confirmed (or legacy without promisedPayouts) — use the stamped
         // values written by reconcileApproval at approval time.
-        workerPayouts = p.splits.reduce((s, sp) => s + sp.amount, 0);
+        // Tips are part of what went OUT to workers. Omitting them here
+        // books the crew's tip share as business revenue — a $15 tip made
+        // "Net to Business" $15 too high and broke the identity below.
+        workerPayouts = p.splits.reduce(
+          (s, sp) => s + sp.amount + ((sp as any).tipAmount ?? 0),
+          0,
+        );
         totalPlatformFees += p.platformFeeAmount ?? 0;
         totalBusinessMargin += p.businessMarginAmount ?? 0;
         totalOverage += (p as any).overageAmount ?? 0;
+        totalTipToBusiness += (p as any).tipToBusinessAmount ?? 0;
         totalShortfall += (p as any).shortfallAmount ?? 0;
       }
       totalRevenue += (p.amountPaid ?? 0) - workerPayouts - expensesSum;
@@ -1377,16 +1391,23 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
           else personMap.set(r.userId, {
             displayName: assignee?.user?.displayName ?? assignee?.user?.email ?? null,
             total: r.net,
+            // Promised rows predate the payment, so no tip exists yet.
+            tips: 0,
           });
         }
       } else {
         for (const sp of p.splits) {
           if (selectedPersons && !selectedPersons.has(sp.userId)) continue;
+          const tip = ((sp as any).tipAmount as number | null) ?? 0;
           const existing = personMap.get(sp.userId);
-          if (existing) existing.total += sp.amount;
+          if (existing) { existing.total += sp.amount + tip; existing.tips += tip; }
           else personMap.set(sp.userId, {
             displayName: sp.user?.displayName ?? sp.user?.email ?? null,
-            total: sp.amount,
+            // Tips ARE part of what this person received — excluding them
+            // understated the row against the per-worker figures on the
+            // cards below.
+            total: sp.amount + tip,
+            tips: tip,
           });
         }
       }
@@ -1404,7 +1425,8 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
     }
 
     // Runtime decomposition identity check. Locks in the rule that
-    //   Net to Business = Commission + Margin + Overage − Shortfall
+    //   Net to Business = Commission + Margin + Overage
+    //                      + Tip-to-business − Shortfall
     // for confirmed payments (stamped by reconcileApproval) AND for
     // pending projections (computed by the loop above using the same
     // canonical math). A drift of more than a penny means the
@@ -1412,7 +1434,8 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
     // loudly + flag it in the UI so the operator notices immediately.
     // PENNY tolerance accounts for the residual-fix penny on splits.
     const PENNY = 0.011;
-    const expectedNet = totalPlatformFees + totalBusinessMargin + totalOverage - totalShortfall;
+    const expectedNet =
+      totalPlatformFees + totalBusinessMargin + totalOverage + totalTipToBusiness - totalShortfall;
     const identityDrift = Math.abs(totalRevenue - expectedNet);
     const mathOK = identityDrift <= PENNY;
     if (!mathOK && typeof window !== "undefined") {
@@ -1424,7 +1447,8 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
           netToBusiness: totalRevenue,
           expectedFromDecomposition: expectedNet,
           drift: identityDrift,
-          totalPlatformFees, totalBusinessMargin, totalOverage, totalShortfall,
+          totalPlatformFees, totalBusinessMargin, totalOverage,
+          totalTipToBusiness, totalShortfall,
         },
       );
     }
@@ -1435,6 +1459,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
       totalPlatformFees,
       totalBusinessMargin,
       totalOverage,
+      totalTipToBusiness,
       totalShortfall,
       totalRevenue: Math.round(totalRevenue * 100) / 100,
       totalEquipCost,
@@ -1469,6 +1494,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
             userId,
             displayName,
             total,
+            tips: fromPayments?.tips ?? 0,
             equipment,
             net: Math.round((total - equipment) * 100) / 100,
           };
@@ -2130,17 +2156,29 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                 <Text fontSize="sm" fontWeight="medium" color="green.600" textAlign="right">${displayedTotals.totalOverage.toFixed(2)}</Text>
               </>
             )}
+            {/* The business's cut of tips. Its own line, so "Net from Jobs"
+                can be checked against the components above it — a tip that
+                only appeared inside the total would make the identity look
+                broken. The crew's share isn't here: that money went out to
+                workers, not to the business. */}
+            {displayedTotals.totalTipToBusiness > 0 && (
+              <>
+                <Text fontSize="sm" fontWeight="medium" color="green.700">Tips kept by business</Text>
+                <Text fontSize="sm" fontWeight="medium" color="green.700" textAlign="right">${displayedTotals.totalTipToBusiness.toFixed(2)}</Text>
+              </>
+            )}
             {displayedTotals.totalShortfall > 0 && (
               <>
                 <Text fontSize="sm" fontWeight="medium" color="red.600">Shortfall absorbed</Text>
                 <Text fontSize="sm" fontWeight="medium" color="red.600" textAlign="right">−${displayedTotals.totalShortfall.toFixed(2)}</Text>
               </>
             )}
-            {/* Net from Jobs — sums Commission + Margin + Overage − Shortfall.
+            {/* Net from Jobs — sums Commission + Margin + Overage
+                + Tips-kept − Shortfall.
                 This is the line covered by the decomposition identity check
                 in `displayedTotals`. The next line (Equipment Rental
                 Income) adds on top to arrive at the final Net to Business. */}
-            <Text fontSize="sm" fontWeight="medium" color="blue.700" title="What the business kept on the visible job payments: collected − worker payouts − job expenses. Includes commission, margin, and any overage; net of shortfalls absorbed on underpaid jobs. Excludes equipment rental income (added separately below).">
+            <Text fontSize="sm" fontWeight="medium" color="blue.700" title="What the business kept on the visible job payments: collected − worker payouts (including their tips) − job expenses. Includes commission, margin, any overage, and the business's share of tips; net of shortfalls absorbed on underpaid jobs. Excludes equipment rental income (added separately below).">
               Net from Jobs
             </Text>
             <Text fontSize="sm" fontWeight="medium" color="blue.700" textAlign="right">
@@ -2217,7 +2255,12 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                 }
                 return (
                   <Fragment key={p.userId}>
-                    <Text fontSize="sm" color="green.800">{p.displayName ?? p.userId}</Text>
+                    <Text fontSize="sm" color="green.800">
+                      {p.displayName ?? p.userId}
+                      {(p.tips ?? 0) > 0 && (
+                        <Text as="span" fontSize="2xs" color="green.700"> · incl. ${(p.tips ?? 0).toFixed(2)} tips</Text>
+                      )}
+                    </Text>
                     <Text fontSize="sm" color="green.800" fontWeight="medium" textAlign="right">${p.total.toFixed(2)}</Text>
                   </Fragment>
                 );
@@ -2397,6 +2440,10 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                         deduction: number | null;  // fee dollars
                         payout: number;            // what they actually get (or will get)
                         topUp: number | null;
+                        /** This worker's share of a designated tip. Kept as its
+                         *  own field, never folded into `payout` — job pay and
+                         *  tips are paid on different payroll periods. */
+                        tip: number;
                         isOwner: boolean;
                         sharePctLabel: number | null;
                         /** True iff this worker's payout is NOT guaranteed until
@@ -2429,6 +2476,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                             deduction: fee,
                             payout: sp.amount,
                             topUp,
+                            tip: ((sp as any).tipAmount as number | null) ?? 0,
                             isOwner: (sp as any).ownerEarnings === true,
                             sharePctLabel: totalGross > 0 && g != null ? Math.round((g / totalGross) * 100) : null,
                             contingent: false, // already paid; not contingent
@@ -2454,6 +2502,9 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                             // actual amount (which may shrink on underpay).
                             payout: isEmployeeClass ? r.net : 0,
                             topUp: null,
+                            // Promised-snapshot rows predate the payment, so
+                            // no tip exists yet — it's designated at approval.
+                            tip: 0,
                             isOwner: false,
                             sharePctLabel: Math.round(r.splitPercent),
                             contingent: !isEmployeeClass,
@@ -2512,6 +2563,12 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                                   <Text fontSize="2xs" color="fg.muted">
                                     ${row.share.toFixed(2)} share − ${row.deduction.toFixed(2)} {deductionLabel} ({row.rate}%)
                                     {row.topUp && row.topUp > 0 ? ` + $${row.topUp.toFixed(2)} top-up` : ""}
+                                    {/* Tip belongs INSIDE the equation, not on
+                                        a line below it. Split across two lines
+                                        the reader had to add "$28.00" and
+                                        "+ $9.00 tip" themselves to learn what
+                                        the worker was actually paid. */}
+                                    {row.tip > 0 ? ` + $${row.tip.toFixed(2)} tip` : ""}
                                     {" = "}
                                     <Text as="span" fontWeight="semibold" color={row.isOwner ? "purple.700" : "green.700"}>
                                       {/* Total must include the top-up addend
@@ -2524,7 +2581,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                                           rows with no top-up so this is a
                                           no-op in the common (full-pay)
                                           case. */}
-                                      ${(row.share - row.deduction + (row.topUp ?? 0)).toFixed(2)}
+                                      ${(row.share - row.deduction + (row.topUp ?? 0) + row.tip).toFixed(2)}
                                     </Text>
                                     {showPromised && (
                                       <Text as="span" color="fg.muted"> promised (pending approval)</Text>
@@ -2535,11 +2592,13 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                                   // to just the net amount.
                                   <Text fontSize="2xs" color="fg.muted">
                                     Net payout:{" "}
+                                    {row.tip > 0 && `$${row.payout.toFixed(2)} + $${row.tip.toFixed(2)} tip = `}
                                     <Text as="span" fontWeight="semibold" color={row.isOwner ? "purple.700" : "green.700"}>
-                                      ${row.payout.toFixed(2)}
+                                      ${(row.payout + row.tip).toFixed(2)}
                                     </Text>
                                   </Text>
                                 )}
+
                               </Box>
                             );
                           })}
@@ -2578,13 +2637,14 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                     const promisedRows = (p.occurrence?.promisedPayouts ?? null) as Array<{
                       userId: string; workerType: string | null; net: number;
                     }> | null;
-                    type EffectiveRow = { userId: string; displayName: string | null; payout: number; contingent: boolean };
+                    type EffectiveRow = { userId: string; displayName: string | null; payout: number; tip: number; contingent: boolean };
                     let effectiveRows: EffectiveRow[];
                     if ((p.splits ?? []).length > 0) {
                       effectiveRows = p.splits.map((sp) => ({
                         userId: sp.userId,
                         displayName: sp.user?.displayName ?? sp.user?.email ?? null,
                         payout: sp.amount,
+                        tip: ((sp as any).tipAmount as number | null) ?? 0,
                         contingent: false,
                       }));
                     } else if (promisedRows && promisedRows.length > 0) {
@@ -2599,6 +2659,8 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                           userId: r.userId,
                           displayName: a?.user?.displayName ?? a?.user?.email ?? null,
                           payout: isEmployeeClass ? r.net : 0,
+                          // No tip yet — it's designated at approval.
+                          tip: 0,
                           contingent: !isEmployeeClass,
                         };
                       });
@@ -2609,7 +2671,15 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                     const headlineRows = selectedPersons
                       ? effectiveRows.filter((r) => selectedPersons.has(r.userId))
                       : effectiveRows;
-                    const splitTotal = headlineRows.reduce((s, r) => s + r.payout, 0);
+                    // The headline is what the workers ACTUALLY take home:
+                    // job pay plus their tip share. Showing job pay alone
+                    // made "TOTAL TO WORKERS $59.50" sit above "+ $9.00 tip"
+                    // and "+ $6.00 tip" on the very same card, forcing the
+                    // reader to add it up themselves. The split into job vs
+                    // tip is spelled out on the line beneath.
+                    const splitJobTotal = headlineRows.reduce((s, r) => s + r.payout, 0);
+                    const splitTipTotal = headlineRows.reduce((s, r) => s + r.tip, 0);
+                    const splitTotal = Math.round((splitJobTotal + splitTipTotal) * 100) / 100;
                     const hasContingent = headlineRows.some((r) => r.contingent);
                     // Label disambiguation:
                     //   • Person filter + 1 worker  → "<name>'s payout"
@@ -2738,6 +2808,11 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                           >
                             ${splitTotal.toFixed(2)}
                           </Text>
+                          {splitTipTotal > 0 && (
+                            <Text fontSize="2xs" color="green.700" mt={0.5}>
+                              ${splitJobTotal.toFixed(2)} job pay + ${splitTipTotal.toFixed(2)} tips
+                            </Text>
+                          )}
                         </VStack>
                         {isPending && hasContingent && (
                           <Text fontSize="2xs" color="orange.700" mt={1} maxW={{ base: "100%", sm: "240px" }} textAlign={{ base: "left", sm: "right" }}>
@@ -2758,14 +2833,37 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                             {expTotal > 0 ? `, after $${expTotal.toFixed(2)} expenses` : ""}
                           </Text>
                         )}
-                        {!skipped && (fee > 0 || margin > 0) && (
+                        {/* When a payment carries a tip or an undesignated
+                            overpayment, the amount the client paid is NOT the
+                            pool the payout math ran on. Without this line the
+                            card reads as broken: "$73.50 to workers" beside
+                            "business kept $31.50" under "from $125.00 paid"
+                            doesn't add up, because $20 of that $125 was a tip
+                            and never entered the job split. Show the
+                            decomposition so each half balances on its own. */}
+                        {!skipped && (tipTotal > 0 || overage > 0) && (
                           <Text fontSize="xs" color="fg.muted">
-                            Business kept ${(fee + margin).toFixed(2)}
+                            = ${(p.amountPaid - tipTotal - overage).toFixed(2)} for the job
+                            {tipTotal > 0 ? ` + $${tipTotal.toFixed(2)} tip` : ""}
+                            {overage > 0 ? ` + $${overage.toFixed(2)} overpaid` : ""}
+                          </Text>
+                        )}
+                        {!skipped && (fee > 0 || margin > 0 || tipToBusiness > 0) && (
+                          <Text fontSize="xs" color="fg.muted">
+                            Business kept ${(fee + margin + tipToBusiness).toFixed(2)}
                             {fee > 0 && margin > 0
-                              ? ` ($${fee.toFixed(2)} commission + $${margin.toFixed(2)} margin)`
+                              ? ` ($${fee.toFixed(2)} commission + $${margin.toFixed(2)} margin`
                               : fee > 0
-                                ? ` commission (${p.platformFeePercent}%)`
-                                : ` margin (${(p as any).businessMarginPercent}%)`}
+                                ? ` ($${fee.toFixed(2)} commission (${p.platformFeePercent}%)`
+                                : margin > 0
+                                  ? ` ($${margin.toFixed(2)} margin (${(p as any).businessMarginPercent}%)`
+                                  : " ("}
+                            {/* The business's tip share belongs in the same
+                                total as its margin — otherwise workers +
+                                business doesn't equal the payment and the
+                                reader has to hunt for the missing money. */}
+                            {tipToBusiness > 0 ? `${fee > 0 || margin > 0 ? " + " : ""}$${tipToBusiness.toFixed(2)} of the tip` : ""}
+                            {")"}
                           </Text>
                         )}
                         {!skipped && shortfall > 0 && (
@@ -2782,10 +2880,13 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                             the payout figures above. The split matters:
                             the crew's share is wages/1099 income while the
                             business's share is ordinary revenue. */}
+                        {/* Closing check the reader can do at a glance:
+                            workers + business = what the client paid. */}
                         {!skipped && tipTotal > 0 && (
-                          <Text fontSize="xs" color="green.700" fontWeight="medium" mt={1}>
-                            Tip ${tipTotal.toFixed(2)} — ${tipToWorkers.toFixed(2)} to workers,
-                            {" "}${tipToBusiness.toFixed(2)} to business
+                          <Text fontSize="xs" color="fg.muted" fontWeight="medium" mt={1}>
+                            ${splitTotal.toFixed(2)} to workers + ${(fee + margin + tipToBusiness + overage).toFixed(2)} to business
+                            {expTotal > 0 ? ` + $${expTotal.toFixed(2)} expenses` : ""}
+                            {" = "}${p.amountPaid.toFixed(2)}
                           </Text>
                         )}
                       </VStack>

@@ -11,7 +11,7 @@
 // to understand: client's report is either right (Approve) or wrong
 // (Reject + re-record).
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useMemo } from "react";
 import {
   Badge,
   Box,
@@ -153,6 +153,15 @@ export default function PendingApprovalsSection({ onReady }: {
   // mutate live data. See memory/feedback_confirm_dialogs.md.
   const [rejectingRow, setRejectingRow] = useState<PendingRow | null>(null);
   const [adjustingRow, setAdjustingRow] = useState<PendingRow | null>(null);
+  // Stable reference for the approve dialog's props — see the comment at
+  // the callsite below.
+  const adjustDialogRow = useMemo(
+    () =>
+      adjustingRow
+        ? { ...tipInputsFor(adjustingRow), note: adjustingRow.note }
+        : null,
+    [adjustingRow],
+  );
   const [writingOffRow, setWritingOffRow] = useState<PendingRow | null>(null);
 
   const load = useCallback(async () => {
@@ -441,7 +450,11 @@ export default function PendingApprovalsSection({ onReady }: {
           })}
         </VStack>
       <AdjustPaymentDialog
-        row={adjustingRow ? { ...tipInputsFor(adjustingRow), note: adjustingRow.note } : null}
+        // Memoized: an inline object here is a new reference every render.
+        // The dialog now keys its seeding effects on row.id so it survives
+        // that either way, but churning the prop re-renders the whole
+        // dialog on every keystroke for no reason.
+        row={adjustDialogRow}
         willScheduleNext={adjustingRow ? willScheduleNext(adjustingRow) : false}
         onConfirm={({ amountOverride, methodOverride, feeOverride, noteOverride, paidAtOverride, tip }) => {
           const r = adjustingRow;
