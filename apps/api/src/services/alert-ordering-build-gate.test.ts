@@ -61,7 +61,6 @@ const TASKS_SRC = readFileSync(
 const ALERT_TO_TASKS: ReadonlyArray<readonly [string, readonly string[]]> = [
   ["Overdue", ["Overdue jobs"]],
   ["Pending Users", ["User sign-ups awaiting approval"]],
-  ["Guaranteed payout expiring", ["Guaranteed-payout periods expiring"]],
   ["Payments to review", ["Pending payment approvals", "Outstanding client invoices"]],
   ["Workdays / mileage to review", ["Workdays to approve"]],
   ["Ledger followups", ["Ledger follow-ups"]],

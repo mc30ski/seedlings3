@@ -195,10 +195,6 @@ type WorkerRow = {
   effectiveHourly: number | null;
   preTopUpHourly: number | null;
   belowMinWage: boolean;
-  /** True when this worker is a contractor in an active guaranteed
-   *  payout period. Splits the wage-compliance banner between
-   *  "reclassification risk" and "guaranteed payout" contractors. */
-  guaranteedPayoutActive: boolean;
   /** True when the worker has at least one in-progress workday in
    *  the window. Headline hours include live elapsed time. */
   hasInProgressWorkday: boolean;
@@ -623,7 +619,7 @@ function getRowWarnings(w: WorkerRow, minWage: number): string[] {
     w.preTopUpHourly < minWage
   ) {
     out.push(
-      `Effective rate $${w.preTopUpHourly.toFixed(2)}/hr below $${minWage.toFixed(2)}/hr — reclassification risk${w.guaranteedPayoutActive ? " (guaranteed payout)" : ""}`,
+      `Effective rate $${w.preTopUpHourly.toFixed(2)}/hr below $${minWage.toFixed(2)}/hr — reclassification risk`,
     );
   }
   return out;
@@ -1638,11 +1634,9 @@ export default function ReconcileTab() {
               {/* Wage-compliance banner — surfaces workers whose
                   effective rate in the window sits below the configured
                   floor. W-2 below-floor is a legal compliance issue;
-                  contractors below-floor split into "reclassification
-                  risk" (persistent signal the DOL/IRS cite when
-                  reclassifying 1099s) and "guaranteed payout" (Company
-                  is voluntarily underwriting timing risk during
-                  onboarding — real signal, but expected). Renders
+                  contractors below-floor is a "reclassification risk"
+                  signal — the persistent pattern the DOL/IRS cite when
+                  reclassifying 1099s. Renders
                   inside the payroll card so the flagged rows sit
                   directly under it. */}
               <WageComplianceBanner
@@ -2650,8 +2644,8 @@ function WorkerCard({
             // Violation banner — red so it clearly reads as "this row
             // is a legal/compliance issue" separate from the softer
             // orange warnings. W-2 below-floor is a legal violation;
-            // contractor below-floor is a reclassification-risk signal
-            // (or "guaranteed payout" during onboarding). Sits above
+            // contractor below-floor is a reclassification-risk signal.
+            // Sits above
             // the warnings banner so the highest-severity item is
             // visible first.
             <Box
@@ -2667,11 +2661,7 @@ function WorkerCard({
                 <VStack align="start" gap={0}>
                   <Text fontSize="xs" color="red.900" fontWeight="semibold">
                     Effective rate {worker.preTopUpHourly != null ? `$${worker.preTopUpHourly.toFixed(2)}` : "—"}/hr below the ${minWage.toFixed(2)}/hr floor
-                    {worker.workerType === "CONTRACTOR" && (
-                      worker.guaranteedPayoutActive
-                        ? " (guaranteed payout — Company voluntarily underwriting timing risk)"
-                        : " (reclassification risk)"
-                    )}
+                    {worker.workerType === "CONTRACTOR" && " (reclassification risk)"}
                   </Text>
                 </VStack>
               </HStack>

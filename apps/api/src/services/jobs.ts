@@ -1780,32 +1780,6 @@ export const jobs: ServicesJobs = {
             receiptNumber: existingPayment.receiptNumber,
             splits: doomedSplits,
           });
-          // DESIGN NOTE — we intentionally DO NOT delete any
-          // GuaranteedPayoutAdvance rows tied to this occurrence here,
-          // even though they reference a payment we just deleted. The
-          // advance was created at a prior export run; in the normal
-          // flow the operator has already uploaded that export to Gusto
-          // and the contractor has been actually paid the advanced
-          // amount. Keeping the advance row preserves that paid-state:
-          // when the operator re-records the payment after revert and
-          // the new splits are created, fetchAdvanceFlagsByUser stamps
-          // `guaranteedPayoutPaidAt` on the matching split — preventing
-          // a double-pay on the next payroll cycle.
-          //
-          // EDGE CASE — if the operator reverted before uploading the
-          // earlier export's CSV to Gusto, the contractor was never
-          // actually paid the advance amount. In that case the orphan
-          // advance silently suppresses the new split from the next
-          // payroll, under-paying the contractor.
-          //
-          // Recovery (rare): manually DELETE the GuaranteedPayoutAdvance
-          // row for (occurrenceId, userId) before approving the new
-          // payment, so the new split lands unflagged in the next
-          // Gusto Contractors CSV.
-          //
-          // Auto-deleting here was considered and rejected because the
-          // common case (operator already paid Gusto) would cause a
-          // double-pay that's worse than the rare under-pay above.
         }
       }
 

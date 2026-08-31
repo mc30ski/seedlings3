@@ -29,7 +29,7 @@ import {
 import { normalizePhone } from "../lib/phone";
 import { generateLedgerId } from "../lib/ledgerId";
 import { loadCategoryLabels } from "../services/expenseCategories";
-import { loadFixedAssetMinCost, isFixedAsset, loadGpWorkAnchoredItems } from "../services/exports";
+import { loadFixedAssetMinCost, isFixedAsset } from "../services/exports";
 import {
   resolveCutoff,
   cutoffWhere,
@@ -392,232 +392,6 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   app.get("/admin/users/pendingCount", adminGuard, async () => {
     return services.users.pendingApprovalCount();
-  });
-
-  // Guaranteed-payout program summary. Active = currently in an open
-  // period. expiringSoon = active AND ≤ 7 days from expiration (the
-  // "needs operator attention" bucket the title-bar alert chip surfaces).
-  // Super-only — the program itself is super-managed and the chip only
-  // renders for super.
-  app.get("/admin/users/guaranteed-payout-summary", superGuard, async () => {
-    const now = new Date();
-    // ET-anchored 7-day window. The raw `now + 7 * 86_400_000` pattern
-    // drifts at DST; etMidnight(etAddDays(..., 7)) is exact.
-    const inSevenDays = etMidnight(etAddDays(etToday(), 7));
-    const [active, expiringSoon] = await Promise.all([
-      prisma.user.count({
-        where: {
-          workerType: "CONTRACTOR",
-          guaranteedPayoutUntil: { gt: now },
-        },
-      }),
-      prisma.user.count({
-        where: {
-          workerType: "CONTRACTOR",
-          guaranteedPayoutUntil: { gt: now, lte: inSevenDays },
-        },
-      }),
-    ]);
-    return { active, expiringSoon };
-  });
-
-  // Super-only override for a single user's payment-comms preference.
-  // null clears the override → falls back to the global
-  // DEFAULT_PAYMENT_COMMUNICATIONS_MODE setting on next resolution.
-  app.patch("/admin/users/:id/payment-comms-mode", superGuard, async (req: any) => {
-    const uid = await currentUserId(req);
-    const targetId = String(req.params.id);
-    const body = (req.body || {}) as { mode?: string | null };
-    const raw = body.mode;
-    let next: "SERVER" | "CLAIMER" | null;
-    if (raw === null || raw === undefined || raw === "") next = null;
-    else if (raw === "SERVER" || raw === "CLAIMER") next = raw;
-    else throw app.httpErrors.badRequest('mode must be "SERVER", "CLAIMER", or null');
-
-    const before = await prisma.user.findUnique({
-      where: { id: targetId },
-      select: { paymentCommsMode: true },
-    });
-    if (!before) throw app.httpErrors.notFound("User not found");
-
-    await prisma.user.update({
-      where: { id: targetId },
-      data: { paymentCommsMode: next },
-    });
-    await writeAudit(prisma, AUDIT.USER.PAYMENT_COMMS_MODE_UPDATED, uid, {
-      targetUserId: targetId,
-      field: "paymentCommsMode",
-      from: before.paymentCommsMode ?? null,
-      to: next,
-    });
-    return { ok: true, paymentCommsMode: next };
-  });
-
-  // Super-only contractor "guaranteed payout period" management. Sets a
-  // bounded window during which contractor pay is timing-decoupled from
-  // client payment (work-anchored payroll instead of payment-anchored).
-  // Body: { until: ISO date string } to start/extend a period, or
-  //       { until: null } to end the period immediately.
-  // Only applies to users with workerType=CONTRACTOR. Writes a paired
-  // audit row (GUARANTEED_PAYOUT_STARTED on activation/extension,
-  // GUARANTEED_PAYOUT_ENDED on early termination). Natural expiration
-  // is audited separately by the daily cron in routes/cron.ts. See the
-  // onboarding addendum + classification memo for the policy framing.
-  //
-  // The update + audit write are wrapped in $transaction so a DB hiccup
-  // can't leave state changed without a corresponding audit row.
-  app.patch("/admin/users/:id/guaranteed-payout-period", superGuard, async (req: any) => {
-    const uid = await currentUserId(req);
-    const targetId = String(req.params.id);
-    const body = (req.body || {}) as { until?: string | null };
-    const raw = body.until;
-
-    let nextUntil: Date | null;
-    if (raw === null || raw === undefined || raw === "") {
-      nextUntil = null;
-    } else {
-      const dateOnly = String(raw).slice(0, 10);
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) {
-        throw app.httpErrors.badRequest("until must be a YYYY-MM-DD date.");
-      }
-      // End-of-day in business timezone (ET) so "through Aug 14" means
-      // work completed any time on Aug 14 ET still qualifies for
-      // guaranteed-payout treatment. Anchoring at UTC end-of-day would
-      // clip the final 4-5 hours of the day for ET operators.
-      nextUntil = etEndOfDay(dateOnly as EtDateKey);
-      // Enforce the same 1-90 day window the UI bounds the picker to.
-      // Defends against direct API calls bypassing the dialog — without
-      // this, an unbounded date could create either a never-STARTED
-      // expired period (past date → cron writes "auto-expired" for a
-      // period that was never activated) or a multi-year "onboarding"
-      // window that undermines the defensibility framing.
-      const nowMs = Date.now();
-      // ET-anchored 90-day window. Computing via `nowMs + 90 * 86_400_000`
-      // drifts at DST; etMidnight(etAddDays(..., 90)) is exact.
-      const ninetyDaysMs = etMidnight(etAddDays(etToday(), 90)).getTime();
-      if (nextUntil.getTime() < nowMs) {
-        throw app.httpErrors.badRequest("until must be today or later (ET).");
-      }
-      if (nextUntil.getTime() > ninetyDaysMs) {
-        throw app.httpErrors.badRequest("until can't be more than 90 days from today.");
-      }
-    }
-
-    return prisma.$transaction(async (tx) => {
-      const before = await tx.user.findUnique({
-        where: { id: targetId },
-        select: {
-          workerType: true,
-          guaranteedPayoutUntil: true,
-          guaranteedPayoutStartedAt: true,
-          guaranteedPayoutHistory: true,
-          displayName: true,
-          email: true,
-        },
-      });
-      if (!before) throw app.httpErrors.notFound("User not found");
-      if (before.workerType !== "CONTRACTOR") {
-        throw app.httpErrors.badRequest(
-          "Guaranteed payout period only applies to contractors. This user's worker type is " +
-          (before.workerType ?? "unset") + ".",
-        );
-      }
-
-      const now = new Date();
-      const wasActive = !!(before.guaranteedPayoutUntil && before.guaranteedPayoutUntil > now);
-      const willBeActive = !!(nextUntil && nextUntil > now);
-
-      // If transitioning from active to inactive (early-end OR extension
-      // that retroactively expires before reset — defensive), push the
-      // closing period record to the history array. The work-anchored
-      // payroll export reads history to find contractors who were in a
-      // GP period when an occurrence completed, even if their active
-      // columns have since been cleared by the cron / a later action.
-      const historyAppend = !willBeActive && wasActive && before.guaranteedPayoutStartedAt
-        ? [{
-            startedAt: before.guaranteedPayoutStartedAt.toISOString(),
-            endedAt: now.toISOString(),
-            endedEarly: true,
-            endedActorUserId: uid,
-          }]
-        : [];
-      const prevHistory = Array.isArray(before.guaranteedPayoutHistory)
-        ? (before.guaranteedPayoutHistory as any[])
-        : [];
-
-      // Defensive validation: refuse to append a history entry that
-      // overlaps with an existing one. Overlaps shouldn't happen in
-      // normal flow (each period either ends naturally via cron or
-      // gets pushed cleanly to history on early-end), but a buggy
-      // code path or hand-edited DB JSON could produce them.
-      // wasUserInGuaranteedPayoutAt iterates history and returns true
-      // on any overlap, so silently allowing them would only show up
-      // later as confusing audit trails.
-      if (historyAppend.length > 0) {
-        const newRange = historyAppend[0];
-        const newStart = new Date(newRange.startedAt).getTime();
-        const newEnd = new Date(newRange.endedAt).getTime();
-        for (const h of prevHistory) {
-          if (!h?.startedAt || !h?.endedAt) continue;
-          const s = new Date(h.startedAt).getTime();
-          const e = new Date(h.endedAt).getTime();
-          if (!Number.isFinite(s) || !Number.isFinite(e)) continue;
-          // Standard interval-overlap: [s, e] overlaps [newStart, newEnd]
-          // iff s <= newEnd AND newStart <= e.
-          if (s <= newEnd && newStart <= e) {
-            throw app.httpErrors.conflict(
-              `Cannot end guaranteed payout period — the active period (${newRange.startedAt} → ${newRange.endedAt}) overlaps with an existing history entry (${h.startedAt} → ${h.endedAt}). Inspect User.guaranteedPayoutHistory directly to resolve before retrying.`,
-            );
-          }
-        }
-      }
-
-      await tx.user.update({
-        where: { id: targetId },
-        data: {
-          guaranteedPayoutUntil: nextUntil,
-          // Stamp the start time only when transitioning into an active
-          // period. If the operator is extending an already-active period,
-          // keep the original start so the UI can say "X days left of N".
-          guaranteedPayoutStartedAt: willBeActive && !wasActive
-            ? now
-            : (willBeActive ? before.guaranteedPayoutStartedAt : null),
-          ...(historyAppend.length > 0
-            ? { guaranteedPayoutHistory: [...prevHistory, ...historyAppend] as any }
-            : {}),
-        },
-      });
-
-      // Pair the audit verb to the transition:
-      //   inactive → active:                  STARTED
-      //   active   → inactive (cleared/short): ENDED (endedEarly: true)
-      //   active   → active (extension):      STARTED (extension: true)
-      //   inactive → inactive:                no audit row
-      if (willBeActive) {
-        await writeAudit(tx, AUDIT.USER.GUARANTEED_PAYOUT_STARTED, uid, {
-          targetUserId: targetId,
-          targetName: before.displayName ?? before.email ?? null,
-          until: nextUntil!.toISOString(),
-          previousUntil: before.guaranteedPayoutUntil?.toISOString() ?? null,
-          extension: wasActive,
-        });
-      } else if (wasActive) {
-        await writeAudit(tx, AUDIT.USER.GUARANTEED_PAYOUT_ENDED, uid, {
-          targetUserId: targetId,
-          targetName: before.displayName ?? before.email ?? null,
-          previousUntil: before.guaranteedPayoutUntil?.toISOString() ?? null,
-          endedEarly: true,
-        });
-      }
-
-      return {
-        ok: true,
-        guaranteedPayoutUntil: nextUntil?.toISOString() ?? null,
-        guaranteedPayoutStartedAt: willBeActive
-          ? (wasActive ? before.guaranteedPayoutStartedAt?.toISOString() ?? null : now.toISOString())
-          : null,
-      };
-    });
   });
 
   app.get("/admin/activity", adminGuard, async (req: any) => {
@@ -3414,9 +3188,7 @@ Respond ONLY with valid JSON in this exact format:
   //   panel deliberately reflects the current record so the mismatch
   //   is visible enough to prompt a review.
   //   - Net pay: sum of PaymentSplit.amount for occurrences whose
-  //     completedAt lands today. GP-flagged splits excluded (their
-  //     cash already flowed on the wage-path Gusto run) and
-  //     re-anchored here via loadGpWorkAnchoredItems.
+  //     completedAt lands today.
   //   - $/hr = netPaid / hoursActive (0 when no hours logged yet).
   //
   // Query: `?workerIds=id1,id2` filters to a subset; omit for all
@@ -3518,7 +3290,6 @@ Respond ONLY with valid JSON in this exact format:
             skippedAt: true,
             writtenOff: true,
             splits: {
-              where: { guaranteedPayoutPaidAt: null },
               select: { userId: true, amount: true },
             },
           },
@@ -3576,19 +3347,7 @@ Respond ONLY with valid JSON in this exact format:
       }
     }
 
-    // GP wage-path earnings for today (contractor jobs completed while
-    // the contractor is inside their guaranteed-payout window). These
-    // occurrences ALSO appear in completedOccs above, but their
-    // computeMyOccurrenceNet result for a GP contractor is $0 because
-    // splits carry guaranteedPayoutPaidAt (already filtered out).
-    // loadGpWorkAnchoredItems is the wage-path source of truth for
-    // that specific case.
-    const gpItems = await loadGpWorkAnchoredItems(dayStart, dayEnd);
     const userSet = new Set(userIds);
-    for (const item of gpItems) {
-      if (!userSet.has(item.userId)) continue;
-      netByUser.set(item.userId, (netByUser.get(item.userId) ?? 0) + item.amount);
-    }
 
     // Workers with a currently-open job — status IN_PROGRESS or PAUSED,
     // that they're a non-observer assignee on. Drives the "in progress"
@@ -3658,9 +3417,8 @@ Respond ONLY with valid JSON in this exact format:
     // the worker sees on their own Profile → Payments (worker.ts:2138).
     // EMPLOYEE / TRAINEE: bucket each assigned job by work date at its
     // promised net (paid or unpaid) via computeMyOccurrenceNet.
-    // CONTRACTOR / unclassified: cash-basis on confirmed splits +
-    // work-anchored GP items — matches the contractor branch of the
-    // self endpoint.
+    // CONTRACTOR / unclassified: cash-basis on confirmed splits —
+    // matches the contractor branch of the self endpoint.
     const target = await prisma.user.findUnique({
       where: { id: userId },
       select: { workerType: true },
@@ -3697,7 +3455,7 @@ Respond ONLY with valid JSON in this exact format:
               method: true,
               confirmed: true,
               skippedAt: true,
-              splits: { where: { userId, guaranteedPayoutPaidAt: null }, select: { amount: true } },
+              splits: { where: { userId }, select: { amount: true } },
             },
           },
         },
@@ -3723,12 +3481,9 @@ Respond ONLY with valid JSON in this exact format:
         jobCount++;
       }
     } else {
-      // Skip splits flagged with guaranteedPayoutPaidAt — their cash flowed
-      // via a GP advance row instead, counted below.
       const splits = await prisma.paymentSplit.findMany({
         where: {
           userId,
-          guaranteedPayoutPaidAt: null,
           // Skipped payments' splits are excluded from every earnings tile.
           payment: {
             skippedAt: null,
@@ -3737,13 +3492,6 @@ Respond ONLY with valid JSON in this exact format:
         },
         include: { payment: { select: { createdAt: true, method: true } } },
       });
-      // GP wage-path earnings: bucketed at occurrence.completedAt. Same
-      // source as the Gusto Contractors CSV's work-anchored half.
-      const gpItems = await loadGpWorkAnchoredItems(
-        cutoff ?? new Date(0),
-        new Date(),
-        { userId },
-      );
       for (const sp of splits) {
         allTime += sp.amount;
         const d = sp.payment.createdAt;
@@ -3751,14 +3499,6 @@ Respond ONLY with valid JSON in this exact format:
         if (d >= startOfMonth) thisMonth += sp.amount;
         if (d >= startOfYear) thisYear += sp.amount;
         byMethod[sp.payment.method] = (byMethod[sp.payment.method] ?? 0) + sp.amount;
-        jobCount++;
-      }
-      for (const item of gpItems) {
-        allTime += item.amount;
-        const d = item.completedAt;
-        if (d >= startOfWeek) thisWeek += item.amount;
-        if (d >= startOfMonth) thisMonth += item.amount;
-        if (d >= startOfYear) thisYear += item.amount;
         jobCount++;
       }
     }
@@ -3920,7 +3660,6 @@ Respond ONLY with valid JSON in this exact format:
             platformFeeAmount: true,
             businessMarginAmount: true,
             splits: {
-              where: { guaranteedPayoutPaidAt: null },
               select: { userId: true, amount: true },
             },
           },
@@ -3951,23 +3690,6 @@ Respond ONLY with valid JSON in this exact format:
       },
       select: { id: true, displayName: true, email: true, workerType: true },
     });
-
-    // For GP-period work, the contractor was paid the wage-path amount
-    // on the Gusto run for the work week. Use the same compute the CSV
-    // uses (loadGpWorkAnchoredItems) so worker stats reconcile with
-    // payroll. For post-GP work, the split amount remains authoritative.
-    const occurrenceWindowStart = occurrences.length > 0
-      ? new Date(Math.min(...occurrences.map((o) => (o.completedAt ?? new Date()).getTime())))
-      : new Date(0);
-    const occurrenceWindowEnd = occurrences.length > 0
-      ? new Date(Math.max(...occurrences.map((o) => (o.completedAt ?? new Date()).getTime())))
-      : new Date();
-    const gpItemsAllUsers = occurrences.length > 0
-      ? await loadGpWorkAnchoredItems(occurrenceWindowStart, occurrenceWindowEnd)
-      : [];
-    const advanceByKey = new Map(
-      gpItemsAllUsers.map((i) => [`${i.userId}:${i.occurrenceId}`, i.amount]),
-    );
 
     // Build per-worker stats
     type WorkerStat = {
@@ -4048,8 +3770,8 @@ Respond ONLY with valid JSON in this exact format:
         //   net (matches payroll — they get paid regardless of client-
         //   payment timing).
         //   CONTRACTOR / unclassified: keep the cash-basis behavior
-        //   (split.amount, with GP advance override) — contractors are
-        //   only paid on confirmed splits.
+        //   (split.amount) — contractors are only paid on confirmed
+        //   splits.
         let earnings: number;
         if (a.user.workerType === "EMPLOYEE" || a.user.workerType === "TRAINEE") {
           const paymentForUser = occ.payment
@@ -4073,8 +3795,7 @@ Respond ONLY with valid JSON in this exact format:
           );
         } else {
           const split = occ.payment?.splits.find((s) => s.userId === a.userId);
-          const gpAdvance = advanceByKey.get(`${a.userId}:${occ.id}`);
-          earnings = gpAdvance ?? split?.amount ?? 0;
+          earnings = split?.amount ?? 0;
         }
         if (earnings > 0) {
           const splitRatio = occ.payment && occ.payment.splits.length > 0
@@ -4362,7 +4083,7 @@ Respond ONLY with valid JSON in this exact format:
     // Team summary
     const workers = await prisma.user.findMany({
       where: { isApproved: true, roles: { some: { role: "WORKER" } } },
-      select: { id: true, displayName: true, workerType: true, guaranteedPayoutUntil: true },
+      select: { id: true, displayName: true, workerType: true },
     });
 
     // Top workers by jobs completed in range.
@@ -4768,15 +4489,6 @@ Respond ONLY with valid JSON in this exact format:
       totalEarnings = wageGross;
       const avgHourlyRate = wageHours > 0 ? wageGross / wageHours : null;
 
-      // Active "guaranteed payout period" — contextualizes wage compliance
-      // warnings. A contractor below the wage floor during an active GP
-      // period is still flagged (the signal is real), but the UI suffixes
-      // the warning so the operator understands the Company is currently
-      // underwriting the timing risk by choice.
-      const guaranteedPayoutActive = !!(
-        w.guaranteedPayoutUntil && w.guaranteedPayoutUntil.getTime() > Date.now()
-      );
-
       return {
         id: w.id,
         name: w.displayName ?? "Unknown",
@@ -4792,7 +4504,6 @@ Respond ONLY with valid JSON in this exact format:
         wageHours: Math.round(wageHours * 100) / 100,
         wageGross: Math.round(wageGross * 100) / 100,
         avgHourlyRate: avgHourlyRate == null ? null : Math.round(avgHourlyRate * 100) / 100,
-        guaranteedPayoutActive,
       };
     }).sort((a, b) => b.jobsCompleted - a.jobsCompleted);
 

@@ -1,15 +1,21 @@
 {
   "version": 2,
-  "builds": [{ "src": "api/index.ts", "use": "@vercel/node" }],
-  "routes": [{ "src": "/(.*)", "dest": "api/index.ts" }],
+  "builds": [
+    {
+      "src": "api/index.ts",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "api/index.ts"
+    }
+  ],
   "crons": [
     {
       "path": "/api/cron/daily-notifications",
       "schedule": "0 22 * * *"
-    },
-    {
-      "path": "/api/cron/guaranteed-payout-expirations",
-      "schedule": "5 5 * * *"
     },
     {
       "path": "/api/cron/document-sync",

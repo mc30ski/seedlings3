@@ -43,15 +43,6 @@
 //
 // The rate is passed in — callers resolve it once per handler from
 // `CONTRACTOR_PLATFORM_FEE_PERCENT` or `EMPLOYEE_BUSINESS_MARGIN_PERCENT`.
-//
-// GP double-count trap: for a contractor in-GP at completion, the split
-// carries `guaranteedPayoutPaidAt IS NOT NULL` because the cash was also
-// paid via the wage-path (loadGpWorkAnchoredItems). Callers MUST filter
-// GP-flagged splits at query time — `splits: { where: { userId,
-// guaranteedPayoutPaidAt: null }, ... }`. When no non-flagged split
-// exists the helper falls through to projection, whose per-worker share ×
-// rate approximates the wage-path payout closely enough for a trend
-// display. Passing an unfiltered splits array double-counts GP jobs.
 
 /** Shape every caller must supply. Payment sub-select is nullable — omit
  *  the payment include entirely for surfaces where no reconciliation
@@ -69,9 +60,9 @@ export type OccurrenceForEarnings = {
    *  current worker in the crew. */
   assignees: { userId: string; role: string | null }[];
   /** Include `payment` when the caller has reconciliation data. Its
-   *  `splits` sub-array MUST be pre-filtered by `{ userId: me,
-   *  guaranteedPayoutPaidAt: null }` at query time — the helper trusts
-   *  the array is already scoped correctly. */
+   *  `splits` sub-array MUST be pre-filtered by `{ userId: me }` at
+   *  query time — the helper trusts the array is already scoped
+   *  correctly. */
   payment?: {
     confirmed: boolean;
     skippedAt: Date | null;

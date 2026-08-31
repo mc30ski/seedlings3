@@ -651,11 +651,6 @@ function WorkerPayments({
                               <Text key={sp.userId} fontSize="xs" color="fg.muted">
                                 {sp.user?.displayName ?? sp.user?.email ?? sp.userId}
                                 {pct != null ? ` (${pct}%)` : ""}: ${sp.amount.toFixed(2)}
-                                {sp.guaranteedPayoutPaidAt && (
-                                  <Text as="span" ml={1} fontSize="2xs" color="purple.700" fontWeight="semibold">
-                                    · Advance paid
-                                  </Text>
-                                )}
                               </Text>
                             );
                           })}
@@ -2642,7 +2637,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                         {/* Status badges stack ABOVE the WORKER PAYOUT
                             headline so the headline number remains the
                             tallest, most prominent element in the row. */}
-                        {(isPending || writtenOff || skipped || (adjustedFrom != null && adjustedFrom !== p.amountPaid)) && (
+                        {(isPending || writtenOff || skipped || overage > 0 || (adjustedFrom != null && adjustedFrom !== p.amountPaid)) && (
                           <HStack gap={1} align="center" wrap="wrap" justify={{ base: "flex-start", sm: "flex-end" }} mb={1}>
                             {isPending && (
                               <Badge size="sm" colorPalette="orange" variant="subtle" title="Awaiting admin approval in the Pending Approvals queue.">
@@ -2687,6 +2682,26 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                             {adjustedFrom != null && adjustedFrom !== p.amountPaid && (
                               <Badge size="sm" colorPalette="orange" variant="subtle" title={`Originally reported as $${adjustedFrom.toFixed(2)}`}>
                                 Adjusted
+                              </Badge>
+                            )}
+                            {/* Overpaid — the client paid more than the
+                                promised total. Worth surfacing because an
+                                overpayment is far more often a typo than a
+                                tip, and nothing else on the row distinguishes
+                                the two: the extra is silently retained by the
+                                business (workers are still paid exactly their
+                                promised amounts) and reported as income.
+                                `overageAmount` is the server's own
+                                collected-minus-promised delta, stamped at
+                                approval from the promised snapshot. */}
+                            {overage > 0 && (
+                              <Badge
+                                size="sm"
+                                colorPalette="purple"
+                                variant="subtle"
+                                title={`Client paid $${overage.toFixed(2)} more than the promised total. Workers were paid their promised amounts; the extra was retained by the business and counts as income. If this was a typo, use Adjust to correct it.`}
+                              >
+                                Overpaid ${overage.toFixed(2)}
                               </Badge>
                             )}
                           </HStack>

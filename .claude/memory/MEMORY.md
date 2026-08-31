@@ -36,7 +36,7 @@
 - Audit logging — AuditTab wired to `/api/admin/audit`
 - Activity — ActivityTab wired to `/api/admin/users/:id/activity`
 - Full financial system: payments, splits, reconciliation, exports (Reconcile tab replaces old Exports + P&L), taxes (see `docs/FINANCIAL_SYSTEM.md`)
-- Contractor Guaranteed Payout, per-job equipment billing, Business Start Date filter
+- Per-job equipment billing, Business Start Date filter (Contractor Guaranteed Payout was REMOVED 2026-08-31)
 - Crews (Group / GroupMember / CheckoutSplit)
 - Compliance: policies + signatures + wizard + banner (worker + admin surfaces)
 - Web dashboard: fully blended tabs across Worker / Admin / Super (see [[reference-tab-blend-pattern]] and [[reference-tab-ordering]])
@@ -78,6 +78,8 @@
 - [Legacy code-pattern reference](patterns.md) — pre-blend tab/route/service template shapes; superseded for tab conventions but still useful for API route + service scaffolding.
 - [Company contact email](project_company_email.md) — admin@seedlingslawncare.com is the company address; mike@wanderski.com is personal
 - [Crews shipped](project_crews_roadmap.md) — Group/GroupMember/CheckoutSplit are live; group rentals split via writeCheckoutSplits at release time. Two policy quirks (employee-claimer = whole crew free; employees inside contractor-claimer crews currently get charged) — read the memo before touching equipment billing.
+- [Guaranteed Payout REMOVED 2026-08-31](project_guaranteed_payout_removal.md) — feature deleted, columns + GuaranteedPayoutAdvance dropped. AuditVerb enum values intentionally kept (live rows). Don't reintroduce.
+- [Tips feature — designed, NOT built](project_tips_feature_design.md) — overpayment→tip split, agreed spec. Was blocked on GP; now unblocked.
 - [Payment math & reconciliation policy](project_payment_math.md) — per-worker fees applied to each split, employees+trainees made whole on underpay, contractors pro-rata; shortfall/overage tracked as internal reporting fields only (cash-basis, no Bad Debt Expense line).
 - [Tax export integrity](project_tax_export_integrity.md) — QuickBooks/tax exports must pull ONLY raw cash-flow fields (Payment.amountPaid, PaymentSplit.amount, Expense.cost). Shortfall/overage/margin breakdowns are operator-dashboard fields only, never tax line items.
 - [NEVER commit, push, or deploy — the user does all of it](feedback_never_push_without_permission.md) — HARD RULE. `git commit` included, unconditionally (2026-08-26: "I'll do commits and push to production always, you should not be doing that"). No standing auth, no urgency-as-permission, no hotfix exceptions. `FIX IT NOW` authorizes editing, NOT recording or publishing. Finish the edits, run the gates, report the file list, stop.
@@ -88,7 +90,6 @@
 - [NEVER use native `<select>` — always Chakra Select.Root](feedback_no_native_select.md) — every dropdown/picker in apps/web uses Chakra v3 `Select.Root` + `createListCollection` with `positioning={{ strategy: "fixed", hideWhenDetached: true }}`. The user has corrected this many times — don't write `<select>` or `<option>` anywhere.
 - [User operates in NC](user_location_nc.md) — federal $7.25/hr applies, no higher state floor. Don't default jurisdiction-dependent settings to NJ/NY/CA examples.
 - [New Setting rows → upsert dev DB directly](feedback_settings_dev_then_neon.md) — editing seed.ts isn't enough; run a one-off `prisma.setting.upsert` script so the row exists before the next reseed. User then copies to prod via Neon UI.
-- [Contractor guaranteed payout period](feature_guaranteed_payout.md) — time-bounded onboarding window (1-90 days) where contractor pay is **work-anchored** (paid on the next payroll run like a W-2) instead of split-anchored (paid when the client pays). Pure derivation from `User.guaranteedPayoutUntil` + `JobOccurrence.completedAt` — **no advance table, no commit step**. `GuaranteedPayoutAdvance` is DEPRECATED and no longer written to (pre-cutover rows kept for audit only). The app does NOT produce 1099 totals — that's Gusto's job. Don't confuse with "made whole on underpay" in payments.ts (that's about AMOUNT; GP is about TIMING).
 - [Reseed trigger phrases](feedback_reseed_phrases.md) — "reseed" = default, "reseed payment" = payments-active, "reseed payment clean" = payments-clean. Just run; don't ask which env.
 - [Run tests trigger phrases](feedback_run_tests_trigger.md) — "run tests" / "run the test suite" / "run e2e" = run API build gate + Playwright e2e; report results concisely. Don't ask which subset.
 - [Always seed dev myself](feedback_always_seed_dev.md) — when I touch seed.ts (new Setting, etc.), run `npm run db:seed` in dev BEFORE reporting done. I own dev seeding; user owns prod (via Neon UI).

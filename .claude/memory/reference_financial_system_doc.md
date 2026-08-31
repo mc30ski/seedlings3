@@ -36,4 +36,4 @@ if the change affects the owner-facing workflow (filing rhythm, three-systems
 boundaries, tax treatment of a transaction class). The user maintains both as
 drift-detection baselines.
 
-Related: [[project-payment-math]], [[project-tax-export-integrity]], [[feedback-config-driven-taxonomies]], [[feature-guaranteed-payout]], [[project-equipment-rental-income]], [[feedback-payments-build-gate]].
+Related: [[project-payment-math]], [[project-tax-export-integrity]], [[feedback-config-driven-taxonomies]], [[project-guaranteed-payout-removal]], [[project-equipment-rental-income]], [[feedback-payments-build-gate]].

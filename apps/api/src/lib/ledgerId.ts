@@ -6,8 +6,8 @@
 //            America/New_York date conventions)
 //   XXXX   — 4 random uppercase alphanumeric chars (CSPRNG-sourced)
 //
-// Stamped at row creation on Payment, Checkout, BusinessExpense, and
-// GuaranteedPayoutAdvance. Used as the QuickBooks JournalNo on export.
+// Stamped at row creation on Payment, Checkout, and BusinessExpense.
+// Used as the QuickBooks JournalNo on export.
 // PaymentSplit and CheckoutSplit JournalNos derive at export time from
 // their parent's ledgerId + a user suffix — no per-split column.
 

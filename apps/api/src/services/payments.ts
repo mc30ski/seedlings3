@@ -69,121 +69,6 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-// JSON shape for User.guaranteedPayoutHistory entries (append-only).
-export type GuaranteedPayoutHistoryEntry = {
-  startedAt: string;        // ISO
-  endedAt: string;          // ISO
-  endedEarly: boolean;      // true = operator early-end, false = cron auto-expired
-  endedActorUserId: string | null;  // null = cron
-};
-
-// Returns true if `time` fell inside any of the user's GP periods —
-// either the current active one (from guaranteedPayoutUntil/StartedAt
-// columns) or any past period from the history array.
-//
-// Used by:
-//   - exports.ts work-anchored contractor payroll: "should this occurrence's
-//     completed work be GP-advanced?"
-//   - exports.ts QB Expenses Contract Labor section: same question.
-//
-// The Slice 2 design splits "current active state" (columns, cleared on
-// expiration) from "history" (JSON array, appended on every end) so this
-// check survives natural expiration of past periods. See feature memo.
-export function wasUserInGuaranteedPayoutAt(
-  user: {
-    guaranteedPayoutUntil: Date | null;
-    guaranteedPayoutStartedAt: Date | null;
-    guaranteedPayoutHistory: any;
-  },
-  time: Date,
-): boolean {
-  const t = time.getTime();
-  if (user.guaranteedPayoutStartedAt && user.guaranteedPayoutUntil) {
-    if (
-      user.guaranteedPayoutStartedAt.getTime() <= t &&
-      t <= user.guaranteedPayoutUntil.getTime()
-    ) {
-      return true;
-    }
-  }
-  const history = Array.isArray(user.guaranteedPayoutHistory)
-    ? (user.guaranteedPayoutHistory as GuaranteedPayoutHistoryEntry[])
-    : [];
-  for (const h of history) {
-    if (!h?.startedAt || !h?.endedAt) continue;
-    const s = new Date(h.startedAt).getTime();
-    const e = new Date(h.endedAt).getTime();
-    if (Number.isFinite(s) && Number.isFinite(e) && s <= t && t <= e) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// Derive `PaymentSplit.guaranteedPayoutPaidAt` for splits being created
-// from an eventual client payment. A split is "GP-paid" when its
-// contractor was in their guaranteed-payout period at the moment their
-// occurrence was completed — that work was already paid on the
-// wage-path Gusto contractor run for the completion week, and the
-// client's later payment must not re-trigger a contractor disbursement.
-//
-// Runs at EVERY split-creation site (createPayment, updatePayment,
-// recalculateSplits, approvePayment) so the flag is consistent regardless
-// of which surface created the split. The flag's downstream consumer is
-// gustoContractorsCsv's payment-anchored half, which skips flagged
-// splits.
-//
-// Pure derivation — no GuaranteedPayoutAdvance table lookup. The advance
-// table is deprecated as of the wage-path refactor (see feature memo
-// `feature_guaranteed_payout`); historical rows remain for audit reference
-// but are not read by new code. The "did this work happen during GP"
-// question is answered by occurrence.completedAt + the user's GP window
-// (User.guaranteedPayoutUntil/StartedAt/History), via the existing
-// wasUserInGuaranteedPayoutAt helper above.
-//
-// Returns a map of userId → "GP-paid date" suitable for stamping on
-// PaymentSplit.guaranteedPayoutPaidAt. We use occurrence.completedAt as
-// the proxy — the actual Gusto pay date lives in Gusto, not the app;
-// completedAt is the load-bearing date that identifies "the work that
-// was paid on the wage cycle covering this date."
-export async function fetchAdvanceFlagsByUser(
-  tx: any,
-  occurrenceId: string,
-  userIds: string[],
-): Promise<Map<string, Date>> {
-  if (userIds.length === 0) return new Map();
-  const occ = await tx.jobOccurrence.findUnique({
-    where: { id: occurrenceId },
-    select: { completedAt: true },
-  });
-  if (!occ?.completedAt) return new Map();
-  const users = await tx.user.findMany({
-    where: { id: { in: userIds } },
-    select: {
-      id: true,
-      guaranteedPayoutUntil: true,
-      guaranteedPayoutStartedAt: true,
-      guaranteedPayoutHistory: true,
-    },
-  });
-  const flags = new Map<string, Date>();
-  for (const u of users as any[]) {
-    if (
-      wasUserInGuaranteedPayoutAt(
-        {
-          guaranteedPayoutUntil: u.guaranteedPayoutUntil,
-          guaranteedPayoutStartedAt: u.guaranteedPayoutStartedAt,
-          guaranteedPayoutHistory: u.guaranteedPayoutHistory,
-        },
-        occ.completedAt,
-      )
-    ) {
-      flags.set(u.id, occ.completedAt);
-    }
-  }
-  return flags;
-}
-
 // When two `gte` constraints apply to the same field (e.g., a user-supplied
 // from-date AND the Business Start Date cutoff), keep the LATER one. The
 // later date is the stricter filter — both must hold, but `gte` only encodes
@@ -766,16 +651,6 @@ export const payments: ServicesPayments = {
       const hasContractors = workersList.some((w) => !isEmployeeClass(w.workerType));
       const hasEmployees = workersList.some((w) => isEmployeeClass(w.workerType));
       const ownerSet = await loadOwnerSet(tx, recon.splits.map((s) => s.userId));
-      // Reconciliation against any GP advance already paid for this work.
-      // Splits whose contractor was advanced get `guaranteedPayoutPaidAt`
-      // stamped so downstream payroll exports skip them (advance already
-      // disbursed the cash; the eventual client payment is reconciled but
-      // not redistributed).
-      const advanceFlags = await fetchAdvanceFlagsByUser(
-        tx,
-        occurrenceId,
-        recon.splits.map((s) => s.userId),
-      );
 
       // Create payment + splits. Always unconfirmed — admin sign-off via
       // approvePayment is the only path to confirmed=true. selfReported
@@ -825,7 +700,6 @@ export const payments: ServicesPayments = {
               netAmount: s.netAmount,
               topUpAmount: s.topUpAmount,
               ownerEarnings: ownerSet.has(s.userId),
-              guaranteedPayoutPaidAt: advanceFlags.get(s.userId) ?? null,
             })),
           },
         },
@@ -1134,15 +1008,7 @@ export const payments: ServicesPayments = {
   },
 
   async listMyPayments(userId, params) {
-    // Skip splits flagged with guaranteedPayoutPaidAt — those splits'
-    // cash flowed via a GP advance, NOT this payment. Including them
-    // would inflate `totalAmount` (the user already got that money via
-    // advance) and surface a misleading row in the worker's Payments
-    // tab. Advances themselves are reflected in the worker's title-bar
-    // earnings / dashboard tile but don't appear as line items here yet
-    // (data shape gap — payments tab is per-Payment, advances aren't
-    // tied to a Payment row).
-    const where: any = { userId, guaranteedPayoutPaidAt: null };
+    const where: any = { userId };
     // Anchor the date window on Payment.createdAt — the stable "when the
     // payment was recorded" date. PaymentSplit rows are delete+recreated at
     // approval, so PaymentSplit.createdAt jumps to the approval date; the
@@ -1514,11 +1380,6 @@ export const payments: ServicesPayments = {
 
       if (input.splits) {
         const ownerSet = await loadOwnerSet(tx, input.splits.map((sp) => sp.userId));
-        const advanceFlags = await fetchAdvanceFlagsByUser(
-          tx,
-          existing.occurrenceId,
-          input.splits.map((sp) => sp.userId),
-        );
         await tx.paymentSplit.deleteMany({ where: { paymentId } });
         await tx.paymentSplit.createMany({
           data: input.splits.map((sp) => ({
@@ -1526,7 +1387,6 @@ export const payments: ServicesPayments = {
             userId: sp.userId,
             amount: sp.amount,
             ownerEarnings: ownerSet.has(sp.userId),
-            guaranteedPayoutPaidAt: advanceFlags.get(sp.userId) ?? null,
           })),
         });
       }
@@ -1654,7 +1514,6 @@ export const payments: ServicesPayments = {
       const splitAmount = Math.round((Math.max(0, totalPayout) / assigneeIds.length) * 100) / 100;
 
       const ownerSet = await loadOwnerSet(tx, assigneeIds);
-      const advanceFlags = await fetchAdvanceFlagsByUser(tx, occurrenceId, assigneeIds);
       await tx.paymentSplit.deleteMany({ where: { paymentId: payment.id } });
       await tx.paymentSplit.createMany({
         data: assigneeIds.map((uid) => ({
@@ -1662,7 +1521,6 @@ export const payments: ServicesPayments = {
           userId: uid,
           amount: splitAmount,
           ownerEarnings: ownerSet.has(uid),
-          guaranteedPayoutPaidAt: advanceFlags.get(uid) ?? null,
         })),
       });
 
@@ -1920,11 +1778,6 @@ export const payments: ServicesPayments = {
     return prisma.$transaction(async (tx) => {
       // Replace splits to reflect the reconciled amounts (gross/fee/net/topUp).
       const ownerSet = await loadOwnerSet(tx, recon.splits.map((s) => s.userId));
-      const advanceFlags = await fetchAdvanceFlagsByUser(
-        tx,
-        existing.occurrence.id,
-        recon.splits.map((s) => s.userId),
-      );
       await tx.paymentSplit.deleteMany({ where: { paymentId } });
       if (recon.splits.length > 0) {
         await tx.paymentSplit.createMany({
@@ -1938,7 +1791,6 @@ export const payments: ServicesPayments = {
             netAmount: s.netAmount,
             topUpAmount: s.topUpAmount,
             ownerEarnings: ownerSet.has(s.userId),
-            guaranteedPayoutPaidAt: advanceFlags.get(s.userId) ?? null,
           })),
         });
       }

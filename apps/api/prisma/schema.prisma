@@ -102,6 +102,11 @@ enum AuditVerb {
   OWNER_EARNINGS_RECORDED
   FEE_APPLIED
   PAYMENT_METHOD_UPDATED
+  // RETIRED 2026-08-31 with the guaranteed-payout feature. The enum values
+  // MUST stay: production AuditEvent rows still reference them, and dropping
+  // a Postgres enum value with live rows fails the migration. Nothing writes
+  // these any more; HistoryTab still renders their labels so the historical
+  // rows remain readable.
   GUARANTEED_PAYOUT_STARTED
   GUARANTEED_PAYOUT_ENDED
   SIGN_IN
@@ -325,31 +330,6 @@ model User {
   // answered by policyPredicate.computeComplianceState() against those
   // relations. See services/policies.ts.
 
-  // Contractor onboarding "guaranteed payout period." When
-  // `guaranteedPayoutUntil` is in the future, contractor payroll for this
-  // worker is work-anchored (paid for completed jobs regardless of client
-  // payment timing) instead of payment-anchored. Auto-expires when the
-  // date passes — no further action required (a daily cron writes the
-  // GUARANTEED_PAYOUT_ENDED audit row for natural expirations and clears
-  // these columns).
-  // `guaranteedPayoutStartedAt` records when the current period began for
-  // UI display ("X days left of N"). Both null = standard contingent-
-  // payment terms apply. See onboarding addendum for the contractual
-  // position; reclassification-risk discussion in user memo.
-  // NOTE: this concept is distinct from the "made whole" terminology used
-  // in payments.ts (which refers to employees being made whole when a
-  // client underpays). That's about AMOUNT; this is about TIMING.
-  //
-  // `guaranteedPayoutHistory` is an append-only JSON array of past periods:
-  //   [{ startedAt: ISO, endedAt: ISO, endedEarly: bool, endedActorUserId: string|null }]
-  // Written on early-end (route) and natural expiration (cron) so split-
-  // reconciliation and work-anchored payroll exports can answer "was the
-  // contractor in a GP period at this occurrence's completedAt?" even
-  // after the active columns have been cleared. Empty array on a fresh
-  // user; never NULL once initialized.
-  guaranteedPayoutUntil     DateTime?
-  guaranteedPayoutStartedAt DateTime?
-  guaranteedPayoutHistory   Json      @default("[]")
 
   // LLC-owner flag. At most one user may have this set to true (enforced via
   // partial unique index in the migration). Additive to ADMIN/SUPER role —
@@ -396,8 +376,6 @@ model User {
   paymentsWrittenOff               Payment[]                 @relation("PaymentWriteOff")
   paymentsSkipped                  Payment[]                 @relation("PaymentSkip")
   paymentSplits                    PaymentSplit[]
-  guaranteedPayoutAdvances         GuaranteedPayoutAdvance[]
-  guaranteedPayoutAdvancesExported GuaranteedPayoutAdvance[] @relation("AdvanceExporter")
   expenses                         Expense[]
   photos                           JobOccurrencePhoto[]
   settingsUpdated                  Setting[]
@@ -1260,7 +1238,6 @@ model JobOccurrence {
 
   assignees                JobOccurrenceAssignee[]
   payment                  Payment?
-  guaranteedPayoutAdvances GuaranteedPayoutAdvance[]
   expenses                 Expense[]
   businessExpenses         BusinessExpense[]
   supplyHolds              SupplyHold[]
@@ -1479,65 +1456,6 @@ model Payment {
   @@index([processorFeeAmount, createdAt])
 }
 
-// DEPRECATED 2026-06-08 — kept for historical audit reference only.
-//
-// Under the wage-path GP model, a contractor in their GP period is paid
-// like a W-2 employee: work-anchored, computed from completed
-// occurrences each pay period (see services/exports.ts
-// loadGpWorkAnchoredItems + gustoContractorsCsv). The app no longer
-// writes to this table.
-//
-// Rows that already exist were created by the old export logic before
-// the cutover. They remain in the database so:
-//   • Pre-cutover periods' QB Contract Labor reconciliation still works
-//   • Historical "what was paid out via Gusto" lookups still find the
-//     advance amount (informational only — Gusto is the system of
-//     record for actual contractor payments going forward)
-//   • The full-DB JSON export still includes them
-//
-// The double-payment-prevention question ("was this contractor already
-// paid for this work?") is now answered by a pure derivation:
-// occurrence.completedAt ∈ user.guaranteedPayoutUntil window. See
-// payments.ts fetchAdvanceFlagsByUser. Advance row existence is no
-// longer consulted by new code.
-//
-// DO NOT write new rows to this table. New code paths producing
-// contractor payments must route through the wage-path computation in
-// loadGpWorkAnchoredItems instead.
-model GuaranteedPayoutAdvance {
-  id String @id @default(cuid())
-
-  // Accounting-system-agnostic ledger ID. See Checkout.ledgerId.
-  ledgerId String? @unique
-
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-
-  occurrenceId String
-  occurrence   JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-
-  // The contractor's promised net at advance time — computed via the same
-  // computeBreakdown formula used for promisedPayouts snapshots. Stored
-  // here verbatim so a later price/expense edit doesn't change history.
-  amount Float
-
-  // When the GP export run that included this advance emitted the row.
-  // Used as the PaymentSplit.guaranteedPayoutPaidAt timestamp when the
-  // client eventually pays.
-  exportedAt DateTime @default(now())
-
-  // Operator who ran the export. Useful for the audit trail; nullable so
-  // a deleted user doesn't break advance rows.
-  exportedByUserId String?
-  exportedBy       User?   @relation("AdvanceExporter", fields: [exportedByUserId], references: [id], onDelete: SetNull)
-
-  createdAt DateTime @default(now())
-
-  @@unique([userId, occurrenceId])
-  @@index([userId, exportedAt])
-  @@index([occurrenceId])
-}
-
 model PaymentSplit {
   id String @id @default(cuid())
 
@@ -1568,25 +1486,12 @@ model PaymentSplit {
   // from Gusto/payroll exports — the owner takes a draw, not a paycheck.
   ownerEarnings Boolean @default(false)
 
-  // Guaranteed-payout reconciliation. Set when this split's user was
-  // in their GP period at the moment of work completion — i.e. the
-  // work was paid on the wage-path Gusto run for the completion week
-  // (loadGpWorkAnchoredItems), not via this client-payment split. The
-  // value is the occurrence's `completedAt` (the wage-path anchor).
-  //
-  // When the client later pays and this row is generated, payroll +
-  // QB exports skip flagged rows so the contractor isn't paid twice.
-  // The flag is derived at split-creation time by
-  // services/payments.ts fetchAdvanceFlagsByUser — see that function
-  // for the derivation rule.
-  guaranteedPayoutPaidAt DateTime?
 
   createdAt DateTime @default(now())
 
   @@unique([paymentId, userId])
   @@index([userId, createdAt])
   @@index([ownerEarnings, createdAt])
-  @@index([guaranteedPayoutPaidAt])
 }
 
 model Expense {

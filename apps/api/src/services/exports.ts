@@ -4,7 +4,6 @@ import { loadExpenseCategories } from "./expenseCategories";
 import {
   computeBreakdown,
   loadRates,
-  wasUserInGuaranteedPayoutAt,
   type WorkerInput,
 } from "./payments";
 
@@ -210,241 +209,6 @@ type W2Agg = {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Gusto W-2 CSV — one row per employee/trainee with totals in the period.
-// ─────────────────────────────────────────────────────────────────────────────
-
-// Computes the work-anchored items for contractors in their guaranteed-
-// payout (GP) period — pure-read, ZERO database writes, fully idempotent.
-//
-// During GP, a contractor's payment is wage-like (work-anchored, paid on
-// the next payroll cycle for the period the work fell in), the same model
-// W-2 employees use. After GP expires, the same contractor's payment
-// reverts to split-anchored (paid when the client's payment is confirmed).
-//
-// This function is the wage-side computation: one entry per (user ×
-// occurrence) where the contractor was in GP at occurrence.completedAt
-// AND completedAt ∈ [start, end]. Callers use it to:
-//   • feed gustoContractorsCsv's work-anchored half
-//   • feed exportPreview's tally for the same window
-//   • populate worker/admin earnings dashboards (filtered by userId)
-//
-// There is NO exclusion based on existing PaymentSplits or any prior
-// GuaranteedPayoutAdvance row. That's the whole point of idempotency —
-// the same (start, end, optional userId) input ALWAYS produces the same
-// output regardless of what other side effects have happened.
-//
-// Dedup against eventual client payment is handled at PaymentSplit
-// creation time: when the client later pays for a GP-period occurrence,
-// fetchAdvanceFlagsByUser derives `guaranteedPayoutPaidAt` from the same
-// "was user in GP at completedAt" rule used here. The Gusto Contractors
-// CSV's payment-anchored half then skips flagged splits.
-//
-// `opts.userId` narrows the result to a single contractor — used by
-// worker/admin earnings dashboards.
-export type GpWorkAnchoredItem = {
-  userId: string;
-  occurrenceId: string;
-  amount: number;
-  completedAt: Date;
-  contractor: { id: string; displayName: string | null; email: string | null };
-  // Property + client context — non-null when the occurrence has them
-  // wired up. Used by the QB Expenses CSV's Contract Labor descriptions
-  // and by any other consumer that wants the human-readable provenance.
-  property: { displayName: string | null; clientDisplayName: string | null } | null;
-};
-
-export async function loadGpWorkAnchoredItems(
-  start: Date,
-  end: Date,
-  opts?: { userId?: string },
-): Promise<GpWorkAnchoredItem[]> {
-  const occs = await prisma.jobOccurrence.findMany({
-    where: {
-      completedAt: { gte: start, lte: end },
-      status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
-      workflow: { in: ["STANDARD", "ONE_OFF"] as any },
-      assignees: {
-        some: {
-          // SQL NULL-safety: `role != 'observer'` evaluates to NULL when
-          // role IS NULL, dropping the row. Most assignees have NULL role
-          // (only crew membership sets one) — without this OR, NULL-role
-          // contractor jobs silently disappear from the Gusto Contractors
-          // export and the contractor doesn't get paid.
-          OR: [{ role: null }, { role: { not: "observer" } }],
-          user: {
-            workerType: "CONTRACTOR",
-            ...(opts?.userId ? { id: opts.userId } : {}),
-          },
-        },
-      },
-    },
-    include: {
-      assignees: {
-        select: {
-          userId: true,
-          role: true,
-          user: {
-            select: {
-              id: true,
-              displayName: true,
-              email: true,
-              workerType: true,
-              guaranteedPayoutUntil: true,
-              guaranteedPayoutStartedAt: true,
-              guaranteedPayoutHistory: true,
-            },
-          },
-        },
-      },
-      addons: { select: { price: true } },
-      expenses: { select: { cost: true } },
-      job: {
-        select: {
-          property: {
-            select: {
-              displayName: true,
-              client: { select: { displayName: true } },
-            },
-          },
-        },
-      },
-    },
-  });
-
-  if (occs.length === 0) return [];
-  const rates = await loadRates(prisma);
-  const out: GpWorkAnchoredItem[] = [];
-
-  for (const occ of occs) {
-    if (!occ.completedAt) continue;
-    const completedAt = occ.completedAt; // narrow once for closure capture
-    const active = occ.assignees.filter((a) => a.role !== "observer");
-    if (active.length === 0) continue;
-
-    const qualifying = active.filter(
-      (a) =>
-        a.user.workerType === "CONTRACTOR" &&
-        (!opts?.userId || a.userId === opts.userId) &&
-        wasUserInGuaranteedPayoutAt(
-          {
-            guaranteedPayoutUntil: a.user.guaranteedPayoutUntil,
-            guaranteedPayoutStartedAt: a.user.guaranteedPayoutStartedAt,
-            guaranteedPayoutHistory: a.user.guaranteedPayoutHistory,
-          },
-          completedAt,
-        ),
-    );
-    if (qualifying.length === 0) continue;
-
-    // Prefer the promisedPayouts snapshot when it exists — it was locked
-    // in at completion time and reflects what each worker was actually
-    // promised. Recomputing from the current price + assignees can drift
-    // if the price was edited post-completion or a contractor was
-    // removed pre-payment. GP guarantees pay the contractor what they
-    // were promised; the snapshot IS the promise.
-    const promisedPayoutsSnapshot = (occ as any).promisedPayouts as
-      | Array<{ userId: string; net: number }>
-      | null
-      | undefined;
-    const snapshotByUser = new Map<string, number>(
-      Array.isArray(promisedPayoutsSnapshot)
-        ? promisedPayoutsSnapshot
-            .map((r: any) => [String(r.userId), Number(r.net) || 0] as [string, number])
-            .filter((r) => r[1] > 0)
-        : [],
-    );
-
-    // Fallback path (no snapshot OR contractor not in snapshot): compute
-    // promised net the same way the snapshot would have at completion
-    // time, using current price/expenses + current assignees. Preserved
-    // for older data created before the snapshot feature existed.
-    const completionSplits = (occ as any).completionSplits as
-      | Array<{ userId: string; percent: number }>
-      | null
-      | undefined;
-    const splitPctById = new Map<string, number>(
-      Array.isArray(completionSplits)
-        ? completionSplits.map((s: any) => [s.userId, Number(s.percent) || 0])
-        : [],
-    );
-    const fallbackPct = active.length > 0 ? 100 / active.length : 0;
-    const workersList: WorkerInput[] = active.map((a) => ({
-      userId: a.userId,
-      splitPercent: splitPctById.get(a.userId) ?? fallbackPct,
-      workerType: a.user.workerType,
-    }));
-    const priceTotal =
-      ((occ as any).price ?? (occ as any).proposalAmount ?? 0) +
-      (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
-    const expTotal = (occ.expenses ?? []).reduce(
-      (s, e) => s + (e.cost ?? 0),
-      0,
-    );
-    const fallbackBreakdown = computeBreakdown(priceTotal, expTotal, workersList, rates);
-
-    for (const q of qualifying) {
-      const snapshotNet = snapshotByUser.get(q.userId);
-      let amount: number;
-      if (snapshotNet != null && snapshotNet > 0) {
-        amount = round2(snapshotNet);
-      } else {
-        const promisedRow = fallbackBreakdown.find((r) => r.userId === q.userId);
-        if (!promisedRow || promisedRow.net <= 0) continue;
-        amount = round2(promisedRow.net);
-      }
-      const property = (occ as any).job?.property
-        ? {
-            displayName: (occ as any).job.property.displayName as string | null,
-            clientDisplayName: (occ as any).job.property.client?.displayName ?? null,
-          }
-        : null;
-      out.push({
-        userId: q.userId,
-        occurrenceId: occ.id,
-        amount,
-        completedAt,
-        contractor: {
-          id: q.user.id,
-          displayName: q.user.displayName,
-          email: q.user.email,
-        },
-        property,
-      });
-    }
-  }
-
-  return out;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Gusto Contractors CSV — one row per 1099 contractor with total paid.
-//
-// PURE READ. Idempotent: same (start, end) → same CSV, no DB writes.
-//
-// Two sources of pay aggregated per contractor:
-//   (a) Payment-anchored (post-GP path): confirmed PaymentSplits in
-//       window, EXCLUDING any flagged with guaranteedPayoutPaidAt
-//       (those splits' contractor was in GP at occurrence completion and
-//       was already paid on the wage-path payroll cycle for that work).
-//   (b) Work-anchored (GP path): for any contractor in their guaranteed-
-//       payout period at the moment their occurrence completed, paid
-//       like a W-2 employee — included on the contractor CSV for the
-//       period the work fell in, NOT the period the client eventually
-//       paid. Computed from JobOccurrence.completedAt + promisedPayouts
-//       snapshot.
-//
-// Cross-week dedup: when the client eventually pays for a GP-period
-// occurrence, the resulting PaymentSplit is created with
-// guaranteedPayoutPaidAt set (see fetchAdvanceFlagsByUser — same
-// derivation as half (b) here). Half (a) skips those splits, so the
-// contractor is never paid for the same work twice.
-//
-// Idempotency contract: this function never inserts into
-// GuaranteedPayoutAdvance (or anywhere else). Gusto is the system of
-// record for what was actually paid. The app is the calculator that
-// computes "what should be on this CSV given current data" — the same
-// answer every time.
-// ─────────────────────────────────────────────────────────────────────────────
-
 // ─────────────────────────────────────────────────────────────────────────────
 // QB Income CSV — one row per confirmed Payment.
 //
@@ -1088,10 +852,8 @@ export async function workdaysCsv(start: Date, end: Date): Promise<CsvResult> {
     // the Net Earnings figure (sum of confirmed PaymentSplit amounts
     // attributed to work the worker did on that date).
     //
-    // Owner-earnings splits and GP-flagged contractor splits are
-    // filtered server-side — the former are the business's own cut
-    // (not personal wage), the latter were already paid via the
-    // wage-path Gusto run (would double-count). Mirrors the QB Income
+    // Owner-earnings splits are filtered server-side — that's the
+    // business's own cut, not personal wage. Mirrors the QB Income
     // export's filter rules.
     //
     // Only real-job workflows count for Jobs Completed / Remaining —
@@ -1131,10 +893,7 @@ export async function workdaysCsv(start: Date, end: Date): Promise<CsvResult> {
             writtenOff: true,
             skippedAt: true,
             splits: {
-              where: {
-                ownerEarnings: false,
-                guaranteedPayoutPaidAt: null,
-              },
+              where: { ownerEarnings: false },
               select: {
                 userId: true,
                 amount: true,
@@ -1194,8 +953,8 @@ export async function workdaysCsv(start: Date, end: Date): Promise<CsvResult> {
   //
   //   3. Otherwise zero — no snapshot, no payment, no signal.
   //
-  // Owner-earnings + GP-flagged splits are filtered server-side by
-  // the query; the snapshot itself never includes owner-earnings.
+  // Owner-earnings splits are filtered server-side by the query; the
+  // snapshot itself never includes owner-earnings.
   const moneyMap = new Map<string, number>();
   const bump = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1);
 

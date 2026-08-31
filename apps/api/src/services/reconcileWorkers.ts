@@ -124,12 +124,6 @@ export type ReconcileWorkerRow = {
 
   // Flags
   belowMinWage: boolean;
-  /** True when this worker is a contractor in an active guaranteed
-   *  payout period. Used to split the wage-compliance banner into
-   *  "reclassification risk" vs "guaranteed payout" buckets — the
-   *  latter means the Company is voluntarily underwriting the timing
-   *  risk during onboarding, not a persistent under-earning signal. */
-  guaranteedPayoutActive: boolean;
   /** True when the worker has at least one workday in the window
    *  that hasn't ended yet. Headline hours / days include the live
    *  elapsed time so the dashboard reflects in-progress activity. */
@@ -186,7 +180,7 @@ export type ReconcilePeriod = {
     qbServiceIncome: number;        // Payment.amountPaid (sum)
     qbEquipmentRentalIncome: number;
     qbProcessorFees: number;
-    qbContractLabor: number;        // contractor splits (non-GP-flagged)
+    qbContractLabor: number;        // contractor splits
   };
   workers: ReconcileWorkerRow[];
   // Per-worker payroll inputs (Gusto-style). One row per active
@@ -339,7 +333,6 @@ export async function buildReconcileWorkers(
                 feeAmount: true,
                 topUpAmount: true,
                 ownerEarnings: true,
-                guaranteedPayoutPaidAt: true,
               },
             },
           },
@@ -517,7 +510,6 @@ export async function buildReconcileWorkers(
       fee: number;
       topUp: number;
       isOwnerEarnings: boolean;
-      gpFlagged: boolean;
     }>();
     if (occ.payment) {
       for (const sp of occ.payment.splits) {
@@ -527,7 +519,6 @@ export async function buildReconcileWorkers(
           fee: sp.feeAmount ?? 0,
           topUp: sp.topUpAmount ?? 0,
           isOwnerEarnings: !!sp.ownerEarnings,
-          gpFlagged: sp.guaranteedPayoutPaidAt != null,
         });
       }
     }
@@ -766,28 +757,6 @@ export async function buildReconcileWorkers(
   }
 
   // ── Build per-worker rows + anomalies ──────────────────────────────────
-  // Lookup for guaranteedPayoutUntil so we can flag contractors currently
-  // in an active GP period. Used by the wage-compliance banner to
-  // distinguish "reclassification risk" (persistent under-earning
-  // contractor) from "guaranteed payout" (Company is voluntarily
-  // underwriting timing risk during onboarding). Single query for all
-  // accumulated users so we don't repeat lookups per row.
-  const userIds = Array.from(acc.values()).map((a) => a.user.id);
-  const gpRows =
-    userIds.length > 0
-      ? await prisma.user.findMany({
-          where: { id: { in: userIds } },
-          select: { id: true, guaranteedPayoutUntil: true },
-        })
-      : [];
-  const nowMs = Date.now();
-  const gpActiveById = new Map<string, boolean>(
-    gpRows.map((u) => [
-      u.id,
-      !!(u.guaranteedPayoutUntil && u.guaranteedPayoutUntil.getTime() > nowMs),
-    ]),
-  );
-
   const workers: ReconcileWorkerRow[] = [];
   const payroll: PayrollRow[] = [];
   let totalAnomalies = 0;
@@ -893,7 +862,6 @@ export async function buildReconcileWorkers(
       effectiveHourly,
       preTopUpHourly,
       belowMinWage,
-      guaranteedPayoutActive: gpActiveById.get(a.user.id) ?? false,
       hasInProgressWorkday,
       anomalies,
       days,

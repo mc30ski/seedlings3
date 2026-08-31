@@ -70,8 +70,8 @@ what it paid; the app's `gusto-w2.csv` for `1/1 → 12/31` is the
 reconciliation source.
 
 The app NEVER tracks "did Gusto pay them." That coupling is what
-created the GuaranteedPayoutAdvance complexity that has now been
-deprecated. See [[feature-guaranteed-payout]].
+created the GuaranteedPayoutAdvance complexity, since removed —
+see [[project-guaranteed-payout-removal]].
 
 Related: [[project-payment-math]], [[financial-system-doc]], [[feedback-payments-build-gate]] — invariant D covers this rule mechanically.
 
@@ -81,8 +81,8 @@ Setting: `QB_INCLUDE_CONTRACT_LABOR` (boolean, default ON). Located
 in Settings → Payments & Payouts.
 
 When ON: the app's `qb-journal-expenses.csv` emits Contract Labor
-rows for post-GP confirmed splits + GP wage-path work + historical
-advance rows. This is the only path getting contractor labor into
+rows for confirmed contractor splits. This is the only path
+getting contractor labor into
 QB until Gusto's QB integration is configured.
 
 When OFF: the entire Contract Labor section is dropped from the CSV.
