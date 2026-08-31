@@ -3059,7 +3059,13 @@ chip: false, bucket: t.bucket }));
   const loadTimelineCount = useCallback(async () => {
     if (!isAdmin) { setTimelineUrgentCount(0); if (me) markAlertLoaded("timeline"); return; }
     try {
-      const endpoint = isSuper
+      // Scope by the ROLE CHIP the operator is on (`scopeIsSuper`), not by
+      // their underlying role. The super endpoint includes adminHidden
+      // events; the admin one doesn't — and goToTimeline lands on whichever
+      // tab tree the chip selects. Keying off `isSuper` meant a super
+      // sitting on the Admin chip got a badge counting super-only rows and
+      // a list that couldn't show them: the badge said 2, the tab showed 1.
+      const endpoint = scopeIsSuper
         ? "/api/super/timeline/upcoming-counts"
         : "/api/admin/timeline/upcoming-counts";
       const r = await apiGet<{ urgent: number; soon: number }>(endpoint);
@@ -3068,7 +3074,7 @@ chip: false, bucket: t.bucket }));
       setTimelineUrgentCount(0);
     }
     markAlertLoaded("timeline");
-  }, [isAdmin, isSuper, me]);
+  }, [isAdmin, scopeIsSuper, me]);
 
   useEffect(() => {
     void loadTimelineCount();

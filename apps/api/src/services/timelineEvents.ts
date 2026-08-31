@@ -4,6 +4,7 @@ import { prisma } from "../db/prisma";
 import { writeAudit } from "../lib/auditLogger";
 import { AUDIT } from "../lib/auditActions";
 import { ServiceError } from "../lib/errors";
+import { etDaysBetween, etFormatDate } from "../lib/dates";
 
 // Urgency thresholds — exposed here so the routes + the title-bar pill stay
 // in sync if they ever drift.
@@ -70,11 +71,28 @@ export type UpcomingRow =
       nextDate: Date;
     };
 
-function urgencyOf(d: Date, from: Date = new Date()): "past" | "urgent" | "soon" | "future" {
-  const diff = d.getTime() - from.getTime();
-  if (diff < 0) return "past";
-  if (diff <= msIn(URGENT_DAYS)) return "urgent";
-  if (diff <= msIn(SOON_DAYS)) return "soon";
+/**
+ * Urgency tier for a due date, as ET CALENDAR DAYS from today.
+ *
+ * This used to subtract raw timestamps from `Date.now()`, which is wrong at
+ * exactly the boundary that matters most: an event due TODAY is stored at
+ * the start of the day, so by mid-morning `diff < 0` and it reported as
+ * "past". The header badge counted it as overdue while the Timeline tab —
+ * which has always bucketed by ET date key — filed it under "Today". The
+ * two disagreed, and an operator clicking a badge that said 2 found 1.
+ *
+ * Mirrors `urgencyOf` in apps/web/src/ui/tabs/TimelineTab.tsx. Both must
+ * agree or the badge lies about the list it links to.
+ */
+function urgencyOf(
+  d: Date,
+  from: Date = new Date(),
+): "past" | "today" | "urgent" | "soon" | "future" {
+  const days = etDaysBetween(etFormatDate(from), etFormatDate(d));
+  if (days < 0) return "past";
+  if (days === 0) return "today";
+  if (days <= URGENT_DAYS) return "urgent";
+  if (days <= SOON_DAYS) return "soon";
   return "future";
 }
 
@@ -239,12 +257,15 @@ export const timelineEvents = {
     for (const r of rows) {
       const u = urgencyOf(r.nextDate, now);
       // `urgent` here drives the title-bar Timeline alert badge. Operator
-      // preference: the badge fires for OVERDUE rows only ("past"), not for
-      // upcoming-within-7-days rows. The 7-day window is still useful as a
-      // visual urgency tier inside the Timeline list itself, but it should
-      // not pull attention from the header. `soon` keeps its existing 8–30
-      // day meaning in case any caller wants the upcoming-soon count.
-      if (u === "past") urgent++;
+      // preference: the badge fires for rows needing action NOW — overdue
+      // ("past") and due today — not for upcoming-within-7-days rows. The
+      // 7-day window is still useful as a visual urgency tier inside the
+      // Timeline list itself, but it should not pull attention from the
+      // header. "today" is included because the Timeline tab colors its
+      // Today section red, the same as Overdue: both are act-now buckets,
+      // and the badge has to add up to what the tab shows.
+      // `soon` keeps its existing 8–30 day meaning for any other caller.
+      if (u === "past" || u === "today") urgent++;
       else if (u === "urgent" || u === "soon") soon++;
     }
     return { urgent, soon };

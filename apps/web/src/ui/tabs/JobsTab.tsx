@@ -203,7 +203,14 @@ export default function JobsTab({
   // (Client Requests, admin filter chips, admin-only sections, …).
   // Worker scope stays untouched.
   const isAdmin = (forAdmin || scope.isAdmin) && hasAdminRole;
-  const isSuper = (forAdmin || scope.isSuper) && hasSuperRole;
+  // NOTE the asymmetry with `isAdmin` above, and do not "fix" it: super
+  // must NOT fall back to `forAdmin ||`. Both the Admin tab and the Super
+  // tab mount JobsTab with purpose="ADMIN", so `forAdmin` is true on both
+  // — a super sitting on the ADMIN chip would light up every super-only
+  // path. That shipped: the Admin Jobs feed fetched
+  // /api/super/timeline/upcoming and pulled adminHidden Timeline rows into
+  // the admin's own feed. Scope, not role, decides super extras.
+  const isSuper = scope.isSuper && hasSuperRole;
   // Admin/super-additive gate. Used in place of `forAdmin` at every
   // site where forAdmin gates an ADMIN-ONLY ADDITION (Client Requests
   // fetch/render, admin filter chips, admin data feeds, admin API
@@ -9343,7 +9350,10 @@ export default function JobsTab({
           totalExpenses={(acceptPaymentOcc.expenses ?? []).reduce((s, e) => s + e.cost, 0)}
           commissionPercent={commissionPercent}
           marginPercent={marginPercent}
-          isSuper={isSuper}
+          // Admin OR super — the kill-switch only hides this from field
+          // workers; operators keep it because the request still has to
+          // clear the payment-approval queue.
+          isOperator={isAdmin || isSuper}
           allowAllMethods={forAdmin}
           viewAsName={effectiveViewAsName}
           assignees={(acceptPaymentOcc.assignees ?? []).filter((a) => a.role !== "observer").map((a) => ({

@@ -3150,7 +3150,7 @@ export default function ServicesTab({
             workerType: a.user?.workerType,
             isClaimer: a.assignedById === a.userId,
           }))}
-          isSuper={isSuper}
+          isOperator={isAdmin || isSuper}
           onAccepted={(_result) => {
             // The accept-payment endpoint calls createPayment, which
             // INTENTIONALLY does NOT auto-create the next occurrence —

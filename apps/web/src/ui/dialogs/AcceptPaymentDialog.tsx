@@ -84,11 +84,16 @@ type Props = {
   /** Occurrence id — required for the Request Payment footer action
    *  (the dialog fetches /comms-handoff to build the SMS/mailto link). */
   occurrenceId?: string;
-  /** Whether the viewer has SUPER role. Used to bypass the
-   *  REQUEST_PAYMENT_FROM_CLIENT_ENABLED gate — when that flag is "false",
-   *  the Request Payment button is hidden for workers but always available
-   *  to Super so the kill-switch can be tested. */
-  isSuper?: boolean;
+  /** Whether the viewer is acting as an operator (ADMIN or SUPER). Used to
+   *  bypass the REQUEST_PAYMENT_FROM_CLIENT_ENABLED gate: when that flag is
+   *  "false" the Request Payment button is hidden from field workers but
+   *  stays available to operators.
+   *
+   *  Was `isSuper` — a super-only testing hatch for the kill-switch. Widened
+   *  to admins on purpose: a requested payment still lands in the approval
+   *  queue for review, so the safety is the approval step, not hiding the
+   *  button from admins. */
+  isOperator?: boolean;
   /** True only when opened from the Admin Jobs tab. Adds a "Client paid
    *  another way?" link that expands the method picker from on-site methods
    *  to ALL active methods — for recording a payment a client made remotely
@@ -122,7 +127,7 @@ export default function AcceptPaymentDialog({
   assignees,
   completionSplits,
   occurrenceId,
-  isSuper = false,
+  isOperator = false,
   allowAllMethods = false,
   viewAsName = null,
   onAccepted,
@@ -153,7 +158,7 @@ export default function AcceptPaymentDialog({
       })
       .catch(() => { /* keep default */ });
   }, []);
-  const canRequestPayment = requestPaymentEnabled || isSuper;
+  const canRequestPayment = requestPaymentEnabled || isOperator;
 
   // Amount Paid is intentionally locked to the invoice total inside the
   // main view. The override path lives in the "confirm" step (same dialog,
