@@ -1237,11 +1237,19 @@ async function seedDatabase() {
     { jobId: martinezRentalBiweekly.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(10, 9), endAt: addMinutes(daysAgo(10, 9), 45), status: "COMPLETED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 65.0, estimatedMinutes: 45, startedAt: daysAgo(10, 9), completedAt: addMinutes(daysAgo(10, 9), 42), paymentRequestToken: "demo-token-martinez-rental-awaiting", paymentRequestTokenCreatedAt: daysAgo(0, 9), paymentRequestSentAt: daysAgo(0, 9), paymentRequestFirstSentAt: daysAgo(10, 9) },
     [{ userId: EMPLOYEE_ID, role: "primary" }],
   );
-  // Cabin: status COMPLETED, self-reported unconfirmed Payment →
-  // "Confirming payment" variant (client already tapped Pay via
-  // /pay/[token]; admin hasn't approved yet).
+  // Cabin: self-reported unconfirmed Payment → "Confirming payment"
+  // variant (client already tapped Pay via /pay/[token]; admin hasn't
+  // approved yet).
+  //
+  // Status MUST be PENDING_PAYMENT, not COMPLETED. approvePayment() rejects
+  // anything else with "Occurrence is not pending payment", so a COMPLETED
+  // occurrence with an unconfirmed payment renders in the admin's PENDING
+  // APPROVAL queue but can never actually be approved — a dead row that
+  // looks real. The client-side "Confirming payment" label is driven by
+  // `!!payment && !payment.confirmed` (routes/client.ts), not by status, so
+  // this keeps the fixture's original purpose intact.
   const cMartinezCabin = await occ(
-    { jobId: martinezCabinMonthly.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(20, 8), endAt: addMinutes(daysAgo(20, 8), 90), status: "COMPLETED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 120.0, estimatedMinutes: 90, startedAt: daysAgo(20, 8), completedAt: addMinutes(daysAgo(20, 8), 85), paymentRequestToken: "demo-token-martinez-cabin-pending", paymentRequestTokenCreatedAt: daysAgo(0, 8), paymentRequestSentAt: daysAgo(0, 8), paymentRequestFirstSentAt: daysAgo(20, 8) },
+    { jobId: martinezCabinMonthly.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(20, 8), endAt: addMinutes(daysAgo(20, 8), 90), status: "PENDING_PAYMENT", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 120.0, estimatedMinutes: 90, startedAt: daysAgo(20, 8), completedAt: addMinutes(daysAgo(20, 8), 85), paymentRequestToken: "demo-token-martinez-cabin-pending", paymentRequestTokenCreatedAt: daysAgo(0, 8), paymentRequestSentAt: daysAgo(0, 8), paymentRequestFirstSentAt: daysAgo(20, 8) },
     [{ userId: EMPLOYEE_ID, role: "primary" }],
   );
   await prisma.payment.create({
@@ -1777,6 +1785,19 @@ async function seedDatabase() {
   }
 
   // ── Payments (for completed occurrences) ──────────────────────────────────
+  // Each per-job expense also writes a paired BusinessExpense so the
+  // tax ledger reflects everything the company spent (matching MVP-2 model).
+  const expenseData: { occId: string; userId: string; cost: number; desc: string; category: string; vendor?: string }[] = [
+    { occId: cWillowbrook7.id, userId: ADMIN_WORKER_ID, cost: 25.0, desc: "Fuel for mowers", category: "Fuel", vendor: "Shell" },
+    { occId: cWillowbrook14.id, userId: ADMIN_WORKER_ID, cost: 28.0, desc: "Fuel for mowers", category: "Fuel", vendor: "Shell" },
+    { occId: cMartinez14.id, userId: EMPLOYEE_ID, cost: 12.5, desc: "Trimmer line replacement", category: "Supplies", vendor: "Stihl Pro Dealer" },
+    { occId: cHarrington7.id, userId: EMPLOYEE_ID, cost: 8.0, desc: "Edger blade", category: "Supplies", vendor: "Pro Lawn Supply" },
+    { occId: cSunrise7.id, userId: ADMIN_WORKER_ID, cost: 35.0, desc: "Fuel and 2-cycle oil", category: "Fuel", vendor: "Shell" },
+    { occId: cRiverBend7.id, userId: CONTRACTOR_ID, cost: 18.0, desc: "Mulch bags (2)", category: "Supplies", vendor: "Lowes" },
+    { occId: cThompson7.id, userId: CONTRACTOR_ID, cost: 15.0, desc: "Hedge trimmer fuel mix", category: "Supplies", vendor: "Pro Lawn Supply" },
+    { occId: cObrien7.id, userId: EMPLOYEE_ID, cost: 6.0, desc: "Trash bags for debris", category: "Supplies", vendor: "Home Depot" },
+  ];
+
   console.log("  Creating payments...");
 
   // Worker type lookup for fee calculation
@@ -1831,14 +1852,15 @@ async function seedDatabase() {
     // Today's completed jobs — populate the SuperWorkHomeTab "today"
     // view with real revenue + team pay data. createdAt is NOW-minus-a-
     // few-hours (guaranteed in the past regardless of when seed runs).
-    // TIP FIXTURE. Client paid $105 on a $85 job and the $20 overpayment
-    // was designated a tip: 25% business / 75% crew. Gives dev a payment
+    // TIP FIXTURE. $85 job, client paid $105, and the $20 overpayment was
+    // designated a tip: 25% business / 75% crew. Split amounts must sum to
+    // the INVOICE ($85), not the payment — the tip is separate money. Gives dev a payment
     // exercising the Tip badge, the tip line on the payment card, and the
     // payroll Tips column. Note the crew shares are NOT proportional to the
     // job splits here — the operator can override the defaults.
     // Includes the LLC owner's share — see the assignee note on
     // cTodayHarrington. His split is stamped ownerEarnings below.
-    { occId: cTodayHarrington.id, amount: 125, method: "VENMO", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 50 }, { userId: EMPLOYEE_ID, amount: 35 }, { userId: MICHAEL_ID, amount: 20 }], createdAt: new Date(NOW.getTime() - 4 * 3_600_000), tip: { total: 20, toBusiness: 5, perWorker: { [ADMIN_WORKER_ID]: 9, [EMPLOYEE_ID]: 6 } } },
+    { occId: cTodayHarrington.id, amount: 105, method: "VENMO", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 40 }, { userId: EMPLOYEE_ID, amount: 30 }, { userId: MICHAEL_ID, amount: 15 }], createdAt: new Date(NOW.getTime() - 4 * 3_600_000), tip: { total: 20, toBusiness: 5, perWorker: { [ADMIN_WORKER_ID]: 9, [EMPLOYEE_ID]: 6 } } },
     // OVERPAID fixture — a $125 job the client paid $140 cash for (rounded
     // up). Worker splits are unchanged, so the $15 is retained by the
     // business and stamped as `overageAmount`. Without a row like this the
@@ -1850,10 +1872,58 @@ async function seedDatabase() {
 
   for (const p of paymentData) {
     // Calculate platform fee (contractor splits) and business margin (employee/trainee splits)
-    const contractorSplitTotal = p.splits.filter((s) => contractorIds.has(s.userId)).reduce((sum, s) => sum + s.amount, 0);
-    const employeeSplitTotal = p.splits.filter((s) => employeeIds.has(s.userId)).reduce((sum, s) => sum + s.amount, 0);
-    const platformFeeAmount = contractorSplitTotal > 0 ? Math.round(contractorSplitTotal * PLATFORM_FEE_PCT) / 100 : null;
-    const businessMarginAmount = employeeSplitTotal > 0 ? Math.round(employeeSplitTotal * BUSINESS_MARGIN_PCT) / 100 : null;
+    // ── Per-worker GROSS → FEE → NET, exactly as the app does it ─────
+    //
+    // `p.splits[].amount` in the fixture table is each worker's GROSS share
+    // of the job portion. Production stores the NET (gross − fee) on
+    // PaymentSplit.amount and keeps the fee in platformFee/businessMargin.
+    //
+    // The seed used to store the GROSS in `amount` while ALSO recording the
+    // fee — so a card rendered "TOTAL TO WORKERS $350" next to "business
+    // kept $95" on a $350 payment, which is $445 and obviously wrong. The
+    // UI was fine; the data contradicted itself. Compute it properly here
+    // and populate grossAmount/ratePercent/feeAmount/netAmount too, so the
+    // card can render the real "$X share − $Y margin (Z%) = $N" breakdown
+    // instead of falling back to a bare "Net payout".
+    const rateFor = (userId: string) =>
+      contractorIds.has(userId) ? PLATFORM_FEE_PCT : BUSINESS_MARGIN_PCT;
+    // Expenses are REIMBURSED off the top before anyone is paid — same as
+    // computeBreakdown(collected, expenses, ...) in services/payments.ts,
+    // which splits (collected − expenses). The fixture's split amounts are
+    // treated as proportions of the job portion so this stays exact
+    // whatever the expense total is.
+    const occExpenses = expenseData
+      .filter((e) => e.occId === p.occId)
+      .reduce((sum, e) => sum + e.cost, 0);
+    const grossPool = p.splits.reduce((sum, sp) => sum + sp.amount, 0);
+    const payoutPool = Math.max(0, Math.round((grossPool - occExpenses) * 100) / 100);
+    const computedSplits = p.splits.map((sp) => {
+      const share = grossPool > 0 ? sp.amount / grossPool : 0;
+      const gross = Math.round(payoutPool * share * 100) / 100;
+      const ratePercent = rateFor(sp.userId);
+      const feeAmount = Math.round(gross * ratePercent) / 100;
+      const netAmount = Math.round((gross - feeAmount) * 100) / 100;
+      return { userId: sp.userId, gross, ratePercent, feeAmount, netAmount };
+    });
+    // Penny residual from rounding each share independently — hand it to
+    // the first worker so gross always sums to the pool exactly. Without
+    // this the conservation invariant trips on odd totals.
+    const grossSum = computedSplits.reduce((sum, c) => sum + c.gross, 0);
+    const residual = Math.round((payoutPool - grossSum) * 100) / 100;
+    if (residual !== 0 && computedSplits.length > 0) {
+      const first = computedSplits[0];
+      first.gross = Math.round((first.gross + residual) * 100) / 100;
+      first.feeAmount = Math.round(first.gross * first.ratePercent) / 100;
+      first.netAmount = Math.round((first.gross - first.feeAmount) * 100) / 100;
+    }
+    const platformFeeTotal = computedSplits
+      .filter((c) => contractorIds.has(c.userId))
+      .reduce((sum, c) => sum + c.feeAmount, 0);
+    const employeeFeeTotal = computedSplits
+      .filter((c) => !contractorIds.has(c.userId))
+      .reduce((sum, c) => sum + c.feeAmount, 0);
+    const platformFeeAmount = platformFeeTotal > 0 ? Math.round(platformFeeTotal * 100) / 100 : null;
+    const businessMarginAmount = employeeFeeTotal > 0 ? Math.round(employeeFeeTotal * 100) / 100 : null;
 
     // Processor fee: snapshot from METHOD_FEES (mirrors the taxonomy). Stored
     // on every payment — zero for Cash/Check/Zelle, ~1.9%+$0.10 for Venmo.
@@ -1893,10 +1963,17 @@ async function seedDatabase() {
         // this via loadOwnerSet at split-write time; the seed mirrors it so
         // every owner-exclusion filter has a row to exclude.
         splits: {
-          create: p.splits.map((sp) => ({
-            ...sp,
-            tipAmount: p.tip?.perWorker?.[sp.userId] ?? 0,
-            ownerEarnings: sp.userId === MICHAEL_ID,
+          create: computedSplits.map((c) => ({
+            userId: c.userId,
+            // NET, matching production. Gross/fee are carried alongside so
+            // the card can show the full derivation.
+            amount: c.netAmount,
+            grossAmount: c.gross,
+            ratePercent: c.ratePercent,
+            feeAmount: c.feeAmount,
+            netAmount: c.netAmount,
+            tipAmount: p.tip?.perWorker?.[c.userId] ?? 0,
+            ownerEarnings: c.userId === MICHAEL_ID,
           })),
         },
       },
@@ -1906,18 +1983,6 @@ async function seedDatabase() {
   // ── Expenses ──────────────────────────────────────────────────────────────
   console.log("  Creating expenses...");
 
-  // Each per-job expense also writes a paired BusinessExpense so the
-  // tax ledger reflects everything the company spent (matching MVP-2 model).
-  const expenseData: { occId: string; userId: string; cost: number; desc: string; category: string; vendor?: string }[] = [
-    { occId: cWillowbrook7.id, userId: ADMIN_WORKER_ID, cost: 25.0, desc: "Fuel for mowers", category: "Fuel", vendor: "Shell" },
-    { occId: cWillowbrook14.id, userId: ADMIN_WORKER_ID, cost: 28.0, desc: "Fuel for mowers", category: "Fuel", vendor: "Shell" },
-    { occId: cMartinez14.id, userId: EMPLOYEE_ID, cost: 12.5, desc: "Trimmer line replacement", category: "Supplies", vendor: "Stihl Pro Dealer" },
-    { occId: cHarrington7.id, userId: EMPLOYEE_ID, cost: 8.0, desc: "Edger blade", category: "Supplies", vendor: "Pro Lawn Supply" },
-    { occId: cSunrise7.id, userId: ADMIN_WORKER_ID, cost: 35.0, desc: "Fuel and 2-cycle oil", category: "Fuel", vendor: "Shell" },
-    { occId: cRiverBend7.id, userId: CONTRACTOR_ID, cost: 18.0, desc: "Mulch bags (2)", category: "Supplies", vendor: "Lowes" },
-    { occId: cThompson7.id, userId: CONTRACTOR_ID, cost: 15.0, desc: "Hedge trimmer fuel mix", category: "Supplies", vendor: "Pro Lawn Supply" },
-    { occId: cObrien7.id, userId: EMPLOYEE_ID, cost: 6.0, desc: "Trash bags for debris", category: "Supplies", vendor: "Home Depot" },
-  ];
 
   for (const e of expenseData) {
     const be = await prisma.businessExpense.create({
@@ -6604,6 +6669,216 @@ async function assertPrimaryContactInvariant() {
     throw new Error(`Seed produced ${violations.length} primary-contact invariant violation(s).`);
   }
   console.log(`✓ Primary-contact invariant holds across ${clients.length} client(s).`);
+
+  // ── Approvable-queue invariant ──────────────────────────────────────
+  // Every unconfirmed Payment shows up in the admin's PENDING APPROVAL
+  // queue, but approvePayment() rejects anything whose occurrence isn't
+  // PENDING_PAYMENT ("Occurrence is not pending payment"). A fixture that
+  // pairs an unconfirmed payment with a COMPLETED/CLOSED occurrence
+  // therefore renders a row the operator can see, click, and never
+  // approve — indistinguishable from a real bug in the app.
+  //
+  // That shipped in the Martinez Cabin fixture and cost real debugging
+  // time. Fail the seed rather than hand over a queue with dead rows.
+  const unapprovable = await prisma.payment.findMany({
+    where: {
+      confirmed: false,
+      writtenOff: false,
+      skippedAt: null,
+      occurrence: { status: { not: "PENDING_PAYMENT" } },
+    },
+    select: {
+      amountPaid: true,
+      occurrence: {
+        select: {
+          status: true,
+          job: { select: { property: { select: { displayName: true } } } },
+        },
+      },
+    },
+  });
+  if (unapprovable.length > 0) {
+    console.error("Unapprovable pending-approval rows (unconfirmed payment on a non-PENDING_PAYMENT occurrence):");
+    for (const u of unapprovable) {
+      console.error(
+        `  - $${u.amountPaid} on "${u.occurrence?.job?.property?.displayName ?? "?"}" (occurrence is ${u.occurrence?.status})`,
+      );
+    }
+    throw new Error(
+      `Seed produced ${unapprovable.length} pending-approval row(s) that can never be approved. ` +
+        "Set the occurrence status to PENDING_PAYMENT, or confirm the payment.",
+    );
+  }
+  console.log("✓ Every pending-approval row is actually approvable.");
+
+  // ── Reconcile seeded splits against the FINAL expense totals ────────
+  //
+  // Expenses are reimbursed off the top before anyone is paid, so a
+  // worker's share is computed on (collected − expenses) — see
+  // computeBreakdown in services/payments.ts. But expenses arrive from
+  // several places in this seed (the per-job list, supply holds, …) and
+  // some are created AFTER the payments are. Rather than have the payment
+  // loop try to predict them all, recompute once here when everything
+  // exists. Idempotent: the pool is derived from amountPaid each time, and
+  // the split proportions are scale-invariant.
+  const toReconcile = await prisma.payment.findMany({
+    where: { writtenOff: false, skippedAt: null },
+    include: {
+      splits: { include: { user: { select: { workerType: true } } } },
+      occurrence: { select: { expenses: { select: { cost: true } } } },
+    },
+  });
+  for (const pay of toReconcile) {
+    if (pay.splits.length === 0) continue;
+    const expenses = (pay.occurrence?.expenses ?? []).reduce((a, e) => a + e.cost, 0);
+    const pool = Math.max(
+      0,
+      Math.round((pay.amountPaid - pay.tipAmount - pay.overageAmount - expenses) * 100) / 100,
+    );
+    const basis = pay.splits.map((sp) => sp.grossAmount ?? sp.amount);
+    const basisTotal = basis.reduce((a, b) => a + b, 0);
+    if (basisTotal <= 0) continue;
+    const rows = pay.splits.map((sp, i) => {
+      const ratePercent = sp.user?.workerType === "CONTRACTOR" ? 20 : 30;
+      const gross = Math.round(pool * (basis[i] / basisTotal) * 100) / 100;
+      return { id: sp.id, ratePercent, gross };
+    });
+    // Hand the rounding residual to the first row so gross sums exactly.
+    const grossSum = rows.reduce((a, r) => a + r.gross, 0);
+    const residual = Math.round((pool - grossSum) * 100) / 100;
+    if (residual !== 0) rows[0].gross = Math.round((rows[0].gross + residual) * 100) / 100;
+
+    let platformFee = 0;
+    let margin = 0;
+    for (const r of rows) {
+      const feeAmount = Math.round(r.gross * r.ratePercent) / 100;
+      const netAmount = Math.round((r.gross - feeAmount) * 100) / 100;
+      if (r.ratePercent === 20) platformFee += feeAmount;
+      else margin += feeAmount;
+      await prisma.paymentSplit.update({
+        where: { id: r.id },
+        data: {
+          amount: netAmount,
+          grossAmount: r.gross,
+          ratePercent: r.ratePercent,
+          feeAmount,
+          netAmount,
+        },
+      });
+    }
+    await prisma.payment.update({
+      where: { id: pay.id },
+      data: {
+        platformFeeAmount: platformFee > 0 ? Math.round(platformFee * 100) / 100 : null,
+        platformFeePercent: platformFee > 0 ? 20 : null,
+        businessMarginAmount: margin > 0 ? Math.round(margin * 100) / 100 : null,
+        businessMarginPercent: margin > 0 ? 30 : null,
+      },
+    });
+  }
+  console.log(`✓ Reconciled splits on ${toReconcile.length} payment(s) against final expense totals.`);
+
+  // ── Payment conservation invariant ──────────────────────────────────
+  // Every dollar a client paid must be accounted for exactly once:
+  //
+  //   amountPaid = Σ split.amount (NET) + Σ split.tipAmount
+  //              + platformFeeAmount + businessMarginAmount
+  //              + tipToBusinessAmount + overageAmount
+  //              − shortfallAmount + expenses
+  //
+  // This is the same identity the payments build gate fuzzes against the
+  // reconciler; asserting it on seeded ROWS catches the other failure mode:
+  // a fixture that hand-writes split amounts in the wrong basis.
+  //
+  // That shipped — the seed stored each worker's GROSS share in
+  // `split.amount` while also recording the fee, so a $350 payment rendered
+  // "TOTAL TO WORKERS $350" beside "business kept $95". The card was right;
+  // the data was contradictory. Fail the seed rather than ship numbers that
+  // make the app look broken.
+  const allPayments = await prisma.payment.findMany({
+    where: { writtenOff: false, skippedAt: null },
+    select: {
+      amountPaid: true, platformFeeAmount: true, businessMarginAmount: true,
+      tipAmount: true, tipToBusinessAmount: true, overageAmount: true,
+      shortfallAmount: true,
+      splits: { select: { amount: true, tipAmount: true } },
+      occurrence: {
+        select: {
+          expenses: { select: { cost: true } },
+          job: { select: { property: { select: { displayName: true } } } },
+        },
+      },
+    },
+  });
+  const drift: string[] = [];
+  for (const pay of allPayments) {
+    if (pay.splits.length === 0) continue; // unapproved rows have no splits yet
+    const nets = pay.splits.reduce((a, b) => a + b.amount, 0);
+    const tips = pay.splits.reduce((a, b) => a + b.tipAmount, 0);
+    const expenses = (pay.occurrence?.expenses ?? []).reduce((a, e) => a + e.cost, 0);
+    const accounted =
+      nets + tips + (pay.platformFeeAmount ?? 0) + (pay.businessMarginAmount ?? 0) +
+      pay.tipToBusinessAmount + pay.overageAmount - pay.shortfallAmount + expenses;
+    if (Math.abs(accounted - pay.amountPaid) >= 0.02) {
+      drift.push(
+        `  - "${pay.occurrence?.job?.property?.displayName ?? "?"}": paid $${pay.amountPaid.toFixed(2)} ` +
+          `but accounted $${accounted.toFixed(2)} ` +
+          `(workers $${nets.toFixed(2)} + tips $${tips.toFixed(2)} + fee $${(pay.platformFeeAmount ?? 0).toFixed(2)} ` +
+          `+ margin $${(pay.businessMarginAmount ?? 0).toFixed(2)} + tipToBiz $${pay.tipToBusinessAmount.toFixed(2)} ` +
+          `+ overage $${pay.overageAmount.toFixed(2)} + expenses $${expenses.toFixed(2)})`,
+      );
+    }
+  }
+  if (drift.length > 0) {
+    console.error("Payment conservation violations — these render as self-contradicting money cards:");
+    for (const d of drift) console.error(d);
+    throw new Error(`Seed produced ${drift.length} payment(s) whose money doesn't add up.`);
+  }
+  console.log(`✓ Payment conservation holds across ${allPayments.length} payment(s).`);
+
+  // ── Job-portion invariant ───────────────────────────────────────────
+  // Conservation alone isn't enough: a fixture can account for every dollar
+  // of the PAYMENT while still splitting the wrong pool. The Harrington tip
+  // fixture did exactly that — an $85 job whose splits summed to $105 — and
+  // every dollar balanced. The workers were simply being paid on a job that
+  // didn't cost that much, which made the card read as nonsense.
+  //
+  //   amountPaid − tip − overage + shortfall  ==  invoice (price + add-ons)
+  const jobPortionDrift: string[] = [];
+  const payRows = await prisma.payment.findMany({
+    where: { writtenOff: false, skippedAt: null },
+    select: {
+      amountPaid: true, tipAmount: true, overageAmount: true, shortfallAmount: true,
+      splits: { select: { id: true } },
+      occurrence: {
+        select: {
+          price: true,
+          addons: { select: { price: true } },
+          job: { select: { property: { select: { displayName: true } } } },
+        },
+      },
+    },
+  });
+  for (const pay of payRows) {
+    if (pay.splits.length === 0) continue;
+    const occ = pay.occurrence;
+    if (!occ || occ.price == null) continue;
+    const invoice = occ.price + (occ.addons ?? []).reduce((a, x) => a + (x.price ?? 0), 0);
+    const jobPortion = Math.round((pay.amountPaid - pay.tipAmount - pay.overageAmount + pay.shortfallAmount) * 100) / 100;
+    if (Math.abs(jobPortion - invoice) >= 0.02) {
+      jobPortionDrift.push(
+        `  - "${occ.job?.property?.displayName ?? "?"}": invoice $${invoice.toFixed(2)} but job portion is ` +
+          `$${jobPortion.toFixed(2)} (paid $${pay.amountPaid.toFixed(2)} − tip $${pay.tipAmount.toFixed(2)} ` +
+          `− overage $${pay.overageAmount.toFixed(2)} + shortfall $${pay.shortfallAmount.toFixed(2)})`,
+      );
+    }
+  }
+  if (jobPortionDrift.length > 0) {
+    console.error("Job-portion violations — workers are being paid on a pool that isn't the invoice:");
+    for (const d of jobPortionDrift) console.error(d);
+    throw new Error(`Seed produced ${jobPortionDrift.length} payment(s) whose job portion doesn't match the invoice.`);
+  }
+  console.log("✓ Job portion matches the invoice on every payment.");
 }
 
 // ── Main ────────────────────────────────────────────────────────────────────

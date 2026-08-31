@@ -116,6 +116,14 @@ export default function AdjustPaymentDialog({ row, willScheduleNext, onConfirm, 
 
   // Seed state from the row on open. Method picker defaults to the
   // originally-reported method; amount + fee come from the same row.
+  //
+  // Keyed on row?.id, NOT the row object. A caller that builds the prop
+  // inline (`row={{ ...somethingFor(x) }}`) hands us a fresh object every
+  // render, so an identity-keyed effect re-fires on every keystroke and
+  // resets the field the operator is typing into. That shipped once: you
+  // could type an amount, watch the tip editor appear, and see the value
+  // snap back to the reported figure a frame later.
+  const rowId = row?.id ?? null;
   useEffect(() => {
     if (!row) return;
     setAmountStr(row.amountPaid.toFixed(2));
@@ -124,7 +132,8 @@ export default function AdjustPaymentDialog({ row, willScheduleNext, onConfirm, 
     setNoteStr(row.note ?? "");
     setFeeManuallyEdited(false);
     setPaidAt(bizToday());
-  }, [row]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rowId]);
 
   const amountNum = Number.parseFloat(amountStr);
   const amountValid = Number.isFinite(amountNum) && amountNum >= 0;
@@ -139,6 +148,7 @@ export default function AdjustPaymentDialog({ row, willScheduleNext, onConfirm, 
   const [isTip, setIsTip] = useState(false);
   const [bizPct, setBizPct] = useState("0");
   const [workerPct, setWorkerPct] = useState<Record<string, string>>({});
+  // Same identity trap as the seeding effect above — key on the id.
   useEffect(() => {
     if (!row) return;
     setIsTip(false);
@@ -151,7 +161,8 @@ export default function AdjustPaymentDialog({ row, willScheduleNext, onConfirm, 
       next[a.userId] = String(Math.round(pct * 100) / 100);
     }
     setWorkerPct(next);
-  }, [row]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rowId]);
   const tipPctSum = round2(
     (Number.parseFloat(bizPct) || 0) +
       (row?.assignees ?? []).reduce((s, a) => s + (Number.parseFloat(workerPct[a.userId]) || 0), 0),

@@ -94,20 +94,54 @@ test.describe("Tips — payment card", () => {
     const badge = page.getByText(/^Tip \$20\.00$/).first();
     await expect(badge).toBeVisible();
 
-    // The breakdown must name BOTH destinations. The crew's share is
+    // The card must name BOTH destinations of the tip. The crew's share is
     // wages/1099 income while the business's share is ordinary revenue —
     // an operator reconciling payroll needs the split, not just the total.
+    await expect(page.getByText(/\$59\.50 job pay \+ \$15\.00 tips/).first()).toBeVisible();
+    await expect(page.getByText(/\$5\.00 of the tip/).first()).toBeVisible();
+  });
+
+  test("each worker's line is a single equation ending in what they were paid", async ({ page }) => {
+    await gotoSuper(page, "payments", "Money");
+    // The tip belongs INSIDE the equation. Split across two lines the
+    // reader had to add "$28.00" and "+ $9.00 tip" themselves to learn
+    // what the worker actually got. Seed: $40 share, 30% margin, $9 tip.
     await expect(
-      page.getByText(/Tip \$20\.00 — \$15\.00 to workers,\s*\$5\.00 to business/),
+      page.getByText(/\$40\.00 share − \$12\.00 margin \(30%\) \+ \$9\.00 tip =/).first(),
+    ).toBeVisible();
+    await expect(page.getByText(/\$37\.00/).first()).toBeVisible();
+    // A worker with no tip keeps the plain equation — no "+ $0.00 tip".
+    await expect(page.getByText(/\+ \$0\.00 tip/)).toHaveCount(0);
+  });
+
+  test("the headline is what workers actually take home, job pay + tips", async ({ page }) => {
+    await gotoSuper(page, "payments", "Money");
+    // $59.50 job pay + $15.00 tips. Showing job pay alone put "$59.50"
+    // above two "+ $X tip" lines on the same card and made the reader
+    // total it themselves.
+    await expect(page.getByText("$74.50").first()).toBeVisible();
+    await expect(page.getByText(/\$59\.50 job pay \+ \$15\.00 tips/).first()).toBeVisible();
+    // And the card closes with a check anyone can do at a glance.
+    await expect(
+      page.getByText(/\$74\.50 to workers \+ \$30\.50 to business = \$105\.00/).first(),
     ).toBeVisible();
   });
 
-  test("the tip is NOT summed into the worker payout headline", async ({ page }) => {
+  test("the card decomposes the payment so each half balances on its own", async ({ page }) => {
     await gotoSuper(page, "payments", "Money");
-    // $105 job splits + $20 tip. If a refactor ever merges them the headline
-    // becomes $120/$125 and silently misstates what payroll owes.
-    await expect(page.getByText("$105.00").first()).toBeVisible();
-    await expect(page.getByText(/from \$125\.00 paid/)).toBeVisible();
+    // The headline is JOB pay only — the tip is never summed into it.
+    await expect(page.getByText(/from \$105\.00 paid/).first()).toBeVisible();
+    // Without this line the card looks broken: "$59.50 to workers" beside
+    // "kept $25.50" under "from $105.00 paid" doesn't add up, because $20
+    // of that payment was a tip that never entered the job split.
+    await expect(
+      page.getByText(/= \$85\.00 for the job \+ \$20\.00 tip/).first(),
+    ).toBeVisible();
+    // The business total names its components, so it can be checked
+    // against figures actually on screen rather than inferred.
+    await expect(
+      page.getByText(/Business kept \$30\.50 \(\$25\.50 margin \(30%\) \+ \$5\.00 of the tip\)/).first(),
+    ).toBeVisible();
   });
 });
 
@@ -161,6 +195,46 @@ test.describe("Tips — designation at approval", () => {
     // Percentages seed from the job's completionSplits with business at 0.
     await expect(page.getByText(/Split the \$60\.00 tip/)).toBeVisible();
     await expect(page.getByText(/Total 100\.00%/)).toBeVisible();
+  });
+
+  test("the typed amount STAYS put — it does not snap back to the reported figure", async ({ page }) => {
+    // Regression. The dialog seeds its fields from `row` in an effect. When
+    // that effect was keyed on the row OBJECT and the caller built the prop
+    // inline, every keystroke produced a new object, re-fired the effect,
+    // and reset the field: you could watch the tip editor appear and the
+    // amount snap back to the reported figure a frame later. Keyed on
+    // row.id now. Asserting AFTER a settle window is the whole point — the
+    // bug only showed up one render later.
+    await gotoSuper(page, "payments", "Money");
+    await openApproveDialogForTipFixture(page);
+
+    const amount = page
+      .getByText("Actual amount collected")
+      .locator("xpath=following::input[1]")
+      .locator("visible=true")
+      .first();
+    await amount.fill("");
+    await amount.fill("275");
+    await amount.blur();
+    await page.waitForTimeout(500);
+    expect(await amount.inputValue()).toBe("275.00");
+
+    // THE ACTUAL TRIGGER. Typing alone never reproduced this — the reset
+    // came from a PARENT re-render while the dialog was open (a refresh
+    // tick, another tab's mutation, the alert-count poll). Any of those
+    // rebuilt the `row` prop, and an identity-keyed seeding effect then
+    // wiped whatever the operator had typed. Simulate one directly.
+    await page.evaluate(() => {
+      window.dispatchEvent(new CustomEvent("seedlings:admin-payments-changed"));
+    });
+    await page.waitForTimeout(2500);
+
+    expect(
+      await amount.inputValue(),
+      "a background refresh reset the amount the operator was editing",
+    ).toBe("275.00");
+    // And the tip editor it revealed is still there, not flickering away.
+    await expect(page.getByText(/over the invoice/)).toBeVisible();
   });
 
   test("approve is blocked while the tip percentages don't total 100", async ({ page }) => {

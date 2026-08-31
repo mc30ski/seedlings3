@@ -115,6 +115,10 @@ export type ReconcileWorkerRow = {
   grossEarnings: number;
   feesOrMargin: number;        // contractor fee OR employee margin
   topUps: number;
+  /** Tips received in the window. PAYMENT-anchored, and intentionally NOT
+   *  inside `netPaid` — `effectiveHourly` is derived from netPaid and the
+   *  operator's rule is that tips don't count toward the effective rate. */
+  tips: number;
   netPaid: number;             // grossEarnings - feesOrMargin + topUps
   ownerEarnings: number;       // business cut (only populated for the LLC owner)
 
@@ -174,7 +178,10 @@ export type ReconcilePeriod = {
     totalBusinessMargin: number;   // sum of employee/trainee margins
     totalContractorFees: number;   // sum of contractor platform fees
     totalTopUps: number;
-    totalWorkerNetPaid: number;    // what workers actually received
+    /** Tips paid to workers in the window. Payment-anchored, and NOT part
+     *  of `totalWorkerNetPaid` — see the note where it's computed. */
+    totalWorkerTips: number;
+    totalWorkerNetPaid: number;    // what workers actually received (job pay)
     totalOwnerEarnings: number;    // business's own cut
     netOperatingIncome: number;    // revenue - worker payouts - processor fees - top-ups
     anomalies: number;
@@ -902,6 +909,7 @@ export async function buildReconcileWorkers(
       // Workers card headline matches the Payroll Total Gross. For
       // non-owners, displayNet === netPaid so this is a no-op.
       netPaid: displayNet,
+      tips,
       ownerEarnings,
       effectiveHourly,
       preTopUpHourly,
@@ -1030,6 +1038,11 @@ export async function buildReconcileWorkers(
   const totalWorkerNetPaid = round2(workers.reduce((s, w) => s + w.netPaid, 0));
   const totalTopUps = round2(workers.reduce((s, w) => s + w.topUps, 0));
   const totalOwnerEarnings = round2(workers.reduce((s, w) => s + w.ownerEarnings, 0));
+  // Tips are deliberately kept OUT of `netPaid` so `effectiveHourly` stays
+  // tip-free (operator policy). But they ARE money that left the business,
+  // so every business-side total below has to subtract them explicitly —
+  // otherwise the crew's tips get counted as company income.
+  const totalWorkerTips = round2(workers.reduce((s, w) => s + w.tips, 0));
 
   // Split fees/margin by worker type.
   let totalBusinessMargin = 0;
@@ -1042,9 +1055,12 @@ export async function buildReconcileWorkers(
   totalContractorFees = round2(totalContractorFees);
 
   // Net operating income (period-level rough cut): revenue + rentals
-  // − worker payouts − processor fees. Top-ups already inside payouts.
+  // − worker payouts − worker tips − processor fees. Top-ups are already
+  // inside payouts; tips are not (see totalWorkerTips), and `totalRevenue`
+  // is Payment.amountPaid which INCLUDES what the client tipped — so
+  // without subtracting them the crew's tips read as company income.
   const netOperatingIncome = round2(
-    totalRevenue + totalEquipmentRental - totalWorkerNetPaid - totalProcessorFees,
+    totalRevenue + totalEquipmentRental - totalWorkerNetPaid - totalWorkerTips - totalProcessorFees,
   );
 
   // ── Reconciliation targets ─────────────────────────────────────────────
@@ -1055,9 +1071,12 @@ export async function buildReconcileWorkers(
   let qbContractLabor = 0;
   for (const w of workers) {
     if (isEmployeeClass(w.workerType)) {
-      gustoEmployeeWages += w.grossEarnings - w.feesOrMargin + w.topUps;
+      // Employee tips are W-2 wages — Gusto pays them through payroll
+      // (in its own Tips earning type), so they belong in this target.
+      gustoEmployeeWages += w.grossEarnings - w.feesOrMargin + w.topUps + w.tips;
     } else {
-      qbContractLabor += w.netPaid;
+      // Contractor tips are 1099 income, same as the rest of their pay.
+      qbContractLabor += w.netPaid + w.tips;
     }
   }
   gustoEmployeeWages = round2(gustoEmployeeWages);
@@ -1078,6 +1097,7 @@ export async function buildReconcileWorkers(
       totalBusinessMargin,
       totalContractorFees,
       totalTopUps,
+      totalWorkerTips,
       totalWorkerNetPaid,
       totalOwnerEarnings,
       netOperatingIncome,
