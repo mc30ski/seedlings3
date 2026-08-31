@@ -19,7 +19,7 @@ Two numbers describe a worker's pay and they will not match:
 
 | | Where it comes from | What it means |
 |---|---|---|
-| **Estimated** | `payments.ts` — payment splits, guaranteed payout, `WorkerHourlyPayCard` | What the app *thinks* the work was worth |
+| **Estimated** | `payments.ts` — payment splits, `WorkerHourlyPayCard` | What the app *thinks* the work was worth |
 | **Actual** | This feature — Gusto CSV | What Gusto *paid*, after taxes and adjustments |
 
 The app is **not** the source of truth for pay. Every estimate surface

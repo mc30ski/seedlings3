@@ -247,7 +247,7 @@ export async function loadTaxDeductibleMap(
  *                      Sub-account of "Other business expenses" in QB
  *                      (colon-delimited → renders indented under its parent).
  *   CONTRACT_LABOR   — sourced from contractor PaymentSplit.amount
- *                      (excluding GP-flagged splits) + GP advance disbursements.
+ *                      PaymentSplit rows for non-employee workers.
  */
 export const SYNTHETIC_PL_CATEGORIES = {
   PROCESSOR_FEES: {

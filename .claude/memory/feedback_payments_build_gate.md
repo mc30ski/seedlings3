@@ -21,7 +21,6 @@ Every build of `@repo/api` MUST run the payment-correctness invariant suite. The
   - B: worker-classification policy (EMPLOYEE+TRAINEE vs CONTRACTOR+null; underpay/overpay/write-off)
   - C: payment-row aggregate identity, fuzzed across (collected, expenses, crew) — formula is `amountPaid = sum(splits) + platformFee + businessMargin + overage − shortfall + expenses`
   - D: tax-export source-of-truth (1099 = advances + unflagged splits; QB Income sources only raw `amountPaid`/`rentalCost`)
-  - E: GP reconciliation flag (non-GP contractor splits stay `null`; advance + flagged split = single counting)
 - If one of these tests breaks, the fix is almost never to relax the test. Legitimate reasons:
   - Documented policy change → also update `[[project-payment-math]]` and/or `[[project-tax-export-integrity]]`
   - A deeper invariant replaces a narrower one
@@ -29,4 +28,4 @@ Every build of `@repo/api` MUST run the payment-correctness invariant suite. The
 - When adding new payment behavior, add an invariant here too — bar is "would breaking this cost money?"
 - Pre-existing tsup config issue (`tsup.config.ts` is missing in `apps/api`) is separate; don't fix it as part of test-gate work.
 
-Related: [[project-payment-math]], [[project-tax-export-integrity]], [[feature-guaranteed-payout]], [[feedback-run-build-gate-after-changes]] — the "run this gate after every edit" companion rule.
+Related: [[project-payment-math]], [[project-tax-export-integrity]], [[feedback-run-build-gate-after-changes]] — the "run this gate after every edit" companion rule.

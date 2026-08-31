@@ -98,10 +98,6 @@ async function clearDatabase() {
 
   console.log("  Clearing payments...");
   await prisma.payment.deleteMany();
-  // GuaranteedPayoutAdvance is deprecated (new code doesn't write rows)
-  // but historical rows still hold FK refs to JobOccurrence. Clear
-  // before deleting occurrences.
-  await prisma.guaranteedPayoutAdvance.deleteMany();
 
   console.log("  Clearing occurrences...");
   await prisma.jobOccurrence.deleteMany();
@@ -1424,7 +1420,12 @@ async function seedDatabase() {
       startedAt: todayHoursAgo(6),
       completedAt: todayHoursAgo(5),
     },
-    [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
+    // Owner is deliberately an assignee here. `ownerEarnings` is the only
+    // split filter left after the guaranteed-payout removal, and it gates
+    // Gusto W-2, Gusto Contractors, the workdays CSV, the P&L wage/contract
+    // -labor buckets and the min-wage check. Without an owner-assigned,
+    // owner-PAID job in the seed, none of those filters are exercised in dev.
+    [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }, { userId: MICHAEL_ID, role: "helper" }],
   );
   const cTodayThompson = await occ(
     {
@@ -1810,7 +1811,7 @@ async function seedDatabase() {
   // Zelle) — the PAYMENT_METHODS taxonomy. Venmo entries carry a processor
   // fee; the loop below computes and stores it so tax-export testing has
   // realistic fee data. Mix: 4 Cash, 5 Check, 4 Venmo, 3 Zelle.
-  const paymentData: { occId: string; amount: number; method: "CASH" | "CHECK" | "VENMO" | "ZELLE"; collector: string; splits: { userId: string; amount: number }[]; createdAt: Date }[] = [
+  const paymentData: { occId: string; amount: number; method: "CASH" | "CHECK" | "VENMO" | "ZELLE"; collector: string; splits: { userId: string; amount: number }[]; createdAt: Date; overage?: number }[] = [
     { occId: cHarrington21.id, amount: 85, method: "CASH", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 50 }, { userId: EMPLOYEE_ID, amount: 35 }], createdAt: daysAgoRandom(20) },
     { occId: cHarrington14.id, amount: 85, method: "CHECK", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 50 }, { userId: EMPLOYEE_ID, amount: 35 }], createdAt: daysAgoRandom(13) },
     { occId: cHarrington7.id, amount: 85, method: "VENMO", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 50 }, { userId: EMPLOYEE_ID, amount: 35 }], createdAt: daysAgoRandom(6) },
@@ -1830,8 +1831,15 @@ async function seedDatabase() {
     // Today's completed jobs — populate the SuperWorkHomeTab "today"
     // view with real revenue + team pay data. createdAt is NOW-minus-a-
     // few-hours (guaranteed in the past regardless of when seed runs).
-    { occId: cTodayHarrington.id, amount: 85, method: "VENMO", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 50 }, { userId: EMPLOYEE_ID, amount: 35 }], createdAt: new Date(NOW.getTime() - 4 * 3_600_000) },
-    { occId: cTodayThompson.id, amount: 125, method: "CASH", collector: CONTRACTOR_ID, splits: [{ userId: CONTRACTOR_ID, amount: 85 }, { userId: TRAINEE_ID, amount: 40 }], createdAt: new Date(NOW.getTime() - 3 * 3_600_000) },
+    // Includes the LLC owner's share — see the assignee note on
+    // cTodayHarrington. His split is stamped ownerEarnings below.
+    { occId: cTodayHarrington.id, amount: 105, method: "VENMO", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 50 }, { userId: EMPLOYEE_ID, amount: 35 }, { userId: MICHAEL_ID, amount: 20 }], createdAt: new Date(NOW.getTime() - 4 * 3_600_000) },
+    // OVERPAID fixture — a $125 job the client paid $140 cash for (rounded
+    // up). Worker splits are unchanged, so the $15 is retained by the
+    // business and stamped as `overageAmount`. Without a row like this the
+    // "Overpaid" badge on the Payments tab has nothing to render, and an
+    // overpayment is otherwise indistinguishable from a normal payment.
+    { occId: cTodayThompson.id, amount: 140, overage: 15, method: "CASH", collector: CONTRACTOR_ID, splits: [{ userId: CONTRACTOR_ID, amount: 85 }, { userId: TRAINEE_ID, amount: 40 }], createdAt: new Date(NOW.getTime() - 3 * 3_600_000) },
     { occId: cTodaySunrise.id, amount: 350, method: "CHECK", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 150 }, { userId: EMPLOYEE_ID, amount: 100 }, { userId: CONTRACTOR_ID, amount: 100 }], createdAt: new Date(NOW.getTime() - 3 * 3_600_000) },
   ];
 
@@ -1867,13 +1875,17 @@ async function seedDatabase() {
         processorFeeAmount,
         grossCharged: p.amount,
         netReceived,
+        overageAmount: p.overage ?? 0,
         // These are CLOSED occurrences — historical, fully-settled payments.
         // Confirmed so they appear in the cash-basis tax exports (which
         // filter on confirmed=true + confirmedAt).
         confirmed: true,
         confirmedAt: p.createdAt,
         confirmedById: MICHAEL_ID,
-        splits: { create: p.splits },
+        // ownerEarnings marks the business's own cut. Production stamps
+        // this via loadOwnerSet at split-write time; the seed mirrors it so
+        // every owner-exclusion filter has a row to exclude.
+        splits: { create: p.splits.map((sp) => ({ ...sp, ownerEarnings: sp.userId === MICHAEL_ID })) },
       },
     });
   }
@@ -2736,8 +2748,6 @@ async function seedDatabase() {
     description?: string;
     expiresAt: Date;
     adminHidden?: boolean;
-    /** Explicit next-due override — otherwise anchorDate is used. */
-    nextDueDate?: Date;
   }> = [
     {
       type: "INSURANCE_CERT",
@@ -2832,10 +2842,10 @@ async function seedDatabase() {
       // sync; the integration posts contractor payments directly so
       // the app's rows become duplicative.
       value: "true",
-      description: "When ON, qb-journal-expenses.csv emits Contract Labor rows for contractor payments (post-GP splits, GP wage-path work, and historical advances). When OFF, the entire Contract Labor section is dropped — appropriate once Gusto's QuickBooks integration is configured to post contractor payments to QB directly. Default ON.",
+      description: "When ON, qb-journal-expenses.csv emits Contract Labor rows for contractor payment splits. When OFF, the entire Contract Labor section is dropped — appropriate once Gusto's QuickBooks integration is configured to post contractor payments to QB directly. Default ON.",
       updatedById: MICHAEL_ID,
     },
-    update: { description: "When ON, qb-journal-expenses.csv emits Contract Labor rows for contractor payments (post-GP splits, GP wage-path work, and historical advances). When OFF, the entire Contract Labor section is dropped — appropriate once Gusto's QuickBooks integration is configured to post contractor payments to QB directly. Default ON.", updatedById: MICHAEL_ID },
+    update: { description: "When ON, qb-journal-expenses.csv emits Contract Labor rows for contractor payment splits. When OFF, the entire Contract Labor section is dropped — appropriate once Gusto's QuickBooks integration is configured to post contractor payments to QB directly. Default ON.", updatedById: MICHAEL_ID },
   });
   await prisma.setting.upsert({
     where: { key: "EQUIPMENT_BILLING_ENABLED" },
@@ -2896,6 +2906,8 @@ async function seedDatabase() {
     rrule: string | null;
     anchorDate: Date;
     adminHidden?: boolean;
+    /** Explicit next-due override — otherwise anchorDate is used. */
+    nextDueDate?: Date;
   }> = [
     {
       title: "Tax filing deadline",
@@ -3521,17 +3533,6 @@ async function seedDatabase() {
     include: { property: { include: { client: true } } },
   });
   const alertAnchorExpense = await prisma.businessExpense.findFirst({ orderBy: { createdAt: "asc" } });
-
-  // 1. Guaranteed payout expiring — flip CONTRACTOR_ID into a GP window
-  //    that ends in 3 days. Drives the title-bar "Guaranteed payout
-  //    expiring" alert + the matching Tasks shortcut card.
-  await prisma.user.update({
-    where: { id: CONTRACTOR_ID },
-    data: {
-      guaranteedPayoutStartedAt: daysAgo(57, 9),
-      guaranteedPayoutUntil: daysFromNow(3, 9),
-    },
-  });
 
   // 2. Pending payment approvals + outstanding client invoices.
   //    Two PENDING_PAYMENT occurrences anchored on the same job:
@@ -5654,8 +5655,8 @@ async function seedPaymentsBase() {
   });
   await prisma.setting.upsert({
     where: { key: "QB_INCLUDE_CONTRACT_LABOR" },
-    create: { key: "QB_INCLUDE_CONTRACT_LABOR", value: "true", description: "When ON, qb-journal-expenses.csv emits Contract Labor rows for contractor payments (post-GP splits, GP wage-path work, and historical advances). When OFF, the entire Contract Labor section is dropped — appropriate once Gusto's QuickBooks integration is configured to post contractor payments to QB directly. Default ON.", updatedById: MICHAEL_ID },
-    update: { description: "When ON, qb-journal-expenses.csv emits Contract Labor rows for contractor payments (post-GP splits, GP wage-path work, and historical advances). When OFF, the entire Contract Labor section is dropped — appropriate once Gusto's QuickBooks integration is configured to post contractor payments to QB directly. Default ON." },
+    create: { key: "QB_INCLUDE_CONTRACT_LABOR", value: "true", description: "When ON, qb-journal-expenses.csv emits Contract Labor rows for contractor payment splits. When OFF, the entire Contract Labor section is dropped — appropriate once Gusto's QuickBooks integration is configured to post contractor payments to QB directly. Default ON.", updatedById: MICHAEL_ID },
+    update: { description: "When ON, qb-journal-expenses.csv emits Contract Labor rows for contractor payment splits. When OFF, the entire Contract Labor section is dropped — appropriate once Gusto's QuickBooks integration is configured to post contractor payments to QB directly. Default ON." },
   });
   await prisma.setting.upsert({
     where: { key: "EQUIPMENT_BILLING_ENABLED" },
@@ -6171,167 +6172,6 @@ async function seedPaymentsActive() {
   console.log("       Expected: contractor=$0, employee=$48, shortfall=$64, writtenOff=true");
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Business Start Date — backdated fixtures.
-//
-// Adds rows on BOTH sides of the seeded BUSINESS_START_DATE so the operator
-// can flip the toggle and watch dashboards transition. Idempotent within a
-// single seed run (we always clear the DB first); pre-cutoff rows use
-// explicit `createdAt` / `date` / `releasedAt` so Prisma writes the dates
-// directly. See apps/api/src/lib/businessStartCutoff.ts.
-//
-// SAFETY: this function intentionally inserts FIXTURE data only. Real
-// production data is never touched by the cutoff feature — the filter is a
-// read-time WHERE-clause, not a destructive operation. If you find yourself
-// tempted to use this pattern outside seeds, stop and re-read the helper.
-// ─────────────────────────────────────────────────────────────────────────────
-// ─────────────────────────────────────────────────────────────────────────────
-// Guaranteed Payout (Slice 2) fixtures
-//
-// Wires CONTRACTOR_ID into an active GP period and produces three
-// occurrences spanning the three states Slice 2 has to handle:
-//
-//   1. UNADVANCED + UNPAID  → work-anchored part of the next contractor
-//      payroll export will INCLUDE this; advance row will be CREATED at
-//      export time. After downloading the CSV the operator should see
-//      Carla on the Gusto Contractors output and a GuaranteedPayoutAdvance
-//      row materializes in the DB.
-//
-//   2. ALREADY-ADVANCED + UNPAID → simulates "operator ran a prior export
-//      and advanced this job last week." The GuaranteedPayoutAdvance row
-//      pre-exists; the work-anchored part should SKIP it (idempotency
-//      check). Carla should still see this advance in her money tab
-//      (bucketed at exportedAt).
-//
-//   3. ALREADY-ADVANCED + CLIENT-PAID → simulates "client eventually paid
-//      after we advanced." Both a GuaranteedPayoutAdvance row AND a
-//      confirmed Payment with reconciled PaymentSplit exist. The
-//      PaymentSplit carries `guaranteedPayoutPaidAt` so the payment-
-//      anchored part SKIPS it (otherwise we'd double-pay). The QB
-//      Expenses CSV emits one Contract Labor row per advance, NOT per
-//      flagged split — verifies the reconciliation flag works end to end.
-// ─────────────────────────────────────────────────────────────────────────────
-async function seedPaymentsGuaranteedPayout() {
-  console.log("  Creating GUARANTEED PAYOUT validation dataset...");
-  const { adamsJob, banksJob, cohenJob } = await seedPaymentsBase();
-
-  // Put CONTRACTOR_ID on an active guaranteed-payout period (60 days out).
-  // Also stamp a `startedAt` ~ 2 weeks ago so any occurrence completed in
-  // the recent past falls inside the active period boundaries.
-  const gpStartedAt = daysAgo(14);
-  const gpUntil = daysFromNow(60, 23); // ~end-of-day-ish today+60
-  await prisma.user.update({
-    where: { id: CONTRACTOR_ID },
-    data: {
-      guaranteedPayoutStartedAt: gpStartedAt,
-      guaranteedPayoutUntil: gpUntil,
-      guaranteedPayoutHistory: [] as any,
-    },
-  });
-  console.log(`    CONTRACTOR_ID on active GP through ${etFormatDate(gpUntil)}`);
-
-  // Helper that creates a PENDING_PAYMENT occurrence with Carla as sole
-  // active assignee. Returns the occurrence + the per-worker promised
-  // payouts snapshot.
-  async function makeGpOcc(jobId: string, completedDaysAgo: number, opts: { skipSplits?: boolean } = {}) {
-    const price = 80.0;
-    const completionSplits = [{ userId: CONTRACTOR_ID, percent: 100 }];
-    const promised = opts.skipSplits
-      ? null
-      : await computePromisedPayoutsForSeed(price, 0, completionSplits);
-    const occ = await prisma.jobOccurrence.create({
-      data: {
-        jobId,
-        kind: "SINGLE_ADDRESS",
-        startAt: daysAgo(completedDaysAgo, 8),
-        endAt: daysAgo(completedDaysAgo, 9),
-        status: "PENDING_PAYMENT",
-        workflow: "STANDARD",
-        jobTags: '["MOW"]',
-        price,
-        estimatedMinutes: 45,
-        startedAt: daysAgo(completedDaysAgo, 8),
-        completedAt: daysAgo(completedDaysAgo, 9),
-        isClientConfirmed: true,
-        completionSplits: opts.skipSplits ? undefined : (completionSplits as any),
-        promisedPayouts: opts.skipSplits ? undefined : (promised as any),
-        hoursApprovedAt: daysAgo(completedDaysAgo, 10), // pre-approved so it's eligible
-      },
-    });
-    await prisma.jobOccurrenceAssignee.create({
-      data: {
-        occurrenceId: occ.id,
-        userId: CONTRACTOR_ID,
-        role: "primary",
-        assignedById: CONTRACTOR_ID,
-      },
-    });
-    return { occ, promisedNet: opts.skipSplits ? 0 : (promised?.[0]?.net ?? 0) };
-  }
-
-  console.log("    Scenario 1: unadvanced + unpaid (next export will create the advance)");
-  await makeGpOcc(adamsJob.id, 3);
-
-  console.log("    Scenario 2: already-advanced + unpaid (prior export, advance row pre-exists)");
-  const { occ: occ2, promisedNet: net2 } = await makeGpOcc(banksJob.id, 7);
-  await prisma.guaranteedPayoutAdvance.create({
-    data: {
-      userId: CONTRACTOR_ID,
-      occurrenceId: occ2.id,
-      amount: net2,
-      exportedAt: daysAgo(6), // simulates "operator ran payroll 6 days ago"
-      exportedByUserId: MICHAEL_ID,
-    },
-  });
-
-  console.log("    Scenario 3: already-advanced + client-paid (flagged split shows in PaymentsTab)");
-  const { occ: occ3, promisedNet: net3 } = await makeGpOcc(cohenJob.id, 10);
-  await prisma.guaranteedPayoutAdvance.create({
-    data: {
-      userId: CONTRACTOR_ID,
-      occurrenceId: occ3.id,
-      amount: net3,
-      exportedAt: daysAgo(9),
-      exportedByUserId: MICHAEL_ID,
-    },
-  });
-  const payment3 = await prisma.payment.create({
-    data: {
-      occurrenceId: occ3.id,
-      receiptNumber: legacyReceiptNumberFor(occ3.id),
-      amountPaid: 80.0,
-      method: "ZELLE",
-      collectedById: MICHAEL_ID,
-      confirmed: true,
-      confirmedAt: daysAgo(2),
-      confirmedById: MICHAEL_ID,
-      createdAt: daysAgo(2),
-      grossCharged: 80.0,
-      netReceived: 80.0,
-    },
-  });
-  await prisma.paymentSplit.create({
-    data: {
-      paymentId: payment3.id,
-      userId: CONTRACTOR_ID,
-      amount: net3,
-      grossAmount: 80.0,
-      ratePercent: 20,
-      feeAmount: 16.0,
-      netAmount: net3,
-      // Reconciliation flag — Slice 2 split-creation hooks set this when
-      // an advance exists for (userId, occurrenceId). The seed pre-flags
-      // it so the PaymentsTab badge + export exclusions can be validated
-      // without re-running the actual confirmation flow.
-      guaranteedPayoutPaidAt: daysAgo(9),
-    },
-  });
-
-  console.log("  Done. Try: Super → Money → Exports → Gusto Contractors CSV.");
-  console.log("    Expected: 2 jobs for Carla (scenarios 1 + 2 visible).");
-  console.log("    Scenario 1 will create a new advance row on download.");
-  console.log("    Scenario 3 should NOT appear (flagged split + existing advance).");
-}
 
 async function seedBusinessStartCutoffFixtures() {
   console.log("    Business Start Date backdated fixtures...");
@@ -6735,14 +6575,9 @@ async function main() {
       console.log("Seeding (payments-active — 5 pending approvals queued)...");
       await seedPaymentsActive();
       break;
-    case "payments-guaranteed-payout":
-    case "payments-gp":
-      console.log("Seeding (payments-guaranteed-payout — GP advance + reconciliation fixtures)...");
-      await seedPaymentsGuaranteedPayout();
-      break;
     default:
       console.error(
-        `Unknown template: ${template}. Available: default, payments-clean, payments-active, payments-guaranteed-payout`,
+        `Unknown template: ${template}. Available: default, payments-clean, payments-active`,
       );
       process.exit(1);
   }
@@ -6796,6 +6631,7 @@ async function seedGuideAssets(): Promise<Map<string, string>> {
     { file: "fertilizer-calendar.png", type: "image/png", kind: "IMAGE", alt: "Twelve-month feeding calendar for warm-season grass" },
     { file: "trimmer-line.png", type: "image/png", kind: "IMAGE", alt: "Five steps for replacing bump-feed trimmer line" },
     { file: "ppe-checklist.png", type: "image/png", kind: "IMAGE", alt: "Pre-start safety checklist" },
+    { file: "grass-id-chart.png", type: "image/png", kind: "IMAGE", alt: "Comparison of nine grass species: blade shape, growth habit, mowing height, and sun and shade tolerance" },
     { file: "striping-demo.webm", type: "video/webm", kind: "VIDEO", alt: "Two-pass striping demonstration" },
   ];
 
@@ -7095,5 +6931,183 @@ Mow low and bag the clippings first so the seed reaches soil.
         },
       },
     },
+  });
+
+  // A broad reference guide — deliberately the longest fixture. It exercises
+  // the reader's long-form rendering (tables, nested headings, a long body)
+  // in a way the short fixtures above don't.
+  const grassTypes = `# Grass types at a glance
+
+North Carolina sits in the **transition zone** — the band where it gets
+too hot for northern grasses and too cold for southern ones. That is why
+we service both families, sometimes on the same street, and why the same
+job can call for two different mowing heights.
+
+Get the species right before you touch anything. Height, feeding, and
+watering all follow from it, and the most expensive mistakes on a lawn
+start with treating one type like the other.
+
+## The two families
+
+**Warm-season** grasses grow from late spring through summer and go
+**dormant** — tan, straw-colored, but alive — after the first hard frost.
+They love heat and full sun.
+
+**Cool-season** grasses do their growing in spring and fall. They stay
+green through winter and struggle in July and August, when heat and
+drought stress them.
+
+${img("grass-id-chart.png", "All nine species compared: blade, growth habit, height, sun and shade")}
+Blade width and growth habit are what actually identify a grass in the
+field — from standing height every lawn is just green. Get down and look
+at a single blade.
+
+## Warm-season types
+
+### Bermuda
+The default for full-sun lawns and athletic fields. Spreads aggressively
+by both above-ground runners and underground rhizomes, so it repairs its
+own damage and creeps into flower beds if the edges are not kept.
+
+- Mow **1–2"**. It thrives on low, frequent cuts.
+- No real shade tolerance — thin, patchy Bermuda under a tree is a light
+  problem, not a fertilizer problem.
+- Excellent traffic tolerance.
+
+### Zoysia
+Dense enough that weeds have trouble establishing. Slow to fill in, which
+makes repairs expensive, so treat established zoysia carefully.
+
+- Mow **1–2"**.
+- Takes more shade than Bermuda, though not as much as St. Augustine.
+- Builds thatch — expect to dethatch more often than on Bermuda.
+
+### Centipede
+The low-input lawn. Wants acidic soil, little fertilizer, and to be left
+alone.
+
+- Mow **1.5–2"**.
+- **Do not over-fertilize.** Pushing centipede with nitrogen causes
+  "centipede decline" — it greens up, then dies back the following
+  spring. On centipede, doing less is doing the job right.
+- Poor traffic tolerance; slow to recover.
+
+### St. Augustine
+Coastal lawns. Wide, coarse blades and the best shade tolerance of the
+warm-season grasses.
+
+- Mow **2.5–4"** — the tallest of the warm-season group.
+- Not cold hardy; winter kill happens inland.
+- Watch for chinch bugs in hot, dry spells.
+
+### Bahia
+Coarse and thin-looking by design. Common on large lots, roadsides, and
+anywhere irrigation is not happening.
+
+- Mow **3–4"**.
+- Very drought tolerant, very low input.
+- Sends up tall seed heads fast — it can look unmown three days after a
+  cut, which is worth telling the client before they call about it.
+
+## Cool-season types
+
+### Tall fescue
+The workhorse for most of the Piedmont and the mountains. Deep roots make
+it the most heat-tolerant of the cool-season grasses.
+
+- Mow **3–4"**. Taller in summer shades its own roots and helps it hold.
+- **Bunch-forming — it does not repair itself.** A bare spot in fescue
+  stays a bare spot until someone seeds it. This is the single biggest
+  practical difference from Bermuda.
+- Overseed in fall, not spring.
+
+### Kentucky bluegrass
+Spreads by rhizomes, so unlike fescue it does self-repair. Usually seen
+blended into fescue rather than on its own here.
+
+- Mow **2.5–3.5"**.
+- Needs more water than fescue and browns out sooner in summer.
+
+### Perennial ryegrass
+Germinates faster than anything else we use, which is what makes it the
+overseeding grass for dormant Bermuda.
+
+- Mow **1.5–2.5"**.
+- Short-lived in our summers — treat winter overseeding as temporary
+  color, not a permanent lawn.
+
+### Fine fescues
+Creeping red, chewings, and hard fescue. The shade-and-neglect group.
+
+- Mow **2.5–4"**.
+- Best shade tolerance of anything on this list.
+- Poor traffic tolerance — not for play areas or dog runs.
+
+## Mowing heights, all together
+
+| Grass | Family | Height | Notes |
+| --- | --- | --- | --- |
+| Bermuda | Warm | 1–2" | Full sun only |
+| Zoysia | Warm | 1–2" | Slow to repair |
+| Centipede | Warm | 1.5–2" | Do not push with nitrogen |
+| St. Augustine | Warm | 2.5–4" | Coastal, shade tolerant |
+| Bahia | Warm | 3–4" | Fast seed heads |
+| Tall fescue | Cool | 3–4" | Does not self-repair |
+| Kentucky bluegrass | Cool | 2.5–3.5" | Thirsty |
+| Perennial ryegrass | Cool | 1.5–2.5" | Overseeding only |
+| Fine fescues | Cool | 2.5–4" | Shade, low traffic |
+
+## Rules that apply to every lawn
+
+**The one-third rule.** Never remove more than a third of the blade in a
+single cut. If the lawn got away from us, cut it high, wait a few days,
+and cut again. Scalping a lawn to catch up stresses the roots and is a
+reliable way to earn a callback.
+
+**Brown is not always dead.** Tan Bermuda or zoysia in January is
+dormant and normal — do not let a client talk us into "fixing" it. Brown
+fescue in August may be dormant *or* dead, and telling the difference
+takes a look at the crowns, not the blades.
+
+**Sharp blades.** A dull blade tears rather than cuts, and the frayed
+tips brown within a day. If a lawn looks off-color right after a cut,
+the blade is the first thing to check.
+
+## When you are not sure
+
+Photograph the lawn and ask before cutting. Guessing the species and
+mowing an inch too low is not something we can undo — it takes a season
+to grow back.
+`;
+
+  const grassGuide = await prisma.guide.create({
+    data: {
+      slug: "grass-types-at-a-glance",
+      title: "Grass types at a glance",
+      summary:
+        "Every species we service, warm- and cool-season, with mowing heights and the mistakes each one punishes.",
+      categoryKey: "lawn-care",
+      tags: ["grass", "species", "mowing", "reference", "warm-season", "cool-season"],
+      createdById: MICHAEL_ID,
+      versions: {
+        create: {
+          versionNumber: 1,
+          contentMarkdown: grassTypes,
+          contentDigest: digest(grassTypes),
+          changeNote: "Initial reference guide",
+          status: "PUBLISHED",
+          createdById: MICHAEL_ID,
+          approvedById: MICHAEL_ID,
+          approvedAt: new Date(),
+          publishedById: MICHAEL_ID,
+          publishedAt: new Date(),
+        },
+      },
+    },
+    include: { versions: true },
+  });
+  await prisma.guide.update({
+    where: { id: grassGuide.id },
+    data: { currentVersionId: grassGuide.versions[0].id },
   });
 }

@@ -503,35 +503,6 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
                     </Box>
                   </HStack>
                 )}
-                {/* Self-view only: contractor's guaranteed payout period.
-                    During the window, the contractor is paid for completed
-                    work regardless of client payment timing. Only renders
-                    while the period is active. */}
-                {isSelf && me?.workerType === "CONTRACTOR" && me?.guaranteedPayoutUntil && (() => {
-                  const untilDate = new Date(me.guaranteedPayoutUntil);
-                  const active = untilDate.getTime() > Date.now();
-                  if (!active) return null;
-                  // ET calendar-day diff (not raw ms / 86_400_000 which
-                  // drifts at DST). See bizDaysBetween in lib/dates.ts.
-                  const daysLeft = Math.max(0, bizDaysBetween(bizToday(), bizDateKey(untilDate)));
-                  return (
-                    <HStack fontSize="sm" align="flex-start">
-                      <Text color="fg.muted" w="80px">Payout:</Text>
-                      <Box flex="1">
-                        <Badge colorPalette={daysLeft <= 7 ? "yellow" : "purple"} variant="solid">
-                          Guaranteed through {fmtDate(me.guaranteedPayoutUntil)} · {daysLeft}d left
-                        </Badge>
-                        <Text fontSize="xs" color="fg.muted" mt={1}>
-                          During this onboarding window you're paid for each completed job on the
-                          next contractor payroll run for the week the work fell in — same timing
-                          a W-2 employee would see for that work. After {fmtDate(me.guaranteedPayoutUntil)},
-                          the standing contingent-payment terms in your Independent Contractor
-                          Agreement apply (paid after the client pays).
-                        </Text>
-                      </Box>
-                    </HStack>
-                  );
-                })()}
                 {isSelf && (
                   <Box pt={2} borderTopWidth="1px" borderColor="gray.200">
                     <VStack align="stretch" gap={1}>

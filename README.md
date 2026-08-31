@@ -312,7 +312,6 @@ The app has grown well beyond its MVP scope. High-level tour of what's shipped, 
 
 - **Payment / PaymentSplit** — per-occurrence payment collection; splits distribute revenue to workers (employees/trainees made whole on underpay, contractors pro-rata). Spec: [`docs/FINANCIAL_SYSTEM.md`](docs/FINANCIAL_SYSTEM.md). Invariants locked by [`apps/api/src/services/payments-build-gate.test.ts`](apps/api/src/services/payments-build-gate.test.ts).
 - **BusinessExpense** — freestanding + job-paired + supply-paired variants. Recurring rows (WEEKLY/MONTHLY/QUARTERLY/ANNUALLY) surface in the "Due to Record" panel with `recurrenceSeriesId` welding the series together across label drift.
-- **GuaranteedPayoutAdvance** — time-bounded onboarding window (1–90 days) where contractor pay is decoupled from client payment. Single table does triple-duty: advance tracking, reconciliation flag on `PaymentSplit`, source of 1099 totals.
 - **Business Start Date filter** — non-destructive money cleanup: when the setting is on, pre-cutoff `Payment`/`Expense`/`Checkout`/`AuditEvent` rows hide from every view and export. Helpers: [`apps/api/src/lib/businessStartCutoff.ts`](apps/api/src/lib/businessStartCutoff.ts).
 - **QuickBooks / tax exports** — [`apps/api/src/services/exports.ts`](apps/api/src/services/exports.ts) generates Schedule C-aware exports. Cash-basis only; shortfall/overage/margin fields are operator-dashboard only, never tax line items. Invariant enforced in the payments build gate.
 
@@ -465,7 +464,6 @@ Push notifications go through the `web-push` library and each browser's push ser
 **Cron Jobs** (configured in [`apps/api/vercel.json`](apps/api/vercel.json), require Vercel Pro):
 
 - `/api/cron/daily-notifications` — daily at 22:00 UTC (6pm ET). Queries workers with jobs tomorrow, sends SMS or email with a link to the Plan Next Work Day workflow.
-- `/api/cron/guaranteed-payout-expirations` — daily at 05:05 UTC. Finds contractors whose guaranteed-payout onboarding window is expiring soon and posts a Timeline reminder for admins.
 
 Both crons require the `Authorization: Bearer $CRON_SECRET` header (Vercel injects this automatically for scheduled invocations).
 

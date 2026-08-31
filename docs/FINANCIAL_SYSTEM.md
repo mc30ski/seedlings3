@@ -161,25 +161,13 @@ of the payment decision:
   client pays. The business fronts it. If the client later underpays
   or never pays, that's a **business loss**; the employee's pay and
   W-2 are **never clawed back**.
-- **Contractor (1099), post-GP** — payment-anchored. Pay is
-  **contingent on the client payment** — paid when the payment is
-  confirmed, in the reconciled (possibly pro-rata-reduced) amount. A
-  client underpayment reduces what the contractor receives and what
-  lands on their 1099.
-- **Contractor (1099), during their GP period** — work-anchored. While
-  the contractor's `guaranteedPayoutUntil` window is active, GP work is
-  paid like W-2: on the regular contractor payroll run for the period
-  the work fell in, regardless of client payment. Same model the
-  employee path uses — only the tax form (1099 vs W-2) differs.
-
-The choice happens per occurrence, automatically. When the app needs to
-know "was this contractor paid via wage path or split path?", it
-checks whether `occurrence.completedAt` falls inside the contractor's
-GP window at completion time. If yes → wage path; if no → split path.
-No per-contractor toggle, no state machine — just a derivation.
+- **Contractor (1099)** — payment-anchored. Pay is **contingent on the
+  client payment** — paid when the payment is confirmed, in the
+  reconciled (possibly pro-rata-reduced) amount. A client underpayment
+  reduces what the contractor receives and what lands on their 1099.
 
 This asymmetry drives the export anchors in §12 — W-2 by work date,
-post-GP 1099 by payment date, GP-period 1099 by work date.
+1099 by payment date.
 
 ---
 
@@ -520,7 +508,7 @@ hardcoded.
 | `ZELLE_ADDRESS` | — | Business Zelle address; referenced by the taxonomy |
 | `DEFAULT_PAYMENT_COMMUNICATIONS_MODE` | `SERVER` | Whether payment-request comms are sent by the server or handed off to the claimer's device |
 | `BUSINESS_START_DATE_ENABLED` / `BUSINESS_START_DATE` | `false` / — | Operator-controlled cutoff: when enabled, financial-event rows dated before the cutoff are hidden from every view and export. See `lib/businessStartCutoff.ts` |
-| `QB_INCLUDE_CONTRACT_LABOR` | `true` | When ON, `qb-journal-expenses.csv` emits Contract Labor rows for contractor payments (post-GP splits, GP wage-path work, historical advances). When OFF, the whole Contract Labor section is dropped. Flip OFF once Gusto's QuickBooks integration is configured to post contractor payments to QB directly — the app's rows become duplicative at that point. See `loadIncludeContractLabor()` in `services/exports.ts`. |
+| `QB_INCLUDE_CONTRACT_LABOR` | `true` | When ON, `qb-journal-expenses.csv` emits Contract Labor rows for contractor payment splits. When OFF, the whole Contract Labor section is dropped. Flip OFF once Gusto's QuickBooks integration is configured to post contractor payments to QB directly — the app's rows become duplicative at that point. See `loadIncludeContractLabor()` in `services/exports.ts`. |
 | `EQUIPMENT_BILLING_ENABLED` | `false` (current operator setting; default ON for fresh installs) | Master toggle for equipment billing. When ON, equipment checkouts charge contractors per the equipment's daily rate (employees + trainees always pay $0). When OFF, every release writes `Checkout.rentalCost = 0` regardless of equipment dailyRate or worker type — `rentalDays` + `rentalBreakdown` are still preserved for audit. Currently OFF while the operator finalizes the contractor billing + sales-tax model with a CPA; equipment cost is absorbed into a higher `CONTRACTOR_PLATFORM_FEE_PERCENT`. See `loadEquipmentBillingEnabled()` in `services/equipment.ts`. |
 
 ---
@@ -550,10 +538,9 @@ are *not* all on one date field:
 | File | One row per (logical) | Date anchor | Amount |
 |---|---|---|---|
 | `gusto-w2` | W-2 worker (employees + trainees) | **Job completion date** (`JobOccurrence.completedAt`) | **Promised net** for jobs they completed in the window |
-| `gusto-contractors` (post-GP path) | 1099 contractor, paid via client payment | **Payment confirmation** (`Payment.confirmedAt`) | Reconciled `PaymentSplit.amount` (post pro-rata) — splits flagged `guaranteedPayoutPaidAt` are skipped |
-| `gusto-contractors` (wage path) | 1099 contractor in their GP period | **Job completion date** (`JobOccurrence.completedAt`) | Promised net for GP-period jobs completed in the window (same compute as W-2) |
+| `gusto-contractors` | 1099 contractor, paid via client payment | **Payment confirmation** (`Payment.confirmedAt`) | Reconciled `PaymentSplit.amount` (post pro-rata) |
 | `qb-journal-income` | Confirmed payment / equipment rental | `Payment.confirmedAt` / `Checkout.releasedAt` | Full `Payment.amountPaid` or `Checkout.rentalCost` |
-| `qb-journal-expenses` | BusinessExpense (operating) + processor fee + post-GP contract labor + GP wage-path contract labor + historical GP advance | `BusinessExpense.date` / `Payment.confirmedAt` / `JobOccurrence.completedAt` / `GuaranteedPayoutAdvance.exportedAt` | Raw cost / fee / split amount / wage-path amount / advance amount |
+| `qb-journal-expenses` | BusinessExpense (operating) + processor fee + contract labor | `BusinessExpense.date` / `Payment.confirmedAt` | Raw cost / fee / split amount |
 | `qb-equity` | BusinessExpense with type CAPITAL_CONTRIBUTION or OWNER_DRAW | `BusinessExpense.date` | `cost` |
 | `qb-fixed-assets` | BusinessExpense with type EXPENSE AND `cost ≥ FIXED_ASSET_MIN_COST` AND date on/after `FIXED_ASSET_START_DATE` | `BusinessExpense.date` | `cost` |
 
@@ -564,8 +551,7 @@ window any number of times → identical output. Same for `qb-journal-expenses`.
 
 **Contract Labor in `qb-journal-expenses` is transitional.** Gated by
 the `QB_INCLUDE_CONTRACT_LABOR` setting (default ON). While ON, the
-CSV emits Contract Labor rows for post-GP contractor splits, GP
-wage-path work, and historical advance rows. Flip OFF once Gusto's
+CSV emits Contract Labor rows for contractor splits. Flip OFF once Gusto's
 QuickBooks integration is configured to post contractor payments to
 QB directly — the app's rows become duplicative at that point. The
 in-app "Explain these files" panel on the Exports tab surfaces this
@@ -612,15 +598,13 @@ Every financial-event row carries a `ledgerId` of the form **`SLC-YYMMDD-XXXX`**
 - `Payment.ledgerId` → drives `JournalNo` for income rows + parent ID for derived fee rows
 - `Checkout.ledgerId` → solo equipment rental income rows
 - `BusinessExpense.ledgerId` → operating expense, equity, fixed-asset rows
-- `GuaranteedPayoutAdvance.ledgerId` → historical GP advance rows (deprecated; no new rows created)
 
-**Derived JournalNos** (split rows + processor fees + GP wage-path rows)
+**Derived JournalNos** (split rows + processor fees)
 compose the parent's ledgerId with a short suffix to stay under QB's
 21-char `doc_num` limit:
 
 - **Processor fee** → `{Payment.ledgerId}-F` (e.g., `SLC-260605-X7K2-F`)
 - **Contract labor (PaymentSplit)** → `{Payment.ledgerId}-{last4(userId).toUpperCase()}` (e.g., `SLC-260605-X7K2-CMG2`)
-- **GP wage-path Contract Labor** → `GPW-{last8(occurrenceId).toUpperCase()}-{last4(userId).toUpperCase()}` — derived from the occurrence (no parent payment exists yet at wage-path time)
 - **Group equipment rental (CheckoutSplit)** → `{Checkout.ledgerId}-{last4(userId).toUpperCase()}`
 
 PaymentSplit and CheckoutSplit do NOT have their own ledger column — their

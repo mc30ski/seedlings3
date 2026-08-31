@@ -50,22 +50,9 @@ Admin can adjust `collected` on approval if the reported amount doesn't match wh
 
 **How to apply:** `shortfallAmount` and `overageAmount` are internal reporting fields — surface them in admin reporting ("money lost to underpayment this quarter"), but never expose them as a separate accounting entry, P&L line, or tax-relevant expense. They're informational, not transactional.
 
-## Guaranteed Payout (GP) period overrides the contractor split rule
-
-When a contractor is in their `guaranteedPayoutUntil` window AT THE
-TIME OF OCCURRENCE COMPLETION, that occurrence's pay is **work-anchored
-like an employee** instead of split-anchored. The split path is
-bypassed entirely for that occurrence; the contractor appears on the
-Gusto Contractors CSV for the work week, then when the client later
-pays, the `PaymentSplit.guaranteedPayoutPaidAt` flag is derived (= the
-occurrence's `completedAt`) and the split is excluded from future
-payroll exports.
-
-Pure derivation, no advance table. See [[feature-guaranteed-payout]].
-
 ## Related
 
-- [[feature-guaranteed-payout]] — wage-path GP for contractors during their onboarding window
+- [[project-guaranteed-payout-removal]] — GP was REMOVED 2026-08-31; contractors are payment-anchored, always.
 - [[feedback-prisma-migrations]] — all schema changes for this go through a single new migration on top of the latest, never `db push`.
 - [[feedback-payments-build-gate]] — invariants that lock the math above.
 - [[project-tax-export-integrity]] — never export shortfall/overage as tax lines.

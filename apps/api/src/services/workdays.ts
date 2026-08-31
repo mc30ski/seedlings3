@@ -963,7 +963,6 @@ export async function superListWorkdaysForDate(workdayDate: string): Promise<{
             skippedAt: true,
             writtenOff: true,
             splits: {
-              where: { guaranteedPayoutPaidAt: null },
               select: { userId: true, amount: true },
             },
           },

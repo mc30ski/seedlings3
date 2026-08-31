@@ -155,8 +155,7 @@ async function loadCashBasisWageEvents(
 //   • Income: Payment.confirmedAt + Checkout.releasedAt
 //   • Expenses: BusinessExpense.date (operating, fixed assets excluded)
 //                Payment.confirmedAt (processor fees)
-//                Payment.confirmedAt (contractor PaymentSplit) +
-//                GuaranteedPayoutAdvance.exportedAt
+//                Payment.confirmedAt (contractor PaymentSplit)
 //   • Cash basis throughout (confirmed, !writtenOff)
 //
 // Section assignment (COGS vs OPERATING_EXPENSE) is config-driven via the
@@ -340,7 +339,6 @@ export async function buildPnLReport(
     operatingExpenses,
     feePayments,
     contractorPayments,
-    gpAdvances,
     rentalIncomeConfig,
     categories,
     fixedAssetMinCost,
@@ -416,18 +414,10 @@ export async function buildPnLReport(
           where: { ownerEarnings: false },
           select: {
             amount: true,
-            guaranteedPayoutPaidAt: true,
             user: { select: { workerType: true } },
           },
         },
       },
-    }),
-    // GP advance disbursements — also Contract Labor (the contractor was
-    // paid even though the client payment hasn't been confirmed yet).
-    // Anchored on exportedAt so the totals match the QB Expenses export.
-    prisma.guaranteedPayoutAdvance.findMany({
-      where: { exportedAt: { gte: start, lte: end } },
-      select: { amount: true },
     }),
     loadEquipmentRentalIncomeAccount(),
     loadExpenseCategories(),
@@ -562,8 +552,7 @@ export async function buildPnLReport(
   // Synthetic: Contract Labor + Wages (accrued).
   //
   // Single iteration over the same split set: contractors go to Contract
-  // Labor (QB-tied; GP-flagged splits routed to GP advances instead, see
-  // exports.ts), employees+trainees go to Wages (accrued) — the
+  // Labor (QB-tied), employees+trainees go to Wages (accrued) — the
   // operator-perspective addition that gives Net Operating Income a
   // meaningful "company kept this" number even before Gusto cuts the
   // payroll check. Owner-earnings splits were filtered out at the query
@@ -582,14 +571,10 @@ export async function buildPnLReport(
         // perspective), which is what payroll taxes apply to.
         wagesAccruedTotal += sp.amount ?? 0;
       } else {
-        // 1099 contractors. GP-flagged splits skip here because the
-        // matching cash already disbursed via GuaranteedPayoutAdvance.
-        if (sp.guaranteedPayoutPaidAt != null) continue;
         contractLaborTotal += sp.amount ?? 0;
       }
     }
   }
-  contractLaborTotal += sum(gpAdvances.map((a) => a.amount ?? 0));
   if (contractLaborTotal > 0) {
     addToAccount(
       SYNTHETIC_PL_CATEGORIES.CONTRACT_LABOR.qbAccount,
@@ -834,8 +819,7 @@ function round2(n: number): number {
 //   • "Services"                                → confirmed Payment rows
 //   • equipment-rental-income account name      → Checkout rentalCost rows
 //   • SYNTHETIC.PROCESSOR_FEES.qbAccount        → Payment.processorFeeAmount rows
-//   • SYNTHETIC.CONTRACT_LABOR.qbAccount        → non-employee PaymentSplit
-//                                                 rows + GP advance rows
+//   • SYNTHETIC.CONTRACT_LABOR.qbAccount        → non-employee PaymentSplit rows
 // Everything else → BusinessExpense rows whose category maps to that qbAccount.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1012,7 +996,7 @@ export async function pnlReportDetails(
 
   // ── Expense: Contract Labor (synthetic) ────────────────────────────────
   if (qbAccount === SYNTHETIC_PL_CATEGORIES.CONTRACT_LABOR.qbAccount) {
-    const [contractorPayments, gpAdvances] = await Promise.all([
+    const [contractorPayments] = await Promise.all([
       prisma.payment.findMany({
         where: {
           confirmed: true,
@@ -1037,24 +1021,17 @@ export async function pnlReportDetails(
             where: { ownerEarnings: false },
             select: {
               amount: true,
-              guaranteedPayoutPaidAt: true,
               user: { select: { workerType: true, displayName: true, email: true } },
             },
           },
         },
         orderBy: { confirmedAt: "asc" },
       }),
-      prisma.guaranteedPayoutAdvance.findMany({
-        where: { exportedAt: { gte: start, lte: end } },
-        include: { user: { select: { displayName: true, email: true } } },
-        orderBy: { exportedAt: "asc" },
-      }),
     ]);
     const rows: PnLDetailRow[] = [];
     for (const p of contractorPayments) {
       for (const sp of p.splits) {
         if (isEmployeeClass(sp.user.workerType)) continue;
-        if (sp.guaranteedPayoutPaidAt != null) continue;
         rows.push({
           date: p.confirmedAt ? etFormatDate(p.confirmedAt) : "",
           primary: sp.user.displayName ?? sp.user.email ?? "(unnamed contractor)",
@@ -1062,14 +1039,6 @@ export async function pnlReportDetails(
           amount: round2(sp.amount ?? 0),
         });
       }
-    }
-    for (const adv of gpAdvances) {
-      rows.push({
-        date: adv.exportedAt ? etFormatDate(adv.exportedAt) : "",
-        primary: adv.user?.displayName ?? adv.user?.email ?? "(unnamed contractor)",
-        secondary: "guaranteed-payout advance",
-        amount: round2(adv.amount ?? 0),
-      });
     }
     rows.sort((a, b) => a.date.localeCompare(b.date));
     return { qbAccount, rows, total: round2(sum(rows.map((r) => r.amount))) };

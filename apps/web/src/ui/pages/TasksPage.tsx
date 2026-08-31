@@ -70,7 +70,6 @@ type ShortcutCounts = {
   streamPauseRemindersCount: number;
   ghostExpiringCount: number;
   ghostExpiredCount: number;
-  guaranteedPayoutExpiringCount: number;
   pendingUsersCount: number;
   // Admin (also visible to super)
   estimateFollowupCount: number;
@@ -107,7 +106,6 @@ type ShortcutHandlers = {
   goToStreamPauseReminders: (occurrenceId?: string) => void;
   goToExpiringGhosts: () => void;
   goToExpiredGhosts: () => void;
-  goToGuaranteedPayoutExpiring: () => void;
   goToApprovals: () => void;
   goToEstimateFollowups: () => void;
   goToOverdue: () => void;
@@ -224,7 +222,6 @@ export default function TasksPage({
     if (isSuper) {
       n += counts.pendingWorkdays;
       n += counts.ledgerFollowupCount;
-      n += counts.guaranteedPayoutExpiringCount;
       n += counts.pendingUsersCount;
       n += counts.policyPendingUploadsCount;
       n += counts.policyPendingApprovalsCount;
@@ -321,14 +318,6 @@ export default function TasksPage({
             >
               <PendingUserSignupsSection />
             </CollapsibleSectionCard>
-          )}
-          {isSuper && counts.guaranteedPayoutExpiringCount > 0 && (
-            <ShortcutCard
-              label="Guaranteed-payout periods expiring"
-              count={counts.guaranteedPayoutExpiringCount}
-              dotColor="#EAB308"
-              onReview={wrap(handlers.goToGuaranteedPayoutExpiring)}
-            />
           )}
           {isSuper && (
             <CollapsibleSectionCard

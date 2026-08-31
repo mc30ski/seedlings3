@@ -49,11 +49,7 @@
 //        split amounts per contractor
 //      - Owner-earnings rows are excluded from Gusto W-2 AND Gusto Contractors
 //      - QB exports source only RAW cash-flow fields, never derived ones
-//
-//   E. Reconciliation flag (Slice 2):
-//      - PaymentSplit.guaranteedPayoutPaidAt is `null` for non-GP contractors
-//        (zero regression in the default flow)
-//      - When set, the same amount is NOT double-counted (advance + split)
+
 //
 // HOW TO USE THIS FILE
 // - If a test here breaks, the fix is almost never to relax the test. The
@@ -67,7 +63,7 @@
 // SEE ALSO
 //   - apps/api/src/services/payments.test.ts (scenario-level coverage)
 //   - apps/api/src/services/exports.test.ts (tax-export format integrity)
-//   - .claude memory: feature_guaranteed_payout, project_payment_math,
+//   - .claude memory: project_payment_math,
 //     project_tax_export_integrity
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -409,28 +405,19 @@ describe("[build-gate] payment-row aggregate identity", () => {
 // most easily get wrong.
 // ──────────────────────────────────────────────────────────────────────────
 describe("[build-gate] tax export source-of-truth", () => {
-  it("1099 contractor income source: advance.amount + unflagged split.amount per contractor", () => {
+  it("1099 contractor income source: split.amount per contractor", () => {
     // The year-end 1099 calculation MUST be the sum of:
-    //   • Every GuaranteedPayoutAdvance.amount for the contractor in year
-    //   • Every PaymentSplit.amount for the contractor where
-    //     guaranteedPayoutPaidAt IS NULL
-    // If we accidentally double-count flagged splits, the 1099 overstates
-    // income. If we accidentally skip non-flagged splits, the 1099
-    // understates income. Either way the contractor's tax filing is wrong.
-    type Adv = { amount: number };
-    type Split = { amount: number; guaranteedPayoutPaidAt: Date | null };
-    const advances: Adv[] = [{ amount: 80 }, { amount: 120 }];
+    //   • Every PaymentSplit.amount for the contractor in the year
+    // Skip a split and the 1099 understates the contractor's income;
+    // count one twice and it overstates. Either way their filing is wrong.
+    type Split = { amount: number };
     const splits: Split[] = [
-      { amount: 50, guaranteedPayoutPaidAt: null }, // counts (no advance)
-      { amount: 40, guaranteedPayoutPaidAt: new Date() }, // SKIP (already advanced)
-      { amount: 30, guaranteedPayoutPaidAt: null }, // counts
+      { amount: 50 },
+      { amount: 40 },
+      { amount: 30 },
     ];
-    const total1099 =
-      advances.reduce((s, a) => s + a.amount, 0) +
-      splits
-        .filter((sp) => sp.guaranteedPayoutPaidAt == null)
-        .reduce((s, sp) => s + sp.amount, 0);
-    expect(total1099).toBe(80 + 120 + 50 + 30); // 280 — flagged $40 correctly excluded
+    const total1099 = splits.reduce((s, sp) => s + sp.amount, 0);
+    expect(total1099).toBe(120);
   });
 
   it("QB Income amount source: Payment.amountPaid (NEVER derived fields)", () => {
@@ -456,68 +443,6 @@ describe("[build-gate] tax export source-of-truth", () => {
   });
 });
 
-// ──────────────────────────────────────────────────────────────────────────
-// E. Reconciliation flag (Slice 2 — guaranteed payout)
-//
-// The flag is the load-bearing piece for the GP feature. If it gets set
-// when it shouldn't, contractors are silently denied earnings they'd
-// otherwise see. If it doesn't get set when it should, contractors are
-// double-paid (advance + split).
-// ──────────────────────────────────────────────────────────────────────────
-describe("[build-gate] GP reconciliation flag invariants", () => {
-  it("non-GP contractor split has guaranteedPayoutPaidAt = null (regression guard)", () => {
-    // The default-flow contract: any contractor with no advance row has
-    // an unflagged split. If a code path silently flags it, the contractor
-    // disappears from Gusto Contractors output and stops getting paid.
-    const workers = [W("c1", "CONTRACTOR", 100)];
-    const promised = computeBreakdown(100, 0, workers, PRODUCTION_RATES);
-    const recon = reconcileApproval(100, 0, workers, promised, PRODUCTION_RATES);
-    const split = recon.splits.find((s) => s.userId === "c1")!;
-    // computeBreakdown / reconcileApproval don't write the flag at all —
-    // it's stamped at the persistence layer (createPayment etc.) using
-    // fetchAdvanceFlagsByUser. So a pure-math result MUST NOT carry it.
-    expect((split as any).guaranteedPayoutPaidAt).toBeUndefined();
-  });
-
-  it("a contractor's gross 'received' = advance.amount XOR split.amount, never both", () => {
-    // The conservation rule for GP: for any (contractor, occurrence) pair,
-    // there can be at most one cash event:
-    //   - Advance: row in GuaranteedPayoutAdvance, no split (yet); OR
-    //   - Standard: PaymentSplit with guaranteedPayoutPaidAt = null; OR
-    //   - Reconciled: both exist; flagged split = "this was advance-paid";
-    //                 contractor's cash = advance.amount.
-    // The 1099 sum + worker money tab depend on this XOR-ness.
-    type State = {
-      label: string;
-      advanceAmount: number | null;
-      split: { amount: number; flagged: boolean } | null;
-      expectedCashReceived: number;
-    };
-    const states: State[] = [
-      { label: "no GP", advanceAmount: null, split: { amount: 50, flagged: false }, expectedCashReceived: 50 },
-      { label: "advance, unpaid client", advanceAmount: 80, split: null, expectedCashReceived: 80 },
-      { label: "reconciled (advance + flagged split)", advanceAmount: 80, split: { amount: 70, flagged: true }, expectedCashReceived: 80 },
-    ];
-    for (const s of states) {
-      const advanceCash = s.advanceAmount ?? 0;
-      const splitCash = s.split && !s.split.flagged ? s.split.amount : 0;
-      const totalCash = advanceCash + splitCash;
-      expect(totalCash).toBe(s.expectedCashReceived);
-    }
-  });
-
-  it("reseed-safe: flagged split + matching advance count once toward contractor's 1099", () => {
-    // Final guard against the scenario where someone re-introduces the
-    // pre-Slice-2 bug of summing all splits. With both a $50 advance and
-    // a $40 flagged split, the contractor's 1099 should be $50 — NOT $90.
-    const advance = { amount: 50 };
-    const flaggedSplit = { amount: 40, guaranteedPayoutPaidAt: new Date() };
-    const total =
-      advance.amount +
-      (flaggedSplit.guaranteedPayoutPaidAt == null ? flaggedSplit.amount : 0);
-    expect(total).toBe(50);
-  });
-});
 
 // ──────────────────────────────────────────────────────────────────────────
 // F. Skipped payments (Super-only "pretend it never happened")
@@ -552,23 +477,19 @@ describe("[build-gate] skipped payments", () => {
   });
 
   it("skipped payments' splits are excluded from contractor 1099", () => {
-    // 1099 = sum(advance.amount) + sum(unflagged split.amount where payment.skippedAt IS NULL).
+    // 1099 = sum(split.amount where payment.skippedAt IS NULL).
     // If skipped payment splits leak in, the contractor's 1099 overstates
     // income. This mirrors the D-section 1099 rule but adds the skip guard.
-    type Adv = { amount: number };
-    type Split = { amount: number; guaranteedPayoutPaidAt: Date | null; paymentSkippedAt: Date | null };
-    const advances: Adv[] = [{ amount: 80 }];
+    type Split = { amount: number; paymentSkippedAt: Date | null };
     const splits: Split[] = [
-      { amount: 50, guaranteedPayoutPaidAt: null, paymentSkippedAt: null },        // counts
-      { amount: 40, guaranteedPayoutPaidAt: null, paymentSkippedAt: new Date() },  // SKIPPED payment — must be excluded
-      { amount: 30, guaranteedPayoutPaidAt: new Date(), paymentSkippedAt: null },  // GP-flagged — already excluded
+      { amount: 50, paymentSkippedAt: null },        // counts
+      { amount: 40, paymentSkippedAt: new Date() },  // SKIPPED payment — must be excluded
+      { amount: 30, paymentSkippedAt: null },        // counts
     ];
-    const total1099 =
-      advances.reduce((s, a) => s + a.amount, 0) +
-      splits
-        .filter((sp) => sp.guaranteedPayoutPaidAt == null && sp.paymentSkippedAt == null)
-        .reduce((s, sp) => s + sp.amount, 0);
-    expect(total1099).toBe(80 + 50); // $40 flagged as skipped and $30 GP-flagged both excluded
+    const total1099 = splits
+      .filter((sp) => sp.paymentSkippedAt == null)
+      .reduce((s, sp) => s + sp.amount, 0);
+    expect(total1099).toBe(80); // the $40 skipped payment is excluded
   });
 
   it("skippedAt is nullable DateTime — NOT a boolean, NOT an enum status", () => {
@@ -1008,18 +929,17 @@ describe("[build-gate] worker earnings display (computeMyOccurrenceNet)", () => 
     expect(result).toBeCloseTo(80, 5);
   });
 
-  it("split query is trusted to be pre-filtered for GP-flagged rows", () => {
-    // Query contract: `splits: { where: { userId, guaranteedPayoutPaidAt: null } }`.
-    // The helper receives ONLY non-flagged splits — so when it sees a
-    // splits array of length 0, it correctly falls to projection. GP-window
-    // contractor's projection ~= wage-path payout, avoiding double-count
-    // with loadGpWorkAnchoredItems bucketed by completedAt.
+  it("split query is trusted to be pre-filtered to the caller's own row", () => {
+    // Query contract: `splits: { where: { userId } }`.
+    // The helper receives only the caller's split — so when it sees an
+    // empty splits array it correctly falls through to projection rather
+    // than reporting $0 for a job that simply has no split for this user.
     const result = computeMyOccurrenceNet(
       occ({
         payment: {
           confirmed: true,
           skippedAt: null,
-          splits: [], // GP-flagged split was filtered out at query time
+          splits: [], // no split for this user on this payment
         },
       }),
       "me",

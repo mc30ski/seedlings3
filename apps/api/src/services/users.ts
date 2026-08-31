@@ -555,12 +555,6 @@ export const users: ServicesUsers = {
       // SOP, etc.) is served separately in Slice 2 via GET /me/policies +
       // getMe compliance-cache. Removed from this response payload with the
       // migration; frontends should read the new endpoint instead.
-      // Guaranteed payout period (contractors only). Surfaced so the
-      // contractor can see their own period and remaining days on
-      // ProfileTab. UI computes "active" from `guaranteedPayoutUntil > now`.
-      guaranteedPayoutUntil: user!.guaranteedPayoutUntil?.toISOString() ?? null,
-      guaranteedPayoutStartedAt: user!.guaranteedPayoutStartedAt?.toISOString() ?? null,
-      // Override columns (for the user-edit UI to show explicit grants/denies)
       canPullInventoryOverride: user!.canPullInventory ?? null,
       canChargeBusinessExpensesOverride: user!.canChargeBusinessExpenses ?? null,
       // Resolved values (admin/super wins, otherwise override-or-default).

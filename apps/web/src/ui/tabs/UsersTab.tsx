@@ -50,7 +50,7 @@ export type TabRolePropType = {
   /** Additive scope — capabilities ADD as you climb the ladder.
    *  scope.isWorker → worker Team roster (read-only, name + type only)
    *  scope.isAdmin  → the full admin/super directory (this file's main UI)
-   *  scope.isSuper  → mutation controls (approve, delete, LLC owner, GP period)
+   *  scope.isSuper  → mutation controls (approve, delete, LLC owner)
    *  Falls back to the legacy `role` prop when not passed. */
   scope?: { isWorker: boolean; isAdmin: boolean; isSuper: boolean };
 };
@@ -67,10 +67,6 @@ type ApiUser = {
   // SOP, etc.) is surfaced separately in Slice 4 via the admin Compliance
   // tab + a per-user "Compliance: OK / N pending" chip added to this card
   // in Slice 5. Removed inline fields as part of the migration.
-  // Guaranteed-payout onboarding period (contractors only). Active when
-  // guaranteedPayoutUntil > now. See onboarding addendum.
-  guaranteedPayoutUntil?: string | null;
-  guaranteedPayoutStartedAt?: string | null;
   // Per-user privilege overrides. Null = follow workerType default.
   canPullInventory?: boolean | null;
   canChargeBusinessExpenses?: boolean | null;
@@ -180,7 +176,7 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
   const [me, setMe] = useState<Me | null>(null);
   const [meReady, setMeReady] = useState(false); // prevents action button flash
 
-  // Super-only affordances (delete, LLC owner, guaranteed-payout period)
+  // Super-only affordances (delete, LLC owner)
   // gate on this. Scope carries the intent (Super tab vs Admin tab),
   // but the underlying role is checked defense-in-depth so a
   // mis-provisioned mount can't unlock super buttons for a non-super.
@@ -209,20 +205,12 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
   const [teamSectionOpen, setTeamSectionOpen] = usePersistedState("users_teamSectionOpen", true);
   const [clientSectionOpen, setClientSectionOpen] = usePersistedState("users_clientSectionOpen", false);
 
-  // Guaranteed-payout filter. "all" = no filter; "active" = only
-  // contractors currently in an open period; "expiring" = active AND
-  // ≤ 7 days from expiration (the title-bar alert chip routes here).
-  // Not persisted — it's a transient navigational filter; reopening the
-  // tab fresh shouldn't carry over a previous filter session.
-  const [guaranteedPayoutFilter, setGuaranteedPayoutFilter] =
-    useState<"all" | "active" | "expiring">("all");
 
-  // Check for pending approvals / guaranteed-payout navigation from header
+  // Check for pending-approvals navigation from the header
   // badge — on mount and via event. Supports three payload shapes:
   //   { status } → set the status filter (pending users path)
   //   { role }   → set the accessRole filter ("all" used by the alert
   //                chip so the persisted role filter is reset on arrival)
-  //   { guaranteedPayoutFilter } → set the GP filter (alert chip path)
   useEffect(() => {
     try {
       const flag = sessionStorage.getItem("admin:usersOpenOnce");
@@ -231,18 +219,12 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
         const parsed = JSON.parse(flag);
         if (parsed?.status) setStatus(parsed.status);
         if (parsed?.role) setAccessRole(parsed.role);
-        if (parsed?.guaranteedPayoutFilter) {
-          setGuaranteedPayoutFilter(parsed.guaranteedPayoutFilter);
-        }
       }
     } catch {}
     const onOpen = (e: Event) => {
       const detail = (e as CustomEvent).detail || {};
       if (detail?.status) setStatus(detail.status);
       if (detail?.role) setAccessRole(detail.role);
-      if (detail?.guaranteedPayoutFilter) {
-        setGuaranteedPayoutFilter(detail.guaranteedPayoutFilter);
-      }
     };
     window.addEventListener("admin:openUsers", onOpen as EventListener);
     return () => window.removeEventListener("admin:openUsers", onOpen as EventListener);
@@ -383,7 +365,7 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
   }, [load]);
 
   // General filters applied to every section (Pending / Team / Clients).
-  // Worker-specific filters (workerTypeFilter, guaranteedPayoutFilter) are
+  // Worker-specific filters (workerTypeFilter) are
   // applied AFTER segmenting, only to the Team subset — they don't make
   // sense for clients or pending users.
   const filtered = useMemo(() => {
@@ -422,7 +404,7 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
 
   const pendingUsers = useMemo(() => filtered.filter(isPendingUser), [filtered]);
   // Team gets the worker-specific filters layered on top. Clients and pending
-  // users are never narrowed by workerType or guaranteed-payout — those are
+  // users are never narrowed by workerType — those are
   // worker-only concepts.
   const teamUsers = useMemo(() => {
     let rows = filtered.filter(isTeamUser);
@@ -433,21 +415,8 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
         rows = rows.filter((u) => u.workerType === workerTypeFilter);
       }
     }
-    if (guaranteedPayoutFilter !== "all") {
-      const now = Date.now();
-      // date-handling-allow: elapsed-time — "expiring within 7 days"
-      // filter threshold. A ≤1-hour DST drift on the cutoff doesn't
-      // materially change which users land in the bucket.
-      const sevenDaysOut = now + 7 * 86400000;
-      rows = rows.filter((u) => {
-        if (!u.guaranteedPayoutUntil) return false;
-        const untilMs = new Date(u.guaranteedPayoutUntil).getTime();
-        if (guaranteedPayoutFilter === "active") return untilMs > now;
-        return untilMs > now && untilMs <= sevenDaysOut;
-      });
-    }
     return rows;
-  }, [filtered, workerTypeFilter, guaranteedPayoutFilter]);
+  }, [filtered, workerTypeFilter]);
   const clientUsers = useMemo(() => filtered.filter(isClientUser), [filtered]);
 
   async function addRole(userId: string, accessRole: Role) {
@@ -536,50 +505,6 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
   const hasOwner = useMemo(() => items.some((u) => u.isOwner), [items]);
   const [ownerConfirm, setOwnerConfirm] = useState<{ userId: string; isOwner: boolean; displayName: string } | null>(null);
 
-  // Contractor "guaranteed payout period" management (super-only). Target
-  // carries the contractor and the form state for the date picker; null =
-  // dialog closed. Default: today + 60 days. Operator may pick 1-90 days
-  // out from today; the dialog enforces the bound via the date input's
-  // min/max and the save handler revalidates.
-  const [guaranteedPayoutTarget, setGuaranteedPayoutTarget] = useState<
-    | { user: ApiUser; mode: "start" | "manage"; dateInput: string }
-    | null
-  >(null);
-  const [guaranteedPayoutBusy, setGuaranteedPayoutBusy] = useState(false);
-  async function saveGuaranteedPayout(until: string | null) {
-    if (!guaranteedPayoutTarget) return;
-    // Re-validate the 1-90 day window before sending (defense in depth —
-    // the input min/max bounds the picker, but a user could type past it
-    // in some browsers).
-    if (until) {
-      const todayIso = bizToday();
-      const maxIso = bizAddDays(todayIso, 90);
-      if (until < todayIso) {
-        publishInlineMessage({ type: "ERROR", text: "End date must be today or later." });
-        return;
-      }
-      if (until > maxIso) {
-        publishInlineMessage({ type: "ERROR", text: "End date can't be more than 90 days from today." });
-        return;
-      }
-    }
-    setGuaranteedPayoutBusy(true);
-    try {
-      await apiPatch(`/api/admin/users/${guaranteedPayoutTarget.user.id}/guaranteed-payout-period`, { until });
-      publishInlineMessage({
-        type: "SUCCESS",
-        text: until
-          ? `Guaranteed payout period set through ${until} for ${guaranteedPayoutTarget.user.displayName ?? guaranteedPayoutTarget.user.email}.`
-          : `Guaranteed payout period ended early for ${guaranteedPayoutTarget.user.displayName ?? guaranteedPayoutTarget.user.email}.`,
-      });
-      setGuaranteedPayoutTarget(null);
-      load();
-    } catch (err: any) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Guaranteed payout update failed", err) });
-    } finally {
-      setGuaranteedPayoutBusy(false);
-    }
-  }
   async function confirmOwner() {
     if (!ownerConfirm) return;
     const { userId, isOwner } = ownerConfirm;
@@ -758,7 +683,7 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
           <Info size={14} />
         </Button>
       </HStack>
-      {(status !== "all" || accessRole !== "all" || workerTypeFilter !== "all" || guaranteedPayoutFilter !== "all") && (
+      {(status !== "all" || accessRole !== "all" || workerTypeFilter !== "all") && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
           {status !== "all" && (
             <Badge size="sm" colorPalette="blue" variant="solid">
@@ -775,12 +700,7 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
               {workerTypeFilterItems.find((i) => i.value === workerTypeFilter)?.label}
             </Badge>
           )}
-          {guaranteedPayoutFilter !== "all" && (
-            <Badge size="sm" colorPalette={guaranteedPayoutFilter === "expiring" ? "yellow" : "blue"} variant="solid">
-              {guaranteedPayoutFilter === "expiring" ? "Guaranteed payout expiring (≤7d)" : "Guaranteed payout active"}
-            </Badge>
-          )}
-          {!(status === "all" && accessRole === "all" && workerTypeFilter === "all" && guaranteedPayoutFilter === "all") && (
+          {!(status === "all" && accessRole === "all" && workerTypeFilter === "all") && (
             <Badge
               size="sm"
               colorPalette="red"
@@ -790,7 +710,6 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
                 setStatus("all");
                 setAccessRole("all");
                 setWorkerTypeFilter("all");
-                setGuaranteedPayoutFilter("all");
               }}
             >
               ✕ Clear
@@ -811,7 +730,6 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
               setStatus("all");
               setAccessRole("all");
               setWorkerTypeFilter("all");
-              setGuaranteedPayoutFilter("all");
               setQ("");
             }}
           >
@@ -844,20 +762,6 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
           const isEmployee = u.workerType === "EMPLOYEE";
           const isTrainee = u.workerType === "TRAINEE";
           const displayName = u.displayName || u.email;
-
-          // Guaranteed-payout state derived per-row. Active when the
-          // server's guaranteedPayoutUntil is in the future; the chip
-          // surfaces remaining days so the operator can see at a glance
-          // how close each contractor is to reverting to standard
-          // contingent terms.
-          const guaranteedPayoutUntilDate = u.guaranteedPayoutUntil ? new Date(u.guaranteedPayoutUntil) : null;
-          const guaranteedPayoutActive = !!(guaranteedPayoutUntilDate && guaranteedPayoutUntilDate.getTime() > Date.now());
-          // Days-remaining in ET calendar days (NOT raw 24-hour elapsed
-          // chunks). bizDaysBetween dodges DST drift that the old
-          // `/ 86_400_000` pattern was vulnerable to.
-          const guaranteedPayoutDaysLeft = guaranteedPayoutActive && guaranteedPayoutUntilDate
-            ? Math.max(0, bizDaysBetween(bizToday(), bizDateKey(guaranteedPayoutUntilDate)))
-            : 0;
 
           return (
             <Box
@@ -936,15 +840,6 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
                           Compliance: cleared
                         </Badge>
                       )
-                    )}
-                    {isContractor && guaranteedPayoutActive && (
-                      <Badge
-                        colorPalette={guaranteedPayoutDaysLeft <= 7 ? "yellow" : "blue"}
-                        variant="solid"
-                        title={`Guaranteed payout period — payroll work-anchored through ${fmtDate(u.guaranteedPayoutUntil)}. ${guaranteedPayoutDaysLeft <= 7 ? "Approaching expiration — confirm transition with the contractor." : ""}`}
-                      >
-                        Guaranteed payout · {guaranteedPayoutDaysLeft}d left
-                      </Badge>
                     )}
                   </HStack>
                 </Box>
@@ -1148,33 +1043,6 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
                         workerAction = NONE + adminCanUploadOnBehalf; the
                         Slice 4 Compliance tab surfaces the upload-on-behalf
                         flow with a full audit trail and versioning. */}
-                    {/* Guaranteed payout period — Super-only mutation.
-                        Opens the date picker dialog; handles both "Start"
-                        (no current period) and "Manage" (active, can extend
-                        or end early). Button shows current state inline. */}
-                    {isContractor && showSuperExtras && (
-                      <Button
-                        size={{ base: "xs", md: "sm" }}
-                        variant={guaranteedPayoutActive ? "subtle" : "outline"}
-                        colorPalette={guaranteedPayoutActive ? "purple" : "gray"}
-                        onClick={() => {
-                          // Default to today + 60 days for fresh starts, or
-                          // the current end date when managing an active
-                          // period. Operator can pick anywhere from 1-90
-                          // days out via the date input's min/max.
-                          const defaultDate = guaranteedPayoutActive && u.guaranteedPayoutUntil
-                            ? u.guaranteedPayoutUntil.slice(0, 10)
-                            : bizAddDays(bizToday(), 60);
-                          setGuaranteedPayoutTarget({
-                            user: u,
-                            mode: guaranteedPayoutActive ? "manage" : "start",
-                            dateInput: defaultDate,
-                          });
-                        }}
-                      >
-                        {guaranteedPayoutActive ? "Guaranteed payout ✓" : "Start guaranteed payout"}
-                      </Button>
-                    )}
                     {/* LLC-owner toggle. SUPER-only — the route enforces it
                         too. Singleton: only one user can hold the flag, so
                         once any user is flagged, the "Set as Owner" button
@@ -1484,121 +1352,6 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
         }}
         onCancel={() => setRemoveWorkerConfirm(null)}
       />
-
-      {/* Guaranteed payout period — set/extend/clear via a single date
-          picker. Dialog adapts to start vs. manage. End-early sends
-          until=null, which the API writes an GUARANTEED_PAYOUT_ENDED
-          audit row for. Date is bound 1-90 days from today. */}
-      <Dialog.Root
-        open={!!guaranteedPayoutTarget}
-        onOpenChange={(e) => { if (!e.open) setGuaranteedPayoutTarget(null); }}
-        placement="center"
-      >
-        <Portal>
-          <Dialog.Backdrop />
-          <Dialog.Positioner>
-            <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg">
-              <Dialog.CloseTrigger />
-              <Dialog.Header>
-                <Dialog.Title>
-                  {guaranteedPayoutTarget?.mode === "start"
-                    ? "Start guaranteed payout period"
-                    : "Manage guaranteed payout period"}
-                </Dialog.Title>
-              </Dialog.Header>
-              <Dialog.Body>
-                {guaranteedPayoutTarget && (() => {
-                  const u = guaranteedPayoutTarget.user;
-                  const currentUntil = u.guaranteedPayoutUntil ? new Date(u.guaranteedPayoutUntil) : null;
-                  // Window bounds for the picker: today (earliest allowed
-                  // end date) through today + 90 days (maximum onboarding
-                  // length). Operator decides anywhere inside.
-                  const todayIso = bizToday();
-                  const maxIso = bizAddDays(todayIso, 90);
-                  return (
-                    <VStack align="stretch" gap={3}>
-                      <Box p={3} bg="gray.50" borderWidth="1px" borderColor="gray.200" rounded="md">
-                        <Text fontSize="sm" fontWeight="medium">{u.displayName ?? u.email ?? u.id}</Text>
-                        <Text fontSize="xs" color="fg.muted">{u.email}</Text>
-                      </Box>
-
-                      {guaranteedPayoutTarget.mode === "manage" && currentUntil && (
-                        <Box p={2} bg="purple.50" borderWidth="1px" borderColor="purple.200" rounded="md">
-                          <Text fontSize="sm" color="purple.900">
-                            Currently active through <b>{fmtDate(u.guaranteedPayoutUntil)}</b>
-                            {u.guaranteedPayoutStartedAt && (
-                              <> (started {fmtDate(u.guaranteedPayoutStartedAt)})</>
-                            )}
-                            .
-                          </Text>
-                        </Box>
-                      )}
-
-                      <Box>
-                        <Text fontSize="xs" fontWeight="semibold" mb={1}>
-                          End date (inclusive, 1–90 days from today)
-                        </Text>
-                        <Input
-                          type="date"
-                          size="sm"
-                          value={guaranteedPayoutTarget.dateInput}
-                          min={todayIso}
-                          max={maxIso}
-                          onChange={(e) => setGuaranteedPayoutTarget({
-                            ...guaranteedPayoutTarget,
-                            dateInput: e.target.value,
-                          })}
-                        />
-                        <Text fontSize="xs" color="fg.muted" mt={1}>
-                          Jobs the contractor completes through this date are paid
-                          regardless of client payment timing. After this date the
-                          standing contingent-payment terms apply automatically.
-                        </Text>
-                      </Box>
-
-                      <Box p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" rounded="md">
-                        <Text fontSize="xs" color="yellow.900">
-                          Make sure the contractor has signed the onboarding
-                          addendum with this end date filled in before activating.
-                        </Text>
-                      </Box>
-                    </VStack>
-                  );
-                })()}
-              </Dialog.Body>
-              <Dialog.Footer>
-                <Stack direction={{ base: "column", md: "row" }} w="full" gap={2} justify="flex-end">
-                  <Button
-                    variant="ghost"
-                    onClick={() => setGuaranteedPayoutTarget(null)}
-                    disabled={guaranteedPayoutBusy}
-                  >
-                    Cancel
-                  </Button>
-                  {guaranteedPayoutTarget?.mode === "manage" && (
-                    <Button
-                      variant="outline"
-                      colorPalette="red"
-                      loading={guaranteedPayoutBusy}
-                      onClick={() => void saveGuaranteedPayout(null)}
-                    >
-                      End early
-                    </Button>
-                  )}
-                  <Button
-                    colorPalette="purple"
-                    loading={guaranteedPayoutBusy}
-                    disabled={!guaranteedPayoutTarget?.dateInput}
-                    onClick={() => void saveGuaranteedPayout(guaranteedPayoutTarget?.dateInput ?? null)}
-                  >
-                    {guaranteedPayoutTarget?.mode === "start" ? "Start period" : "Save end date"}
-                  </Button>
-                </Stack>
-              </Dialog.Footer>
-            </Dialog.Content>
-          </Dialog.Positioner>
-        </Portal>
-      </Dialog.Root>
 
       {/* Roles & Types Info Overlay */}
       <Dialog.Root open={showInfoOverlay} onOpenChange={(e) => { if (!e.open) setShowInfoOverlay(false); }}>

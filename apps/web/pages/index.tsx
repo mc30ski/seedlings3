@@ -2587,39 +2587,6 @@ chip: false, bucket: t.bucket }));
     return () => window.removeEventListener("seedlings:admin-payments-changed", onChanged);
   }, [loadAwaitingClientPayment]);
 
-  // Guaranteed-payout summary (super-only). `active` = currently in an
-  // open period; `expiringSoon` = active AND ≤ 7 days from expiration —
-  // the bucket the title-bar alert chip surfaces so an operator gets a
-  // proactive nudge to decide renew-or-let-expire before the natural
-  // transition. Doesn't fire until super is logged in (route is super-
-  // gated). The active count surfaces inside the Users tab; this state
-  // exists in the shell only because the alert chip lives in the shell.
-  const [guaranteedPayoutActiveCount, setGuaranteedPayoutActiveCount] = useState<number>(0);
-  const [guaranteedPayoutExpiringCount, setGuaranteedPayoutExpiringCount] = useState<number>(0);
-  const loadGuaranteedPayoutSummary = useCallback(async () => {
-    if (!isSuper) {
-      setGuaranteedPayoutActiveCount(0);
-      setGuaranteedPayoutExpiringCount(0);
-      markAlertLoaded("guaranteedPayout");
-      return;
-    }
-    try {
-      const res = await apiGet<{ active: number; expiringSoon: number }>(
-        "/api/admin/users/guaranteed-payout-summary",
-      );
-      setGuaranteedPayoutActiveCount(res?.active ?? 0);
-      setGuaranteedPayoutExpiringCount(res?.expiringSoon ?? 0);
-    } catch {
-      setGuaranteedPayoutActiveCount(0);
-      setGuaranteedPayoutExpiringCount(0);
-    }
-    markAlertLoaded("guaranteedPayout");
-  }, [isSuper]);
-
-  useEffect(() => {
-    void loadGuaranteedPayoutSummary();
-  }, [loadGuaranteedPayoutSummary]);
-
   // Overdue count for admin header badge — matches Admin Jobs tab
   // overdue logic. Predicate lives in lib/overdueRule so all three
   // overdue sites (this badge, ServicesTab chip, JobsTab chip) stay in
@@ -2938,7 +2905,7 @@ chip: false, bucket: t.bucket }));
     return () => { clearTimeout(timer); document.removeEventListener("click", close); };
   }, [alertDropdownOpen]);
   const [alertsLoaded, setAlertsLoaded] = useState<Record<string, boolean>>({});
-  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests && alertsLoaded.estimateFollowups && alertsLoaded.unapprovedHours && alertsLoaded.guaranteedPayout && alertsLoaded.pendingWorkdays && alertsLoaded.ledgerFollowups && alertsLoaded.dueToRecord && alertsLoaded.streamPauseReminders && alertsLoaded.ghostExpiry && alertsLoaded.policyAdmin && alertsLoaded.policyWorker && alertsLoaded.timeline && alertsLoaded.payrollUnmatched && alertsLoaded.unlinkedAccounts && alertsLoaded.guideApprovals);
+  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests && alertsLoaded.estimateFollowups && alertsLoaded.unapprovedHours && alertsLoaded.pendingWorkdays && alertsLoaded.ledgerFollowups && alertsLoaded.dueToRecord && alertsLoaded.streamPauseReminders && alertsLoaded.ghostExpiry && alertsLoaded.policyAdmin && alertsLoaded.policyWorker && alertsLoaded.timeline && alertsLoaded.payrollUnmatched && alertsLoaded.unlinkedAccounts && alertsLoaded.guideApprovals);
   const markAlertLoaded = useCallback((key: string) => setAlertsLoaded((prev) => prev[key] ? prev : { ...prev, [key]: true }), []);
   const loadAnnouncementCount = useCallback(async () => {
     // Staff-only: /api/occurrences requires a worker/admin/super role.
@@ -3845,26 +3812,6 @@ chip: false, bucket: t.bucket }));
     }, 100);
   }, []);
 
-  const goToGuaranteedPayoutExpiring = useCallback(() => {
-    // Title-bar "Guaranteed payout expiring" alert chip routes here —
-    // Super → Directory → Users with the guaranteed-payout filter set to
-    // "expiring" so the operator sees only the contractors needing
-    // attention in the next 7 days.
-    window.sessionStorage.setItem(
-      "admin:usersOpenOnce",
-      JSON.stringify({ guaranteedPayoutFilter: "expiring" }),
-    );
-    setTopTab("super");
-    setSuperInnerTab("users");
-    setTimeout(() => {
-      window.dispatchEvent(
-        new CustomEvent("admin:openUsers", {
-          detail: { guaranteedPayoutFilter: "expiring" as const },
-        }),
-      );
-    }, 100);
-  }, []);
-
   const goToPaymentApprovals = useCallback(() => {
     setTopTab("super");
     setSuperInnerTab("payments");
@@ -4232,14 +4179,6 @@ chip: false, bucket: t.bucket }));
               const alerts: { label: string; count: number; bg: string; color: string; dotColor: string; onClick: () => void }[] = [];
               if (scopeIsAdmin && overdueCount > 0) alerts.push({ label: "Overdue", count: overdueCount, bg: "#FEE2E2", color: "#991B1B", dotColor: "#EF4444", onClick: goToOverdue });
               if (scopeIsSuper && pending > 0) alerts.push({ label: "Pending Users", count: pending, bg: "#FFEDD5", color: "#9A3412", dotColor: "#FB923C", onClick: goToApprovals });
-              if (scopeIsSuper && guaranteedPayoutExpiringCount > 0) alerts.push({
-                label: "Guaranteed payout expiring",
-                count: guaranteedPayoutExpiringCount,
-                bg: "#FEF3C7",
-                color: "#854D0E",
-                dotColor: "#EAB308",
-                onClick: goToGuaranteedPayoutExpiring,
-              });
               // Payments to review — combined alert that rolls up
               // pending-admin-approval payments + outstanding client
               // payment requests. Both used to be separate entries
@@ -4689,7 +4628,6 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
             streamPauseRemindersCount,
             ghostExpiringCount,
             ghostExpiredCount,
-            guaranteedPayoutExpiringCount,
             pendingUsersCount: pending,
             estimateFollowupCount,
             overdueCount,
@@ -4714,7 +4652,6 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
             goToStreamPauseReminders,
             goToExpiringGhosts,
             goToExpiredGhosts,
-            goToGuaranteedPayoutExpiring,
             goToApprovals,
             goToEstimateFollowups,
             goToOverdue,

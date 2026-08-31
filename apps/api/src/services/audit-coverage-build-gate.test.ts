@@ -74,7 +74,12 @@ const BASELINE: Record<string, number> = {
   // PAYMENT.CREATED row), so a count well below the mutation total is
   // expected and healthy here.
   "apps/api/src/services/jobs.ts": 44,
-  "apps/api/src/routes/admin.ts": 32,
+  // Raised 32 → 33 on 2026-08-31 by the guaranteed-payout removal, NOT by a
+  // coverage regression. The GP endpoint was a single mutation with TWO
+  // audit branches (GUARANTEED_PAYOUT_STARTED / _ENDED), so deleting it
+  // removed 1 mutation site and 2 writeAudit calls — the ratio gets worse
+  // even though every remaining mutation is exactly as audited as before.
+  "apps/api/src/routes/admin.ts": 33,
   "apps/api/src/services/payments.ts": 20,
   "apps/api/src/routes/worker.ts": 18,
   "apps/api/src/services/supplies.ts": 16,
@@ -94,7 +99,6 @@ const BASELINE: Record<string, number> = {
   "apps/api/src/services/companyDocuments.ts": 1,
   "apps/api/src/services/banners.ts": 1,
   "apps/api/src/routes/equipmentCollections.ts": 3,
-  "apps/api/src/routes/cron.ts": 1,
   "apps/api/src/routes/preview.ts": 1,
   // me.ts + public.ts were reviewed line-by-line during the sweep and
   // every site is a deliberate exemption (Clerk profile sync,

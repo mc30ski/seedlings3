@@ -15,7 +15,6 @@ When the user asks to reseed the dev database, map the phrasing to a template (n
 | "reseed the development database" / "reseed dev" / "reseed" | default | `npx prisma db seed -- --template=default` |
 | "reseed payment" / "reseed payments" | payments-active | `npx prisma db seed -- --template=payments-active` |
 | "reseed payment clean" / "reseed payments clean" | payments-clean | `npx prisma db seed -- --template=payments-clean` |
-| "reseed payment gp" / "reseed payment guaranteed payout" / "reseed gp" | payments-guaranteed-payout | `npx prisma db seed -- --template=payments-guaranteed-payout` |
 
 **Why:** The user wants short, predictable triggers. Don't second-guess or read intent into adjectives — match the phrase pattern. If a phrase is genuinely ambiguous (e.g. "reseed something different"), ask which template.
 

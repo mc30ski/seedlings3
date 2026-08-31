@@ -45,15 +45,14 @@ export type DataSnapshot = {
   paymentSplits: unknown[];
   expenses: unknown[];
   auditEvents: unknown[];
-  guaranteedPayoutAdvances: unknown[];
 };
 
 /**
  * Build a full-database snapshot for export/backup.
  *
  * @param cutoff  When non-null, pre-cutoff money rows (Payment,
- *                PaymentSplit, Expense, AuditEvent, Checkout,
- *                GuaranteedPayoutAdvance) are excluded — same
+ *                PaymentSplit, Expense, AuditEvent, Checkout) are
+ *                excluded — same
  *                semantics as the Business Start Date filter that
  *                runs across the money-facing UI. Non-money tables
  *                (Users, Clients, Properties, Jobs, etc.) are
@@ -78,7 +77,6 @@ export async function buildDataSnapshot(cutoff: Date | null): Promise<DataSnapsh
     paymentSplits,
     expenses,
     auditEvents,
-    guaranteedPayoutAdvances,
   ] = await Promise.all([
     prisma.user.findMany({ orderBy: { createdAt: "asc" } }),
     prisma.userRole.findMany(),
@@ -105,10 +103,6 @@ export async function buildDataSnapshot(cutoff: Date | null): Promise<DataSnapsh
       orderBy: { createdAt: "asc" },
     }),
     prisma.auditEvent.findMany({ where: { ...cutoffWhere("AuditEvent", cutoff) }, orderBy: { createdAt: "asc" } }),
-    prisma.guaranteedPayoutAdvance.findMany({
-      where: { ...cutoffWhere("GuaranteedPayoutAdvance", cutoff) },
-      orderBy: { createdAt: "asc" },
-    }),
   ]);
 
   return {
@@ -131,6 +125,5 @@ export async function buildDataSnapshot(cutoff: Date | null): Promise<DataSnapsh
     paymentSplits,
     expenses,
     auditEvents,
-    guaranteedPayoutAdvances,
   };
 }

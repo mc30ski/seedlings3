@@ -30,16 +30,6 @@ async function main() {
     count: await prisma.user.count({ where: { isApproved: false } }),
   });
 
-  // 3. Guaranteed payout expiring (≤7 days)
-  checks.push({
-    name: "Guaranteed payout expiring (≤7 days)",
-    count: await prisma.user.count({
-      where: {
-        guaranteedPayoutUntil: { gte: today, lte: sevenDaysOut },
-      },
-    }),
-  });
-
   // 4a. Pending payment approvals (unconfirmed Payments)
   checks.push({
     name: "Pending payment approvals",
