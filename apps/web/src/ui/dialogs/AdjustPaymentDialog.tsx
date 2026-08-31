@@ -20,9 +20,8 @@ import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
 
 /**
- * Adjust-and-approve dialog. Used by the Edit button on a pending-approval
- * card when the client-reported amount or method is wrong. Lets the admin
- * correct ALL THREE fields that affect the final accounting:
+ * THE approve dialog for a pending payment. Opened by the Approve button.
+ * Correct anything that affects the final accounting, then approve:
  *
  *   1. Amount — what actually arrived in your account
  *   2. Method — what the client actually paid through (e.g. they reported
@@ -31,10 +30,15 @@ import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
  *      amount or method changes (formula = grossCharged × feePercent + feeFixed);
  *      the admin can override to match the exact figure that hit the
  *      processor statement.
+ *   4. Tip    — appears the moment the amount exceeds the invoice.
  *
- * Companion to ApprovePaymentDialog, which only handles the fee tweak path
- * (used when the report was correct but the estimated fee was a penny off).
- * This dialog is the strict superset — every field is editable here.
+ * MERGED 2026-09-01. There used to be TWO buttons: "Approve" (fee + date
+ * only) and "Edit" (this dialog). That split made tips undiscoverable — the
+ * button labelled Approve couldn't change the amount, and the one that could
+ * was called Edit, so nothing on the approve screen suggested a tip was even
+ * possible. Since this dialog was already a strict superset, the fast path
+ * costs nothing: the amount is pre-filled with what was reported, so
+ * "approve as reported" is still a single click.
  */
 
 type AdjustRow = {
@@ -42,6 +46,14 @@ type AdjustRow = {
   amountPaid: number;
   method: string;
   processorFeeAmount: number | null;
+  /** Invoice total (price + add-ons). Raising the collected amount above
+   *  this is what makes the payment an overpayment — and an overpayment is
+   *  the only thing that can be designated a tip. */
+  invoiceTotal: number;
+  /** Non-observer assignees, for the tip split editor. */
+  assignees: Array<{ userId: string; displayName: string; isOwner: boolean }>;
+  /** Per-worker job percentages, if set. Seeds the tip defaults. */
+  completionSplits: Array<{ userId: string; percent: number }> | null;
   /** Existing note on the payment (whatever the worker wrote when they
    *  first recorded it, if anything). Seeds the note textarea so the
    *  admin sees what's there before adding to it. */
@@ -50,6 +62,8 @@ type AdjustRow = {
 
 type Props = {
   row: AdjustRow | null;
+  /** Whether approving will auto-schedule the next occurrence (for the copy). */
+  willScheduleNext: boolean;
   /** Called on Approve with the final values. Each field is only included
    *  when it differs from the row's current value, mirroring how the
    *  backend `/admin/payments/:id/approve` overrides work — only changes
@@ -63,6 +77,13 @@ type Props = {
      *  "payment received on" field from today. Backend anchors to
      *  ET-noon; absent = fall through to server's `now()`. */
     paidAtOverride?: string;
+    /** Tip designation. Present only when the admin raised the amount above
+     *  the invoice AND marked the difference a tip. */
+    tip?: {
+      amount: number;
+      businessPercent: number;
+      workerPercents: Array<{ userId: string; percent: number }>;
+    } | null;
   }) => void;
   onCancel: () => void;
 };
@@ -73,7 +94,7 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-export default function AdjustPaymentDialog({ row, onConfirm, onCancel }: Props) {
+export default function AdjustPaymentDialog({ row, willScheduleNext, onConfirm, onCancel }: Props) {
   const open = !!row;
   const { methods } = usePaymentMethodLabels();
 
@@ -107,6 +128,40 @@ export default function AdjustPaymentDialog({ row, onConfirm, onCancel }: Props)
 
   const amountNum = Number.parseFloat(amountStr);
   const amountValid = Number.isFinite(amountNum) && amountNum >= 0;
+
+  // ── Tip designation ────────────────────────────────────────────────
+  // Recomputed live from the amount field, so raising "Actual amount
+  // collected" above the invoice reveals the editor as you type. This is
+  // the primary path: the worker tells you a tip was left, you enter the
+  // real amount here, and designate the difference.
+  const overpayment = row && amountValid ? round2(amountNum - row.invoiceTotal) : 0;
+  const canTip = overpayment > 0;
+  const [isTip, setIsTip] = useState(false);
+  const [bizPct, setBizPct] = useState("0");
+  const [workerPct, setWorkerPct] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!row) return;
+    setIsTip(false);
+    setBizPct("0");
+    const cs = new Map((row.completionSplits ?? []).map((c) => [c.userId, c.percent]));
+    const n = row.assignees.length;
+    const next: Record<string, string> = {};
+    for (const a of row.assignees) {
+      const pct = cs.get(a.userId) ?? (n > 0 ? 100 / n : 0);
+      next[a.userId] = String(Math.round(pct * 100) / 100);
+    }
+    setWorkerPct(next);
+  }, [row]);
+  const tipPctSum = round2(
+    (Number.parseFloat(bizPct) || 0) +
+      (row?.assignees ?? []).reduce((s, a) => s + (Number.parseFloat(workerPct[a.userId]) || 0), 0),
+  );
+  const tipPctValid = Math.abs(tipPctSum - 100) <= 0.01;
+  const ownerPct = (row?.assignees ?? [])
+    .filter((a) => a.isOwner)
+    .reduce((s, a) => s + (Number.parseFloat(workerPct[a.userId]) || 0), 0);
+  const effectiveBizPct = round2((Number.parseFloat(bizPct) || 0) + ownerPct);
+  const tipDollars = (pct: number) => round2((overpayment * pct) / 100);
 
   // The selected method's fee config drives both the computed-fee preview
   // and the "show fee section?" decision. A method with no fee (Cash,
@@ -156,7 +211,9 @@ export default function AdjustPaymentDialog({ row, onConfirm, onCancel }: Props)
     [methods, row?.method],
   );
 
-  const canConfirm = amountValid && !!methodKey && feeValid;
+  // Block confirm while a designated tip's percentages don't total 100 —
+  // the money would otherwise land somewhere unintended.
+  const canConfirm = amountValid && !!methodKey && feeValid && (!isTip || tipPctValid);
 
   function confirm() {
     if (!row || !canConfirm) return;
@@ -166,13 +223,28 @@ export default function AdjustPaymentDialog({ row, onConfirm, onCancel }: Props)
       feeOverride?: number;
       noteOverride?: string | null;
       paidAtOverride?: string;
+      tip?: {
+        amount: number;
+        businessPercent: number;
+        workerPercents: Array<{ userId: string; percent: number }>;
+      } | null;
     } = {};
     const finalAmount = round2(amountNum);
+    if (isTip && canTip && tipPctValid && row) {
+      changes.tip = {
+        amount: overpayment,
+        businessPercent: Number.parseFloat(bizPct) || 0,
+        workerPercents: row.assignees.map((a) => ({
+          userId: a.userId,
+          percent: Number.parseFloat(workerPct[a.userId]) || 0,
+        })),
+      };
+    }
     if (finalAmount !== round2(row.amountPaid)) changes.amountOverride = finalAmount;
     if (methodKey !== row.method) changes.methodOverride = methodKey;
     // Fee override only when the user's value differs from the auto-
     // computed estimate by more than half a cent. Matches the
-    // ApprovePaymentDialog policy so back-end semantics line up.
+    // the same half-cent policy the backend expects, so semantics line up.
     if (hasFee && Math.abs(feeNum - computedFee) >= PENNY) {
       changes.feeOverride = round2(feeNum);
     }
@@ -198,17 +270,20 @@ export default function AdjustPaymentDialog({ row, onConfirm, onCancel }: Props)
         <Dialog.Positioner>
           <Dialog.Content mx="4" maxW="sm" w="full" rounded="2xl" p="4" shadow="lg">
             <Dialog.Header>
-              <Dialog.Title>Adjust, then approve</Dialog.Title>
+              <Dialog.Title>Approve this payment?</Dialog.Title>
             </Dialog.Header>
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
                 <Text fontSize="sm" color="fg.muted">
-                  Originally reported:{" "}
+                  Reported as{" "}
                   <Text as="span" fontWeight="medium" color="fg.default">
                     ${row?.amountPaid.toFixed(2) ?? "0.00"} via {row?.method ?? "—"}
                   </Text>
-                  . Correct any field below — fee recomputes automatically when
-                  amount or method changes.
+                  . Approving closes the job
+                  {willScheduleNext ? " and schedules the next occurrence" : ""}.
+                  Correct anything below first — if the client paid MORE than the
+                  invoice, raise the amount and you can split the difference as a
+                  tip. The fee recomputes automatically.
                 </Text>
 
                 <Box>
@@ -222,6 +297,93 @@ export default function AdjustPaymentDialog({ row, onConfirm, onCancel }: Props)
                     placeholder="0.00"
                   />
                 </Box>
+
+                {/* Tip designation. Appears the moment the amount typed above
+                    exceeds the invoice — this is the primary path for
+                    recording a tip: the worker tells you the client left one,
+                    you enter the real amount, and split the difference. */}
+                {canTip && (
+                  <Box borderWidth="1px" borderColor={isTip ? "green.300" : "gray.200"} bg={isTip ? "green.50" : undefined} borderRadius="md" p={3}>
+                    <VStack align="stretch" gap={2}>
+                      <HStack justify="space-between" align="center">
+                        <VStack align="start" gap={0}>
+                          <Text fontSize="sm" fontWeight="semibold">
+                            ${overpayment.toFixed(2)} over the invoice
+                          </Text>
+                          <Text fontSize="xs" color="fg.muted">
+                            Invoice ${row?.invoiceTotal.toFixed(2)} · collecting ${amountNum.toFixed(2)}
+                          </Text>
+                        </VStack>
+                        <Button
+                          size="xs"
+                          variant={isTip ? "solid" : "outline"}
+                          colorPalette={isTip ? "green" : "gray"}
+                          onClick={() => setIsTip((v) => !v)}
+                        >
+                          {isTip ? "It's a tip ✓" : "It's a tip"}
+                        </Button>
+                      </HStack>
+
+                      {!isTip && (
+                        <Text fontSize="xs" color="fg.muted">
+                          Left as-is, the business keeps the ${overpayment.toFixed(2)} as
+                          income. Mark it a tip to share it with the crew.
+                        </Text>
+                      )}
+
+                      {isTip && (
+                        <VStack align="stretch" gap={2}>
+                          <Text fontSize="xs" color="fg.muted">
+                            Split the ${overpayment.toFixed(2)} tip. Defaults to each worker's
+                            share of the job. Tips skip commission and margin.
+                          </Text>
+                          <HStack justify="space-between" align="center">
+                            <Text fontSize="sm">Business</Text>
+                            <HStack gap={2}>
+                              <Input size="xs" w="64px" textAlign="right" inputMode="decimal"
+                                value={bizPct} onChange={(e) => setBizPct(e.target.value)} />
+                              <Text fontSize="xs" color="fg.muted" w="14px">%</Text>
+                              <Text fontSize="sm" fontWeight="medium" w="64px" textAlign="right">
+                                ${tipDollars(Number.parseFloat(bizPct) || 0).toFixed(2)}
+                              </Text>
+                            </HStack>
+                          </HStack>
+                          {(row?.assignees ?? []).map((a) => (
+                            <HStack key={a.userId} justify="space-between" align="center">
+                              <Text fontSize="sm">
+                                {a.displayName}
+                                {a.isOwner && (
+                                  <Text as="span" fontSize="2xs" color="purple.700" ml={1} fontWeight="semibold">
+                                    LLC Owner
+                                  </Text>
+                                )}
+                              </Text>
+                              <HStack gap={2}>
+                                <Input size="xs" w="64px" textAlign="right" inputMode="decimal"
+                                  value={workerPct[a.userId] ?? "0"}
+                                  onChange={(e) => setWorkerPct((prev) => ({ ...prev, [a.userId]: e.target.value }))} />
+                                <Text fontSize="xs" color="fg.muted" w="14px">%</Text>
+                                <Text fontSize="sm" fontWeight="medium" w="64px" textAlign="right">
+                                  ${tipDollars(Number.parseFloat(workerPct[a.userId]) || 0).toFixed(2)}
+                                </Text>
+                              </HStack>
+                            </HStack>
+                          ))}
+                          <Text fontSize="xs" fontWeight="medium" color={tipPctValid ? "fg.muted" : "red.600"} pt={1} borderTopWidth="1px" borderColor="green.200">
+                            Total {tipPctSum.toFixed(2)}%{!tipPctValid && " — must be 100%"}
+                          </Text>
+                          {ownerPct > 0 && (
+                            <Text fontSize="xs" color="purple.700">
+                              Business keeps {effectiveBizPct.toFixed(2)}% —{" "}
+                              {(Number.parseFloat(bizPct) || 0).toFixed(2)}% business share +{" "}
+                              {ownerPct.toFixed(2)}% owner share (owner earnings are business money).
+                            </Text>
+                          )}
+                        </VStack>
+                      )}
+                    </VStack>
+                  </Box>
+                )}
 
                 <Box>
                   <Text fontSize="sm" fontWeight="medium" mb={1}>

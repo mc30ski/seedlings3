@@ -680,7 +680,7 @@ export default function OutstandingRequestsSection({ onReady }: {
                       </HStack>
                     )}
                   </Box>
-                  {/* Fee + Net breakdown — mirrors ApprovePaymentDialog. Only
+                  {/* Fee + Net breakdown — mirrors AdjustPaymentDialog. Only
                       surfaces for methods with a non-zero fee config. The fee
                       is editable so the admin can match the actual amount
                       from the Venmo/Stripe statement. */}

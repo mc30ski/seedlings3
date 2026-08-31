@@ -22,7 +22,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { Check, ExternalLink, Pencil, RefreshCw, Slash, XCircle } from "lucide-react";
+import { Check, ExternalLink, RefreshCw, Slash, XCircle } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
 import { fmtDate } from "@/src/lib/dates";
 import { composePaymentMessage, type PaymentActionResult } from "@/src/lib/paymentMessages";
@@ -31,7 +31,6 @@ import {
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
-import ApprovePaymentDialog from "@/src/ui/dialogs/ApprovePaymentDialog";
 import AdjustPaymentDialog from "@/src/ui/dialogs/AdjustPaymentDialog";
 import { PaymentContactsLine } from "@/src/ui/components/PaymentContactsLine";
 import { PaymentPropertyLine } from "@/src/ui/components/PaymentPropertyLine";
@@ -90,6 +89,29 @@ type PendingRow = {
   };
 };
 
+/** The shape both the Approve and Adjust dialogs need to render the tip
+ *  editor: what was invoiced, who worked it, and how the job was split.
+ *  Shared so the two dialogs can't drift on which assignees are eligible. */
+function tipInputsFor(r: PendingRow) {
+  return {
+    id: r.id,
+    amountPaid: r.amountPaid,
+    method: r.method,
+    processorFeeAmount: r.processorFeeAmount,
+    // Invoice total = base price + add-ons. Anything above it is the
+    // overpayment a tip can be carved from.
+    invoiceTotal:
+      (r.occurrence.price ?? 0) +
+      (r.occurrence.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0),
+    assignees: (r.occurrence.assignees ?? []).map((a) => ({
+      userId: a.userId,
+      displayName: a.user?.displayName ?? a.user?.email ?? "Worker",
+      isOwner: !!a.user?.isOwner,
+    })),
+    completionSplits: r.occurrence.completionSplits ?? null,
+  };
+}
+
 // True when approving the payment should auto-create the next occurrence.
 // Matches the server-side logic in approvePayment: needs a frequency on
 // either the occurrence or the job, the job must not be PAUSED, and it
@@ -129,7 +151,6 @@ export default function PendingApprovalsSection({ onReady }: {
   // Every mutating action (Approve / Reject / Adjust / Write-off) goes
   // through ConfirmDialog — accidental thumb taps on mobile must not
   // mutate live data. See memory/feedback_confirm_dialogs.md.
-  const [approvingRow, setApprovingRow] = useState<PendingRow | null>(null);
   const [rejectingRow, setRejectingRow] = useState<PendingRow | null>(null);
   const [adjustingRow, setAdjustingRow] = useState<PendingRow | null>(null);
   const [writingOffRow, setWritingOffRow] = useState<PendingRow | null>(null);
@@ -364,7 +385,7 @@ export default function PendingApprovalsSection({ onReady }: {
                     <Button
                       size="xs"
                       colorPalette="green"
-                      onClick={() => setApprovingRow(r)}
+                      onClick={() => setAdjustingRow(r)}
                       disabled={r.amountPaid <= 0}
                       title={
                         r.amountPaid <= 0
@@ -373,14 +394,6 @@ export default function PendingApprovalsSection({ onReady }: {
                       }
                     >
                       <Check size={12} /> Approve
-                    </Button>
-                    <Button
-                      size="xs"
-                      colorPalette="orange"
-                      onClick={() => setAdjustingRow(r)}
-                      title="Adjust the amount and/or method, then approve (use when the client paid a different amount or via a different method than reported)"
-                    >
-                      <Pencil size={12} /> Edit
                     </Button>
                     <Button size="xs" colorPalette="red" onClick={() => setRejectingRow(r)} title="Reject (the worker will need to re-record)">
                       <Slash size={12} /> Reject
@@ -427,65 +440,14 @@ export default function PendingApprovalsSection({ onReady }: {
             );
           })}
         </VStack>
-      <ApprovePaymentDialog
-        row={
-          approvingRow
-            ? {
-                id: approvingRow.id,
-                amountPaid: approvingRow.amountPaid,
-                method: approvingRow.method,
-                processorFeeAmount: approvingRow.processorFeeAmount,
-                // Invoice total = base price + add-ons. Anything above it
-                // is the overpayment the tip can be carved from.
-                invoiceTotal:
-                  (approvingRow.occurrence.price ?? 0) +
-                  (approvingRow.occurrence.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0),
-                assignees: (approvingRow.occurrence.assignees ?? []).map((a) => ({
-                  userId: a.userId,
-                  displayName: a.user?.displayName ?? a.user?.email ?? "Worker",
-                  isOwner: !!a.user?.isOwner,
-                })),
-                completionSplits: approvingRow.occurrence.completionSplits ?? null,
-              }
-            : null
-        }
-        willScheduleNext={approvingRow ? willScheduleNext(approvingRow) : false}
-        onConfirm={(feeOverride?: number, paidAt?: string, tip?: any) => {
-          const r = approvingRow;
-          setApprovingRow(null);
-          if (r) void approve(r, undefined, feeOverride, undefined, undefined, paidAt, tip);
-        }}
-        onCancel={() => setApprovingRow(null)}
-      />
-
-      <ConfirmDialog
-        open={!!rejectingRow}
-        title="Reject this payment?"
-        message={
-          rejectingRow
-            ? `The client will need to re-pay ${dollar(rejectingRow.amountPaid)}. This can't be undone.`
-            : ""
-        }
-        confirmLabel="Reject"
-        confirmColorPalette="red"
-        inputLabel="Reason"
-        inputPlaceholder="e.g. Zelle never arrived, check bounced, wrong amount…"
-        inputOptional
-        onConfirm={async (reason: string) => {
-          const r = rejectingRow;
-          setRejectingRow(null);
-          if (r) await performReject(r, reason.trim());
-        }}
-        onCancel={() => setRejectingRow(null)}
-      />
-
       <AdjustPaymentDialog
-        row={adjustingRow}
-        onConfirm={({ amountOverride, methodOverride, feeOverride, noteOverride, paidAtOverride }) => {
+        row={adjustingRow ? { ...tipInputsFor(adjustingRow), note: adjustingRow.note } : null}
+        willScheduleNext={adjustingRow ? willScheduleNext(adjustingRow) : false}
+        onConfirm={({ amountOverride, methodOverride, feeOverride, noteOverride, paidAtOverride, tip }) => {
           const r = adjustingRow;
           setAdjustingRow(null);
           if (!r) return;
-          void approve(r, amountOverride, feeOverride, methodOverride, noteOverride, paidAtOverride);
+          void approve(r, amountOverride, feeOverride, methodOverride, noteOverride, paidAtOverride, tip);
         }}
         onCancel={() => setAdjustingRow(null)}
       />

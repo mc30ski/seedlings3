@@ -56,6 +56,10 @@ async function gotoSuper(page: Page, tab: string, category: string) {
  * fixtures come and go from the queue.
  */
 async function openApproveDialogForTipFixture(page: Page) {
+  // Dismiss anything a previous test left open — a stale dialog keeps its
+  // inputs in the DOM and later locators match the hidden copy.
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(400);
   const note = page.getByText(/TIP FIXTURE/).first();
   // The section may render expanded or collapsed depending on persisted
   // state; only toggle it when the fixture isn't already on screen.
@@ -118,7 +122,7 @@ test.describe("Tips — designation at approval", () => {
     });
   }
 
-  test("the tip editor appears only for an overpayment, defaulting to the job splits", async ({ page }) => {
+  test("raising the amount above the invoice reveals the tip editor", async ({ page }) => {
     const pending = await findPendingTipFixture();
     test.skip(!pending, "TIP FIXTURE pending payment missing — reseed dev.");
 
@@ -126,10 +130,25 @@ test.describe("Tips — designation at approval", () => {
 
     await openApproveDialogForTipFixture(page);
 
-    // The dialog must state the overpayment in plain money, not make the
-    // operator subtract two numbers themselves.
-    const overpaidLine = page.getByText(/Client overpaid by \$/);
-    await expect(overpaidLine).toBeVisible();
+    // Approve and Edit were MERGED — one dialog, amount editable in place.
+    // The tip editor must key off the amount FIELD, not the reported value,
+    // or a tip recorded after the fact is unreachable (that's exactly what
+    // the two-button split caused).
+    const amount = page
+      .getByText("Actual amount collected")
+      .locator("xpath=following::input[1]")
+      .locator("visible=true")
+      .first();
+    // CurrencyInput rejects input failing /^\d*\.?\d{0,2}$/, so clear first —
+    // a partial edit is silently dropped and the value never changes.
+    await amount.fill("");
+    await amount.fill("260");
+    await amount.blur();
+    await page.waitForTimeout(800);
+
+    // The dialog states the overpayment in plain money rather than making
+    // the operator subtract two numbers themselves.
+    await expect(page.getByText(/\$60\.00 over the invoice/)).toBeVisible();
 
     // Default OFF. An overpayment is more often a data-entry error than a
     // tip, so the operator opts IN — the money stays with the business
@@ -140,7 +159,7 @@ test.describe("Tips — designation at approval", () => {
     await page.waitForTimeout(500);
 
     // Percentages seed from the job's completionSplits with business at 0.
-    await expect(page.getByText(/Split the \$40\.00 tip/)).toBeVisible();
+    await expect(page.getByText(/Split the \$60\.00 tip/)).toBeVisible();
     await expect(page.getByText(/Total 100\.00%/)).toBeVisible();
   });
 
@@ -154,13 +173,19 @@ test.describe("Tips — designation at approval", () => {
     await page.waitForTimeout(400);
 
     // Break the total — the confirm must refuse rather than quietly
-    // allocating money somewhere the operator didn't intend.
-    const firstPct = page.locator("input[inputmode='decimal']").first();
-    await firstPct.fill("99");
+    // allocating money somewhere the operator didn't intend. Anchored on
+    // the Business row's label: an index-based locator picks up inputs on
+    // the page behind the modal.
+    const bizPct = page
+      .getByText("Business", { exact: true })
+      .locator("xpath=following::input[1]")
+      .locator("visible=true")
+      .first();
+    await bizPct.fill("99");
     await page.waitForTimeout(400);
     await expect(page.getByText(/must be 100%/)).toBeVisible();
 
-    const confirm = page.getByRole("button", { name: /^Approve payment$|^Approve$/ }).last();
+    const confirm = page.getByRole("button", { name: /^Approve$/ }).last();
     await expect(confirm).toBeDisabled();
   });
 });
