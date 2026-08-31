@@ -655,7 +655,11 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
       const spAny = sp as any;
       const isOwnerCut = spAny.ownerEarnings === true;
       if (!isOwnerCut) {
-        workerPayouts += sp.amount ?? 0;
+        // Tips included: `paymentGross` is the full amount the client paid
+        // (tip and all), so leaving tip payouts out here would silently
+        // inflate Business Margin by the workers' share and the row would
+        // stop balancing.
+        workerPayouts += (sp.amount ?? 0) + (spAny.tipAmount ?? 0);
       }
     }
     const businessMargin = round2(paymentNet - round2(workerPayouts));
@@ -898,6 +902,13 @@ export async function workdaysCsv(start: Date, end: Date): Promise<CsvResult> {
                 userId: true,
                 amount: true,
                 topUpAmount: true,
+                // NOTE: `tipAmount` is deliberately NOT selected. This CSV
+                // is WORK-anchored (net earnings attributed to the day the
+                // worker did the job) and a tip is PAYMENT-anchored — it
+                // doesn't exist until the client pays, often in a later
+                // period. Adding tips here would date them to the work day
+                // and disagree with the payroll surface. Tips appear in
+                // their own column on the payroll export instead.
               },
             },
           },

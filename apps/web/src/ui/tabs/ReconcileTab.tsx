@@ -242,6 +242,9 @@ type PayrollRow = {
   hours: number;
   hourlyWage: number;
   regularWages: number;
+  /** Payment-anchored, unlike everything else on this row — a tip belongs
+   *  to the period the client paid, not the period the work happened. */
+  tips: number;
   additionalEarnings: number;
   totalGross: number;
   equivalentHourlyRate: number | null;
@@ -268,6 +271,9 @@ type PayrollPreviewRow = {
   hours: number;
   hourlyWage: number;
   regularWages: number;
+  /** Payment-anchored, unlike everything else on this row — a tip belongs
+   *  to the period the client paid, not the period the work happened. */
+  tips: number;
   additionalEarnings: number;
   totalGross: number;
   equivalentHourlyRate: number | null;
@@ -294,6 +300,7 @@ function applyAssignToOwner(
   let addHours = 0;
   let addRegular = 0;
   let addAdditional = 0;
+  let addTips = 0;
   let addTotal = 0;
   for (const r of out) {
     if (r.userId === ownerOut.userId) continue;
@@ -301,10 +308,12 @@ function applyAssignToOwner(
     addHours += r.hours;
     addRegular += r.regularWages;
     addAdditional += r.additionalEarnings;
+    addTips += r.tips;
     addTotal += r.totalGross;
     r.hours = 0;
     r.regularWages = 0;
     r.additionalEarnings = 0;
+    r.tips = 0;
     r.totalGross = 0;
     r.equivalentHourlyRate = null;
   }
@@ -312,6 +321,7 @@ function applyAssignToOwner(
   ownerOut.regularWages = Math.round((ownerOut.regularWages + addRegular) * 100) / 100;
   ownerOut.additionalEarnings =
     Math.round((ownerOut.additionalEarnings + addAdditional) * 100) / 100;
+  ownerOut.tips = Math.round((ownerOut.tips + addTips) * 100) / 100;
   ownerOut.totalGross = Math.round((ownerOut.totalGross + addTotal) * 100) / 100;
   ownerOut.equivalentHourlyRate =
     ownerOut.hours > 0
@@ -413,6 +423,14 @@ function PayrollPreviewTable(props: {
                 <Table.ColumnHeader fontSize="2xs" whiteSpace="nowrap" textAlign="right">Hours</Table.ColumnHeader>
                 <Table.ColumnHeader fontSize="2xs" whiteSpace="nowrap" textAlign="right">Hourly Wage</Table.ColumnHeader>
                 <Table.ColumnHeader fontSize="2xs" whiteSpace="nowrap" textAlign="right">Regular Wages</Table.ColumnHeader>
+                <Table.ColumnHeader
+                  fontSize="2xs"
+                  whiteSpace="nowrap"
+                  textAlign="right"
+                  title="Client tips earned in this period. Anchored on the date the CLIENT PAID, not the date of the job — so a tip can land on a later payroll than the job it came from. Enter in Gusto's Tips earning type, not Additional Earnings."
+                >
+                  Tips
+                </Table.ColumnHeader>
                 <Table.ColumnHeader fontSize="2xs" whiteSpace="nowrap" textAlign="right">Additional Earnings</Table.ColumnHeader>
                 <Table.ColumnHeader fontSize="2xs" whiteSpace="nowrap" textAlign="right">Total Gross</Table.ColumnHeader>
                 <Table.ColumnHeader fontSize="2xs" whiteSpace="nowrap" textAlign="right">$/hr</Table.ColumnHeader>
@@ -453,6 +471,15 @@ function PayrollPreviewTable(props: {
                     <Table.Cell fontSize="xs" whiteSpace="nowrap" textAlign="right">{r.hours.toFixed(2)}</Table.Cell>
                     <Table.Cell fontSize="xs" whiteSpace="nowrap" textAlign="right">{r.hourlyWage.toFixed(2)}</Table.Cell>
                     <Table.Cell fontSize="xs" whiteSpace="nowrap" textAlign="right">{r.regularWages.toFixed(2)}</Table.Cell>
+                    <Table.Cell
+                      fontSize="xs"
+                      whiteSpace="nowrap"
+                      textAlign="right"
+                      color={r.tips > 0 ? "green.700" : undefined}
+                      fontWeight={r.tips > 0 ? "semibold" : undefined}
+                    >
+                      {r.tips.toFixed(2)}
+                    </Table.Cell>
                     <Table.Cell fontSize="xs" whiteSpace="nowrap" textAlign="right">{r.additionalEarnings.toFixed(2)}</Table.Cell>
                     <Table.Cell fontSize="xs" whiteSpace="nowrap" textAlign="right">{r.totalGross.toFixed(2)}</Table.Cell>
                     <Table.Cell fontSize="xs" whiteSpace="nowrap" textAlign="right">
@@ -1582,7 +1609,7 @@ export default function ReconcileTab() {
           {/* Combined Workers & Payroll — one row per worker.
               Collapsed: name, badges, hours, net paid, effective rate.
               Expanded: the Gusto-copy payroll fields (Hours / Hourly
-              Wage / Regular Wages / Additional Earnings / Total Gross /
+              Wage / Regular Wages / Tips / Additional Earnings / Total Gross /
               Equivalent Hourly Rate — tap to copy) sit on top of the
               earnings breakdown, then the day-by-day and per-job
               drill-down. Everything the operator needs to run payroll
@@ -2566,7 +2593,9 @@ function WorkerCard({
         {/* Payroll — the Gusto-copy fields, inlined right below the
             summary so scanning down the list shows every worker's
             payroll at a glance. Hours + Additional Earnings are the
-            two values typed into Gusto; Regular Wages is what Gusto
+            two values typed into Gusto (plus Tips, which goes in Gusto's
+            own Tips earning type — never rolled into Additional Earnings);
+            Regular Wages is what Gusto
             auto-computes from the on-file hourly rate. Equivalent
             Hourly Rate is the sanity-check. Every value is a copy
             button; taps stop propagation so they don't toggle expand. */}
@@ -2596,6 +2625,14 @@ function WorkerCard({
               copyValue={payroll.regularWages.toFixed(2)}
               width="110px"
             />
+            {payroll.tips > 0 && (
+              <PayrollStat
+                label="Tips"
+                display={fmtUSD(payroll.tips)}
+                copyValue={payroll.tips.toFixed(2)}
+                width="80px"
+              />
+            )}
             <PayrollStat
               label="Additional Earnings"
               display={fmtUSD(payroll.additionalEarnings)}

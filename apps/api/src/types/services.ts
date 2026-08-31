@@ -955,6 +955,15 @@ export type ServicesPayments = {
        *  happened to open the app. Recommended for reconciliation
        *  workflows where the operator is entering historical data. */
       paidAt?: Date;
+      /** Designates part (or all) of an overpayment as a tip and divides
+       *  it between the business and the workers. Clamped to the computed
+       *  overage — you cannot tip money the client didn't overpay.
+       *  Percentages must total 100; the UI validates before submitting. */
+      tip?: {
+        amount: number;
+        businessPercent: number;
+        workerPercents: Array<{ userId: string; percent: number }>;
+      } | null;
     },
   ): Promise<any>;
 

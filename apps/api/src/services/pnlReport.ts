@@ -414,6 +414,7 @@ export async function buildPnLReport(
           where: { ownerEarnings: false },
           select: {
             amount: true,
+            tipAmount: true,
             user: { select: { workerType: true } },
           },
         },
@@ -569,9 +570,13 @@ export async function buildPnLReport(
         // W-2 wages base — sp.amount is already netAmount + topUpAmount
         // (the worker's paycheck gross from the payroll-tax-base
         // perspective), which is what payroll taxes apply to.
-        wagesAccruedTotal += sp.amount ?? 0;
+        // Tips ride along: an employee's tip share is W-2 wages, subject
+        // to the same payroll taxes as the rest of their paycheck. Owner
+        // tips never reach here — the query filters ownerEarnings.
+        wagesAccruedTotal += (sp.amount ?? 0) + (sp.tipAmount ?? 0);
       } else {
-        contractLaborTotal += sp.amount ?? 0;
+        // A contractor's tip share is 1099 income, same as their split.
+        contractLaborTotal += (sp.amount ?? 0) + (sp.tipAmount ?? 0);
       }
     }
   }
@@ -1021,6 +1026,7 @@ export async function pnlReportDetails(
             where: { ownerEarnings: false },
             select: {
               amount: true,
+              tipAmount: true,
               user: { select: { workerType: true, displayName: true, email: true } },
             },
           },
@@ -1036,7 +1042,7 @@ export async function pnlReportDetails(
           date: p.confirmedAt ? etFormatDate(p.confirmedAt) : "",
           primary: sp.user.displayName ?? sp.user.email ?? "(unnamed contractor)",
           secondary: p.occurrence?.job?.property?.client?.displayName ?? undefined,
-          amount: round2(sp.amount ?? 0),
+          amount: round2((sp.amount ?? 0) + (sp.tipAmount ?? 0)),
         });
       }
     }
@@ -1161,6 +1167,7 @@ export async function pnlReportDetails(
           select: {
             userId: true,
             amount: true,
+            tipAmount: true,
             grossAmount: true,
             user: { select: { displayName: true, email: true, workerType: true } },
           },
@@ -1218,7 +1225,9 @@ export async function pnlReportDetails(
           date: paymentDateStr ?? "",
           primary: workerName,
           secondary: [client, property].filter(Boolean).join(" · ") || undefined,
-          amount: round2(sp.amount ?? 0),
+          // Includes the tip share so the drilldown sums to the
+          // "Wages (accrued)" line total, which also includes tips.
+          amount: round2((sp.amount ?? 0) + (sp.tipAmount ?? 0)),
           splitPercent: primaryPct != null ? primaryPct : derivedPct,
           serviceDate: serviceDateStr,
           paymentDate: paymentDateStr,

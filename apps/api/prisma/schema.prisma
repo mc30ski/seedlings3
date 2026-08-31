@@ -1401,6 +1401,20 @@ model Payment {
   shortfallAmount Float @default(0)
   overageAmount   Float @default(0)
 
+  // TIPS. A tip is a DESIGNATED overpayment — the operator marks part (or
+  // all) of an overpayment as a tip when approving, or later via Adjust.
+  //
+  // `tipAmount` is the total designated; it splits into
+  // `tipToBusinessAmount` plus the per-worker `PaymentSplit.tipAmount`
+  // rows, which together must equal it.
+  //
+  // Tip and overage are MUTUALLY EXCLUSIVE: designating money as a tip
+  // moves it out of `overageAmount`, which narrows to "overpayment nobody
+  // called a tip". Tips bypass platform fee and business margin entirely —
+  // the business's cut of a tip is exactly the percentage assigned.
+  tipAmount           Float @default(0)
+  tipToBusinessAmount Float @default(0)
+
   // Processor fees: snapshotted from the PAYMENT_METHODS taxonomy at payment
   // time so changes to the fee schedule don't rewrite history. All nullable
   // — historical rows are treated as zero-fee at read time.
@@ -1485,6 +1499,16 @@ model PaymentSplit {
   // Stamped at write time when the split's user is the LLC owner. Excluded
   // from Gusto/payroll exports — the owner takes a draw, not a paycheck.
   ownerEarnings Boolean @default(false)
+
+  // This worker's share of the payment's tip. Deliberately a SEPARATE
+  // column from `amount`, not folded into it: every existing reader of
+  // `amount` (payroll netPaid, QB income, workdays CSV, 1099 aggregation,
+  // worker earnings) would otherwise absorb tips silently AND mis-anchor
+  // them — job pay is WORK-anchored (JobOccurrence.completedAt) while a
+  // tip is PAYMENT-anchored (Payment.confirmedAt), because a tip doesn't
+  // exist until the client pays it. A worker can legitimately receive the
+  // job payout on one payroll and the tip on another.
+  tipAmount Float @default(0)
 
 
   createdAt DateTime @default(now())

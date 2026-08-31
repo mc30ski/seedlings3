@@ -139,7 +139,61 @@ When the actual collected amount differs from the invoice:
 
 ### Overpayment (client paid more than invoiced)
 - All workers receive their **promised** net (no windfall to workers).
-- The business **keeps the overage** — recorded in `overageAmount`.
+- The business **keeps the overage** — recorded in `overageAmount` —
+  **unless the operator designates it a tip.**
+
+### Tips (a designated overpayment)
+
+There is no standalone tip entry. A tip is an overpayment the operator
+marks as one at approval: job $50, client pays $60, the $10 is
+designated and divided.
+
+- `Payment.tipAmount` is the total; it splits into
+  `Payment.tipToBusinessAmount` plus the per-worker
+  `PaymentSplit.tipAmount` rows, which together equal it exactly.
+- **Tip and overage are mutually exclusive.** Designating money as a tip
+  moves it out of `overageAmount`, which narrows to "an overpayment
+  nobody called a tip". A tip is clamped to the overage — you cannot tip
+  money the client didn't overpay.
+- **Tips bypass platform fee and business margin entirely.** The
+  business's cut is exactly the percentage assigned, not that plus a
+  rate skimmed off the workers' shares.
+- Default split = the job's `completionSplits` percentages with the
+  business at 0%. A trainee credited 20% of the job defaults to 20% of
+  the tip. Observers are excluded; the operator can override.
+- **Owner tips need no special handling** — the owner's split already
+  carries `ownerEarnings: true`, which redirects the money at every
+  reporting boundary. The tip editor surfaces this ("Business keeps X%
+  — 0% business share + X% owner share") so a 0% business row doesn't
+  read as "the business takes nothing."
+- **Excluded from the min-wage and effective-hourly checks.** Tips
+  aren't guaranteed wages, and counting them could mask a genuinely
+  below-floor base rate.
+
+#### Tips are PAYMENT-anchored — the one exception on the payroll surface
+
+Job pay is **work-anchored** (`JobOccurrence.completedAt`). A tip is
+**payment-anchored** (`Payment.confirmedAt`), because it doesn't exist
+until the client pays it.
+
+**A worker can therefore receive the job payout on one payroll and its
+tip on another. That is correct, not a bug.** The workdays CSV
+deliberately excludes tips for the same reason — it's a work-anchored
+labor record, and dating a tip to the work day would disagree with
+payroll.
+
+Tips reach Gusto in their **own Tips column**, never folded into
+Additional Earnings: Gusto treats tips as a distinct earning type, and
+cash tips versus paycheck tips are different things.
+
+Employee tips are W-2 wages (they join `wagesAccruedTotal`); contractor
+tips are 1099 income (they join `contractLaborTotal`); owner tips are
+business money and are excluded from both.
+
+**Legacy occurrences.** About a third of historical occurrences have no
+`promisedPayouts` snapshot, so overage can't be derived for them. A tip
+still works there: the operator supplied an explicit amount, so it's
+carved off the top before the job math runs rather than derived.
 
 ### Write-off (client never paid)
 - Collected = $0. Employees/trainees still receive their promised net.

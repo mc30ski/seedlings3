@@ -87,10 +87,25 @@ compromise.
    `additionalEarnings`. Gusto treats tips as a distinct earning type
    (and "Cash Tips" vs "Paycheck Tips" are different things).
 
-Two findings from the original audit **go away** once GP is removed:
-the GP row-drop trap, and the `observerRedaction.ts` leak (it already
-filters `payment.splits` to the caller's own row, so tips on that row
-are redacted for free).
+One finding from the original audit **goes away** once GP is removed:
+the GP row-drop trap.
+
+**CORRECTION (verified 2026-09-01):** I originally claimed the
+`observerRedaction.ts` concern also vanished because it "filters
+payment.splits to the caller's own row." That is true only on the
+OBSERVER path. The real policy, confirmed by e2e against the live
+payload:
+
+- Teammates on a SHARED job DO see each other's splits — and therefore
+  each other's tips. Peek redaction only strips financials for jobs the
+  caller is NOT assigned to; trainee redaction only fires for TRAINEE
+  callers.
+- So a teammate's tip is visible on a job you worked together, exactly
+  as their payout already is. Consistent, deliberate — not a leak.
+- The guarantee that must hold is narrower: no split for a job the
+  worker isn't on. `tips-worker.spec.ts` asserts that.
+- The JOB CARD is stricter than the payload by choice: a worker sees
+  only their own tip there, and nothing when they have none.
 
 ## UI
 
@@ -105,6 +120,25 @@ its own line — never silently summed in.**
   period differs from the job's, say so or the two-payroll case reads
   as a bug.
 - Receipt: job total, tip, grand total.
+
+## Built 2026-09-01
+
+Implemented and verified: schema + migration, reconciler with
+largest-remainder allocation, approve-dialog designation flow, payment
+card badge + breakdown, job-card tip badge, payroll Tips column + CSV,
+P&L routing, Income CSV, seed fixtures (one tipped payment + one pending
+overpayment), `docs/FINANCIAL_SYSTEM.md`, build-gate identity C, and e2e
+(`tips-admin.spec.ts`, `tips-worker.spec.ts`).
+
+Two bugs found by testing, not reasoning:
+1. ~33% of production occurrences have no `promisedPayouts` snapshot; the
+   legacy approval path returned `overageAmount: 0` and SILENTLY DROPPED
+   the tip. Fixed by carving the tip off the top before the job math.
+   (Same gap means the Overpaid badge never fires on those payments.)
+2. `updatePayment` and `recalculateSplits` delete+recreate splits and
+   would have zeroed per-worker tips while `Payment.tipAmount` stayed.
+   Both now carry tips forward; `recalculateSplits` also excludes tip
+   money from the pot it redistributes.
 
 ## Deferred
 

@@ -1831,9 +1831,14 @@ async function seedDatabase() {
     // Today's completed jobs — populate the SuperWorkHomeTab "today"
     // view with real revenue + team pay data. createdAt is NOW-minus-a-
     // few-hours (guaranteed in the past regardless of when seed runs).
+    // TIP FIXTURE. Client paid $105 on a $85 job and the $20 overpayment
+    // was designated a tip: 25% business / 75% crew. Gives dev a payment
+    // exercising the Tip badge, the tip line on the payment card, and the
+    // payroll Tips column. Note the crew shares are NOT proportional to the
+    // job splits here — the operator can override the defaults.
     // Includes the LLC owner's share — see the assignee note on
     // cTodayHarrington. His split is stamped ownerEarnings below.
-    { occId: cTodayHarrington.id, amount: 105, method: "VENMO", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 50 }, { userId: EMPLOYEE_ID, amount: 35 }, { userId: MICHAEL_ID, amount: 20 }], createdAt: new Date(NOW.getTime() - 4 * 3_600_000) },
+    { occId: cTodayHarrington.id, amount: 125, method: "VENMO", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 50 }, { userId: EMPLOYEE_ID, amount: 35 }, { userId: MICHAEL_ID, amount: 20 }], createdAt: new Date(NOW.getTime() - 4 * 3_600_000), tip: { total: 20, toBusiness: 5, perWorker: { [ADMIN_WORKER_ID]: 9, [EMPLOYEE_ID]: 6 } } },
     // OVERPAID fixture — a $125 job the client paid $140 cash for (rounded
     // up). Worker splits are unchanged, so the $15 is retained by the
     // business and stamped as `overageAmount`. Without a row like this the
@@ -1876,6 +1881,8 @@ async function seedDatabase() {
         grossCharged: p.amount,
         netReceived,
         overageAmount: p.overage ?? 0,
+        tipAmount: p.tip?.total ?? 0,
+        tipToBusinessAmount: p.tip?.toBusiness ?? 0,
         // These are CLOSED occurrences — historical, fully-settled payments.
         // Confirmed so they appear in the cash-basis tax exports (which
         // filter on confirmed=true + confirmedAt).
@@ -1885,7 +1892,13 @@ async function seedDatabase() {
         // ownerEarnings marks the business's own cut. Production stamps
         // this via loadOwnerSet at split-write time; the seed mirrors it so
         // every owner-exclusion filter has a row to exclude.
-        splits: { create: p.splits.map((sp) => ({ ...sp, ownerEarnings: sp.userId === MICHAEL_ID })) },
+        splits: {
+          create: p.splits.map((sp) => ({
+            ...sp,
+            tipAmount: p.tip?.perWorker?.[sp.userId] ?? 0,
+            ownerEarnings: sp.userId === MICHAEL_ID,
+          })),
+        },
       },
     });
   }
@@ -3571,6 +3584,52 @@ async function seedDatabase() {
         selfReported: false,
         grossCharged: 150,
         netReceived: 150,
+      } as any,
+    });
+
+    // TIP FIXTURE (pending) — a $200 job the client paid $240 for. The
+    // overpayment is what makes the approve dialog offer the tip editor, so
+    // e2e can drive the real designation flow instead of asserting on
+    // already-tipped data. Two assignees with an uneven completionSplits so
+    // the editor's defaults (60/40, business 0%) are visibly non-trivial.
+    const tipPendingOcc = await prisma.jobOccurrence.create({
+      data: {
+        jobId: alertAnchorJob.id,
+        kind: alertAnchorJob.kind,
+        startAt: daysAgo(1, 9),
+        endAt: daysAgo(1, 11),
+        status: "PENDING_PAYMENT",
+        source: "MANUAL",
+        workflow: "STANDARD",
+        completedAt: daysAgo(1, 11),
+        startedAt: daysAgo(1, 9),
+        notes: "TIP FIXTURE — client overpaid; approve dialog offers the tip editor",
+        price: 200,
+        estimatedMinutes: 120,
+        completionSplits: [
+          { userId: ADMIN_WORKER_ID, percent: 60 },
+          { userId: EMPLOYEE_ID, percent: 40 },
+        ] as any,
+      } as any,
+    });
+    for (const uid of [ADMIN_WORKER_ID, EMPLOYEE_ID]) {
+      await prisma.jobOccurrenceAssignee.create({
+        data: { occurrenceId: tipPendingOcc.id, userId: uid, assignedById: ADMIN_WORKER_ID },
+      });
+    }
+    await prisma.payment.create({
+      data: {
+        ledgerId: `seed-tip-pending-${Date.now()}`,
+        occurrenceId: tipPendingOcc.id,
+        receiptNumber: legacyReceiptNumberFor(tipPendingOcc.id),
+        amountPaid: 240,
+        method: "CASH",
+        note: "TIP FIXTURE — $200 job, client paid $240",
+        collectedById: ADMIN_WORKER_ID,
+        confirmed: false,
+        selfReported: false,
+        grossCharged: 240,
+        netReceived: 240,
       } as any,
     });
 
