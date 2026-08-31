@@ -1541,30 +1541,31 @@ export default async function workerRoutes(app: FastifyInstance) {
   });
 
   /**
-   * Count of next-visit ghosts that expired within the grace window.
+   * Counts of next-visit ghosts needing attention — expiring soon, and
+   * already expired within the grace window.
    *
-   * Its own endpoint because the number is deliberately independent of
+   * Its own endpoint because the numbers are deliberately independent of
    * the Jobs tab's date range: ghosts are dated on the day the visit was
    * due, so a forward-looking range contains none of the expired ones.
-   * This is what the "Expired N" chip on the Today group header reports.
+   * Feeds the "Expired N" chip on the Today group header plus the two
+   * header-alert / Tasks entries.
    */
   // view-as-allow: not a /me/* route; scoping comes from workerView/viewAsUserId
   //   exactly as the sibling /occurrences ghost query does.
-  app.get("/occurrences/expired-ghost-count", workerGuard, async (req: any) => {
+  app.get("/occurrences/ghost-expiry-counts", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const q = (req.query || {}) as Record<string, string>;
     const viewAsUserId = q.viewAsUserId || null;
     const isWorkerViewRequest = String(q.workerView ?? "") === "1";
     const cutoff = await resolveCutoff(req);
     try {
-      const count = await services.jobs.countExpiredGhosts({
+      return await services.jobs.countGhostExpiry({
         assigneeUserId: isWorkerViewRequest || viewAsUserId ? uid : null,
         cutoff,
       });
-      return { count };
     } catch (err: any) {
-      req.log.warn({ where: "occurrences.expiredGhostCount", err: err?.message }, "count failed");
-      return { count: 0 };
+      req.log.warn({ where: "occurrences.ghostExpiryCounts", err: err?.message }, "count failed");
+      return { expiringSoon: 0, expired: 0 };
     }
   });
 

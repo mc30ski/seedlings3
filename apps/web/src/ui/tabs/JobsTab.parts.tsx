@@ -16,7 +16,7 @@ import {
   Activity, Archive, Ban, Bell, CheckCircle2, FastForward, FileText,
   RotateCcw, X, Zap,
   BadgeDollarSign, Calendar, Calculator, CheckSquare, Clock, CreditCard, DollarSign,
-  Ghost, HelpCircle, ListChecks, Megaphone, PauseCircle, PlayCircle, Repeat,
+  HelpCircle, Megaphone, PauseCircle, PlayCircle, Repeat,
   ScrollText, ShieldQuestion, Star, TrendingUp, UserCheck, Users, UserX,
 } from "lucide-react";
 import MiniStatCard, { type MiniStatColor } from "@/src/ui/components/MiniStatCard";
@@ -67,9 +67,6 @@ export function OpsSummaryStrip({ rows }: { rows: WorkerOccurrence[] }) {
 }
 
 type OpsMetrics = {
-  totalReal: number;
-  totalGhosts: number;
-  totalForeign: number;
   byStatus: Record<string, number>;
   byWorkflow: Record<string, number>;
   unassigned: number;
@@ -100,9 +97,6 @@ function computeOpsMetrics(rows: WorkerOccurrence[]): OpsMetrics {
   };
   const clientIds = new Set<string>();
   const assigneeIds = new Set<string>();
-  let totalReal = 0;
-  let totalGhosts = 0;
-  let totalForeign = 0;
   let unassigned = 0;
   let unconfirmed = 0;
   let tentative = 0;
@@ -118,12 +112,14 @@ function computeOpsMetrics(rows: WorkerOccurrence[]): OpsMetrics {
   let pricedSum = 0;
 
   for (const occ of rows) {
-    if ((occ as any)._foreignKind) { totalForeign++; continue; }
+    // Skip rows that aren't real job occurrences so they can't distort any
+    // metric below: foreign rows are Timeline activities / document
+    // expirations injected for admins, and ghosts are synthesized
+    // placeholder cards with no database row behind them.
+    if ((occ as any)._foreignKind) continue;
     if ((occ as any)._isNextOccurrenceGhost || (occ as any)._isReminderGhost || (occ as any)._isPinnedGhost) {
-      totalGhosts++;
       continue;
     }
-    totalReal++;
 
     if (byStatus[occ.status] !== undefined) byStatus[occ.status]++;
     const wf = (occ as any).workflow ?? "STANDARD";
@@ -153,9 +149,6 @@ function computeOpsMetrics(rows: WorkerOccurrence[]): OpsMetrics {
   }
 
   return {
-    totalReal,
-    totalGhosts,
-    totalForeign,
     byStatus,
     byWorkflow,
     unassigned,
@@ -211,32 +204,15 @@ function OpsExpandedDetails({ metrics }: { metrics: OpsMetrics }) {
 
   return (
     <VStack align="stretch" gap={3}>
-      {/* Rows in range — what's actually visible in the current filter. */}
-      <Section title="Rows in range">
-        <SimpleGrid columns={{ base: 2, sm: 3, md: 4 }} gap={2}>
-          <MiniStatCard
-            label="Real"
-            value={fmtInt(metrics.totalReal)}
-            hint="occurrences"
-            color="blue"
-            icon={ListChecks}
-          />
-          <MiniStatCard
-            label="Ghosts"
-            value={fmtInt(metrics.totalGhosts)}
-            hint="reminder / pinned / next-visit"
-            color="gray"
-            icon={Ghost}
-          />
-          <MiniStatCard
-            label="Foreign"
-            value={fmtInt(metrics.totalForeign)}
-            hint="activity / doc expiration"
-            color="gray"
-            icon={FileText}
-          />
-        </SimpleGrid>
-      </Section>
+      {/* NB: there used to be a "Rows in range" section here showing
+          Real / Ghosts / Foreign counts. That was a card-PROVENANCE
+          breakdown — it explained how the feed was assembled (database
+          occurrences vs. synthesized placeholders vs. rows borrowed from
+          Timeline/documents), which is a debugging question, not an
+          operator one. No decision changed based on those numbers, and
+          "Real" wasn't even a useful total since it counted reminders
+          and announcements as occurrences. The sections below carry the
+          actual signal, and each day header shows its own count. */}
 
       {/* By status — one card per populated bucket. */}
       <Section title="By status">
@@ -253,7 +229,7 @@ function OpsExpandedDetails({ metrics }: { metrics: OpsMetrics }) {
             ))}
           </SimpleGrid>
         ) : (
-          <Text fontSize="xs" color="fg.muted">No real occurrences in range.</Text>
+          <Text fontSize="xs" color="fg.muted">No jobs in this date range.</Text>
         )}
       </Section>
 
@@ -272,7 +248,7 @@ function OpsExpandedDetails({ metrics }: { metrics: OpsMetrics }) {
             ))}
           </SimpleGrid>
         ) : (
-          <Text fontSize="xs" color="fg.muted">No workflow data.</Text>
+          <Text fontSize="xs" color="fg.muted">No jobs in this date range.</Text>
         )}
       </Section>
 
@@ -295,12 +271,12 @@ function OpsExpandedDetails({ metrics }: { metrics: OpsMetrics }) {
           <MiniStatCard
             label="Total booked"
             value={fmtMoney(metrics.revenueBooked)}
-            hint="all real rows"
+            hint="all priced jobs"
             color="blue"
             icon={BadgeDollarSign}
           />
           <MiniStatCard
-            label="Avg per priced row"
+            label="Avg job price"
             value={fmtMoney(metrics.avgPrice)}
             color="teal"
             icon={TrendingUp}

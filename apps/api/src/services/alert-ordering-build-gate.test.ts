@@ -67,6 +67,8 @@ const ALERT_TO_TASKS: ReadonlyArray<readonly [string, readonly string[]]> = [
   ["Ledger followups", ["Ledger follow-ups"]],
   ["Due to record", ["Due to record"]],
   ["Paused repeating to review", ["Paused repeating to review"]],
+  ["Next visits expiring", ["Next visits expiring"]],
+  ["Next visits expired", ["Next visits expired"]],
   ["Compliance uploads to review", ["Compliance uploads to review"]],
   ["Policy versions awaiting approval", ["Policy versions awaiting approval"]],
   ["Documents to sign", ["Documents to sign"]],

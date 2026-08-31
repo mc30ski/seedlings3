@@ -38,7 +38,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertCircle, AlertTriangle, Archive, BarChart3, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, Eye, Filter, Hand, Heart, Inbox, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, Play, RefreshCw, Repeat, Share2, Star, Tag, Users, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, Archive, BarChart3, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, ExternalLink, Eye, Filter, Hand, Heart, Inbox, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, Play, RefreshCw, Repeat, Share2, Star, Tag, Users, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { WeatherIcon } from "@/src/ui/components/WeatherBar";
 import { useForecastByDate } from "@/src/lib/useForecastByDate";
@@ -939,6 +939,74 @@ export default function JobsTab({
     void load(true, { from: overdueFrom, to: overdueTo });
   }, []);
 
+  // "Next visits expiring / expired" header alerts + Tasks cards → narrow to
+  // the ghost placeholder cards. Same shape as applyOverdue: clear every
+  // other filter, then set the one that matters. The date range differs by
+  // bucket because ghosts are dated on the day the visit was due — expiring
+  // ones are ahead of today, expired ones behind it.
+  // Ghost card → the last real visit behind it (the one blocking the next
+  // occurrence from being created). Mirrors the Services-tab deep link:
+  // highlight the occurrence, force it expanded, drop every other filter,
+  // and widen the date range around its startAt so it's actually in range.
+  const openBlockingOccurrence = useCallback((occId: string, startAt: string | null) => {
+    setHighlightOccId(occId);
+    setCardOverrides(new Map([[occId, "expanded"]]));
+    setFilterJobId(null);
+    setQ("");
+    setStatusFilter(["ALL"]);
+    setOverdueActive(false);
+    setDatePreset(null);
+    const anchor = startAt ? bizDateKey(startAt) : bizToday();
+    const fromKey = bizAddDays(anchor, -3);
+    const toKey = bizAddDays(anchor, 3);
+    setDateFrom(fromKey);
+    setDateTo(toKey);
+    void load(true, { from: fromKey, to: toKey }, occId);
+  }, []);
+
+  const applyGhostFilter = useCallback((bucket: "expiring" | "expired") => {
+    setQ("");
+    setKind(["ALL"]);
+    setTypeFilter(["ALL"]);
+    setVipOnly(false);
+    setLikedOnly(false);
+    setShowCanceled(false);
+    setShowArchived(false);
+    setOverdueActive(false);
+    setUnapprovedHoursActive(false);
+    setPausedRepeatingOnly(false);
+    const preset: DatePreset = bucket === "expired" ? "lastWeek" : "now";
+    const d = computeDatesFromPreset(preset);
+    setStatusFilter([bucket === "expired" ? "GHOST_EXPIRED" : "GHOST_EXPIRING"]);
+    setDatePreset(preset);
+    setDateFrom(d.from);
+    setDateTo(d.to);
+    void load(true, { from: d.from, to: d.to });
+  }, []);
+
+  useEffect(() => {
+    if (!showAdminExtras) return;
+    try {
+      for (const [key, bucket] of [
+        ["seedlings_adminJobs_showExpiringGhosts", "expiring"],
+        ["seedlings_adminJobs_showExpiredGhosts", "expired"],
+      ] as const) {
+        if (localStorage.getItem(key)) {
+          localStorage.removeItem(key);
+          applyGhostFilter(bucket);
+        }
+      }
+    } catch {}
+    const onExpiring = () => applyGhostFilter("expiring");
+    const onExpired = () => applyGhostFilter("expired");
+    window.addEventListener("adminJobs:showExpiringGhosts", onExpiring);
+    window.addEventListener("adminJobs:showExpiredGhosts", onExpired);
+    return () => {
+      window.removeEventListener("adminJobs:showExpiringGhosts", onExpiring);
+      window.removeEventListener("adminJobs:showExpiredGhosts", onExpired);
+    };
+  }, [showAdminExtras, applyGhostFilter]);
+
   useEffect(() => {
     if (!showAdminExtras) return;
     try {
@@ -1579,10 +1647,10 @@ export default function JobsTab({
       const countQs = new URLSearchParams();
       if (isWorkerView) countQs.set("workerView", "1");
       if (forAdmin && viewAsUserIds?.length === 1) countQs.set("viewAsUserId", viewAsUserIds[0]);
-      void apiGet<{ count: number }>(
-        `/api/occurrences/expired-ghost-count${countQs.toString() ? `?${countQs}` : ""}`,
+      void apiGet<{ expiringSoon: number; expired: number }>(
+        `/api/occurrences/ghost-expiry-counts${countQs.toString() ? `?${countQs}` : ""}`,
       )
-        .then((r) => { if (seq === loadSeqRef.current) setExpiredGhostCount(r?.count ?? 0); })
+        .then((r) => { if (seq === loadSeqRef.current) setExpiredGhostCount(r?.expired ?? 0); })
         .catch(() => {});
 
       const url = `/api/occurrences${qs.toString() ? `?${qs}` : ""}`;
@@ -4569,6 +4637,29 @@ export default function JobsTab({
                                 ? " It has already passed its due date and will stop showing a week after it expired."
                                 : ""}
                             </Text>
+                            {(occ as any)._blockingOccurrenceId && (
+                              <Button
+                                size="xs"
+                                variant="solid"
+                                mt={2}
+                                bg="gray.700"
+                                color="gray.50"
+                                _hover={{ bg: "gray.800" }}
+                                onClick={(e: any) => {
+                                  // The card body toggles density on click —
+                                  // don't collapse the card out from under
+                                  // the navigation.
+                                  e.stopPropagation();
+                                  openBlockingOccurrence(
+                                    (occ as any)._blockingOccurrenceId,
+                                    (occ as any)._blockingOccurrenceStartAt ?? null,
+                                  );
+                                }}
+                              >
+                                <ExternalLink size={13} />
+                                Open the last visit
+                              </Button>
+                            )}
                           </VStack>
                         )}
                       </VStack>

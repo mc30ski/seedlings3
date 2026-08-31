@@ -25,6 +25,13 @@ import type { ServicesJobs } from "../types/services";
  */
 export const GHOST_EXPIRED_GRACE_DAYS = 7;
 
+/**
+ * How close to its due date a next-visit ghost has to be before it counts
+ * as needing attention — the same threshold the card's pulse uses. Below
+ * this it's just a normal upcoming visit and doesn't warrant an alert.
+ */
+export const GHOST_EXPIRING_SOON_DAYS = 3;
+
 import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
 import { etMidnight, etEndOfDay, etToday, etFormatDate, etDaysBetween, etAddDays, type EtDateKey } from "../lib/dates";
@@ -2399,6 +2406,9 @@ export const jobs: ServicesJobs = {
         _ghostDate: rawStartAt.toISOString(),
         _blockingOccurrenceId: latest.id,
         _blockingOccurrenceStatus: latest.status,
+        /** startAt of the last real visit — the client widens its date
+         *  range around this to navigate to that occurrence. */
+        _blockingOccurrenceStartAt: latest.startAt ? latest.startAt.toISOString() : null,
       });
     }
 
@@ -2407,26 +2417,34 @@ export const jobs: ServicesJobs = {
 
 
   /**
-   * How many next-visit ghosts expired inside the grace window.
+   * Next-visit ghosts that need the operator's attention, bucketed.
    *
-   * Deliberately independent of the caller's date range. Ghosts are dated
-   * on the day the visit was due, so a forward-looking Jobs range contains
-   * none of the expired ones — this count is what the "Expired N" chip on
-   * the Today group header reports, telling the operator some have slipped
-   * into the past. Clicking that chip widens the range to reveal them.
+   *   expiringSoon — due within GHOST_EXPIRING_SOON_DAYS. Still fixable.
+   *   expired      — already past due, inside the grace window.
+   *
+   * Deliberately independent of any caller date range. Ghosts are dated on
+   * the day the visit was due, so a forward-looking Jobs range contains
+   * none of the expired ones and only some of the expiring ones. These
+   * counts feed the "Expired N" chip on the Today group header and the two
+   * header/Tasks alerts, all of which have to be true regardless of what
+   * range the operator happens to be looking at.
    */
-  async countExpiredGhosts(params: {
+  async countGhostExpiry(params: {
     assigneeUserId?: string | null;
     cutoff?: Date | null;
   }) {
-    const today = etToday();
     const ghosts = await this.listNextOccurrenceGhosts({
-      from: etAddDays(today, -GHOST_EXPIRED_GRACE_DAYS),
-      to: etAddDays(today, -1),
       assigneeUserId: params.assigneeUserId ?? null,
       cutoff: params.cutoff ?? null,
     });
-    return ghosts.length;
+    let expiringSoon = 0;
+    let expired = 0;
+    for (const g of ghosts as any[]) {
+      const d = g._daysUntilExpiry as number;
+      if (d < 0) expired++;
+      else if (d <= GHOST_EXPIRING_SOON_DAYS) expiringSoon++;
+    }
+    return { expiringSoon, expired };
   },
   async getOccurrencesByIds(ids: string[], cutoff?: Date | null) {
     if (ids.length === 0) return [];
