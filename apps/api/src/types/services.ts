@@ -567,10 +567,10 @@ export type ServicesJobs = {
     /** Lift the week-old expired-ghost drop so a wider range finds them. */
     matchRangeOnExpiry?: boolean;
   }): Promise<any[]>;
-  countExpiredGhosts(params: {
+  countGhostExpiry(params: {
     assigneeUserId?: string | null;
     cutoff?: Date | null;
-  }): Promise<number>;
+  }): Promise<{ expiringSoon: number; expired: number }>;
   getOccurrencesByIds(ids: string[], cutoff?: Date | null): Promise<any[]>;
   listMyOccurrences(
     userId: string,

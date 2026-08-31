@@ -248,6 +248,11 @@ export default function HomePage() {
   // Tasks page shortcut. Source of truth is the Services tab where
   // stream-pauses live.
   const [streamPauseRemindersCount, setStreamPauseRemindersCount] = useState<number>(0);
+  // Next-visit ghost placeholders needing attention. Two buckets: due within
+  // three days (still fixable) and already past due inside the one-week
+  // grace. Deliberately range-independent — see countGhostExpiry.
+  const [ghostExpiringCount, setGhostExpiringCount] = useState<number>(0);
+  const [ghostExpiredCount, setGhostExpiredCount] = useState<number>(0);
 
   // Super-only: compliance-policy alerts. Two independent buckets:
   //   pendingUploadReviews = worker uploads awaiting admin approve/reject
@@ -2401,6 +2406,26 @@ chip: false, bucket: t.bucket }));
     markAlertLoaded("streamPauseReminders");
   }, [isAdmin, isSuper]);
 
+  const loadGhostExpiryCounts = useCallback(async () => {
+    if (!(isAdmin || isSuper)) {
+      setGhostExpiringCount(0);
+      setGhostExpiredCount(0);
+      markAlertLoaded("ghostExpiry");
+      return;
+    }
+    try {
+      const r = await apiGet<{ expiringSoon: number; expired: number }>(
+        "/api/occurrences/ghost-expiry-counts",
+      );
+      setGhostExpiringCount(r?.expiringSoon ?? 0);
+      setGhostExpiredCount(r?.expired ?? 0);
+    } catch {
+      setGhostExpiringCount(0);
+      setGhostExpiredCount(0);
+    }
+    markAlertLoaded("ghostExpiry");
+  }, [isAdmin, isSuper]);
+
   const loadDueToRecordCount = useCallback(async () => {
     if (!isSuper) {
       setDueToRecordCount(0);
@@ -2493,6 +2518,16 @@ chip: false, bucket: t.bucket }));
     window.addEventListener("seedlings:stream-pauses-changed", onChanged);
     return () => window.removeEventListener("seedlings:stream-pauses-changed", onChanged);
   }, [loadStreamPauseRemindersCount]);
+
+  // Next-visit ghost counts. A ghost appears or clears whenever the visit
+  // blocking it moves — most often a payment landing — so this rides the
+  // same jobs-changed signal the feed does.
+  useEffect(() => {
+    void loadGhostExpiryCounts();
+    const onChanged = () => void loadGhostExpiryCounts();
+    window.addEventListener("seedlings3:jobs-changed", onChanged);
+    return () => window.removeEventListener("seedlings3:jobs-changed", onChanged);
+  }, [loadGhostExpiryCounts]);
 
   // Compliance-policy alert refresh. Reloads on any policy signature or
   // version state change so the admin-side "pending uploads" badge stays
@@ -2903,7 +2938,7 @@ chip: false, bucket: t.bucket }));
     return () => { clearTimeout(timer); document.removeEventListener("click", close); };
   }, [alertDropdownOpen]);
   const [alertsLoaded, setAlertsLoaded] = useState<Record<string, boolean>>({});
-  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests && alertsLoaded.estimateFollowups && alertsLoaded.unapprovedHours && alertsLoaded.guaranteedPayout && alertsLoaded.pendingWorkdays && alertsLoaded.ledgerFollowups && alertsLoaded.dueToRecord && alertsLoaded.streamPauseReminders && alertsLoaded.policyAdmin && alertsLoaded.policyWorker && alertsLoaded.timeline && alertsLoaded.payrollUnmatched && alertsLoaded.unlinkedAccounts && alertsLoaded.guideApprovals);
+  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests && alertsLoaded.estimateFollowups && alertsLoaded.unapprovedHours && alertsLoaded.guaranteedPayout && alertsLoaded.pendingWorkdays && alertsLoaded.ledgerFollowups && alertsLoaded.dueToRecord && alertsLoaded.streamPauseReminders && alertsLoaded.ghostExpiry && alertsLoaded.policyAdmin && alertsLoaded.policyWorker && alertsLoaded.timeline && alertsLoaded.payrollUnmatched && alertsLoaded.unlinkedAccounts && alertsLoaded.guideApprovals);
   const markAlertLoaded = useCallback((key: string) => setAlertsLoaded((prev) => prev[key] ? prev : { ...prev, [key]: true }), []);
   const loadAnnouncementCount = useCallback(async () => {
     // Staff-only: /api/occurrences requires a worker/admin/super role.
@@ -2968,6 +3003,29 @@ chip: false, bucket: t.bucket }));
       window.dispatchEvent(new CustomEvent("adminJobs:showOverdue"));
     }, 100);
   }, [gotoOperatorSurface]);
+
+  // Next-visit ghost alerts → Jobs, narrowed to the matching placeholder
+  // bucket. Same localStorage-flag-plus-event shape as goToOverdue: the flag
+  // covers a cold mount, the event covers an already-mounted tab.
+  const goToGhostBucket = useCallback((bucket: "expiring" | "expired") => {
+    const key = bucket === "expired"
+      ? "seedlings_adminJobs_showExpiredGhosts"
+      : "seedlings_adminJobs_showExpiringGhosts";
+    try {
+      localStorage.setItem(key, "1");
+      // Clear "View as" so every matching ghost shows, not just one
+      // worker's — mirrors goToOverdue.
+      localStorage.setItem("seedlings_adminjobs_workers", JSON.stringify([]));
+    } catch {}
+    gotoOperatorSurface({ superTab: "jobs", superCategory: "Work", adminTab: "jobs" });
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent(
+        bucket === "expired" ? "adminJobs:showExpiredGhosts" : "adminJobs:showExpiringGhosts",
+      ));
+    }, 100);
+  }, [gotoOperatorSurface]);
+  const goToExpiringGhosts = useCallback(() => goToGhostBucket("expiring"), [goToGhostBucket]);
+  const goToExpiredGhosts = useCallback(() => goToGhostBucket("expired"), [goToGhostBucket]);
 
   // Jump to the admin Jobs tab and scroll to the Client Requests section.
   // The section is mounted at the top of the Jobs view for admins, so we
@@ -3046,6 +3104,7 @@ chip: false, bucket: t.bucket }));
         loadLedgerFollowupCount(),
         loadDueToRecordCount(),
         loadStreamPauseRemindersCount(),
+        loadGhostExpiryCounts(),
         // Policy counts — omitted from this list originally, which meant
         // clicking the dropdown refresh button never updated "Documents
         // to sign" or the admin-side compliance queues. The worker who
@@ -4221,6 +4280,11 @@ chip: false, bucket: t.bucket }));
               if (scopeIsSuper && ledgerFollowupCount > 0) alerts.push({ label: "Ledger followups", count: ledgerFollowupCount, bg: "#FEF3C7", color: "#92400E", dotColor: "#F59E0B", onClick: goToLedgerFollowups });
               if (scopeIsSuper && dueToRecordCount > 0) alerts.push({ label: "Due to record", count: dueToRecordCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToDueToRecord });
               if (scopeIsAdmin && streamPauseRemindersCount > 0) alerts.push({ label: "Paused repeating to review", count: streamPauseRemindersCount, bg: "#F3E8FF", color: "#6B21A8", dotColor: "#A855F7", onClick: goToStreamPauseReminders });
+              // Next-visit placeholders. Gray on purpose — it's the ghost
+              // card's own color, so the alert and the cards it lands on
+              // read as the same thing. Expired is the darker of the two.
+              if (scopeIsAdmin && ghostExpiringCount > 0) alerts.push({ label: "Next visits expiring", count: ghostExpiringCount, bg: "#F3F4F6", color: "#374151", dotColor: "#6B7280", onClick: goToExpiringGhosts });
+              if (scopeIsAdmin && ghostExpiredCount > 0) alerts.push({ label: "Next visits expired", count: ghostExpiredCount, bg: "#E5E7EB", color: "#111827", dotColor: "#374151", onClick: goToExpiredGhosts });
               if (scopeIsSuper && policyPendingUploadsCount > 0) alerts.push({ label: "Compliance uploads to review", count: policyPendingUploadsCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToCompliance });
               if (scopeIsSuper && policyPendingApprovalsCount > 0) alerts.push({ label: "Policy versions awaiting approval", count: policyPendingApprovalsCount, bg: "#DBEAFE", color: "#1E3A8A", dotColor: "#3B82F6", onClick: goToCompliance });
               // "Documents to sign" is a per-user obligation, so it
@@ -4617,6 +4681,8 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
             ledgerFollowupCount,
             dueToRecordCount,
             streamPauseRemindersCount,
+            ghostExpiringCount,
+            ghostExpiredCount,
             guaranteedPayoutExpiringCount,
             pendingUsersCount: pending,
             estimateFollowupCount,
@@ -4640,6 +4706,8 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
             goToPayrollIdentities,
             goToGuideApprovals,
             goToStreamPauseReminders,
+            goToExpiringGhosts,
+            goToExpiredGhosts,
             goToGuaranteedPayoutExpiring,
             goToApprovals,
             goToEstimateFollowups,

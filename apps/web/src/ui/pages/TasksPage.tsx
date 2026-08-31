@@ -68,6 +68,8 @@ type ShortcutCounts = {
   ledgerFollowupCount: number;
   dueToRecordCount: number;
   streamPauseRemindersCount: number;
+  ghostExpiringCount: number;
+  ghostExpiredCount: number;
   guaranteedPayoutExpiringCount: number;
   pendingUsersCount: number;
   // Admin (also visible to super)
@@ -103,6 +105,8 @@ type ShortcutHandlers = {
    *  just that occurrence rather than expanding every reminder-due
    *  job on the Services tab. */
   goToStreamPauseReminders: (occurrenceId?: string) => void;
+  goToExpiringGhosts: () => void;
+  goToExpiredGhosts: () => void;
   goToGuaranteedPayoutExpiring: () => void;
   goToApprovals: () => void;
   goToEstimateFollowups: () => void;
@@ -391,6 +395,24 @@ export default function TasksPage({
                 }
               />
             </CollapsibleSectionCard>
+          )}
+          {/* Next-visit placeholders. Gray dots match the ghost cards these
+              land on, so the alert and its destination read as one thing. */}
+          {(isAdmin || isSuper) && counts.ghostExpiringCount > 0 && (
+            <ShortcutCard
+              label="Next visits expiring"
+              count={counts.ghostExpiringCount}
+              dotColor="#6B7280"
+              onReview={wrap(handlers.goToExpiringGhosts)}
+            />
+          )}
+          {(isAdmin || isSuper) && counts.ghostExpiredCount > 0 && (
+            <ShortcutCard
+              label="Next visits expired"
+              count={counts.ghostExpiredCount}
+              dotColor="#374151"
+              onReview={wrap(handlers.goToExpiredGhosts)}
+            />
           )}
           {isSuper && counts.policyPendingUploadsCount > 0 && (
             <ShortcutCard
