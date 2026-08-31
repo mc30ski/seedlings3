@@ -1553,11 +1553,23 @@ export default async function workerRoutes(app: FastifyInstance) {
   // view-as-allow: not a /me/* route; scoping comes from workerView/viewAsUserId
   //   exactly as the sibling /occurrences ghost query does.
   app.get("/occurrences/ghost-expiry-counts", workerGuard, async (req: any) => {
-    const uid = await currentUserId(req);
+    const callerUid = await currentUserId(req);
     const q = (req.query || {}) as Record<string, string>;
     const viewAsUserId = q.viewAsUserId || null;
     const isWorkerViewRequest = String(q.workerView ?? "") === "1";
     const cutoff = await resolveCutoff(req);
+    // Admin override — the SAME one /occurrences applies, and it has to be
+    // the same or the two disagree: this endpoint would count the admin's
+    // own assignments while the feed beside it shows the viewed worker's.
+    // That's exactly how the chip went missing when an admin picked a
+    // worker in "View as" — the ghost was in the feed, the count said 0.
+    let uid = callerUid;
+    if (viewAsUserId && viewAsUserId !== callerUid) {
+      const caller = await prisma.user.findUnique({ where: { id: callerUid }, include: { roles: true } });
+      const isAdmin = caller?.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+      if (!isAdmin) throw app.httpErrors.forbidden("Only admins can view another worker's occurrences.");
+      uid = viewAsUserId;
+    }
     try {
       return await services.jobs.countGhostExpiry({
         assigneeUserId: isWorkerViewRequest || viewAsUserId ? uid : null,

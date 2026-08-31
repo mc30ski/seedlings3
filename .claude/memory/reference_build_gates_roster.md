@@ -1,6 +1,6 @@
 ---
 name: reference-build-gates-roster
-description: "Full roster of the seven build gates wired into `apps/api` test:build-gate, including the three (observer-filter, recurrence-series, promotions) that had no memory or CLAUDE.md coverage. Read before relaxing or deleting any gate assertion."
+description: "Full roster of the build gates wired into `apps/api` test:build-gate, including the three (observer-filter, recurrence-series, promotions) that had no memory or CLAUDE.md coverage. Read before relaxing or deleting any gate assertion."
 metadata: 
   node_type: memory
   type: reference
@@ -194,3 +194,43 @@ deletion). Mutation-tested against all four.
 
 **Adding a gate now means: create the file, add it to `test:build-gate`,
 and add it here.** The middle step is enforced; this file is not.
+
+## super-scope-build-gate (added 2026-08-31)
+
+`apps/api/src/services/super-scope-build-gate.test.ts` — 3 tests.
+Scans `apps/web/src` + `apps/web/pages` for super-scope bindings that
+fall back to `forAdmin`.
+
+**Why.** This bug class has now shipped TWICE under two names. First
+`showSuperExtras` (see [[reference-tab-blend-pattern]]), then on
+2026-08-31 in JobsTab:
+
+```ts
+const isSuper = (forAdmin || scope.isSuper) && hasSuperRole;
+```
+
+Both the Admin tab and the Super tab mount JobsTab with
+`purpose="ADMIN"`, so `forAdmin` is true on **both** — a super on the
+Admin chip got `isSuper === true` and the jobs feed fetched
+`/api/super/timeline/upcoming`, pulling adminHidden Timeline activity
+cards (and the document-expiration card path, 21 adminHidden docs in
+prod, none with an expiry yet) into the admin's own feed.
+
+**The rule.** Super extras are gated on SCOPE, never role:
+`scope.isSuper && hasSuperRole`. Note the deliberate asymmetry —
+`isAdmin` MAY use `forAdmin ||`, because `purpose="ADMIN"` legitimately
+means "show admin extras". Only SUPER is scope-only. Don't "fix" the
+asymmetry.
+
+**Suppression.** `// super-scope-allow: <reason>` on the line or the
+line above.
+
+**Why JobsTab was the only leak.** Every other super/admin split gets
+scope handed to it: TimelineTab/DocumentsTab are mounted twice (bare
+under admin, `isSuper` under super) and TasksPage receives
+`scopeIsWorker/Admin/Super`. JobsTab was the one component deriving it
+internally.
+
+The gate includes a self-test asserting its own regexes still match the
+2026-08-31 line — without it a pattern typo turns the gate into a
+silent no-op.

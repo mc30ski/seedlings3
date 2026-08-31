@@ -2736,6 +2736,8 @@ async function seedDatabase() {
     description?: string;
     expiresAt: Date;
     adminHidden?: boolean;
+    /** Explicit next-due override — otherwise anchorDate is used. */
+    nextDueDate?: Date;
   }> = [
     {
       type: "INSURANCE_CERT",
@@ -2962,6 +2964,25 @@ async function seedDatabase() {
       rrule: "FREQ=MONTHLY;INTERVAL=3;BYMONTHDAY=15",
       anchorDate: date(thisYear, 3, 15),
     },
+    // ── Regression fixture: admin-hidden AND due today ────────────────
+    // This is the exact shape that broke on 2026-08-31. Two bugs met here:
+    //  1. The header badge scoped by the operator's ROLE while the Timeline
+    //     tab scoped by the ROLE CHIP, so a super on the Admin chip got a
+    //     count including this adminHidden row and a list that couldn't
+    //     show it — badge said 2, tab showed 1.
+    //  2. Server-side urgency compared raw timestamps, so a row due TODAY
+    //     read as "past" by mid-morning while the tab filed it under Today.
+    // Keep this fixture: without an adminHidden row that is also due today,
+    // dev cannot reproduce either one.
+    {
+      title: "Weekly Payroll",
+      description: "Run payroll in Gusto. Super-only — not visible to admins.",
+      category: "FINANCE",
+      rrule: "FREQ=WEEKLY;BYDAY=MO",
+      anchorDate: daysFromNow(0, 9),
+      nextDueDate: daysFromNow(0, 9),
+      adminHidden: true,
+    },
   ];
   for (const e of timelineSeed) {
     const existing = await prisma.timelineEvent.findFirst({
@@ -2975,6 +2996,10 @@ async function seedDatabase() {
           category: e.category ?? null,
           rrule: e.rrule,
           anchorDate: e.anchorDate,
+          // listUpcoming filters on `nextDueDate: { not: null }`. The seed
+          // never set it, so on a database without the 2026-05 backfill
+          // migration every seeded event was invisible.
+          nextDueDate: e.nextDueDate ?? e.anchorDate,
           adminHidden: !!e.adminHidden,
         },
       });
@@ -2986,6 +3011,7 @@ async function seedDatabase() {
           category: e.category ?? null,
           rrule: e.rrule,
           anchorDate: e.anchorDate,
+          nextDueDate: e.nextDueDate ?? e.anchorDate,
           adminHidden: !!e.adminHidden,
           createdById: MICHAEL_ID,
         },
