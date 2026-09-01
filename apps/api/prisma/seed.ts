@@ -6850,6 +6850,57 @@ async function assertPrimaryContactInvariant() {
   }
   console.log(`✓ Stamped the production two-basis shape on ${divergent.length} overpaid fixture(s).`);
 
+  // ── Write-off fixture: the shortfall shape ──────────────────────────────
+  //
+  // When a client never pays, the employee is still made whole under the
+  // guarantee policy: the payment goes to $0, the worker keeps their promised
+  // net as a `topUpAmount`, and the uncollected money is booked as
+  // `shortfallAmount` — which the conservation identity SUBTRACTS.
+  //
+  // Dev had ZERO payments in this shape, so nothing could catch a money card
+  // that forgets the shortfall term. One did: the job-card reconciliation
+  // line omitted it and rendered a red "Unaccounted" warning on all 12 such
+  // payments in production, while the e2e stayed green. Same gap that hid the
+  // two-basis bug — the seed only ever produced the happy path.
+  const woTarget = await prisma.payment.findFirst({
+    where: {
+      confirmed: true, writtenOff: false, skippedAt: null,
+      tipAmount: 0, overageAmount: 0,
+      splits: { some: {} },
+      occurrence: { status: "CLOSED", expenses: { none: {} } },
+    },
+    include: { splits: true },
+    orderBy: { id: "asc" },
+  });
+  if (woTarget) {
+    const splitTotal = woTarget.splits.reduce((a, b) => a + b.amount, 0);
+    const business = (woTarget.platformFeeAmount ?? 0) + (woTarget.businessMarginAmount ?? 0);
+    // shortfall = everything that was promised but never collected, so
+    // splits + business − shortfall = 0 = amountPaid.
+    const shortfall = Math.round((splitTotal + business) * 100) / 100;
+    await prisma.payment.update({
+      where: { id: woTarget.id },
+      data: {
+        amountPaid: 0, grossCharged: 0, netReceived: 0,
+        processorFeeAmount: 0,
+        writtenOff: true, writtenOffAt: new Date(), writtenOffById: MICHAEL_ID,
+        writeOffReason: "Client never paid — worker made whole per guarantee policy",
+        shortfallAmount: shortfall,
+      },
+    });
+    // Workers keep their promised net; the business funded it, so the money
+    // moves from job pay (gross/fee) to a top-up.
+    for (const sp of woTarget.splits) {
+      await prisma.paymentSplit.update({
+        where: { id: sp.id },
+        data: { grossAmount: 0, feeAmount: 0, netAmount: 0, topUpAmount: sp.amount },
+      });
+    }
+    console.log(`✓ Seeded the write-off / shortfall shape ($${shortfall.toFixed(2)}) on 1 payment.`);
+  } else {
+    console.log("!! No eligible payment for the write-off fixture — shortfall rendering is UNTESTED.");
+  }
+
   // ── Payment conservation invariant ──────────────────────────────────
   // Every dollar a client paid must be accounted for exactly once:
   //
