@@ -91,8 +91,17 @@ test.describe("Tips — payment card", () => {
     // The badge proves the tip is distinguishable at a glance from a plain
     // overpayment, which is the whole reason it exists — an overpayment is
     // more often a typo than a tip.
-    const badge = page.getByText(/^Tip \$20\.00$/).first();
+    const badge = page.getByText(/^Tip \$20\.00 \([\d.]+%\)$/).first();
     await expect(badge).toBeVisible();
+
+    // AND the percentage is quoted against the JOB TOTAL, not the amount
+    // paid. The fixture is an $85 job the client paid $105 for, tipping $20:
+    //   against the job total  -> 20/85  = 23.5%   ← what a tip percentage means
+    //   against the amount paid -> 20/105 = 19.0%   ← wrong base, silently plausible
+    // Both render as a believable-looking badge, so only pinning the number
+    // catches a regression that swaps the denominator.
+    const pct = Number((await badge.innerText()).match(/\(([\d.]+)%\)/)![1]);
+    expect(pct, "tip % must be of the job total ($85), not the amount paid ($105)").toBeCloseTo(23.5, 1);
 
     // The card must name BOTH destinations of the tip. The crew's share is
     // wages/1099 income while the business's share is ordinary revenue —

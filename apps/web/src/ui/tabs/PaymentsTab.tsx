@@ -875,8 +875,8 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
   // The queue sections render CONTENT ONLY now; they report refresh /
   // busy / count up so the Dashboard frame here can supply the shared
   // title bar, count badge, refresh control and dim.
-  const [approvalsApi, setApprovalsApi] = useState<{ refresh: () => void; loading: boolean; count: number } | null>(null);
-  const [outstandingApi, setOutstandingApi] = useState<{ refresh: () => void; loading: boolean; count: number; staleCount: number } | null>(null);
+  const [approvalsApi, setApprovalsApi] = useState<{ refresh: () => void; loading: boolean; count: number; totalAmount: number } | null>(null);
+  const [outstandingApi, setOutstandingApi] = useState<{ refresh: () => void; loading: boolean; count: number; staleCount: number; totalAmount: number } | null>(null);
 
   const equipmentBillingEnabled = useEquipmentBillingEnabled();
   const [items, setItems] = useState<PaymentListItem[]>([]);
@@ -1601,6 +1601,14 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
             icon={CheckCircle2}
             variant="attention"
             count={approvalsApi?.count ?? 0}
+            /* Same reasoning as AWAITING PAYMENT below: the count says how
+               many decisions are waiting, not how much money is behind them.
+               `summarySlot` keeps it visible when the section is collapsed. */
+            summarySlot={(approvalsApi?.count ?? 0) > 0 ? (
+              <Text fontSize="xs" fontWeight="semibold" color="orange.700" whiteSpace="nowrap">
+                ${(approvalsApi?.totalAmount ?? 0).toFixed(2)} to approve
+              </Text>
+            ) : undefined}
             forceGlow={(approvalsApi?.count ?? 0) > 0 ? "orange" : undefined}
             onRefresh={approvalsApi?.refresh}
             refreshing={!!approvalsApi?.loading}
@@ -1630,6 +1638,15 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                sections overlapping. Pulses track the section they
                belong to. */
             forceGlow={(outstandingApi?.staleCount ?? 0) > 0 ? "purple" : undefined}
+            /* What the outstanding invoices are actually worth. The count
+               badge alone says "6" without saying whether that is $240 or
+               $2,400. Uses `summarySlot` so it survives collapsing — the
+               figure is most useful precisely when the section is shut. */
+            summarySlot={(outstandingApi?.count ?? 0) > 0 ? (
+              <Text fontSize="xs" fontWeight="semibold" color="purple.700" whiteSpace="nowrap">
+                ${(outstandingApi?.totalAmount ?? 0).toFixed(2)} expected
+              </Text>
+            ) : undefined}
             onRefresh={outstandingApi?.refresh}
             refreshing={!!outstandingApi?.loading}
           >
@@ -2749,6 +2766,19 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                     const tipTotal = (p as any).tipAmount ?? 0;
                     const tipToBusiness = (p as any).tipToBusinessAmount ?? 0;
                     const tipToWorkers = Math.max(0, Math.round((tipTotal - tipToBusiness) * 100) / 100);
+                    // Tip percentage is quoted against the JOB total, not the
+                    // amount paid — that's what "a 20% tip" means everywhere
+                    // else, and it's the same base the decomposition line
+                    // below uses ("= $105.00 for the job + $21.00 tip").
+                    // Against amountPaid the same tip would read 16.7%, which
+                    // is nobody's idea of the number.
+                    const tipBase = Math.round((p.amountPaid - tipTotal - overage) * 100) / 100;
+                    const tipPct = tipBase > 0 ? (tipTotal / tipBase) * 100 : null;
+                    // Whole numbers stay whole (20%, not 20.0%); anything else
+                    // gets one decimal so a 12.5% tip isn't rounded into a lie.
+                    const tipPctLabel = tipPct == null
+                      ? ""
+                      : ` (${Math.abs(tipPct - Math.round(tipPct)) < 0.05 ? Math.round(tipPct) : tipPct.toFixed(1)}%)`;
                     const adjustedFrom = (p as any).adjustedFromAmount as number | null | undefined;
                     return (
                       // Headline = worker payout (what the workers actually
@@ -2823,9 +2853,9 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                                 size="sm"
                                 colorPalette="green"
                                 variant="subtle"
-                                title={`Client tipped $${tipTotal.toFixed(2)} — $${tipToWorkers.toFixed(2)} to the crew, $${tipToBusiness.toFixed(2)} to the business. Tips skip commission and margin, and are paid on the payroll covering the date the client paid (not the date of the job).`}
+                                title={`Client tipped $${tipTotal.toFixed(2)}${tipPct == null ? "" : ` — ${tipPctLabel.slice(2, -1)} of the $${tipBase.toFixed(2)} job total`}. $${tipToWorkers.toFixed(2)} to the crew, $${tipToBusiness.toFixed(2)} to the business. Tips skip commission and margin, and are paid on the payroll covering the date the client paid (not the date of the job).`}
                               >
-                                Tip ${tipTotal.toFixed(2)}
+                                Tip ${tipTotal.toFixed(2)}{tipPctLabel}
                               </Badge>
                             )}
                             {overage > 0 && (

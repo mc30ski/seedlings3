@@ -68,7 +68,7 @@ export type ReconcileJobRow = {
   grossShare: number;          // pre-fee/margin
   feeOrMargin: number;         // contractor fee or business margin
   topUp: number;               // employee/trainee make-whole
-  netPaid: number;             // grossShare - feeOrMargin + topUp
+  netPaid: number;             // what the worker actually received (see netForJob)
   /** What % of the job payment this worker was credited for.
    *  Source priority: completionSplits (the operator-edited split),
    *  fallback = even split across active assignees (100 / N). */
@@ -119,7 +119,7 @@ export type ReconcileWorkerRow = {
    *  inside `netPaid` — `effectiveHourly` is derived from netPaid and the
    *  operator's rule is that tips don't count toward the effective rate. */
   tips: number;
-  netPaid: number;             // grossEarnings - feesOrMargin + topUps
+  netPaid: number;             // sum of the per-job figures (see netForJob)
   ownerEarnings: number;       // business cut (only populated for the LLC owner)
 
   // Derived
@@ -267,6 +267,33 @@ function readSnapshot(raw: unknown): Map<string, SnapshotEntry> | null {
 
 // ── Main entry ─────────────────────────────────────────────────────────────
 
+/**
+ * What a worker actually receives for one job.
+ *
+ * `gross`/`fee` are read from the PROMISED snapshot where one exists, while
+ * `topUp` is the make-whole recorded on the PaymentSplit at payment time.
+ * On a written-off or underpaid job those are two DIFFERENT bases:
+ * `gross - fee` already equals the promised net, so adding the top-up counts
+ * the same money twice. In production that reported David Wanderski at
+ * $35.00 on a job he was paid $17.50 for.
+ *
+ * When a split exists it is authoritative — `split.amount` is the money that
+ * moved. The `gross - fee + topUp` form is only correct as a pre-payment
+ * estimate, where no split exists yet and gross/fee are the only basis there
+ * is.
+ *
+ * Same two-basis error the payment card had (`share - deduction + topUp`),
+ * fixed there 2026-09-01; this surface was missed in that pass.
+ */
+export function netForJob(
+  split: { amount: number } | undefined,
+  gross: number,
+  fee: number,
+  topUp: number,
+): number {
+  return split ? round2(split.amount) : round2(gross - fee + topUp);
+}
+
 export async function buildReconcileWorkers(
   start: Date,
   end: Date,
@@ -407,6 +434,9 @@ export async function buildReconcileWorkers(
     grossEarnings: number;
     feesOrMargin: number;
     topUps: number;
+    /** Sum of `netForJob` per job — what the worker actually received.
+     *  NOT derivable from the three fields above once a payment exists. */
+    netEarned: number;
     /** Tips received in the window. PAYMENT-anchored, unlike every other
      *  figure on this row — see the tips query below. */
     tips: number;
@@ -427,6 +457,7 @@ export async function buildReconcileWorkers(
         grossEarnings: number;
         feesOrMargin: number;
         topUps: number;
+        netEarned: number;
         // Owner-earnings attributed to this day's occurrences.
         // Populated ONLY for users who receive owner-earnings splits.
         // Surfaced via the day-level netPaid so the daily breakdown
@@ -474,6 +505,7 @@ export async function buildReconcileWorkers(
         daysSet: new Set(),
         jobsCompleted: 0,
         grossEarnings: 0,
+        netEarned: 0,
         feesOrMargin: 0,
         topUps: 0,
         tips: 0,
@@ -488,7 +520,7 @@ export async function buildReconcileWorkers(
   function getDay(a: Accum, date: string) {
     let d = a.byDay.get(date);
     if (!d) {
-      d = { hoursMs: 0, jobsCompleted: 0, grossEarnings: 0, feesOrMargin: 0, topUps: 0, ownerEarnings: 0, inProgress: false, jobs: [] };
+      d = { hoursMs: 0, jobsCompleted: 0, grossEarnings: 0, feesOrMargin: 0, topUps: 0, netEarned: 0, ownerEarnings: 0, inProgress: false, jobs: [] };
       a.byDay.set(date, d);
     }
     return d;
@@ -616,7 +648,7 @@ export async function buildReconcileWorkers(
         gross: round2(gross),
         feeOrMargin: round2(fee),
         topUp: round2(topUp),
-        netPaid: round2(gross - fee + topUp),
+        netPaid: netForJob(split, gross, fee, topUp),
         isOwnerEarnings: false,
       });
     }
@@ -680,19 +712,24 @@ export async function buildReconcileWorkers(
       const gross = snap?.gross ?? comp?.gross ?? split?.gross ?? 0;
       const fee = snap?.fee ?? comp?.fee ?? split?.fee ?? 0;
       const topUp = split?.topUp ?? 0; // top-ups only known at payment time
-      const netPaid = round2(gross - fee + topUp);
+      const netPaid = netForJob(split, gross, fee, topUp);
       const source: "snapshot" | "computed" = snap ? "snapshot" : "computed";
 
       a.jobsCompleted += 1;
       a.grossEarnings += gross;
       a.feesOrMargin += fee;
       a.topUps += topUp;
+      // Accumulated rather than re-derived at the end: the summary used to
+      // recompute `grossEarnings - feesOrMargin + topUps`, which reproduces
+      // the double-count this function exists to avoid.
+      a.netEarned += netPaid;
 
       const d = getDay(a, day);
       d.jobsCompleted += 1;
       d.grossEarnings += gross;
       d.feesOrMargin += fee;
       d.topUps += topUp;
+      d.netEarned += netPaid;
       d.jobs.push({
         occurrenceId: occ.id,
         title: titleLabel,
@@ -817,7 +854,10 @@ export async function buildReconcileWorkers(
     // the number and could mask a genuinely below-floor base rate.
     // `preTopUpHourly` (the min-wage check) reads grossEarnings, which
     // tips never enter either. They surface as their own payroll column.
-    const netPaid = round2(grossEarnings - feesOrMargin + topUps);
+    // Sum of the per-job figures, NOT re-derived from gross/fee/topUp —
+    // see netForJob. `preTopUpHourly` below still uses gross - fee on
+    // purpose: the minimum-wage floor is checked before any make-whole.
+    const netPaid = round2(a.netEarned);
     const ownerEarnings = round2(a.ownerEarnings);
 
     // For owners, the "display total" includes their owner-earnings
@@ -876,7 +916,7 @@ export async function buildReconcileWorkers(
         // Include ownerEarnings in the day-level netPaid so the
         // breakdown reconciles with the owner row's headline. For
         // non-owners, ownerEarnings is always 0 so this is a no-op.
-        netPaid: round2(d.grossEarnings - d.feesOrMargin + d.topUps + d.ownerEarnings),
+        netPaid: round2(d.netEarned + d.ownerEarnings),
         inProgress: d.inProgress,
         jobs: d.jobs,
       };
