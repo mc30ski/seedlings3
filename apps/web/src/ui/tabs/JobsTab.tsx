@@ -7167,6 +7167,30 @@ export default function JobsTab({
                       const fee = pay.platformFeeAmount ?? 0;
                       const margin = pay.businessMarginAmount ?? 0;
                       const splitTotal = (pay.splits ?? []).reduce((s: number, sp: any) => s + sp.amount, 0);
+                      // WHAT THE CLIENT'S MONEY ACTUALLY BECAME.
+                      //
+                      // This block used to render only `sp.amount` + margin,
+                      // which is the JOB portion. On a tipped or overpaid
+                      // payment that silently omitted the difference: a $105
+                      // job paid $126 rendered $34.12 + $34.12 + $36.76 and
+                      // called it "Paid: $126.00". Every dollar the client
+                      // handed over has to land in a line here, or the block
+                      // is lying about the header directly above it.
+                      const tipToBiz = pay.tipToBusinessAmount ?? 0;
+                      const overage = pay.overageAmount ?? 0;
+                      const tipTotal = (pay.splits ?? []).reduce((s: number, sp: any) => s + (sp.tipAmount ?? 0), 0);
+                      const businessTotal = fee + margin + tipToBiz + overage + expTotal;
+                      const accounted = splitTotal + tipTotal + businessTotal;
+                      const unaccounted = Math.round((pay.amountPaid - accounted) * 100) / 100;
+                      // A worker sees only their OWN tip, so their view of the
+                      // tip column is deliberately incomplete — showing them a
+                      // reconciliation line built from numbers they can't see
+                      // would read as broken. Operators get the full equation.
+                      const tipFor = (sp: any) => {
+                        const t = sp.tipAmount ?? 0;
+                        if (!(t > 0)) return 0;
+                        return showAdminExtras || sp.userId === myId ? t : 0;
+                      };
                       const feeableSplitTotal = (pay.splits ?? []).filter((sp: any) => sp.user?.workerType !== "EMPLOYEE" && sp.user?.workerType !== "TRAINEE").reduce((s: number, sp: any) => s + sp.amount, 0);
                       const employeeSplitTotal = (pay.splits ?? []).filter((sp: any) => sp.user?.workerType === "EMPLOYEE" || sp.user?.workerType === "TRAINEE").reduce((s: number, sp: any) => s + sp.amount, 0);
                       return (
@@ -7187,13 +7211,33 @@ export default function JobsTab({
                                   <Badge colorPalette="green" variant="solid" fontSize="xs" px="2" borderRadius="full">
                                     ${sp.amount.toFixed(2)}
                                   </Badge>
+                                  {tipFor(sp) > 0 && (
+                                    <Text color="green.700">+ ${tipFor(sp).toFixed(2)} tip</Text>
+                                  )}
                                 </HStack>
                               ))}
-                              {(expTotal > 0 || fee > 0 || margin > 0) && (
+                              {(expTotal > 0 || fee > 0 || margin > 0 || tipToBiz > 0 || overage > 0) && (
                                 <Box fontSize="xs" color="fg.muted" mt={0.5}>
                                   {expTotal > 0 && <Text>Expenses: ${expTotal.toFixed(2)}</Text>}
                                   {fee > 0 && <Text>Commission ({pay.platformFeePercent}%): ${fee.toFixed(2)}</Text>}
                                   {margin > 0 && <Text>Margin ({pay.businessMarginPercent}%): ${margin.toFixed(2)}</Text>}
+                                  {tipToBiz > 0 && <Text>Tip kept by business: ${tipToBiz.toFixed(2)}</Text>}
+                                  {overage > 0 && <Text>Overpayment (not designated as a tip): ${overage.toFixed(2)}</Text>}
+                                </Box>
+                              )}
+                              {showAdminExtras && (
+                                <Box fontSize="xs" color="fg.muted" mt={0.5} borderTopWidth="1px" borderColor="green.200" pt={0.5}>
+                                  <Text>
+                                    ${splitTotal.toFixed(2)} job pay
+                                    {tipTotal > 0 ? ` + $${tipTotal.toFixed(2)} tips` : ""}
+                                    {` + $${businessTotal.toFixed(2)} business`}
+                                    {Math.abs(unaccounted) < 0.02 ? ` = $${pay.amountPaid.toFixed(2)} paid` : ""}
+                                  </Text>
+                                  {Math.abs(unaccounted) >= 0.02 && (
+                                    <Text color="red.600" fontWeight="medium">
+                                      Unaccounted: ${unaccounted.toFixed(2)} of the ${pay.amountPaid.toFixed(2)} paid
+                                    </Text>
+                                  )}
                                 </Box>
                               )}
                             </VStack>
