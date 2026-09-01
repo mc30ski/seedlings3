@@ -169,3 +169,59 @@ describe("section pattern — a section refresh refreshes only itself", () => {
     expect(card).not.toMatch(/my-activities-refresh/);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pulse direction — outward only.
+//
+// Reported 2026-09-01: "some areas pulsate outward and then inward, but this
+// is not consistent". The cause was two shapes of keyframe living side by
+// side. The two-stop shorthand
+//
+//     0%, 100% { box-shadow: 0 0 0 0   rgba(c, 0.45); }
+//     50%      { box-shadow: 0 0 0 8px rgba(c, 0);    }
+//
+// looks equivalent to the three-stop form but is not: from 50% to 100% the
+// ring shrinks back to zero WHILE FADING BACK IN, so it visibly contracts.
+// Ten of the eleven pulses used it.
+//
+// This is a text scan rather than a behavioural test because the difference
+// lives entirely in a CSS file no unit test can execute.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("pulse animations only travel outward", () => {
+  const cssPath = resolve(__dirname, "../../../web/src/styles/globals.css");
+
+  it("no pulse keyframe uses the contracting two-stop form", () => {
+    const css = readFileSync(cssPath, "utf8");
+    // Only look inside @keyframes blocks named seedlings-pulse*, so the
+    // explanatory comment above them (which quotes the bad form on purpose)
+    // doesn't trip this.
+    const blocks = [...css.matchAll(/@keyframes\s+(seedlings-pulse[\w-]*)\s*\{([\s\S]*?)\n\}/g)];
+    expect(blocks.length, "found no pulse keyframes — did globals.css move?").toBeGreaterThan(5);
+
+    const offenders = blocks
+      .filter(([, , body]) => /0%\s*,\s*100%/.test(body))
+      .map(([, name]) => name);
+
+    expect(
+      offenders,
+      `these pulses contract instead of only radiating outward: ${offenders.join(", ")}. ` +
+        "Use the three-stop form — 0% opaque at 0 radius, ~70% transparent at full radius, " +
+        "100% back to 0 radius while still transparent, so the reset is invisible.",
+    ).toEqual([]);
+  });
+
+  it("every pulse keyframe ends transparent at zero radius", () => {
+    const css = readFileSync(cssPath, "utf8");
+    const blocks = [...css.matchAll(/@keyframes\s+(seedlings-pulse[\w-]*)\s*\{([\s\S]*?)\n\}/g)];
+    for (const [, name, body] of blocks) {
+      const final = body.match(/100%\s*\{([\s\S]*?)\}/)?.[1] ?? "";
+      expect(final, `${name} has no 100% stop`).not.toBe("");
+      // The closing frame must be fully transparent, or the snap back to a
+      // zero-radius ring is visible as a flicker.
+      expect(
+        /rgba\([^)]*,\s*0\s*\)/.test(final),
+        `${name} ends at a visible alpha — the reset to 0 radius will flicker`,
+      ).toBe(true);
+    }
+  });
+});

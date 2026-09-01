@@ -169,6 +169,11 @@ export const setGuideArchived = (id: string, archived: boolean) =>
 
 export const purgeGuide = (id: string) => apiPost<{ ok: true }>(`/api/guides/${id}/purge`, {});
 
+/** Throw away an unsubmitted draft. Returns whether the guide went with it —
+ *  it does when the draft was the guide's only version. */
+export const discardDraft = (versionId: string) =>
+  apiDelete<{ guideDeleted: boolean }>(`/api/guides/versions/${versionId}`);
+
 // ── Media ───────────────────────────────────────────────────────────────────
 
 /** Paged — the library only ever grows, since assets are immutable and

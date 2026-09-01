@@ -128,24 +128,46 @@ export default function WeatherBar({
       try {
         let latitude: number;
         let longitude: number;
+
+        // ASK THE SERVER FIRST.
+        //
+        // When BUSINESS_ADDRESS is configured it answers with the business's
+        // own coordinates (`source: "business"`), which is where the jobs
+        // actually are. Device location answers a different question — where
+        // the person holding the phone is — and checking tomorrow's schedule
+        // from another town silently returned that town's forecast.
+        //
+        // A nice side effect: with the address set, workers never see the
+        // location permission prompt at all.
+        let serverLoc: { lat: number; lng: number; source?: string } | null = null;
         try {
-          // Browser geolocation is only attempted when the caller opts in
-          // (allowGeolocation = true). Workers/admins benefit from accurate
-          // weather for the job's actual location; logged-out visitors and
-          // signed-in clients should NOT see the location permission prompt
-          // just for visiting the dashboard — they fall straight through to
-          // the IP-based fallback below.
-          if (!allowGeolocation) throw new Error("geolocation_skipped");
-          const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
-            navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000, maximumAge: 600000, enableHighAccuracy: false });
-          });
-          latitude = pos.coords.latitude;
-          longitude = pos.coords.longitude;
+          serverLoc = await apiGet<{ lat: number; lng: number; source?: string }>("/api/weather/location");
         } catch {
-          // Fallback: IP-based location via the API (less accurate but works)
-          const ipLoc = await apiGet<{ lat: number; lng: number }>("/api/weather/location");
-          latitude = ipLoc.lat;
-          longitude = ipLoc.lng;
+          serverLoc = null; // unset / ungeocodable / not permitted — handled below
+        }
+
+        if (serverLoc?.source === "business") {
+          latitude = serverLoc.lat;
+          longitude = serverLoc.lng;
+        } else {
+          // No business address to go on — the previous behaviour, unchanged:
+          // browser geolocation when the caller opts in, else the IP result.
+          //
+          // Geolocation is only attempted when allowGeolocation = true.
+          // Logged-out visitors and signed-in clients should NOT see a
+          // location permission prompt just for visiting the dashboard.
+          try {
+            if (!allowGeolocation) throw new Error("geolocation_skipped");
+            const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+              navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000, maximumAge: 600000, enableHighAccuracy: false });
+            });
+            latitude = pos.coords.latitude;
+            longitude = pos.coords.longitude;
+          } catch (geoErr) {
+            if (!serverLoc) throw geoErr; // rethrow so code === 1 still yields the "denied" copy
+            latitude = serverLoc.lat;
+            longitude = serverLoc.lng;
+          }
         }
         const result = await apiGet<WeatherResponse>(`/api/weather?lat=${latitude}&lng=${longitude}`);
         if (!cancelled) {

@@ -1874,6 +1874,28 @@ function BusinessStartRevealToggle() {
   );
 }
 
+/**
+ * A setting whose value LOOKS like JSON but does not parse.
+ *
+ * Such a value falls through every structured renderer and prints as a raw
+ * string — visually identical to a setting that is legitimately plain text.
+ * So one stray character (a trailing comma in GUIDE_CATEGORIES, 2026-09-01)
+ * silently degrades a pill list into a wall of braces with nothing to say
+ * why, and the only way to notice is to know what it should have looked like.
+ *
+ * Returns the parser's message when the value is broken, else null.
+ */
+function jsonSyntaxError(value: string | null | undefined): string | null {
+  const v = (value ?? "").trim();
+  if (!/^[[{]/.test(v)) return null; // not attempting to be JSON — nothing to say
+  try {
+    JSON.parse(v);
+    return null;
+  } catch (e: any) {
+    return typeof e?.message === "string" ? e.message : "Invalid JSON";
+  }
+}
+
 export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
   const { isAvail, isSuper: userIsSuper } = determineRoles(me, purpose);
   const isSuper = userIsSuper && purpose === "SUPER";
@@ -2386,12 +2408,23 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                         if (s.value === "[]") {
                           return <JsonArrayEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} originalValue={s.value} forceDescription={forceDescription} />;
                         }
+                        // The raw-text editor is what a malformed JSON value
+                        // falls back to, so it's also where a broken value
+                        // gets fixed — and where a new one would be
+                        // introduced. Block the save rather than storing
+                        // something no renderer can read.
+                        const editError = jsonSyntaxError(editValue);
                         return (
-                          <HStack gap={2} w="full">
-                            <Input value={editValue} onChange={(e) => setEditValue(e.target.value)} size="sm" flex="1" autoFocus />
-                            <Button size="sm" onClick={() => handleSave(s.key)} loading={saving} disabled={editValue === s.value}>Save</Button>
-                            <Button size="sm" variant="ghost" onClick={() => setEditingKey(null)} disabled={saving}>Cancel</Button>
-                          </HStack>
+                          <VStack align="stretch" gap={1} w="full">
+                            <HStack gap={2} w="full">
+                              <Input value={editValue} onChange={(e) => setEditValue(e.target.value)} size="sm" flex="1" autoFocus />
+                              <Button size="sm" onClick={() => handleSave(s.key)} loading={saving} disabled={editValue === s.value || !!editError}>Save</Button>
+                              <Button size="sm" variant="ghost" onClick={() => setEditingKey(null)} disabled={saving}>Cancel</Button>
+                            </HStack>
+                            {editError && (
+                              <Text fontSize="xs" color="red.700">Invalid JSON — {editError}</Text>
+                            )}
+                          </VStack>
                         );
                       })()
                     ) : (
@@ -2580,6 +2613,25 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                                 <EyeOff size={14} />
                               </Button>
                             </HStack>
+                          );
+                        }
+                        const syntaxError = jsonSyntaxError(s.value);
+                        if (syntaxError) {
+                          return (
+                            <VStack align="start" gap={1}>
+                              <HStack gap={2} flexWrap="wrap">
+                                <Badge size="sm" colorPalette="red" variant="solid" px="2" borderRadius="full" fontSize="xs">
+                                  Invalid JSON
+                                </Badge>
+                                <Text fontSize="xs" color="red.700">{syntaxError}</Text>
+                              </HStack>
+                              <Text fontSize="sm" fontFamily="mono" color="fg.muted" wordBreak="break-all">
+                                {s.value}
+                              </Text>
+                              <Text fontSize="xs" color="fg.muted" fontStyle="italic">
+                                This setting can&apos;t be read by the app until the syntax is fixed — Edit to correct it.
+                              </Text>
+                            </VStack>
                           );
                         }
                         return <Text fontSize="md" fontWeight="medium">{s.value}</Text>;

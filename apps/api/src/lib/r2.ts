@@ -202,6 +202,23 @@ export async function putObjectText(
   );
 }
 
+/** Binary counterpart to putObjectText — used for cached parcel imagery. */
+export async function putObjectBuffer(
+  key: string,
+  body: Uint8Array,
+  contentType: string,
+  bucket: BucketType = "photos",
+): Promise<void> {
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: bucketName(bucket),
+      Key: key,
+      Body: body,
+      ContentType: contentType,
+    }),
+  );
+}
+
 export async function getObjectText(
   key: string,
   bucket: BucketType = "photos",

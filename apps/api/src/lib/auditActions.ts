@@ -211,6 +211,10 @@ export const AUDIT = {
     /// version destroyed — after this the audit row is the only record
     /// that the guide ever existed.
     PURGED: [AuditScope.GUIDE, AuditVerb.PURGED] as const,
+    /// An unsubmitted draft thrown away. Reuses the existing DELETED verb
+    /// rather than adding an enum value — AuditVerb is a Prisma enum and a
+    /// new member would need a migration for no semantic gain.
+    DRAFT_DISCARDED: [AuditScope.GUIDE, AuditVerb.DELETED] as const,
   },
   GUIDE_ASSET: {
     // Assets are immutable: uploaded once, never replaced in place. So

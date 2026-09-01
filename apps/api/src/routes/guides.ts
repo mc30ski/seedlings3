@@ -8,6 +8,7 @@ import {
   listPendingApprovals,
   pendingApprovalCount,
   createGuide,
+  discardDraft,
   updateGuideMeta,
   saveDraft,
   submitForApproval,
@@ -137,6 +138,13 @@ export default async function guideRoutes(app: FastifyInstance) {
   app.post("/guides/:id/draft", adminGuard, async (req: any) => {
     const viewer = guideViewer(req);
     return saveDraft(viewer, String(req.params.id), req.body ?? {});
+  });
+
+  // DELETE rather than POST /discard: it removes a resource and is
+  // idempotent-ish (a second call 404s), which is what DELETE means.
+  app.delete("/guides/versions/:versionId", adminGuard, async (req: any) => {
+    const viewer = guideViewer(req);
+    return discardDraft(viewer, String(req.params.versionId));
   });
 
   app.post("/guides/versions/:versionId/submit", adminGuard, async (req: any) => {

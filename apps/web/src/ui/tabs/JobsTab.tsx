@@ -38,7 +38,9 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertCircle, AlertTriangle, Archive, BarChart3, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, ExternalLink, Eye, Filter, Hand, Heart, Inbox, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, Play, RefreshCw, Repeat, Share2, Star, Tag, Users, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, Archive, BarChart3, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, ExternalLink, Eye, Filter, Hand, Heart, Inbox, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, Play, RefreshCw, Repeat, Share2, Star, Tag, Users, X,
+  Map as MapIcon,
+} from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { WeatherIcon } from "@/src/ui/components/WeatherBar";
 import { useForecastByDate } from "@/src/lib/useForecastByDate";
@@ -77,6 +79,7 @@ import ClientRequestsSection from "@/src/ui/components/ClientRequestsSection";
 import StatusButton from "@/src/ui/components/StatusButton";
 import AddAssigneeDialog from "@/src/ui/dialogs/AddAssigneeDialog";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
+import PropertyParcelDialog from "@/src/ui/dialogs/PropertyParcelDialog";
 import SendReceiptDialog from "@/src/ui/dialogs/SendReceiptDialog";
 import { Dashboard } from "@/src/ui/components/Dashboard";
 import { type ReceiptData } from "@/src/lib/receipt";
@@ -1132,6 +1135,9 @@ export default function JobsTab({
   // next few days that fall inside the forecast window). Silently
   // no-op for date keys outside the forecast range.
   const forecastByDate = useForecastByDate();
+  // Parcel dialog — the public county record for a property. Admin/Super
+  // only; see PropertyParcelDialog for why.
+  const [parcelFor, setParcelFor] = useState<{ propertyId: string; label: string } | null>(null);
 
   const [datePreset, setDatePreset] = usePersistedState<DatePreset>(`${pfx}_datePreset`, "now");
   const presetDates = useMemo(() => computeDatesFromPreset(datePreset), [datePreset]);
@@ -3900,6 +3906,14 @@ export default function JobsTab({
                         color="gray.600"
                         title={`${f.description}${f.rainChance > 0 ? ` · ${f.rainChance}% rain` : ""} · ${Math.round(f.high)}° / ${Math.round(f.low)}°`}
                       >
+                        {/* Temperature leads, icon follows. The high, not the
+                            current temp: these headers are future days, and
+                            what matters when planning a crew's day is how hot
+                            it will get. Low stays in the tooltip — two numbers
+                            in a header this dense reads as noise. */}
+                        <Text fontSize="2xs" fontWeight="semibold" lineHeight="1">
+                          {Math.round(f.high)}°
+                        </Text>
                         <WeatherIcon icon={f.icon} size={14} />
                         {f.rainChance >= 30 && (
                           <Text fontSize="2xs" color="blue.600" fontWeight="semibold" lineHeight="1">
@@ -5296,6 +5310,32 @@ export default function JobsTab({
             // ultra, semi, and expanded title rows all render the same button
             // + menu without code duplication. Body uses position:fixed and
             // computes coords from its parent Box; renders wherever it's used.
+            /* Public parcel record — acreage, overhead view, county
+               appraisal. Defined here rather than inline because Card.Header
+               has a branch per density: the first version only reached the
+               semi layout, so the icon was invisible at ultra and expanded. */
+            // Every role: workers need the size and the aerial to plan the
+            // work. The SERVER decides how much of the record comes back —
+            // see routes/me.ts — so this is not a permission decision.
+            const parcelButton = occ.job?.property?.id ? (
+              <Button
+                variant="ghost"
+                size="xs"
+                px="0"
+                minW="0"
+                title="Property record — size, overhead view, county appraisal"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setParcelFor({
+                    propertyId: occ.job!.property!.id,
+                    label: occ.job?.property?.displayName ?? "Property",
+                  });
+                }}
+              >
+                <MapIcon size={14} color="var(--chakra-colors-gray-700)" />
+              </Button>
+            ) : null;
+
             const moreActionsMenu = isPeek ? null : (
               <Box position="relative">
                 <Button variant="ghost" size="xs" px="1" minW="0" onClick={(e) => { e.stopPropagation(); setActionMenuOcc((v) => v === occ.id ? null : occ.id); }} title="More actions">
@@ -5612,6 +5652,7 @@ export default function JobsTab({
                         {/* "..." menu on the ultra row too — same affordances
                             (Like / Pin / Add expense / Share link) without
                             having to expand the card first. */}
+                        {parcelButton}
                         {moreActionsMenu}
                       </HStack>
                     );
@@ -5766,7 +5807,8 @@ export default function JobsTab({
                               </Box>
                             );
                           })()}
-                          {moreActionsMenu}
+                          {parcelButton}
+                        {moreActionsMenu}
                         </HStack>
                       </HStack>
                       {/* Instructions come FIRST under the title — ahead of
@@ -6092,7 +6134,8 @@ export default function JobsTab({
                                 </Box>
                               );
                             })()}
-                            {moreActionsMenu}
+                            {parcelButton}
+                        {moreActionsMenu}
                           </HStack>
                         </HStack>
                         {/* Instructions come FIRST under the title — ahead of
@@ -10397,6 +10440,12 @@ export default function JobsTab({
           a worker tries to start/resume a job without an active workday. */}
       {workdayGate.dialog}
       {teamWorkdayDialog.dialog}
+      <PropertyParcelDialog
+        propertyId={parcelFor?.propertyId ?? null}
+        propertyLabel={parcelFor?.label ?? ""}
+        open={!!parcelFor}
+        onClose={() => setParcelFor(null)}
+      />
     </Box>
   );
 }

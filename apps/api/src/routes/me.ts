@@ -4,6 +4,8 @@ import { createClerkClient } from "@clerk/backend";
 import { prisma } from "../db/prisma";
 import { IMPERSONATE_HEADER } from "../lib/impersonation";
 import { resolveCutoff } from "../lib/businessStartCutoff";
+import { resolveParcel, parcelImageUrl, redactParcelForWorker } from "../services/parcels";
+import { Role as RoleVal } from "@prisma/client";
 
 function readBearer(req: any): string | null {
   const h = req.headers?.authorization ?? "";
@@ -56,6 +58,37 @@ export default async function meRoutes(app: FastifyInstance) {
       t2.push(`meservice;dur=${Date.now() - t}`);
       return result;
     }
+  });
+
+  // ── Public parcel record + overhead imagery ────────────────────────────
+  //
+  // Available to every approved role, but the PAYLOAD DIFFERS. Workers get
+  // the parcel size and the picture — what they need to plan the work.
+  // Admins and Supers additionally get the county's appraised value and the
+  // owner of record. The stripping happens here, on the server: a redaction
+  // that only hides fields in the UI is still sitting in the network
+  // response for anyone who opens devtools.
+  //
+  // Role comes from `req.user.roles`, which requireApproved attaches with
+  // the impersonation-adjusted set — so a Super using "view as Worker" sees
+  // the worker payload here too, which is the whole point of view-as.
+  //
+  // view-as-allow: a parcel is a property of the LAND, identical for every
+  // caller. There is no per-worker state to impersonate — only the redaction
+  // level, which already follows the caller's effective roles above.
+  app.get("/me/properties/:id/parcel", { preHandler: app.requireApproved.bind(app) }, async (req: any) => {
+    const roles = new Set((req.user?.roles ?? []) as RoleVal[]);
+    const privileged = roles.has(RoleVal.ADMIN) || roles.has(RoleVal.SUPER);
+    const result = await resolveParcel(String(req.params.id), {
+      force: String(req.query?.refresh ?? "") === "1",
+    });
+    return privileged ? { ...result, redacted: false } : redactParcelForWorker(result);
+  });
+
+  // view-as-allow: the imagery is the same picture of the same land for
+  // every caller — nothing here varies by user.
+  app.get("/me/properties/:id/parcel/image", { preHandler: app.requireApproved.bind(app) }, async (req: any) => {
+    return parcelImageUrl(String(req.params.id));
   });
 
   // Business Start Date — exposes the EFFECTIVE cutoff for the current

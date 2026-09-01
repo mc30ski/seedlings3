@@ -330,7 +330,6 @@ model User {
   // answered by policyPredicate.computeComplianceState() against those
   // relations. See services/policies.ts.
 
-
   // LLC-owner flag. At most one user may have this set to true (enforced via
   // partial unique index in the migration). Additive to ADMIN/SUPER role —
   // does not replace it. The owner participates in jobs like any worker;
@@ -370,32 +369,32 @@ model User {
   jobOccurrenceAssignments JobOccurrenceAssignee[]
   jobAssignmentAuditActor  JobOccurrenceAssignee[] @relation("JobAssignActor")
 
-  paymentsCollected                Payment[]                 @relation("PaymentCollector")
-  paymentsConfirmed                Payment[]                 @relation("PaymentConfirmer")
-  paymentsAdjusted                 Payment[]                 @relation("PaymentAdjuster")
-  paymentsWrittenOff               Payment[]                 @relation("PaymentWriteOff")
-  paymentsSkipped                  Payment[]                 @relation("PaymentSkip")
-  paymentSplits                    PaymentSplit[]
-  expenses                         Expense[]
-  photos                           JobOccurrencePhoto[]
-  settingsUpdated                  Setting[]
-  pinnedOccurrences                PinnedOccurrence[]
-  likedOccurrences                 LikedOccurrence[]
-  reminders                        Reminder[]
-  calendarFeedTokens               CalendarFeedToken[]
-  occurrenceComments               OccurrenceComment[]
-  propertyPhotosUploaded           PropertyPhoto[]
-  equipmentPhotosUploaded          EquipmentPhoto[]
-  occurrenceAddons                 OccurrenceAddon[]
-  pinnedEquipment                  PinnedEquipment[]
-  likedEquipment                   LikedEquipment[]
-  businessExpenses                 BusinessExpense[]
-  businessExpensesReconciled       BusinessExpense[]         @relation("BusinessExpenseReconciler")
-  businessExpenseSeriesEnded       BusinessExpense[]         @relation("BusinessExpenseSeriesEnder")
-  changeRequestsCreated            OccurrenceChangeRequest[] @relation("ChangeRequestRequester")
-  changeRequestsResolved           OccurrenceChangeRequest[] @relation("ChangeRequestResolver")
-  hoursApproved                    JobOccurrence[]           @relation("HoursApprover")
-  pushSubscriptions                PushSubscription[]
+  paymentsCollected          Payment[]                 @relation("PaymentCollector")
+  paymentsConfirmed          Payment[]                 @relation("PaymentConfirmer")
+  paymentsAdjusted           Payment[]                 @relation("PaymentAdjuster")
+  paymentsWrittenOff         Payment[]                 @relation("PaymentWriteOff")
+  paymentsSkipped            Payment[]                 @relation("PaymentSkip")
+  paymentSplits              PaymentSplit[]
+  expenses                   Expense[]
+  photos                     JobOccurrencePhoto[]
+  settingsUpdated            Setting[]
+  pinnedOccurrences          PinnedOccurrence[]
+  likedOccurrences           LikedOccurrence[]
+  reminders                  Reminder[]
+  calendarFeedTokens         CalendarFeedToken[]
+  occurrenceComments         OccurrenceComment[]
+  propertyPhotosUploaded     PropertyPhoto[]
+  equipmentPhotosUploaded    EquipmentPhoto[]
+  occurrenceAddons           OccurrenceAddon[]
+  pinnedEquipment            PinnedEquipment[]
+  likedEquipment             LikedEquipment[]
+  businessExpenses           BusinessExpense[]
+  businessExpensesReconciled BusinessExpense[]         @relation("BusinessExpenseReconciler")
+  businessExpenseSeriesEnded BusinessExpense[]         @relation("BusinessExpenseSeriesEnder")
+  changeRequestsCreated      OccurrenceChangeRequest[] @relation("ChangeRequestRequester")
+  changeRequestsResolved     OccurrenceChangeRequest[] @relation("ChangeRequestResolver")
+  hoursApproved              JobOccurrence[]           @relation("HoursApprover")
+  pushSubscriptions          PushSubscription[]
 
   suppliesCreated          Supply[]
   supplyPurchasesCreated   SupplyPurchase[]
@@ -857,10 +856,36 @@ model Property {
   postalCode  String
   country     String
 
-  // Optional geo
-  //lat                Float?
-  //lng                Float?
+  // Optional geo — populated by the parcel lookup (services/parcels.ts),
+  // NOT by hand. The address is geocoded once and the result cached here.
+  lat Float?
+  lng Float?
   //geohash            String
+
+  // ── Public parcel record (county assessor via NC OneMap) ────────────────
+  //
+  // Cached because a parcel boundary changes at most once a year, while a
+  // job card can be opened dozens of times a day. Re-resolved when
+  // `parcelFetchedAt` is older than the configured cache window.
+  //
+  // `parcelData` holds the assessor attributes (acreage, land/improvement
+  // value, owner of record, county) and `parcelBoundary` the polygon rings
+  // in EPSG:4326 — kept separate because the boundary is ~30x larger and is
+  // only needed when drawing the map.
+  parcelData        Json?
+  parcelBoundary    Json?
+  parcelFetchedAt   DateTime?
+  /// R2 key for the cached overhead image, in the property-photos bucket
+  /// under a `parcel/` prefix. Null until someone opens the map.
+  parcelImageKey    String?
+  parcelImageAt     DateTime?
+  /// The geographic extent + pixel size the cached image was rendered at, so
+  /// the parcel boundary can be drawn over it without re-deriving the bbox.
+  parcelImageBox    Json?
+  /// Set when a lookup ran but found nothing — an out-of-state property, or
+  /// an address the geocoder can't place. Stops us retrying on every open;
+  /// cleared by a forced refresh.
+  parcelLookupError String?
 
   // Aggregate-site (community) fields (optional)
   //unitLabel          String?        // e.g., "home", "lot", "unit"
@@ -916,7 +941,6 @@ enum JobStatus {
   PAUSED
   ARCHIVED
 }
-
 
 enum JobOccurrenceStatus {
   SCHEDULED
@@ -1032,7 +1056,6 @@ model JobClient {
   @@index([jobId])
   @@index([clientId])
 }
-
 
 model JobOccurrence {
   id String @id @default(cuid())
@@ -1236,22 +1259,22 @@ model JobOccurrence {
   assignedGroupId String?
   assignedGroup   Group?  @relation("OccurrenceGroup", fields: [assignedGroupId], references: [id], onDelete: SetNull)
 
-  assignees                JobOccurrenceAssignee[]
-  payment                  Payment?
-  expenses                 Expense[]
-  businessExpenses         BusinessExpense[]
-  supplyHolds              SupplyHold[]
-  addons                   OccurrenceAddon[]
-  instructions             OccurrenceInstruction[]
-  photos                   JobOccurrencePhoto[]
-  propertyPhotos           OccurrencePropertyPhoto[]
-  pins                     PinnedOccurrence[]
-  likes                    LikedOccurrence[]
-  reminders                Reminder[]
-  comments                 OccurrenceComment[]
-  followupClients          FollowupClient[]
-  followupJobs             FollowupJob[]
-  changeRequests           OccurrenceChangeRequest[]
+  assignees        JobOccurrenceAssignee[]
+  payment          Payment?
+  expenses         Expense[]
+  businessExpenses BusinessExpense[]
+  supplyHolds      SupplyHold[]
+  addons           OccurrenceAddon[]
+  instructions     OccurrenceInstruction[]
+  photos           JobOccurrencePhoto[]
+  propertyPhotos   OccurrencePropertyPhoto[]
+  pins             PinnedOccurrence[]
+  likes            LikedOccurrence[]
+  reminders        Reminder[]
+  comments         OccurrenceComment[]
+  followupClients  FollowupClient[]
+  followupJobs     FollowupJob[]
+  changeRequests   OccurrenceChangeRequest[]
 
   @@index([linkGroupId])
   @@index([assignedGroupId])
@@ -1509,7 +1532,6 @@ model PaymentSplit {
   // exist until the client pays it. A worker can legitimately receive the
   // job payout on one payroll and the tip on another.
   tipAmount Float @default(0)
-
 
   createdAt DateTime @default(now())
 
