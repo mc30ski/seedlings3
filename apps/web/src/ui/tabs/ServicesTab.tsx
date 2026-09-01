@@ -2152,8 +2152,15 @@ export default function ServicesTab({
                               const overage = pay.overageAmount ?? 0;
                               const splitTotal = (pay.splits ?? []).reduce((s: number, sp: any) => s + sp.amount, 0);
                               const tipTotal = (pay.splits ?? []).reduce((s: number, sp: any) => s + (sp.tipAmount ?? 0), 0);
+                              // A write-off / underpayment books the uncollected money as
+                              // `shortfallAmount`, and the conservation identity SUBTRACTS it
+                              // (see payments-build-gate.test.ts identity C). Omitting it made
+                              // every payment carrying a shortfall render a red "Unaccounted"
+                              // warning — 12 of them in production — because the components
+                              // legitimately exceed what the client actually paid.
+                              const shortfall = pay.shortfallAmount ?? 0;
                               const businessTotal = fee + margin + tipToBiz + overage + expTotal;
-                              const unaccounted = Math.round((pay.amountPaid - (splitTotal + tipTotal + businessTotal)) * 100) / 100;
+                              const unaccounted = Math.round((pay.amountPaid - (splitTotal + tipTotal + businessTotal - shortfall)) * 100) / 100;
                               return (
                                 <Box mt={1} p={2} bg="green.50" rounded="sm">
                                   <Text fontSize="xs" fontWeight="medium" color="green.700">
@@ -2196,6 +2203,7 @@ export default function ServicesTab({
                                           ${splitTotal.toFixed(2)} job pay
                                           {tipTotal > 0 ? ` + $${tipTotal.toFixed(2)} tips` : ""}
                                           {` + $${businessTotal.toFixed(2)} business`}
+                                {shortfall > 0 ? ` − $${shortfall.toFixed(2)} shortfall absorbed` : ""}
                                           {Math.abs(unaccounted) < 0.02 ? ` = $${pay.amountPaid.toFixed(2)} paid` : ""}
                                         </Text>
                                         {Math.abs(unaccounted) >= 0.02 && (
