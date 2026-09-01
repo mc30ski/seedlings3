@@ -169,7 +169,7 @@ async function main() {
   // exist. So the surviving row is promoted to the STRONGER role first
   // (worker beats observer; role === null means worker).
   console.log("1. JobOccurrenceAssignee");
-  const markAsg = await prisma.jobOccurrenceAssignee.findMany({ where: { userId: MARK }, select: { id: true, occurrenceId: true, role: true, assignedAt: true } });
+  const markAsg = await prisma.jobOccurrenceAssignee.findMany({ where: { userId: MARK }, select: { id: true, occurrenceId: true, role: true, assignedAt: true, assignedById: true } });
   const mikeAsg = await prisma.jobOccurrenceAssignee.findMany({ where: { userId: MIKE }, select: { id: true, occurrenceId: true, role: true, assignedAt: true } });
   const mikeByOcc = new Map(mikeAsg.map((a) => [a.occurrenceId, a]));
 
@@ -193,9 +193,25 @@ async function main() {
   add("assignee rows MERGED", "role promoted, duplicate deleted", merges.length);
   for (const m of merges) console.log(`         - ${m}`);
 
+  // ORDER-DEPENDENT EXPECTATION.
+  //
+  // The plan is computed before anything executes, but the merge deletions
+  // above run FIRST — and some of those deleted rows also carry
+  // `assignedById = MARK` (he assigned himself to a job the owner was already
+  // on). Those rows are gone by the time this bulk update runs, so it
+  // legitimately touches fewer rows than a naive pre-count predicts.
+  //
+  // Found by the blast-radius guard on the first production attempt, which
+  // aborted the transaction: "touched 45 rows, plan said 47". Four read-
+  // throughs missed it because it only exists in the interaction between two
+  // statements, not in either one alone.
   const asgBy = await prisma.jobOccurrenceAssignee.count({ where: { assignedById: MARK } });
-  add("assignee.assignedById", "-> owner", asgBy);
-  queue((tx) => tx.jobOccurrenceAssignee.updateMany({ where: { assignedById: MARK }, data: { assignedById: MIKE } }), "assignee.assignedById", asgBy);
+  const asgByConsumedByDeletes = markAsg.filter(
+    (a) => mikeByOcc.has(a.occurrenceId) && a.assignedById === MARK,
+  ).length;
+  const asgByExpected = asgBy - asgByConsumedByDeletes;
+  add("assignee.assignedById", `-> owner (${asgByConsumedByDeletes} consumed by the merge deletes above)`, asgBy);
+  queue((tx) => tx.jobOccurrenceAssignee.updateMany({ where: { assignedById: MARK }, data: { assignedById: MIKE } }), "assignee.assignedById", asgByExpected);
 
   // ── 2. PaymentSplit — the money ────────────────────────────────────────────
   //
