@@ -2326,6 +2326,12 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
           return (
             <Card.Root
               key={p.id}
+              // Card-scoped handle so a test can reconcile ONE card's rows
+              // against ONE card's headline. Slicing the page text on the
+              // "TOTAL TO WORKERS" marker instead silently mixes cards
+              // together, because cards without a headline don't reset the
+              // slice. See tests/e2e/specs/money-card-math-admin.spec.ts.
+              data-testid="payment-card"
               variant="outline"
               css={compact ? { cursor: "pointer" } : undefined}
               onClick={(e: any) => {
@@ -2439,6 +2445,12 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                         rate: number | null;       // fee %
                         deduction: number | null;  // fee dollars
                         payout: number;            // what they actually get (or will get)
+                        /** The figure the rendered equation must END at:
+                         *  payout + tip (or the promised net for a contingent
+                         *  contractor). Carried explicitly rather than
+                         *  recomputed from share − deduction, because those two
+                         *  can sit on a different basis than the payout. */
+                        total: number;
                         topUp: number | null;
                         /** This worker's share of a designated tip. Kept as its
                          *  own field, never folded into `payout` — job pay and
@@ -2462,10 +2474,42 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                       let derived: DerivedRow[] = [];
                       if (realSplits.length > 0) {
                         const totalGross = realSplits.reduce((s, sp) => s + ((sp as any).grossAmount ?? 0), 0);
+                        // WHICH BASIS THE EQUATION USES.
+                        //
+                        // A split carries TWO bases. `grossAmount`/`feeAmount`
+                        // are the ACTUAL breakdown, computed on everything the
+                        // client handed over — tip included. `amount` is what
+                        // the worker is actually PAID, which for an employee is
+                        // their share of the INVOICE (the promised snapshot),
+                        // because employees don't share in an overpayment.
+                        //
+                        // On an overpaid job those diverge, and rendering the
+                        // actual basis produced an equation that didn't end at
+                        // the payout: "$63.00 share − $22.05 margin = $40.95"
+                        // when the worker was paid $34.12. It also implied the
+                        // margin had been taken out of the tip.
+                        //
+                        // Pick whichever basis actually produces `amount`, so
+                        // share − deduction === amount on every row.
+                        const promisedByUser = new Map(
+                          (promisedRows ?? []).map((r) => [r.userId, r]),
+                        );
                         derived = realSplits.map((sp) => {
-                          const g = (sp as any).grossAmount as number | null;
-                          const fee = (sp as any).feeAmount as number | null;
-                          const rate = (sp as any).ratePercent as number | null;
+                          const pr = promisedByUser.get(sp.userId);
+                          const usePromised = !!pr && Math.abs(sp.amount - pr.net) < 0.005;
+                          const g = usePromised
+                            ? pr!.gross
+                            : ((sp as any).grossAmount as number | null);
+                          const fee = usePromised
+                            ? pr!.fee
+                            : ((sp as any).feeAmount as number | null);
+                          const rate = usePromised
+                            ? pr!.ratePercent
+                            : ((sp as any).ratePercent as number | null);
+                          // The top-up is how the BUSINESS reached that payout,
+                          // not an addend on the worker's side: with the basis
+                          // above, share − deduction already equals `amount`.
+                          // Adding it double-counted on write-offs.
                           const topUp = (sp as any).topUpAmount as number | null;
                           return {
                             userId: sp.userId,
@@ -2476,6 +2520,12 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                             deduction: fee,
                             payout: sp.amount,
                             topUp,
+                            // The number the equation must END at. Taken from
+                            // `sp.amount` (what was actually paid) rather than
+                            // recomputed from share/deduction, so the total can
+                            // never drift from the payout the way it did when
+                            // the equation rendered the actual-collected basis.
+                            total: sp.amount + (((sp as any).tipAmount as number | null) ?? 0),
                             tip: ((sp as any).tipAmount as number | null) ?? 0,
                             isOwner: (sp as any).ownerEarnings === true,
                             sharePctLabel: totalGross > 0 && g != null ? Math.round((g / totalGross) * 100) : null,
@@ -2501,6 +2551,9 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                             // sit at $0 until reconciliation determines the
                             // actual amount (which may shrink on underpay).
                             payout: isEmployeeClass ? r.net : 0,
+                            // Contingent contractors show the promised net
+                            // (labelled "promised"), not their $0 payout.
+                            total: r.net,
                             topUp: null,
                             // Promised-snapshot rows predate the payment, so
                             // no tip exists yet — it's designated at approval.
@@ -2562,7 +2615,6 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                                 {row.share != null && row.deduction != null && row.rate != null ? (
                                   <Text fontSize="2xs" color="fg.muted">
                                     ${row.share.toFixed(2)} share − ${row.deduction.toFixed(2)} {deductionLabel} ({row.rate}%)
-                                    {row.topUp && row.topUp > 0 ? ` + $${row.topUp.toFixed(2)} top-up` : ""}
                                     {/* Tip belongs INSIDE the equation, not on
                                         a line below it. Split across two lines
                                         the reader had to add "$28.00" and
@@ -2571,20 +2623,19 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                                     {row.tip > 0 ? ` + $${row.tip.toFixed(2)} tip` : ""}
                                     {" = "}
                                     <Text as="span" fontWeight="semibold" color={row.isOwner ? "purple.700" : "green.700"}>
-                                      {/* Total must include the top-up addend
-                                          to match the equation rendered just
-                                          above. Without it, an employee made
-                                          whole on a write-off / underpayment
-                                          displays `share − margin + $X.XX
-                                          top-up = $0.00`, which contradicts
-                                          itself. `row.topUp` is null/0 for
-                                          rows with no top-up so this is a
-                                          no-op in the common (full-pay)
-                                          case. */}
-                                      ${(row.share - row.deduction + (row.topUp ?? 0) + row.tip).toFixed(2)}
+                                      ${row.total.toFixed(2)}
                                     </Text>
                                     {showPromised && (
                                       <Text as="span" color="fg.muted"> promised (pending approval)</Text>
+                                    )}
+                                    {/* The top-up is how the BUSINESS reached
+                                        that payout on an underpaid job, not an
+                                        addend on the worker's side — the share
+                                        basis above already resolves to it. It
+                                        used to sit inside the equation, which
+                                        double-counted on write-offs. */}
+                                    {row.topUp != null && row.topUp > 0 && (
+                                      <Text as="span" color="fg.muted"> · business topped up ${row.topUp.toFixed(2)}</Text>
                                     )}
                                   </Text>
                                 ) : (

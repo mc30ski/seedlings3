@@ -1966,7 +1966,10 @@ async function seedDatabase() {
           create: computedSplits.map((c) => ({
             userId: c.userId,
             // NET, matching production. Gross/fee are carried alongside so
-            // the card can show the full derivation.
+            // the card can show the full derivation. Fixtures flagged
+            // `actualBasis` have these columns re-stamped onto the
+            // actual-collected basis by a post-pass below, once the
+            // expense reconciler has finished rewriting every split.
             amount: c.netAmount,
             grossAmount: c.gross,
             ratePercent: c.ratePercent,
@@ -6777,6 +6780,75 @@ async function assertPrimaryContactInvariant() {
     });
   }
   console.log(`✓ Reconciled splits on ${toReconcile.length} payment(s) against final expense totals.`);
+
+  // ── Divergent-basis fixtures: give dev the PRODUCTION shape ─────────
+  //
+  // Everything above writes agreeing columns: `amount`, `netAmount` and
+  // `grossAmount − feeAmount` all land on the same number, because the
+  // seed computes one basis (the invoice) and stores it everywhere.
+  //
+  // Production does not look like that on an overpaid job.
+  // `reconcileApproval` computes the ACTUAL breakdown on everything the
+  // client handed over — the tip included — and stores it in
+  // grossAmount/feeAmount/netAmount, while `amount` keeps the PROMISED net
+  // from the invoice snapshot, because employees don't share in an
+  // overpayment. The two bases diverge and the payment card has to know
+  // which one to render.
+  //
+  // No dev row could reproduce that, which is how a card rendering
+  // "$63.00 share − $22.05 margin = $51.45" against a real payout of
+  // $44.62 shipped under a green e2e suite. So re-stamp the flagged
+  // fixtures here, AFTER the expense reconciler (which would otherwise
+  // immediately undo it): promisedPayouts from the settled invoice basis,
+  // gross/fee/net moved onto the collected basis, `amount` untouched.
+  // Which fixtures? Exactly the ones where the client paid more than the
+  // invoice — designated a tip or not. That IS the condition under which
+  // production's two bases diverge, so it needs no separate flag.
+  const divergent = await prisma.payment.findMany({
+    where: { writtenOff: false, skippedAt: null, OR: [{ tipAmount: { gt: 0 } }, { overageAmount: { gt: 0 } }] },
+    include: {
+      splits: { include: { user: { select: { workerType: true } } } },
+      occurrence: { select: { id: true, expenses: { select: { cost: true } } } },
+    },
+  });
+  for (const pay of divergent) {
+    const occId = pay.occurrence?.id;
+    if (!occId || pay.splits.length === 0) continue;
+    const expenses = (pay.occurrence?.expenses ?? []).reduce((a, e) => a + e.cost, 0);
+    // The invoice basis, as just settled by the reconciler.
+    const invoicePool = pay.splits.reduce((a, sp) => a + (sp.grossAmount ?? sp.amount), 0);
+    if (invoicePool <= 0) continue;
+    // Everything the client handed over, which is what production's actual
+    // breakdown is computed on.
+    const actualPool = Math.max(0, Math.round((pay.amountPaid - expenses) * 100) / 100);
+
+    await prisma.jobOccurrence.update({
+      where: { id: occId },
+      data: {
+        promisedPayouts: pay.splits.map((sp) => ({
+          userId: sp.userId,
+          workerType: sp.user?.workerType ?? "EMPLOYEE",
+          gross: sp.grossAmount ?? sp.amount,
+          ratePercent: sp.ratePercent ?? 30,
+          fee: sp.feeAmount ?? 0,
+          net: sp.amount,
+          splitPercent: Math.round(((sp.grossAmount ?? sp.amount) / invoicePool) * 100),
+        })),
+      },
+    });
+
+    for (const sp of pay.splits) {
+      const share = (sp.grossAmount ?? sp.amount) / invoicePool;
+      const gross = Math.round(actualPool * share * 100) / 100;
+      const fee = Math.round(gross * (sp.ratePercent ?? 30)) / 100;
+      await prisma.paymentSplit.update({
+        where: { id: sp.id },
+        // `amount` is deliberately NOT touched — it stays the promised net.
+        data: { grossAmount: gross, feeAmount: fee, netAmount: Math.round((gross - fee) * 100) / 100 },
+      });
+    }
+  }
+  console.log(`✓ Stamped the production two-basis shape on ${divergent.length} overpaid fixture(s).`);
 
   // ── Payment conservation invariant ──────────────────────────────────
   // Every dollar a client paid must be accounted for exactly once:

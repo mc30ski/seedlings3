@@ -2144,6 +2144,16 @@ export default function ServicesTab({
                               const expTotal = (occ.expenses ?? []).reduce((s: number, e: any) => s + e.cost, 0);
                               const fee = pay.platformFeeAmount ?? 0;
                               const margin = pay.businessMarginAmount ?? 0;
+                              // Same reconciliation rule as the JobsTab payout
+                              // block: every dollar of `amountPaid` must land
+                              // in a line here. Tips and undesignated
+                              // overpayments used to be silently omitted.
+                              const tipToBiz = pay.tipToBusinessAmount ?? 0;
+                              const overage = pay.overageAmount ?? 0;
+                              const splitTotal = (pay.splits ?? []).reduce((s: number, sp: any) => s + sp.amount, 0);
+                              const tipTotal = (pay.splits ?? []).reduce((s: number, sp: any) => s + (sp.tipAmount ?? 0), 0);
+                              const businessTotal = fee + margin + tipToBiz + overage + expTotal;
+                              const unaccounted = Math.round((pay.amountPaid - (splitTotal + tipTotal + businessTotal)) * 100) / 100;
                               return (
                                 <Box mt={1} p={2} bg="green.50" rounded="sm">
                                   <Text fontSize="xs" fontWeight="medium" color="green.700">
@@ -2167,15 +2177,33 @@ export default function ServicesTab({
                                           <Badge colorPalette="green" variant="solid" fontSize="xs" px="2" borderRadius="full">
                                             ${sp.amount.toFixed(2)}
                                           </Badge>
+                                          {(sp.tipAmount ?? 0) > 0 && (
+                                            <Text color="green.700">+ ${(sp.tipAmount as number).toFixed(2)} tip</Text>
+                                          )}
                                         </HStack>
                                       ))}
-                                      {(expTotal > 0 || fee > 0 || margin > 0) && (
+                                      {(expTotal > 0 || fee > 0 || margin > 0 || tipToBiz > 0 || overage > 0) && (
                                         <Box fontSize="xs" color="fg.muted" mt={0.5}>
                                           {expTotal > 0 && <Text>Expenses: ${expTotal.toFixed(2)}</Text>}
                                           {fee > 0 && <Text>Commission ({pay.platformFeePercent}%): ${fee.toFixed(2)}</Text>}
                                           {margin > 0 && <Text>Margin ({pay.businessMarginPercent}%): ${margin.toFixed(2)}</Text>}
+                                          {tipToBiz > 0 && <Text>Tip kept by business: ${tipToBiz.toFixed(2)}</Text>}
+                                          {overage > 0 && <Text>Overpayment (not designated as a tip): ${overage.toFixed(2)}</Text>}
                                         </Box>
                                       )}
+                                      <Box fontSize="xs" color="fg.muted" mt={0.5} borderTopWidth="1px" borderColor="green.200" pt={0.5}>
+                                        <Text>
+                                          ${splitTotal.toFixed(2)} job pay
+                                          {tipTotal > 0 ? ` + $${tipTotal.toFixed(2)} tips` : ""}
+                                          {` + $${businessTotal.toFixed(2)} business`}
+                                          {Math.abs(unaccounted) < 0.02 ? ` = $${pay.amountPaid.toFixed(2)} paid` : ""}
+                                        </Text>
+                                        {Math.abs(unaccounted) >= 0.02 && (
+                                          <Text color="red.600" fontWeight="medium">
+                                            Unaccounted: ${unaccounted.toFixed(2)} of the ${pay.amountPaid.toFixed(2)} paid
+                                          </Text>
+                                        )}
+                                      </Box>
                                     </VStack>
                                   )}
                                 </Box>
