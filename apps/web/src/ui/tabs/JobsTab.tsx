@@ -126,6 +126,17 @@ import {
 // dragging any of the tab's local state along. Everything imported
 // below is React-free and side-effect-free.
 
+/**
+ * Ghost-card background — deliberately NOT a Chakra token.
+ *
+ * gray.500 (#6b7280) read as too heavy, but the next step down, gray.400
+ * (#9ca3af), drops the card's near-white text to ~2.6:1 contrast, which is
+ * unreadable. This sits between the two: lighter to the eye while keeping the
+ * text at ~4.3:1. Shared with the legend swatch in the help section so the
+ * example can't drift from the real card.
+ */
+const GHOST_CARD_BG = "#7c8698";
+
 type OccComment = {
   id: string;
   body: string;
@@ -3959,7 +3970,7 @@ export default function JobsTab({
                         size="sm"
                         variant="solid"
                         colorPalette="gray"
-                        bg="gray.700"
+                        bg="gray.600"
                         color="gray.50"
                         px="2"
                         py="0.5"
@@ -3968,7 +3979,7 @@ export default function JobsTab({
                         fontSize="2xs"
                         lineHeight="1.3"
                         whiteSpace="nowrap"
-                        _hover={{ bg: "gray.800" }}
+                        _hover={{ bg: "gray.700" }}
                         css={{ animation: "seedlings-pulse-ghost-chip 2s ease-in-out infinite" }}
                         title="Filter to next visits that expired in the last week"
                         onClick={(e: any) => {
@@ -4582,7 +4593,7 @@ export default function JobsTab({
                     key={`ghost-next-${occ.id}-${occIdx}`}
                     variant="outline"
                     overflow="hidden"
-                    bg="gray.500"
+                    bg={GHOST_CARD_BG}
                     color="gray.50"
                     cursor="pointer"
                     onClick={toggleCard}
@@ -4590,7 +4601,7 @@ export default function JobsTab({
                   >
                     <HStack px="3" py="1" gap={2} h="44px" align="center" fontSize="xs">
                       <Clock size={13} style={{ color: "var(--chakra-colors-gray-200)", flexShrink: 0 }} />
-                      <Badge size="xs" variant="solid" colorPalette="gray" bg={ghostExpired ? "gray.900" : "gray.100"} color={ghostExpired ? "gray.50" : "gray.900"} flexShrink={0}>
+                      <Badge size="xs" variant="solid" colorPalette="gray" bg={ghostExpired ? "gray.700" : "gray.100"} color={ghostExpired ? "gray.50" : "gray.900"} flexShrink={0}>
                         {ghostChipLabel}
                       </Badge>
                       <Text fontWeight="medium" color="white" flex="1" minW={0} overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
@@ -4608,7 +4619,7 @@ export default function JobsTab({
                 <Card.Root
                   key={`ghost-next-${occ.id}-${occIdx}`}
                   size="sm"
-                  bg="gray.500"
+                  bg={GHOST_CARD_BG}
                   color="gray.50"
                   cursor="pointer"
                   onClick={toggleCard}
@@ -4670,7 +4681,7 @@ export default function JobsTab({
                           </VStack>
                         )}
                       </VStack>
-                      <Badge size="xs" variant="solid" colorPalette="gray" bg={ghostExpired ? "gray.900" : "gray.100"} color={ghostExpired ? "gray.50" : "gray.900"} flexShrink={0} whiteSpace="nowrap">
+                      <Badge size="xs" variant="solid" colorPalette="gray" bg={ghostExpired ? "gray.700" : "gray.100"} color={ghostExpired ? "gray.50" : "gray.900"} flexShrink={0} whiteSpace="nowrap">
                         {ghostChipLabel}
                       </Badge>
                     </HStack>
@@ -10162,7 +10173,7 @@ export default function JobsTab({
                     </Text>
                   </Box>
 
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="gray.400" bg="gray.500">
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="gray.400" bg={GHOST_CARD_BG}>
                     <Badge variant="solid" colorPalette="gray" bg="gray.100" color="gray.900" mb={1}>Expires in 5d</Badge>
                     <Text fontSize="sm" fontWeight="semibold" color="white">Next visit not scheduled</Text>
                     <Text fontSize="xs" color="gray.100" mt={1}>

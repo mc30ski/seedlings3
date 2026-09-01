@@ -139,6 +139,10 @@ export default function OutstandingRequestsSection({ onReady }: {
      *  "is any of this overdue" (whether the section pulses). An
      *  invoice sent this morning is outstanding but not a problem. */
     staleCount: number;
+    /** Sum of every outstanding invoice, so the section header can say what
+     *  is actually expected to land rather than only how many rows there
+     *  are — five $40 mows and one $900 mulch job are the same count. */
+    totalAmount: number;
   }) => void;
 } = {}) {
   const { labelFor: methodLabel } = usePaymentMethodLabels();
@@ -195,6 +199,7 @@ export default function OutstandingRequestsSection({ onReady }: {
       loading,
       count: rows.length,
       staleCount: rows.filter((r) => r.stale).length,
+      totalAmount: Math.round(rows.reduce((sum, r) => sum + (r.amount ?? 0), 0) * 100) / 100,
     });
   }, [onReady, load, loading, rows]);
 

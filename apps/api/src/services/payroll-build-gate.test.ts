@@ -28,6 +28,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { describe, it, expect } from "vitest";
+import { netForJob } from "./reconcileWorkers";
 import { readFileSync } from "fs";
 import { join, resolve } from "path";
 import {
@@ -369,5 +370,45 @@ describe("payroll build gate — decoupled from the financial system", () => {
       "utf8",
     );
     expect(exportsSrc).not.toMatch(/payrollEntry|payrollPeriod|PayrollEntry|PayrollPeriod/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A made-whole worker must not be reported at twice their pay.
+//
+// `gross`/`fee` come from the PROMISED snapshot; `topUp` is the make-whole
+// stamped on the PaymentSplit when the payment resolves. On a written-off job
+// those are two different bases — `gross - fee` ALREADY equals the promised
+// net — so the old `gross - fee + topUp` form counted the same money twice.
+//
+// Shipped: David Wanderski reported at $35.00 on a job he was paid $17.50 for,
+// across 12 production rows. Identical two-basis error to the one the payment
+// card had, found only because someone asked how tips land across payroll
+// cycles.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("netForJob — the make-whole double-count", () => {
+  it("uses the split as the source of truth once a payment exists", () => {
+    // $50 job, client never paid, employee made whole at their promised net.
+    // Snapshot: gross 25, fee 7.50 -> net 17.50. Top-up: 17.50. Paid: 17.50.
+    expect(netForJob({ amount: 17.5 }, 25, 7.5, 17.5)).toBe(17.5);
+    // The form that shipped, kept here so the regression is legible:
+    expect(25 - 7.5 + 17.5).toBe(35);
+  });
+
+  it("still reports the estimate before any payment exists", () => {
+    // No split yet — gross/fee are the only basis there is, and a pre-payment
+    // estimate must not collapse to $0.
+    expect(netForJob(undefined, 25, 7.5, 0)).toBe(17.5);
+  });
+
+  it("follows the split even when it diverges from the snapshot", () => {
+    // Underpaid contractor: capped at what actually arrived, not the promise.
+    expect(netForJob({ amount: 12 }, 25, 7.5, 0)).toBe(12);
+    // And upward, when an adjustment paid more than the stale snapshot said.
+    expect(netForJob({ amount: 22 }, 25, 7.5, 0)).toBe(22);
+  });
+
+  it("is exact to the cent", () => {
+    expect(netForJob(undefined, 52.5, 18.375, 0)).toBe(34.13);
   });
 });

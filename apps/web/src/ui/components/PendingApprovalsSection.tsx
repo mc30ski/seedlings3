@@ -144,7 +144,14 @@ export default function PendingApprovalsSection({ onReady }: {
    * frames it. The component renders CONTENT ONLY — Dashboard (or
    * TasksPage's card) supplies the title bar, stripe, refresh and dim.
    */
-  onReady?: (api: { refresh: () => void; loading: boolean; count: number }) => void;
+  onReady?: (api: {
+    refresh: () => void;
+    loading: boolean;
+    count: number;
+    /** Sum of what's sitting in the queue. The count alone doesn't say
+     *  whether five rows are $200 or $2,000 of money awaiting a decision. */
+    totalAmount: number;
+  }) => void;
 } = {}) {
   const [rows, setRows] = useState<PendingRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -180,7 +187,12 @@ export default function PendingApprovalsSection({ onReady }: {
   // TasksPage). Kept in an effect rather than called during render so a
   // parent setState never fires mid-render.
   useEffect(() => {
-    onReady?.({ refresh: () => void load(), loading, count: rows.length });
+    onReady?.({
+      refresh: () => void load(),
+      loading,
+      count: rows.length,
+      totalAmount: Math.round(rows.reduce((sum, r) => sum + (r.amountPaid ?? 0), 0) * 100) / 100,
+    });
   }, [onReady, load, loading, rows]);
 
   useEffect(() => {
