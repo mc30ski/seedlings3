@@ -3972,9 +3972,19 @@ chip: false, bucket: t.bucket }));
             style={{ transform: "translateY(1px)" }}
           >
             <style>{`
+              /* Outward-only, matching every seedlings-pulse-* keyframe in
+                 globals.css — see the PULSE DIRECTION note there. Was
+                 0%,100%/50%, which grew the dot to 1.5x and shrank it back,
+                 so this one visibly throbbed in and out while the rest of
+                 the app radiated outward.
+
+                 The ring does the pulsing now; the dot itself stays a solid,
+                 fully-opaque status indicator rather than fading to 0.6 and
+                 changing size, which made a 10px dot hard to read. */
               @keyframes pulse-dot {
-                0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 0 0 rgba(234,179,8,0.4); }
-                50% { opacity: 0.6; transform: scale(1.5); box-shadow: 0 0 6px 3px rgba(234,179,8,0.25); }
+                0% { box-shadow: 0 0 0 0 rgba(234,179,8,0.55); }
+                70% { box-shadow: 0 0 0 7px rgba(234,179,8,0); }
+                100% { box-shadow: 0 0 0 0 rgba(234,179,8,0); }
               }
             `}</style>
             {/* Brand cluster (leaf icon + "Seedlings" text + online-status

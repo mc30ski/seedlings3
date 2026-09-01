@@ -288,7 +288,10 @@ export async function createGuide(
   input: { title: string; summary?: string | null; categoryKey: string; tags?: string[] },
 ) {
   assertAuthor(viewer);
-  const title = input.title.trim();
+  // Guard the type as well as emptiness: the body is passed through
+  // unvalidated (`createGuide(viewer, req.body ?? {})`), so a missing title
+  // would otherwise throw a TypeError and surface as a 500.
+  const title = typeof input.title === "string" ? input.title.trim() : "";
   if (!title) throw new ServiceError("BAD_REQUEST", "Title is required.", 400);
 
   const cats = await listCategories();
@@ -436,6 +439,80 @@ export async function saveDraft(
       digest: version.contentDigest,
     });
     return version;
+  });
+}
+
+/**
+ * Throw away an unsubmitted draft.
+ *
+ * Two shapes, because a draft means different things depending on whether
+ * the guide has ever been readable:
+ *
+ *   - The guide HAS other versions -> delete just the draft. Whatever was
+ *     published stays published; this is "cancel my edit".
+ *   - The draft is the ONLY version -> there is no guide without it, so the
+ *     guide goes too. Otherwise the operator is left with an empty shell
+ *     they can only remove by archiving it first.
+ *
+ * Accepts DRAFT and REJECTED, mirroring submitForApproval — both are the
+ * author's to act on, and a rejected draft is exactly the thing you'd want
+ * to throw away. The rejection itself stays on the record: it was audited
+ * as GUIDE.REJECTED when it happened.
+ *
+ * Not available once submitted — a PENDING_APPROVAL version is sitting in
+ * someone else's queue and is withdrawn by rejection, not deletion.
+ */
+export async function discardDraft(viewer: GuideViewer, versionId: string) {
+  assertAuthor(viewer);
+  const version = await prisma.guideVersion.findUnique({
+    where: { id: versionId },
+    include: { guide: { include: { versions: { select: { id: true } } } } },
+  });
+  if (!version) throw new ServiceError("NOT_FOUND", "Version not found.", 404);
+  if (version.status !== "DRAFT" && version.status !== "REJECTED") {
+    throw new ServiceError(
+      "BAD_STATE",
+      version.status === "PENDING_APPROVAL"
+        ? "This is awaiting approval — a Super has to reject it before it can be discarded."
+        : "Only an unsubmitted draft can be discarded.",
+      400,
+    );
+  }
+  const guide = version.guide;
+  const isOnlyVersion = guide.versions.length === 1;
+
+  return prisma.$transaction(async (tx) => {
+    // Snapshot BEFORE deleting — the audit row is the only remaining record.
+    await writeAudit(tx, AUDIT.GUIDE.DRAFT_DISCARDED, viewer.userId, {
+      guideId: guide.id,
+      versionId,
+      versionNumber: version.versionNumber,
+      guideDeleted: isOnlyVersion,
+      snapshot: {
+        title: guide.title,
+        slug: guide.slug,
+        changeNote: version.changeNote,
+        contentDigest: version.contentDigest,
+        contentMarkdown: version.contentMarkdown,
+      },
+    });
+    // Never leave the guide pointing at a row that is about to disappear.
+    if (guide.currentVersionId === versionId) {
+      // audit-allow: GUIDE.DRAFT_DISCARDED above snapshots the version and
+      // records whether the guide goes with it.
+      await tx.guide.update({ where: { id: guide.id }, data: { currentVersionId: null } });
+    }
+    // audit-allow: see above — part of the discard, snapshotted first.
+    await tx.guideVersion.delete({ where: { id: versionId } });
+    if (isOnlyVersion) {
+      // Assets live in the shared library and may be referenced elsewhere —
+      // detach rather than cascade-delete, same as purge().
+      // audit-allow: see above — part of the discard, snapshotted first.
+      await tx.guideAsset.updateMany({ where: { guideId: guide.id }, data: { guideId: null } });
+      // audit-allow: see above — part of the discard, snapshotted first.
+      await tx.guide.delete({ where: { id: guide.id } });
+    }
+    return { guideDeleted: isOnlyVersion };
   });
 }
 

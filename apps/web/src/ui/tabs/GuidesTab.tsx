@@ -51,6 +51,7 @@ import {
   unpublishGuide,
   setGuideArchived,
   purgeGuide,
+  discardDraft,
   fetchInboundLinks,
   statusLabel,
   type GuideCategory,
@@ -386,11 +387,20 @@ function NewGuideButton({
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
 
-  async function create() {
+  // Takes the title as an ARGUMENT rather than reading the `title` state.
+  //
+  // The dialog hands the typed value to onConfirm, which called setTitle()
+  // and then create() in the same tick. React state updates are async, so
+  // create() still saw the previous render's `title` — an empty string on the
+  // first use — and posted `title: ""`. The API rejected it with "Title is
+  // required", which read as a broken form: the field visibly had text in it.
+  async function create(rawTitle: string) {
+    const trimmed = rawTitle.trim();
+    if (!trimmed) return;
     setBusy(true);
     try {
       const g = await createGuide({
-        title: title.trim(),
+        title: trimmed,
         categoryKey: cats[0]?.key ?? "lawn-care",
       });
       setOpen(false);
@@ -418,8 +428,11 @@ function NewGuideButton({
         confirmLabel={busy ? "Creating…" : "Create draft"}
         confirmColorPalette="blue"
         onConfirm={(value?: string) => {
-          setTitle(value ?? "");
-          if ((value ?? "").trim()) void create();
+          const typed = value ?? "";
+          // Kept so the field repopulates if the dialog reopens after a
+          // failure; the create path deliberately does not read it.
+          setTitle(typed);
+          void create(typed);
         }}
         onCancel={() => setOpen(false)}
       />
@@ -506,6 +519,9 @@ function GuideDetailView({
   const versions = guide?.versions ?? [];
   const draft = versions.find((v) => v.status === "DRAFT" || v.status === "REJECTED") ?? null;
   const pending = versions.find((v) => v.status === "PENDING_APPROVAL") ?? null;
+  // Discarding the only version leaves nothing behind, so it takes the guide
+  // with it — the button and its confirmation both have to say so.
+  const isOnlyVersion = versions.length === 1;
   const live = guide?.currentVersion ?? null;
 
   function beginEdit() {
@@ -704,6 +720,38 @@ function GuideDetailView({
             }
             >
             Submit for approval
+            </Button>
+          )}
+          {/* Discard sits next to Continue draft because it's the other half
+              of the same decision: keep working on this, or throw it away.
+              Only for an UNSUBMITTED draft — once it's pending, it's in a
+              Super's queue and gets withdrawn by rejection, not deletion. */}
+          {showAdminExtras && draft && !pending && (
+            <Button
+            size="sm"
+            variant="outline"
+            colorPalette="red"
+            loading={busy}
+            onClick={() =>
+            setConfirmAction({
+            // The copy has to change with the consequence: discarding the
+            // only version takes the whole guide, and that's not obvious
+            // from a button labelled "Discard draft".
+            title: isOnlyVersion ? "Delete this guide?" : "Discard this draft?",
+            message: isOnlyVersion
+            ? "This draft is the only version, so the guide goes with it. Nothing has been published, so no one else has seen it. This can't be undone."
+            : "Your unsaved changes in this draft are thrown away. The published version stays exactly as it is.",
+            confirmLabel: isOnlyVersion ? "Delete guide" : "Discard draft",
+            confirmColorPalette: "red",
+            run: async () => {
+            const res = await discardDraft(draft.id);
+            if (res.guideDeleted) onBack();
+            },
+            done: isOnlyVersion ? "Guide deleted." : "Draft discarded.",
+            })
+            }
+            >
+            {isOnlyVersion ? "Delete guide" : "Discard draft"}
             </Button>
           )}
           {showSuperExtras && pending && (

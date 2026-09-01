@@ -469,3 +469,21 @@ export function etStartOfYear(): EtDateKey {
   const today = etToday();
   return `${today.slice(0, 4)}-01-01` as EtDateKey;
 }
+
+/**
+ * True when `at` is null/undefined, or older than `days` days from now.
+ *
+ * For cache-expiry checks. Written here rather than inline because
+ * `Date.now() - at.getTime() > days * 24 * 60 * 60 * 1000` is the
+ * hand-rolled day-arithmetic the date-handling gate exists to stop — the
+ * same shape as the `86_400_000` constant it forbids. A null `at` counts as
+ * stale so an un-populated cache always refreshes.
+ *
+ * Deliberately absolute elapsed time, not calendar days: a cache written at
+ * 11pm should not expire an hour later just because the ET date rolled.
+ */
+export function isStaleAfterDays(at: Date | null | undefined, days: number): boolean {
+  if (!at) return true;
+  const MS_PER_DAY = 24 * 60 * 60 * 1000; // date-handling-allow: the single definition of a day, used only here
+  return Date.now() - at.getTime() > days * MS_PER_DAY;
+}

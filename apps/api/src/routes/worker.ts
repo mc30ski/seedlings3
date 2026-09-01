@@ -4818,21 +4818,90 @@ export default async function workerRoutes(app: FastifyInstance) {
   });
 
   // List of approved workers (for co-worker selection)
-  // IP-based location fallback for weather
+  // ── Where the weather is FOR ───────────────────────────────────────────
+  //
+  // Was: browser geolocation, falling back to the caller's IP. Both answer
+  // "where is the person holding the phone", which is not the question — the
+  // jobs are wherever the business operates. Checking tomorrow's schedule
+  // from another town silently returned that town's forecast (observed
+  // resolving to Durham for a Chapel Hill business, 2026-09-01).
+  //
+  // BUSINESS_ADDRESS is now the default, with IP kept only for when it is
+  // unset or won't geocode.
+  //
+  // Geocoding notes: OpenWeather's /geo/1.0/direct is CITY-level, so a street
+  // address usually fails. The ZIP endpoint is exact and a US address almost
+  // always carries one, so try that first and fall back to parsing a
+  // "City, ST" pair out of the comma-separated parts.
+  let cachedBizLoc: { key: string; lat: number; lng: number } | null = null;
+
+  async function businessLatLng(): Promise<{ lat: number; lng: number } | null> {
+    const [addrSetting, keySetting] = await Promise.all([
+      prisma.setting.findUnique({ where: { key: "BUSINESS_ADDRESS" } }),
+      prisma.setting.findUnique({ where: { key: "WEATHER_API_KEY" } }),
+    ]);
+    const address = (addrSetting?.value ?? "").trim();
+    const apiKey = keySetting?.value || process.env.OPENWEATHER_API_KEY;
+    if (!address || !apiKey) return null;
+    // Keyed on the address itself, so editing the setting invalidates this
+    // without needing a cache-busting step anywhere.
+    if (cachedBizLoc?.key === address) return { lat: cachedBizLoc.lat, lng: cachedBizLoc.lng };
+
+    const urls: string[] = [];
+    const zip = address.match(/\b(\d{5})(?:-\d{4})?\b/)?.[1];
+    if (zip) urls.push(`https://api.openweathermap.org/geo/1.0/zip?zip=${zip},US&appid=${apiKey}`);
+    // "225 Stony Branch Trl., Chapel Hill, NC. 27516" -> "Chapel Hill,NC,US"
+    const parts = address.split(",").map((p) => p.trim()).filter(Boolean);
+    const stateIdx = parts.findIndex((p) => /^[A-Za-z]{2}\b\.?/.test(p) && p.length <= 12);
+    if (stateIdx > 0) {
+      const city = parts[stateIdx - 1];
+      const st = parts[stateIdx].slice(0, 2).toUpperCase();
+      if (city) urls.push(`https://api.openweathermap.org/geo/1.0/direct?q=${encodeURIComponent(city)},${st},US&limit=1&appid=${apiKey}`);
+    }
+
+    for (const url of urls) {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) continue;
+        const body = await res.json();
+        // /zip returns an object, /direct returns an array.
+        const hit = Array.isArray(body) ? body[0] : body;
+        const lat = Number(hit?.lat);
+        const lng = Number(hit?.lon);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) {
+          cachedBizLoc = { key: address, lat, lng };
+          return { lat, lng };
+        }
+      } catch {
+        // try the next strategy
+      }
+    }
+    return null;
+  }
+
   app.get("/weather/location", workerGuard, async (req: any) => {
+    const biz = await businessLatLng();
+    if (biz) return { ...biz, source: "business" as const };
     try {
       // Use ip-api.com (free, no key needed, 45 req/min)
       const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip;
       const res = await fetch(`http://ip-api.com/json/${ip === "127.0.0.1" || ip === "::1" ? "" : ip}?fields=lat,lon`);
       const data = await res.json();
-      if (data.lat && data.lon) return { lat: data.lat, lng: data.lon };
+      if (data.lat && data.lon) return { lat: data.lat, lng: data.lon, source: "ip" as const };
       throw new Error("No location data");
     } catch {
       throw app.httpErrors.serviceUnavailable("Could not determine location");
     }
   });
 
-  // Weather proxy — uses OpenWeatherMap forecast, returns 3 days
+  // Weather proxy — OpenWeatherMap's free /data/2.5/forecast endpoint.
+  //
+  // HORIZON IS A HARD LIMIT. That endpoint returns 40 entries at 3-hour
+  // steps = 5 days, so 5 days is the ceiling no matter what we ask for. A
+  // 7-day forecast needs One Call API 3.0, which is a separate subscription
+  // (1,000 calls/day free but billing details required). Until someone
+  // decides to sign up for that, this returns everything the free window
+  // actually covers rather than an arbitrary 3 days.
   app.get("/weather", workerGuard, async (req: any) => {
     const { lat, lng } = (req.query || {}) as { lat?: string; lng?: string };
     if (!lat || !lng) throw app.httpErrors.badRequest("lat and lng are required");
@@ -4883,7 +4952,13 @@ export default async function workerRoutes(app: FastifyInstance) {
       // Get next days (skip today since we built it from current weather)
       const futureDays = Object.entries(days)
         .filter(([date]) => date > todayKey)
-        .slice(0, 3)
+        // The last day in the window is usually a stub of one or two 3-hour
+        // steps. Its min/max across those would be presented as a whole
+        // day's high and low, which is worse than showing nothing — a
+        // single 3am reading becomes "tomorrow's high". Require enough
+        // coverage for the numbers to mean something.
+        .filter(([, entries]) => entries.length >= 3)
+        .slice(0, 6)
         .map(([date, entries]) => {
           const midday = entries.find((e) => e.dt_txt?.includes("12:00")) ?? entries[Math.floor(entries.length / 2)];
           const temps = entries.map((e) => e.main?.temp ?? 0);

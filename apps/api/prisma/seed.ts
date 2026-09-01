@@ -465,68 +465,68 @@ async function seedDatabase() {
   console.log("  Creating properties...");
 
   const harringtonMain = await prisma.property.create({
-    data: { clientId: vipClient.id, displayName: "Main Residence", street1: "1200 Oak Ridge Dr", city: "Austin", state: "TX", postalCode: "78701", country: "US", kind: "SINGLE", pointOfContactId: harringtonPrimary.id, lotSize: 12000, lotSizeUnit: "sqft", accessNotes: "Enter through side gate" },
+    data: { clientId: vipClient.id, displayName: "Main Residence", street1: "225 Stony Branch Trl", city: "Chapel Hill", state: "NC", postalCode: "27516", country: "US", kind: "SINGLE", pointOfContactId: harringtonPrimary.id, lotSize: 12000, lotSizeUnit: "sqft", accessNotes: "Enter through side gate" },
   });
   const harringtonLake = await prisma.property.create({
-    data: { clientId: vipClient.id, displayName: "Lake House", street1: "450 Lakeview Ln", city: "Lakeway", state: "TX", postalCode: "78734", country: "US", kind: "SINGLE", pointOfContactId: harringtonSpouse.id, lotSize: 8000, lotSizeUnit: "sqft", accessNotes: "Key under mat for backyard access" },
+    data: { clientId: vipClient.id, displayName: "Lake House", street1: "200 Plaza Dr", city: "Chapel Hill", state: "NC", postalCode: "27517", country: "US", kind: "SINGLE", pointOfContactId: harringtonSpouse.id, lotSize: 8000, lotSizeUnit: "sqft", accessNotes: "Key under mat for backyard access" },
   });
   const martinezHome = await prisma.property.create({
-    data: { clientId: martinezFamily.id, displayName: "Home", street1: "3322 Elm St", city: "Austin", state: "TX", postalCode: "78702", country: "US", kind: "SINGLE", pointOfContactId: martinezPrimary.id, lotSize: 5500, lotSizeUnit: "sqft" },
+    data: { clientId: martinezFamily.id, displayName: "Home", street1: "301 Watts St", city: "Durham", state: "NC", postalCode: "27701", country: "US", kind: "SINGLE", pointOfContactId: martinezPrimary.id, lotSize: 5500, lotSizeUnit: "sqft" },
   });
   // Two extra Martinez properties dedicated to the "awaiting payment"
   // placeholder card on the client My Properties tab (see /client/upcoming
   // → awaitingPayment). Kept OFF the main Home pipeline so existing
   // Martinez-based tests continue to work.
   const martinezRental = await prisma.property.create({
-    data: { clientId: martinezFamily.id, displayName: "Rental House", street1: "4488 Cedar Ln", city: "Austin", state: "TX", postalCode: "78702", country: "US", kind: "SINGLE", pointOfContactId: martinezPrimary.id, lotSize: 4200, lotSizeUnit: "sqft" },
+    data: { clientId: martinezFamily.id, displayName: "Rental House", street1: "311 Watts St", city: "Durham", state: "NC", postalCode: "27701", country: "US", kind: "SINGLE", pointOfContactId: martinezPrimary.id, lotSize: 4200, lotSizeUnit: "sqft" },
   });
   const martinezCabin = await prisma.property.create({
-    data: { clientId: martinezFamily.id, displayName: "Weekend Cabin", street1: "77 Ridge Loop", city: "Wimberley", state: "TX", postalCode: "78676", country: "US", kind: "SINGLE", pointOfContactId: martinezPrimary.id, lotSize: 12000, lotSizeUnit: "sqft" },
+    data: { clientId: martinezFamily.id, displayName: "Weekend Cabin", street1: "129 Sanford Rd", city: "Pittsboro", state: "NC", postalCode: "27312", country: "US", kind: "SINGLE", pointOfContactId: martinezPrimary.id, lotSize: 12000, lotSizeUnit: "sqft" },
   });
   const willowbrookCommon = await prisma.property.create({
-    data: { clientId: willowbrookHoa.id, displayName: "Common Areas", street1: "100 Willowbrook Blvd", city: "Round Rock", state: "TX", postalCode: "78664", country: "US", kind: "AGGREGATE_SITE", pointOfContactId: willowbrookManager.id, lotSize: 5, lotSizeUnit: "acres", accessNotes: "HOA maintenance shed has supplies" },
+    data: { clientId: willowbrookHoa.id, displayName: "Common Areas", street1: "101 City Hall Plaza", city: "Durham", state: "NC", postalCode: "27701", country: "US", kind: "AGGREGATE_SITE", pointOfContactId: willowbrookManager.id, lotSize: 5, lotSizeUnit: "acres", accessNotes: "HOA maintenance shed has supplies" },
   });
   const willowbrookPool = await prisma.property.create({
-    data: { clientId: willowbrookHoa.id, displayName: "Pool Area Grounds", street1: "110 Willowbrook Blvd", city: "Round Rock", state: "TX", postalCode: "78664", country: "US", kind: "SINGLE", pointOfContactId: willowbrookManager.id, lotSize: 15000, lotSizeUnit: "sqft" },
+    data: { clientId: willowbrookHoa.id, displayName: "Pool Area Grounds", street1: "315 Holland St", city: "Durham", state: "NC", postalCode: "27701", country: "US", kind: "SINGLE", pointOfContactId: willowbrookManager.id, lotSize: 15000, lotSizeUnit: "sqft" },
   });
   const willowbrookEntrance = await prisma.property.create({
-    data: { clientId: willowbrookHoa.id, displayName: "Entrance Median", street1: "1 Willowbrook Dr", city: "Round Rock", state: "TX", postalCode: "78664", country: "US", kind: "SINGLE", pointOfContactId: willowbrookOps.id, lotSize: 3000, lotSizeUnit: "sqft", accessNotes: "High visibility area" },
+    data: { clientId: willowbrookHoa.id, displayName: "Entrance Median", street1: "1107 Minerva Ave", city: "Durham", state: "NC", postalCode: "27701", country: "US", kind: "SINGLE", pointOfContactId: willowbrookOps.id, lotSize: 3000, lotSizeUnit: "sqft", accessNotes: "High visibility area" },
   });
   const chenHome = await prisma.property.create({
-    data: { clientId: chenResidence.id, displayName: "Home", street1: "7801 Maple Ave", city: "Cedar Park", state: "TX", postalCode: "78613", country: "US", kind: "SINGLE", pointOfContactId: chenPrimary.id, lotSize: 4000, lotSizeUnit: "sqft" },
+    data: { clientId: chenResidence.id, displayName: "Home", street1: "307 Watts St", city: "Durham", state: "NC", postalCode: "27701", country: "US", kind: "SINGLE", pointOfContactId: chenPrimary.id, lotSize: 4000, lotSizeUnit: "sqft" },
   });
   const thompsonMain = await prisma.property.create({
-    data: { clientId: vipThompson.id, displayName: "Main Estate", street1: "2500 Westlake Dr", city: "Austin", state: "TX", postalCode: "78746", country: "US", kind: "SINGLE", pointOfContactId: thompsonPrimary.id, lotSize: 18000, lotSizeUnit: "sqft", accessNotes: "Ring bell at front gate, code 7739" },
+    data: { clientId: vipThompson.id, displayName: "Main Estate", street1: "100 Library Dr", city: "Chapel Hill", state: "NC", postalCode: "27514", country: "US", kind: "SINGLE", pointOfContactId: thompsonPrimary.id, lotSize: 18000, lotSizeUnit: "sqft", accessNotes: "Ring bell at front gate, code 7739" },
   });
   const thompsonGuest = await prisma.property.create({
-    data: { clientId: vipThompson.id, displayName: "Guest House", street1: "2502 Westlake Dr", city: "Austin", state: "TX", postalCode: "78746", country: "US", kind: "SINGLE", pointOfContactId: thompsonSpouse.id, lotSize: 6000, lotSizeUnit: "sqft" },
+    data: { clientId: vipThompson.id, displayName: "Guest House", street1: "250 E Franklin St", city: "Chapel Hill", state: "NC", postalCode: "27514", country: "US", kind: "SINGLE", pointOfContactId: thompsonSpouse.id, lotSize: 6000, lotSizeUnit: "sqft" },
   });
   const obrienHome = await prisma.property.create({
-    data: { clientId: obrienFamily.id, displayName: "Home", street1: "914 Pecan St", city: "Pflugerville", state: "TX", postalCode: "78660", country: "US", kind: "SINGLE", pointOfContactId: obrienPrimary.id, lotSize: 7000, lotSizeUnit: "sqft", accessNotes: "Large dog in backyard - latch gate first" },
+    data: { clientId: obrienFamily.id, displayName: "Home", street1: "208 N Buchanan Blvd", city: "Durham", state: "NC", postalCode: "27701", country: "US", kind: "SINGLE", pointOfContactId: obrienPrimary.id, lotSize: 7000, lotSizeUnit: "sqft", accessNotes: "Large dog in backyard - latch gate first" },
   });
   const sunriseCommon = await prisma.property.create({
-    data: { clientId: sunriseHoa.id, displayName: "Common Grounds", street1: "500 Sunrise Blvd", city: "Georgetown", state: "TX", postalCode: "78626", country: "US", kind: "AGGREGATE_SITE", pointOfContactId: sunriseManager.id, lotSize: 8, lotSizeUnit: "acres", accessNotes: "Storage unit behind clubhouse" },
+    data: { clientId: sunriseHoa.id, displayName: "Common Grounds", street1: "137 W Margaret Ln", city: "Hillsborough", state: "NC", postalCode: "27278", country: "US", kind: "AGGREGATE_SITE", pointOfContactId: sunriseManager.id, lotSize: 8, lotSizeUnit: "acres", accessNotes: "Storage unit behind clubhouse" },
   });
   const sunrisePlayground = await prisma.property.create({
-    data: { clientId: sunriseHoa.id, displayName: "Playground Park", street1: "520 Sunrise Blvd", city: "Georgetown", state: "TX", postalCode: "78626", country: "US", kind: "SINGLE", pointOfContactId: sunriseManager.id, lotSize: 10000, lotSizeUnit: "sqft" },
+    data: { clientId: sunriseHoa.id, displayName: "Playground Park", street1: "49 W Salisbury St", city: "Pittsboro", state: "NC", postalCode: "27312", country: "US", kind: "SINGLE", pointOfContactId: sunriseManager.id, lotSize: 10000, lotSizeUnit: "sqft" },
   });
   const patelHome = await prisma.property.create({
-    data: { clientId: patelResidence.id, displayName: "Home", street1: "1105 Bluebonnet Ln", city: "Austin", state: "TX", postalCode: "78704", country: "US", kind: "SINGLE", pointOfContactId: patelPrimary.id, lotSize: 3500, lotSizeUnit: "sqft" },
+    data: { clientId: patelResidence.id, displayName: "Home", street1: "20 Sanford Rd", city: "Pittsboro", state: "NC", postalCode: "27312", country: "US", kind: "SINGLE", pointOfContactId: patelPrimary.id, lotSize: 3500, lotSizeUnit: "sqft" },
   });
   const riverBendCampus = await prisma.property.create({
-    data: { clientId: riverBend.id, displayName: "Office Campus", street1: "8000 River Bend Dr", city: "Austin", state: "TX", postalCode: "78730", country: "US", kind: "AGGREGATE_SITE", pointOfContactId: riverBendManager.id, lotSize: 3, lotSizeUnit: "acres", accessNotes: "After-hours access via loading dock" },
+    data: { clientId: riverBend.id, displayName: "Office Campus", street1: "405 Martin Luther King Jr Blvd", city: "Chapel Hill", state: "NC", postalCode: "27514", country: "US", kind: "AGGREGATE_SITE", pointOfContactId: riverBendManager.id, lotSize: 3, lotSizeUnit: "acres", accessNotes: "After-hours access via loading dock" },
   });
   const riverBendFront = await prisma.property.create({
-    data: { clientId: riverBend.id, displayName: "Front Entrance & Signage", street1: "8000 River Bend Dr", city: "Austin", state: "TX", postalCode: "78730", country: "US", kind: "SINGLE", pointOfContactId: riverBendManager.id, lotSize: 5000, lotSizeUnit: "sqft", accessNotes: "Keep flower beds tidy - client-facing" },
+    data: { clientId: riverBend.id, displayName: "Front Entrance & Signage", street1: "116 N Buchanan Blvd", city: "Durham", state: "NC", postalCode: "27701", country: "US", kind: "SINGLE", pointOfContactId: riverBendManager.id, lotSize: 5000, lotSizeUnit: "sqft", accessNotes: "Keep flower beds tidy - client-facing" },
   });
   const kimHome = await prisma.property.create({
-    data: { clientId: kimResidence.id, displayName: "Home", street1: "2211 Congress Ave", city: "Austin", state: "TX", postalCode: "78701", country: "US", kind: "SINGLE", pointOfContactId: kimPrimary.id, lotSize: 4500, lotSizeUnit: "sqft" },
+    data: { clientId: kimResidence.id, displayName: "Home", street1: "301 W Main St", city: "Carrboro", state: "NC", postalCode: "27510", country: "US", kind: "SINGLE", pointOfContactId: kimPrimary.id, lotSize: 4500, lotSizeUnit: "sqft" },
   });
   const garciaHome = await prisma.property.create({
-    data: { clientId: garciaFamily.id, displayName: "Home", street1: "660 Mockingbird Ln", city: "San Marcos", state: "TX", postalCode: "78666", country: "US", kind: "SINGLE", pointOfContactId: garciaPrimary.id, lotSize: 6000, lotSizeUnit: "sqft" },
+    data: { clientId: garciaFamily.id, displayName: "Home", street1: "12 East St", city: "Pittsboro", state: "NC", postalCode: "27312", country: "US", kind: "SINGLE", pointOfContactId: garciaPrimary.id, lotSize: 6000, lotSizeUnit: "sqft" },
   });
   const churchGrounds = await prisma.property.create({
-    data: { clientId: lakesideChurch.id, displayName: "Church Grounds", street1: "3300 Lake Austin Blvd", city: "Austin", state: "TX", postalCode: "78703", country: "US", kind: "AGGREGATE_SITE", pointOfContactId: churchPrimary.id, lotSize: 2, lotSizeUnit: "acres", accessNotes: "Avoid mowing during Sunday services (8am-1pm)" },
+    data: { clientId: lakesideChurch.id, displayName: "Church Grounds", street1: "12 East St", city: "Pittsboro", state: "NC", postalCode: "27312", country: "US", kind: "AGGREGATE_SITE", pointOfContactId: churchPrimary.id, lotSize: 2, lotSizeUnit: "acres", accessNotes: "Avoid mowing during Sunday services (8am-1pm)" },
   });
 
   // ── Equipment (18) ────────────────────────────────────────────────────────
@@ -3350,7 +3350,7 @@ async function seedDatabase() {
 
   // 2. Duplicate property address (matches "914 Pecan St" — O'Brien Home)
   await prisma.property.create({
-    data: { clientId: obrienFamily.id, displayName: "O'Brien Backyard", street1: "914 Pecan St", city: "Pflugerville", state: "TX", postalCode: "78660", country: "US", kind: "SINGLE" },
+    data: { clientId: obrienFamily.id, displayName: "O'Brien Backyard", street1: "208 N Buchanan Blvd", city: "Durham", state: "NC", postalCode: "27701", country: "US", kind: "SINGLE" },
   });
 
   // 3. Duplicate active job (same property+kind as obrienMow)
@@ -5846,7 +5846,11 @@ async function seedPaymentsBase() {
 
   console.log("    Properties...");
   const adamsProp = await prisma.property.create({
-    data: { clientId: adams.id, displayName: "Home", street1: "100 Adams Lane", city: "Test City", state: "TX", postalCode: "00001", country: "US", kind: "SINGLE", pointOfContactId: adamsContact.id },
+    // The five "Test City" clients exist to exercise alphabetical ordering,
+  // not geography. Deliberately left OUT OF STATE so they also cover the
+  // parcel lookup's graceful-degradation path — a property the service
+  // has no coverage for should show no icon rather than a broken dialog.
+  data: { clientId: adams.id, displayName: "Home", street1: "100 Adams Lane", city: "Test City", state: "TX", postalCode: "00001", country: "US", kind: "SINGLE", pointOfContactId: adamsContact.id },
   });
   const banksProp = await prisma.property.create({
     data: { clientId: banks.id, displayName: "Home", street1: "200 Banks Way", city: "Test City", state: "TX", postalCode: "00002", country: "US", kind: "SINGLE", pointOfContactId: banksContact.id },

@@ -22,6 +22,7 @@ import {
   parseUsDateToEtDateKey,
   parseUsDateRangeToEtDateKeys,
   type EtDateKey,
+  isStaleAfterDays,
 } from "./dates";
 
 describe("etFormatDate", () => {
@@ -359,5 +360,31 @@ describe("parseUsDateRangeToEtDateKeys", () => {
     expect(() => parseUsDateRangeToEtDateKeys("08/10/2026 - ")).toThrow();
     expect(() => parseUsDateRangeToEtDateKeys("")).toThrow();
     expect(() => parseUsDateRangeToEtDateKeys("08/10/2026 - 08/16/2026 - 08/20/2026")).toThrow();
+  });
+});
+
+describe("isStaleAfterDays", () => {
+  const daysAgo = (n: number) => new Date(Date.now() - n * 24 * 60 * 60 * 1000);
+
+  it("treats a missing timestamp as stale so an empty cache always refreshes", () => {
+    expect(isStaleAfterDays(null, 365)).toBe(true);
+    expect(isStaleAfterDays(undefined, 365)).toBe(true);
+  });
+
+  it("is fresh inside the window and stale outside it", () => {
+    expect(isStaleAfterDays(daysAgo(364), 365)).toBe(false);
+    expect(isStaleAfterDays(daysAgo(366), 365)).toBe(true);
+  });
+
+  it("measures elapsed time, not calendar days", () => {
+    // A cache written 23 hours ago is NOT a day old, even if the ET date
+    // rolled over in between — the whole point of using elapsed ms.
+    const t = new Date(Date.now() - 23 * 60 * 60 * 1000);
+    expect(isStaleAfterDays(t, 1)).toBe(false);
+  });
+
+  it("handles a zero-day window as always stale", () => {
+    expect(isStaleAfterDays(daysAgo(0), 0)).toBe(false); // exactly now
+    expect(isStaleAfterDays(new Date(Date.now() - 1000), 0)).toBe(true);
   });
 });
