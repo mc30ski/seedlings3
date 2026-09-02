@@ -204,7 +204,10 @@ export default function PreviewRoutesTab({ scope }: Props) {
   const [lookAhead, setLookAhead] = usePersistedState("preview_lookAhead", 5);
 
   // Available hours in the day — defaults from profile
-  const [availableHours, setAvailableHours] = usePersistedState("preview_availableHours", 0);
+  // -1 = not yet seeded from the profile. 0 = "No limit", a deliberate choice
+  // the worker can make and keep — distinct from "we don't know yet", which is
+  // why this can't just be 0-means-unset. See the seeding effect below.
+  const [availableHours, setAvailableHours] = usePersistedState("preview_availableHours", -1);
   const [profileHoursLoaded, setProfileHoursLoaded] = useState(false);
 
   // Buffer time between jobs (percentage)
@@ -257,9 +260,12 @@ export default function PreviewRoutesTab({ scope }: Props) {
         setHomeBase(activeAddr);
         setActiveHomeBase(activeAddr);
         setHomeBaseLoaded(true);
-        // Only set from profile if user hasn't manually set a value
-        if (!availableHours || availableHours === 0) {
-          setAvailableHours(u?.availableHoursPerDay ?? 4);
+        // Seed from the profile once. If the worker has never set an hours
+        // preference we leave it at "No limit" rather than inventing 4 — a
+        // fabricated cap silently binned a worker's 22-job Saturday into
+        // several days. Don't override what a worker thinks they can do.
+        if (availableHours < 0) {
+          setAvailableHours(u?.availableHoursPerDay ?? 0);
         }
         setProfileHoursLoaded(true);
       })
@@ -323,7 +329,9 @@ export default function PreviewRoutesTab({ scope }: Props) {
       }
       const userParam = userId ? `&userId=${userId}` : "";
       const params = `targetDate=${targetDate}&bufferPercent=${bufferPercent}&mode=${mode}&routingProvider=${routingProvider}` +
-        (mode === "suggest" ? `&lookAhead=${lookAhead}&availableHours=${availableHours}` : "") +
+        (mode === "suggest"
+          ? `&lookAhead=${lookAhead}` + (availableHours > 0 ? `&availableHours=${availableHours}` : "")
+          : "") +
         userParam + startParam;
       const res = await apiGet<Response>(`/api/preview/route-suggestions?${params}`);
       const now = new Date().toISOString();
@@ -561,7 +569,7 @@ export default function PreviewRoutesTab({ scope }: Props) {
               <Text as="span">Advanced settings</Text>
               <Text as="span" fontSize="xs" color="fg.muted">
                 · {mode === "claimed" ? "Claimed only" : "Suggest jobs"} · {bufferPercent}% buffer
-                {mode === "suggest" ? ` · ${availableHours}h · ±${Math.min(lookAhead, maxMoveDays)}d` : ""}
+                {mode === "suggest" ? `${availableHours > 0 ? ` · ${availableHours}h` : ""} · ±${Math.min(lookAhead, maxMoveDays)}d` : ""}
               </Text>
             </HStack>
           }
@@ -695,18 +703,20 @@ export default function PreviewRoutesTab({ scope }: Props) {
                 <Box flex="1" minW="140px">
                   <HStack justify="space-between" mb={1}>
                     <Text fontSize="xs" fontWeight="medium">Available hours</Text>
-                    <Text fontSize="xs" color="fg.muted" fontWeight="medium">{availableHours}h</Text>
+                    <Text fontSize="xs" color="fg.muted" fontWeight="medium">
+                      {availableHours > 0 ? `${availableHours}h` : "No limit"}
+                    </Text>
                   </HStack>
                   <input
                     type="range"
-                    min={2}
+                    min={0}
                     max={12}
-                    value={availableHours}
+                    value={Math.max(availableHours, 0)}
                     onChange={(e) => setAvailableHours(Number(e.target.value))}
                     style={{ width: "100%", accentColor: "var(--chakra-colors-blue-500)" }}
                   />
                   <HStack justify="space-between" fontSize="xs" color="fg.muted">
-                    <Text>2h</Text>
+                    <Text>No limit</Text>
                     <Text>12h</Text>
                   </HStack>
                 </Box>
@@ -819,8 +829,11 @@ export default function PreviewRoutesTab({ scope }: Props) {
                       {availableHours > 0 && totalMins > availableHours * 60 * 1.05 && (
                         <>
                           <Text />
+                          {/* A heads-up, not a trim. Every job is still in the
+                              route — the worker decides whether the day is
+                              too long, not us. */}
                           <Text fontSize="xs" color="red.500" fontWeight="medium">
-                            ⚠ Exceeds {availableHours}h available — over by ~{formatDuration(Math.round(totalMins - availableHours * 60))}
+                            ⚠ Over your {availableHours}h setting by ~{formatDuration(Math.round(totalMins - availableHours * 60))} — all jobs still routed
                           </Text>
                         </>
                       )}

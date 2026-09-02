@@ -29,6 +29,7 @@ import {
   Textarea,
   VStack,
   createListCollection,
+  Portal,
 } from "@chakra-ui/react";
 import { AlertTriangle, ChevronDown, ChevronRight, Plus, Search } from "lucide-react";
 import { Dashboard } from "@/src/ui/components/Dashboard";
@@ -45,6 +46,7 @@ import {
   fetchMediaLimits,
   createGuide,
   saveDraft,
+  updateGuideMeta,
   submitForApproval,
   approveVersion,
   rejectVersion,
@@ -175,6 +177,7 @@ export default function GuidesTab({
         showSuperExtras={showSuperExtras}
         limits={limits}
         catLabel={catLabel}
+        cats={cats}
       />
     );
   }
@@ -450,6 +453,7 @@ function GuideDetailView({
   showSuperExtras,
   limits,
   catLabel,
+  cats,
 }: {
   idOrSlug: string;
   onBack: () => void;
@@ -458,12 +462,21 @@ function GuideDetailView({
   showSuperExtras: boolean;
   limits: MediaLimits | null;
   catLabel: (key: string) => string;
+  cats: GuideCategory[];
 }) {
   const [guide, setGuide] = useState<GuideDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [body, setBody] = useState("");
   const [note, setNote] = useState("");
+  // Title / summary / category live on the GUIDE, not on a version, so they
+  // save immediately and don't go through approval — unlike the body. Kept in
+  // their own state so an unsaved edit here can't be confused with draft
+  // content.
+  const [metaTitle, setMetaTitle] = useState("");
+  const [metaSummary, setMetaSummary] = useState("");
+  const [metaCategory, setMetaCategory] = useState("");
+  const [metaBusy, setMetaBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [rejectFor, setRejectFor] = useState<string | null>(null);
   const [purgeOpen, setPurgeOpen] = useState(false);
@@ -542,6 +555,9 @@ function GuideDetailView({
       [draft, pending, live].find((v) => v?.contentMarkdown?.trim()) ?? null;
     setBody(source?.contentMarkdown ?? "");
     setNote(draft?.changeNote && draft.changeNote !== "Initial draft" ? draft.changeNote : "");
+    setMetaTitle(guide?.title ?? "");
+    setMetaSummary(guide?.summary ?? "");
+    setMetaCategory(guide?.categoryKey ?? "");
     setEditing(true);
   }
 
@@ -622,6 +638,103 @@ function GuideDetailView({
 
           {editing ? (
             <VStack align="stretch" gap={2}>
+              {/* PAGE DETAILS.
+                  These were reachable only at creation — and summary and
+                  category not even then: the New Guide dialog asked for a
+                  title, silently filed every guide under the FIRST category,
+                  and its own copy promised "you can set the category, summary
+                  and body next", which was not true.
+                  They save on their own button because they live on the guide
+                  rather than a version: changing a title is immediate and
+                  needs no approval, while changing the body does. */}
+              <Box borderWidth="1px" borderColor="gray.200" rounded="md" p={3}>
+                <Text fontSize="2xs" color="fg.muted" textTransform="uppercase" mb={2}>
+                  Page details
+                </Text>
+                <VStack align="stretch" gap={2}>
+                  <Box>
+                    <Text fontSize="xs" color="fg.muted" mb={1}>Title</Text>
+                    <Input size="sm" value={metaTitle} onChange={(e) => setMetaTitle(e.target.value)} placeholder="How to fertilize Bermuda grass" />
+                  </Box>
+                  <Box>
+                    <Text fontSize="xs" color="fg.muted" mb={1}>
+                      Description — the one line shown under the title in the catalog
+                    </Text>
+                    <Textarea
+                      size="sm"
+                      rows={2}
+                      value={metaSummary}
+                      onChange={(e) => setMetaSummary(e.target.value)}
+                      placeholder="What a reader will get out of this page"
+                    />
+                  </Box>
+                  <Box>
+                    <Text fontSize="xs" color="fg.muted" mb={1}>Category</Text>
+                    <Select.Root
+                      collection={createListCollection({ items: cats.map((c) => ({ label: c.label, value: c.key })) })}
+                      value={metaCategory ? [metaCategory] : []}
+                      onValueChange={(e) => setMetaCategory(e.value?.[0] ?? "")}
+                      size="sm"
+                      positioning={{ strategy: "fixed", hideWhenDetached: true }}
+                    >
+                      <Select.Control>
+                        <Select.Trigger>
+                          <Select.ValueText placeholder="Pick a category" />
+                          <Select.Indicator />
+                        </Select.Trigger>
+                      </Select.Control>
+                      <Portal>
+                        <Select.Positioner>
+                          <Select.Content>
+                            {cats.map((c) => (
+                              <Select.Item key={c.key} item={{ label: c.label, value: c.key }}>
+                                {c.label}
+                                <Select.ItemIndicator />
+                              </Select.Item>
+                            ))}
+                          </Select.Content>
+                        </Select.Positioner>
+                      </Portal>
+                    </Select.Root>
+                  </Box>
+                  <HStack>
+                    <Button
+                      size="xs"
+                      colorPalette="blue"
+                      loading={metaBusy}
+                      disabled={
+                        !metaTitle.trim() ||
+                        (metaTitle === (guide.title ?? "") &&
+                          metaSummary === (guide.summary ?? "") &&
+                          metaCategory === (guide.categoryKey ?? ""))
+                      }
+                      onClick={async () => {
+                        setMetaBusy(true);
+                        try {
+                          await updateGuideMeta(guide.id, {
+                            title: metaTitle.trim(),
+                            // Empty clears it rather than storing "".
+                            summary: metaSummary.trim() || null,
+                            categoryKey: metaCategory || undefined,
+                          });
+                          await load();
+                          publishInlineMessage({ type: "SUCCESS", text: "Page details saved." });
+                        } catch (err) {
+                          publishInlineMessage({ type: "ERROR", text: getErrorMessage("Couldn't save the page details.", err) });
+                        } finally {
+                          setMetaBusy(false);
+                        }
+                      }}
+                    >
+                      Save details
+                    </Button>
+                    <Text fontSize="2xs" color="fg.muted">
+                      Saved immediately — no approval needed, unlike the page content below.
+                    </Text>
+                  </HStack>
+                </VStack>
+              </Box>
+
               <Textarea
                 value={body}
                 onChange={(e) => setBody(e.target.value)}

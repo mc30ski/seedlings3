@@ -29,7 +29,23 @@ export default async function previewRoutes(app: FastifyInstance) {
     const mode = (req.query?.mode as string) === "suggest" ? "suggest" : "claimed";
     const maxLookAhead = targetUserIdParam ? 5 : 2;
     const lookAhead = mode === "suggest" ? Math.min(Math.max(Number(req.query?.lookAhead) || maxLookAhead, 0), maxLookAhead) : 0;
-    const availableHours = mode === "suggest" ? Math.min(Math.max(Number(req.query?.availableHours) || (user.availableHoursPerDay ?? 4), 2), 12) : 0;
+    // CAPACITY IS THE WORKER'S CALL.
+    //
+    // This used to fall back to `availableHoursPerDay ?? 4` and then hand the
+    // model "remove jobs until it fits — hard constraint". A worker who had
+    // claimed 22 jobs for a Saturday got most of the day binned against a
+    // 4-hour default they never set. A stored preference is a planning hint,
+    // not a cap on what someone has already committed to.
+    //
+    // So: only an EXPLICIT number from this request, or one the worker has
+    // actually set on their profile, counts. Absent both, there is no stated
+    // budget and none is enforced.
+    const requestedHours = Number(req.query?.availableHours);
+    const statedHours =
+      Number.isFinite(requestedHours) && requestedHours > 0
+        ? Math.min(Math.max(requestedHours, 1), 12)
+        : (user.availableHoursPerDay ?? null);
+    const availableHours = mode === "suggest" && statedHours ? statedHours : 0;
     const bufferPercent = Math.min(Math.max(Number(req.query?.bufferPercent) || 20, 0), 50);
     const availableDays: number[] = user.availableDays ? JSON.parse(user.availableDays) : [];
     // Target date = the specific day to plan a route for. ET-anchored so a
@@ -288,89 +304,35 @@ export default async function previewRoutes(app: FastifyInstance) {
       app.log.warn({ where: "preview/route-optimization", err: err.message });
     }
 
-    // Enforce time budget: remove claimable jobs that don't fit
-    if (mode === "suggest" && availableHours > 0) {
-      const budgetMins = availableHours * 60 * 1.05; // 5% flexibility
-      const totalDriveMins = optimizedRoute ? Math.round(optimizedRoute.totalDuration / 60) : 0;
-
-      // Calculate total work time for ALL jobs (not just optimized stops)
-      let totalWorkMins = 0;
-      for (const job of allJobs) {
-        totalWorkMins += (job.estimatedMinutes ?? 60);
-      }
-      const setupMins = Math.round(totalWorkMins * bufferPercent / 100);
-      const totalMins = totalWorkMins + setupMins + totalDriveMins;
-
-      // If over budget, remove claimable jobs (lowest value first) until it fits
-      if (totalMins > budgetMins) {
-        // Score claimable jobs: lower score = remove first
-        const removeCandidates = allJobs
-          .map((job, idx) => ({ job, idx }))
-          .filter(({ job }) => job.type === "claimable")
-          // Remove lowest-value jobs first (price / time ratio)
-          .sort((a, b) => {
-            const aVal = (a.job.price ?? 0) / (a.job.estimatedMinutes ?? 60);
-            const bVal = (b.job.price ?? 0) / (b.job.estimatedMinutes ?? 60);
-            return aVal - bVal;
-          });
-
-        let currentWork = totalWorkMins;
-        let currentDrive = totalDriveMins;
-        const removedIndices = new Set<number>();
-
-        for (const { job, idx } of removeCandidates) {
-          const currentSetup = Math.round(currentWork * bufferPercent / 100);
-          if (currentWork + currentSetup + currentDrive <= budgetMins) break;
-          currentWork -= (job.estimatedMinutes ?? 60);
-          removedIndices.add(idx);
-        }
-
-        if (removedIndices.size > 0) {
-          // Remove from allJobs (reverse order to preserve indices)
-          const sorted = Array.from(removedIndices).sort((a, b) => b - a);
-          for (const idx of sorted) {
-            allJobs.splice(idx, 1);
-          }
-
-          // Re-optimize route with remaining jobs if we have the provider
-          if (optimizedRoute) {
-            try {
-              const router = getRoutingProvider(routingProviderName);
-              const addresses = allJobs.map((j) => j.address);
-              const geocoded = await router.geocodeMany(addresses);
-              const validIndices2: number[] = [];
-              const validCoords2: { lng: number; lat: number }[] = [];
-              for (let i = 0; i < geocoded.length; i++) {
-                if (geocoded[i]) {
-                  validIndices2.push(i);
-                  validCoords2.push(geocoded[i]!.coordinates);
-                }
-              }
-              let startCoords2: { lng: number; lat: number } | undefined;
-              if (fromCurrentLocation) {
-                startCoords2 = { lat: currentLat, lng: currentLng };
-              } else if (user.homeBaseAddress) {
-                const hg = await router.geocode(user.homeBaseAddress);
-                if (hg) startCoords2 = hg.coordinates;
-              }
-              if (validCoords2.length > 1) {
-                optimizedRoute = await router.optimizeRoute(validCoords2, {
-                  startCoords: startCoords2,
-                  roundTrip: !!startCoords2 && !fromCurrentLocation,
-                });
-                for (const stop of optimizedRoute.stops) {
-                  stop.inputIndex = validIndices2[stop.inputIndex] ?? stop.inputIndex;
-                }
-              } else {
-                optimizedRoute = null;
-              }
-            } catch {
-              // Keep existing route data if re-optimization fails
-            }
-          }
-        }
-      }
-    }
+    // ── Capacity is REPORTED, never enforced ────────────────────────────
+    //
+    // This block used to splice jobs out of `allJobs` — lowest price-per-
+    // minute first — until the day fit inside the worker's hours setting,
+    // then re-optimize the route around what was left. The jobs didn't just
+    // drop out of the route; they vanished from the response entirely, so
+    // the worker never saw that they'd been taken off the table.
+    //
+    // That is not the app's call to make. A worker who wants 22 jobs plotted
+    // for one day gets 22 jobs plotted, whatever their stored preference
+    // says. We still do the arithmetic — an honest "this is ~15h of work
+    // against your 8h setting" is useful — but it is information handed back,
+    // not a decision taken on the worker's behalf. The client renders it as
+    // an over-capacity warning above the route.
+    const totalDriveMins = optimizedRoute ? Math.round(optimizedRoute.totalDuration / 60) : 0;
+    const totalWorkMins = allJobs.reduce((t, j) => t + (j.estimatedMinutes ?? 60), 0);
+    const totalSetupMins = Math.round(totalWorkMins * bufferPercent / 100);
+    const capacity = {
+      statedHours: availableHours > 0 ? availableHours : null,
+      totalMinutes: totalWorkMins + totalSetupMins + totalDriveMins,
+      workMinutes: totalWorkMins,
+      setupMinutes: totalSetupMins,
+      driveMinutes: totalDriveMins,
+      /** True only when the worker actually stated hours AND the plotted day
+       *  exceeds them. Drives a warning — never a removal. */
+      overStatedHours:
+        availableHours > 0 &&
+        totalWorkMins + totalSetupMins + totalDriveMins > availableHours * 60 * 1.05,
+    };
 
     // Build route context for Claude
     let routeContext = "";
@@ -412,9 +374,11 @@ IMPORTANT: Use this optimized order as the basis for your route. The driving tim
     const modeInstructions = mode === "claimed"
       ? `MODE: Claimed Only — optimize the route order for ONLY the jobs this worker has already claimed. Do not suggest additional jobs. Focus purely on the most efficient ordering and travel path.
 
+SINGLE DAY. Return EXACTLY ONE entry in "days", dated ${targetStr}, containing EVERY claimed job. Do NOT spread the work across multiple days, do not defer jobs to a later date, and do not leave any job out because the day looks long. The worker decided what they are doing that day; your job is the ORDER, not the workload.
+
 Rules:
 1. ${startRule}
-2. All claimed jobs must be included — just find the optimal order
+2. All claimed jobs must be included, all on ${targetStr} — just find the optimal order
 3. Setup buffer: ${bufferPercent}% — add this on top of each job's estimated work time for setup/teardown (unloading equipment, etc.). Travel time is calculated separately by the mapping provider.
 4. Prioritize properties the worker has previously serviced — they know the property and can work more efficiently there`
       : `MODE: Suggest Additional Jobs — optimize the route AND suggest additional available jobs to fill the day.
@@ -449,7 +413,11 @@ ${JSON.stringify(workerHistory, null, 2)}
 ` : ""}
 ${modeInstructions}
 ${routeContext}
-${mode === "suggest" ? `8. CRITICAL: The worker has ${availableHours} hours available TOTAL. Calculate: (sum of all job durations × ${1 + bufferPercent / 100} for setup buffer) + (total driving time from route data). If that exceeds ${Math.round(availableHours * 1.05 * 60)} minutes, remove jobs until it fits. This is a hard constraint.` : "8. Include ALL claimed jobs in the route — do not remove any."}
+${mode === "suggest"
+  ? (availableHours > 0
+      ? `8. NEVER remove a claimed job. The worker has stated ${availableHours} hours available (~${Math.round(availableHours * 1.05 * 60)} minutes including buffer); order your ADDITIONAL suggestions best-first so the ones past that mark fall at the end, and say so in the reason. Do not withhold or delete anything — how much of it they take on is their call, not yours.`
+      : `8. NEVER remove a job. The worker has not stated how many hours they have, so do not invent a limit — include everything claimed and order additional suggestions by how well they fit the route.`)
+  : "8. Include ALL claimed jobs in the route — do not remove any, for any reason."}
 9. For jobs without an estimated duration, assume 60 minutes (err on the larger side)
 10. Consider earnings and estimated duration for workload balance
 
@@ -551,6 +519,63 @@ For jobs that need a date change, set dateChanged=true with originalDate and sug
         }
       }
 
+      // ── Claimed mode is ONE day, enforced here, not merely requested ─────
+      //
+      // The response schema is an array of days and the summary prompt asks
+      // for a "week strategy", so the model is structurally invited to spread
+      // work out — and with 22 claimed jobs for one Saturday it did exactly
+      // that, leaving the worker no usable route for the day he could
+      // actually work. Asking nicely in the prompt is not enough when the
+      // shape of the answer pulls the other way.
+      //
+      // Flatten to a single day at the target date, in the order the model
+      // gave, de-duplicated. Anything it deferred comes back.
+      if (mode === "claimed" && parsed?.days && Array.isArray(parsed.days)) {
+        const seen = new Set<string>();
+        const merged: any[] = [];
+        for (const day of parsed.days) {
+          for (const stop of day?.route ?? []) {
+            if (stop?.occurrenceId && !seen.has(stop.occurrenceId)) {
+              seen.add(stop.occurrenceId);
+              // A claimed job is not being rescheduled — it is being ordered.
+              merged.push({ ...stop, dateChanged: false, originalDate: null, suggestedDate: null });
+            }
+          }
+        }
+        // Any claimed job the model dropped entirely still belongs to the
+        // day. Appended rather than discarded: a missing job is worse than
+        // an imperfectly placed one.
+        for (const j of allJobs) {
+          if (!seen.has(j.id)) {
+            seen.add(j.id);
+            merged.push({
+              occurrenceId: j.id,
+              property: j.property,
+              address: j.address,
+              reason: "Added back — the planner left this out, but it is claimed for this day.",
+              dateChanged: false, originalDate: null, suggestedDate: null,
+            });
+          }
+        }
+        merged.forEach((stop, i) => { stop.order = i + 1; });
+        const collapsedFrom = parsed.days.length;
+        parsed.days = [{
+          date: targetStr,
+          dayLabel: parsed.days[0]?.dayLabel ?? targetStr,
+          route: merged,
+          estimatedEarnings: parsed.days.reduce((t: number, d: any) => t + (Number(d?.estimatedEarnings) || 0), 0),
+          estimatedHours: parsed.days.reduce((t: number, d: any) => t + (Number(d?.estimatedHours) || 0), 0),
+          daySummary: parsed.days[0]?.daySummary ?? "",
+        }];
+        parsed.dateChangeCount = 0;
+        if (collapsedFrom > 1) {
+          app.log.warn({ where: "preview/route-suggestions", reason: "claimed_mode_multi_day", collapsedFrom, stops: merged.length });
+          parsed.summary =
+            `All ${merged.length} claimed jobs are on ${targetStr}. ` +
+            (parsed.summary ?? "");
+        }
+      }
+
       return {
         suggestions: parsed,
         // Always pair unparseable output with an `error`, so the client
@@ -569,6 +594,8 @@ For jobs that need a date change, set dateChanged=true with originalDate and sug
           totalDriveMiles: Math.round(optimizedRoute.totalDistance / 1609.34 * 10) / 10,
         } : null,
         routeError,
+        // Reported, not enforced — see the capacity block above.
+        capacity,
         startedFromCurrentLocation: fromCurrentLocation,
         currentLocationAddress: fromCurrentLocation ? currentLocationAddress : null,
         dataIssues,
