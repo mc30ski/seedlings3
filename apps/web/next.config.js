@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  transpilePackages: ["@repo/tokens"],
+  transpilePackages: ["@repo/tokens", "@repo/money"],
   async rewrites() {
     const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL;
     // Dev-only rewrites. In prod, apiBase is a RELATIVE path

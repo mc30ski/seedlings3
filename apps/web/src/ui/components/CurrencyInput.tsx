@@ -8,6 +8,11 @@ type Props = {
   placeholder?: string;
   size?: "sm" | "md" | "lg" | "xs";
   disabled?: boolean;
+  /** Permit a leading minus. OFF by default — a negative price, payment or
+   *  wage is a data-entry error everywhere except the Ledger, where a
+   *  negative expense is how a refund is recorded. Opt in per call site
+   *  rather than loosening the mask for the whole app. */
+  allowNegative?: boolean;
 };
 
 export default function CurrencyInput({
@@ -16,22 +21,25 @@ export default function CurrencyInput({
   placeholder = "0.00",
   size,
   disabled,
+  allowNegative = false,
 }: Props) {
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     const raw = e.target.value;
-    // Allow digits with an optional single decimal point and up to 2 decimal places
-    if (/^\d*\.?\d{0,2}$/.test(raw)) {
+    // Digits, an optional single decimal point, up to 2 decimal places — and
+    // a leading minus only where the call site asked for one.
+    const mask = allowNegative ? /^-?\d*\.?\d{0,2}$/ : /^\d*\.?\d{0,2}$/;
+    if (mask.test(raw)) {
       onChange(raw);
     }
   }
 
   function handleBlur() {
-    if (value === "" || value === ".") {
+    if (value === "" || value === "." || value === "-") {
       onChange("");
       return;
     }
     const n = parseFloat(value);
-    if (isNaN(n) || n < 0) {
+    if (isNaN(n) || (n < 0 && !allowNegative)) {
       onChange("");
       return;
     }

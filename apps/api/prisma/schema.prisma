@@ -62,6 +62,12 @@ enum AuditScope {
   // Covers CSV imports of Gusto payroll journals, whole-period replacement,
   // archiving, and the name -> User identity mapping.
   PAYROLL
+
+  // Added 2026-09-02 with the Super forecasting tool (Money -> Forecast).
+  // A forecast changes no live setting and pays nobody, but it is the
+  // document a pay-structure decision gets argued from, so who built it,
+  // who edited the assumptions, and who deleted it are all worth keeping.
+  FORECAST
 }
 
 enum AuditVerb {
@@ -110,6 +116,12 @@ enum AuditVerb {
   GUARANTEED_PAYOUT_STARTED
   GUARANTEED_PAYOUT_ENDED
   SIGN_IN
+
+  // Forecast lifecycle (Money -> Forecast). DUPLICATED is its own verb
+  // rather than CREATED so the trail distinguishes a scenario built from
+  // scratch from one branched off an existing set of assumptions.
+  DUPLICATED
+  ASSESSED
   // Compliance-policy verbs. See models Policy* below. Replaces the
   // old-insurance-flow verbs INSURANCE_UPLOADED, CONTRACTOR_AGREED,
   // and W9_COLLECTED (removed with the tear-out).
@@ -469,9 +481,12 @@ model User {
 
   // Payroll (docs/features/payroll.md). payrollEntries is the worker's OWN
   // imported rows — the relation a worker-scoped query hangs off.
-  payrollPeriodsUploaded     PayrollPeriod[]   @relation("PayrollUploadedBy")
-  payrollPeriodsArchived     PayrollPeriod[]   @relation("PayrollArchivedBy")
-  payrollEntries             PayrollEntry[]    @relation("PayrollEntryUser")
+  payrollPeriodsUploaded PayrollPeriod[] @relation("PayrollUploadedBy")
+  payrollPeriodsArchived PayrollPeriod[] @relation("PayrollArchivedBy")
+  payrollEntries         PayrollEntry[]  @relation("PayrollEntryUser")
+
+  /// Saved pay-structure scenarios this user authored (Money -> Forecast).
+  forecasts                  Forecast[]        @relation("ForecastAuthor")
   payrollIdentities          PayrollIdentity[] @relation("PayrollIdentityUser")
   payrollIdentitiesConfirmed PayrollIdentity[] @relation("PayrollIdentityConfirmedBy")
 
@@ -3752,4 +3767,61 @@ model GuideAsset {
   @@index([kind, uploadedAt])
   @@index([guideId])
   @@index([uploadedById])
+}
+
+/// A saved pay-structure scenario from the Super forecasting tool
+/// (Money -> Forecast). ADVISORY ONLY — a Forecast never writes a Setting,
+/// never touches a Payment, and pays nobody. It is a saved question, not a
+/// decision that has been executed.
+///
+/// Why the assumption set is JSON rather than columns: every new lever we
+/// want to model (a rate card, a tiered margin, a minimum invoice, a
+/// hypothetical hire) would otherwise be a migration, and the whole point of
+/// the tool is to model levers the app does not implement yet. The shape is
+/// validated in services/forecast.ts, which owns the schema.
+model Forecast {
+  id    String  @id @default(cuid())
+  name  String
+  notes String?
+
+  /// Baseline sample window, ET date keys (YYYY-MM-DD).
+  windowFrom String
+  windowTo   String
+
+  /// Optional second window, for putting one season beside another. Seasonal
+  /// swing in this business is large enough that a single window is often
+  /// the wrong basis for an annual decision.
+  compareFrom String?
+  compareTo   String?
+
+  /// Slider positions, roster overrides, and hypothetical workers.
+  assumptions Json
+
+  /// What the baseline looked like WHEN THE FORECAST WAS SAVED. Kept so a
+  /// scenario reopened months later can show its original numbers next to
+  /// freshly-queried ones: late-confirmed payments and back-dated expenses
+  /// both move a historical window after the fact. Without the snapshot a
+  /// forecast silently rewrites itself and the operator has no way to see
+  /// that the ground moved.
+  baselineSnapshot   Json?
+  baselineCapturedAt DateTime?
+
+  /// Last AI assessment of this scenario, cached so reopening a saved
+  /// forecast doesn't silently spend another model call. Cleared whenever
+  /// the assumptions change, because an assessment of superseded numbers is
+  /// worse than none.
+  assessment Json?
+  assessedAt DateTime?
+
+  createdById String
+  createdBy   User   @relation("ForecastAuthor", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// Soft delete, matching the archivedAt/retiredAt convention used across
+  /// the schema.
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([createdById])
+  @@index([archivedAt, updatedAt])
 }

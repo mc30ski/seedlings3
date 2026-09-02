@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback, useRef, ReactNode } from "react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import { Badge, Box, Button, Container, Dialog, HStack, Portal, Spinner, Text, VStack } from "@chakra-ui/react";
-import { AlertTriangle, ArrowLeftCircle, Banknote, Link2 } from "lucide-react";
+import { AlertTriangle, ArrowLeftCircle, Banknote, Link2, LineChart } from "lucide-react";
 import OnClockBubble from "@/src/ui/components/OnClockBubble";
 import { useOffline } from "@/src/lib/offline";
 import OfflineQueueDialog from "@/src/ui/dialogs/OfflineQueueDialog";
@@ -50,6 +50,9 @@ import ClientStatementsTab from "@/src/ui/tabs/ClientStatementsTab";
 import PlanWorkdayWorkflow from "@/src/ui/workflows/PlanWorkdayWorkflow";
 import BeginWorkDayWorkflow from "@/src/ui/workflows/BeginWorkDayWorkflow";
 import PayrollTab from "@/src/ui/tabs/PayrollTab";
+import { WeatherAlertBadge } from "@/src/ui/components/WeatherAlertBadge";
+import type { WeatherAlert } from "@/src/lib/weatherAlerts";
+import ForecastTab from "@/src/ui/tabs/ForecastTab";
 import GuidesTab from "@/src/ui/tabs/GuidesTab";
 import { fetchPendingApprovalCount as fetchGuidePendingCount } from "@/src/lib/guides";
 import { fetchUnmatchedPayrollNames } from "@/src/lib/payroll";
@@ -1651,16 +1654,22 @@ chip: false, bucket: t.bucket }));
         },
         {
           // ── Money ── (Super sub-tab order: Payments → Payroll →
-          // Ledger → Pricing → Supplies → Promotions.
+          // Ledger → Forecast → Pricing → Supplies → Promotions.
           //
           // The first three are the money-movement surfaces — what came
           // in, what went out to people, what went out everywhere else —
           // so they sit together; Pricing and Supplies are configuration
           // rather than record-keeping and follow.
           //
+          // Forecast sits directly after the three record surfaces because
+          // it is what you do AFTER reading them — it consumes the same data
+          // and answers "what should change", which is a different question
+          // from "what happened". It is advisory: it writes no setting and
+          // pays nobody.
+          //
           // Payments/Pricing/Supplies are shared across all three roles
           // via the additive scope prop; Payroll is shared but heavily
-          // scoped, and Ledger + Promotions are Super-only.)
+          // scoped, and Ledger + Forecast + Promotions are Super-only.)
           value: "payments",
           label: "Payments",
           icon: TfiMoney,
@@ -1694,6 +1703,18 @@ chip: false, bucket: t.bucket }));
           label: "Ledger",
           icon: FiBook,
           content: wrapWithInlineMessage(<BusinessExpensesTab />),
+          category: "Money",
+          categoryIcon: TfiMoney,
+        },
+        {
+          // Pay-structure simulator. Super-only, and deliberately NOT part of
+          // Reconcile or the P&L: those report what happened, this asks what
+          // should change. Keeping them separate stops a projection from ever
+          // being mistaken for a record.
+          value: "forecast",
+          label: "Forecast",
+          icon: LineChart,
+          content: wrapWithInlineMessage(<ForecastTab />),
           category: "Money",
           categoryIcon: TfiMoney,
         },
@@ -2188,12 +2209,16 @@ chip: false, bucket: t.bucket }));
     const cached = (window as any).__seedlingsWeather?.current;
     return cached ? { temp: cached.temp, icon: cached.icon } : null;
   });
+  // Severe-weather alerts ride along on the same broadcast. Kept in its own
+  // state so a payload without them leaves the temperature chip untouched.
+  const [titleAlerts, setTitleAlerts] = useState<WeatherAlert[]>([]);
   useEffect(() => {
     function onWeather(e: any) {
       const d = e?.detail;
       if (d && typeof d.temp === "number" && typeof d.icon === "string") {
         setTitleWeather({ temp: d.temp, icon: d.icon });
       }
+      if (d && Array.isArray(d.alerts)) setTitleAlerts(d.alerts);
     }
     window.addEventListener("seedlings:weather", onWeather);
     return () => window.removeEventListener("seedlings:weather", onWeather);
@@ -3298,7 +3323,7 @@ chip: false, bucket: t.bucket }));
       home: "Work", jobs: "Work", routes: "Work", services: "Work", tasks: "Work",
       equipment: "Equipment", collections: "Equipment", vehicles: "Equipment",
       clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
-      payments: "Money", payroll: "Money", pricing: "Money", supplies: "Money", ledger: "Money", promotions: "Money",
+      payments: "Money", payroll: "Money", pricing: "Money", supplies: "Money", ledger: "Money", forecast: "Money", promotions: "Money",
       reconcile: "Records", workdays: "Records", compliance: "Records", activity: "Records",
       history: "Records", timeline: "Records", documents: "Records", guides: "Records", audit: "Records",
       "tools-mowing": "Tools", "tools-mulch": "Tools",
@@ -4102,6 +4127,10 @@ chip: false, bucket: t.bucket }));
                 <Text fontSize="sm" fontWeight="semibold" lineHeight="1" whiteSpace="nowrap">
                   {Math.round(titleWeather.temp)}°
                 </Text>
+                {/* Glyph only — the title bar has a few pixels to spare. The
+                    event name is in the tooltip; the weather bar below has
+                    the readable version. */}
+                <WeatherAlertBadge alerts={titleAlerts} density="icon" />
               </Box>
             )}
           </Box>

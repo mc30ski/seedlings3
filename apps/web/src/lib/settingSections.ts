@@ -68,6 +68,18 @@ export const SETTING_SECTIONS: SettingSection[] = [
       "Every endpoint is a setting so covering a different state or county is a config change, not a deploy. " +
       "None of these services need an API key.",
   },
+  {
+    // The `vanity` section value was already being stamped on these rows by
+    // the API seed, but no definition existed here — so resolveSettingSection
+    // fell through and both settings rendered under "Other" despite having a
+    // perfectly good section. Added 2026-09-02.
+    key: "vanity",
+    title: "Startup Animation",
+    description:
+      "The typing animation on the app's splash screen, and the vanity slugs it cycles through. " +
+      "The master switch is authoritative in the database, so it can be flipped from the Neon SQL " +
+      "editor if the app itself won't load.",
+  },
 ];
 
 // The catch-all bucket for settings with a null/unknown section. Rendered

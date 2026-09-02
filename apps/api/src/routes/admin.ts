@@ -4609,6 +4609,18 @@ Respond ONLY with valid JSON in this exact format:
     if (key === "PAYROLL_PERIOD_CADENCE" && value !== "WEEKLY" && value !== "BIWEEKLY" && value !== "MONTHLY") {
       throw app.httpErrors.badRequest("PAYROLL_PERIOD_CADENCE must be WEEKLY, BIWEEKLY, or MONTHLY.");
     }
+    if (key === "EXPENSE_COST_BEHAVIOR") {
+      // Validated on WRITE so a typo is caught here with a clear message.
+      // Deliberately NOT strict on read — loadCostBehaviorMap swallows a bad
+      // value and falls back to defaults, because this setting must never be
+      // able to break anything outside the forecasting tool.
+      const { validateCostBehaviorJson } = await import("../services/costBehavior");
+      try {
+        validateCostBehaviorJson(value);
+      } catch (err: any) {
+        throw app.httpErrors.badRequest(err?.message || "Invalid EXPENSE_COST_BEHAVIOR JSON.");
+      }
+    }
     if (key === "EXPENSE_CATEGORIES") {
       const { validateExpenseCategoriesJson } = await import("../services/expenseCategories");
       try {
@@ -6169,6 +6181,19 @@ Respond ONLY with valid JSON in this exact format:
     if (!["EXPENSE", "CAPITAL_CONTRIBUTION", "OWNER_DRAW"].includes(type)) {
       throw app.httpErrors.badRequest(`Invalid type: ${type}`);
     }
+    // A negative cost is how a REFUND is recorded — it nets against the
+    // category's total and its Schedule C deduction, which is what a refund
+    // does on a cash basis. Not allowed on the equity types: a negative
+    // contribution is an owner draw and a negative draw is a contribution,
+    // and having two ways to spell each would make the equity section
+    // ambiguous to total.
+    if (Number(b.cost) < 0 && type !== "EXPENSE") {
+      throw app.httpErrors.badRequest(
+        type === "CAPITAL_CONTRIBUTION"
+          ? "A negative contribution is an owner draw — use the Owner Draw type instead."
+          : "A negative draw is a capital contribution — use the Capital Contribution type instead.",
+      );
+    }
     const trimmedCategory = b.category ? String(b.category).trim() : null;
     // Schedule C category is meaningful only for EXPENSE. Silently drop on
     // equity entries — they post to QB equity accounts, not P&L categories.
@@ -6491,6 +6516,22 @@ Respond ONLY with valid JSON in this exact format:
         data.equipmentId = null;
         data.vendor = null;
         data.invoiceNumber = null;
+      }
+    }
+
+    // Same negative-cost rule as the create path, applied to the type this
+    // row will END UP as. Checked here rather than beside the cost
+    // assignment because the type may be changing in the same request —
+    // editing a refund into a capital contribution has to be caught.
+    {
+      const finalType = nextType ?? existing.type;
+      const finalCost = "cost" in b ? Number(b.cost) : existing.cost;
+      if (finalCost < 0 && finalType !== "EXPENSE") {
+        throw app.httpErrors.badRequest(
+          finalType === "CAPITAL_CONTRIBUTION"
+            ? "A negative contribution is an owner draw — use the Owner Draw type instead."
+            : "A negative draw is a capital contribution — use the Capital Contribution type instead.",
+        );
       }
     }
 

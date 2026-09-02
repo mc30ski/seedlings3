@@ -5,6 +5,9 @@ import { Box, HStack, Text } from "@chakra-ui/react";
 import { Cloud, CloudRain, Droplets, Sun, CloudSun, Snowflake, CloudLightning, Wind } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
 import { bizToday, bizTomorrow, fmtDateOpts } from "@/src/lib/dates";
+import type { WeatherAlert } from "@/src/lib/weatherAlerts";
+import { alertsForDate } from "@/src/lib/weatherAlerts";
+import { WeatherAlertBadge } from "@/src/ui/components/WeatherAlertBadge";
 
 type DayForecast = {
   date: string;
@@ -19,6 +22,10 @@ type DayForecast = {
 };
 
 type WeatherResponse = {
+  /** Severe-weather alerts from the NWS, layered on top of the OpenWeather
+   *  data below. Always present, often empty — absent or [] is the normal
+   *  case and must render exactly as the bar did before alerts existed. */
+  alerts?: WeatherAlert[];
   current: {
     temp: number;
     feelsLike: number;
@@ -111,11 +118,12 @@ export default function WeatherBar({
       (window as any).__seedlingsWeather = {
         current: { temp: cached.current.temp, icon: cached.current.icon },
         forecast: cached.forecast,
+        alerts: cached.alerts ?? [],
       };
       // Broadcast so the title chip refreshes from the cached temp
       // immediately, rather than waiting for the network fetch to finish.
       window.dispatchEvent(new CustomEvent("seedlings:weather", {
-        detail: { temp: cached.current.temp, icon: cached.current.icon, forecast: cached.forecast },
+        detail: { temp: cached.current.temp, icon: cached.current.icon, forecast: cached.forecast, alerts: cached.alerts ?? [] },
       }));
     } catch {
       // localStorage in private mode / disabled storage — just skip.
@@ -191,7 +199,7 @@ export default function WeatherBar({
           // Broadcast current temp for title bar plus the full forecast so
           // tiles can show tomorrow's inclement-weather indicator.
           window.dispatchEvent(new CustomEvent("seedlings:weather", {
-            detail: { temp: result.current.temp, icon: result.current.icon, forecast: result.forecast },
+            detail: { temp: result.current.temp, icon: result.current.icon, forecast: result.forecast, alerts: result.alerts ?? [] },
           }));
         }
       } catch (err: any) {
@@ -272,6 +280,8 @@ export default function WeatherBar({
     const t = getTheme(icon, rain);
     return {
       icon, rain, theme: t,
+      // ET date key for this row, so alerts can be scoped to the day.
+      date: d?.date ?? bizToday(),
       label: d ? dayLabel(d.date, d.label) : "Today",
       temp: `${d?.high ?? current.temp}°/${d?.low ?? current.temp}°`,
       desc: i === 0 ? current.description : (d?.description ?? ""),
@@ -290,6 +300,10 @@ export default function WeatherBar({
         <Text flexShrink={0}>·</Text>
         <Text overflow="hidden" textOverflow="ellipsis">{capitalize(p.desc)}</Text>
         {p.rain > 0 && <><Text flexShrink={0}>·</Text><HStack gap={0.5} flexShrink={0} color={p.rain >= 50 ? p.theme.text : p.theme.sub}><Droplets size={11} /><Text fontWeight={p.rain >= 50 ? "bold" : "normal"}>{p.rain}%</Text></HStack></>}
+        {/* Only the alerts that actually cover this row's date. No wrapper
+            Box — a block element inherits the row's xs line-height and sits
+            the pill low; the badge is its own centered flex child. */}
+        <WeatherAlertBadge alerts={alertsForDate(data?.alerts, p.date)} density="compact" max={1} />
       </HStack>
     );
   }
