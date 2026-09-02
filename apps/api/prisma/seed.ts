@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { PARCEL_SETTINGS } from "../src/services/parcels";
 import { PrismaNeon } from "@prisma/adapter-neon";
 import { neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
@@ -207,6 +208,21 @@ const SETTING_SECTIONS: Record<string, string> = {
   EXPENSE_CATEGORIES: "catalogs",
   EQUIPMENT_RENTAL_INCOME_CONFIG: "catalogs",
   GUIDE_CATEGORIES: "catalogs",
+  // Property Records — public county parcel lookup. Every endpoint is a
+  // setting so covering another state is a config change, not a deploy.
+  PARCEL_ENABLED: "parcel",
+  PARCEL_GEOCODER_URL: "parcel",
+  PARCEL_GEOCODER_QUERY: "parcel",
+  PARCEL_SERVICE_URL: "parcel",
+  PARCEL_IMAGE_SERVICE_URL: "parcel",
+  PARCEL_CACHE_DAYS: "parcel",
+  PARCEL_SEARCH_RADIUS_FT: "parcel",
+  PARCEL_IMAGE_MAX_PX: "parcel",
+  PARCEL_IMAGE_MARGIN_FT: "parcel",
+  PARCEL_IMAGE_FORMAT: "parcel",
+  PARCEL_IMAGE_TIMEOUT_SECONDS: "parcel",
+  PARCEL_IMAGE_ATTEMPTS: "parcel",
+  PARCEL_STATES: "parcel",
   // Photos & Documents
   MAX_PHOTOS_PER_JOB: "media",
   PHOTO_JPEG_QUALITY: "media",
@@ -2583,6 +2599,17 @@ async function seedDatabase() {
       description: "Routing for equipment rental income in the QB Income export. `qbAccount` must match the QB chart-of-accounts entry exactly (capitalization + spacing). `scheduleCLine` is the Schedule C tax line — default '1' (Gross receipts, alongside service revenue); change to '6' (Other gross receipts) if your CPA prefers separate visibility.",
     },
   ];
+  // Property-record settings, generated from PARCEL_SETTINGS in
+  // services/parcels.ts — the same map the service reads its defaults from,
+  // so a new tunable cannot exist in code without a row to change it.
+  for (const [key, [value, description]] of Object.entries(PARCEL_SETTINGS)) {
+    await prisma.setting.upsert({
+      where: { key },
+      create: { key, value, description, updatedById: MICHAEL_ID },
+      update: { description, updatedById: MICHAEL_ID },
+    });
+  }
+
   for (const s of feeSettings) {
     await prisma.setting.upsert({
       where: { key: s.key },
