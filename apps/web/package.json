@@ -15,6 +15,7 @@
     "test:e2e:report": "playwright show-report tests/e2e/report"
   },
   "dependencies": {
+    "@repo/money": "0.1.0",
     "@chakra-ui/react": "^3.25.0",
     "@clerk/nextjs": "^6.31.4",
     "@emotion/react": "^11.14.0",

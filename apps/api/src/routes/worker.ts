@@ -1,5 +1,6 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { services } from "../services";
+import { fetchWeatherAlerts } from "../services/weatherAlerts";
 import { prisma } from "../db/prisma";
 import { getUploadUrl, getDownloadUrl, deleteObject } from "../lib/r2";
 import { etMidnight, etEndOfDay, etToday, etTomorrow, etAddDays, etFormatDate, etDaysBetween , type EtDateKey } from "../lib/dates";
@@ -4922,6 +4923,14 @@ export default async function workerRoutes(app: FastifyInstance) {
       const current = await currentRes.json();
       const forecast = await forecastRes.json();
 
+      // Severe-weather alerts (NWS). Fetched AFTER the OpenWeather calls and
+      // deliberately NOT inside the Promise.all above — that block throws on
+      // a non-ok response, so folding NWS into it would let an NWS outage
+      // take temperature down with it. fetchWeatherAlerts never throws and
+      // never rejects; the worst case is an empty array and a weather bar
+      // that behaves exactly as it did before alerts existed.
+      const alerts = await fetchWeatherAlerts(Number(lat), Number(lng));
+
       // Group forecast by day and pick midday (12:00) or closest entry
       const days: Record<string, any[]> = {};
       for (const entry of (forecast.list ?? [])) {
@@ -4978,6 +4987,10 @@ export default async function workerRoutes(app: FastifyInstance) {
       const dailyForecasts = [todayEntry, ...futureDays];
 
       return {
+        // Additive: every field below this line is exactly what it was
+        // before alerts existed. `alerts` is [] whenever NWS is disabled,
+        // unreachable, or returns something unexpected.
+        alerts,
         current: {
           temp: Math.round(current.main?.temp ?? 0),
           feelsLike: Math.round(current.main?.feels_like ?? 0),

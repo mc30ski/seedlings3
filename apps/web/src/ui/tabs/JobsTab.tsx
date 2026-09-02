@@ -44,6 +44,9 @@ import { AlertCircle, AlertTriangle, Archive, BarChart3, Bell, BellOff, Calendar
 import DateInput from "@/src/ui/components/DateInput";
 import { WeatherIcon } from "@/src/ui/components/WeatherBar";
 import { useForecastByDate } from "@/src/lib/useForecastByDate";
+import { useWeatherAlerts } from "@/src/lib/useWeatherAlerts";
+import { alertsForDate } from "@/src/lib/weatherAlerts";
+import { WeatherAlertBadge } from "@/src/ui/components/WeatherAlertBadge";
 import {
   useWorkdayGate,
   useTeamWorkdayDialog,
@@ -1135,6 +1138,7 @@ export default function JobsTab({
   // next few days that fall inside the forecast window). Silently
   // no-op for date keys outside the forecast range.
   const forecastByDate = useForecastByDate();
+  const weatherAlerts = useWeatherAlerts();
   // Parcel dialog — the public county record for a property. Admin/Super
   // only; see PropertyParcelDialog for why.
   const [parcelFor, setParcelFor] = useState<{ propertyId: string; label: string } | null>(null);
@@ -3923,6 +3927,15 @@ export default function JobsTab({
                       </HStack>
                     );
                   })()}
+                  {/* Severe-weather alert for THIS day, from the NWS. Scoped
+                      to the section's date key so a Friday heat advisory
+                      doesn't decorate Tuesday. Renders nothing when there
+                      are none, which is most days. */}
+                  <WeatherAlertBadge
+                    alerts={alertsForDate(weatherAlerts, group.key)}
+                    density="compact"
+                    max={1}
+                  />
                   <Text fontSize="sm" fontWeight="bold" color="gray.600" whiteSpace="nowrap" textTransform="uppercase" letterSpacing="wide">
                     {group.label}
                   </Text>

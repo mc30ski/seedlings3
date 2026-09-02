@@ -315,6 +315,27 @@ export const AUDIT = {
     IDENTITY_LINKED: [AuditScope.PAYROLL, AuditVerb.PAYROLL_IDENTITY_LINKED] as const,
     IDENTITY_UNLINKED: [AuditScope.PAYROLL, AuditVerb.PAYROLL_IDENTITY_UNLINKED] as const,
   },
+
+  // Super forecasting tool (Money -> Forecast). A forecast changes no live
+  // setting and pays nobody — it is ADVISORY. But it is the document a
+  // pay-structure decision gets argued from, so the trail matters: who built
+  // a scenario, who moved its assumptions, and who threw it away.
+  //
+  // DELETED snapshots the whole scenario (assumptions, window, notes) BEFORE
+  // the row goes, because "it used to say something different" is otherwise
+  // unanswerable.
+  //
+  // Archive reuses RETIRED/UNRETIRED, matching how CLIENT and PROPERTY spell
+  // the same soft-delete idea.
+  FORECAST: {
+    CREATED: [AuditScope.FORECAST, AuditVerb.CREATED] as const,
+    UPDATED: [AuditScope.FORECAST, AuditVerb.UPDATED] as const,
+    DUPLICATED: [AuditScope.FORECAST, AuditVerb.DUPLICATED] as const,
+    ARCHIVED: [AuditScope.FORECAST, AuditVerb.RETIRED] as const,
+    UNARCHIVED: [AuditScope.FORECAST, AuditVerb.UNRETIRED] as const,
+    DELETED: [AuditScope.FORECAST, AuditVerb.DELETED] as const,
+    ASSESSED: [AuditScope.FORECAST, AuditVerb.ASSESSED] as const,
+  },
   PROMO_OPT: {
     // Per-contact promotional-message opt-out / opt-in events. Metadata
     // always includes { contactId, clientId, channel, source, reason? }.

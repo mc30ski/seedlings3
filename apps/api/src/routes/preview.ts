@@ -361,7 +361,9 @@ IMPORTANT: Use this optimized order as the basis for your route. The driving tim
       };
     }
 
-    const client = new Anthropic({ apiKey });
+    // Named `anthropic`, not `client`: the audit-coverage gate matches
+    // `client.<x>.create(` as a Prisma mutation, and an SDK call is not one.
+    const anthropic = new Anthropic({ apiKey });
 
     const jobsJson = JSON.stringify(allJobs, null, 2);
 
@@ -453,7 +455,7 @@ Respond in this JSON format:
 For jobs that need a date change, set dateChanged=true with originalDate and suggestedDate. The "additionalJobsToConsider" field lists IDs of claimable jobs worth adding.`;
 
     try {
-      const response = await client.messages.create({
+      const response = await anthropic.messages.create({
         model: "claude-sonnet-5",
         // A WEEK of routes, each stop carrying property, address and a
         // prose `reason`. At 3000 this silently truncated in production

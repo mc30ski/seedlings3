@@ -1124,6 +1124,137 @@ function SocialLinksEditor({ value, onChange, onSave, onCancel, saving, original
   );
 }
 
+// ── EXPENSE_COST_BEHAVIOR ───────────────────────────────────────────────────
+//
+// The generic JsonMapEditor rendered this as two free-text boxes per row,
+// which is wrong twice over: the right-hand side is one of five fixed values
+// (so it should be a picker, per the house rule that pickers are never free
+// text), and the left-hand side is an EXPENSE_CATEGORIES label, not an
+// arbitrary string — typing a label that doesn't exist silently does nothing.
+//
+// So: the categories are read from the live taxonomy and are not editable
+// here, and the behavior is a dropdown. A category the map hasn't classified
+// shows as "Not set", which is honest — the forecaster treats it as VARIABLE.
+// Short labels: the descriptive versions truncated inside the trigger, and
+// the card's own description above already spells out what each one means.
+const COST_BEHAVIORS = [
+  { value: "FIXED", label: "Fixed" },
+  { value: "VARIABLE", label: "Variable" },
+  { value: "PER_JOB", label: "Per job" },
+  { value: "ONE_TIME", label: "One-time" },
+  { value: "DISCRETIONARY", label: "Discretionary" },
+] as const;
+
+const BEHAVIOR_TONE: Record<string, string> = {
+  FIXED: "purple",
+  VARIABLE: "blue",
+  PER_JOB: "teal",
+  ONE_TIME: "gray",
+  DISCRETIONARY: "orange",
+};
+
+function CostBehaviorEditor({ value, onChange, onSave, onCancel, saving, categoryLabels }: {
+  value: string;
+  onChange: (v: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  saving: boolean;
+  /** Labels from the live EXPENSE_CATEGORIES taxonomy — the only valid keys. */
+  categoryLabels: string[];
+}) {
+  let map: Record<string, string> = {};
+  let parseError: string | null = null;
+  try {
+    const parsed = JSON.parse(value || "{}");
+    if (typeof parsed !== "object" || Array.isArray(parsed) || parsed === null) {
+      throw new Error("must be a JSON object");
+    }
+    map = parsed as Record<string, string>;
+  } catch (e: any) {
+    parseError = e?.message ?? "invalid JSON";
+  }
+
+  const collection = createListCollection({ items: COST_BEHAVIORS.map((b) => ({ ...b })) });
+
+  function set(label: string, behavior: string | null) {
+    const next = { ...map };
+    if (behavior) next[label] = behavior;
+    else delete next[label];
+    onChange(JSON.stringify(next));
+  }
+
+  if (parseError) {
+    return (
+      <VStack align="stretch" gap={2} w="full">
+        <Text fontSize="xs" color="red.600">EXPENSE_COST_BEHAVIOR JSON is malformed: {parseError}</Text>
+        <Button size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>
+      </VStack>
+    );
+  }
+
+  // Anything in the map that no longer matches a category — usually a renamed
+  // category. Surfaced rather than silently dropped, since the forecaster
+  // ignores these and the operator would otherwise never find out.
+  const orphans = Object.keys(map).filter((k) => !categoryLabels.includes(k));
+
+  return (
+    <VStack align="stretch" gap={2} w="full">
+      <Text fontSize="2xs" color="fg.muted">
+        Only the forecasting tool reads this — nothing here affects the P&amp;L, QuickBooks, or
+        expense recording. <Text as="span" fontWeight="semibold">Fixed</Text> stays flat as you grow
+        (insurance, software) and is what makes scale improve margin;{" "}
+        <Text as="span" fontWeight="semibold">Variable</Text> follows revenue (fuel);{" "}
+        <Text as="span" fontWeight="semibold">Per job</Text> follows job count, so a price rise
+        doesn&apos;t move it (mulch); <Text as="span" fontWeight="semibold">One-time</Text> is left
+        out of forward projections (the mower); <Text as="span" fontWeight="semibold">Discretionary</Text>{" "}
+        is held flat because you choose it each period (advertising).
+      </Text>
+      <VStack align="stretch" gap={1} w="full">
+        {categoryLabels.map((label) => (
+          <HStack key={label} gap={2} w="full">
+            <Text fontSize="sm" flex="1" minW="120px" truncate>{label}</Text>
+            <Box w="190px" flexShrink={0}>
+              <Select.Root
+                collection={collection}
+                value={map[label] ? [map[label]] : []}
+                onValueChange={(e) => set(label, e.value?.[0] ?? null)}
+                size="sm"
+                positioning={{ strategy: "fixed", hideWhenDetached: true }}
+              >
+                <Select.Control>
+                  <Select.Trigger w="100%" px="2">
+                    <Select.ValueText placeholder="Not set (= Variable)" />
+                    <Select.Indicator />
+                  </Select.Trigger>
+                </Select.Control>
+                <Select.Positioner>
+                  <Select.Content minW="var(--reference-width)">
+                    {collection.items.map((item) => (
+                      <Select.Item key={item.value} item={item.value}>
+                        <Select.ItemText>{item.label}</Select.ItemText>
+                      </Select.Item>
+                    ))}
+                  </Select.Content>
+                </Select.Positioner>
+              </Select.Root>
+            </Box>
+          </HStack>
+        ))}
+      </VStack>
+      {orphans.length > 0 && (
+        <Text fontSize="xs" color="orange.600">
+          Ignored — no matching expense category: {orphans.join(", ")}. Remove them or rename the
+          category to match.
+        </Text>
+      )}
+      <HStack gap={2}>
+        <Button size="sm" onClick={onSave} loading={saving}>Save</Button>
+        <Button size="sm" variant="ghost" onClick={onCancel} disabled={saving}>Cancel</Button>
+      </HStack>
+    </VStack>
+  );
+}
+
 function PaymentFromOptionsEditor({ value, onChange, onSave, onCancel, saving }: {
   value: string;
   onChange: (v: string) => void;
@@ -1922,6 +2053,21 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
     "settings_collapsed_sections_v2",
     SETTING_SECTION_ORDER,
   );
+  // Category labels from the live EXPENSE_CATEGORIES setting. The
+  // cost-behavior editor keys off these rather than letting the operator type
+  // a label, since a label that doesn't match a real category is silently
+  // ignored by the forecaster.
+  const expenseCategoryLabels = useMemo(() => {
+    const row = settings.find((x) => x.key === "EXPENSE_CATEGORIES");
+    if (!row) return [];
+    try {
+      const parsed = JSON.parse(row.value);
+      return Array.isArray(parsed) ? parsed.map((c: any) => String(c?.label ?? "")).filter(Boolean) : [];
+    } catch {
+      return [];
+    }
+  }, [settings]);
+
   function toggleSection(key: string) {
     setCollapsedSections((prev) =>
       prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
@@ -2380,6 +2526,13 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                         if (s.key === "PAYMENT_FROM_OPTIONS") {
                           return <PaymentFromOptionsEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} />;
                         }
+                        // Dedicated editor for EXPENSE_COST_BEHAVIOR — one
+                        // dropdown per expense category. The generic map
+                        // editor gave two free-text boxes for what is a fixed
+                        // five-value enum keyed by an existing category label.
+                        if (s.key === "EXPENSE_COST_BEHAVIOR") {
+                          return <CostBehaviorEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} categoryLabels={expenseCategoryLabels} />;
+                        }
                         // Dedicated editor for PAYROLL_TAX_ESTIMATES — four
                         // labeled percent inputs + a live "Total employer
                         // burden" sanity-check. Drives the synthetic
@@ -2540,6 +2693,26 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                         // EXPENSE_CATEGORIES items are keyed on `label`, not
                         // `key`, so render them explicitly as badges instead
                         // of falling through to the raw-JSON display.
+                        if (s.key === "EXPENSE_COST_BEHAVIOR") {
+                          try {
+                            const map = JSON.parse(s.value) as Record<string, string>;
+                            const entries = Object.entries(map);
+                            if (entries.length) {
+                              return (
+                                <Box display="flex" gap="4px" flexWrap="wrap">
+                                  {entries.map(([label, behavior]) => (
+                                    <Badge key={label} size="sm" variant="solid"
+                                           colorPalette={BEHAVIOR_TONE[behavior] ?? "gray"}
+                                           px="2" borderRadius="full" fontSize="xs">
+                                      {label} · {behavior.replace("_", " ").toLowerCase()}
+                                    </Badge>
+                                  ))}
+                                </Box>
+                              );
+                            }
+                            return <Text fontSize="xs" color="fg.muted" fontStyle="italic">Nothing classified — every category defaults to Variable</Text>;
+                          } catch {}
+                        }
                         if (s.key === "EXPENSE_CATEGORIES") {
                           try {
                             const cats = JSON.parse(s.value);

@@ -99,7 +99,10 @@ const BASELINE: Record<string, number> = {
   "apps/api/src/services/companyDocuments.ts": 1,
   "apps/api/src/services/banners.ts": 1,
   "apps/api/src/routes/equipmentCollections.ts": 3,
-  "apps/api/src/routes/preview.ts": 1,
+  // Was 1: the only "mutation" was `client.messages.create` — an Anthropic
+  // SDK call the regex mistook for a Prisma write. Variable renamed; this
+  // file has no DB mutations at all.
+  "apps/api/src/routes/preview.ts": 0,
   // me.ts + public.ts were reviewed line-by-line during the sweep and
   // every site is a deliberate exemption (Clerk profile sync,
   // lastAccessedAt bump, push-subscription registration, client-side hint

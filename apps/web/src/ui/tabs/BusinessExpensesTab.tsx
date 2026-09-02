@@ -59,7 +59,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { CalendarClock, CheckCircle2, ChevronDown, ChevronUp, Eye, Flag, Info, Paperclip, Pencil, Plus, Repeat, Search, Trash2, X } from "lucide-react";
+import { CalendarClock, CheckCircle2, ChevronDown, ChevronUp, CornerUpLeft, Eye, Flag, Info, Paperclip, Pencil, Plus, Repeat, Search, Trash2, X } from "lucide-react";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import { bizToday, bizAddDays, bizStartOfMonth, bizStartOfYear, fmtDate, fmtDateOpts } from "@/src/lib/dates";
 import {
@@ -879,6 +879,17 @@ export default function BusinessExpensesTab() {
   async function save() {
     if (!fDate || !fDescription.trim() || !fCost) {
       publishInlineMessage({ type: "WARNING", text: "Date, description, and cost are required." });
+      return;
+    }
+    // Switching the type after typing a negative would otherwise slip one
+    // through — a negative contribution or draw is really the other type.
+    if (parseFloat(fCost) < 0 && fType !== "EXPENSE") {
+      publishInlineMessage({
+        type: "WARNING",
+        text: fType === "CAPITAL_CONTRIBUTION"
+          ? "A negative contribution is an owner draw — switch the type instead."
+          : "A negative draw is a capital contribution — switch the type instead.",
+      });
       return;
     }
     setSaving(true);
@@ -1807,7 +1818,24 @@ export default function BusinessExpensesTab() {
                     })()}
                   </Box>
                   <VStack align="end" gap={1}>
-                    <Text fontSize="md" fontWeight="bold" color="orange.600">{fmtUSD(e.cost)}</Text>
+                    {/* A refund is a negative cost. fmtUSD already renders the
+                        minus, but in the same orange as a charge it reads as
+                        money going OUT at a glance — which is the opposite of
+                        what happened. Green plus an explicit chip. */}
+                    <HStack gap={1.5}>
+                      {e.cost < 0 && (
+                        <Badge size="sm" colorPalette="green" variant="subtle" borderRadius="full" px="2" fontSize="2xs">
+                          Refund
+                        </Badge>
+                      )}
+                      <Text
+                        fontSize="md"
+                        fontWeight="bold"
+                        color={e.cost < 0 ? "green.600" : "orange.600"}
+                      >
+                        {fmtUSD(e.cost)}
+                      </Text>
+                    </HStack>
                     <HStack gap={1}>
                       {/* Paperclip icon when a receipt is attached — clicks
                           open the receipt in a new tab via a presigned GET URL. */}
@@ -2124,7 +2152,27 @@ export default function BusinessExpensesTab() {
                           ? "Amount contributed *"
                           : "Amount drawn *"}
                     </Text>
-                    <CurrencyInput value={fCost} onChange={setFCost} size="sm" placeholder="0.00" />
+                    {/* Negatives are permitted on EXPENSE only — that's how a
+                        refund is recorded. A negative capital contribution or
+                        draw would be a second way to say what the other type
+                        already says, so those stay positive-only. */}
+                    <CurrencyInput
+                      value={fCost}
+                      onChange={setFCost}
+                      size="sm"
+                      placeholder="0.00"
+                      allowNegative={fType === "EXPENSE"}
+                    />
+                    {fType === "EXPENSE" && parseFloat(fCost) < 0 && (
+                      <HStack gap={1.5} mt={1.5} align="start">
+                        <Box as={CornerUpLeft} mt="2px" color="green.solid" flexShrink={0} />
+                        <Text fontSize="xs" color="green.fg">
+                          Recorded as a <Text as="span" fontWeight="semibold">refund</Text> — it
+                          reduces this category's total and its Schedule C deduction. Date it when
+                          the money came back, not when the original was paid.
+                        </Text>
+                      </HStack>
+                    )}
                   </Box>
                   {fType === "EXPENSE" && (
                     <>

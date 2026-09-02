@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { PARCEL_SETTINGS } from "../src/services/parcels";
+import { ALERT_SETTINGS } from "../src/services/weatherAlerts";
 import { PrismaNeon } from "@prisma/adapter-neon";
 import { neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
@@ -173,6 +174,7 @@ const SETTING_SECTIONS: Record<string, string> = {
   // Payments & Payouts
   CONTRACTOR_PLATFORM_FEE_PERCENT: "payments",
   EMPLOYEE_BUSINESS_MARGIN_PERCENT: "payments",
+  WORKERS_COMP_PERCENT_OF_WAGES: "payments",
   PAYMENT_METHODS: "payments",
   PAYMENT_FROM_OPTIONS: "catalogs",
   PAYROLL_PERIOD_CADENCE: "payments",
@@ -194,6 +196,9 @@ const SETTING_SECTIONS: Record<string, string> = {
   PAYMENT_REQUEST_BASE_URL: "client_requests",
   PAYMENT_REQUEST_TOKEN_EXPIRY_HOURS: "client_requests",
   PAYMENT_REQUEST_STALE_DAYS: "client_requests",
+  // Not seeded as a normal row — written by the stale-toggle path near the
+  // bottom of this file — but it IS operator-facing, so it needs a section.
+  REQUEST_PAYMENT_FROM_CLIENT_ENABLED: "client_requests",
   NOTIFY_PAYMENT_APPROVAL_VIA_SMS_EMAIL: "client_requests",
   NOTIFY_CHANGE_REQUEST_VIA_SMS_EMAIL: "client_requests",
   OUTGOING_COMMS_CC: "client_requests",
@@ -206,6 +211,7 @@ const SETTING_SECTIONS: Record<string, string> = {
   DOCUMENT_TYPES: "catalogs",
   TIMELINE_CATEGORIES: "catalogs",
   EXPENSE_CATEGORIES: "catalogs",
+  EXPENSE_COST_BEHAVIOR: "catalogs",
   EQUIPMENT_RENTAL_INCOME_CONFIG: "catalogs",
   GUIDE_CATEGORIES: "catalogs",
   // Property Records — public county parcel lookup. Every endpoint is a
@@ -223,6 +229,10 @@ const SETTING_SECTIONS: Record<string, string> = {
   PARCEL_IMAGE_TIMEOUT_SECONDS: "parcel",
   PARCEL_IMAGE_ATTEMPTS: "parcel",
   PARCEL_STATES: "parcel",
+  PARCEL_QUERY_TIMEOUT_SECONDS: "parcel",
+  PARCEL_QUERY_ATTEMPTS: "parcel",
+  PARCEL_FAILURE_RETRY_HOURS: "parcel",
+  PARCEL_USE_WORKER_GPS: "parcel",
   // Photos & Documents
   MAX_PHOTOS_PER_JOB: "media",
   PHOTO_JPEG_QUALITY: "media",
@@ -248,8 +258,15 @@ const SETTING_SECTIONS: Record<string, string> = {
   ALLOWED_DOMAINS: "promotions",
   PROMOTION_LANDING_BASE_URL: "promotions",
   VANITY_STARTUP_ANIMATION_SHOW_HISTORY: "vanity",
+  VANITY_STARTUP_ANIMATION_ENABLED: "vanity",
   // Integrations
   WEATHER_API_KEY: "integrations",
+  NWS_ALERTS_ENABLED: "integrations",
+  NWS_ALERTS_URL: "integrations",
+  NWS_ALERTS_USER_AGENT: "integrations",
+  NWS_ALERTS_CACHE_MINUTES: "integrations",
+  NWS_ALERTS_MIN_SEVERITY: "integrations",
+  NWS_ALERTS_EVENT_KEYWORDS: "integrations",
   DOCUMENT_SYNC_ENABLED: "integrations",
   CLIENT_BACKUP_ENABLED: "integrations",
 };
@@ -2457,6 +2474,23 @@ async function seedDatabase() {
     { key: "EMPLOYEE_BUSINESS_MARGIN_PERCENT", value: "30", description: "Business margin percentage retained from employee (W-2) and trainee payment splits" },
     { key: "HIGH_VALUE_JOB_THRESHOLD", value: "200", description: "Jobs at or above this price require insurance for contractors to claim" },
     { key: "HOURS_APPROVAL_VARIANCE_THRESHOLD_PERCENT", value: "30", description: "Percent variance (over OR under the estimate) that auto-approves logged hours for payroll. Anything outside this window leaves hoursApprovedAt null and surfaces in the 'Hours awaiting review' alert until an admin reviews. Same threshold drives the visual '⚠ X% over estimate' warning on the JobsTab card." },
+    {
+      // Forecasting ONLY (Money -> Forecast). Deliberately a separate setting
+      // rather than a field on EXPENSE_CATEGORIES: that taxonomy is
+      // load-bearing for expense recording, the QuickBooks export and the
+      // P&L, its parser rejects unknown fields, and its loader swallows the
+      // error and returns nothing — so adding a field to it took production's
+      // Add Expense down on 2026-09-02. Nothing outside the forecast reads
+      // this row, so a bad value here cannot reach the ledger.
+      //
+      // Categories absent from this map default to VARIABLE, which is the
+      // conservative assumption: it denies a forecast any margin expansion
+      // from scale rather than inventing some.
+      key: "EXPENSE_COST_BEHAVIOR",
+      value: JSON.stringify({"Advertising": "DISCRETIONARY", "Fuel": "VARIABLE", "Vehicle Maintenance": "VARIABLE", "Contract labor": "VARIABLE", "Depreciation": "ONE_TIME", "Insurance": "FIXED", "Legal and professional services": "FIXED", "Office expense": "FIXED", "Rent or lease — vehicles/equipment": "FIXED", "Rent or lease — other business property": "FIXED", "Repairs and maintenance": "VARIABLE", "Supplies": "PER_JOB", "Taxes and licenses": "FIXED", "Travel": "DISCRETIONARY", "Meals": "DISCRETIONARY", "Utilities": "FIXED", "Payment Processing Fees": "VARIABLE", "Other": "FIXED"}),
+      description: "How each expense category responds to business volume, used only by the Super forecasting tool (Money -> Forecast). FIXED = does not grow with volume (insurance, software) — this is what makes scale improve margin. VARIABLE = scales with revenue (fuel, vehicle upkeep). PER_JOB = scales with job count rather than dollars (mulch, trimmer line), so a price increase does not move it. ONE_TIME = startup/non-recurring, excluded from a forward projection. DISCRETIONARY = you pick the amount each period (advertising, meals), held flat unless you opt into scaling it. Categories missing from this map default to VARIABLE. Has no effect on the P&L, the QuickBooks export, or expense recording.",
+    },
+    { key: "WORKERS_COMP_PERCENT_OF_WAGES", value: "12", description: "Workers compensation premium as a percent of W-2 wages. Used ONLY as the starting position for the Super forecasting tool (Money -> Forecast), where it is a tunable slider — it does not affect the P&L, payroll, or any export. Landscaping class codes run high and first-year minimum premiums distort the effective rate, so treat this as a placeholder until you can read the real percentage off a renewal quote." },
     { key: "MIN_WAGE_PER_HOUR", value: "7.25", description: "Minimum wage floor (USD/hour) used by the Operations → Worker Performance compliance check. Defaults to the federal FLSA minimum ($7.25) which is what applies in NC (no state-level higher floor). If you operate in a state with a higher minimum (e.g., NJ, NY, CA), bump this to match. Drives color coding on the per-worker $/hr column; contractors are shown for reclassification-risk monitoring (the floor is not a legal requirement for true 1099 workers)." },
     { key: "FIXED_ASSET_MIN_COST", value: "500", description: "Capitalization threshold (USD). BusinessExpense purchases at or above this cost, dated on/after the policy start date, are treated as Fixed Assets — excluded from qb-expenses.csv and emitted into qb-fixed-assets.csv instead. Policy start date is currently hardcoded in code; only the dollar threshold is editable here." },
     { key: "WORKDAY_APPROVAL_CUTOFF_HOUR_ET", value: "4", description: "Hour (0-23, ET) the next morning at which workday approval becomes available to admins/supers and the worker's edit window closes. Default 4 covers late-night work that wraps past midnight. Symmetric — worker can still edit until this hour the next day; admin can approve from this hour onward." },
@@ -2602,6 +2636,17 @@ async function seedDatabase() {
   // Property-record settings, generated from PARCEL_SETTINGS in
   // services/parcels.ts — the same map the service reads its defaults from,
   // so a new tunable cannot exist in code without a row to change it.
+  // Severe-weather alerts, generated from ALERT_SETTINGS in
+  // services/weatherAlerts.ts — same map the service reads its defaults
+  // from, so a new tunable cannot exist in code without a row to change it.
+  for (const [key, [value, description]] of Object.entries(ALERT_SETTINGS)) {
+    await prisma.setting.upsert({
+      where: { key },
+      create: { key, value, description, updatedById: MICHAEL_ID },
+      update: { description, updatedById: MICHAEL_ID },
+    });
+  }
+
   for (const [key, [value, description]] of Object.entries(PARCEL_SETTINGS)) {
     await prisma.setting.upsert({
       where: { key },
