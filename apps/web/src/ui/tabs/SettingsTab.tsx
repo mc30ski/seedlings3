@@ -2209,17 +2209,22 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
               <Card.Root key={s.id} variant="outline">
                 <Card.Body py="2" px="3">
                   <VStack align="start" gap={1}>
-                    <HStack justify="space-between" w="full" align="start">
-                      <VStack align="start" gap={0}>
+                    {/* minW={0} is load-bearing: a flex child defaults to
+                        min-width:auto, so a long unbreakable value — an
+                        endpoint URL in a description — widens the whole row
+                        past the viewport on a phone instead of wrapping.
+                        flexShrink={0} then stops Edit being crushed by it. */}
+                    <HStack justify="space-between" w="full" align="start" gap={2}>
+                      <VStack align="start" gap={0} flex="1" minW={0}>
                         <Text fontSize="sm" fontWeight="semibold">
                           {prettySettingName(s.key)}
                         </Text>
                         {s.description && (
-                          <Text fontSize="xs" color="fg.muted">{s.description}</Text>
+                          <Text fontSize="xs" color="fg.muted" overflowWrap="anywhere">{s.description}</Text>
                         )}
                       </VStack>
                       {isSuper && editingKey !== s.key && s.key !== "DEFAULT_PAYMENT_COMMUNICATIONS_MODE" && s.key !== "PAYROLL_PERIOD_CADENCE" && !BOOLEAN_SETTINGS.has(s.key) && !DATE_SETTINGS.has(s.key) && (
-                        <Button size="xs" variant="outline" onClick={() => { setEditingKey(s.key); setEditValue(s.value); }}>
+                        <Button size="xs" variant="outline" flexShrink={0} onClick={() => { setEditingKey(s.key); setEditValue(s.value); }}>
                           Edit
                         </Button>
                       )}
@@ -2416,10 +2421,15 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                         const editError = jsonSyntaxError(editValue);
                         return (
                           <VStack align="stretch" gap={1} w="full">
-                            <HStack gap={2} w="full">
-                              <Input value={editValue} onChange={(e) => setEditValue(e.target.value)} size="sm" flex="1" autoFocus />
-                              <Button size="sm" onClick={() => handleSave(s.key)} loading={saving} disabled={editValue === s.value || !!editError}>Save</Button>
-                              <Button size="sm" variant="ghost" onClick={() => setEditingKey(null)} disabled={saving}>Cancel</Button>
+                            {/* Wraps on a narrow screen: an input plus two
+                                buttons on one line leaves the field a few
+                                characters wide on a phone. */}
+                            <HStack gap={2} w="full" wrap="wrap">
+                              <Input value={editValue} onChange={(e) => setEditValue(e.target.value)} size="sm" flex="1" minW="180px" autoFocus />
+                              <HStack gap={2} flexShrink={0}>
+                                <Button size="sm" onClick={() => handleSave(s.key)} loading={saving} disabled={editValue === s.value || !!editError}>Save</Button>
+                                <Button size="sm" variant="ghost" onClick={() => setEditingKey(null)} disabled={saving}>Cancel</Button>
+                              </HStack>
                             </HStack>
                             {editError && (
                               <Text fontSize="xs" color="red.700">Invalid JSON — {editError}</Text>
@@ -2634,7 +2644,13 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                             </VStack>
                           );
                         }
-                        return <Text fontSize="md" fontWeight="medium">{s.value}</Text>;
+                        // break-all rather than normal wrapping: these are
+                        // often URLs, which contain no spaces to break at.
+                        return (
+                          <Text fontSize="md" fontWeight="medium" w="full" wordBreak="break-all">
+                            {s.value}
+                          </Text>
+                        );
                       })()
                     )}
 
