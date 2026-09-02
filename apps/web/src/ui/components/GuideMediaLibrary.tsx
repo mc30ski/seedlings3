@@ -24,10 +24,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge, Box, Button, HStack, Input, Text, VStack } from "@chakra-ui/react";
-import { Image as ImageIcon, Video } from "lucide-react";
+import { Image as ImageIcon, Video, ExternalLink} from "lucide-react";
 import { Dashboard } from "@/src/ui/components/Dashboard";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
+import { apiGet } from "@/src/lib/api";
 import {
   fetchAssets,
   presignAsset,
@@ -47,6 +48,8 @@ export default function GuideMediaLibrary({
   limits: MediaLimits | null;
 }) {
   const [assets, setAssets] = useState<GuideAsset[] | null>(null);
+  /** Asset whose signed URL is being fetched, so only that row spins. */
+  const [viewing, setViewing] = useState<string | null>(null);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   // From the server, not a copy of its constant — a duplicated page size
@@ -253,6 +256,35 @@ export default function GuideMediaLibrary({
                   <Text fontSize="2xs" color="fg.muted">
                     {a.uploadedByName ?? "—"}
                   </Text>
+                  {/* VIEW — opens the actual file in a new tab.
+                      The library listed name, size and uploader but gave no
+                      way to SEE the thing, so identifying an asset meant
+                      pasting its markdown into a guide and previewing.
+                      Fetched on click rather than up front: these are signed,
+                      short-lived URLs, and minting one per row on every render
+                      would be a request per asset for links mostly never used. */}
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    title={`Open ${a.originalFilename} in a new tab`}
+                    loading={viewing === a.id}
+                    onClick={async () => {
+                      setViewing(a.id);
+                      try {
+                        const { url } = await apiGet<{ url: string }>(`/api/me/guides/assets/${a.id}/url`);
+                        window.open(url, "_blank", "noopener,noreferrer");
+                      } catch (err) {
+                        publishInlineMessage({
+                          type: "ERROR",
+                          text: getErrorMessage("Couldn't open that file.", err),
+                        });
+                      } finally {
+                        setViewing(null);
+                      }
+                    }}
+                  >
+                    <ExternalLink size={12} /> View
+                  </Button>
                   <Button
                     size="xs"
                     variant="ghost"
