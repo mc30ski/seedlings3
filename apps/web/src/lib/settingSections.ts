@@ -60,6 +60,14 @@ export const SETTING_SECTIONS: SettingSection[] = [
     title: "Integrations",
     description: "API keys and credentials for external services.",
   },
+  {
+    key: "parcel",
+    title: "Property Records",
+    description:
+      "Public county parcel lookup — the acreage, overhead imagery and assessment shown from a job card. " +
+      "Every endpoint is a setting so covering a different state or county is a config change, not a deploy. " +
+      "None of these services need an API key.",
+  },
 ];
 
 // The catch-all bucket for settings with a null/unknown section. Rendered

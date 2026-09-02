@@ -35,70 +35,95 @@ import { ServiceError } from "../lib/errors";
 import { isStaleAfterDays } from "../lib/dates";
 import { getDownloadUrl, headObject, putObjectBuffer } from "../lib/r2";
 
+/**
+ * Every tunable for this feature, one Settings row each.
+ *
+ * Deliberately NOT a single JSON blob: the operator asked to be able to see
+ * and change each value on its own, and a blob means editing raw JSON in a
+ * text box to move one number. Grouped under the "Property Records" section.
+ *
+ * NOTHING about the external services is hardcoded — all three endpoints are
+ * here, so covering another state or swapping a county's own geocoder in is a
+ * settings change. (The RESPONSE SHAPES are still assumed: an ArcGIS parcel
+ * layer and a Census-style geocoder. A different vendor needs code.)
+ */
 export type ParcelConfig = {
   enabled: boolean;
-  /** ArcGIS FeatureServer/MapServer layer query endpoint for parcel polygons. */
+  geocoderUrl: string;
+  geocoderQuery: string;
   parcelServiceUrl: string;
-  /** ArcGIS ImageServer exportImage endpoint for orthoimagery. */
   imageServiceUrl: string;
-  /** Re-resolve once the cached record is older than this. Parcel data is
-   *  revalued on a multi-year county cycle, so this is deliberately long. */
   cacheDays: number;
-  /** How far from the geocoded street point to look for candidate parcels. */
   searchRadiusFt: number;
-  /** Longest edge of the cached image, in pixels. */
   imageMaxPx: number;
-  /** Padding around the parcel in the image, in feet. */
   imageMarginFt: number;
-  /** `jpg` or `png`. Aerial imagery is photographic, so PNG's lossless
-   *  encoding buys nothing and costs ~5x the bytes — 806 KB vs ~150 KB at
-   *  640px measured on one parcel. Only worth PNG if you need crisp overlaid
-   *  vector lines, which we don't: the boundary is drawn client-side. */
-  imageFormat: "jpg" | "png";
-  /** Two-letter states the parcel service covers. A property outside these
-   *  gets no lookup and no icon rather than a broken dialog. */
+  imageFormat: string;
+  imageTimeoutSeconds: number;
+  imageAttempts: number;
   states: string[];
 };
 
-/** Defaults describe North Carolina. Everything is overridable from Settings
- *  so covering another state is a config change, not a deploy. */
-export const PARCEL_DEFAULTS: ParcelConfig = {
-  enabled: true,
-  parcelServiceUrl:
-    "https://services.nconemap.gov/secure/rest/services/NC1Map_Parcels/MapServer/1/query",
-  imageServiceUrl:
-    "https://services.nconemap.gov/secure/rest/services/Imagery/Orthoimagery_20242027_analysis/ImageServer/exportImage",
-  cacheDays: 365,
-  searchRadiusFt: 250,
-  imageMaxPx: 640,
-  imageMarginFt: 50,
-  imageFormat: "jpg",
-  states: ["NC"],
-};
-
-export const PARCEL_SETTING_KEY = "PARCEL_LOOKUP";
+/** key -> [default, description]. The single source of truth: the seed reads
+ *  this to create the rows, so a new tunable can never drift from its row. */
+export const PARCEL_SETTINGS = {
+  PARCEL_ENABLED: ["true", "Master switch for the property-record lookup. When off, the icon still appears but the dialog reports the feature is disabled."],
+  PARCEL_GEOCODER_URL: ["https://geocoding.geo.census.gov/geocoder/locations/onelineaddress",
+    "Turns a street address into a coordinate. The US Census geocoder is free, national and needs no key. Swap for a county's own address locator if you want rooftop accuracy — Census interpolates along street centrelines, so its point lands in the road."],
+  PARCEL_GEOCODER_QUERY: ["?address={address}&benchmark=Public_AR_Current&format=json",
+    "Query string appended to the geocoder URL. {address} is replaced with the URL-encoded address."],
+  PARCEL_SERVICE_URL: ["https://services.nconemap.gov/secure/rest/services/NC1Map_Parcels/MapServer/1/query",
+    "ArcGIS parcel-polygon layer, queried for the parcel containing the geocoded point. NC OneMap covers every NC county."],
+  PARCEL_IMAGE_SERVICE_URL: ["https://services.nconemap.gov/secure/rest/services/Imagery/Orthoimagery_20242027_analysis/ImageServer/exportImage",
+    "ArcGIS ImageServer that renders the overhead view. NC's statewide orthoimagery is 6 inches per pixel and flown leaf-off in winter."],
+  PARCEL_CACHE_DAYS: ["365",
+    "How long a resolved parcel and its cached image are reused before re-querying. Counties revalue on a multi-year cycle, so this is deliberately long."],
+  PARCEL_SEARCH_RADIUS_FT: ["250",
+    "How far from the geocoded point to look for candidate parcels. Needed because the geocoder returns a point in the road, not on the house; the parcel whose house number matches wins."],
+  PARCEL_IMAGE_MAX_PX: ["640", "Longest edge of the cached overhead image, in pixels."],
+  PARCEL_IMAGE_MARGIN_FT: ["50", "Padding around the parcel in the overhead image, in feet."],
+  PARCEL_IMAGE_FORMAT: ["jpg", "jpg or png. Aerial imagery is photographic, so PNG's lossless encoding costs ~5x the bytes for no visible gain (806 KB vs 104 KB measured)."],
+  PARCEL_IMAGE_TIMEOUT_SECONDS: ["45",
+    "How long to wait for the imagery service. Its latency is very erratic — eight identical requests measured 1.2s to 24.6s — so this is deliberately generous."],
+  PARCEL_IMAGE_ATTEMPTS: ["2", "How many times to try the imagery service before giving up. The fast responses cluster after a slow one, so a retry usually returns quickly."],
+  PARCEL_STATES: ["NC",
+    "Comma-separated two-letter states the parcel service covers. A property outside these gets no lookup and no dialog rather than a broken one."],
+} as const;
 
 /**
  * Bump when the shape of `parcelData` changes.
  *
  * A cached record written by an older version is missing whatever field was
- * just added, and with a 365-day window it would keep serving that gap for a
- * year. Observed immediately: adding `confident` left every cached record
- * reading `undefined`, so the low-confidence warning never fired on data
- * resolved minutes earlier.
+ * just added, and with a year-long window it would keep serving that gap.
+ * Observed: adding `confident` left records resolved minutes earlier reading
+ * `undefined`, so the low-confidence warning never fired.
  */
 const PARCEL_DATA_VERSION = 2;
 
+const num = (v: string | undefined, fallback: number) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+};
+
 export async function parcelConfig(): Promise<ParcelConfig> {
-  const row = await prisma.setting.findUnique({ where: { key: PARCEL_SETTING_KEY } });
-  if (!row?.value) return PARCEL_DEFAULTS;
-  try {
-    return { ...PARCEL_DEFAULTS, ...(JSON.parse(row.value) as Partial<ParcelConfig>) };
-  } catch {
-    // A malformed setting must not take the feature down — SettingsTab now
-    // flags invalid JSON in place, which is where it gets fixed.
-    return PARCEL_DEFAULTS;
-  }
+  const keys = Object.keys(PARCEL_SETTINGS);
+  const rows = await prisma.setting.findMany({ where: { key: { in: keys } }, select: { key: true, value: true } });
+  const v = new Map(rows.map((r) => [r.key, r.value]));
+  const d = (k: keyof typeof PARCEL_SETTINGS) => v.get(k) ?? PARCEL_SETTINGS[k][0];
+  return {
+    enabled: d("PARCEL_ENABLED") !== "false",
+    geocoderUrl: d("PARCEL_GEOCODER_URL"),
+    geocoderQuery: d("PARCEL_GEOCODER_QUERY"),
+    parcelServiceUrl: d("PARCEL_SERVICE_URL"),
+    imageServiceUrl: d("PARCEL_IMAGE_SERVICE_URL"),
+    cacheDays: num(d("PARCEL_CACHE_DAYS"), 365),
+    searchRadiusFt: num(d("PARCEL_SEARCH_RADIUS_FT"), 250),
+    imageMaxPx: num(d("PARCEL_IMAGE_MAX_PX"), 640),
+    imageMarginFt: num(d("PARCEL_IMAGE_MARGIN_FT"), 50),
+    imageFormat: d("PARCEL_IMAGE_FORMAT") === "png" ? "png" : "jpg",
+    imageTimeoutSeconds: num(d("PARCEL_IMAGE_TIMEOUT_SECONDS"), 45),
+    imageAttempts: Math.max(1, num(d("PARCEL_IMAGE_ATTEMPTS"), 2)),
+    states: d("PARCEL_STATES").split(",").map((x) => x.trim().toUpperCase()).filter(Boolean),
+  };
 }
 
 export type ParcelAttributes = {
@@ -149,11 +174,11 @@ async function fetchJson(url: string, timeoutMs = 15000): Promise<any> {
 }
 
 /** Free, national, no key. Returns null when the address can't be placed. */
-async function geocode(address: string): Promise<{ lat: number; lng: number } | null> {
-  const url =
-    "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress" +
-    `?address=${encodeURIComponent(address)}&benchmark=Public_AR_Current&format=json`;
+async function geocode(address: string, cfg: ParcelConfig): Promise<{ lat: number; lng: number } | null> {
+  const url = cfg.geocoderUrl + cfg.geocoderQuery.replace("{address}", encodeURIComponent(address));
   const body = await fetchJson(url);
+  // Census response shape. Swapping to a different geocoder needs this reader
+  // changed too — a configurable URL only gets you a compatible service.
   const m = body?.result?.addressMatches?.[0];
   if (!m?.coordinates) return null;
   const lat = Number(m.coordinates.y);
@@ -303,7 +328,7 @@ export async function resolveParcel(propertyId: string, opts: { force?: boolean 
     .filter(Boolean).join(", ");
   let point: { lat: number; lng: number } | null;
   try {
-    point = await geocode(address);
+    point = await geocode(address, cfg);
   } catch (e: any) {
     return fail(`Geocoder unavailable (${e?.message ?? "error"}).`);
   }
@@ -506,12 +531,12 @@ export async function parcelImageUrl(propertyId: string): Promise<ParcelImage> {
   // longer deadline plus one retry: the fast runs cluster after a slow one,
   // which looks like a cold tile warming upstream, so a second attempt
   // usually returns quickly.
-  const IMAGE_TIMEOUT_MS = 45000;
+  const IMAGE_TIMEOUT_MS = cfg.imageTimeoutSeconds * 1000;
   let buf: Uint8Array | null = null;
   let lastErr = "";
   let lastKind: "timeout" | "upstream" | "network" = "network";
   let lastUpstream: string | null = null;
-  for (let attempt = 1; attempt <= 2 && !buf; attempt++) {
+  for (let attempt = 1; attempt <= cfg.imageAttempts && !buf; attempt++) {
     const ctl = new AbortController();
     const t = setTimeout(() => ctl.abort(), IMAGE_TIMEOUT_MS);
     try {
@@ -559,12 +584,12 @@ export async function parcelImageUrl(propertyId: string): Promise<ParcelImage> {
     // broken endpoint, so the two don't share a message.
     const message =
       lastKind === "timeout"
-        ? `The imagery service didn't respond within ${IMAGE_TIMEOUT_MS / 1000} seconds, twice. ` +
+        ? `The imagery service didn't respond within ${cfg.imageTimeoutSeconds} seconds, after ${cfg.imageAttempts} attempt(s). ` +
           `It's a free public service with no uptime guarantee and its speed varies a lot — trying again usually works.`
         : lastKind === "upstream"
           ? `The imagery service rejected the request${lastUpstream ? ` ("${lastUpstream}")` : ""}. ` +
-            `That's a configuration problem rather than an outage — check the imagery URL in ` +
-            `Settings → ${PARCEL_SETTING_KEY}. Retrying won't help until it's corrected.`
+            `That's a configuration problem rather than an outage — check ` +
+            `PARCEL_IMAGE_SERVICE_URL under Settings → Property Records. Retrying won't help until it's corrected.`
           : `The imagery service couldn't be reached (${lastErr}). Check the connection and try again.`;
     throw new ServiceError("IMAGERY_UNAVAILABLE", message, 502);
   }
