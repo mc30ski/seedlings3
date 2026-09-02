@@ -60,6 +60,10 @@ export type ParcelConfig = {
   imageFormat: string;
   imageTimeoutSeconds: number;
   imageAttempts: number;
+  queryTimeoutSeconds: number;
+  queryAttempts: number;
+  failureRetryHours: number;
+  useWorkerGps: boolean;
   states: string[];
 };
 
@@ -85,6 +89,13 @@ export const PARCEL_SETTINGS = {
   PARCEL_IMAGE_TIMEOUT_SECONDS: ["45",
     "How long to wait for the imagery service. Its latency is very erratic — eight identical requests measured 1.2s to 24.6s — so this is deliberately generous."],
   PARCEL_IMAGE_ATTEMPTS: ["2", "How many times to try the imagery service before giving up. The fast responses cluster after a slow one, so a retry usually returns quickly."],
+  PARCEL_QUERY_TIMEOUT_SECONDS: ["45",
+    "How long to wait for the parcel service. Like the imagery service its latency is erratic, and a timeout here is the most common reason a lot fails to resolve while its neighbours succeed."],
+  PARCEL_QUERY_ATTEMPTS: ["2", "How many times to try the parcel service before giving up."],
+  PARCEL_FAILURE_RETRY_HOURS: ["6",
+    "How long a FAILED lookup is remembered before being retried. Much shorter than the success cache: most failures are transient (a timeout, a service blip), and caching one for a year would strand a property that would resolve fine on the next try."],
+  PARCEL_USE_WORKER_GPS: ["true",
+    "When the geocoder can't place an address, fall back to the coordinates a worker's phone recorded when starting a job at that property. Newer subdivisions are often missing from the Census geocoder, and a worker who stood there is a better source than an address database."],
   PARCEL_STATES: ["NC",
     "Comma-separated two-letter states the parcel service covers. A property outside these gets no lookup and no dialog rather than a broken one."],
 } as const;
@@ -98,6 +109,45 @@ export const PARCEL_SETTINGS = {
  * `undefined`, so the low-confidence warning never fired.
  */
 const PARCEL_DATA_VERSION = 2;
+
+/**
+ * Does a stored state value match one of the configured states?
+ *
+ * Production stores the same state three different ways — "NC" (48
+ * properties), "North Carolina" (21) and "North" (22, evidently truncated) —
+ * so a plain `states.includes(value)` rejected 47% of them with "no parcel
+ * coverage". Address fields are free text and always will be.
+ *
+ * Matches a two-letter code, the full name, or an unambiguous prefix of the
+ * full name of a CONFIGURED state. "North" is accepted as North Carolina here
+ * only because NC is configured and North Dakota is not; if both were
+ * configured it would correctly match neither.
+ */
+const STATE_NAMES: Record<string, string> = {
+  AL: "ALABAMA", AK: "ALASKA", AZ: "ARIZONA", AR: "ARKANSAS", CA: "CALIFORNIA",
+  CO: "COLORADO", CT: "CONNECTICUT", DE: "DELAWARE", FL: "FLORIDA", GA: "GEORGIA",
+  HI: "HAWAII", ID: "IDAHO", IL: "ILLINOIS", IN: "INDIANA", IA: "IOWA",
+  KS: "KANSAS", KY: "KENTUCKY", LA: "LOUISIANA", ME: "MAINE", MD: "MARYLAND",
+  MA: "MASSACHUSETTS", MI: "MICHIGAN", MN: "MINNESOTA", MS: "MISSISSIPPI",
+  MO: "MISSOURI", MT: "MONTANA", NE: "NEBRASKA", NV: "NEVADA",
+  NH: "NEW HAMPSHIRE", NJ: "NEW JERSEY", NM: "NEW MEXICO", NY: "NEW YORK",
+  NC: "NORTH CAROLINA", ND: "NORTH DAKOTA", OH: "OHIO", OK: "OKLAHOMA",
+  OR: "OREGON", PA: "PENNSYLVANIA", RI: "RHODE ISLAND", SC: "SOUTH CAROLINA",
+  SD: "SOUTH DAKOTA", TN: "TENNESSEE", TX: "TEXAS", UT: "UTAH", VT: "VERMONT",
+  VA: "VIRGINIA", WA: "WASHINGTON", WV: "WEST VIRGINIA", WI: "WISCONSIN", WY: "WYOMING",
+};
+
+export function stateMatches(stored: string | null | undefined, configured: string[]): boolean {
+  const v = (stored ?? "").trim().toUpperCase().replace(/\.$/, "");
+  if (!v) return false;
+  const candidates = configured.map((c) => c.trim().toUpperCase());
+  if (candidates.includes(v)) return true;
+  const full = candidates.map((c) => STATE_NAMES[c]).filter(Boolean);
+  if (full.includes(v)) return true;
+  // Prefix, but only if it is unambiguous across the configured states.
+  const hits = full.filter((f) => f.startsWith(v));
+  return v.length >= 3 && hits.length === 1;
+}
 
 const num = (v: string | undefined, fallback: number) => {
   const n = Number(v);
@@ -122,6 +172,10 @@ export async function parcelConfig(): Promise<ParcelConfig> {
     imageFormat: d("PARCEL_IMAGE_FORMAT") === "png" ? "png" : "jpg",
     imageTimeoutSeconds: num(d("PARCEL_IMAGE_TIMEOUT_SECONDS"), 45),
     imageAttempts: Math.max(1, num(d("PARCEL_IMAGE_ATTEMPTS"), 2)),
+    queryTimeoutSeconds: num(d("PARCEL_QUERY_TIMEOUT_SECONDS"), 45),
+    queryAttempts: Math.max(1, num(d("PARCEL_QUERY_ATTEMPTS"), 2)),
+    failureRetryHours: num(d("PARCEL_FAILURE_RETRY_HOURS"), 6),
+    useWorkerGps: d("PARCEL_USE_WORKER_GPS") !== "false",
     states: d("PARCEL_STATES").split(",").map((x) => x.trim().toUpperCase()).filter(Boolean),
   };
 }
@@ -195,6 +249,37 @@ const addressOf = (p: { street1: string | null; city: string | null; state: stri
   state: p.state ?? "",
   postalCode: p.postalCode ?? "",
 });
+
+/**
+ * Where a worker's phone said they were when they started a job here.
+ *
+ * The Census geocoder is built from TIGER address ranges and simply does not
+ * know newer subdivisions — "87 Monteith Dr, Chapel Hill" returns no match in
+ * any spelling, while the parcel sits right there in Chatham's data. A worker
+ * who physically stood on the property is a better source than an address
+ * database, and this is data we already collect.
+ *
+ * Uses the MEDIAN of the recorded fixes, not the mean: one bad GPS lock (a
+ * worker who hit start from the road two streets away) would drag an average
+ * off the lot, while a median ignores it.
+ */
+async function workerGps(propertyId: string): Promise<{ lat: number; lng: number } | null> {
+  const rows = await prisma.jobOccurrence.findMany({
+    where: { job: { propertyId }, startLat: { not: null }, startLng: { not: null } },
+    select: { startLat: true, startLng: true },
+    orderBy: { startAt: "desc" },
+    take: 15,
+  });
+  if (rows.length === 0) return null;
+  const mid = (xs: number[]) => {
+    const v = [...xs].sort((a, b) => a - b);
+    return v[Math.floor(v.length / 2)];
+  };
+  return {
+    lat: mid(rows.map((r) => r.startLat!)),
+    lng: mid(rows.map((r) => r.startLng!)),
+  };
+}
 
 const houseNumberOf = (s: string | null | undefined): number | null => {
   const n = String(s ?? "").trim().match(/^(\d+)/)?.[1];
@@ -287,14 +372,24 @@ export async function resolveParcel(propertyId: string, opts: { force?: boolean 
     },
   });
   if (!property) throw new ServiceError("NOT_FOUND", "Property not found.", 404);
-  if (!cfg.enabled) throw new ServiceError("DISABLED", "Parcel lookup is turned off.", 400);
+  if (!cfg.enabled) {
+    throw new ServiceError(
+      "DISABLED",
+      "Property records are switched off for this business. A Super can turn them back on in Settings, under Property Records.",
+      400,
+    );
+  }
 
   const cachedVersion = (property.parcelData as any)?.version ?? 0;
-  const fresh =
-    !isStaleAfterDays(property.parcelFetchedAt, cfg.cacheDays) &&
-    // A lookup that found nothing has no payload to version — don't force it
-    // to re-run on every schema bump.
-    (property.parcelLookupError != null || cachedVersion === PARCEL_DATA_VERSION);
+  // A FAILURE is remembered for hours, a SUCCESS for a year.
+  //
+  // Both used to share `cacheDays`, so one transient timeout stranded a
+  // property for 365 days — the single worst behaviour in this feature, since
+  // the most common failure (a slow upstream) is also the most transient.
+  const fresh = property.parcelLookupError != null
+    ? !isStaleAfterDays(property.parcelFetchedAt, cfg.failureRetryHours / 24)
+    : !isStaleAfterDays(property.parcelFetchedAt, cfg.cacheDays) &&
+      cachedVersion === PARCEL_DATA_VERSION;
   if (!opts.force && fresh && (property.parcelData || property.parcelLookupError)) {
     return {
       cached: true,
@@ -320,19 +415,35 @@ export async function resolveParcel(propertyId: string, opts: { force?: boolean 
     };
   };
 
-  if (!cfg.states.includes((property.state ?? "").toUpperCase())) {
-    return fail(`No parcel coverage for ${property.state || "this state"}.`);
+  if (!stateMatches(property.state, cfg.states)) {
+    return fail(
+      `This property is in ${property.state || "another state"}. County property records are only ` +
+      `set up for North Carolina right now, so there's nothing to look up.`,
+    );
   }
 
   const address = [property.street1, property.city, `${property.state} ${property.postalCode}`]
     .filter(Boolean).join(", ");
-  let point: { lat: number; lng: number } | null;
+  let point: { lat: number; lng: number } | null = null;
+  let located = "geocoded address";
   try {
     point = await geocode(address, cfg);
-  } catch (e: any) {
-    return fail(`Geocoder unavailable (${e?.message ?? "error"}).`);
+  } catch {
+    point = null; // fall through to the GPS fallback before giving up
   }
-  if (!point) return fail("Address could not be located.");
+  if (!point && cfg.useWorkerGps) {
+    point = await workerGps(propertyId);
+    if (point) located = "a worker's recorded location at this property";
+  }
+  if (!point) {
+    return fail(
+      "We couldn't work out where this property is on the map. The national address " +
+      "directory doesn't have this street — common for newer neighbourhoods — and nobody " +
+      "has started a job here yet, so there's no location from a phone to fall back on " +
+      "either. It should sort itself out once someone works here. If it doesn't, check " +
+      "the street address for a typo.",
+    );
+  }
 
   // Candidate parcels near the street point. Geometry comes back so we can
   // both rank by distance and cache the boundary in one call.
@@ -342,14 +453,36 @@ export async function resolveParcel(propertyId: string, opts: { force?: boolean 
     `&units=esriSRUnit_Foot&spatialRel=esriSpatialRelIntersects` +
     `&outFields=parno,siteadd,cntyname,gisacres,landval,improvval,parval,parvaltype,parusedesc,ownname` +
     `&returnGeometry=true&outSR=4326&f=json`;
-  let body: any;
-  try {
-    body = await fetchJson(q, 25000);
-  } catch (e: any) {
-    return fail(`Parcel service unavailable (${e?.message ?? "error"}).`);
+  // Retry, for the same reason the imagery fetch does: this service times out
+  // intermittently and a single 25s attempt was the top cause of "the
+  // neighbour's lot resolves but mine doesn't". Observed in one run: the same
+  // address failed and succeeded minutes apart.
+  let body: any = null;
+  let queryErr = "";
+  for (let attempt = 1; attempt <= cfg.queryAttempts && !body; attempt++) {
+    try {
+      body = await fetchJson(q, cfg.queryTimeoutSeconds * 1000);
+    } catch (e: any) {
+      queryErr = e?.name === "AbortError"
+        ? `it took longer than ${cfg.queryTimeoutSeconds} seconds to reply`
+        : "we couldn't reach it";
+    }
+  }
+  if (!body) {
+    return fail(
+      `The county's property records aren't answering right now — ${queryErr}. This is ` +
+      `almost always temporary and nothing to do with this property; it'll try again by ` +
+      `itself shortly, or you can hit refresh.`,
+    );
   }
   const features: any[] = body?.features ?? [];
-  if (features.length === 0) return fail("No parcel found at this address.");
+  if (features.length === 0) {
+    return fail(
+      "We found the address on the map, but the county has no property record at that " +
+      "spot. That usually means the address points somewhere slightly off — a shared " +
+      "driveway, or the road rather than the lot. Worth checking the address.",
+    );
+  }
 
   // House number first — an integer compare, immune to the spelling
   // differences between our record, the county's and the Census's. Distance
@@ -387,8 +520,8 @@ export async function resolveParcel(propertyId: string, opts: { force?: boolean 
     owner: a.ownname ?? null,
     confident: best.numberMatch,
     source: best.numberMatch
-      ? "Matched by house number"
-      : `Nearest of ${scored.length} parcels, ${Math.round(best.distFt)} ft from the geocoded address`,
+      ? `Matched by house number, from ${located}`
+      : `Nearest of ${scored.length} parcels, ${Math.round(best.distFt)} ft from ${located}`,
   };
 
   // audit-allow: caches the county's public parcel record against the
@@ -483,7 +616,11 @@ export async function parcelImageUrl(propertyId: string): Promise<ParcelImage> {
 
   const rings = p.parcelBoundary as number[][][] | null;
   if (!rings?.length && (p.lat == null || p.lng == null)) {
-    throw new ServiceError("BAD_STATE", "Resolve the parcel before requesting imagery.", 400);
+    throw new ServiceError(
+      "BAD_STATE",
+      "We need to find the property on the map before we can fetch a photo of it. Close this and open it again.",
+      400,
+    );
   }
 
   // Bounding box in degrees, padded, then converted to a pixel size that
@@ -541,7 +678,7 @@ export async function parcelImageUrl(propertyId: string): Promise<ParcelImage> {
     const t = setTimeout(() => ctl.abort(), IMAGE_TIMEOUT_MS);
     try {
       const res = await fetch(url, { signal: ctl.signal });
-      if (!res.ok) throw new Error(`the imagery service returned HTTP ${res.status}`);
+      if (!res.ok) throw new Error(`the service reported an error (code ${res.status})`);
 
       // ARCGIS SIGNALS ERRORS WITH HTTP 200.
       //
@@ -555,7 +692,7 @@ export async function parcelImageUrl(propertyId: string): Promise<ParcelImage> {
         const text = (await res.text()).slice(0, 400);
         let upstream = text;
         try { upstream = JSON.parse(text)?.error?.message ?? text; } catch { /* not JSON */ }
-        const err: any = new Error(`the imagery service returned an error instead of an image`);
+        const err: any = new Error(`it sent back an error message instead of a photo`);
         err.upstream = upstream;
         throw err;
       }
@@ -563,7 +700,7 @@ export async function parcelImageUrl(propertyId: string): Promise<ParcelImage> {
       const bytes = new Uint8Array(await res.arrayBuffer());
       // A zero-length or absurdly small body is not a usable picture either.
       if (bytes.byteLength < 1024) {
-        throw new Error(`the imagery service returned only ${bytes.byteLength} bytes`);
+        throw new Error(`it sent back a file too small to be a photo (${bytes.byteLength} bytes)`);
       }
       buf = bytes;
     } catch (e: any) {
@@ -572,7 +709,7 @@ export async function parcelImageUrl(propertyId: string): Promise<ParcelImage> {
       // "returned Token Required … it is often slow, try again", which is
       // both contradictory and useless.
       lastKind = e?.name === "AbortError" ? "timeout" : (e?.upstream ? "upstream" : "network");
-      lastErr = e?.message ?? "the imagery service could not be reached";
+      lastErr = e?.message ?? "we couldn't reach it";
       lastUpstream = e?.upstream ?? null;
     } finally {
       clearTimeout(t);
@@ -584,13 +721,15 @@ export async function parcelImageUrl(propertyId: string): Promise<ParcelImage> {
     // broken endpoint, so the two don't share a message.
     const message =
       lastKind === "timeout"
-        ? `The imagery service didn't respond within ${cfg.imageTimeoutSeconds} seconds, after ${cfg.imageAttempts} attempt(s). ` +
-          `It's a free public service with no uptime guarantee and its speed varies a lot — trying again usually works.`
+        ? `The state's aerial photo service didn't answer, even after ${cfg.imageAttempts === 1 ? "one try" : `${cfg.imageAttempts} tries`}. ` +
+          `It's a free public service and its speed is very unpredictable — some minutes it answers instantly, ` +
+          `some not at all. Trying again usually works.`
         : lastKind === "upstream"
-          ? `The imagery service rejected the request${lastUpstream ? ` ("${lastUpstream}")` : ""}. ` +
-            `That's a configuration problem rather than an outage — check ` +
-            `PARCEL_IMAGE_SERVICE_URL under Settings → Property Records. Retrying won't help until it's corrected.`
-          : `The imagery service couldn't be reached (${lastErr}). Check the connection and try again.`;
+          ? `The state's aerial photo service turned the request away${lastUpstream ? ` — it said: "${lastUpstream}"` : ""}. ` +
+            `That points to a setting being wrong rather than the service being down, so trying again won't help. ` +
+            `A Super should check the aerial photo address in Settings, under Property Records.`
+          : `We couldn't reach the state's aerial photo service at all. That's usually a network problem ` +
+            `on this end rather than anything to do with the property — check the connection and try again.`;
     throw new ServiceError("IMAGERY_UNAVAILABLE", message, 502);
   }
 
