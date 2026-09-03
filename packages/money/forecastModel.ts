@@ -76,6 +76,10 @@ export type ForecastExpenseLine = {
   category: string;
   behavior: CostBehavior;
   amount: number;
+  /** The slice of `amount` that is a capital purchase — a mower, a trailer —
+   *  rather than a running cost. The P&L capitalizes these; a scenario can
+   *  hold them out too, which is what `excludeFixedAssets` does. */
+  fixedAssetAmount: number;
 };
 
 /** The local market wage band the fairness view compares against, with enough
@@ -130,6 +134,12 @@ export type ForecastBaseline = {
      *  else; a 1099 contractor carries neither payroll tax nor workers comp. */
     w2Wages: number;
     contractLabor: number;
+    /** Capital purchases in the window. Excluded from the profit figure above,
+     *  the same way the P&L excludes them from Net Operating Income. */
+    fixedAssetPurchases: number;
+    /** Job materials that also carry a ledger row, so a reader can see the
+     *  deduplication rather than wonder where the money went. */
+    jobMaterialsInLedger: number;
     ownerEarnings: number;
     profitBeforeOwnerLabor: number;
   };
@@ -273,6 +283,19 @@ export type Assumptions = {
    *  software cull. Null = use the window's actual fixed costs. */
   fixedCostOverride: number | null;
   includeOneTime: boolean;
+  /**
+   * Hold capital purchases out of the operating picture. ON by default.
+   *
+   * A mower is not a running cost — it cuts grass for years. Charging the
+   * whole ticket to the quarter you bought it in is correct for tax (Section
+   * 179) and badly wrong for "am I making money running jobs": one $7,943
+   * purchase read as 46% of a quarter's revenue and turned a roughly
+   * breakeven window into a 59% loss.
+   *
+   * A toggle rather than a rule, because the money genuinely did leave the
+   * bank and there are questions where that is the thing you want to see.
+   */
+  excludeFixedAssets: boolean;
   /** Discretionary spend (advertising, meals) held flat by default: scaling it
    *  with revenue asserts a causal link the data can't support. */
   scaleDiscretionary: boolean;
@@ -315,6 +338,7 @@ export function defaultAssumptions(b: ForecastBaseline): Assumptions {
     workersCompInExpenses: 0,
     fixedCostOverride: null,
     includeOneTime: true,
+    excludeFixedAssets: true,
     scaleDiscretionary: false,
     behaviorOverrides: {},
     workerOverrides: {},
@@ -680,7 +704,12 @@ export function simulate(baseline: ForecastBaseline, a: Assumptions): ForecastRe
   for (const line of baseline.expenses) {
     // The scenario's own tag wins over the configured one.
     const behavior = a.behaviorOverrides?.[line.category] ?? "AS_IS";
-    let amount = line.amount;
+    // Take the capital slice off the top, BEFORE any behavior scaling — a
+    // mower doesn't become 1.5 mowers because you modelled 50% more work.
+    // Every case below scales THIS, not line.amount, or the exclusion would
+    // silently come back the moment a category was tagged.
+    const base = a.excludeFixedAssets ? line.amount - line.fixedAssetAmount : line.amount;
+    let amount = base;
     switch (behavior) {
       case "AS_IS":
       case "FIXED":
@@ -697,16 +726,16 @@ export function simulate(baseline: ForecastBaseline, a: Assumptions): ForecastRe
         // a single flat multiplier. Both tags are kept because they mean
         // different things and would diverge the moment job COUNT and job
         // SIZE become separate levers; today the distinction is descriptive.
-        amount = line.amount * vm;
+        amount = base * vm;
         break;
       case "PER_JOB":
-        amount = line.amount * vm;
+        amount = base * vm;
         break;
       case "ONE_TIME":
-        amount = a.includeOneTime ? line.amount : 0;
+        amount = a.includeOneTime ? base : 0;
         break;
       case "DISCRETIONARY":
-        amount = a.scaleDiscretionary ? line.amount * revenueRatio : line.amount;
+        amount = a.scaleDiscretionary ? base * revenueRatio : base;
         break;
     }
     // Inflation lands on every cost line, after volume scaling.

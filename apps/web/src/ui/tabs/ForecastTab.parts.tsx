@@ -5,7 +5,7 @@
 // buy nothing but weight. Everything below is a pure function of props so a
 // re-render on drag stays cheap.
 
-import React from "react";
+import React, { useState } from "react";
 import { Badge, Box, Button, HStack, Select, Separator, Stack, Text, VStack, createListCollection } from "@chakra-ui/react";
 import { FiAlertTriangle, FiInfo, FiTrendingUp, FiTrendingDown } from "react-icons/fi";
 import type { ForecastResult, WorkerOutcome, ForecastAssessment, MarketRateInfo } from "@/src/lib/forecast";
@@ -94,6 +94,78 @@ export function MarketRateProvenance({ market }: { market?: MarketRateInfo }) {
 
 // ── Headline numbers ────────────────────────────────────────────────────────
 
+/**
+ * The (i) affordance, matching the one on every Adjustments lever.
+ *
+ * Same contract deliberately: a toggle, not a hover tooltip. These sit on a
+ * mobile-first tab where hover doesn't exist, and the explanations are long
+ * enough that a tooltip would clip them.
+ */
+function InfoDot({ label, open, onToggle }: { label: string; open: boolean; onToggle: () => void }) {
+  return (
+    <Box
+      as="button"
+      aria-label={`What does "${label}" mean?`}
+      aria-expanded={open}
+      onClick={(e: any) => { e.stopPropagation(); onToggle(); }}
+      color={open ? "blue.solid" : "fg.muted"}
+      display="inline-flex"
+      flexShrink={0}
+      _hover={{ color: "blue.solid" }}
+    >
+      <FiInfo size={12} />
+    </Box>
+  );
+}
+
+function InfoPanel({ children }: { children: React.ReactNode }) {
+  return (
+    <Box mt={1.5} px={2.5} py={2} bg="blue.subtle" borderRadius="md"
+         borderLeftWidth="3px" borderColor="blue.solid">
+      <Text fontSize="11.5px" lineHeight="1.5">{children}</Text>
+    </Box>
+  );
+}
+
+/** What each headline number actually means. Written to answer "why is this
+ *  number what it is", not to restate the label. */
+const STAT_INFO: Record<string, string> = {
+  "Retained after owner share":
+    "What the business keeps once everything is paid — the crew, employer payroll tax, every operating cost, AND your own share of the jobs you personally worked. It is the bottom line for the COMPANY as a separate thing from you. Equipment purchases are not in it; a machine you will use for years is capital, not a cost of running this window's jobs, so it sits on its own line below.",
+  "Margin":
+    "Retained profit as a percentage of revenue collected. Negative means you finished behind: at −20% every dollar collected left you twenty cents down. It uses the retained figure, so it is after your own share — the business's margin, not yours.",
+  "Labor % of revenue":
+    "Every dollar that went to a person, as a share of revenue: crew pay, your own share, and the employer payroll tax charged on W-2 wages. This is usually the number that decides whether the business works. A lawn operation generally needs this in the 35–50% range; well above that and no amount of cost-cutting elsewhere closes the gap.",
+  "LLC Owner share":
+    "What YOU accrued for jobs you personally worked — your cut of those jobs, exactly like any crew member's. It is not payment for hours on the clock: under a share model, clocking time on a job you are not credited on earns nothing. It gets its own line because it is neither a business cost nor profit, and it is the number that moves when you model hiring someone to do your hours.",
+};
+
+/** Every line of the money flow, in plain terms. */
+const FLOW_INFO: Record<string, string> = {
+  "Revenue collected":
+    "Cash actually collected on confirmed payments in this window — not what you invoiced. A job billed at $60 that paid $40 counts as $40 here, and one that paid nothing counts as nothing. Unpaid work is a collection problem, and counting it as revenue would hide a real loss.",
+  "Job materials":
+    "Mulch, chemicals and anything else bought for a specific job. It comes off the top before the crew's split is calculated, so it reduces both what workers take and what the business keeps. These also carry a ledger row — counted once here, not again under Operating costs.",
+  "Processor fees":
+    "What Stripe and the card networks skimmed off the payments. The business absorbs these in full; they are never charged back to a worker's share.",
+  "Crew pay":
+    "Everyone but you. Each worker's share of the jobs they worked, after the business keeps its margin. Under an hourly or rate-card structure this also carries those amounts.",
+  "Employer payroll tax":
+    "The employer's half — Social Security, Medicare, FUTA and state unemployment — as a percentage of W-2 wages. Charged on employees and trainees only: contractors pay their own, and the owner takes a draw rather than a paycheck. It comes from the app's estimator, never from imported Gusto rows.",
+  "Operating costs":
+    "Every business expense in the window — fuel, insurance, supplies, advertising — grouped by category in the Costs section, where you can tag which ones actually scale with volume. Equipment purchases above the fixed-asset threshold are held out; job materials are too, since they are already counted above.",
+  "Operating profit":
+    "Revenue less every cost of producing it, BEFORE your own share. This is the closest line to the P&L's Net Operating Income, and the one to use when comparing the two pages.",
+  "Your own share":
+    "Your cut of the jobs you personally worked, on its own line. Deducted here so that hiring someone to do your hours is a visible trade rather than a hidden one — replacing you converts this into crew pay.",
+  "Retained in the business":
+    "Operating profit after your own share. What the company kept, treating you as someone who has to be paid for the work you did.",
+  "Equipment bought":
+    "Purchases at or above your fixed-asset threshold — a mower, a trailer. Real money that left the bank, but held out of the lines above because a machine you will use for years is not a cost of running this window's jobs. Charging it all to one quarter is right for tax (Section 179) and wrong for judging whether the work itself pays. Same rule the P&L uses.",
+  "Cash after equipment":
+    "What actually happened to the bank balance: everything above, including the equipment. Use this for a cash-flow question and the line above it for an is-this-business-working question.",
+};
+
 export function StatStrip({
   scenario,
   statusQuo,
@@ -138,6 +210,10 @@ export function StatStrip({
     },
   ];
 
+  // One open at a time — four cards side by side, and two expanded panels
+  // push the layout around more than they explain.
+  const [openInfo, setOpenInfo] = useState<string | null>(null);
+
   return (
     <HStack gap={2} align="stretch" wrap="wrap">
       {cards.map((c) => {
@@ -147,9 +223,13 @@ export function StatStrip({
         const tone = !moved || c.neutral ? "gray" : good ? "green" : "red";
         return (
           <Box key={c.k} flex="1 1 170px" minW="160px" borderWidth="1px" borderRadius="md" p={3} bg="bg.panel">
-            <Text fontSize="10px" letterSpacing="wide" textTransform="uppercase" color="fg.muted">
-              {c.k}
-            </Text>
+            <HStack gap={1} align="center" minW={0}>
+              <Text fontSize="10px" letterSpacing="wide" textTransform="uppercase" color="fg.muted">
+                {c.k}
+              </Text>
+              <InfoDot label={c.k} open={openInfo === c.k}
+                       onToggle={() => setOpenInfo((v) => (v === c.k ? null : c.k))} />
+            </HStack>
             <HStack gap={2} align="center" mt={1.5} wrap="wrap">
               <Text fontSize="22px" fontWeight="bold" lineHeight="1" fontVariantNumeric="tabular-nums">
                 {c.fmt(c.next)}
@@ -170,10 +250,98 @@ export function StatStrip({
             <Text fontSize="11.5px" color="fg.muted" mt={1.5} fontVariantNumeric="tabular-nums">
               Today {c.fmt(c.now)}
             </Text>
+            {openInfo === c.k && STAT_INFO[c.k] && <InfoPanel>{STAT_INFO[c.k]}</InfoPanel>}
           </Box>
         );
       })}
     </HStack>
+  );
+}
+
+// ── Money flow ──────────────────────────────────────────────────────────────
+
+/**
+ * Where the money went, top to bottom, always visible.
+ *
+ * The Waterfall below answers "what does my change do" — three columns of
+ * today-vs-forecast-vs-change, and it lives in a section that can be collapsed
+ * and stay collapsed. That left the tab with no plain answer to the first
+ * question anyone actually asks, which is where the revenue went. This is that
+ * answer and nothing else: one column, no comparison, no expander.
+ */
+export function MoneyFlow({
+  scenario,
+  capitalPurchases = 0,
+}: {
+  scenario: ForecastResult;
+  capitalPurchases?: number;
+}) {
+  const lines: Array<{ label: string; amount: number; kind?: "in" | "rule" | "total" | "owner" }> = [
+    { label: "Revenue collected", amount: scenario.revenue, kind: "in" },
+    { label: "Job materials", amount: -scenario.materials },
+    { label: "Processor fees", amount: -scenario.processorFees },
+    { label: "Crew pay", amount: -scenario.crewPay },
+    { label: "Employer payroll tax", amount: -scenario.employerBurden },
+    { label: "Operating costs", amount: -scenario.costsTotal },
+    { label: "Operating profit", amount: scenario.profitBeforeOwnerLabor, kind: "total" },
+    { label: "Your own share", amount: -scenario.ownerPay, kind: "owner" },
+    { label: "Retained in the business", amount: scenario.profitAfterOwnerLabor, kind: "total" },
+  ];
+  if (capitalPurchases > 0) {
+    lines.push({ label: "Equipment bought", amount: -capitalPurchases });
+    lines.push({
+      label: "Cash after equipment",
+      amount: scenario.profitAfterOwnerLabor - capitalPurchases,
+      kind: "total",
+    });
+  }
+
+  const [openInfo, setOpenInfo] = useState<string | null>(null);
+
+  return (
+    <Box borderWidth="1px" borderRadius="md" overflow="hidden">
+      <HStack px={3} py={2} bg="bg.emphasized" gap={2}>
+        <Box w="3px" h="14px" borderRadius="full" bg="blue.solid" flexShrink={0} />
+        <Text fontSize="12px" fontWeight="bold" textTransform="uppercase" letterSpacing="0.1em">
+          Where the money went
+        </Text>
+      </HStack>
+      <VStack align="stretch" gap={0} px={3} py={1}>
+        {lines.map((l) => {
+          const isTotal = l.kind === "total";
+          const open = openInfo === l.label;
+          return (
+            <Box key={l.label} borderTopWidth={isTotal ? "1px" : 0}>
+              <HStack justify="space-between" gap={3} py={1.5}>
+                <HStack gap={1.5} minW={0} align="center">
+                  <Text fontSize="13px"
+                        fontWeight={isTotal ? "semibold" : "normal"}
+                        color={l.kind === "owner" ? "purple.fg" : undefined}>
+                    {l.label}
+                  </Text>
+                  <InfoDot label={l.label} open={open}
+                           onToggle={() => setOpenInfo((v) => (v === l.label ? null : l.label))} />
+                </HStack>
+                <Text fontSize={isTotal ? "14px" : "13px"}
+                      fontWeight={isTotal ? "bold" : "normal"}
+                      fontVariantNumeric="tabular-nums"
+                      color={
+                        isTotal ? (l.amount < 0 ? "red.solid" : "green.solid")
+                          : l.kind === "in" ? "blue.fg"
+                          : l.kind === "owner" ? "purple.fg"
+                          : "fg"
+                      }>
+                  {money(l.amount)}
+                </Text>
+              </HStack>
+              {open && FLOW_INFO[l.label] && (
+                <Box pb={1.5}><InfoPanel>{FLOW_INFO[l.label]}</InfoPanel></Box>
+              )}
+            </Box>
+          );
+        })}
+      </VStack>
+    </Box>
   );
 }
 
@@ -182,9 +350,15 @@ export function StatStrip({
 export function Waterfall({
   scenario,
   statusQuo,
+  capitalPurchases = 0,
 }: {
   scenario: ForecastResult;
   statusQuo: ForecastResult;
+  /** Equipment bought in the window. Sits BELOW the operating total rather
+   *  than inside it — the money left the bank, but a mower is not a cost of
+   *  running this quarter's jobs. Shown whenever there were any, so it can
+   *  never look like it was quietly ignored. */
+  capitalPurchases?: number;
 }) {
   const rows: Array<{ label: string; now: number; next: number; kind: "in" | "out" | "total" | "owner"; note?: string }> = [
     { label: "Revenue collected", now: statusQuo.revenue, next: scenario.revenue, kind: "in" },
@@ -220,6 +394,7 @@ export function Waterfall({
   ];
 
   const scale = Math.max(scenario.revenue, statusQuo.revenue, 1);
+  const cashAfterCapEx = scenario.profitAfterOwnerLabor - capitalPurchases;
 
   return (
     <VStack align="stretch" gap={0} borderWidth="1px" borderRadius="md" overflow="hidden">
@@ -281,6 +456,31 @@ export function Waterfall({
           </Box>
         );
       })}
+      {capitalPurchases > 0 && (
+        <Box px={3} py={2} borderTopWidth="1px" bg="blue.subtle">
+          <Stack direction={{ base: "column", md: "row" }} gap={{ base: 1, md: 2 }}
+                 align={{ md: "center" }}>
+            <Box flex={{ md: "1" }} minW={0}>
+              <Text fontSize="13px" fontWeight="semibold">Equipment bought this window</Text>
+              <Text fontSize="11px" color="fg.muted">
+                Held out of the lines above — a machine you'll use for years isn't a cost of
+                running this quarter's jobs. Same rule the P&amp;L uses.
+              </Text>
+            </Box>
+            <HStack gap={2} w={{ base: "100%", md: "auto" }}
+                    justify={{ base: "space-between", md: "flex-end" }}>
+              <CompareCell caption="Spent" w="90px" fontSize="13px" fontWeight="medium">
+                {money(-capitalPurchases)}
+              </CompareCell>
+              <CompareCell caption="Cash after" w="90px" fontSize="13px" fontWeight="bold"
+                           color={cashAfterCapEx < 0 ? "red.solid" : "green.solid"}>
+                {money(cashAfterCapEx)}
+              </CompareCell>
+              <Box w={{ base: "auto", md: "80px" }} />
+            </HStack>
+          </Stack>
+        </Box>
+      )}
     </VStack>
   );
 }
@@ -513,7 +713,11 @@ export function CostBreakdown({
     if (!groups.has(c.behavior)) groups.set(c.behavior, []);
     groups.get(c.behavior)!.push(c);
   }
-  const order = ["FIXED", "VARIABLE", "PER_JOB", "DISCRETIONARY", "ONE_TIME"];
+  // AS_IS FIRST, and it must be here at all: this list is what gets rendered,
+  // so when AS_IS became the default for every untagged category the whole
+  // table silently emptied — every row grouped under a behavior the renderer
+  // didn't know to draw.
+  const order = ["AS_IS", "FIXED", "VARIABLE", "PER_JOB", "DISCRETIONARY", "ONE_TIME"];
   const total = scenario.costsTotal || 1;
 
   return (
