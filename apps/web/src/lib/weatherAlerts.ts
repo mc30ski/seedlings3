@@ -54,11 +54,36 @@ export function alertTone(severity: WeatherAlert["severity"]): string {
   return "yellow";
 }
 
-/** Most urgent first — what a single-slot surface (title bar) should show. */
-export function topAlert(alerts: WeatherAlert[] | undefined): WeatherAlert | null {
+const SEVERITY_RANK = { Extreme: 0, Severe: 1, Moderate: 2, Minor: 3, Unknown: 4 };
+
+/** Most urgent first — what a single-slot surface (title bar) should show.
+ *
+ *  Prefers an alert covering TODAY. An advisory that starts tomorrow is real
+ *  and worth flagging, but showing it identically to one in force right now
+ *  makes every date-scoped surface look broken: the title bar said "heat" and
+ *  the Today section, correctly, showed nothing. */
+export function topAlert(
+  alerts: WeatherAlert[] | undefined,
+  todayKey?: string,
+): { alert: WeatherAlert; today: boolean } | null {
   if (!alerts?.length) return null;
-  const rank = { Extreme: 0, Severe: 1, Moderate: 2, Minor: 3, Unknown: 4 };
-  return [...alerts].sort((a, b) => rank[a.severity] - rank[b.severity])[0];
+  const byUrgency = [...alerts].sort(
+    (a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity],
+  );
+  if (todayKey) {
+    const now = byUrgency.find((a) => a.dateKeys.includes(todayKey));
+    if (now) return { alert: now, today: true };
+  }
+  return { alert: byUrgency[0], today: !todayKey };
+}
+
+/** "today" | "tomorrow" | a weekday name — for saying WHEN an alert applies. */
+export function whenLabel(a: WeatherAlert, todayKey: string, tomorrowKey: string): string {
+  if (a.dateKeys.includes(todayKey)) return "today";
+  if (a.dateKeys.includes(tomorrowKey)) return "tomorrow";
+  const first = a.dateKeys[0];
+  if (!first) return "";
+  return new Date(`${first}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "long" });
 }
 
 /** Alerts covering a specific ET date key, for per-day surfaces like a job

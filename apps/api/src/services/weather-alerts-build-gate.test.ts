@@ -158,3 +158,28 @@ describe("weather alerts — reach every surface, including late mounters", () =
     }
   });
 });
+
+// ── The title bar must say WHEN ───────────────────────────────────────────
+describe("weather alerts — the undated surface can't contradict the dated ones", () => {
+  const LIB = readFileSync(join(REPO_ROOT, "apps/web/src/lib/weatherAlerts.ts"), "utf8");
+  const BADGE = readFileSync(join(REPO_ROOT, "apps/web/src/ui/components/WeatherAlertBadge.tsx"), "utf8");
+
+  it("topAlert prefers an alert covering today", () => {
+    // The bug: the title bar showed any active alert with no date awareness.
+    // An advisory starting tomorrow lit it up while the Today section —
+    // correctly — showed nothing, which makes the app look broken.
+    expect(LIB).toMatch(/a\.dateKeys\.includes\(todayKey\)/);
+    expect(LIB).toMatch(/return \{ alert: now, today: true \}/);
+  });
+
+  it("the title badge distinguishes now from upcoming", () => {
+    expect(BADGE).toMatch(/topAlert\(alerts, today\)/);
+    expect(BADGE).toMatch(/opacity=\{top\.today \? 1 : 0\.55\}/);
+  });
+
+  it("the tooltip and aria-label say when it applies", () => {
+    expect(BADGE).toMatch(/whenLabel\(/);
+    expect(BADGE).toMatch(/title=\{`\$\{a\.event\} — \$\{when\}/);
+    expect(BADGE).toMatch(/aria-label=\{`\$\{a\.event\} \$\{when\}`\}/);
+  });
+});

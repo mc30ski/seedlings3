@@ -9,9 +9,10 @@
 
 import { Box, HStack, Text } from "@chakra-ui/react";
 import {
-  alertIcon, alertTone, shortLabel, topAlert,
+  alertIcon, alertTone, shortLabel, topAlert, whenLabel,
   type WeatherAlert,
 } from "@/src/lib/weatherAlerts";
+import { bizToday, bizTomorrow } from "@/src/lib/dates";
 
 /** `icon` — glyph only, for the title bar where space is a few pixels.
  *  `compact` — glyph + short label, for the weather bar and section headers.
@@ -30,16 +31,23 @@ export function WeatherAlertBadge({
   if (!alerts?.length) return null;
 
   if (density === "icon") {
-    const a = topAlert(alerts)!;
+    const today = bizToday();
+    const top = topAlert(alerts, today)!;
+    const a = top.alert;
     const Icon = alertIcon(a.kind);
+    const when = whenLabel(a, today, bizTomorrow());
+    // An alert in force NOW is solid; one that starts later is outlined and
+    // dimmed, so it never reads as "this is happening right now" while the
+    // date-scoped surfaces below correctly show nothing for today.
     return (
       <Box
         as="span"
-        title={`${a.event}${alerts.length > 1 ? ` (+${alerts.length - 1} more)` : ""}`}
+        title={`${a.event} — ${when}${alerts.length > 1 ? ` (+${alerts.length - 1} more)` : ""}`}
         color={`${alertTone(a.severity)}.solid`}
+        opacity={top.today ? 1 : 0.55}
         display="inline-flex"
         alignItems="center"
-        aria-label={a.event}
+        aria-label={`${a.event} ${when}`}
       >
         <Icon size={14} />
       </Box>
