@@ -135,8 +135,8 @@ describe("[build-gate] a forecast is advisory and firewalled", () => {
 describe("[build-gate] cost behavior drives the scale argument", () => {
   it("fixed costs do not grow with volume; per-job costs do", () => {
     const b = baseline();
-    const one = simulate(b, A({ volumeMultiplier: 1 }));
-    const two = simulate(b, A({ volumeMultiplier: 2 }));
+    const one = simulate(b, A({ volumeMultiplier: 1, behaviorOverrides: { Insurance: "FIXED", Fuel: "VARIABLE", Supplies: "PER_JOB", Tools: "ONE_TIME", Advertising: "DISCRETIONARY" } }));
+    const two = simulate(b, A({ volumeMultiplier: 2, behaviorOverrides: { Insurance: "FIXED", Fuel: "VARIABLE", Supplies: "PER_JOB", Tools: "ONE_TIME", Advertising: "DISCRETIONARY" } }));
     const fixedOf = (r: typeof one) =>
       r.costs.filter((c) => c.behavior === "FIXED").reduce((s, c) => s + c.amount, 0);
     const perJobOf = (r: typeof one) =>
@@ -148,15 +148,15 @@ describe("[build-gate] cost behavior drives the scale argument", () => {
 
   it("doubling volume therefore improves margin — the whole point of the lever", () => {
     const b = baseline();
-    const one = simulate(b, A({ volumeMultiplier: 1 }));
-    const two = simulate(b, A({ volumeMultiplier: 2 }));
+    const one = simulate(b, A({ volumeMultiplier: 1, behaviorOverrides: { Insurance: "FIXED", Fuel: "VARIABLE", Supplies: "PER_JOB", Tools: "ONE_TIME", Advertising: "DISCRETIONARY" } }));
+    const two = simulate(b, A({ volumeMultiplier: 2, behaviorOverrides: { Insurance: "FIXED", Fuel: "VARIABLE", Supplies: "PER_JOB", Tools: "ONE_TIME", Advertising: "DISCRETIONARY" } }));
     expect(two.marginPercent).toBeGreaterThan(one.marginPercent);
   });
 
   it("discretionary spend is held flat unless the operator opts in", () => {
     const b = baseline();
-    const held = simulate(b, A({ volumeMultiplier: 3, scaleDiscretionary: false }));
-    const scaled = simulate(b, A({ volumeMultiplier: 3, scaleDiscretionary: true }));
+    const held = simulate(b, A({ volumeMultiplier: 3, scaleDiscretionary: false, behaviorOverrides: { Insurance: "FIXED", Fuel: "VARIABLE", Supplies: "PER_JOB", Tools: "ONE_TIME", Advertising: "DISCRETIONARY" } }));
+    const scaled = simulate(b, A({ volumeMultiplier: 3, scaleDiscretionary: true, behaviorOverrides: { Insurance: "FIXED", Fuel: "VARIABLE", Supplies: "PER_JOB", Tools: "ONE_TIME", Advertising: "DISCRETIONARY" } }));
     const adv = (r: typeof held) => r.costs.find((c) => c.category === "Advertising")!.amount;
     expect(adv(held)).toBeCloseTo(20, 2);
     expect(adv(scaled)).toBeGreaterThan(20);
@@ -164,8 +164,8 @@ describe("[build-gate] cost behavior drives the scale argument", () => {
 
   it("one-time costs can be dropped from a forward projection", () => {
     const b = baseline();
-    expect(simulate(b, A({ includeOneTime: false })).costs.some((c) => c.category === "Tools")).toBe(false);
-    expect(simulate(b, A({ includeOneTime: true })).costs.some((c) => c.category === "Tools")).toBe(true);
+    expect(simulate(b, A({ includeOneTime: false, behaviorOverrides: { Insurance: "FIXED", Fuel: "VARIABLE", Supplies: "PER_JOB", Tools: "ONE_TIME", Advertising: "DISCRETIONARY" } })).costs.some((c) => c.category === "Tools")).toBe(false);
+    expect(simulate(b, A({ includeOneTime: true, behaviorOverrides: { Insurance: "FIXED", Fuel: "VARIABLE", Supplies: "PER_JOB", Tools: "ONE_TIME", Advertising: "DISCRETIONARY" } })).costs.some((c) => c.category === "Tools")).toBe(true);
   });
 });
 
@@ -180,7 +180,7 @@ describe("[build-gate] employer burden", () => {
   });
 
   it("is never charged on the owner, who takes a draw rather than a paycheck", () => {
-    const r = simulate(baseline(), A({ payOwner: true }));
+    const r = simulate(baseline(), A());
     expect(r.workers.find((w) => w.userId === "own")!.employerBurden).toBe(0);
   });
 
@@ -356,8 +356,9 @@ describe("[build-gate] cost inflation and variable-cost driver", () => {
   });
 
   it("variable costs DO follow job volume", () => {
-    const one = simulate(baseline(), A({ volumeMultiplier: 1 }));
-    const two = simulate(baseline(), A({ volumeMultiplier: 2 }));
+    const tag = { behaviorOverrides: { Fuel: "VARIABLE" as const } };
+    const one = simulate(baseline(), A({ volumeMultiplier: 1, ...tag }));
+    const two = simulate(baseline(), A({ volumeMultiplier: 2, ...tag }));
     const fuelOf = (r: typeof one) => r.costs.find((c) => c.category === "Fuel")!.amount;
     expect(fuelOf(two)).toBeCloseTo(fuelOf(one) * 2, 2);
   });
@@ -402,5 +403,94 @@ describe("[build-gate] side-by-side comparison uses the right data", () => {
   it("skips a row whose window has not loaded instead of substituting one", () => {
     // Rendering the wrong window's numbers is worse than rendering nothing.
     expect(block).toMatch(/if\s*\(!src\)\s*return\s*\[\]/);
+  });
+});
+
+// ── The LLC owner's share is its own line, never hidden ───────────────────
+describe("[build-gate] LLC Owner share is neither a cost nor silent profit", () => {
+  // The shared fixture's owner clocks hours but works no jobs, so they accrue
+  // nothing. These assertions need an owner who actually earns.
+  const withOwnerJob = () => {
+    const b = baseline();
+    b.jobs = [
+      ...b.jobs,
+      { id: "j5", paid: 120, invoicePrice: 120, materials: 0, minutes: 60, dateKey: "2026-06-05",
+        crew: [{ userId: "own", splitPercent: 100 }] },
+    ];
+    return b;
+  };
+  const A2 = () => defaultAssumptions(withOwnerJob());
+
+  it("is always deducted to reach the retained figure", () => {
+    // It used to sit behind a `payOwner` boolean defaulting to OFF, so an
+    // owner-worked job looked far more profitable than the identical job
+    // worked by an employee — breaking the one comparison the tool most
+    // needs to get right: "should I hire someone to do my hours?"
+    const r = simulate(withOwnerJob(), A2());
+    expect(r.ownerPay).toBeGreaterThan(0);
+    expect(r.profitAfterOwnerLabor).toBeCloseTo(r.profitBeforeOwnerLabor - r.ownerPay, 2);
+  });
+
+  it("no assumption can hide it", () => {
+    expect(Object.keys(defaultAssumptions(baseline()))).not.toContain("payOwner");
+  });
+
+  it("counts toward labor, because it is labor", () => {
+    const r = simulate(withOwnerJob(), A2());
+    const byHand = ((r.crewPay + r.ownerPay + r.employerBurden) / r.revenue) * 100;
+    expect(r.laborPercentOfRevenue).toBeCloseTo(byHand, 1);
+  });
+
+  it("is excluded from crew pay, so hiring shows up as a real trade", () => {
+    // Replacing the owner's hours moves money from ownerPay into crewPay.
+    // If the two were pooled, that swap would be invisible.
+    const r = simulate(withOwnerJob(), A2());
+    const ownerRow = r.workers.find((w) => w.isOwner)!;
+    expect(ownerRow.totalPay).toBeGreaterThan(0);
+    expect(r.ownerPay).toBeCloseTo(ownerRow.totalPay, 2);
+    // The owner's pay must NOT be inside crewPay, or swapping their hours for
+    // a hire would be invisible in the numbers.
+    const crewSum = r.workers.filter((w) => !w.isOwner).reduce((t, w) => t + w.totalPay, 0);
+    expect(r.crewPay).toBeCloseTo(crewSum, 2);
+  });
+});
+
+// ── Retagging a cost is scenario-local, never a Settings write ────────────
+describe("[build-gate] cost-behavior overrides stay advisory", () => {
+  it("an override changes the multiplier for this scenario only", () => {
+    const b = baseline();
+    const at2x = A({ volumeMultiplier: 2 });
+    const asVariable = simulate(b, { ...at2x, behaviorOverrides: { Fuel: "VARIABLE" } });
+    const asFixed = simulate(b, { ...at2x, behaviorOverrides: { Fuel: "FIXED" } });
+    const fuel = (r: typeof asVariable) => r.costs.find((c) => c.category === "Fuel")!;
+    expect(fuel(asVariable).amount).toBeCloseTo(100, 2);  // 50 x 2
+    expect(fuel(asFixed).amount).toBeCloseTo(50, 2);      // pinned
+    expect(fuel(asFixed).behavior).toBe("FIXED");
+  });
+
+  it("every category starts AS_IS — the tool asserts nothing until you tag it", () => {
+    // Baseline is reality, the same as every other lever: margin starts at
+    // the real setting, volume at 1x, price at 0%. A cost starts at what was
+    // actually spent and does not move until told to.
+    const r = simulate(baseline(), A({ volumeMultiplier: 3 }));
+    for (const c of r.costs) expect(c.behavior).toBe("AS_IS");
+    const flat = simulate(baseline(), A({ volumeMultiplier: 1 }));
+    expect(r.costsTotal).toBeCloseTo(flat.costsTotal, 2);
+  });
+
+  it("warns when volume moved but categories are still untagged", () => {
+    // Silence here would overstate scale — the mirror of the bug the AS_IS
+    // default replaced.
+    const r = simulate(baseline(), A({ volumeMultiplier: 2 }));
+    expect(r.warnings.some((w) => /still "as is"/.test(w.message))).toBe(true);
+  });
+
+  it("the tab writes no Setting when retagging", () => {
+    // The Forecast tab is advisory. Retagging must ride along with the saved
+    // scenario, not quietly rewrite EXPENSE_COST_BEHAVIOR for the whole app.
+    const tab = readFileSync(join(REPO_ROOT, "apps/web/src/ui/tabs/ForecastTab.tsx"), "utf8");
+    expect(tab).toMatch(/onRetag=\{\(category, behavior\) =>/);
+    expect(tab).toMatch(/set\("behaviorOverrides"/);
+    expect(tab).not.toMatch(/EXPENSE_COST_BEHAVIOR/);
   });
 });

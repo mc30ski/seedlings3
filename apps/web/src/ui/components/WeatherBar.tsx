@@ -187,6 +187,12 @@ export default function WeatherBar({
           (window as any).__seedlingsWeather = {
             current: { temp: result.current.temp, icon: result.current.icon },
             forecast: result.forecast,
+            // Alerts belong on the synchronous cache too, not just the
+            // broadcast. A component that mounts LATER — JobsTab when the
+            // operator switches role scope — reads this object rather than
+            // waiting for the next event, and would otherwise start empty
+            // while the title bar (already holding state) kept showing them.
+            alerts: result.alerts ?? [],
           };
           // Also persist to localStorage so the chip + bar render cached
           // weather instantly on subsequent cold boots — important for

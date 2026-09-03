@@ -54,7 +54,7 @@ import {
 } from "@/src/lib/forecast";
 import {
   StatStrip, Waterfall, WorkerFairnessTable, WarningList, CostBreakdown,
-  SensitivityList, AssessmentPanel, ComparisonPanel,
+  SensitivityList, AssessmentPanel, ComparisonPanel, MarketRateProvenance,
   type SensitivityRow, type ComparisonEntry,
 } from "@/src/ui/tabs/ForecastTab.parts";
 
@@ -90,18 +90,41 @@ const CAPACITY_MODES = [
  *  be, and a native range input is the one form control the house rule about
  *  `<select>` doesn't cover. */
 function Lever({
-  label, value, min, max, step = 1, suffix = "", onChange, hint, disabled,
+  label, value, baseline, min, max, step = 1, suffix = "", onChange, hint, disabled,
 }: {
-  label: string; value: number; min: number; max: number; step?: number;
+  label: string; value: number;
+  /** Where this lever sits today, before any adjustment — the live setting
+   *  where one exists, otherwise the neutral default. Shown beside the
+   *  current value so an adjustment is always read against its starting
+   *  point rather than in isolation. */
+  baseline?: number;
+  min: number; max: number; step?: number;
   suffix?: string; onChange: (n: number) => void; hint?: string; disabled?: boolean;
 }) {
+  const changed = baseline !== undefined && Math.abs(value - baseline) > 1e-9;
   return (
     <Box opacity={disabled ? 0.45 : 1}>
-      <HStack justify="space-between" mb={0.5}>
+      <HStack justify="space-between" mb={0.5} gap={2}>
         <Text fontSize="12px" fontWeight="medium">{label}</Text>
-        <Text fontSize="12px" color="fg.muted" fontVariantNumeric="tabular-nums">
-          {value}{suffix}
-        </Text>
+        <HStack gap={1.5} flexShrink={0}>
+          {changed && (
+            <>
+              <Text fontSize="11px" color="fg.muted" fontVariantNumeric="tabular-nums"
+                    textDecoration="line-through">
+                {baseline}{suffix}
+              </Text>
+              <Text fontSize="11px" color="fg.muted">→</Text>
+            </>
+          )}
+          <Text
+            fontSize="12px"
+            fontWeight={changed ? "bold" : "normal"}
+            color={changed ? "blue.fg" : "fg.muted"}
+            fontVariantNumeric="tabular-nums"
+          >
+            {value}{suffix}
+          </Text>
+        </HStack>
       </HStack>
       <input
         type="range"
@@ -115,15 +138,29 @@ function Lever({
 }
 
 function Picker({
-  label, value, options, onChange, w = "100%",
+  label, value, baseline, options, onChange, w = "100%",
 }: {
-  label?: string; value: string; options: Array<{ value: string; label: string }>;
+  label?: string; value: string;
+  /** The unadjusted choice, shown struck through when you've moved off it. */
+  baseline?: string;
+  options: Array<{ value: string; label: string }>;
   onChange: (v: string) => void; w?: string;
 }) {
   const collection = useMemo(() => createListCollection({ items: options }), [options]);
+  const changed = baseline !== undefined && baseline !== value;
+  const baseLabel = options.find((o) => o.value === baseline)?.label ?? baseline;
   return (
     <Box w={w}>
-      {label && <Text fontSize="12px" fontWeight="medium" mb={0.5}>{label}</Text>}
+      {label && (
+        <HStack justify="space-between" mb={0.5} gap={2}>
+          <Text fontSize="12px" fontWeight="medium">{label}</Text>
+          {changed && (
+            <Text fontSize="11px" color="fg.muted" textDecoration="line-through" truncate maxW="120px">
+              {baseLabel}
+            </Text>
+          )}
+        </HStack>
+      )}
       <Select.Root
         collection={collection}
         value={[value]}
@@ -403,6 +440,10 @@ export default function ForecastTab() {
 
   const a = assumptions;
   const sq = data.statusQuo;
+  // What every lever sits at before you touch it. Same function the model
+  // uses for the "Today" column, so the two can never disagree about what
+  // the current settings are.
+  const base = defaultAssumptions(data.baseline);
 
   return (
     <VStack align="stretch" gap={3}>
@@ -507,10 +548,10 @@ export default function ForecastTab() {
       </Box>
 
       {/* ── Headline ───────────────────────────────────────────────────── */}
-      <StatStrip scenario={scenario} statusQuo={sq} payOwner={a.payOwner} />
+      <StatStrip scenario={scenario} statusQuo={sq} />
 
       {/* ── Levers ─────────────────────────────────────────────────────── */}
-      <SectionExpander title="Assumptions" storageKey="forecast_sec_levers" defaultOpen>
+      <SectionExpander title="Adjustments" storageKey="forecast_sec_levers" defaultOpen>
         <VStack align="stretch" gap={3} pt={2}>
           <HStack gap={3} align="start" wrap="wrap">
             <VStack align="stretch" gap={2.5} flex="1 1 280px">
@@ -520,39 +561,40 @@ export default function ForecastTab() {
               <Picker
                 label="Pay model"
                 value={a.payModel}
+                baseline={base.payModel}
                 options={PAY_MODELS}
                 onChange={(v) => set("payModel", v as Assumptions["payModel"])}
               />
               <Lever
-                label="Business keeps — employees" value={a.employeeMarginPercent}
+                label="Business keeps — employees" value={a.employeeMarginPercent} baseline={base.employeeMarginPercent}
                 min={0} max={90} suffix="%"
                 onChange={(n) => set("employeeMarginPercent", n)}
-                hint={`Worker share ${100 - a.employeeMarginPercent}% · live setting ${data.baseline.rates.employeeMarginPercent}%`}
+                hint={`Worker share ${100 - a.employeeMarginPercent}%`}
                 disabled={a.payModel === "RATE_CARD"}
               />
               <Lever
-                label="Business keeps — contractors" value={a.contractorFeePercent}
+                label="Business keeps — contractors" value={a.contractorFeePercent} baseline={base.contractorFeePercent}
                 min={0} max={90} suffix="%"
                 onChange={(n) => set("contractorFeePercent", n)}
-                hint={`Worker share ${100 - a.contractorFeePercent}% · live setting ${data.baseline.rates.contractorFeePercent}%`}
+                hint={`Worker share ${100 - a.contractorFeePercent}%`}
                 disabled={a.payModel === "RATE_CARD"}
               />
               <Lever
-                label="Guaranteed hourly base" value={a.hourlyBase}
+                label="Guaranteed hourly base" value={a.hourlyBase} baseline={base.hourlyBase}
                 min={0} max={30} suffix="/hr"
                 onChange={(n) => set("hourlyBase", n)}
                 hint="Covers drive time, rain days and training — the hours a pure share model pays nothing for."
                 disabled={a.payModel !== "HOURLY_PLUS_SHARE"}
               />
               <Lever
-                label="Crew-lead premium" value={a.leadHourlyBonus}
+                label="Crew-lead premium" value={a.leadHourlyBonus} baseline={base.leadHourlyBonus}
                 min={0} max={10} suffix="/hr"
                 onChange={(n) => set("leadHourlyBonus", n)}
                 hint="Makes a productivity premium explicit rather than an artifact of job assignment."
                 disabled={a.payModel !== "HOURLY_PLUS_SHARE"}
               />
               <Lever
-                label="Rate card per job" value={a.rateCardPerJob}
+                label="Rate card per job" value={a.rateCardPerJob} baseline={base.rateCardPerJob}
                 min={0} max={120} suffix=""
                 onChange={(n) => set("rateCardPerJob", n)}
                 hint="Decouples pay from price, so a price increase reaches the business instead of being split on the way in."
@@ -564,28 +606,29 @@ export default function ForecastTab() {
               <Text fontSize="11px" textTransform="uppercase" letterSpacing="wide" color="fg.muted">
                 Pricing and volume
               </Text>
-              <Lever label="Price change" value={a.priceIncreasePercent} min={-20} max={50} suffix="%"
+              <Lever label="Price change" value={a.priceIncreasePercent} baseline={base.priceIncreasePercent} min={-20} max={50} suffix="%"
                      onChange={(n) => set("priceIncreasePercent", n)} />
-              <Lever label="Minimum invoice" value={a.minimumInvoice} min={0} max={120} suffix=""
+              <Lever label="Minimum invoice" value={a.minimumInvoice} baseline={base.minimumInvoice} min={0} max={120} suffix=""
                      onChange={(n) => set("minimumInvoice", n)}
                      hint="Lifts underpriced jobs to a floor. Never applied to jobs that collected $0 — that's a collection problem, not a pricing one." />
-              <Lever label="Volume" value={a.volumeMultiplier} min={0.5} max={4} step={0.25} suffix="×"
+              <Lever label="Volume" value={a.volumeMultiplier} baseline={base.volumeMultiplier} min={0.5} max={4} step={0.25} suffix="×"
                      onChange={(n) => set("volumeMultiplier", n)}
                      hint="Fixed costs deliberately don't follow — that gap is how much of the problem is scale rather than structure." />
-              <Lever label="Cost inflation" value={a.costInflationPercent} min={0} max={25} suffix="%"
+              <Lever label="Cost inflation" value={a.costInflationPercent} baseline={base.costInflationPercent} min={0} max={25} suffix="%"
                      onChange={(n) => set("costInflationPercent", n)}
                      hint="Everything gets more expensive. Applied to every cost, not to wages — share-based pay already rises with prices, and you set the hourly base yourself." />
 
               <Text fontSize="11px" textTransform="uppercase" letterSpacing="wide" color="fg.muted" pt={1}>
                 Employer costs
               </Text>
-              <Lever label="Employer payroll tax" value={a.employerTaxPercent} min={0} max={20} step={0.25} suffix="%"
+              <Lever label="Employer payroll tax" value={a.employerTaxPercent} baseline={base.employerTaxPercent} min={0} max={20} step={0.25} suffix="%"
                      onChange={(n) => set("employerTaxPercent", n)}
                      hint="From the app's estimator, never from imported Gusto rows." />
-              <Lever label="Workers comp" value={a.workersCompPercent} min={0} max={30} step={0.5} suffix="%"
+              <Lever label="Workers comp" value={a.workersCompPercent} baseline={base.workersCompPercent} min={0} max={30} step={0.5} suffix="%"
                      onChange={(n) => set("workersCompPercent", n)}
                      hint="Of W-2 wages. A quote, not something the app can derive — check a renewal before leaning on it." />
               <Lever label="Fixed costs" value={Math.round(a.fixedCostOverride ?? scenario.fixedCosts)}
+                     baseline={Math.round(sq.fixedCosts)}
                      min={0} max={Math.max(1000, Math.round(scenario.fixedCosts * 2))} step={50} suffix=""
                      onChange={(n) => set("fixedCostOverride", n)}
                      hint="Insurance, software, banking. Doesn't move with volume." />
@@ -594,17 +637,26 @@ export default function ForecastTab() {
                 <Checkbox.Root size="sm" checked={a.includeOneTime}
                                onCheckedChange={(e) => set("includeOneTime", !!e.checked)}>
                   <Checkbox.HiddenInput /><Checkbox.Control />
-                  <Checkbox.Label fontSize="12px">Include one-time costs (tools, startup)</Checkbox.Label>
+                  <Checkbox.Label fontSize="12px">
+                    Include one-time costs (tools, startup)
+                    {a.includeOneTime !== base.includeOneTime && (
+                      <Text as="span" fontSize="10px" color="blue.fg" fontWeight="bold" ml={1}>
+                        {" "}· changed
+                      </Text>
+                    )}
+                  </Checkbox.Label>
                 </Checkbox.Root>
                 <Checkbox.Root size="sm" checked={a.scaleDiscretionary}
                                onCheckedChange={(e) => set("scaleDiscretionary", !!e.checked)}>
                   <Checkbox.HiddenInput /><Checkbox.Control />
-                  <Checkbox.Label fontSize="12px">Grow advertising with revenue</Checkbox.Label>
-                </Checkbox.Root>
-                <Checkbox.Root size="sm" checked={a.payOwner}
-                               onCheckedChange={(e) => set("payOwner", !!e.checked)}>
-                  <Checkbox.HiddenInput /><Checkbox.Control />
-                  <Checkbox.Label fontSize="12px">Count the owner's own labor as a cost</Checkbox.Label>
+                  <Checkbox.Label fontSize="12px">
+                    Grow advertising with revenue
+                    {a.scaleDiscretionary !== base.scaleDiscretionary && (
+                      <Text as="span" fontSize="10px" color="blue.fg" fontWeight="bold" ml={1}>
+                        {" "}· changed
+                      </Text>
+                    )}
+                  </Checkbox.Label>
                 </Checkbox.Root>
               </VStack>
             </VStack>
@@ -717,12 +769,15 @@ export default function ForecastTab() {
 
       {/* ── Outcomes ───────────────────────────────────────────────────── */}
       <SectionExpander title="What it does to the books" storageKey="forecast_sec_pnl" defaultOpen>
-        <Box pt={2}><Waterfall scenario={scenario} statusQuo={sq} payOwner={a.payOwner} /></Box>
+        <Box pt={2}><Waterfall scenario={scenario} statusQuo={sq} /></Box>
       </SectionExpander>
 
       <SectionExpander title="What it does to people" storageKey="forecast_sec_people" defaultOpen>
         <VStack align="stretch" gap={3} pt={2}>
-          <WorkerFairnessTable scenario={scenario} statusQuo={sq} />
+          {/* Where the market band comes from, stated before the table that
+              uses it — this number decides who reads as underpaid. */}
+          <MarketRateProvenance market={data.baseline.marketRate} />
+          <WorkerFairnessTable scenario={scenario} statusQuo={sq} market={data.baseline.marketRate} />
           <WarningList warnings={scenario.warnings} />
         </VStack>
       </SectionExpander>
@@ -732,7 +787,20 @@ export default function ForecastTab() {
       </SectionExpander>
 
       <SectionExpander title="Costs" storageKey="forecast_sec_costs">
-        <Box pt={2}><CostBreakdown scenario={scenario} /></Box>
+        <Box pt={2}>
+          <CostBreakdown
+            scenario={scenario}
+            statusQuo={sq}
+            onRetag={(category, behavior) => {
+              // Clearing back to "As is" removes the entry rather than
+              // storing it, so a saved scenario only carries real decisions.
+              const next = { ...a.behaviorOverrides };
+              if (behavior === "AS_IS") delete next[category];
+              else next[category] = behavior as any;
+              set("behaviorOverrides", next);
+            }}
+          />
+        </Box>
       </SectionExpander>
 
       {/* ── Assessment ─────────────────────────────────────────────────── */}
@@ -798,7 +866,7 @@ export default function ForecastTab() {
           {comparing && (
             <Text fontSize="12px" color="fg.muted">Loading the other windows…</Text>
           )}
-          <ComparisonPanel entries={comparison} payOwner={a.payOwner} />
+          <ComparisonPanel entries={comparison} />
         </VStack>
       </SectionExpander>
 
