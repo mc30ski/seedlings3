@@ -6,11 +6,34 @@
 // re-render on drag stays cheap.
 
 import React from "react";
-import { Badge, Box, Button, HStack, Select, Separator, Text, VStack, createListCollection } from "@chakra-ui/react";
+import { Badge, Box, Button, HStack, Select, Separator, Stack, Text, VStack, createListCollection } from "@chakra-ui/react";
 import { FiAlertTriangle, FiInfo, FiTrendingUp, FiTrendingDown } from "react-icons/fi";
 import type { ForecastResult, WorkerOutcome, ForecastAssessment, MarketRateInfo } from "@/src/lib/forecast";
 import { money, pct, VERDICT_LABEL, VERDICT_TONE } from "@/src/lib/forecast";
 import { fmtDate } from "@/src/lib/dates";
+
+/**
+ * One numeric column of a comparison row.
+ *
+ * On a phone the header row is hidden and each number carries its own caption
+ * instead. The three fixed numeric columns came to 260px, which on a 360px
+ * screen left the label about 40px — narrow enough that "Revenue" itself broke
+ * mid-word, one fragment per line. Nothing about the layout was salvageable at
+ * that width; it had to stop being a table.
+ */
+function CompareCell({
+  caption, w, children, ...rest
+}: { caption: string; w: string; children: React.ReactNode } & Record<string, any>) {
+  return (
+    <Box w={{ base: "auto", md: w }} textAlign={{ base: "left", md: "right" }} minW={0}>
+      <Text display={{ base: "block", md: "none" }} fontSize="10px" color="fg.muted"
+            textTransform="uppercase" letterSpacing="wide" lineHeight="1.2">
+        {caption}
+      </Text>
+      <Text fontVariantNumeric="tabular-nums" {...rest}>{children}</Text>
+    </Box>
+  );
+}
 
 /** Last-resort band, used only when no rate has been looked up. The real one
  *  comes from the BLS for the metro the business address sits in — see
@@ -203,7 +226,8 @@ export function Waterfall({
       {/* Headers at a readable weight. These were 10px muted micro-caps and
           were effectively invisible — the comparison was on screen the whole
           time and styled to be ignored. */}
-      <HStack px={3} py={2} bg="bg.subtle" fontSize="12px" fontWeight="semibold">
+      <HStack px={3} py={2} bg="bg.subtle" fontSize="12px" fontWeight="semibold"
+              display={{ base: "none", md: "flex" }}>
         <Text flex="1" color="fg.muted">Line</Text>
         <Text w="90px" textAlign="right" color="fg.muted">Today</Text>
         <Text w="90px" textAlign="right">Forecast</Text>
@@ -216,8 +240,9 @@ export function Waterfall({
           <Box key={r.label} px={3} py={2}
                bg={r.kind === "total" ? "bg.subtle" : r.kind === "owner" ? "purple.subtle" : undefined}
                borderTopWidth={i === 0 ? 0 : "1px"}>
-            <HStack gap={2}>
-              <Box flex="1" minW={0}>
+            <Stack direction={{ base: "column", md: "row" }}
+                   gap={{ base: 1, md: 2 }} align={{ md: "center" }}>
+              <Box flex={{ md: "1" }} minW={0}>
                 <Text fontSize="13px"
                       fontWeight={r.kind === "total" || r.kind === "owner" ? "semibold" : "normal"}
                       color={r.kind === "owner" ? "purple.fg" : undefined}>
@@ -225,22 +250,20 @@ export function Waterfall({
                 </Text>
                 {r.note && <Text fontSize="11px" color="fg.muted">{r.note}</Text>}
               </Box>
-              <Text w="90px" textAlign="right" fontSize="12px" color="fg.muted" fontVariantNumeric="tabular-nums">
-                {money(r.now)}
-              </Text>
-              <Text w="90px" textAlign="right" fontSize="13px" fontWeight="medium" fontVariantNumeric="tabular-nums">
-                {money(r.next)}
-              </Text>
-              <Text
-                w="80px"
-                textAlign="right"
-                fontSize="12px"
-                fontVariantNumeric="tabular-nums"
-                color={Math.abs(diff) < 0.5 ? "fg.muted" : good ? "green.solid" : "red.solid"}
-              >
-                {Math.abs(diff) < 0.5 ? "—" : money(diff)}
-              </Text>
-            </HStack>
+              <HStack gap={2} justify={{ base: "space-between", md: "flex-end" }}
+                      w={{ base: "100%", md: "auto" }}>
+                <CompareCell caption="Today" w="90px" fontSize="12px" color="fg.muted">
+                  {money(r.now)}
+                </CompareCell>
+                <CompareCell caption="Forecast" w="90px" fontSize="13px" fontWeight="medium">
+                  {money(r.next)}
+                </CompareCell>
+                <CompareCell caption="Change" w="80px" fontSize="12px"
+                             color={Math.abs(diff) < 0.5 ? "fg.muted" : good ? "green.solid" : "red.solid"}>
+                  {Math.abs(diff) < 0.5 ? "—" : money(diff)}
+                </CompareCell>
+              </HStack>
+            </Stack>
             {/* Paired bars: the faint one is today, the solid one the scenario.
                 Seeing both lengths at once is the point of the whole panel. */}
             <Box mt={1.5} position="relative" h="10px">
@@ -287,13 +310,16 @@ export function WorkerFairnessTable({
 
   return (
     <VStack align="stretch" gap={0} borderWidth="1px" borderRadius="md" overflow="hidden">
+      {/* Desktop only. On a phone each number carries its own caption instead —
+          a header row can't line up with a stacked layout. */}
       <HStack px={3} py={1.5} bg="bg.subtle" fontSize="10px" letterSpacing="wide"
-              textTransform="uppercase" color="fg.muted">
+              textTransform="uppercase" color="fg.muted"
+              display={{ base: "none", md: "flex" }}>
         <Text flex="1">Worker</Text>
         <Text w="52px" textAlign="right">Hours</Text>
         <Text w="76px" textAlign="right">Pay</Text>
-        <Text w="120px">Per hour vs market</Text>
         <Text w="70px" textAlign="right">Today</Text>
+        <Text w="120px">Per hour vs market</Text>
       </HStack>
       {rows.map((w, i) => {
         const before = statusQuo.workers.find((x) => x.userId === w.userId);
@@ -301,8 +327,12 @@ export function WorkerFairnessTable({
         const change = was > 0 ? (w.effectiveHourly - was) / was : 0;
         return (
           <Box key={w.userId} px={3} py={2} borderTopWidth={i === 0 ? 0 : "1px"}>
-            <HStack gap={2}>
-              <HStack flex="1" gap={1.5} minW={0}>
+            {/* Two rows on a phone, one on a desktop. The four fixed columns
+                came to 318px, so on a 360px screen the name was squeezed to
+                nothing and the badges rendered straight through the hours. */}
+            <Stack direction={{ base: "column", md: "row" }}
+                   gap={{ base: 1.5, md: 2 }} align={{ md: "center" }}>
+              <HStack flex={{ md: "1" }} gap={1.5} minW={0} wrap="wrap">
                 <Text fontSize="13px" fontWeight="medium" truncate>{w.name}</Text>
                 {w.isOwner && <Badge size="xs" colorPalette="purple">Owner</Badge>}
                 {w.hypothetical && <Badge size="xs" colorPalette="cyan">Modelled</Badge>}
@@ -310,13 +340,47 @@ export function WorkerFairnessTable({
                   {w.workerType === "CONTRACTOR" ? "1099" : w.workerType === "TRAINEE" ? "Trainee" : "W-2"}
                 </Badge>
               </HStack>
-              <Text w="52px" textAlign="right" fontSize="12px" fontVariantNumeric="tabular-nums">
-                {w.clockedHours.toFixed(0)}h
-              </Text>
-              <Text w="76px" textAlign="right" fontSize="12px" fontVariantNumeric="tabular-nums">
-                {money(w.totalPay)}
-              </Text>
-              <Box w="120px">
+              <HStack gap={2} w={{ base: "100%", md: "auto" }}
+                      align={{ base: "start", md: "center" }}
+                      justify={{ base: "space-between", md: "flex-end" }}>
+              <VStack w={{ base: "auto", md: "52px" }} align={{ base: "start", md: "end" }} gap={0}>
+                <Text display={{ base: "block", md: "none" }} fontSize="10px" color="fg.muted"
+                      textTransform="uppercase" letterSpacing="wide">Hours</Text>
+                <Text fontSize="12px" fontVariantNumeric="tabular-nums">
+                  {w.clockedHours.toFixed(0)}h
+                </Text>
+                {/* Hours paid but not worked. Shown beside the worked hours
+                    because the per-hour bar to the right divides by the WORKED
+                    ones — a guarantee lifts that rate without anyone being
+                    paid more per hour on the job. */}
+                {w.guaranteedTopUpHours > 0 && (
+                  <Text fontSize="10px" color="orange.fg" fontVariantNumeric="tabular-nums">
+                    +{w.guaranteedTopUpHours.toFixed(0)}h gtd
+                  </Text>
+                )}
+              </VStack>
+              <Box w={{ base: "auto", md: "76px" }} textAlign={{ base: "left", md: "right" }}>
+                <Text display={{ base: "block", md: "none" }} fontSize="10px" color="fg.muted"
+                      textTransform="uppercase" letterSpacing="wide">Pay</Text>
+                <Text fontSize="12px" fontVariantNumeric="tabular-nums">{money(w.totalPay)}</Text>
+              </Box>
+              <VStack w={{ base: "auto", md: "70px" }} align={{ base: "end", md: "end" }} gap={0}>
+                <Text display={{ base: "block", md: "none" }} fontSize="10px" color="fg.muted"
+                      textTransform="uppercase" letterSpacing="wide">Today</Text>
+                <Text fontSize="11px" color="fg.muted" fontVariantNumeric="tabular-nums">
+                  ${was.toFixed(2)}
+                </Text>
+                {was > 0 && Math.abs(change) > 0.01 && (
+                  <Text fontSize="11px" fontVariantNumeric="tabular-nums"
+                        color={change > 0 ? "green.solid" : "red.solid"}>
+                    {change > 0 ? "+" : "−"}{Math.abs(change * 100).toFixed(0)}%
+                  </Text>
+                )}
+              </VStack>
+              </HStack>
+              {/* Full width on a phone: the bar IS the fairness read, and at
+                  120px squeezed beside four other columns it was unreadable. */}
+              <Box w={{ base: "100%", md: "120px" }}>
                 {/* Market band drawn behind the bar, so "is this fair" is a
                     glance rather than a calculation. */}
                 <Box position="relative" h="14px" bg="bg.subtle" borderRadius="sm" overflow="hidden">
@@ -340,21 +404,7 @@ export function WorkerFairnessTable({
                   ${w.effectiveHourly.toFixed(2)}/hr
                 </Text>
               </Box>
-              <VStack w="70px" align="end" gap={0}>
-                <Text fontSize="11px" color="fg.muted" fontVariantNumeric="tabular-nums">
-                  ${was.toFixed(2)}
-                </Text>
-                {was > 0 && Math.abs(change) > 0.01 && (
-                  <Text
-                    fontSize="11px"
-                    fontVariantNumeric="tabular-nums"
-                    color={change > 0 ? "green.solid" : "red.solid"}
-                  >
-                    {change > 0 ? "+" : "−"}{Math.abs(change * 100).toFixed(0)}%
-                  </Text>
-                )}
-              </VStack>
-            </HStack>
+            </Stack>
           </Box>
         );
       })}

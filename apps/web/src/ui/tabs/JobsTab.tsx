@@ -45,7 +45,7 @@ import DateInput from "@/src/ui/components/DateInput";
 import { WeatherIcon } from "@/src/ui/components/WeatherBar";
 import { useForecastByDate } from "@/src/lib/useForecastByDate";
 import { useWeatherAlerts } from "@/src/lib/useWeatherAlerts";
-import { alertsForDate } from "@/src/lib/weatherAlerts";
+import { alertsForDate, alertIcon, alertTone, whenLabel } from "@/src/lib/weatherAlerts";
 import { WeatherAlertBadge } from "@/src/ui/components/WeatherAlertBadge";
 import {
   useWorkdayGate,
@@ -61,7 +61,7 @@ import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
 import { getLocation } from "@/src/lib/geo";
 import { useOnSiteHint } from "@/src/lib/onSiteHint";
 import OnSiteHintBanner from "@/src/ui/components/OnSiteHintBanner";
-import { fmtDate, fmtDateTime, fmtDateWeekday, fmtDateOpts, fmtTimeOpts, bizDateKey, bizToday, bizYesterday, bizAddDays, bizAddYears, bizYearOf, bizDaysBetween, bizHourMinute, bizInstantFromEtParts, bizToLocalInputValue, bizParseLocalInputValue, type EtDateKey } from "@/src/lib/dates";
+import { fmtDate, fmtDateTime, fmtDateWeekday, fmtDateOpts, fmtTimeOpts, bizDateKey, bizToday, bizYesterday, bizAddDays, bizAddYears, bizYearOf, bizDaysBetween, bizHourMinute, bizInstantFromEtParts, bizToLocalInputValue, bizParseLocalInputValue, type EtDateKey, bizTomorrow } from "@/src/lib/dates";
 import { prettyStatus, clientLabel, jobTypeLabel } from "@/src/lib/labels";
 import { determineRoles } from "@/src/lib/roles";
 import { occurrenceStatusColor } from "@/src/lib/statusColors";
@@ -3846,6 +3846,43 @@ export default function JobsTab({
 
       <Box position="relative">
         <VStack align="stretch" gap={3}>
+          {/* Severe-weather alerts for the whole feed, not just the days that
+              happen to have jobs.
+
+              Attaching these only to day-section headers meant an alert for a
+              day with NO scheduled work had nowhere to render and vanished
+              from the feed entirely — the title bar showed a Heat Advisory
+              and the feed showed nothing, because the advisory fell on a day
+              with no jobs. An empty day is exactly when a crew still needs to
+              know: it's the day you'd add work to. */}
+          {weatherAlerts.length > 0 && (
+            <VStack align="stretch" gap={1.5}>
+              {weatherAlerts.map((al) => {
+                const when = whenLabel(al, bizToday(), bizTomorrow());
+                const Icon = alertIcon(al.kind);
+                const tone = alertTone(al.severity);
+                return (
+                  <HStack key={al.id} gap={2} align="start" px={3} py={2}
+                          borderWidth="1px" borderLeftWidth="3px" borderRadius="md"
+                          borderColor={`${tone}.solid`} bg={`${tone}.subtle`}>
+                    <Box mt="2px" color={`${tone}.solid`} flexShrink={0} display="inline-flex">
+                      <Icon size={16} />
+                    </Box>
+                    <Box minW={0}>
+                      <Text fontSize="13px" fontWeight="semibold">
+                        {al.event}
+                        <Text as="span" fontWeight="normal" color="fg.muted"> · {when}</Text>
+                      </Text>
+                      <Text fontSize="12px" color="fg.muted">{al.headline}</Text>
+                      {al.instruction && (
+                        <Text fontSize="12px" mt={1}>{al.instruction}</Text>
+                      )}
+                    </Box>
+                  </HStack>
+                );
+              })}
+            </VStack>
+          )}
           {/* Client Requests moved above the filter bar — see the
               Dashboard section render for the actual mount point. */}
           {showAdminExtras && !viewAsUserIds?.length && (

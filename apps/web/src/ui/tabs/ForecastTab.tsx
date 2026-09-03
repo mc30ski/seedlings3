@@ -36,11 +36,11 @@ import {
   createListCollection,
 } from "@chakra-ui/react";
 import {
-  FiPlus, FiSave, FiCopy, FiTrash2, FiRefreshCw, FiArchive, FiX, FiBarChart2,
+  FiPlus, FiSave, FiCopy, FiTrash2, FiRefreshCw, FiArchive, FiX, FiBarChart2, FiInfo,
 } from "react-icons/fi";
-import { LineChart } from "lucide-react";
-import { simulate, defaultAssumptions } from "@repo/money";
-import type { Assumptions, ForecastResult, WorkerType } from "@repo/money";
+import { LineChart, ChevronDown } from "lucide-react";
+import { simulate, defaultAssumptions, describePayShape, migrateAssumptions } from "@repo/money";
+import type { Assumptions, ForecastBaseline, ForecastResult, WorkerType } from "@repo/money";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { usePersistedState } from "@/src/lib/usePersistedState";
@@ -71,11 +71,6 @@ const PRESETS: Preset[] = [
   { key: "12m", label: "Last 12 months", range: () => [bizAddDays(bizToday(), -365), bizToday()] },
 ];
 
-const PAY_MODELS = [
-  { value: "SHARE", label: "Share of each job" },
-  { value: "HOURLY_PLUS_SHARE", label: "Hourly base + share" },
-  { value: "RATE_CARD", label: "Fixed rate card per job" },
-];
 const WORKER_TYPES = [
   { value: "EMPLOYEE", label: "Employee (W-2)" },
   { value: "CONTRACTOR", label: "Contractor (1099)" },
@@ -86,11 +81,36 @@ const CAPACITY_MODES = [
   { value: "ADDED_CAPACITY", label: "Brings new work" },
 ];
 
+/** Heading for a group of levers.
+ *
+ *  These were the same muted 11px uppercase run used for every minor label on
+ *  the tab, so the three groups didn't read as divisions at all — the column
+ *  of sliders looked like one undifferentiated list. An accent bar and a rule
+ *  that runs to the edge give them weight without turning them into headings
+ *  that compete with the section title above. */
+function GroupHeading({ children, mt = 0 }: { children: React.ReactNode; mt?: number }) {
+  return (
+    <Box
+      mt={mt} mb={1}
+      bg="bg.emphasized"
+      borderLeftWidth="4px" borderLeftColor="blue.solid"
+      borderTopRightRadius="md" borderBottomRightRadius="md"
+      px={3} py={2}
+    >
+      <Text fontSize="13px" fontWeight="bold" textTransform="uppercase"
+            letterSpacing="0.1em" color="fg" lineHeight="1.2">
+        {children}
+      </Text>
+    </Box>
+  );
+}
+
 /** Small labelled slider. Chakra's Slider in v3 is heavier than this needs to
  *  be, and a native range input is the one form control the house rule about
  *  `<select>` doesn't cover. */
 function Lever({
-  label, value, baseline, min, max, step = 1, suffix = "", onChange, hint, disabled,
+  label, value, baseline, min, max, step = 1, suffix = "", onChange, hint, info,
+  disabled, disabledReason,
 }: {
   label: string; value: number;
   /** Where this lever sits today, before any adjustment — the live setting
@@ -99,13 +119,44 @@ function Lever({
    *  point rather than in isolation. */
   baseline?: number;
   min: number; max: number; step?: number;
-  suffix?: string; onChange: (n: number) => void; hint?: string; disabled?: boolean;
+  suffix?: string; onChange: (n: number) => void;
+  /** One line under the control, always visible. */
+  hint?: string;
+  /** The full explanation, behind the (i). Answers "what does this actually
+   *  do to my numbers", not just what it is called. */
+  info?: string;
+  disabled?: boolean;
+  /** Why it's disabled. Required whenever `disabled` can be true. */
+  disabledReason?: string;
 }) {
-  const changed = baseline !== undefined && Math.abs(value - baseline) > 1e-9;
+  // DIRECTION, not judgement. Green means you moved this lever up and red means
+  // you moved it down — it does NOT mean the change is good or bad for the
+  // business. Raising "Business keeps" is green and costs the crew; raising
+  // "Fixed costs" is green and costs you. The colour answers "which way did I
+  // push this", which is the thing that's hard to see at a glance across a
+  // dozen sliders; whether that was wise is what the numbers below are for.
+  const delta = baseline === undefined ? 0 : value - baseline;
+  const changed = Math.abs(delta) > 1e-9;
+  const [showInfo, setShowInfo] = useState(false);
   return (
     <Box opacity={disabled ? 0.45 : 1}>
       <HStack justify="space-between" mb={0.5} gap={2}>
-        <Text fontSize="12px" fontWeight="medium">{label}</Text>
+        <HStack gap={1} minW={0}>
+          <Text fontSize="12px" fontWeight="medium">{label}</Text>
+          {info && (
+            <Box
+              as="button"
+              aria-label={`What does "${label}" do?`}
+              onClick={() => setShowInfo((v) => !v)}
+              color={showInfo ? "blue.solid" : "fg.muted"}
+              display="inline-flex"
+              flexShrink={0}
+              _hover={{ color: "blue.solid" }}
+            >
+              <FiInfo size={12} />
+            </Box>
+          )}
+        </HStack>
         <HStack gap={1.5} flexShrink={0}>
           {changed && (
             <>
@@ -119,10 +170,16 @@ function Lever({
           <Text
             fontSize="12px"
             fontWeight={changed ? "bold" : "normal"}
-            color={changed ? "blue.fg" : "fg.muted"}
+            color={changed ? (delta > 0 ? "green.fg" : "red.fg") : "fg.muted"}
             fontVariantNumeric="tabular-nums"
           >
+            {/* Sign the delta explicitly. Colour alone fails for anyone who
+                can't separate red from green, and it's the one cue that
+                survives a screenshot pasted into a message. */}
             {value}{suffix}
+            <Text as="span" fontSize="10px" fontWeight="normal" ml={0.5}>
+              {changed ? (delta > 0 ? "▲" : "▼") : ""}
+            </Text>
           </Text>
         </HStack>
       </HStack>
@@ -132,7 +189,17 @@ function Lever({
         onChange={(e) => onChange(Number(e.target.value))}
         style={{ width: "100%", accentColor: "var(--chakra-colors-blue-500)" }}
       />
-      {hint && <Text fontSize="10.5px" color="fg.muted" mt={0.5}>{hint}</Text>}
+      {showInfo && info && (
+        <Box mt={1.5} mb={1} px={2.5} py={2} bg="blue.subtle" borderRadius="md"
+             borderLeftWidth="3px" borderColor="blue.solid">
+          <Text fontSize="11.5px" lineHeight="1.5">{info}</Text>
+        </Box>
+      )}
+      {/* A greyed-out control with no reason is just a dead control. */}
+      {disabled && disabledReason && (
+        <Text fontSize="10.5px" color="orange.fg" mt={0.5}>{disabledReason}</Text>
+      )}
+      {hint && !disabled && <Text fontSize="10.5px" color="fg.muted" mt={0.5}>{hint}</Text>}
     </Box>
   );
 }
@@ -188,9 +255,42 @@ function Picker({
   );
 }
 
+/**
+ * A stored scenario, laid over today's defaults.
+ *
+ * Saved assumptions are a jsonb snapshot of whatever levers existed the day
+ * they were saved, so a scenario from before a new lever shipped has no key
+ * for it. Without this the control renders `undefined` and React flips it to
+ * an uncontrolled input; with it, an old scenario simply means "that lever was
+ * at its default", which is exactly what it meant when it was saved.
+ */
+function hydrate(stored: Assumptions, baseline: ForecastBaseline): Assumptions {
+  // migrateAssumptions first: a scenario saved under the old pay-model
+  // dropdown needs "RATE_CARD" rewritten as "business keeps 100%", or the
+  // additive rules would pay both the rate card and the share.
+  return {
+    ...defaultAssumptions(baseline),
+    ...(migrateAssumptions(stored as unknown as Record<string, unknown>) as Partial<Assumptions>),
+  };
+}
+
 export default function ForecastTab() {
   const [from, setFrom] = usePersistedState("forecast_from", PRESETS[0].range()[0]);
   const [to, setTo] = usePersistedState("forecast_to", PRESETS[0].range()[1]);
+  // Which preset produced the current window, so the badge can name it. Cleared
+  // the moment either date is edited by hand — a badge still reading "Last 90
+  // days" over a hand-picked range is worse than no label at all.
+  const [presetKey, setPresetKey] = usePersistedState("forecast_preset", PRESETS[0].key);
+  const [presetMenuOpen, setPresetMenuOpen] = useState(false);
+
+  // Close on any click that isn't the badge itself. The badge stops propagation,
+  // so this only ever fires for clicks elsewhere on the page.
+  useEffect(() => {
+    if (!presetMenuOpen) return;
+    const close = () => setPresetMenuOpen(false);
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [presetMenuOpen]);
   const [data, setData] = useState<BaselineResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [assumptions, setAssumptions] = useState<Assumptions | null>(null);
@@ -298,6 +398,8 @@ export default function ForecastTab() {
         impact: probe({ fixedCostOverride: scenario.fixedCosts * 0.8 }) },
       { label: "Hourly base", perUnit: "+$1/hr",
         impact: probe({ hourlyBase: assumptions.hourlyBase + 1 }) },
+      { label: "Pay-period guarantee", perUnit: "+1 guaranteed hour",
+        impact: probe({ guaranteedHoursPerPeriod: assumptions.guaranteedHoursPerPeriod + 1 }) },
       { label: "Cost inflation", perUnit: "+3% on costs",
         impact: probe({ costInflationPercent: assumptions.costInflationPercent + 3 }) },
     ].sort((a, b) => Math.abs(b.impact) - Math.abs(a.impact));
@@ -317,7 +419,7 @@ export default function ForecastTab() {
         id: s.id,
         name: s.name,
         window: `${s.windowFrom} → ${s.windowTo}`,
-        result: simulate(src.baseline, s.assumptions),
+        result: simulate(src.baseline, hydrate(s.assumptions, src.baseline)),
       }];
     });
     if (assumptions && scenario) {
@@ -363,7 +465,7 @@ export default function ForecastTab() {
     setActiveId(s.id);
     setName(s.name);
     setNotes(s.notes ?? "");
-    setAssumptions(s.assumptions);
+    setAssumptions(data ? hydrate(s.assumptions, data.baseline) : s.assumptions);
     setAssessError(null);
     setDirty(false);
     if (s.windowFrom !== from || s.windowTo !== to) {
@@ -376,7 +478,9 @@ export default function ForecastTab() {
     try {
       const full = await fetchForecast(s.id);
       setAssessment(full.assessment ?? null);
-      if (full.assumptions) setAssumptions(full.assumptions);
+      if (full.assumptions) {
+        setAssumptions(data ? hydrate(full.assumptions, data.baseline) : full.assumptions);
+      }
     } catch {
       setAssessment(null);
     }
@@ -444,6 +548,14 @@ export default function ForecastTab() {
   // uses for the "Today" column, so the two can never disagree about what
   // the current settings are.
   const base = defaultAssumptions(data.baseline);
+  // How pay periods are described and how many the window holds. Comes from
+  // the baseline so the copy matches PAYROLL_PERIOD_CADENCE instead of
+  // hard-coding "weekly" and being wrong the day it changes.
+  const periodCount = data.baseline.payPeriods?.keys.length ?? 0;
+  const periodWord = (data.baseline.payPeriods?.cadence ?? "WEEKLY").toLowerCase();
+  // What the pay levers currently add up to, named if it lands on a structure
+  // that has a name.
+  const shape = describePayShape(a);
 
   return (
     <VStack align="stretch" gap={3}>
@@ -469,21 +581,54 @@ export default function ForecastTab() {
           <Box>
             <Text fontSize="11px" color="fg.muted" mb={0.5}>From</Text>
             <Input size="sm" type="date" value={from} w="145px"
-                   onChange={(e) => setFrom(e.target.value)} />
+                   onChange={(e) => { setFrom(e.target.value); setPresetKey(""); }} />
           </Box>
           <Box>
             <Text fontSize="11px" color="fg.muted" mb={0.5}>To</Text>
             <Input size="sm" type="date" value={to} w="145px"
-                   onChange={(e) => setTo(e.target.value)} />
+                   onChange={(e) => { setTo(e.target.value); setPresetKey(""); }} />
           </Box>
-          <HStack gap={1} wrap="wrap">
-            {PRESETS.map((p) => (
-              <Button key={p.key} size="xs" variant="ghost"
-                      onClick={() => { const [f, t] = p.range(); setFrom(f); setTo(t); }}>
-                {p.label}
-              </Button>
-            ))}
-          </HStack>
+          {/* Green preset badge — same affordance as the timeframe pickers on
+              Payments and the other money tabs, so a date range is picked the
+              same way everywhere. */}
+          <Box position="relative" pb={0.5} onClick={(e: any) => e.stopPropagation()}>
+            <Badge size="sm" colorPalette="green" variant="subtle" cursor="pointer"
+                   onClick={() => setPresetMenuOpen((v) => !v)}>
+              {PRESETS.find((p) => p.key === presetKey)?.label ?? "Custom dates"}
+              {" "}
+              <Box as="span" display="inline-flex" alignItems="center" justifyContent="center"
+                   w="14px" h="14px" borderRadius="full" bg="green.500" color="white"
+                   verticalAlign="middle">
+                <ChevronDown size={9} />
+              </Box>
+            </Badge>
+            {presetMenuOpen && (
+              <VStack
+                position="fixed" bg="bg.panel" borderWidth="1px" borderColor="border"
+                rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="160px"
+                ref={(el: HTMLDivElement | null) => {
+                  if (el && el.parentElement) {
+                    const rect = el.parentElement.getBoundingClientRect();
+                    el.style.top = `${rect.bottom + 4}px`;
+                    el.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 168))}px`;
+                  }
+                }}
+              >
+                {PRESETS.map((p) => (
+                  <Button key={p.key} size="xs" w="full" justifyContent="start"
+                          variant={presetKey === p.key ? "solid" : "ghost"}
+                          colorPalette={presetKey === p.key ? "green" : undefined}
+                          onClick={() => {
+                            const [f, t] = p.range();
+                            setFrom(f); setTo(t); setPresetKey(p.key);
+                            setPresetMenuOpen(false);
+                          }}>
+                    {p.label}
+                  </Button>
+                ))}
+              </VStack>
+            )}
+          </Box>
           <IconButton size="xs" variant="ghost" aria-label="Reload window"
                       onClick={() => void load()} loading={loading}>
             <Box as={FiRefreshCw} />
@@ -541,7 +686,7 @@ export default function ForecastTab() {
           mt={2}
           size="sm"
           rows={2}
-          placeholder="What are you trying to work out? (saved with the forecast, and given to Claude when you ask for a read)"
+          placeholder="What are you trying to work out?"
           value={notes}
           onChange={(e) => { setNotes(e.target.value); setDirty(true); }}
         />
@@ -553,81 +698,166 @@ export default function ForecastTab() {
       {/* ── Levers ─────────────────────────────────────────────────────── */}
       <SectionExpander title="Adjustments" storageKey="forecast_sec_levers" defaultOpen>
         <VStack align="stretch" gap={3} pt={2}>
-          <HStack gap={3} align="start" wrap="wrap">
-            <VStack align="stretch" gap={2.5} flex="1 1 280px">
-              <Text fontSize="11px" textTransform="uppercase" letterSpacing="wide" color="fg.muted">
-                How people are paid
-              </Text>
-              <Picker
-                label="Pay model"
-                value={a.payModel}
-                baseline={base.payModel}
-                options={PAY_MODELS}
-                onChange={(v) => set("payModel", v as Assumptions["payModel"])}
-              />
+          {/* One column, read top to bottom. Side by side, the three groups
+              had no reading order — "Employer costs" sat below "Pricing and
+              volume" in the right-hand column while "How people are paid"
+              filled the left, so which lever came after which depended on the
+              window width. */}
+          <VStack align="stretch" gap={4}>
+            <VStack align="stretch" gap={2.5}>
+              <GroupHeading>How people are paid</GroupHeading>
+              {/* Read out of the levers, not a control of them. There used to
+                  be a "pay model" dropdown here that greyed out whichever
+                  levers its mode didn't use — which made pure hourly, the
+                  structure most likely to be the right answer, impossible to
+                  express. The levers are free now and this names what they
+                  come to. */}
+              <Box borderWidth="1px" borderRadius="md" px={2.5} py={2} bg="bg.subtle">
+                <HStack gap={1.5} mb={0.5}>
+                  <Text fontSize="10px" textTransform="uppercase" letterSpacing="wide"
+                        color="fg.muted">
+                    This structure is
+                  </Text>
+                  {shape.name ? (
+                    <Badge size="xs" colorPalette="blue">{shape.name}</Badge>
+                  ) : (
+                    <Badge size="xs" variant="outline">A blend</Badge>
+                  )}
+                </HStack>
+                <Text fontSize="11.5px" color="fg.muted">
+                  Workers are paid {shape.detail}.
+                </Text>
+                {!shape.name && (
+                  <Text fontSize="10.5px" color="fg.muted" mt={0.5}>
+                    Nothing wrong with that — it just doesn't match a structure with a
+                    standard name.
+                  </Text>
+                )}
+              </Box>
               <Lever
-                label="Business keeps — employees" value={a.employeeMarginPercent} baseline={base.employeeMarginPercent}
-                min={0} max={90} suffix="%"
+                label="Business keeps — employees"
+                info={"The share of each job the business retains from a W-2 worker's cut; they take the rest. Applied to each worker's OWN share of a job, never to the pool \u2014 so on a two-person job each person's rate applies only to their half. Employer payroll tax and workers comp are charged on top of what the worker takes, so an employee costs more than their share alone."} value={a.employeeMarginPercent} baseline={base.employeeMarginPercent}
+                min={0} max={100} suffix="%"
                 onChange={(n) => set("employeeMarginPercent", n)}
-                hint={`Worker share ${100 - a.employeeMarginPercent}%`}
-                disabled={a.payModel === "RATE_CARD"}
+                hint={a.employeeMarginPercent >= 100
+                  ? "Worker share 0% — the job pays nothing on its own, so pay comes only from the hourly base and rate card."
+                  : `Worker share ${100 - a.employeeMarginPercent}%`}
               />
               <Lever
-                label="Business keeps — contractors" value={a.contractorFeePercent} baseline={base.contractorFeePercent}
-                min={0} max={90} suffix="%"
+                label="Business keeps — contractors"
+                info={"The same thing for 1099 contractors \u2014 the platform fee the business keeps from their share. Contractors carry no employer payroll tax and no workers comp, so a dollar paid to a contractor costs the business a dollar, where a dollar to an employee costs roughly $1.26."} value={a.contractorFeePercent} baseline={base.contractorFeePercent}
+                min={0} max={100} suffix="%"
                 onChange={(n) => set("contractorFeePercent", n)}
-                hint={`Worker share ${100 - a.contractorFeePercent}%`}
-                disabled={a.payModel === "RATE_CARD"}
+                hint={a.contractorFeePercent >= 100
+                  ? "Worker share 0% — the job pays nothing on its own."
+                  : `Worker share ${100 - a.contractorFeePercent}%`}
               />
               <Lever
-                label="Guaranteed hourly base" value={a.hourlyBase} baseline={base.hourlyBase}
+                label="Guaranteed hourly base"
+                info={"An hourly wage paid for every hour a worker actually clocks \u2014 clock-in to clock-out, including drive time, loading and rain delays. It is NOT a guaranteed number of hours: clock three hours and you are paid for three. It is also NOT a floor that the job share tops up to \u2014 it is ADDED to the share, so raising it without lowering the share raises total pay. Its purpose is to pay for the hours a pure share model pays nothing for. Set it alongside a business-keeps of 100% and you have a plain hourly wage."} value={a.hourlyBase} baseline={base.hourlyBase}
                 min={0} max={30} suffix="/hr"
                 onChange={(n) => set("hourlyBase", n)}
                 hint="Covers drive time, rain days and training — the hours a pure share model pays nothing for."
-                disabled={a.payModel !== "HOURLY_PLUS_SHARE"}
               />
               <Lever
-                label="Crew-lead premium" value={a.leadHourlyBonus} baseline={base.leadHourlyBonus}
+                label="Crew-lead premium"
+                info={"Extra dollars per hour on top of the base, paid only to workers marked as crew lead. Makes a seniority premium something you set deliberately rather than something that emerges from who happened to be assigned the expensive jobs."} value={a.leadHourlyBonus} baseline={base.leadHourlyBonus}
                 min={0} max={10} suffix="/hr"
                 onChange={(n) => set("leadHourlyBonus", n)}
                 hint="Makes a productivity premium explicit rather than an artifact of job assignment."
-                disabled={a.payModel !== "HOURLY_PLUS_SHARE"}
               />
               <Lever
-                label="Rate card per job" value={a.rateCardPerJob} baseline={base.rateCardPerJob}
+                label="Guaranteed hours per pay period"
+                info={
+                  "A floor under each " + periodWord + " paycheck. Everyone covered is paid for at least this many hours in EVERY " +
+                  periodWord + " period \u2014 including the periods they didn't work at all, which is what makes it a guarantee rather than a bonus for showing up. " +
+                  "Someone who clocks 2 hours against a 5-hour floor is paid for 5; someone who clocks 9 is paid for 9. " +
+                  "Only the shortfall is added, and it is paid at the base rate above, without the crew-lead premium. " +
+                  "The cost lands mostly in slow " + periodWord + " periods, not slow days, and it is W-2 wages \u2014 employer payroll tax and workers comp are charged on top."
+                }
+                value={a.guaranteedHoursPerPeriod} baseline={base.guaranteedHoursPerPeriod}
+                min={0} max={40} suffix="h"
+                onChange={(n) => set("guaranteedHoursPerPeriod", n)}
+                hint={
+                  a.guaranteedHoursPerPeriod > 0 && periodCount > 0
+                    ? `Applies to all ${periodCount} ${periodWord} periods in this window, worked or not.`
+                    : "0 turns it off. Pay is then whatever the hours and the share come to."
+                }
+                disabled={a.hourlyBase <= 0}
+                disabledReason={"Needs an hourly base above \u2014 the shortfall is paid at that rate, so at $0/hr it costs nothing."}
+              />
+              {a.guaranteedHoursPerPeriod > 0 && a.hourlyBase > 0 && (
+                <Checkbox.Root size="sm" checked={a.guaranteeContractors}
+                               onCheckedChange={(e) => set("guaranteeContractors", !!e.checked)}>
+                  <Checkbox.HiddenInput /><Checkbox.Control />
+                  <Checkbox.Label fontSize="12px">
+                    Also guarantee contractors
+                    <Text fontSize="10.5px" color="orange.fg">
+                      A guaranteed minimum makes a 1099 worker look like an employee.
+                    </Text>
+                  </Checkbox.Label>
+                </Checkbox.Root>
+              )}
+              <Lever
+                label="Rate card per job"
+                info={"A flat amount paid per job, split across whoever worked it by their split percentage, with the client's price ignored entirely. It is ADDED to the job share, so on its own it is a per-job bonus. For a TRUE rate card \u2014 pay fully decoupled from price \u2014 raise business-keeps to 100%, which zeroes the share and leaves this as the whole of job-based pay. That is the point of the structure: under a share model the crew automatically takes a cut of every price rise, so a price increase never reaches the business."} value={a.rateCardPerJob} baseline={base.rateCardPerJob}
                 min={0} max={120} suffix=""
                 onChange={(n) => set("rateCardPerJob", n)}
-                hint="Decouples pay from price, so a price increase reaches the business instead of being split on the way in."
-                disabled={a.payModel !== "RATE_CARD"}
+                hint={a.employeeMarginPercent >= 100 && a.contractorFeePercent >= 100
+                  ? "With the share at zero this IS the pay — a price increase reaches the business instead of being split on the way in."
+                  : "Paid ON TOP of the job share. Set business-keeps to 100% for a pure rate card."}
               />
             </VStack>
 
-            <VStack align="stretch" gap={2.5} flex="1 1 280px">
-              <Text fontSize="11px" textTransform="uppercase" letterSpacing="wide" color="fg.muted">
-                Pricing and volume
-              </Text>
-              <Lever label="Price change" value={a.priceIncreasePercent} baseline={base.priceIncreasePercent} min={-20} max={50} suffix="%"
+            <VStack align="stretch" gap={2.5}>
+              <GroupHeading>Pricing and volume</GroupHeading>
+              <Lever label="Price change"
+                info={"Raises or lowers every collected amount by this percentage, keeping the same jobs and the same hours. Jobs that collected $0 stay at $0 \u2014 unpaid work is a collection problem, and quietly turning it into revenue would hide a real loss."} value={a.priceIncreasePercent} baseline={base.priceIncreasePercent} min={-20} max={50} suffix="%"
                      onChange={(n) => set("priceIncreasePercent", n)} />
-              <Lever label="Minimum invoice" value={a.minimumInvoice} baseline={base.minimumInvoice} min={0} max={120} suffix=""
+              <Lever label="Minimum invoice"
+                info={"Lifts any job that collected less than this up to the floor, leaving everything above it untouched. Models repricing the cheap end of the book without touching the rest. Never applied to jobs that collected nothing."} value={a.minimumInvoice} baseline={base.minimumInvoice} min={0} max={120} suffix=""
                      onChange={(n) => set("minimumInvoice", n)}
                      hint="Lifts underpriced jobs to a floor. Never applied to jobs that collected $0 — that's a collection problem, not a pricing one." />
-              <Lever label="Volume" value={a.volumeMultiplier} baseline={base.volumeMultiplier} min={0.5} max={4} step={0.25} suffix="×"
+              <Lever label="Volume"
+                info={"Scales the whole book of work \u2014 twice the volume means twice the jobs, twice the crew hours and twice the revenue. Costs only follow if you have tagged them to in the Costs section; anything left at 'as is' holds steady. Fixed costs never follow, which is what makes scale improve margin."} value={a.volumeMultiplier} baseline={base.volumeMultiplier} min={0.5} max={4} step={0.25} suffix="×"
                      onChange={(n) => set("volumeMultiplier", n)}
                      hint="Fixed costs deliberately don't follow — that gap is how much of the problem is scale rather than structure." />
-              <Lever label="Cost inflation" value={a.costInflationPercent} baseline={base.costInflationPercent} min={0} max={25} suffix="%"
+              <Lever label="Cost inflation"
+                info={"Raises every cost line by this percentage, on top of any volume scaling. Applied to costs only, never to wages: share-based pay already rises with prices and the hourly base is a number you set yourself, so inflating wages here would count the same rise twice."} value={a.costInflationPercent} baseline={base.costInflationPercent} min={0} max={25} suffix="%"
                      onChange={(n) => set("costInflationPercent", n)}
                      hint="Everything gets more expensive. Applied to every cost, not to wages — share-based pay already rises with prices, and you set the hourly base yourself." />
 
-              <Text fontSize="11px" textTransform="uppercase" letterSpacing="wide" color="fg.muted" pt={1}>
-                Employer costs
-              </Text>
-              <Lever label="Employer payroll tax" value={a.employerTaxPercent} baseline={base.employerTaxPercent} min={0} max={20} step={0.25} suffix="%"
+              <GroupHeading mt={2}>Employer costs</GroupHeading>
+              <Lever label="Employer payroll tax"
+                info={"The employer's share of payroll tax as a percentage of W-2 wages \u2014 Social Security, Medicare, FUTA and state unemployment. Charged on employees and trainees only, never on contractors and never on the owner, who takes a draw rather than a paycheck. The figure comes from the app's own estimator, never from imported Gusto rows."} value={a.employerTaxPercent} baseline={base.employerTaxPercent} min={0} max={20} step={0.25} suffix="%"
                      onChange={(n) => set("employerTaxPercent", n)}
                      hint="From the app's estimator, never from imported Gusto rows." />
-              <Lever label="Workers comp" value={a.workersCompPercent} baseline={base.workersCompPercent} min={0} max={30} step={0.5} suffix="%"
+              <Lever label="Workers comp (re-modelled on wages)"
+                info={
+                  "Workers compensation as a percentage of W-2 wages. OFF BY DEFAULT, because your real premiums are already booked as Insurance \u2014 adding a percentage on top counts comp twice, and at a landscaping rate that is the biggest single piece of the burden. " +
+                  "Turn it on only alongside the control above, which takes the booked premium back out. What you gain is that comp then RESPONDS to the scenario: model hiring two people and a flat Insurance line doesn't move, which understates what growing costs. " +
+                  "The rate itself is a quote, not something the app can derive. Landscaping class codes run high and first-year minimum premiums distort the effective rate, so check a renewal before leaning on it."
+                }
+                value={a.workersCompPercent} baseline={base.workersCompPercent} min={0} max={30} step={0.5} suffix="%"
                      onChange={(n) => set("workersCompPercent", n)}
-                     hint="Of W-2 wages. A quote, not something the app can derive — check a renewal before leaning on it." />
-              <Lever label="Fixed costs" value={Math.round(a.fixedCostOverride ?? scenario.fixedCosts)}
+                     hint={a.workersCompPercent > 0 && a.workersCompInExpenses <= 0
+                       ? "Counting comp twice — the booked premium is still in Insurance. Set the control above."
+                       : `Off by default; your configured rate is ${data.baseline.workersCompPercent}%. The ledger already carries the real premium.`} />
+              <Lever
+                label="Workers comp already in Insurance"
+                info={
+                  "How many dollars of this window's booked Insurance are workers comp premium. " +
+                  "The app cannot work this out on its own \u2014 comp, general liability and commercial auto all sit in one Insurance category on Schedule C line 15, with nothing to tell them apart. " +
+                  "Enter it and the forecast takes that amount OUT of costs and re-derives comp from wages at the rate below, so it scales when you model hiring or more volume. " +
+                  "Leave both at zero and the scenario simply uses the premiums you actually booked, which is what the P&L does."
+                }
+                value={a.workersCompInExpenses} baseline={base.workersCompInExpenses}
+                min={0} max={Math.max(500, Math.round(sq.costsTotal))} step={25} suffix=""
+                onChange={(n) => set("workersCompInExpenses", n)}
+                hint="Only needed if you want comp to scale with payroll. Otherwise leave at $0."
+              />
+              <Lever label="Fixed costs"
+                info={"Replaces the total of everything tagged Fixed \u2014 insurance, software, banking. Use it to model an insurance change or a software cull without editing individual categories. This is the number that decides how much growing actually helps, since it is the part that does not rise with the work."} value={Math.round(a.fixedCostOverride ?? scenario.fixedCosts)}
                      baseline={Math.round(sq.fixedCosts)}
                      min={0} max={Math.max(1000, Math.round(scenario.fixedCosts * 2))} step={50} suffix=""
                      onChange={(n) => set("fixedCostOverride", n)}
@@ -660,7 +890,7 @@ export default function ForecastTab() {
                 </Checkbox.Root>
               </VStack>
             </VStack>
-          </HStack>
+          </VStack>
         </VStack>
       </SectionExpander>
 

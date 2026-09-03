@@ -25,7 +25,7 @@ import { Prisma } from "@prisma/client";
 import { ServiceError } from "../lib/errors";
 import { writeAudit } from "../lib/auditLogger";
 import { AUDIT } from "../lib/auditActions";
-import { etMidnight, etEndOfDay, etFormatDate, type EtDateKey } from "../lib/dates";
+import { etMidnight, etEndOfDay, etFormatDate, etAddDays, etWeekStart, type EtDateKey } from "../lib/dates";
 import { loadRates } from "./payments";
 import { getMarketRate } from "./marketRate";
 import { loadPayrollTaxEstimates, totalEmployerTaxPct } from "./payrollTaxEstimates";
@@ -37,6 +37,7 @@ import {
   type ForecastBaseline,
   type ForecastJob,
   type ForecastWorker,
+  type PayPeriodCadence,
   type ForecastExpenseLine,
   type Assumptions,
 } from "@repo/money";
@@ -53,13 +54,84 @@ async function loadWorkersCompPercent(): Promise<number> {
   return Number.isFinite(n) && n >= 0 ? n : WORKERS_COMP_DEFAULT;
 }
 
+// ── Pay periods ─────────────────────────────────────────────────────────────
+//
+// FIREWALL-SAFE. The cadence is read from a Setting — operator configuration,
+// the same kind of value as a tax percent. Nothing here reads an IMPORTED
+// payroll row, so no forecast number's meaning depends on whether a Gusto
+// export happened to be uploaded. The payroll build gate holds the other
+// direction; forecast-build-gate.test.ts holds this one — including by
+// scanning this file for the model names, so don't spell them here either.
+
+const CADENCE_SETTING = "PAYROLL_PERIOD_CADENCE";
+
+async function loadCadence(): Promise<PayPeriodCadence> {
+  const row = await prisma.setting.findUnique({ where: { key: CADENCE_SETTING } });
+  const v = row?.value;
+  return v === "BIWEEKLY" || v === "MONTHLY" ? v : "WEEKLY";
+}
+
+/** Add one calendar month to a YYYY-MM-01 key. String arithmetic on purpose:
+ *  no Date, so there is no month-overflow behavior to get wrong. */
+function nextMonthStart(key: string): string {
+  const [y, m] = key.split("-").map(Number);
+  return m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`;
+}
+
+/**
+ * Every pay period the window touches, as ordered START keys.
+ *
+ * The FIRST period starts on or BEFORE `from` — a window opening mid-week sits
+ * inside a real pay period, and pretending it starts on the window boundary
+ * would leave a partial period looking like a short one the guarantee has to
+ * top up.
+ *
+ * BIWEEKLY anchors on the window's own first week rather than on a real Gusto
+ * period boundary, which this file deliberately cannot see. That makes it
+ * stable for a given window but arbitrary in absolute terms; it matters only
+ * for period COUNT, which is off by at most one.
+ */
+export function payPeriodKeys(
+  from: EtDateKey,
+  to: EtDateKey,
+  cadence: PayPeriodCadence,
+): string[] {
+  const keys: string[] = [];
+  if (cadence === "MONTHLY") {
+    let k = `${String(from).slice(0, 7)}-01`;
+    while (k <= String(to)) {
+      keys.push(k);
+      k = nextMonthStart(k);
+    }
+    return keys;
+  }
+  const step = cadence === "BIWEEKLY" ? 14 : 7;
+  let k: string = etWeekStart(from);
+  while (k <= String(to)) {
+    keys.push(k);
+    k = etAddDays(k as EtDateKey, step);
+  }
+  return keys;
+}
+
+/** Index of the period a date key falls in: the last start on or before it.
+ *  YYYY-MM-DD sorts lexicographically, so plain string compare is correct. */
+function periodIndexOf(dateKey: string, keys: string[]): number {
+  let idx = -1;
+  for (let i = 0; i < keys.length; i++) {
+    if (keys[i] <= dateKey) idx = i;
+    else break;
+  }
+  return idx;
+}
+
 // ── Baseline ────────────────────────────────────────────────────────────────
 
 export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<ForecastBaseline> {
   const start = etMidnight(from);
   const end = etEndOfDay(to);
 
-  const [payments, workdays, users, expenses, rates, taxCfg, wcPercent, marketRate] =
+  const [payments, workdays, users, expenses, rates, taxCfg, wcPercent, marketRate, cadence] =
     await Promise.all([
       prisma.payment.findMany({
         where: { confirmed: true, createdAt: { gte: start, lte: end } },
@@ -82,7 +154,10 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
       }),
       prisma.workerWorkday.findMany({
         where: { endedAt: { not: null }, workdayDate: { gte: from, lte: to } },
-        select: { userId: true, startedAt: true, endedAt: true, totalPausedMs: true },
+        select: {
+          userId: true, workdayDate: true,
+          startedAt: true, endedAt: true, totalPausedMs: true,
+        },
       }),
       prisma.user.findMany({
         where: { workerType: { not: null } },
@@ -96,16 +171,30 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
       loadPayrollTaxEstimates(prisma),
       loadWorkersCompPercent(),
       getMarketRate(),
+      loadCadence(),
     ]);
 
   const userById = new Map(users.map((u) => [u.id, u]));
 
   // ── Clocked hours, and what each person was actually paid ────────────────
+  const periodKeys = payPeriodKeys(from, to, cadence);
   const clocked = new Map<string, number>();
+  // Every worker gets a slot for EVERY period, pre-filled with zeros. Building
+  // this from the workday rows instead would silently omit the periods someone
+  // didn't work — which are precisely the periods a guarantee has to pay for.
+  const perPeriod = new Map<string, number[]>();
+  const slots = (id: string) => {
+    let a = perPeriod.get(id);
+    if (!a) { a = new Array(periodKeys.length).fill(0); perPeriod.set(id, a); }
+    return a;
+  };
   for (const w of workdays) {
     if (!w.endedAt) continue;
     const hrs = (w.endedAt.getTime() - w.startedAt.getTime()) / 3_600_000 - w.totalPausedMs / 3_600_000;
-    if (hrs > 0) clocked.set(w.userId, (clocked.get(w.userId) ?? 0) + hrs);
+    if (hrs <= 0) continue;
+    clocked.set(w.userId, (clocked.get(w.userId) ?? 0) + hrs);
+    const i = periodIndexOf(w.workdayDate, periodKeys);
+    if (i >= 0) slots(w.userId)[i] += hrs;
   }
   const actualPay = new Map<string, number>();
   for (const p of payments) {
@@ -166,6 +255,7 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
         workerType: u?.workerType ?? null,
         isOwner: u?.isOwner ?? false,
         clockedHours: round2(clocked.get(id) ?? 0),
+        periodHours: (perPeriod.get(id) ?? new Array(periodKeys.length).fill(0)).map(round2),
         actualPay: round2(actualPay.get(id) ?? 0),
       };
     })
@@ -192,21 +282,37 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
   const revenue = jobs.reduce((s, j) => s + j.paid, 0);
   const processorFees = payments.reduce((s, p) => s + (p.processorFeeAmount ?? 0), 0);
   const materialsTotal = jobs.reduce((s, j) => s + j.materials, 0);
-  const ownerIds = new Set(users.filter((u) => u.isOwner).map((u) => u.id));
-  let crewWages = 0;
+  // Employer burden lands on W-2 WAGES ONLY. Splitting owner-vs-everyone-else
+  // and charging the whole remainder was wrong twice over: a 1099 contractor
+  // carries neither payroll tax nor workers comp, and this figure is the
+  // "actual" half of the backtest — the check that tells the operator whether
+  // the model reproduces the books. A miscounted reference makes the model
+  // look wrong when it is right. pnlReport.ts has always split Wages from
+  // Contract Labor; this now matches it.
+  let crewWages = 0;      // W-2 (employee + trainee), non-owner
+  let contractLabor = 0;  // 1099
   let ownerEarnings = 0;
   for (const [userId, amt] of actualPay) {
-    if (ownerIds.has(userId)) ownerEarnings += amt;
+    const u = userById.get(userId);
+    if (u?.isOwner) ownerEarnings += amt;
+    else if (u?.workerType === "CONTRACTOR") contractLabor += amt;
     else crewWages += amt;
   }
   const employerTaxPercent = totalEmployerTaxPct(taxCfg);
-  const burden = crewWages * ((employerTaxPercent + wcPercent) / 100);
+  // Payroll tax only. Workers comp is NOT synthesized here: the real premium
+  // is already sitting in the Insurance expense rows below, and adding a
+  // percentage of wages on top of it is the double-count that
+  // payrollTaxEstimates.ts documents and pnlReport.ts avoids. A scenario can
+  // opt into modelling comp as a wage-scaling cost, which is the only way it
+  // responds to hiring — see `workersCompInExpenses`.
+  const burden = crewWages * (employerTaxPercent / 100);
   const opex = expenseLines.reduce((s, l) => s + l.amount, 0);
 
   return {
     window: { from, to },
     marketRate,
     jobs,
+    payPeriods: { cadence, keys: periodKeys },
     workers,
     expenses: expenseLines,
     processorFees: round2(processorFees),
@@ -215,10 +321,15 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
     workersCompPercent: wcPercent,
     actual: {
       revenue: round2(revenue),
-      crewWages: round2(crewWages),
+      // Everything paid to the crew, W-2 and 1099 alike. Kept whole because
+      // this is the "what did labor cost" figure the UI reports; the split
+      // below exists so the employer burden lands only where it legally does.
+      crewWages: round2(crewWages + contractLabor),
+      w2Wages: round2(crewWages),
+      contractLabor: round2(contractLabor),
       ownerEarnings: round2(ownerEarnings),
       profitBeforeOwnerLabor: round2(
-        revenue - processorFees - materialsTotal - crewWages - burden - opex,
+        revenue - processorFees - materialsTotal - crewWages - contractLabor - burden - opex,
       ),
     },
   };
