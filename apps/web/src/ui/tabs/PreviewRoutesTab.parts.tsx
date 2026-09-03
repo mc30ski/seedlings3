@@ -190,12 +190,17 @@ export function SectionExpander({
   title,
   storageKey,
   defaultOpen = false,
+  emphasis = false,
   children,
 }: {
   title: React.ReactNode;
   /** When provided, open state is remembered across sessions. */
   storageKey?: string;
   defaultOpen?: boolean;
+  /** Heavier treatment for pages built ENTIRELY out of these, where the plain
+   *  version reads as a list of rows rather than a set of sections. Opt-in so
+   *  existing callers are untouched. */
+  emphasis?: boolean;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState<boolean>(defaultOpen);
@@ -216,6 +221,31 @@ export function SectionExpander({
       return next;
     });
   };
+
+  if (emphasis) {
+    return (
+      // Semantic tokens throughout, unlike the plain variant below — this one
+      // is new, so there's no reason to inherit its hardcoded white/gray.200.
+      <Box borderWidth="1px" borderColor="border" rounded="md" bg="bg.panel" overflow="hidden">
+        <HStack as="button" onClick={toggle} gap={0} align="stretch" w="full"
+                cursor="pointer" textAlign="left"
+                _hover={{ "& .sec-band": { bg: "bg.subtle" } }}>
+          {/* Accent rail doubles as the open/closed tell. */}
+          <Box w="4px" bg={open ? "blue.solid" : "border.emphasized"} flexShrink={0} />
+          <HStack className="sec-band" flex="1" minW={0} gap={2} align="center"
+                  px={3} py={2.5} bg="bg.emphasized">
+            <Box color="fg.muted" display="flex" flexShrink={0}>
+              {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            </Box>
+            <Text fontSize="15px" fontWeight="bold" color="fg" flex="1" minW={0}>
+              {title}
+            </Text>
+          </HStack>
+        </HStack>
+        {open && <Box px={3} py={3}>{children}</Box>}
+      </Box>
+    );
+  }
 
   return (
     <Box borderWidth="1px" borderColor="gray.200" rounded="md" bg="white">

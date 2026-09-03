@@ -53,7 +53,7 @@ import {
   type BaselineResponse, type SavedForecast, type ForecastAssessment,
 } from "@/src/lib/forecast";
 import {
-  StatStrip, Waterfall, WorkerFairnessTable, WarningList, CostBreakdown,
+  StatStrip, MoneyFlow, Waterfall, WorkerFairnessTable, WarningList, CostBreakdown,
   SensitivityList, AssessmentPanel, ComparisonPanel, MarketRateProvenance,
   type SensitivityRow, type ComparisonEntry,
 } from "@/src/ui/tabs/ForecastTab.parts";
@@ -695,8 +695,14 @@ export default function ForecastTab() {
       {/* ── Headline ───────────────────────────────────────────────────── */}
       <StatStrip scenario={scenario} statusQuo={sq} />
 
+      {/* Deliberately NOT in a SectionExpander. "Where did the revenue go" is
+          the first question anyone asks, and it was only answerable inside a
+          collapsible that remembers being closed. */}
+      <MoneyFlow scenario={scenario}
+                 capitalPurchases={data.baseline.actual.fixedAssetPurchases} />
+
       {/* ── Levers ─────────────────────────────────────────────────────── */}
-      <SectionExpander title="Adjustments" storageKey="forecast_sec_levers" defaultOpen>
+      <SectionExpander emphasis title="Adjustments" storageKey="forecast_sec_levers" defaultOpen>
         <VStack align="stretch" gap={3} pt={2}>
           {/* One column, read top to bottom. Side by side, the three groups
               had no reading order — "Employer costs" sat below "Pricing and
@@ -864,6 +870,23 @@ export default function ForecastTab() {
                      hint="Insurance, software, banking. Doesn't move with volume." />
 
               <VStack align="start" gap={1.5} pt={1}>
+                <Checkbox.Root size="sm" checked={a.excludeFixedAssets}
+                               onCheckedChange={(e) => set("excludeFixedAssets", !!e.checked)}>
+                  <Checkbox.HiddenInput /><Checkbox.Control />
+                  <Checkbox.Label fontSize="12px">
+                    Treat equipment purchases as capital, not running costs
+                    {a.excludeFixedAssets !== base.excludeFixedAssets && (
+                      <Text as="span" fontSize="10px" color="blue.fg" fontWeight="bold" ml={1}>
+                        {" "}· changed
+                      </Text>
+                    )}
+                    <Text fontSize="10.5px" color="fg.muted">
+                      {data.baseline.actual.fixedAssetPurchases > 0
+                        ? `${money(data.baseline.actual.fixedAssetPurchases)} of purchases in this window. A mower cuts grass for years — charging it all to one quarter is right for tax and wrong for "am I making money running jobs". This is the same rule the P&L uses.`
+                        : "No purchases in this window meet the threshold."}
+                    </Text>
+                  </Checkbox.Label>
+                </Checkbox.Root>
                 <Checkbox.Root size="sm" checked={a.includeOneTime}
                                onCheckedChange={(e) => set("includeOneTime", !!e.checked)}>
                   <Checkbox.HiddenInput /><Checkbox.Control />
@@ -895,7 +918,7 @@ export default function ForecastTab() {
       </SectionExpander>
 
       {/* ── Roster ─────────────────────────────────────────────────────── */}
-      <SectionExpander title="Crew" storageKey="forecast_sec_roster">
+      <SectionExpander emphasis title="Crew" storageKey="forecast_sec_roster">
         <VStack align="stretch" gap={2} pt={2}>
           {data.baseline.workers.map((w) => {
             const o = a.workerOverrides[w.userId] ?? {};
@@ -998,11 +1021,14 @@ export default function ForecastTab() {
       </SectionExpander>
 
       {/* ── Outcomes ───────────────────────────────────────────────────── */}
-      <SectionExpander title="What it does to the books" storageKey="forecast_sec_pnl" defaultOpen>
-        <Box pt={2}><Waterfall scenario={scenario} statusQuo={sq} /></Box>
+      <SectionExpander emphasis title="What it does to the books" storageKey="forecast_sec_pnl" defaultOpen>
+        <Box pt={2}>
+          <Waterfall scenario={scenario} statusQuo={sq}
+                     capitalPurchases={data.baseline.actual.fixedAssetPurchases} />
+        </Box>
       </SectionExpander>
 
-      <SectionExpander title="What it does to people" storageKey="forecast_sec_people" defaultOpen>
+      <SectionExpander emphasis title="What it does to people" storageKey="forecast_sec_people" defaultOpen>
         <VStack align="stretch" gap={3} pt={2}>
           {/* Where the market band comes from, stated before the table that
               uses it — this number decides who reads as underpaid. */}
@@ -1012,11 +1038,11 @@ export default function ForecastTab() {
         </VStack>
       </SectionExpander>
 
-      <SectionExpander title="Which lever matters" storageKey="forecast_sec_sens">
+      <SectionExpander emphasis title="Which lever matters" storageKey="forecast_sec_sens">
         <Box pt={2}><SensitivityList rows={sensitivity} /></Box>
       </SectionExpander>
 
-      <SectionExpander title="Costs" storageKey="forecast_sec_costs">
+      <SectionExpander emphasis title="Costs" storageKey="forecast_sec_costs">
         <Box pt={2}>
           <CostBreakdown
             scenario={scenario}
@@ -1034,7 +1060,7 @@ export default function ForecastTab() {
       </SectionExpander>
 
       {/* ── Assessment ─────────────────────────────────────────────────── */}
-      <SectionExpander title="Claude's read" storageKey="forecast_sec_ai">
+      <SectionExpander emphasis title="Claude's read" storageKey="forecast_sec_ai">
         <Box pt={2}>
           <AssessmentPanel
             assessment={assessment}
@@ -1047,7 +1073,7 @@ export default function ForecastTab() {
       </SectionExpander>
 
       {/* ── Saved + compare ────────────────────────────────────────────── */}
-      <SectionExpander title="Saved forecasts" storageKey="forecast_sec_saved" defaultOpen>
+      <SectionExpander emphasis title="Saved forecasts" storageKey="forecast_sec_saved" defaultOpen>
         <VStack align="stretch" gap={2} pt={2}>
           {!saved.length && (
             <Text fontSize="13px" color="fg.muted">

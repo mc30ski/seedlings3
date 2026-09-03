@@ -71,11 +71,13 @@ function baseline(over: Partial<ForecastBaseline> = {}): ForecastBaseline {
       { userId: "own", name: "Own", workerType: "EMPLOYEE", isOwner: true, clockedHours: 4, periodHours: [1, 1, 1, 1], actualPay: 80 },
     ],
     expenses: [
-      { category: "Insurance", behavior: "FIXED", amount: 100 },
-      { category: "Fuel", behavior: "VARIABLE", amount: 50 },
-      { category: "Supplies", behavior: "PER_JOB", amount: 40 },
-      { category: "Tools", behavior: "ONE_TIME", amount: 30 },
-      { category: "Advertising", behavior: "DISCRETIONARY", amount: 20 },
+      { category: "Insurance", behavior: "FIXED", amount: 100, fixedAssetAmount: 0 },
+      { category: "Fuel", behavior: "VARIABLE", amount: 50, fixedAssetAmount: 0 },
+      { category: "Supplies", behavior: "PER_JOB", amount: 40, fixedAssetAmount: 0 },
+      // A $30 category of which $25 is a capital purchase — the shape the
+      // fixed-asset toggle exists for.
+      { category: "Tools", behavior: "ONE_TIME", amount: 30, fixedAssetAmount: 25 },
+      { category: "Advertising", behavior: "DISCRETIONARY", amount: 20, fixedAssetAmount: 0 },
     ],
     processorFees: 5,
     rates: { employeeMarginPercent: 35, contractorFeePercent: 25 },
@@ -83,6 +85,7 @@ function baseline(over: Partial<ForecastBaseline> = {}): ForecastBaseline {
     workersCompPercent: 17.6,
     actual: {
       revenue: 180, crewWages: 150, w2Wages: 90, contractLabor: 60,
+      fixedAssetPurchases: 25, jobMaterialsInLedger: 0,
       ownerEarnings: 80, profitBeforeOwnerLabor: 0,
     },
     ...over,
@@ -948,7 +951,7 @@ describe("[build-gate] the actuals side classifies wages like the P&L does", () 
   it("contractor pay is still subtracted from profit", () => {
     // The narrow miss when fixing this: exclude contractors from the burden
     // base and accidentally exclude their PAY from the P&L too.
-    expect(SERVICE).toMatch(/crewWages - contractLabor - burden - opex/);
+    expect(SERVICE).toMatch(/crewWages - contractLabor - burden/);
   });
 });
 
@@ -1002,5 +1005,184 @@ describe("[build-gate] workers comp is not counted twice", () => {
     const r = simulate(baseline(), A({ workersCompPercent: 12, workersCompInExpenses: 100 }));
     expect(r.workers.find((w) => w.userId === "con")!.employerBurden).toBe(0);
     expect(r.workers.find((w) => w.userId === "own")!.employerBurden).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Capital purchases, and the job-material double count
+//
+// Two ways the forecast disagreed with the P&L on the SAME window:
+//
+//   1. A $7,943 mower was charged to the quarter as an operating cost. The
+//      P&L capitalizes anything at or above FIXED_ASSET_MIN_COST and reports
+//      it outside Net Operating Income. One purchase read as 46% of revenue
+//      and turned a roughly breakeven quarter into a 59% loss.
+//   2. Every per-job Expense carries a PAIRED BusinessExpense — workers buy on
+//      the company card. The forecast subtracted those as `materials` AND left
+//      them in the category totals, charging the same mulch twice.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("[build-gate] capital purchases are not running costs", () => {
+  it("excluded by default, because that is what the P&L does", () => {
+    expect(defaultAssumptions(baseline()).excludeFixedAssets).toBe(true);
+  });
+
+  it("the capital slice comes out of its category", () => {
+    // Tools is $30 of which $25 is capital.
+    const on = simulate(baseline(), A());
+    expect(on.costs.find((c) => c.category === "Tools")?.amount).toBe(5);
+    const off = simulate(baseline(), A({ excludeFixedAssets: false }));
+    expect(off.costs.find((c) => c.category === "Tools")?.amount).toBe(30);
+  });
+
+  it("it comes off BEFORE behavior scaling — a mower doesn't multiply", () => {
+    // The subtle miss: scale line.amount instead of the adjusted base and the
+    // exclusion silently comes back the moment a category is tagged.
+    const r = simulate(baseline(), A({
+      behaviorOverrides: { Tools: "VARIABLE" }, volumeMultiplier: 2,
+    }));
+    expect(r.costs.find((c) => c.category === "Tools")?.amount).toBe(10); // 5 × 2, not 60
+  });
+
+  it("the backtest reference excludes them too, so it compares like with like", () => {
+    const svc = readFileSync(SERVICE_PATH, "utf8");
+    expect(svc).toMatch(/\(opex - fixedAssetPurchases\)/);
+  });
+
+  it("the amount is still reported — the money did leave the bank", () => {
+    expect(baseline().actual.fixedAssetPurchases).toBe(25);
+    const parts = readFileSync(
+      join(REPO_ROOT, "apps/web/src/ui/tabs/ForecastTab.parts.tsx"), "utf8",
+    );
+    expect(parts).toMatch(/Equipment bought this window/);
+    expect(parts).toMatch(/cashAfterCapEx/);
+  });
+});
+
+describe("[build-gate] job materials are counted once", () => {
+  it("the ledger row paired to a job Expense is skipped", () => {
+    // `expense` is the 1:1 back-link. Its presence means this ledger row IS a
+    // job material, already subtracted as `materials`.
+    const svc = readFileSync(SERVICE_PATH, "utf8");
+    expect(svc).toMatch(/if \(e\.expense\) \{ jobMaterialsInLedger \+= e\.cost; continue; \}/);
+  });
+
+  it("the query selects the link, or the check above is always false", () => {
+    const svc = readFileSync(SERVICE_PATH, "utf8");
+    expect(svc).toMatch(/expense: \{ select: \{ id: true \} \}/);
+  });
+
+  it("the deduplicated total is reported rather than silently dropped", () => {
+    expect(baseline().actual).toHaveProperty("jobMaterialsInLedger");
+  });
+});
+
+describe("[build-gate] the Costs table can actually render every behavior", () => {
+  it("the render order covers all six, AS_IS included", () => {
+    // AS_IS is the default for every untagged category. Leaving it out of the
+    // order list emptied the entire table — the rows existed, grouped under a
+    // key the renderer never looked for.
+    const parts = readFileSync(
+      join(REPO_ROOT, "apps/web/src/ui/tabs/ForecastTab.parts.tsx"), "utf8",
+    );
+    const m = parts.match(/const order = \[([^\]]+)\]/);
+    const rendered = (m?.[1] ?? "").match(/"([A-Z_]+)"/g)?.map((x) => x.replace(/"/g, "")) ?? [];
+    const behaviors = ["AS_IS", "FIXED", "VARIABLE", "PER_JOB", "ONE_TIME", "DISCRETIONARY"];
+    for (const b of behaviors) expect(rendered, `${b} must be renderable`).toContain(b);
+  });
+
+  it("a default scenario produces rows the table will draw", () => {
+    const r = simulate(baseline(), A());
+    expect(r.costs.length).toBeGreaterThan(0);
+  });
+});
+
+describe("[build-gate] the money flow is visible without expanding anything", () => {
+  it("MoneyFlow renders outside a SectionExpander", () => {
+    // It lived only inside the collapsible P&L comparison, which remembers
+    // being closed — so the tab had no plain answer to "where did it go".
+    const tab = readFileSync(join(REPO_ROOT, "apps/web/src/ui/tabs/ForecastTab.tsx"), "utf8");
+    const before = tab.slice(0, tab.indexOf("<MoneyFlow"));
+    const opens = (before.match(/<SectionExpander/g) ?? []).length;
+    const closes = (before.match(/<\/SectionExpander>/g) ?? []).length;
+    expect(opens).toBe(closes);
+  });
+
+  it("it carries every line of the flow, capital purchases included", () => {
+    const parts = readFileSync(
+      join(REPO_ROOT, "apps/web/src/ui/tabs/ForecastTab.parts.tsx"), "utf8",
+    );
+    const fn = parts.slice(parts.indexOf("export function MoneyFlow"), parts.indexOf("// ── Waterfall"));
+    for (const line of [
+      "Revenue collected", "Job materials", "Processor fees", "Crew pay",
+      "Employer payroll tax", "Operating costs", "Operating profit",
+      "Your own share", "Retained in the business", "Equipment bought",
+    ]) expect(fn, `missing "${line}"`).toContain(line);
+  });
+});
+
+describe("[build-gate] every Forecast section gets the emphasized header", () => {
+  it("no section is left with the plain treatment", () => {
+    // A page built entirely out of collapsibles reads as a list of rows unless
+    // the headers carry weight; one plain header among eight reads as broken.
+    const tab = readFileSync(join(REPO_ROOT, "apps/web/src/ui/tabs/ForecastTab.tsx"), "utf8");
+    const all = (tab.match(/<SectionExpander/g) ?? []).length;
+    const emphasized = (tab.match(/<SectionExpander emphasis/g) ?? []).length;
+    expect(emphasized).toBe(all);
+  });
+
+  it("emphasis is opt-in, so the Routes tab is untouched", () => {
+    const parts = readFileSync(
+      join(REPO_ROOT, "apps/web/src/ui/tabs/PreviewRoutesTab.parts.tsx"), "utf8",
+    );
+    expect(parts).toMatch(/emphasis = false/);
+    const routes = readFileSync(
+      join(REPO_ROOT, "apps/web/src/ui/tabs/PreviewRoutesTab.tsx"), "utf8",
+    );
+    expect(routes).not.toMatch(/<SectionExpander emphasis/);
+  });
+});
+
+describe("[build-gate] every headline number can explain itself", () => {
+  const PARTS = readFileSync(
+    join(REPO_ROOT, "apps/web/src/ui/tabs/ForecastTab.parts.tsx"), "utf8",
+  );
+  const keysOf = (name: string) => {
+    const block = PARTS.slice(PARTS.indexOf(`const ${name}: Record<string, string> = {`));
+    return (block.slice(0, block.indexOf("\n};")).match(/^  "([^"]+)":/gm) ?? [])
+      .map((x) => x.replace(/^ +"|":$/g, ""));
+  };
+
+  it("all four stat cards have an explanation", () => {
+    // The cards are the first thing read and the least self-evident —
+    // "Retained after owner share" means nothing until someone says what the
+    // owner share is and why it's deducted.
+    const cards = ["Retained after owner share", "Margin", "Labor % of revenue", "LLC Owner share"];
+    for (const c of cards) expect(keysOf("STAT_INFO"), `${c} needs info copy`).toContain(c);
+  });
+
+  it("every money-flow line has an explanation", () => {
+    const lines = [
+      "Revenue collected", "Job materials", "Processor fees", "Crew pay",
+      "Employer payroll tax", "Operating costs", "Operating profit",
+      "Your own share", "Retained in the business", "Equipment bought",
+      "Cash after equipment",
+    ];
+    for (const l of lines) expect(keysOf("FLOW_INFO"), `${l} needs info copy`).toContain(l);
+  });
+
+  it("the labels the components render match the copy keys exactly", () => {
+    // A renamed label silently loses its (i) — the lookup just misses.
+    const flow = PARTS.slice(PARTS.indexOf("export function MoneyFlow"), PARTS.indexOf("// ── Waterfall"));
+    for (const label of (flow.match(/label: "([^"]+)"/g) ?? []).map((x) => x.slice(8, -1))) {
+      expect(keysOf("FLOW_INFO"), `rendered line "${label}" has no info copy`).toContain(label);
+    }
+  });
+
+  it("the affordance is a toggle, not a hover tooltip", () => {
+    // Mobile-first tab: hover doesn't exist, and these explanations are far
+    // too long for a tooltip anyway.
+    expect(PARTS).toMatch(/function InfoDot/);
+    expect(PARTS).toMatch(/aria-expanded=\{open\}/);
   });
 });

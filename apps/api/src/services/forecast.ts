@@ -29,6 +29,7 @@ import { etMidnight, etEndOfDay, etFormatDate, etAddDays, etWeekStart, type EtDa
 import { loadRates } from "./payments";
 import { getMarketRate } from "./marketRate";
 import { loadPayrollTaxEstimates, totalEmployerTaxPct } from "./payrollTaxEstimates";
+import { loadFixedAssetMinCost, isFixedAsset } from "./exports";
 import {
   simulate,
   backtest,
@@ -131,7 +132,7 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
   const start = etMidnight(from);
   const end = etEndOfDay(to);
 
-  const [payments, workdays, users, expenses, rates, taxCfg, wcPercent, marketRate, cadence] =
+  const [payments, workdays, users, expenses, rates, taxCfg, wcPercent, marketRate, cadence, fixedAssetMinCost] =
     await Promise.all([
       prisma.payment.findMany({
         where: { confirmed: true, createdAt: { gte: start, lte: end } },
@@ -165,13 +166,17 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
       }),
       prisma.businessExpense.findMany({
         where: { type: "EXPENSE", date: { gte: start, lte: end } },
-        select: { category: true, cost: true },
+        // `expense` is the 1:1 back-link to a per-job Expense row. Its presence
+        // means this ledger entry IS a job material, which the forecast already
+        // subtracts separately — see the dedupe below.
+        select: { category: true, cost: true, date: true, expense: { select: { id: true } } },
       }),
       loadRates(prisma),
       loadPayrollTaxEstimates(prisma),
       loadWorkersCompPercent(),
       getMarketRate(),
       loadCadence(),
+      loadFixedAssetMinCost(),
     ]);
 
   const userById = new Map(users.map((u) => [u.id, u]));
@@ -262,14 +267,38 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
     .sort((a, b) => b.clockedHours - a.clockedHours);
 
   // ── Expenses, grouped by category and tagged with how they scale ─────────
+  //
+  // TWO THINGS ARE SEPARATED OUT HERE.
+  //
+  // 1. JOB MATERIALS. Every per-job Expense gets a paired BusinessExpense —
+  //    workers buy on the company card, so job spend IS ledger spend. The
+  //    forecast already subtracts those as `materials` (they also come off the
+  //    pool before the split, which is why the payout math needs them), so
+  //    leaving them in the category totals charged the same mulch twice.
+  //
+  // 2. CAPITAL PURCHASES. A $7,943 mower is not a running cost. pnlReport.ts
+  //    capitalizes anything at or above FIXED_ASSET_MIN_COST and reports it
+  //    outside Net Operating Income; without the same treatment the forecast
+  //    read a single equipment purchase as 46% of revenue and called the
+  //    quarter a disaster. Tracked per category so the scenario can put it
+  //    back — the toggle is the operator's, not ours.
   const byCategory = new Map<string, number>();
+  const fixedByCategory = new Map<string, number>();
+  let jobMaterialsInLedger = 0;
   for (const e of expenses) {
+    if (e.expense) { jobMaterialsInLedger += e.cost; continue; }
     const label = e.category ?? "Uncategorized";
     byCategory.set(label, (byCategory.get(label) ?? 0) + e.cost);
+    if (isFixedAsset({ cost: e.cost, date: e.date }, fixedAssetMinCost)) {
+      fixedByCategory.set(label, (fixedByCategory.get(label) ?? 0) + e.cost);
+    }
   }
   const expenseLines: ForecastExpenseLine[] = [...byCategory.entries()]
     .map(([category, amount]) => ({
       category,
+      /** The slice of this category that is a capital purchase, not a running
+       *  cost. Zero for almost every category. */
+      fixedAssetAmount: round2(fixedByCategory.get(category) ?? 0),
       // Every category starts AS_IS — holding what was actually spent. The
       // scenario's own behaviorOverrides are the only thing that changes it,
       // the same way every other lever baselines on reality.
@@ -307,6 +336,10 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
   // responds to hiring — see `workersCompInExpenses`.
   const burden = crewWages * (employerTaxPercent / 100);
   const opex = expenseLines.reduce((s, l) => s + l.amount, 0);
+  // Capital purchases, held out of the operating figure the way the P&L holds
+  // them out of Net Operating Income. The default scenario excludes them too,
+  // so the backtest keeps comparing like with like.
+  const fixedAssetPurchases = expenseLines.reduce((s, l) => s + l.fixedAssetAmount, 0);
 
   return {
     window: { from, to },
@@ -328,8 +361,13 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
       w2Wages: round2(crewWages),
       contractLabor: round2(contractLabor),
       ownerEarnings: round2(ownerEarnings),
+      /** Equipment and vehicles bought in the window, at or above
+       *  FIXED_ASSET_MIN_COST. Reported, not buried — the money did leave. */
+      fixedAssetPurchases: round2(fixedAssetPurchases),
+      jobMaterialsInLedger: round2(jobMaterialsInLedger),
       profitBeforeOwnerLabor: round2(
-        revenue - processorFees - materialsTotal - crewWages - contractLabor - burden - opex,
+        revenue - processorFees - materialsTotal - crewWages - contractLabor - burden
+          - (opex - fixedAssetPurchases),
       ),
     },
   };
