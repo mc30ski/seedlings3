@@ -57,6 +57,15 @@ export type ForecastWorker = {
   /** Portal-to-portal hours from WorkerWorkday. Drive time and rain delays
    *  are in here, which is why an hourly base costs real money. */
   clockedHours: number;
+  /** Those same hours bucketed into pay periods, ALIGNED POSITIONALLY to
+   *  `baseline.payPeriods.keys` — one entry per period in the window, and a
+   *  ZERO for every period this person did not work at all.
+   *
+   *  The zeros are the whole point. A guarantee that only pays out in periods
+   *  you showed up for is not a guarantee, so the array cannot be built from
+   *  the workday rows alone: over the 2026 season that reading costs 56 top-up
+   *  hours, the honest one costs 231. */
+  periodHours: number[];
   /** What this person actually took home over the window. Kept on the baseline
    *  so every scenario can answer "is this person better or worse off than they
    *  really were?" — the aggregate labor percentage hides that entirely. */
@@ -85,8 +94,16 @@ export type MarketRateInfo = {
   note: string | null;
 };
 
+/** How often people are paid. Read from the PAYROLL_PERIOD_CADENCE setting,
+ *  which is operator CONFIG — not an imported Gusto row. Reading actual
+ *  payroll here would breach the estimate/actual firewall. */
+export type PayPeriodCadence = "WEEKLY" | "BIWEEKLY" | "MONTHLY";
+
 export type ForecastBaseline = {
   window: { from: string; to: string };
+  /** Every pay period the window covers, in order — the index space that
+   *  `ForecastWorker.periodHours` is aligned to. */
+  payPeriods: { cadence: PayPeriodCadence; keys: string[] };
   marketRate?: MarketRateInfo;
   jobs: ForecastJob[];
   workers: ForecastWorker[];
@@ -107,7 +124,12 @@ export type ForecastBaseline = {
    *  the model reproduces reality before anyone trusts a projection. */
   actual: {
     revenue: number;
+    /** Everything paid to the crew — W-2 and 1099 together. */
     crewWages: number;
+    /** The W-2 slice of it. Employer payroll tax applies to this and nothing
+     *  else; a 1099 contractor carries neither payroll tax nor workers comp. */
+    w2Wages: number;
+    contractLabor: number;
     ownerEarnings: number;
     profitBeforeOwnerLabor: number;
   };
@@ -146,17 +168,32 @@ export type HypotheticalWorker = {
 
 // ── The levers ───────────────────────────────────────────────────────────────
 
-export type PayModel =
-  /** Worker share of each job, as today. */
-  | "SHARE"
-  /** Guaranteed hourly floor plus a smaller share. */
-  | "HOURLY_PLUS_SHARE"
-  /** Fixed dollars per job, decoupled from what the client pays — so a price
-   *  increase reaches the business instead of being split 65/35 on the way in. */
-  | "RATE_CARD";
-
+/**
+ * PAY STRUCTURE IS ADDITIVE, NOT A MODE.
+ *
+ * There used to be a "pay model" dropdown here — SHARE / HOURLY_PLUS_SHARE /
+ * RATE_CARD — that greyed out whichever levers the chosen mode didn't use. It
+ * was a worse tool than the sum of its parts:
+ *
+ *   - It couldn't express PURE HOURLY, which is what an ordinary W-2 lawn crew
+ *     job actually looks like. The one structure most likely to be the right
+ *     answer was the one the control forbade.
+ *   - It couldn't express share PLUS a per-job bonus, or hourly plus a rate
+ *     card, or any other blend.
+ *   - Two of the three modes were already just "set this lever to zero".
+ *
+ * Now every pay lever is always live and they simply add up. Each named model
+ * is a corner of that space rather than a mode you switch into:
+ *
+ *   Share only    business-keeps < 100, hourly $0, rate card $0
+ *   Hourly+share  business-keeps < 100, hourly > $0
+ *   Rate card     business-keeps 100 (zeroing the share), rate card > $0
+ *   Hourly only   business-keeps 100, hourly > $0
+ *
+ * `describePayShape` reads the levers back and names the corner when the
+ * numbers land on one, so the vocabulary survives without the cage.
+ */
 export type Assumptions = {
-  payModel: PayModel;
   /** Percent of each job the BUSINESS keeps. Named to match the live settings
    *  (EMPLOYEE_BUSINESS_MARGIN_PERCENT / CONTRACTOR_PLATFORM_FEE_PERCENT) so a
    *  scenario translates directly into a settings change. */
@@ -170,7 +207,22 @@ export type Assumptions = {
   leadHourlyBonus: number;
   leadUserIds: string[];
 
-  /** RATE_CARD: dollars per job, split across the crew by their split percent. */
+  /** Hours every eligible worker is paid for in EVERY pay period, whether they
+   *  worked them or not. 0 turns the guarantee off.
+   *
+   *  Paid at `hourlyBase`, so it does nothing while that is $0 — there is no
+   *  rate to pay the shortfall at. `buildWarnings` says so rather than letting
+   *  a lever move and change nothing. */
+  guaranteedHoursPerPeriod: number;
+  /** Extend the guarantee to contractors. OFF by default: a guaranteed minimum
+   *  payment to a 1099 worker is one of the factors that makes them look like
+   *  an employee, and this tool should not make that easy to do by accident. */
+  guaranteeContractors: boolean;
+
+  /** Dollars per job, split across the crew by their split percent, ON TOP OF
+   *  the share. To get a PURE rate card — pay decoupled from the client's
+   *  price, so a price increase reaches the business instead of being split on
+   *  the way in — set business-keeps to 100%, which zeroes the share. */
   rateCardPerJob: number;
 
   /** Applied to every collected amount. */
@@ -193,7 +245,30 @@ export type Assumptions = {
   costInflationPercent: number;
 
   employerTaxPercent: number;
+  /**
+   * Workers comp as a percent of W-2 wages — a SYNTHETIC cost, off by default.
+   *
+   * The real premium is already in the ledger, booked as Insurance (Schedule C
+   * line 15). Adding a percentage of wages on top of it counts comp twice, and
+   * at a typical landscaping rate that is the largest single component of the
+   * burden — bigger than all four payroll taxes combined.
+   *
+   * It is offered at all because comp is the one labor cost that genuinely
+   * scales with payroll: model doubling the crew with a flat Insurance line
+   * and the premium doesn't move, which understates the cost of growing. To
+   * use it honestly you must also say how much of the ledger is already comp,
+   * so it can be taken out before this is added — hence the field below.
+   */
   workersCompPercent: number;
+  /**
+   * How many dollars of the window's booked expenses are workers comp premium.
+   *
+   * There is NO WAY TO DERIVE THIS. The ledger has one Insurance category
+   * carrying comp alongside general liability, commercial auto and everything
+   * else on line 15, with nothing distinguishing them. So it is an input, and
+   * `buildWarnings` says so when a comp rate is set without one.
+   */
+  workersCompInExpenses: number;
   /** Replace the fixed-cost base, for modelling an insurance change or a
    *  software cull. Null = use the window's actual fixed costs. */
   fixedCostOverride: number | null;
@@ -219,19 +294,25 @@ export type Assumptions = {
 
 export function defaultAssumptions(b: ForecastBaseline): Assumptions {
   return {
-    payModel: "SHARE",
     employeeMarginPercent: b.rates.employeeMarginPercent,
     contractorFeePercent: b.rates.contractorFeePercent,
     hourlyBase: 0,
     leadHourlyBonus: 0,
     leadUserIds: [],
+    guaranteedHoursPerPeriod: 0,
+    guaranteeContractors: false,
     rateCardPerJob: 0,
     priceIncreasePercent: 0,
     minimumInvoice: 0,
     volumeMultiplier: 1,
     costInflationPercent: 0,
     employerTaxPercent: b.employerTaxPercent,
-    workersCompPercent: b.workersCompPercent,
+    // Zero, NOT the configured rate. The default scenario has to reconcile
+    // with the P&L, and the P&L synthesizes no comp — it reports the premiums
+    // actually booked. `b.workersCompPercent` still carries the operator's
+    // configured rate so the UI can offer it as the suggested value.
+    workersCompPercent: 0,
+    workersCompInExpenses: 0,
     fixedCostOverride: null,
     includeOneTime: true,
     scaleDiscretionary: false,
@@ -239,6 +320,67 @@ export function defaultAssumptions(b: ForecastBaseline): Assumptions {
     workerOverrides: {},
     hypotheticalWorkers: [],
   };
+}
+
+/**
+ * Read the pay levers back and name the structure they add up to.
+ *
+ * This is the whole trade the dropdown made in reverse: instead of a control
+ * that names a model and then constrains the levers, the levers are free and
+ * this names what they came to. A blend nobody has a word for is a legitimate
+ * answer — it gets `null` and the UI says so plainly rather than pretending it
+ * is one of the three.
+ */
+export function describePayShape(a: Assumptions): { name: string | null; detail: string } {
+  // "Business keeps 100%" is how you zero the share, so it is the hinge every
+  // named shape turns on.
+  const shareOff = a.employeeMarginPercent >= 100 && a.contractorFeePercent >= 100;
+  const hourly = a.hourlyBase > 0;
+  const card = a.rateCardPerJob > 0;
+
+  const parts: string[] = [];
+  if (!shareOff) {
+    parts.push(`${100 - a.employeeMarginPercent}% of each job to employees, ${100 - a.contractorFeePercent}% to contractors`);
+  }
+  if (hourly) parts.push(`$${a.hourlyBase}/hr for every clocked hour`);
+  if (card) parts.push(`$${a.rateCardPerJob} per job`);
+  if (a.guaranteedHoursPerPeriod > 0 && hourly) {
+    parts.push(`a floor of ${a.guaranteedHoursPerPeriod}h per pay period`);
+  }
+
+  const detail = parts.length ? parts.join(" + ") : "nothing — every pay lever is at zero";
+
+  let name: string | null = null;
+  if (!shareOff && !hourly && !card) name = "Share only";
+  else if (!shareOff && hourly && !card) name = "Hourly + share";
+  else if (shareOff && hourly && !card) name = "Hourly only";
+  else if (shareOff && !hourly && card) name = "Rate card";
+  else if (shareOff && !hourly && !card) name = "Unpaid";
+
+  return { name, detail };
+}
+
+/**
+ * Bring a stored scenario forward from the pay-model era.
+ *
+ * Saved assumptions are a jsonb snapshot, and the dropdown didn't just pick a
+ * label — RATE_CARD genuinely did not pay the share. Replaying such a scenario
+ * under the additive rules without this would pay BOTH, overstating crew cost
+ * on a scenario the operator never changed. Setting business-keeps to 100 is
+ * the additive spelling of the same structure.
+ */
+export function migrateAssumptions(stored: Record<string, unknown>): Record<string, unknown> {
+  const { payModel, ...rest } = stored as { payModel?: string } & Record<string, unknown>;
+  if (!payModel) return rest;
+  if (payModel === "RATE_CARD") {
+    return { ...rest, employeeMarginPercent: 100, contractorFeePercent: 100 };
+  }
+  if (payModel === "SHARE") {
+    // The hourly block was disabled, so whatever it holds was never paid.
+    return { ...rest, hourlyBase: 0, leadHourlyBonus: 0, guaranteedHoursPerPeriod: 0, rateCardPerJob: 0 };
+  }
+  // HOURLY_PLUS_SHARE: the rate card was the disabled one.
+  return { ...rest, rateCardPerJob: 0 };
 }
 
 // ── Results ──────────────────────────────────────────────────────────────────
@@ -252,8 +394,12 @@ export type WorkerOutcome = {
   clockedHours: number;
   /** Share of job revenue. */
   sharePay: number;
-  /** Guaranteed hourly, if the model has one. */
+  /** Guaranteed hourly, if the model has one. Includes any period guarantee. */
   hourlyPay: number;
+  /** Hours paid but not worked, from the per-period guarantee. Broken out so
+   *  the cost of the guarantee is visible rather than buried in hourly pay. */
+  guaranteedTopUpHours: number;
+  guaranteedTopUpPay: number;
   totalPay: number;
   /** What they take home per hour they actually clocked — the number that
    *  decides whether a scenario is fair to a real person. */
@@ -300,6 +446,17 @@ export type ForecastResult = {
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const isW2 = (t: WorkerType | null) => t === "EMPLOYEE" || t === "TRAINEE";
 
+/** Rescale a per-period array so it still sums to `to` while keeping its
+ *  shape. Falls back to spreading evenly when there is no shape to keep. */
+function scaleHours(periods: number[], from: number, to: number): number[] {
+  if (!periods.length) return periods;
+  if (from > 0) {
+    const f = to / from;
+    return periods.map((h) => h * f);
+  }
+  return periods.map(() => to / periods.length);
+}
+
 /** Price a single job under the pricing levers. */
 function adjustedPaid(job: ForecastJob, a: Assumptions): number {
   if (job.paid <= 0) return 0; // uncollected stays uncollected — see minimumInvoice
@@ -325,15 +482,24 @@ export function simulate(baseline: ForecastBaseline, a: Assumptions): ForecastRe
   for (const w of baseline.workers) {
     const o = a.workerOverrides[w.userId];
     if (o?.excluded) continue;
+    const hours = o?.clockedHours ?? w.clockedHours;
     roster.set(w.userId, {
       ...w,
       workerType: o?.workerType !== undefined ? o.workerType : w.workerType,
-      clockedHours: o?.clockedHours ?? w.clockedHours,
+      clockedHours: hours,
+      // Re-houring someone has to move their PER-PERIOD hours too, or a worker
+      // dialled down to zero keeps their real week-by-week shape and the
+      // guarantee tops up against hours the scenario says they never worked.
+      periodHours: scaleHours(w.periodHours, w.clockedHours, hours),
     });
   }
 
+  const nPeriods = baseline.payPeriods?.keys.length ?? 0;
+
   const sharePay = new Map<string, number>();
   const add = (id: string, n: number) => sharePay.set(id, (sharePay.get(id) ?? 0) + n);
+  const cardPay = new Map<string, number>();
+  const addCard = (id: string, n: number) => cardPay.set(id, (cardPay.get(id) ?? 0) + n);
 
   let revenue = 0;
   let materials = 0;
@@ -351,14 +517,16 @@ export function simulate(baseline: ForecastBaseline, a: Assumptions): ForecastRe
     materials += job.materials;
     jobCount += 1;
 
-    if (a.payModel === "RATE_CARD") {
+    // Rate card rides ON TOP of the share and is kept in its own ledger. Two
+    // reasons to keep them apart rather than summing as we go: a rate card is
+    // per-job and carries no worker-type rate, so when a substitution moves
+    // work between people the share has to be re-rated and the rate card does
+    // not — mixing them makes that re-rating silently wrong.
+    if (a.rateCardPerJob > 0) {
       const totalPct = crew.reduce((s, c) => s + c.splitPercent, 0) || 100;
-      for (const c of crew) add(c.userId, (a.rateCardPerJob * c.splitPercent) / totalPct);
-      continue;
+      for (const c of crew) addCard(c.userId, (a.rateCardPerJob * c.splitPercent) / totalPct);
     }
 
-    // SHARE and HOURLY_PLUS_SHARE both split the job; they differ only in the
-    // margin percent the operator sets alongside the hourly base.
     const workers: WorkerInput[] = crew.map((c) => ({
       userId: c.userId,
       splitPercent: c.splitPercent,
@@ -383,6 +551,12 @@ export function simulate(baseline: ForecastBaseline, a: Assumptions): ForecastRe
       workerType: h.workerType,
       isOwner: false,
       clockedHours: h.hours,
+      // A person who doesn't exist has no week-by-week history, so their hours
+      // spread evenly across the window. Neutral by construction: it neither
+      // manufactures a slow week for the guarantee to top up nor hides one.
+      periodHours: nPeriods
+        ? Array.from({ length: nPeriods }, () => h.hours / nPeriods)
+        : [],
       // No history to compare against — a person who doesn't exist has no
       // "before". The fairness regression check skips hypothetical workers
       // for exactly this reason.
@@ -399,11 +573,10 @@ export function simulate(baseline: ForecastBaseline, a: Assumptions): ForecastRe
         ? paidJobs.reduce((s, j) => s + j.paid, 0) / paidJobs.length
         : 0;
       jobCount += avgJob > 0 ? Math.round(newRevenue / avgJob) : 0;
-      if (a.payModel === "RATE_CARD") {
-        add(h.id, avgJob > 0 ? (newRevenue / avgJob) * a.rateCardPerJob : 0);
-      } else {
-        const rate = isW2(h.workerType) ? a.employeeMarginPercent : a.contractorFeePercent;
-        add(h.id, newRevenue * (1 - rate / 100));
+      const rate = isW2(h.workerType) ? a.employeeMarginPercent : a.contractorFeePercent;
+      add(h.id, newRevenue * (1 - rate / 100));
+      if (a.rateCardPerJob > 0 && avgJob > 0) {
+        addCard(h.id, (newRevenue / avgJob) * a.rateCardPerJob);
       }
     } else {
       const from = h.substituteForUserId ? roster.get(h.substituteForUserId) : undefined;
@@ -411,18 +584,23 @@ export function simulate(baseline: ForecastBaseline, a: Assumptions): ForecastRe
         const fraction = Math.min(1, h.hours / from.clockedHours);
         const moved = (sharePay.get(from.userId) ?? 0) * fraction;
         add(from.userId, -moved);
-        from.clockedHours = round2(from.clockedHours - h.hours * fraction);
+        const left = from.clockedHours - h.hours * fraction;
+        from.periodHours = scaleHours(from.periodHours, from.clockedHours, left);
+        from.clockedHours = round2(left);
         // The displaced worker's share is re-earned by the substitute at the
         // substitute's own rate — that rate difference IS the question being
         // asked when you compare a W-2 crew against a 1099 one.
-        if (a.payModel !== "RATE_CARD") {
-          const fromRate = isW2(from.workerType) ? a.employeeMarginPercent : a.contractorFeePercent;
-          const toRate = isW2(h.workerType) ? a.employeeMarginPercent : a.contractorFeePercent;
-          const grossMoved = fromRate >= 100 ? 0 : moved / (1 - fromRate / 100);
-          add(h.id, grossMoved * (1 - toRate / 100));
-        } else {
-          add(h.id, moved);
-        }
+        const fromRate = isW2(from.workerType) ? a.employeeMarginPercent : a.contractorFeePercent;
+        const toRate = isW2(h.workerType) ? a.employeeMarginPercent : a.contractorFeePercent;
+        const grossMoved = fromRate >= 100 ? 0 : moved / (1 - fromRate / 100);
+        add(h.id, grossMoved * (1 - toRate / 100));
+
+        // Rate-card money moves at face value. It is priced per JOB, not per
+        // worker type, so there is no rate to translate — whoever does the job
+        // is paid the same for it.
+        const movedCard = (cardPay.get(from.userId) ?? 0) * fraction;
+        addCard(from.userId, -movedCard);
+        addCard(h.id, movedCard);
       }
     }
   }
@@ -439,14 +617,35 @@ export function simulate(baseline: ForecastBaseline, a: Assumptions): ForecastRe
   const processorFees = baseline.processorFees * vm;
 
   // ── Pay per worker ────────────────────────────────────────────────────────
+  // No mode gate. Every pay lever is live at whatever the operator set it to;
+  // a lever at zero contributes zero, which is the same thing the old dropdown
+  // achieved by disabling the control — minus the combinations it forbade.
+  const guarantee = Math.max(0, a.guaranteedHoursPerPeriod || 0);
+
   const outcomes: WorkerOutcome[] = allWorkers.map((w) => {
     const hours = w.clockedHours * vm;
-    const share = (sharePay.get(w.userId) ?? 0) * vm;
+    const share = ((sharePay.get(w.userId) ?? 0) + (cardPay.get(w.userId) ?? 0)) * vm;
     const base =
-      a.payModel === "HOURLY_PLUS_SHARE"
-        ? hours * (a.hourlyBase + (a.leadUserIds.includes(w.userId) ? a.leadHourlyBonus : 0))
-        : 0;
-    const total = round2(share + base);
+      hours * (a.hourlyBase + (a.leadUserIds.includes(w.userId) ? a.leadHourlyBonus : 0));
+
+    // ── Per-period guarantee ────────────────────────────────────────────────
+    // Iterates EVERY period in the window, not just the ones with hours in
+    // them, because "guaranteed regardless" has to cover the weeks someone
+    // didn't work at all — those are exactly the weeks it exists for.
+    //
+    // The owner is never covered: owner earnings are a draw, not a paycheck.
+    // Contractors are covered only on an explicit opt-in (see the assumption).
+    const covered =
+      guarantee > 0 && !w.isOwner && (isW2(w.workerType) || a.guaranteeContractors);
+    let topUpHours = 0;
+    if (covered) {
+      for (const h of w.periodHours) topUpHours += Math.max(0, guarantee - h * vm);
+    }
+    // Paid at the plain base: a lead premium is a premium for leading a crew,
+    // and there is no crew in a week nobody worked.
+    const topUpPay = topUpHours * a.hourlyBase;
+
+    const total = round2(share + base + topUpPay);
     // Employer burden lands on W-2 workers only, and never on the owner —
     // owner earnings are a draw, not a paycheck (FINANCIAL_SYSTEM §8).
     const burden =
@@ -461,7 +660,9 @@ export function simulate(baseline: ForecastBaseline, a: Assumptions): ForecastRe
       hypothetical: w.userId.startsWith("hyp-"),
       clockedHours: round2(hours),
       sharePay: round2(share),
-      hourlyPay: round2(base),
+      hourlyPay: round2(base + topUpPay),
+      guaranteedTopUpHours: round2(topUpHours),
+      guaranteedTopUpPay: round2(topUpPay),
       totalPay: total,
       effectiveHourly: hours > 0 ? round2(total / hours) : 0,
       employerBurden: burden,
@@ -512,6 +713,18 @@ export function simulate(baseline: ForecastBaseline, a: Assumptions): ForecastRe
     amount = amount * inflation;
     if (amount !== 0) costs.push({ category: line.category, behavior, amount: round2(amount) });
   }
+  // Take the booked comp premium OUT before the synthetic wage-scaled one goes
+  // in, or the same cost is counted twice. Rendered as its own visible line
+  // rather than netted silently into Insurance: an operator comparing this
+  // against their ledger has to be able to see where the money went.
+  if (a.workersCompInExpenses > 0) {
+    costs.push({
+      category: "Workers comp premium (re-modelled on wages)",
+      behavior: "FIXED",
+      amount: round2(-a.workersCompInExpenses * inflation),
+    });
+  }
+
   const naturalFixed = costs
     .filter((c) => c.behavior === "FIXED")
     .reduce((s, c) => s + c.amount, 0);
@@ -615,6 +828,45 @@ export function buildWarnings(
     out.push({
       level: "caution",
       message: `${losers.map((d) => `${d.name} $${d.was.toFixed(0)}→$${d.now.toFixed(0)}/hr`).join(", ")} — a cut of more than 15% per hour.`,
+    });
+  }
+
+  // ── The per-period guarantee ────────────────────────────────────────────
+  if (a.guaranteedHoursPerPeriod > 0) {
+    if (a.hourlyBase <= 0) {
+      out.push({
+        level: "caution",
+        message: `The ${a.guaranteedHoursPerPeriod}-hour guarantee costs nothing because the hourly base is $0. Set a base rate for it to mean anything.`,
+      });
+    } else {
+      const topUp = outcomes.reduce((t, o) => t + o.guaranteedTopUpHours, 0);
+      const cost = outcomes.reduce((t, o) => t + o.guaranteedTopUpPay, 0);
+      if (topUp > 0) {
+        out.push({
+          level: "caution",
+          message: `The guarantee pays for ${topUp.toFixed(0)} hours nobody worked ($${cost.toFixed(0)} before employer tax), spread over ${baseline.payPeriods?.keys.length ?? 0} ${(baseline.payPeriods?.cadence ?? "WEEKLY").toLowerCase()} periods. Most of that is slow periods, not slow days.`,
+        });
+      }
+    }
+    if (a.guaranteeContractors) {
+      out.push({
+        level: "critical",
+        message: `Guaranteeing a minimum payment to a contractor is one of the factors that makes a 1099 worker look like an employee. If you want a floor under their pay, the safer answer is usually to reclassify them.`,
+      });
+    }
+  }
+
+  // ── Workers comp counted twice ──────────────────────────────────────────
+  if (a.workersCompPercent > 0 && a.workersCompInExpenses <= 0) {
+    out.push({
+      level: "critical",
+      message: `Workers comp is being counted twice: ${a.workersCompPercent}% of wages is added on top of the premiums already booked as Insurance. Enter how much of this window's Insurance is comp so it can be taken out first, or set the rate to 0 and let the ledger stand.`,
+    });
+  }
+  if (a.workersCompInExpenses > 0 && a.workersCompPercent <= 0) {
+    out.push({
+      level: "caution",
+      message: `$${a.workersCompInExpenses.toFixed(0)} of comp premium has been removed from costs but no rate replaces it, so this scenario carries no workers comp at all.`,
     });
   }
 

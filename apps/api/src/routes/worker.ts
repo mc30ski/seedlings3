@@ -4955,11 +4955,29 @@ export default async function workerRoutes(app: FastifyInstance) {
       // Always include today using current weather, then next 2 forecast days
       const todayForecastEntries = days[todayKey] ?? [];
       const todayRainChances = todayForecastEntries.map((e) => Math.round((e.pop ?? 0) * 100));
+      // Today's high/low comes from the FORECAST entries, like every other
+      // day in the bar — not from current.main.temp_max.
+      //
+      // On the current-weather endpoint temp_max/temp_min are the spread of
+      // what nearby stations are reporting RIGHT NOW, not a daily forecast.
+      // Using them showed "Today 83°/78°" on a day forecast to hit 97°, with
+      // a Heat Advisory in force — while tomorrow correctly read 95°, because
+      // tomorrow was built from the forecast list. Only Today was wrong.
+      //
+      // The forecast list starts from the current 3-hour block, so late in
+      // the day it no longer covers the morning. Fold in the observed
+      // readings so the high is never lower than something already measured.
+      const todayHighs = todayForecastEntries.map((e: any) => e.main?.temp_max ?? e.main?.temp ?? 0);
+      const todayLows = todayForecastEntries.map((e: any) => e.main?.temp_min ?? e.main?.temp ?? 0);
+      const observedNow = current.main?.temp ?? 0;
+      const todayHigh = Math.max(...todayHighs, observedNow, current.main?.temp_max ?? observedNow);
+      const todayLow = Math.min(...todayLows, observedNow, current.main?.temp_min ?? observedNow);
+
       const todayEntry = {
         date: todayKey,
         label: "Today",
-        high: Math.round(current.main?.temp_max ?? current.main?.temp ?? 0),
-        low: Math.round(current.main?.temp_min ?? current.main?.temp ?? 0),
+        high: Math.round(todayHigh),
+        low: Math.round(todayLow),
         description: current.weather?.[0]?.description ?? "",
         icon: current.weather?.[0]?.icon ?? "",
         rainChance: todayRainChances.length > 0 ? Math.max(...todayRainChances) : 0,

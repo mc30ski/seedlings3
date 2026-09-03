@@ -1654,18 +1654,18 @@ chip: false, bucket: t.bucket }));
         },
         {
           // ── Money ── (Super sub-tab order: Payments → Payroll →
-          // Ledger → Forecast → Pricing → Supplies → Promotions.
+          // Ledger → Pricing → Supplies → Promotions → Forecast.
           //
           // The first three are the money-movement surfaces — what came
           // in, what went out to people, what went out everywhere else —
           // so they sit together; Pricing and Supplies are configuration
           // rather than record-keeping and follow.
           //
-          // Forecast sits directly after the three record surfaces because
-          // it is what you do AFTER reading them — it consumes the same data
-          // and answers "what should change", which is a different question
-          // from "what happened". It is advisory: it writes no setting and
-          // pays nobody.
+          // Forecast sits LAST — it is the only surface here that reports
+          // nothing that happened. Everything above it is a record or a
+          // setting; Forecast is advisory, writes no setting and pays nobody,
+          // so it reads as the thing you do after the rest rather than
+          // another ledger.
           //
           // Payments/Pricing/Supplies are shared across all three roles
           // via the additive scope prop; Payroll is shared but heavily
@@ -1707,18 +1707,6 @@ chip: false, bucket: t.bucket }));
           categoryIcon: TfiMoney,
         },
         {
-          // Pay-structure simulator. Super-only, and deliberately NOT part of
-          // Reconcile or the P&L: those report what happened, this asks what
-          // should change. Keeping them separate stops a projection from ever
-          // being mistaken for a record.
-          value: "forecast",
-          label: "Forecast",
-          icon: LineChart,
-          content: wrapWithInlineMessage(<ForecastTab />),
-          category: "Money",
-          categoryIcon: TfiMoney,
-        },
-        {
           value: "pricing",
           label: "Pricing",
           icon: FiTag,
@@ -1748,6 +1736,18 @@ chip: false, bucket: t.bucket }));
           label: "Promotions",
           icon: FiSpeaker,
           content: wrapWithInlineMessage(<PromotionsTab />),
+          category: "Money",
+          categoryIcon: TfiMoney,
+        },
+        {
+          // Pay-structure simulator. Super-only, and deliberately NOT part of
+          // Reconcile or the P&L: those report what happened, this asks what
+          // should change. Keeping them separate stops a projection from ever
+          // being mistaken for a record.
+          value: "forecast",
+          label: "Forecast",
+          icon: LineChart,
+          content: wrapWithInlineMessage(<ForecastTab />),
           category: "Money",
           categoryIcon: TfiMoney,
         },
@@ -3323,7 +3323,7 @@ chip: false, bucket: t.bucket }));
       home: "Work", jobs: "Work", routes: "Work", services: "Work", tasks: "Work",
       equipment: "Equipment", collections: "Equipment", vehicles: "Equipment",
       clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
-      payments: "Money", payroll: "Money", pricing: "Money", supplies: "Money", ledger: "Money", forecast: "Money", promotions: "Money",
+      payments: "Money", payroll: "Money", pricing: "Money", supplies: "Money", ledger: "Money", promotions: "Money", forecast: "Money",
       reconcile: "Records", workdays: "Records", compliance: "Records", activity: "Records",
       history: "Records", timeline: "Records", documents: "Records", guides: "Records", audit: "Records",
       "tools-mowing": "Tools", "tools-mulch": "Tools",

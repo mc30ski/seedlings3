@@ -432,6 +432,22 @@ export function etHourMinute(d: Date): string {
  * Use this instead of `setDate(now.getDate() - now.getDay())` etc., which
  * does the arithmetic in server time (= UTC on Vercel).
  */
+/**
+ * The Monday on-or-before an ARBITRARY date key, as YYYY-MM-DD in ET.
+ *
+ * `etMondayOnOrBefore()` only answers for today. This answers for any day,
+ * which is what bucketing historical workdays into pay periods needs — Gusto
+ * periods run Monday to Sunday.
+ *
+ * Same UTC-noon anchor as its sibling: noon can't be pushed across a day
+ * boundary by a DST shift, so the weekday is always the ET weekday.
+ */
+export function etWeekStart(dateKey: EtDateKey): EtDateKey {
+  const [y, m, d] = String(dateKey).split("-").map(Number);
+  const dow = new Date(Date.UTC(y, m - 1, d, 12)).getUTCDay(); // 0=Sun..6=Sat
+  return etAddDays(dateKey, -(dow === 0 ? 6 : dow - 1));
+}
+
 export function etMondayOnOrBefore(): EtDateKey {
   const today = etToday();
   const [y, m, d] = today.split("-").map(Number);

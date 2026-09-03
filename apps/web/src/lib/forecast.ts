@@ -23,7 +23,6 @@ export type {
   WorkerOutcome,
   MarketRateInfo,
   CapacityMode,
-  PayModel,
   CostBehavior,
 } from "@repo/money";
 

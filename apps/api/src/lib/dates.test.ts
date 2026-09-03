@@ -13,6 +13,7 @@ import {
   etFormatDateOpts,
   etFormatTimeOpts,
   etAddDays,
+  etWeekStart,
   etDaysBetween,
   etMondayOnOrBefore,
   etSundayOnOrBefore,
@@ -386,5 +387,34 @@ describe("isStaleAfterDays", () => {
   it("handles a zero-day window as always stale", () => {
     expect(isStaleAfterDays(daysAgo(0), 0)).toBe(false); // exactly now
     expect(isStaleAfterDays(new Date(Date.now() - 1000), 0)).toBe(true);
+  });
+});
+
+describe("etWeekStart", () => {
+  it("returns the same day for a Monday", () => {
+    // 2026-09-07 is a Monday.
+    expect(etWeekStart("2026-09-07" as EtDateKey)).toBe("2026-09-07");
+  });
+
+  it("walks back to Monday from mid-week", () => {
+    expect(etWeekStart("2026-09-03" as EtDateKey)).toBe("2026-08-31"); // Thu -> Mon
+    expect(etWeekStart("2026-09-05" as EtDateKey)).toBe("2026-08-31"); // Sat -> Mon
+  });
+
+  it("treats Sunday as the END of its week, not the start", () => {
+    // The classic off-by-one: getDay() is 0 for Sunday, so a naive
+    // `-dow` lands on the Monday six days LATER in the wrong direction.
+    expect(etWeekStart("2026-09-06" as EtDateKey)).toBe("2026-08-31");
+  });
+
+  it("survives the DST boundaries", () => {
+    // US DST ends 2026-11-01 (a Sunday) and begins 2026-03-08.
+    expect(etWeekStart("2026-11-01" as EtDateKey)).toBe("2026-10-26");
+    expect(etWeekStart("2026-11-02" as EtDateKey)).toBe("2026-11-02");
+    expect(etWeekStart("2026-03-08" as EtDateKey)).toBe("2026-03-02");
+  });
+
+  it("crosses month and year boundaries", () => {
+    expect(etWeekStart("2026-01-01" as EtDateKey)).toBe("2025-12-29");
   });
 });

@@ -25,10 +25,14 @@ import {
   backtest,
   defaultAssumptions,
   assumptionsDiffer,
+  describePayShape,
+  migrateAssumptions,
   stableStringify,
   type ForecastBaseline,
   type Assumptions,
 } from "@repo/money";
+import { payPeriodKeys } from "./forecast";
+import type { EtDateKey } from "../lib/dates";
 
 const REPO_ROOT = join(__dirname, "../../../..");
 const MODEL_SRC = readFileSync(join(REPO_ROOT, "packages/money/forecastModel.ts"), "utf8");
@@ -38,7 +42,13 @@ const ROUTES_PATH = join(REPO_ROOT, "apps/api/src/routes/forecast.ts");
 // ── Fixture: a miniature season with the shapes that matter ──────────────────
 function baseline(over: Partial<ForecastBaseline> = {}): ForecastBaseline {
   return {
-    window: { from: "2026-05-11", to: "2026-09-01" },
+    window: { from: "2026-06-01", to: "2026-06-28" },
+    // Four weekly periods, which is the index space every worker's
+    // `periodHours` below is aligned to.
+    payPeriods: {
+      cadence: "WEEKLY" as const,
+      keys: ["2026-06-01", "2026-06-08", "2026-06-15", "2026-06-22"],
+    },
     jobs: [
       // solo employee job
       { id: "j1", paid: 60, invoicePrice: 60, materials: 0, minutes: 30, dateKey: "2026-06-01",
@@ -54,9 +64,11 @@ function baseline(over: Partial<ForecastBaseline> = {}): ForecastBaseline {
         crew: [{ userId: "con", splitPercent: 100 }] },
     ],
     workers: [
-      { userId: "emp", name: "Emp", workerType: "EMPLOYEE", isOwner: false, clockedHours: 10, actualPay: 90 },
-      { userId: "con", name: "Con", workerType: "CONTRACTOR", isOwner: false, clockedHours: 5, actualPay: 60 },
-      { userId: "own", name: "Own", workerType: "EMPLOYEE", isOwner: true, clockedHours: 4, actualPay: 80 },
+      // Emp works three of the four weeks, Con only the first — the shape a
+      // per-period guarantee exists to price.
+      { userId: "emp", name: "Emp", workerType: "EMPLOYEE", isOwner: false, clockedHours: 10, periodHours: [4, 3, 3, 0], actualPay: 90 },
+      { userId: "con", name: "Con", workerType: "CONTRACTOR", isOwner: false, clockedHours: 5, periodHours: [5, 0, 0, 0], actualPay: 60 },
+      { userId: "own", name: "Own", workerType: "EMPLOYEE", isOwner: true, clockedHours: 4, periodHours: [1, 1, 1, 1], actualPay: 80 },
     ],
     expenses: [
       { category: "Insurance", behavior: "FIXED", amount: 100 },
@@ -69,7 +81,10 @@ function baseline(over: Partial<ForecastBaseline> = {}): ForecastBaseline {
     rates: { employeeMarginPercent: 35, contractorFeePercent: 25 },
     employerTaxPercent: 8.25,
     workersCompPercent: 17.6,
-    actual: { revenue: 180, crewWages: 150, ownerEarnings: 80, profitBeforeOwnerLabor: 0 },
+    actual: {
+      revenue: 180, crewWages: 150, w2Wages: 90, contractLabor: 60,
+      ownerEarnings: 80, profitBeforeOwnerLabor: 0,
+    },
     ...over,
   };
 }
@@ -211,7 +226,9 @@ describe("[build-gate] pricing levers", () => {
   });
 
   it("under a rate card the business keeps the whole price increase", () => {
-    const base = A({ payModel: "RATE_CARD", rateCardPerJob: 25 });
+    // A PURE rate card is now spelled "business keeps 100%", which zeroes the
+    // share, plus a per-job amount.
+    const base = A({ employeeMarginPercent: 100, contractorFeePercent: 100, rateCardPerJob: 25 });
     const flat = simulate(baseline(), base);
     const up = simulate(baseline(), { ...base, priceIncreasePercent: 15 });
     expect(up.crewPay).toBeCloseTo(flat.crewPay, 2);
@@ -492,5 +509,498 @@ describe("[build-gate] cost-behavior overrides stay advisory", () => {
     expect(tab).toMatch(/onRetag=\{\(category, behavior\) =>/);
     expect(tab).toMatch(/set\("behaviorOverrides"/);
     expect(tab).not.toMatch(/EXPENSE_COST_BEHAVIOR/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-period pay guarantee
+//
+// "Every worker is guaranteed N hours of pay per pay period regardless."
+//
+// The word that carries the cost is REGARDLESS. Paying the guarantee only in
+// periods someone clocked into is a different, much cheaper promise — over the
+// real 2026 season, 56 top-up hours instead of 231. The tests below pin the
+// expensive reading, because it is the one the operator asked for.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const GUAR = (over: Partial<Assumptions> = {}): Assumptions =>
+  A({ hourlyBase: 20, guaranteedHoursPerPeriod: 5, ...over });
+
+describe("forecast — the per-period guarantee covers periods with NO hours", () => {
+  it("tops a worker up in the week they didn't work at all", () => {
+    const r = simulate(baseline(), GUAR());
+    const emp = r.workers.find((w) => w.userId === "emp")!;
+    // [4,3,3,0] against a 5-hour floor -> 1 + 2 + 2 + 5 = 10 hours.
+    // The 5 is the whole point: it comes from a week with no workday rows.
+    expect(emp.guaranteedTopUpHours).toBe(10);
+    expect(emp.guaranteedTopUpPay).toBe(200);
+  });
+
+  it("does not quietly skip empty periods", () => {
+    // The failure mode: derive periods from the workday rows, and Con — who
+    // worked exactly one of four weeks — costs 0 instead of 15 hours.
+    const r = simulate(baseline(), GUAR({ guaranteeContractors: true }));
+    const con = r.workers.find((w) => w.userId === "con")!;
+    expect(con.guaranteedTopUpHours).toBe(15);
+  });
+
+  it("a worker already over the floor every period costs nothing", () => {
+    const r = simulate(baseline(), GUAR({ guaranteedHoursPerPeriod: 1 }));
+    expect(r.workers.find((w) => w.userId === "own")!.guaranteedTopUpHours).toBe(0);
+  });
+});
+
+describe("forecast — who the guarantee applies to", () => {
+  it("skips contractors unless explicitly opted in", () => {
+    const off = simulate(baseline(), GUAR());
+    expect(off.workers.find((w) => w.userId === "con")!.guaranteedTopUpHours).toBe(0);
+    const on = simulate(baseline(), GUAR({ guaranteeContractors: true }));
+    expect(on.workers.find((w) => w.userId === "con")!.guaranteedTopUpHours).toBeGreaterThan(0);
+  });
+
+  it("warns loudly when it IS extended to a contractor", () => {
+    // A guaranteed minimum to a 1099 worker is a classification factor. The
+    // tool may model it; it must not let it pass silently.
+    const r = simulate(baseline(), GUAR({ guaranteeContractors: true }));
+    const w = r.warnings.find((x) => /1099 worker look like an employee/.test(x.message));
+    expect(w?.level).toBe("critical");
+  });
+
+  it("never applies to the owner — a draw is not a paycheck", () => {
+    const r = simulate(baseline(), GUAR({ guaranteedHoursPerPeriod: 40 }));
+    expect(r.workers.find((w) => w.userId === "own")!.guaranteedTopUpHours).toBe(0);
+  });
+});
+
+describe("forecast — the guarantee is priced, not free", () => {
+  it("the top-up reaches take-home pay and the P&L", () => {
+    const off = simulate(baseline(), GUAR({ guaranteedHoursPerPeriod: 0 }));
+    const on = simulate(baseline(), GUAR());
+    const empOff = off.workers.find((w) => w.userId === "emp")!;
+    const empOn = r_(on, "emp");
+    expect(empOn.totalPay).toBe(round2(empOff.totalPay + 200));
+    expect(on.crewPay).toBeGreaterThan(off.crewPay);
+    expect(on.profitAfterOwnerLabor).toBeLessThan(off.profitAfterOwnerLabor);
+  });
+
+  it("carries employer tax and workers comp, because it is W-2 wages", () => {
+    const off = simulate(baseline(), GUAR({ guaranteedHoursPerPeriod: 0 }));
+    const on = simulate(baseline(), GUAR());
+    expect(r_(on, "emp").employerBurden).toBeGreaterThan(
+      off.workers.find((w) => w.userId === "emp")!.employerBurden,
+    );
+  });
+
+  it("is reported separately from hours actually worked", () => {
+    // Buried inside hourlyPay, the guarantee's cost is invisible — the operator
+    // can't tell a slow season from an expensive promise.
+    const emp = r_(simulate(baseline(), GUAR()), "emp");
+    expect(emp.hourlyPay).toBe(round2(10 * 20 + emp.guaranteedTopUpPay));
+  });
+
+  it("pays the plain base, not the crew-lead premium", () => {
+    // Nobody leads a crew in a week nobody worked.
+    const emp = r_(simulate(baseline(), GUAR({ leadHourlyBonus: 10, leadUserIds: ["emp"] })), "emp");
+    expect(emp.guaranteedTopUpPay).toBe(200);
+  });
+});
+
+describe("forecast — the guarantee scales with the other levers", () => {
+  it("volume moves the hours it is measured against", () => {
+    // At 2x volume Emp works [8,6,6,0]; only the empty week is still short.
+    const emp = r_(simulate(baseline(), GUAR({ volumeMultiplier: 2 })), "emp");
+    expect(emp.guaranteedTopUpHours).toBe(5);
+  });
+
+  it("re-houring a worker moves their per-period shape with them", () => {
+    // Halving Emp's hours gives [2,1.5,1.5,0] -> 3 + 3.5 + 3.5 + 5 = 15.
+    const emp = r_(
+      simulate(baseline(), GUAR({ workerOverrides: { emp: { clockedHours: 5 } } })),
+      "emp",
+    );
+    expect(emp.guaranteedTopUpHours).toBe(15);
+  });
+
+  it("an excluded worker costs nothing", () => {
+    const r = simulate(baseline(), GUAR({ workerOverrides: { emp: { excluded: true } } }));
+    expect(r.workers.some((w) => w.userId === "emp")).toBe(false);
+  });
+});
+
+describe("forecast — the guarantee says so when it is inert", () => {
+  it("warns when the hourly base is still $0", () => {
+    // The defect the crew-lead premium shipped with: a slider that moves and
+    // changes nothing.
+    const r = simulate(baseline(), GUAR({ hourlyBase: 0 }));
+    expect(r.warnings.some((w) => /costs nothing because the hourly base is \$0/.test(w.message)))
+      .toBe(true);
+  });
+
+  it("names the cost and the number of periods when it IS live", () => {
+    const r = simulate(baseline(), GUAR());
+    const w = r.warnings.find((x) => /hours nobody worked/.test(x.message));
+    expect(w?.message).toMatch(/4 weekly periods/);
+  });
+
+  it("off by default", () => {
+    expect(defaultAssumptions(baseline()).guaranteedHoursPerPeriod).toBe(0);
+    expect(defaultAssumptions(baseline()).guaranteeContractors).toBe(false);
+  });
+});
+
+const r_ = (res: ReturnType<typeof simulate>, id: string) =>
+  res.workers.find((w) => w.userId === id)!;
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+describe("forecast — the pay-period calendar the guarantee is priced against", () => {
+  const K = (from: string, to: string, c: "WEEKLY" | "BIWEEKLY" | "MONTHLY" = "WEEKLY") =>
+    payPeriodKeys(from as EtDateKey, to as EtDateKey, c);
+
+  it("starts at the Monday ON OR BEFORE the window, not the window edge", () => {
+    // A window opening mid-week sits inside a real pay period. Starting at the
+    // window edge would leave a partial period looking like a short one that
+    // the guarantee has to top up.
+    expect(K("2026-06-03", "2026-06-21")[0]).toBe("2026-06-01");
+  });
+
+  it("counts weekly periods inclusively at both ends", () => {
+    expect(K("2026-06-01", "2026-06-28")).toEqual([
+      "2026-06-01", "2026-06-08", "2026-06-15", "2026-06-22",
+    ]);
+    // The 29th opens a fifth period, partial but real.
+    expect(K("2026-06-01", "2026-06-29")).toHaveLength(5);
+  });
+
+  it("steps biweekly in 14s", () => {
+    expect(K("2026-06-01", "2026-06-28", "BIWEEKLY")).toEqual(["2026-06-01", "2026-06-15"]);
+  });
+
+  it("uses calendar months when the cadence is monthly", () => {
+    expect(K("2026-06-15", "2026-08-02", "MONTHLY")).toEqual([
+      "2026-06-01", "2026-07-01", "2026-08-01",
+    ]);
+  });
+
+  it("rolls the year on a monthly window that crosses December", () => {
+    expect(K("2026-11-10", "2027-01-05", "MONTHLY")).toEqual([
+      "2026-11-01", "2026-12-01", "2027-01-01",
+    ]);
+  });
+
+  it("crosses a DST boundary without dropping or duplicating a week", () => {
+    // DST ends 2026-11-01. A naive +7*86400000 step lands on Sunday here.
+    const keys = K("2026-10-26", "2026-11-15");
+    expect(keys).toEqual(["2026-10-26", "2026-11-02", "2026-11-09"]);
+  });
+
+  it("a single-day window is still one whole period", () => {
+    // Not zero: you cannot be in no pay period.
+    expect(K("2026-06-03", "2026-06-03")).toEqual(["2026-06-01"]);
+  });
+});
+
+describe("forecast — the guarantee reads CONFIG, never imported payroll", () => {
+  it("the cadence comes from a Setting", () => {
+    const src = readFileSync(SERVICE_PATH, "utf8");
+    expect(src).toMatch(/PAYROLL_PERIOD_CADENCE/);
+    expect(src).toMatch(/prisma\.setting\.findUnique/);
+  });
+
+  it("the service reads no PayrollPeriod or PayrollEntry row", () => {
+    // The other half of the estimate/actual firewall. Bucketing hours by real
+    // Gusto periods would be more accurate and would make every forecast
+    // number's meaning depend on whether an export happened to be uploaded.
+    const src = readFileSync(SERVICE_PATH, "utf8");
+    expect(src).not.toMatch(/payrollEntry\.|payrollPeriod\.|PayrollEntry|PayrollPeriod/);
+  });
+
+  it("every worker's periodHours is aligned to the shared period list", () => {
+    const src = readFileSync(SERVICE_PATH, "utf8");
+    // Pre-filled with zeros for EVERY period. Building the array from workday
+    // rows would omit exactly the periods the guarantee exists to pay for.
+    expect(src).toMatch(/new Array\(periodKeys\.length\)\.fill\(0\)/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pay structure is ADDITIVE — there is no pay model
+//
+// The old dropdown (SHARE / HOURLY_PLUS_SHARE / RATE_CARD) greyed out whichever
+// levers its mode didn't use. Two of the three modes were just "set a lever to
+// zero", and the cage forbade combinations that are perfectly reasonable — most
+// importantly PURE HOURLY, which is what an ordinary W-2 lawn crew job looks
+// like. The levers are free now and add up.
+//
+// The one lever whose meaning genuinely changed is the rate card: it used to
+// SUPPRESS the share, and now rides on top of it. That is what
+// migrateAssumptions exists for, and the test below pins it to the penny.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("[build-gate] the pay model dropdown is gone for good", () => {
+  it("no payModel lever survives anywhere", () => {
+    // Reintroducing a mode would re-disable controls and silently re-forbid
+    // the combinations this change exists to allow.
+    expect(MODEL_SRC).not.toMatch(/a\.payModel/);
+    expect(defaultAssumptions(baseline())).not.toHaveProperty("payModel");
+    const tab = readFileSync(
+      join(REPO_ROOT, "apps/web/src/ui/tabs/ForecastTab.tsx"), "utf8",
+    );
+    expect(tab).not.toMatch(/set\("payModel"/);
+  });
+
+  it("the margin levers reach 100, which is how the share gets zeroed", () => {
+    // Capped at 90 they did before, "pure hourly" and "pure rate card" are
+    // both unreachable and the whole design collapses.
+    const tab = readFileSync(
+      join(REPO_ROOT, "apps/web/src/ui/tabs/ForecastTab.tsx"), "utf8",
+    );
+    const levers = tab.match(/max=\{100\} suffix="%"/g) ?? [];
+    expect(levers.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("[build-gate] every pay lever is live at once", () => {
+  it("a rate card ADDS to the share instead of replacing it", () => {
+    const share = simulate(baseline(), A());
+    const both = simulate(baseline(), A({ rateCardPerJob: 25 }));
+    // 4 jobs × $25, on top of every share already being paid.
+    expect(both.crewPay + both.ownerPay).toBeCloseTo(share.crewPay + share.ownerPay + 100, 2);
+  });
+
+  it("business-keeps 100% zeroes the share, leaving only what else is set", () => {
+    const r = simulate(baseline(), A({
+      employeeMarginPercent: 100, contractorFeePercent: 100, rateCardPerJob: 25,
+    }));
+    expect(r.crewPay + r.ownerPay).toBeCloseTo(100, 2);
+  });
+
+  it("PURE HOURLY is expressible — the structure the dropdown forbade", () => {
+    // Share off, no rate card, an hourly wage. There was no way to say this.
+    const r = simulate(baseline(), A({
+      employeeMarginPercent: 100, contractorFeePercent: 100, hourlyBase: 18,
+    }));
+    const emp = r.workers.find((w) => w.userId === "emp")!;
+    expect(emp.sharePay).toBe(0);
+    expect(emp.totalPay).toBeCloseTo(10 * 18, 2);
+    expect(emp.effectiveHourly).toBeCloseTo(18, 2);
+  });
+
+  it("hourly and a rate card and a share can all run together", () => {
+    const r = simulate(baseline(), A({ hourlyBase: 10, rateCardPerJob: 5 }));
+    const emp = r.workers.find((w) => w.userId === "emp")!;
+    // Share (j1 + j2 half + j3) + rate card (j1 + half j2 + j3) + 10h × $10.
+    expect(emp.hourlyPay).toBeCloseTo(100, 2);
+    expect(emp.sharePay).toBeGreaterThan(0);
+    expect(emp.totalPay).toBeCloseTo(emp.sharePay + emp.hourlyPay, 2);
+  });
+
+  it("the guarantee no longer needs a mode — only an hourly base", () => {
+    const r = simulate(baseline(), A({ hourlyBase: 20, guaranteedHoursPerPeriod: 5 }));
+    expect(r.workers.find((w) => w.userId === "emp")!.guaranteedTopUpHours).toBe(10);
+  });
+});
+
+describe("[build-gate] a scenario saved under the old dropdown still means the same thing", () => {
+  const legacy = (payModel: string, over: Record<string, unknown> = {}) =>
+    ({ ...A(), payModel, ...over }) as unknown as Record<string, unknown>;
+
+  it("RATE_CARD becomes business-keeps-100, paying the card and NOT the share", () => {
+    // Without the rewrite the additive rules pay both, overstating crew cost on
+    // a scenario the operator never touched.
+    const m = migrateAssumptions(legacy("RATE_CARD", { rateCardPerJob: 25 })) as any;
+    expect(m.payModel).toBeUndefined();
+    expect(m.employeeMarginPercent).toBe(100);
+    expect(m.contractorFeePercent).toBe(100);
+    const r = simulate(baseline(), m);
+    expect(r.crewPay + r.ownerPay).toBeCloseTo(100, 2);
+  });
+
+  it("SHARE drops the hourly block it had disabled", () => {
+    const m = migrateAssumptions(
+      legacy("SHARE", { hourlyBase: 20, guaranteedHoursPerPeriod: 8, rateCardPerJob: 40 }),
+    ) as any;
+    expect(m.hourlyBase).toBe(0);
+    expect(m.guaranteedHoursPerPeriod).toBe(0);
+    expect(m.rateCardPerJob).toBe(0);
+    // Identical to a plain share scenario, which is what it displayed as.
+    expect(simulate(baseline(), m).crewPay).toBeCloseTo(simulate(baseline(), A()).crewPay, 2);
+  });
+
+  it("HOURLY_PLUS_SHARE keeps the hourly and drops the rate card", () => {
+    const m = migrateAssumptions(legacy("HOURLY_PLUS_SHARE", { hourlyBase: 12, rateCardPerJob: 40 })) as any;
+    expect(m.hourlyBase).toBe(12);
+    expect(m.rateCardPerJob).toBe(0);
+  });
+
+  it("a scenario saved AFTER the change passes through untouched", () => {
+    const a = A({ hourlyBase: 7, rateCardPerJob: 3 });
+    expect(migrateAssumptions(a as unknown as Record<string, unknown>)).toEqual(a);
+  });
+});
+
+describe("[build-gate] substitution re-rates the share but not the rate card", () => {
+  it("rate-card money moves at face value between worker types", () => {
+    // A rate card is priced per JOB. Running it through the share's
+    // employee/contractor rate translation would invent a rate difference that
+    // the structure explicitly does not have.
+    const opts = {
+      employeeMarginPercent: 100, contractorFeePercent: 100, rateCardPerJob: 25,
+      hypotheticalWorkers: [{
+        id: "hyp-1", name: "Sub", workerType: "CONTRACTOR" as const, hours: 10,
+        mode: "SUBSTITUTION" as const, revenuePerHour: 0, substituteForUserId: "emp",
+      }],
+    };
+    const r = simulate(baseline(), A(opts));
+    const before = simulate(baseline(), A({
+      employeeMarginPercent: 100, contractorFeePercent: 100, rateCardPerJob: 25,
+    }));
+    // Swapping who does the work moves the money but doesn't change its total.
+    expect(r.crewPay + r.ownerPay).toBeCloseTo(before.crewPay + before.ownerPay, 2);
+    expect(r.workers.find((w) => w.userId === "hyp-1")!.totalPay).toBeGreaterThan(0);
+  });
+});
+
+describe("[build-gate] describePayShape names the corner, or admits it can't", () => {
+  const shape = (over: Partial<Assumptions> = {}) => describePayShape(A(over));
+
+  it("names each structure that has a name", () => {
+    expect(shape().name).toBe("Share only");
+    expect(shape({ hourlyBase: 15 }).name).toBe("Hourly + share");
+    expect(shape({ employeeMarginPercent: 100, contractorFeePercent: 100, hourlyBase: 15 }).name)
+      .toBe("Hourly only");
+    expect(shape({ employeeMarginPercent: 100, contractorFeePercent: 100, rateCardPerJob: 40 }).name)
+      .toBe("Rate card");
+  });
+
+  it("returns null for a blend rather than mislabelling it", () => {
+    // The honest answer. Calling share + rate card "Rate card" would tell the
+    // operator their price increases stop reaching the crew, when they don't.
+    expect(shape({ rateCardPerJob: 40 }).name).toBeNull();
+    expect(shape({ hourlyBase: 15, rateCardPerJob: 40 }).name).toBeNull();
+  });
+
+  it("spells out what a worker actually receives", () => {
+    const s = shape({ hourlyBase: 15, guaranteedHoursPerPeriod: 5 });
+    expect(s.detail).toMatch(/65% of each job to employees/);
+    expect(s.detail).toMatch(/\$15\/hr for every clocked hour/);
+    expect(s.detail).toMatch(/floor of 5h per pay period/);
+  });
+
+  it("says so when every pay lever is at zero", () => {
+    const s = shape({ employeeMarginPercent: 100, contractorFeePercent: 100 });
+    expect(s.name).toBe("Unpaid");
+    expect(s.detail).toMatch(/every pay lever is at zero/);
+  });
+});
+
+describe("[build-gate] an adjusted lever shows which way it moved", () => {
+  const TAB = readFileSync(join(REPO_ROOT, "apps/web/src/ui/tabs/ForecastTab.tsx"), "utf8");
+
+  it("the current value goes green when raised and red when lowered", () => {
+    expect(TAB).toMatch(/color=\{changed \? \(delta > 0 \? "green\.fg" : "red\.fg"\) : "fg\.muted"\}/);
+  });
+
+  it("colour is not the only cue", () => {
+    // Red/green alone is invisible to a red-green colourblind operator, and
+    // this is the tool used to decide what people get paid.
+    expect(TAB).toMatch(/delta > 0 \? "▲" : "▼"/);
+  });
+
+  it("the direction is measured against the lever's own baseline", () => {
+    // Against anything else — the previous value, say — dragging a slider back
+    // and forth would leave the colour lying about where it sits now.
+    expect(TAB).toMatch(/const delta = baseline === undefined \? 0 : value - baseline;/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Employer burden lands where it legally lands — on BOTH sides
+//
+// The simulation always classified correctly. The `actual` half of the
+// baseline did not: it split owner vs everyone-else and charged the whole
+// remainder, so a 1099 contractor was carrying payroll tax and workers comp.
+// That figure is the reference the backtest measures the model against, so a
+// wrong reference makes a correct model look broken.
+//
+// And workers comp was synthesized on top of the premiums already booked as
+// Insurance — the double-count that payrollTaxEstimates.ts documents and
+// pnlReport.ts avoids. It stays available, because comp is the one labor cost
+// that scales with payroll, but it now requires saying what to remove first.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("[build-gate] the actuals side classifies wages like the P&L does", () => {
+  const SERVICE = readFileSync(SERVICE_PATH, "utf8");
+
+  it("contractors are separated from W-2 wages before burden is applied", () => {
+    expect(SERVICE).toMatch(/else if \(u\?\.workerType === "CONTRACTOR"\) contractLabor \+= amt;/);
+  });
+
+  it("employer tax multiplies W-2 wages only", () => {
+    expect(SERVICE).toMatch(/const burden = crewWages \* \(employerTaxPercent \/ 100\);/);
+  });
+
+  it("workers comp is NOT synthesized into the actuals", () => {
+    // pnlReport.ts reports the premiums actually booked and adds no synthetic
+    // comp. The forecast's "Today" column has to reconcile with it.
+    expect(SERVICE).not.toMatch(/employerTaxPercent \+ wcPercent/);
+  });
+
+  it("contractor pay is still subtracted from profit", () => {
+    // The narrow miss when fixing this: exclude contractors from the burden
+    // base and accidentally exclude their PAY from the P&L too.
+    expect(SERVICE).toMatch(/crewWages - contractLabor - burden - opex/);
+  });
+});
+
+describe("[build-gate] workers comp is not counted twice", () => {
+  it("the synthetic rate is OFF in the default scenario", () => {
+    // The default has to reconcile with the P&L, which synthesizes no comp.
+    expect(defaultAssumptions(baseline()).workersCompPercent).toBe(0);
+    expect(defaultAssumptions(baseline()).workersCompInExpenses).toBe(0);
+  });
+
+  it("the configured rate still reaches the baseline for the UI to suggest", () => {
+    // Defaulting the assumption to 0 must not throw away the operator's rate.
+    expect(baseline().workersCompPercent).toBe(17.6);
+  });
+
+  it("a rate with nothing removed is flagged CRITICAL", () => {
+    const r = simulate(baseline(), A({ workersCompPercent: 12 }));
+    const w = r.warnings.find((x) => /counted twice/.test(x.message));
+    expect(w?.level).toBe("critical");
+  });
+
+  it("removing the premium shows up as its own visible cost line", () => {
+    // Netted silently into Insurance, an operator reconciling against their
+    // ledger can't see where the money went.
+    const r = simulate(baseline(), A({ workersCompPercent: 12, workersCompInExpenses: 100 }));
+    const line = r.costs.find((c) => /Workers comp premium/.test(c.category));
+    expect(line?.amount).toBe(-100);
+    expect(r.warnings.some((x) => /counted twice/.test(x.message))).toBe(false);
+  });
+
+  it("the removal nets out of the cost total", () => {
+    const off = simulate(baseline(), A());
+    const on = simulate(baseline(), A({ workersCompPercent: 12, workersCompInExpenses: 100 }));
+    expect(on.costsTotal).toBeCloseTo(off.costsTotal - 100, 2);
+  });
+
+  it("re-modelled comp scales with payroll, which is the whole point", () => {
+    const opts = { workersCompPercent: 12, workersCompInExpenses: 100 };
+    const flat = simulate(baseline(), A(opts));
+    const grown = simulate(baseline(), A({ ...opts, volumeMultiplier: 2 }));
+    // A flat Insurance line wouldn't move at all; that understates growing.
+    expect(grown.employerBurden).toBeGreaterThan(flat.employerBurden * 1.5);
+  });
+
+  it("removing a premium with no rate to replace it is flagged", () => {
+    const r = simulate(baseline(), A({ workersCompInExpenses: 100 }));
+    expect(r.warnings.some((x) => /no rate replaces it/.test(x.message))).toBe(true);
+  });
+
+  it("comp never lands on a contractor or the owner", () => {
+    const r = simulate(baseline(), A({ workersCompPercent: 12, workersCompInExpenses: 100 }));
+    expect(r.workers.find((w) => w.userId === "con")!.employerBurden).toBe(0);
+    expect(r.workers.find((w) => w.userId === "own")!.employerBurden).toBe(0);
   });
 });

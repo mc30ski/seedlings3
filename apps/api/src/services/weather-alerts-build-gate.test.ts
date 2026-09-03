@@ -183,3 +183,56 @@ describe("weather alerts — the undated surface can't contradict the dated ones
     expect(BADGE).toMatch(/aria-label=\{`\$\{a\.event\} \$\{when\}`\}/);
   });
 });
+
+// ── An alert must reach the feed even on a day with no work ───────────────
+describe("weather alerts — the job feed shows alerts regardless of scheduling", () => {
+  const JOBS = readFileSync(join(REPO_ROOT, "apps/web/src/ui/tabs/JobsTab.tsx"), "utf8");
+
+  it("renders a feed-level banner, not only per-day badges", () => {
+    // The bug: alerts were attached ONLY to day-section headers, so an alert
+    // falling on a day with no scheduled jobs had nowhere to render and
+    // disappeared from the feed. The title bar showed a Heat Advisory and the
+    // feed showed nothing — because nothing was booked that day. An empty day
+    // is exactly when the crew still needs to know; it's the day you'd add
+    // work to.
+    expect(JOBS).toMatch(/weatherAlerts\.length > 0 && \(/);
+    expect(JOBS).toMatch(/weatherAlerts\.map\(\(al\) =>/);
+  });
+
+  it("the banner says which day the alert is for", () => {
+    expect(JOBS).toMatch(/whenLabel\(al, bizToday\(\), bizTomorrow\(\)\)/);
+  });
+
+  it("per-day badges still exist for the days that do have work", () => {
+    expect(JOBS).toMatch(/alertsForDate\(weatherAlerts, group\.key\)/);
+  });
+});
+
+// ── Today's high/low must come from the same place as every other day ─────
+describe("weather — today's high is a forecast, not a station spread", () => {
+  it("does not use current.main.temp_max as the daily high", () => {
+    // OpenWeather's CURRENT endpoint reports temp_max/temp_min as the spread
+    // across nearby stations right now — not a daily forecast. Using them
+    // showed "Today 83°/78°" on a day forecast to reach 97°, with a Heat
+    // Advisory in force, while tomorrow correctly read 95° because tomorrow
+    // was built from the forecast list.
+    const block = WORKER.slice(WORKER.indexOf("const todayEntry = {"), WORKER.indexOf("const todayEntry = {") + 400);
+    expect(block).not.toMatch(/high: Math\.round\(current\.main\?\.temp_max/);
+    expect(block).not.toMatch(/low: Math\.round\(current\.main\?\.temp_min/);
+  });
+
+  it("derives today from the forecast entries for today", () => {
+    expect(WORKER).toMatch(/const todayHighs = todayForecastEntries\.map/);
+    expect(WORKER).toMatch(/const todayLows = todayForecastEntries\.map/);
+    expect(WORKER).toMatch(/high: Math\.round\(todayHigh\)/);
+    expect(WORKER).toMatch(/low: Math\.round\(todayLow\)/);
+  });
+
+  it("folds in what has already been observed", () => {
+    // The forecast list starts at the current 3-hour block, so by evening it
+    // no longer covers the morning. The displayed high must never be lower
+    // than something already measured.
+    expect(WORKER).toMatch(/Math\.max\(\.\.\.todayHighs, observedNow/);
+    expect(WORKER).toMatch(/Math\.min\(\.\.\.todayLows, observedNow/);
+  });
+});

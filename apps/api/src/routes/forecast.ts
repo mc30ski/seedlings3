@@ -23,7 +23,10 @@ import {
   deleteForecast,
   saveAssessment,
 } from "../services/forecast";
-import { simulate, defaultAssumptions, type Assumptions } from "@repo/money";
+import {
+  simulate, defaultAssumptions, describePayShape, migrateAssumptions,
+  type Assumptions,
+} from "@repo/money";
 
 export default async function forecastRoutes(app: FastifyInstance) {
   const superGuard = {
@@ -104,7 +107,12 @@ export default async function forecastRoutes(app: FastifyInstance) {
       forecast.windowFrom as EtDateKey,
       forecast.windowTo as EtDateKey,
     );
-    const assumptions = forecast.assumptions as unknown as Assumptions;
+    // Stored scenarios can predate the additive pay structure, where
+    // "RATE_CARD" genuinely suppressed the share. Replaying one without
+    // migrating would pay both and overstate crew cost.
+    const assumptions = migrateAssumptions(
+      forecast.assumptions as unknown as Record<string, unknown>,
+    ) as unknown as Assumptions;
     const scenario = simulate(baseline, assumptions);
     const statusQuo = simulate(baseline, defaultAssumptions(baseline));
 
@@ -190,13 +198,19 @@ function buildAssessmentPrompt(ctx: {
   baseline: Awaited<ReturnType<typeof buildBaselineWithBacktest>>["baseline"];
 }): string {
   const { statusQuo: sq, scenario: sc, assumptions: a, baseline: b } = ctx;
+  // Pay structure is additive — there is no mode to report, so the prompt
+  // describes what the levers add up to rather than naming a setting.
+  const shape = describePayShape(a);
 
   const workerLines = sc.workers
-    .filter((w) => w.clockedHours > 0)
+    // Pay, not hours, is the test for inclusion — a per-period guarantee can
+    // pay someone who clocked nothing, and leaving them out would hide exactly
+    // the person the guarantee was written for.
+    .filter((w) => w.clockedHours > 0 || w.totalPay > 0)
     .map((w) => {
       const before = sq.workers.find((x) => x.userId === w.userId);
       const wasRate = before ? before.effectiveHourly : 0;
-      return `  - ${w.name} (${w.workerType ?? "unclassified"}${w.isOwner ? ", OWNER" : ""}${w.hypothetical ? ", HYPOTHETICAL HIRE" : ""}): ${w.clockedHours}h, $${w.totalPay.toFixed(0)} total, $${w.effectiveHourly.toFixed(2)}/hr (was $${wasRate.toFixed(2)}/hr)`;
+      return `  - ${w.name} (${w.workerType ?? "unclassified"}${w.isOwner ? ", OWNER" : ""}${w.hypothetical ? ", HYPOTHETICAL HIRE" : ""}): ${w.clockedHours}h, $${w.totalPay.toFixed(0)} total, $${w.effectiveHourly.toFixed(2)}/hr (was $${wasRate.toFixed(2)}/hr)${w.guaranteedTopUpHours > 0 ? `, of which ${w.guaranteedTopUpHours.toFixed(1)}h ($${w.guaranteedTopUpPay.toFixed(0)}) is guaranteed time not worked` : ""}`;
     })
     .join("\n");
 
@@ -224,8 +238,12 @@ TODAY (unchanged settings)
   Labor is ${sq.laborPercentOfRevenue}% of revenue. Revenue per clocked hour ${money(sq.revenuePerClockedHour)}.
 
 THE SCENARIO
-  Pay model: ${a.payModel}${a.payModel === "HOURLY_PLUS_SHARE" ? ` — $${a.hourlyBase}/hr base${a.leadHourlyBonus ? ` (+$${a.leadHourlyBonus}/hr lead)` : ""}` : ""}${a.payModel === "RATE_CARD" ? ` — $${a.rateCardPerJob} per job` : ""}
-  Business keeps ${a.employeeMarginPercent}% from employees, ${a.contractorFeePercent}% from contractors
+  Pay structure: ${shape.name ?? "a blend with no standard name"} — workers are paid ${shape.detail}${a.leadHourlyBonus ? `, plus $${a.leadHourlyBonus}/hr for crew leads` : ""}
+  Business keeps ${a.employeeMarginPercent}% from employees, ${a.contractorFeePercent}% from contractors${
+    a.guaranteedHoursPerPeriod > 0
+      ? `\n  Pay guarantee: every ${a.guaranteeContractors ? "worker including contractors" : "W-2 worker"} is paid for at least ${a.guaranteedHoursPerPeriod}h in each of the ${b.payPeriods.keys.length} ${b.payPeriods.cadence.toLowerCase()} periods in this window, INCLUDING periods they did not work at all. That buys ${sc.workers.reduce((t, w) => t + w.guaranteedTopUpHours, 0).toFixed(0)}h of unworked time.`
+      : ""
+  }
   Price change ${a.priceIncreasePercent}% · minimum invoice ${money(a.minimumInvoice)} · volume ×${a.volumeMultiplier}
   Employer tax ${a.employerTaxPercent}% · workers comp ${a.workersCompPercent}% of W-2 wages
   LLC Owner share is its OWN line — neither a business cost nor profit. Operating profit is before it; "retained in the business" is after it. Replacing the owner's hours with a hire converts that share into crew pay, which is the comparison to reason about.
