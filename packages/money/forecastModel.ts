@@ -21,7 +21,15 @@ export const FORECAST_MODEL_VERSION = 1;
 /** Mirrors CostBehavior in apps/api/src/services/expenseCategories.ts. Declared
  *  here too so this package stays dependency-free; the API passes its own
  *  union straight in. */
-export type CostBehavior = "VARIABLE" | "FIXED" | "PER_JOB" | "ONE_TIME" | "DISCRETIONARY";
+/** How a cost category responds to volume.
+ *
+ *  AS_IS is the default and means exactly what it says: the category holds
+ *  the amount actually spent, whatever you do to the other levers. Every
+ *  other adjustment in this tool baselines on reality — margin starts at the
+ *  real setting, volume at 1x, price at 0% — and this now does too. The tool
+ *  asserts nothing about how a cost behaves until you tell it. */
+export type CostBehavior =
+  | "AS_IS" | "VARIABLE" | "FIXED" | "PER_JOB" | "ONE_TIME" | "DISCRETIONARY";
 
 // ── Baseline: what actually happened, as data ────────────────────────────────
 
@@ -61,8 +69,25 @@ export type ForecastExpenseLine = {
   amount: number;
 };
 
+/** The local market wage band the fairness view compares against, with enough
+ *  provenance for the UI to say where it came from. Optional so a caller that
+ *  hasn't looked one up still type-checks. */
+export type MarketRateInfo = {
+  low: number;
+  high: number;
+  source: "bls" | "override" | "fallback";
+  areaName: string | null;
+  areaCode: string | null;
+  year: string | null;
+  occupation: string | null;
+  percentiles: [number, number];
+  fetchedAt: string | null;
+  note: string | null;
+};
+
 export type ForecastBaseline = {
   window: { from: string; to: string };
+  marketRate?: MarketRateInfo;
   jobs: ForecastJob[];
   workers: ForecastWorker[];
   expenses: ForecastExpenseLine[];
@@ -177,6 +202,12 @@ export type Assumptions = {
    *  with revenue asserts a causal link the data can't support. */
   scaleDiscretionary: boolean;
 
+  /** Retag a cost category for this scenario only — "what if insurance
+   *  behaved like a variable cost?". Scenario-local on purpose: the Forecast
+   *  tab is advisory and writes no Settings, so the real EXPENSE_COST_BEHAVIOR
+   *  stays the baseline and this rides along with the saved forecast. */
+  behaviorOverrides: Record<string, CostBehavior>;
+
   /** Per-worker changes: reclassify, re-hour, or remove. */
   workerOverrides: Record<
     string,
@@ -184,9 +215,6 @@ export type Assumptions = {
   >;
   hypotheticalWorkers: HypotheticalWorker[];
 
-  /** Whether the owner's accrued earnings count as a cost. Off by default:
-   *  the owner has never actually drawn, so the cash view excludes it. */
-  payOwner: boolean;
 };
 
 export function defaultAssumptions(b: ForecastBaseline): Assumptions {
@@ -207,9 +235,9 @@ export function defaultAssumptions(b: ForecastBaseline): Assumptions {
     fixedCostOverride: null,
     includeOneTime: true,
     scaleDiscretionary: false,
+    behaviorOverrides: {},
     workerOverrides: {},
     hypotheticalWorkers: [],
-    payOwner: false,
   };
 }
 
@@ -251,9 +279,14 @@ export type ForecastResult = {
   costs: CostLine[];
   costsTotal: number;
   fixedCosts: number;
-  /** Before the owner is paid for their own labor. The honest headline for a
-   *  business whose owner has never taken a draw. */
+  /** What the business earns before the LLC owner's share of the work is
+   *  accounted for. NOT the bottom line — the owner's share is real labor
+   *  that someone would have to be paid to replace. */
   profitBeforeOwnerLabor: number;
+  /** What actually stays in the business after the owner's share. This is
+   *  the apples-to-apples line for "should I hire someone to do my hours" —
+   *  hiring converts owner share into crew pay, and only this number lets
+   *  you compare the two honestly. */
   profitAfterOwnerLabor: number;
   marginPercent: number;
   laborPercentOfRevenue: number;
@@ -444,10 +477,16 @@ export function simulate(baseline: ForecastBaseline, a: Assumptions): ForecastRe
   const inflation = 1 + (a.costInflationPercent || 0) / 100;
   const costs: CostLine[] = [];
   for (const line of baseline.expenses) {
+    // The scenario's own tag wins over the configured one.
+    const behavior = a.behaviorOverrides?.[line.category] ?? "AS_IS";
     let amount = line.amount;
-    switch (line.behavior) {
+    switch (behavior) {
+      case "AS_IS":
       case "FIXED":
-        break; // constant by definition — the reason scale pays
+        // Both hold the actual amount. They differ in intent, not arithmetic:
+        // AS_IS is "I haven't said", FIXED is "I've said this doesn't scale".
+        // Keeping them apart is what lets the UI warn about the untagged ones.
+        break;
       case "VARIABLE":
         // Follows WORK DONE, not money billed. This used to scale by the
         // revenue ratio, which meant raising prices on identical routes
@@ -471,7 +510,7 @@ export function simulate(baseline: ForecastBaseline, a: Assumptions): ForecastRe
     }
     // Inflation lands on every cost line, after volume scaling.
     amount = amount * inflation;
-    if (amount !== 0) costs.push({ category: line.category, behavior: line.behavior, amount: round2(amount) });
+    if (amount !== 0) costs.push({ category: line.category, behavior, amount: round2(amount) });
   }
   const naturalFixed = costs
     .filter((c) => c.behavior === "FIXED")
@@ -485,8 +524,12 @@ export function simulate(baseline: ForecastBaseline, a: Assumptions): ForecastRe
 
   const profitBeforeOwnerLabor =
     revenue - materials - processorFees - crewPay - employerBurden - costsTotal;
-  const profitAfterOwnerLabor = profitBeforeOwnerLabor - (a.payOwner ? ownerPay : 0);
-  const headlineProfit = a.payOwner ? profitAfterOwnerLabor : profitBeforeOwnerLabor;
+  // The owner's share always comes off. It used to be behind a boolean that
+  // defaulted to OFF, which made an owner-worked job look far more profitable
+  // than the identical job worked by an employee — and quietly broke the one
+  // comparison the tool most needs to get right.
+  const profitAfterOwnerLabor = profitBeforeOwnerLabor - ownerPay;
+  const headlineProfit = profitAfterOwnerLabor;
 
   const totalClockedHours = outcomes.reduce((s, o) => s + o.clockedHours, 0);
 
@@ -503,10 +546,9 @@ export function simulate(baseline: ForecastBaseline, a: Assumptions): ForecastRe
     profitBeforeOwnerLabor: round2(profitBeforeOwnerLabor),
     profitAfterOwnerLabor: round2(profitAfterOwnerLabor),
     marginPercent: revenue > 0 ? round2((headlineProfit / revenue) * 100) : 0,
+    // Includes the owner's share — it is labor, whoever performs it.
     laborPercentOfRevenue:
-      revenue > 0
-        ? round2(((crewPay + (a.payOwner ? ownerPay : 0) + employerBurden) / revenue) * 100)
-        : 0,
+      revenue > 0 ? round2(((crewPay + ownerPay + employerBurden) / revenue) * 100) : 0,
     workers: outcomes.sort((x, y) => y.clockedHours - x.clockedHours),
     jobCount,
     totalClockedHours: round2(totalClockedHours),
@@ -524,9 +566,13 @@ export function buildWarnings(
   baseline: ForecastBaseline,
   a: Assumptions,
   outcomes: WorkerOutcome[],
-  marketFloor = 15,
+  // Defaults only apply when no rate has been looked up. The real floor comes
+  // from the baseline's BLS band, so the retention warning fires against the
+  // actual local market rather than a number someone once guessed.
+  marketFloorFallback = 15,
   federalMinimum = 7.25,
 ): ForecastWarning[] {
+  const marketFloor = baseline.marketRate?.low ?? marketFloorFallback;
   const out: ForecastWarning[] = [];
 
   for (const o of outcomes) {
@@ -584,6 +630,22 @@ export function buildWarnings(
       message: `Includes a hire modelled as added capacity, so its revenue is assumed rather than observed.`,
     });
   }
+  // Volume was moved but most costs are still untagged, so they didn't move
+  // with it. Silence here would overstate the benefit of scale — the mirror
+  // of the bug this default replaced.
+  if (a.volumeMultiplier !== 1) {
+    const untagged = baseline.expenses.filter(
+      (e) => (a.behaviorOverrides?.[e.category] ?? "AS_IS") === "AS_IS",
+    );
+    if (untagged.length) {
+      const held = untagged.reduce((t, e) => t + e.amount, 0);
+      out.push({
+        level: "caution",
+        message: `${untagged.length} of ${baseline.expenses.length} cost categories are still "as is" ($${held.toFixed(0)}), so changing volume doesn't move them. Tag the ones that actually scale — ${untagged.slice(0, 3).map((e) => e.category).join(", ")}${untagged.length > 3 ? "…" : ""}.`,
+      });
+    }
+  }
+
   if (baseline.jobs.length < 30) {
     out.push({
       level: "caution",

@@ -19,6 +19,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { prisma } from "../db/prisma";
+import { cached, invalidate } from "../lib/cache";
 import { etAddDays, etFormatDate } from "../lib/dates";
 
 export const ALERT_SETTINGS: Record<string, [string, string]> = {
@@ -33,10 +34,6 @@ export const ALERT_SETTINGS: Record<string, [string, string]> = {
   NWS_ALERTS_USER_AGENT: [
     "SeedlingsLawnCare/1.0 (admin@seedlingslawncare.com)",
     "The National Weather Service requires a User-Agent identifying who is calling, with contact details, and throttles requests without one. Keep a real address here.",
-  ],
-  NWS_ALERTS_CACHE_MINUTES: [
-    "15",
-    "How long an alert lookup is reused before re-fetching. Alerts are issued in hourly-ish cycles, and every worker's screen polls the weather, so this keeps us well inside what the NWS considers polite.",
   ],
   NWS_ALERTS_MIN_SEVERITY: [
     "Moderate",
@@ -119,16 +116,10 @@ async function loadSettings() {
     enabled: get("NWS_ALERTS_ENABLED") !== "false",
     url: get("NWS_ALERTS_URL"),
     userAgent: get("NWS_ALERTS_USER_AGENT"),
-    cacheMinutes: Math.max(1, Number(get("NWS_ALERTS_CACHE_MINUTES")) || 15),
     minSeverity: get("NWS_ALERTS_MIN_SEVERITY") as AlertSeverity,
     keywords,
   };
 }
-
-// In-process cache. Keyed by rounded coordinates: alerts are issued per
-// county/zone, so two crews a mile apart are under the identical alert and
-// should share one lookup.
-const cache = new Map<string, { at: number; alerts: WeatherAlert[] }>();
 
 function severityRank(s: string): number {
   const i = SEVERITY_ORDER.indexOf(s as AlertSeverity);
@@ -169,80 +160,82 @@ export async function fetchWeatherAlerts(lat: number, lng: number): Promise<Weat
     const cfg = await loadSettings();
     if (!cfg.enabled) return [];
 
+    // Rounded coordinates: alerts are issued per county/zone, so two crews a
+    // mile apart are under the identical alert and should share one lookup.
     const key = `${lat.toFixed(2)},${lng.toFixed(2)}`;
-    const hit = cache.get(key);
-    if (hit && Date.now() - hit.at < cfg.cacheMinutes * 60_000) return hit.alerts;
-
     const url = cfg.url.replace("{lat}", String(lat)).replace("{lng}", String(lng));
-    const res = await fetch(url, {
-      headers: { "User-Agent": cfg.userAgent, Accept: "application/geo+json" },
-      signal: AbortSignal.timeout(6000),
-    });
-    if (!res.ok) throw new Error(`NWS returned ${res.status}`);
-    const json: any = await res.json();
-
-    const minRank = severityRank(cfg.minSeverity);
-    const raw: WeatherAlert[] = (json.features ?? [])
-      .map((f: any) => {
-        const p = f?.properties ?? {};
-        const event = String(p.event ?? "").trim();
-        return {
-          id: String(p.id ?? f?.id ?? event),
-          event,
-          severity: (p.severity ?? "Unknown") as WeatherAlert["severity"],
-          headline: String(p.headline ?? event),
-          instruction: p.instruction ? String(p.instruction).replace(/\s+/g, " ").trim() : null,
-          onset: p.onset ?? p.effective ?? null,
-          ends: p.ends ?? p.expires ?? null,
-          dateKeys: coveredDateKeys(p.onset ?? p.effective ?? null, p.ends ?? p.expires ?? null),
-          kind: kindFor(event),
-        };
-      })
-      .filter((a: WeatherAlert) => a.event)
-      .filter((a: WeatherAlert) => severityRank(a.severity) <= minRank)
-      .filter((a: WeatherAlert) =>
-        cfg.keywords.length === 0 || cfg.keywords.some((k) => a.event.toLowerCase().includes(k)),
-      );
-
-    // Collapse repeats of the same event, MERGING their coverage.
-    //
-    // The NWS routinely has several instances of one product active at once,
-    // each covering a different stretch. Chapel Hill on 2026-09-02 had two
-    // Heat Advisories: one 1:46pm-8pm that day, another 11am-8pm the next.
-    //
-    // An earlier version kept only the longest-lived instance, which silently
-    // discarded TODAY's coverage — the title bar (not date-scoped) showed the
-    // advisory while the Today section header (date-scoped) did not. Showing
-    // "Heat Advisory" twice is noise; dropping a day is a lie.
-    //
-    // So: one row per event, carrying the union of every instance's days and
-    // the full span. The representative is the most severe instance, then the
-    // one in effect soonest — its headline is the one worth reading now.
-    const byEvent = new Map<string, WeatherAlert>();
-    for (const a of raw) {
-      const prev = byEvent.get(a.event);
-      if (!prev) {
-        byEvent.set(a.event, a);
-        continue;
-      }
-      const better =
-        severityRank(a.severity) < severityRank(prev.severity) ||
-        (severityRank(a.severity) === severityRank(prev.severity) &&
-          (a.onset ?? "") < (prev.onset ?? ""));
-      const rep = better ? a : prev;
-      byEvent.set(a.event, {
-        ...rep,
-        dateKeys: [...new Set([...prev.dateKeys, ...a.dateKeys])].sort(),
-        onset: [prev.onset, a.onset].filter(Boolean).sort()[0] ?? rep.onset,
-        ends: [prev.ends, a.ends].filter(Boolean).sort().pop() ?? rep.ends,
+    const { value } = await cached("nwsAlerts", key, async () => {
+      const res = await fetch(url, {
+        headers: { "User-Agent": cfg.userAgent, Accept: "application/geo+json" },
+        signal: AbortSignal.timeout(6000),
       });
-    }
+      if (!res.ok) throw new Error(`NWS returned ${res.status}`);
+      const json: any = await res.json();
 
-    const alerts = [...byEvent.values()].sort(
-      (x, y) => severityRank(x.severity) - severityRank(y.severity),
-    );
-    cache.set(key, { at: Date.now(), alerts });
-    return alerts;
+      const minRank = severityRank(cfg.minSeverity);
+      const raw: WeatherAlert[] = (json.features ?? [])
+        .map((f: any) => {
+          const p = f?.properties ?? {};
+          const event = String(p.event ?? "").trim();
+          return {
+            id: String(p.id ?? f?.id ?? event),
+            event,
+            severity: (p.severity ?? "Unknown") as WeatherAlert["severity"],
+            headline: String(p.headline ?? event),
+            instruction: p.instruction ? String(p.instruction).replace(/\s+/g, " ").trim() : null,
+            onset: p.onset ?? p.effective ?? null,
+            ends: p.ends ?? p.expires ?? null,
+            dateKeys: coveredDateKeys(p.onset ?? p.effective ?? null, p.ends ?? p.expires ?? null),
+            kind: kindFor(event),
+          };
+        })
+        .filter((a: WeatherAlert) => a.event)
+        .filter((a: WeatherAlert) => severityRank(a.severity) <= minRank)
+        .filter((a: WeatherAlert) =>
+          cfg.keywords.length === 0 || cfg.keywords.some((k) => a.event.toLowerCase().includes(k)),
+        );
+
+      // Collapse repeats of the same event, MERGING their coverage.
+      //
+      // The NWS routinely has several instances of one product active at once,
+      // each covering a different stretch. Chapel Hill on 2026-09-02 had two
+      // Heat Advisories: one 1:46pm-8pm that day, another 11am-8pm the next.
+      //
+      // An earlier version kept only the longest-lived instance, which silently
+      // discarded TODAY's coverage — the title bar (not date-scoped) showed the
+      // advisory while the Today section header (date-scoped) did not. Showing
+      // "Heat Advisory" twice is noise; dropping a day is a lie.
+      //
+      // So: one row per event, carrying the union of every instance's days and
+      // the full span. The representative is the most severe instance, then the
+      // one in effect soonest — its headline is the one worth reading now.
+      const byEvent = new Map<string, WeatherAlert>();
+      for (const a of raw) {
+        const prev = byEvent.get(a.event);
+        if (!prev) {
+          byEvent.set(a.event, a);
+          continue;
+        }
+        const better =
+          severityRank(a.severity) < severityRank(prev.severity) ||
+          (severityRank(a.severity) === severityRank(prev.severity) &&
+            (a.onset ?? "") < (prev.onset ?? ""));
+        const rep = better ? a : prev;
+        byEvent.set(a.event, {
+          ...rep,
+          dateKeys: [...new Set([...prev.dateKeys, ...a.dateKeys])].sort(),
+          onset: [prev.onset, a.onset].filter(Boolean).sort()[0] ?? rep.onset,
+          ends: [prev.ends, a.ends].filter(Boolean).sort().pop() ?? rep.ends,
+        });
+      }
+
+      const alerts = [...byEvent.values()].sort(
+        (x, y) => severityRank(x.severity) - severityRank(y.severity),
+      );
+      return alerts;
+    });
+    return value;
+
   } catch {
     // Swallowed on purpose. Alerts are an enhancement; temperature is not.
     // Returning [] keeps every weather surface rendering exactly as it did
@@ -251,7 +244,7 @@ export async function fetchWeatherAlerts(lat: number, lng: number): Promise<Weat
   }
 }
 
-/** Test seam — the cache is process-local and would otherwise leak between runs. */
-export function __clearAlertCache() {
-  cache.clear();
+/** Test seam. Delegates to the shared cache, which is where alerts now live. */
+export async function __clearAlertCache() {
+  await invalidate("nwsAlerts");
 }

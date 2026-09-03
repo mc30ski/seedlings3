@@ -149,60 +149,16 @@ describe("settings section build gate", () => {
   });
 });
 
-// ── The cost-behavior map must keep up with the expense taxonomy ───────────
+// ── Cost behavior never returns to the expense taxonomy ───────────────────
 //
-// These are two separate settings on purpose: EXPENSE_COST_BEHAVIOR is
-// forecasting-only, and welding it onto EXPENSE_CATEGORIES took production's
-// expense recording down on 2026-09-02. The cost of that separation is drift,
-// which is what this checks. An unlisted category still works — it defaults to
-// VARIABLE — so this is about the forecast being right, not about anything
-// breaking.
-describe("expense cost-behavior map keeps up with the taxonomy", () => {
-  function seededCategoryLabels(): string[] {
-    const i = SEED_SRC.indexOf('key: "EXPENSE_CATEGORIES"');
-    const block = SEED_SRC.slice(i, SEED_SRC.indexOf("]),", i));
-    return [...block.matchAll(/\{ label: "([^"]+)"/g)].map((m) => m[1]);
-  }
-  function seededBehaviorMap(): Record<string, string> {
-    // Brace-match the object literal rather than slicing on punctuation — the
-    // description string alongside it contains both ")" and "}," characters.
-    const i = SEED_SRC.indexOf('key: "EXPENSE_COST_BEHAVIOR"');
-    const open = SEED_SRC.indexOf("{", SEED_SRC.indexOf("JSON.stringify(", i));
-    let depth = 0, end = open;
-    for (let k = open; k < SEED_SRC.length; k++) {
-      if (SEED_SRC[k] === "{") depth++;
-      else if (SEED_SRC[k] === "}") { depth--; if (depth === 0) { end = k; break; } }
-    }
-    return JSON.parse(SEED_SRC.slice(open, end + 1));
-  }
-
-  it("every seeded expense category has a cost behavior", () => {
-    const map = seededBehaviorMap();
-    const missing = seededCategoryLabels().filter((l) => !(l in map));
-    expect(
-      missing,
-      `Expense categories with no entry in EXPENSE_COST_BEHAVIOR: ${missing.join(", ")}. ` +
-        `They will default to VARIABLE in the forecast, which understates the effect of scale.`,
-    ).toEqual([]);
-  });
-
-  it("the behavior map names no category that does not exist", () => {
-    const labels = new Set(seededCategoryLabels());
-    const stale = Object.keys(seededBehaviorMap()).filter((l) => !labels.has(l));
-    expect(stale, `EXPENSE_COST_BEHAVIOR names unknown categories: ${stale.join(", ")}`).toEqual([]);
-  });
-
-  it("every behavior is one the forecaster understands", () => {
-    const allowed = new Set(["VARIABLE", "FIXED", "PER_JOB", "ONE_TIME", "DISCRETIONARY"]);
-    const bad = Object.entries(seededBehaviorMap()).filter(([, v]) => !allowed.has(v));
-    expect(bad.map(([k, v]) => `${k}=${v}`)).toEqual([]);
-  });
-
-  it("cost behavior is NOT a field on EXPENSE_CATEGORIES", () => {
-    // The whole point of the split. That taxonomy's parser rejects unknown
-    // fields and its loader swallows the error into an empty list, so a field
-    // added here silently disables expense recording, the QB export and the
-    // P&L. Keep forecasting concerns out of it.
+// EXPENSE_COST_BEHAVIOR is gone: every category now starts "as is" in the
+// forecaster and is tagged per-scenario, the same way every other lever
+// baselines on reality. What must not come back is the ORIGINAL mistake —
+// putting a forecasting-only field on EXPENSE_CATEGORIES, whose parser
+// rejects unknown fields and whose loader swallows the error into an empty
+// list. That took production's expense recording down on 2026-09-02.
+describe("cost behavior stays out of the expense taxonomy", () => {
+  it("costBehavior is NOT a field on EXPENSE_CATEGORIES", () => {
     const cats = SEED_SRC.slice(
       SEED_SRC.indexOf('key: "EXPENSE_CATEGORIES"'),
       SEED_SRC.indexOf("]),", SEED_SRC.indexOf('key: "EXPENSE_CATEGORIES"')),
@@ -212,5 +168,9 @@ describe("expense cost-behavior map keeps up with the taxonomy", () => {
       join(REPO_ROOT, "apps/api/src/services/expenseCategories.ts"), "utf8",
     );
     expect(parser).not.toMatch(/costBehavior/i);
+  });
+
+  it("no EXPENSE_COST_BEHAVIOR setting is seeded any more", () => {
+    expect(SEED_SRC).not.toMatch(/EXPENSE_COST_BEHAVIOR/);
   });
 });

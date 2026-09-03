@@ -21,6 +21,7 @@ export type {
   ForecastResult,
   HypotheticalWorker,
   WorkerOutcome,
+  MarketRateInfo,
   CapacityMode,
   PayModel,
   CostBehavior,
@@ -119,7 +120,10 @@ export function money(n: number, cents = false): string {
 }
 
 export function pct(n: number, places = 1): string {
-  return `${n.toFixed(places)}%`;
+  // Same minus glyph money() uses — an ASCII hyphen beside an en-dash minus
+  // reads as a typo when the two sit in adjacent cards.
+  const sign = n < 0 ? "−" : "";
+  return `${sign}${Math.abs(n).toFixed(places)}%`;
 }
 
 /** Signed delta, for before/after columns. */

@@ -3,6 +3,7 @@ import { prisma } from "../db/prisma";
 import { notifyWorker } from "../lib/notifications";
 import { etMidnight, etToday, etTomorrow, etAddDays } from "../lib/dates";
 import { AUDIT } from "../lib/auditActions";
+import { pruneCache } from "../lib/cache";
 
 /**
  * Cron job routes — called by Vercel Cron.
@@ -146,13 +147,25 @@ export default async function cronRoutes(app: FastifyInstance) {
       results.push({ userId, method: result.method, ok: result.ok, error: result.error });
     }
 
-    app.log.info({ cron: "daily-notifications", date: tomorrowStr, workers: workerBuckets.size, results });
+    // Sweep long-dead cache entries while we're already running daily.
+    // Deliberately only removes rows expired well past their grace period —
+    // recently-expired entries are what stale-on-error serves, so pruning on
+    // expiry would delete exactly the safety net. Never fails the cron.
+    let cachePruned = 0;
+    try {
+      cachePruned = await pruneCache();
+    } catch (err: any) {
+      app.log.warn({ cron: "daily-notifications", step: "pruneCache", err: err?.message });
+    }
+
+    app.log.info({ cron: "daily-notifications", date: tomorrowStr, workers: workerBuckets.size, cachePruned, results });
 
     return {
       ok: true,
       date: tomorrowStr,
       notified: results.filter((r) => r.ok).length,
       failed: results.filter((r) => !r.ok).length,
+      cachePruned,
       results,
     };
   });

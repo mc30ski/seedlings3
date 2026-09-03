@@ -220,7 +220,7 @@ Model fidelity: replaying today's settings reproduces the books to within ${ctx.
 TODAY (unchanged settings)
   Revenue ${money(sq.revenue)} · crew pay ${money(sq.crewPay)} · employer burden ${money(sq.employerBurden)}
   Operating costs ${money(sq.costsTotal)} (of which fixed ${money(sq.fixedCosts)})
-  Profit before owner labor ${money(sq.profitBeforeOwnerLabor)} (${sq.marginPercent}% margin)
+  Operating profit ${money(sq.profitBeforeOwnerLabor)} · LLC Owner share ${money(sq.ownerPay)} · retained ${money(sq.profitAfterOwnerLabor)} (${sq.marginPercent}% margin)
   Labor is ${sq.laborPercentOfRevenue}% of revenue. Revenue per clocked hour ${money(sq.revenuePerClockedHour)}.
 
 THE SCENARIO
@@ -228,9 +228,9 @@ THE SCENARIO
   Business keeps ${a.employeeMarginPercent}% from employees, ${a.contractorFeePercent}% from contractors
   Price change ${a.priceIncreasePercent}% · minimum invoice ${money(a.minimumInvoice)} · volume ×${a.volumeMultiplier}
   Employer tax ${a.employerTaxPercent}% · workers comp ${a.workersCompPercent}% of W-2 wages
-  Owner's own labor ${a.payOwner ? "IS" : "is NOT"} counted as a cost
+  LLC Owner share is its OWN line — neither a business cost nor profit. Operating profit is before it; "retained in the business" is after it. Replacing the owner's hours with a hire converts that share into crew pay, which is the comparison to reason about.
 
-  RESULT: revenue ${money(sc.revenue)} · crew pay ${money(sc.crewPay)} · profit before owner labor ${money(sc.profitBeforeOwnerLabor)} (${sc.marginPercent}% margin)
+  RESULT: revenue ${money(sc.revenue)} · crew pay ${money(sc.crewPay)} · LLC Owner share ${money(sc.ownerPay)} · operating profit ${money(sc.profitBeforeOwnerLabor)} · retained after owner share ${money(sc.profitAfterOwnerLabor)} (${sc.marginPercent}% margin)
   Labor ${sc.laborPercentOfRevenue}% of revenue (was ${sq.laborPercentOfRevenue}%)
 
 PER PERSON, UNDER THIS SCENARIO

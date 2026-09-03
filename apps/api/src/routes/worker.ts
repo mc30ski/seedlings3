@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { services } from "../services";
 import { fetchWeatherAlerts } from "../services/weatherAlerts";
+import { cached } from "../lib/cache";
 import { prisma } from "../db/prisma";
 import { getUploadUrl, getDownloadUrl, deleteObject } from "../lib/r2";
 import { etMidnight, etEndOfDay, etToday, etTomorrow, etAddDays, etFormatDate, etDaysBetween , type EtDateKey } from "../lib/dates";
@@ -4913,15 +4914,23 @@ export default async function workerRoutes(app: FastifyInstance) {
     if (!apiKey) throw app.httpErrors.serviceUnavailable("Weather API key not configured");
 
     try {
-      // Fetch both current weather and 5-day forecast
-      const [currentRes, forecastRes] = await Promise.all([
-        fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lng}&units=imperial&appid=${apiKey}`),
-        fetch(`https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lng}&units=imperial&appid=${apiKey}`),
-      ]);
-      if (!currentRes.ok) throw new Error(`Weather API returned ${currentRes.status}`);
-      if (!forecastRes.ok) throw new Error(`Forecast API returned ${forecastRes.status}`);
-      const current = await currentRes.json();
-      const forecast = await forecastRes.json();
+      // Cached server-side, keyed by rounded coordinates. This had NO server
+      // cache at all: every worker's browser poll was a fresh pair of
+      // OpenWeather calls, and a crew working the same neighbourhood was
+      // fetching the same weather over and over. Two decimal places is about
+      // a kilometre, which is well inside the resolution of a forecast.
+      const wxKey = `${Number(lat).toFixed(2)},${Number(lng).toFixed(2)}`;
+      const { value: wx } = await cached("openWeather", wxKey, async () => {
+        const [currentRes, forecastRes] = await Promise.all([
+          fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lng}&units=imperial&appid=${apiKey}`),
+          fetch(`https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lng}&units=imperial&appid=${apiKey}`),
+        ]);
+        if (!currentRes.ok) throw new Error(`Weather API returned ${currentRes.status}`);
+        if (!forecastRes.ok) throw new Error(`Forecast API returned ${forecastRes.status}`);
+        return { current: await currentRes.json(), forecast: await forecastRes.json() };
+      });
+      const current = wx.current;
+      const forecast = wx.forecast;
 
       // Severe-weather alerts (NWS). Fetched AFTER the OpenWeather calls and
       // deliberately NOT inside the Promise.all above — that block throws on

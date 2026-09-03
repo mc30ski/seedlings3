@@ -45,9 +45,13 @@ describe("weather alerts build gate — alerts can never break the weather bar",
     expect(SERVICE).toMatch(/"User-Agent"/);
   });
 
-  it("caches, so every worker's poll does not become an NWS request", () => {
-    expect(SERVICE).toMatch(/cache\.set\(/);
-    expect(SERVICE).toMatch(/cacheMinutes/);
+  it("caches through the shared cache, so every worker's poll is not an NWS request", () => {
+    // Was a private in-memory Map, which died on every serverless cold start
+    // — near-useless against an API that throttles. Now goes through
+    // lib/cache.ts, which adds a DB tier and stale-on-error.
+    expect(SERVICE).toMatch(/from "\.\.\/lib\/cache"/);
+    expect(SERVICE).toMatch(/cached\("nwsAlerts"/);
+    expect(SERVICE).not.toMatch(/const cache = new Map</);
   });
 
   it("a malformed keyword setting shows every alert rather than none", () => {
@@ -120,5 +124,37 @@ describe("weather alerts — repeated events merge their coverage", () => {
   it("does NOT keep only the longest-lived instance", () => {
     // The exact shape of the old bug.
     expect(block).not.toMatch(/const rep = [\s\S]{0,80}\(a\.ends \?\? ""\) > \(prev\.ends \?\? ""\)[\s\S]{0,40}byEvent\.set\(a\.event, a\)/);
+  });
+});
+
+// ── Every path that publishes weather must publish alerts with it ─────────
+describe("weather alerts — reach every surface, including late mounters", () => {
+  const BAR = readFileSync(
+    join(REPO_ROOT, "apps/web/src/ui/components/WeatherBar.tsx"), "utf8",
+  );
+
+  it("BOTH __seedlingsWeather writes include alerts", () => {
+    // WeatherBar populates this synchronous cache twice: once from
+    // localStorage on mount, once after the network fetch. Components that
+    // mount LATER read the cache rather than waiting for the next broadcast
+    // event — so a write that omits alerts leaves them empty.
+    //
+    // The bug: only the cached-read path carried alerts. Switching role scope
+    // remounted JobsTab, whose hook initialised from the post-fetch cache and
+    // got nothing, while the title bar (already holding React state) kept
+    // showing the advisory. Two surfaces, same data, disagreeing.
+    const writes = [...BAR.matchAll(/__seedlingsWeather = \{[\s\S]*?\};/g)].map((m) => m[0]);
+    expect(writes.length, "expected both cache writes to still exist").toBe(2);
+    for (const w of writes) {
+      expect(w, "every __seedlingsWeather write must carry alerts").toMatch(/alerts:/);
+    }
+  });
+
+  it("BOTH broadcast events include alerts", () => {
+    const events = [...BAR.matchAll(/detail: \{[\s\S]*?\}/g)].map((m) => m[0]);
+    expect(events.length).toBeGreaterThanOrEqual(2);
+    for (const e of events) {
+      expect(e, "every seedlings:weather broadcast must carry alerts").toMatch(/alerts:/);
+    }
   });
 });

@@ -27,7 +27,7 @@ import { writeAudit } from "../lib/auditLogger";
 import { AUDIT } from "../lib/auditActions";
 import { etMidnight, etEndOfDay, etFormatDate, type EtDateKey } from "../lib/dates";
 import { loadRates } from "./payments";
-import { loadCostBehaviorMap, behaviorFor, type CostBehavior } from "./costBehavior";
+import { getMarketRate } from "./marketRate";
 import { loadPayrollTaxEstimates, totalEmployerTaxPct } from "./payrollTaxEstimates";
 import {
   simulate,
@@ -59,7 +59,7 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
   const start = etMidnight(from);
   const end = etEndOfDay(to);
 
-  const [payments, workdays, users, expenses, rates, behaviorMap, taxCfg, wcPercent] =
+  const [payments, workdays, users, expenses, rates, taxCfg, wcPercent, marketRate] =
     await Promise.all([
       prisma.payment.findMany({
         where: { confirmed: true, createdAt: { gte: start, lte: end } },
@@ -93,9 +93,9 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
         select: { category: true, cost: true },
       }),
       loadRates(prisma),
-      loadCostBehaviorMap(prisma),
       loadPayrollTaxEstimates(prisma),
       loadWorkersCompPercent(),
+      getMarketRate(),
     ]);
 
   const userById = new Map(users.map((u) => [u.id, u]));
@@ -180,9 +180,10 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
   const expenseLines: ForecastExpenseLine[] = [...byCategory.entries()]
     .map(([category, amount]) => ({
       category,
-      // Unclassified categories fall back to VARIABLE — the conservative
-      // choice, since it denies the scenario any margin expansion from scale.
-      behavior: behaviorFor(behaviorMap, category),
+      // Every category starts AS_IS — holding what was actually spent. The
+      // scenario's own behaviorOverrides are the only thing that changes it,
+      // the same way every other lever baselines on reality.
+      behavior: "AS_IS" as const,
       amount: round2(amount),
     }))
     .sort((a, b) => b.amount - a.amount);
@@ -204,6 +205,7 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
 
   return {
     window: { from, to },
+    marketRate,
     jobs,
     workers,
     expenses: expenseLines,

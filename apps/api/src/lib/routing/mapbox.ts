@@ -1,5 +1,7 @@
 import type { RoutingProvider, Coordinates, GeocodedAddress, OptimizedRoute, RouteStop } from "./types";
 
+import { cached } from "../cache";
+
 const BASE_URL = "https://api.mapbox.com";
 
 export class MapboxProvider implements RoutingProvider {
@@ -12,11 +14,35 @@ export class MapboxProvider implements RoutingProvider {
   }
 
   async geocode(address: string): Promise<GeocodedAddress | null> {
+    // Cached: geocoding is billed per call and a property's address does not
+    // move. Before this, every route run re-geocoded the same job addresses
+    // from scratch — `geocodeMany` fans out one call per stop.
+    //
+    // Key is the normalised address so casing and stray whitespace don't
+    // produce separate entries for the same place. A null result is cached
+    // too: an address Mapbox cannot place will not become placeable by asking
+    // again on every route run.
+    const key = address.trim().toLowerCase().replace(/\s+/g, " ");
+    if (!key) return null;
+    try {
+      const { value } = await cached("geocode", key, () => this.geocodeUncached(address));
+      // The cached shape carries whatever address string was passed first;
+      // hand back the caller's own so downstream matching is unaffected.
+      return value ? { ...value, address } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async geocodeUncached(address: string): Promise<GeocodedAddress | null> {
     const encoded = encodeURIComponent(address);
     const url = `${BASE_URL}/geocoding/v5/mapbox.places/${encoded}.json?access_token=${this.token}&limit=1&country=us`;
 
     const res = await fetch(url);
-    if (!res.ok) return null;
+    // A transport failure must THROW so stale-on-error can serve a previous
+    // result; returning null here would cache "unknown" as if it were an
+    // answer. A 404-shaped "no match" is a real answer and returns null.
+    if (!res.ok) throw new Error(`Mapbox geocoding returned ${res.status}`);
 
     const data = await res.json();
     const feature = data.features?.[0];

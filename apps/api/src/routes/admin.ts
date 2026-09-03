@@ -4609,18 +4609,6 @@ Respond ONLY with valid JSON in this exact format:
     if (key === "PAYROLL_PERIOD_CADENCE" && value !== "WEEKLY" && value !== "BIWEEKLY" && value !== "MONTHLY") {
       throw app.httpErrors.badRequest("PAYROLL_PERIOD_CADENCE must be WEEKLY, BIWEEKLY, or MONTHLY.");
     }
-    if (key === "EXPENSE_COST_BEHAVIOR") {
-      // Validated on WRITE so a typo is caught here with a clear message.
-      // Deliberately NOT strict on read — loadCostBehaviorMap swallows a bad
-      // value and falls back to defaults, because this setting must never be
-      // able to break anything outside the forecasting tool.
-      const { validateCostBehaviorJson } = await import("../services/costBehavior");
-      try {
-        validateCostBehaviorJson(value);
-      } catch (err: any) {
-        throw app.httpErrors.badRequest(err?.message || "Invalid EXPENSE_COST_BEHAVIOR JSON.");
-      }
-    }
     if (key === "EXPENSE_CATEGORIES") {
       const { validateExpenseCategoriesJson } = await import("../services/expenseCategories");
       try {

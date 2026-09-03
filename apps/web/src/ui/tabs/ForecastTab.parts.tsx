@@ -6,88 +6,150 @@
 // re-render on drag stays cheap.
 
 import React from "react";
-import { Badge, Box, Button, HStack, Separator, Text, VStack } from "@chakra-ui/react";
+import { Badge, Box, Button, HStack, Select, Separator, Text, VStack, createListCollection } from "@chakra-ui/react";
 import { FiAlertTriangle, FiInfo, FiTrendingUp, FiTrendingDown } from "react-icons/fi";
-import type { ForecastResult, WorkerOutcome, ForecastAssessment } from "@/src/lib/forecast";
+import type { ForecastResult, WorkerOutcome, ForecastAssessment, MarketRateInfo } from "@/src/lib/forecast";
 import { money, pct, VERDICT_LABEL, VERDICT_TONE } from "@/src/lib/forecast";
+import { fmtDate } from "@/src/lib/dates";
 
-/** Local market band for lawn crew in the Triangle. General knowledge, not
- *  queried — shown as context for the fairness read, never as a rule. */
+/** Last-resort band, used only when no rate has been looked up. The real one
+ *  comes from the BLS for the metro the business address sits in — see
+ *  services/marketRate.ts. These constants exist so the component still
+ *  renders when a baseline predates the lookup. */
 export const MARKET_LOW = 15;
 export const MARKET_HIGH = 24;
+
+const PCT_LABEL: Record<number, string> = {
+  10: "10th", 25: "25th", 50: "median", 75: "75th", 90: "90th",
+};
+
+/** Says plainly where the band came from, which survey year, and when it was
+ *  fetched — so a number that steers a pay decision is never anonymous. */
+export function MarketRateProvenance({ market }: { market?: MarketRateInfo }) {
+  if (!market) return null;
+  const looked = market.source === "bls";
+  const tone = looked ? "blue" : market.source === "override" ? "purple" : "orange";
+  return (
+    <HStack
+      gap={2} align="start" px={2.5} py={2} borderRadius="md"
+      bg={`${tone}.subtle`} borderWidth="1px" borderColor={`${tone}.solid`}
+    >
+      <Box as={FiInfo} mt="2px" color={`${tone}.solid`} flexShrink={0} />
+      <Box minW={0}>
+        <Text fontSize="12.5px" fontWeight="semibold">
+          Market rate ${market.low.toFixed(2)}–${market.high.toFixed(2)}/hr
+          {market.percentiles && (
+            <Text as="span" fontWeight="normal" color="fg.muted">
+              {" "}({PCT_LABEL[market.percentiles[0]] ?? market.percentiles[0]}–
+              {PCT_LABEL[market.percentiles[1]] ?? market.percentiles[1]} percentile)
+            </Text>
+          )}
+        </Text>
+        <Text fontSize="11.5px" color="fg.muted">
+          {looked ? (
+            <>
+              US Bureau of Labor Statistics, OEWS {market.year} · Landscaping &amp;
+              Groundskeeping Workers (SOC {market.occupation}) · {market.areaName} ·
+              looked up from your business address
+              {market.fetchedAt ? ` · cached ${fmtDate(market.fetchedAt)}` : ""}
+            </>
+          ) : market.source === "override" ? (
+            <>Manually set in Settings (MARKET_RATE_OVERRIDE), overriding the BLS figure.</>
+          ) : (
+            <>Not looked up — this is a generic estimate, not a local figure.</>
+          )}
+        </Text>
+        {market.note && (
+          <Text fontSize="11.5px" color={looked ? "fg.muted" : `${tone}.fg`} mt={0.5}>
+            {market.note}
+          </Text>
+        )}
+      </Box>
+    </HStack>
+  );
+}
 
 // ── Headline numbers ────────────────────────────────────────────────────────
 
 export function StatStrip({
   scenario,
   statusQuo,
-  payOwner,
 }: {
   scenario: ForecastResult;
   statusQuo: ForecastResult;
-  payOwner: boolean;
 }) {
-  const profitNow = payOwner ? statusQuo.profitAfterOwnerLabor : statusQuo.profitBeforeOwnerLabor;
-  const profitNew = payOwner ? scenario.profitAfterOwnerLabor : scenario.profitBeforeOwnerLabor;
+  const profitNow = statusQuo.profitAfterOwnerLabor;
+  const profitNew = scenario.profitAfterOwnerLabor;
 
-  const cards = [
+  // `betterWhenLower` inverts the good/bad colouring for labor share — a
+  // smaller number is the win there, and colouring it like a loss is the
+  // kind of thing that gets read wrong at a glance.
+  const cards: Array<{
+    k: string; now: number; next: number;
+    fmt: (n: number) => string; deltaFmt: (n: number) => string;
+    betterWhenLower?: boolean; neutral?: boolean;
+  }> = [
     {
-      k: payOwner ? "Profit after owner labor" : "Profit before owner labor",
-      v: money(profitNew),
-      was: money(profitNow),
-      up: profitNew >= profitNow,
-      tone: profitNew >= 0 ? "green" : "red",
+      k: "Retained after owner share",
+      now: profitNow, next: profitNew,
+      fmt: money, deltaFmt: (n) => (n >= 0 ? "+" : "−") + money(Math.abs(n)),
     },
     {
       k: "Margin",
-      v: pct(scenario.marginPercent),
-      was: pct(statusQuo.marginPercent),
-      up: scenario.marginPercent >= statusQuo.marginPercent,
-      tone: scenario.marginPercent >= 10 ? "green" : scenario.marginPercent >= 0 ? "orange" : "red",
+      now: statusQuo.marginPercent, next: scenario.marginPercent,
+      fmt: (n) => pct(n), deltaFmt: (n) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(1)} pts`,
     },
     {
       k: "Labor % of revenue",
-      v: pct(scenario.laborPercentOfRevenue),
-      was: pct(statusQuo.laborPercentOfRevenue),
-      // Lower is better here, so the arrow has to be inverted deliberately.
-      up: scenario.laborPercentOfRevenue <= statusQuo.laborPercentOfRevenue,
-      tone: scenario.laborPercentOfRevenue <= 55 ? "green" : scenario.laborPercentOfRevenue <= 65 ? "orange" : "red",
+      now: statusQuo.laborPercentOfRevenue, next: scenario.laborPercentOfRevenue,
+      fmt: (n) => pct(n), deltaFmt: (n) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(1)} pts`,
+      betterWhenLower: true,
     },
     {
-      k: "Revenue",
-      v: money(scenario.revenue),
-      was: money(statusQuo.revenue),
-      up: scenario.revenue >= statusQuo.revenue,
-      tone: "gray",
+      // Its own card, never folded into profit and never hidden. This is the
+      // number that moves when you model hiring someone to do your hours.
+      k: "LLC Owner share",
+      now: statusQuo.ownerPay, next: scenario.ownerPay,
+      fmt: money, deltaFmt: (n) => (n >= 0 ? "+" : "−") + money(Math.abs(n)),
+      neutral: true,
     },
   ];
 
   return (
     <HStack gap={2} align="stretch" wrap="wrap">
-      {cards.map((c) => (
-        <Box
-          key={c.k}
-          flex="1 1 160px"
-          minW="150px"
-          borderWidth="1px"
-          borderRadius="md"
-          p={3}
-          bg="bg.panel"
-        >
-          <Text fontSize="10px" letterSpacing="wide" textTransform="uppercase" color="fg.muted">
-            {c.k}
-          </Text>
-          <HStack gap={1.5} align="baseline" mt={1}>
-            <Text fontSize="22px" fontWeight="bold" color={`${c.tone}.solid`} lineHeight="1.1">
-              {c.v}
+      {cards.map((c) => {
+        const diff = c.next - c.now;
+        const moved = Math.abs(diff) >= 0.05;
+        const good = c.betterWhenLower ? diff < 0 : diff > 0;
+        const tone = !moved || c.neutral ? "gray" : good ? "green" : "red";
+        return (
+          <Box key={c.k} flex="1 1 170px" minW="160px" borderWidth="1px" borderRadius="md" p={3} bg="bg.panel">
+            <Text fontSize="10px" letterSpacing="wide" textTransform="uppercase" color="fg.muted">
+              {c.k}
             </Text>
-            <Box as={c.up ? FiTrendingUp : FiTrendingDown} color={c.up ? "green.solid" : "red.solid"} />
-          </HStack>
-          <Text fontSize="11px" color="fg.muted" mt={0.5}>
-            now {c.was}
-          </Text>
-        </Box>
-      ))}
+            <HStack gap={2} align="center" mt={1.5} wrap="wrap">
+              <Text fontSize="22px" fontWeight="bold" lineHeight="1" fontVariantNumeric="tabular-nums">
+                {c.fmt(c.next)}
+              </Text>
+              {/* The change, not the absolute, is what the operator is here to
+                  read — so it gets the colour and a solid chip instead of the
+                  faint trend arrow this used to carry. */}
+              <Box
+                px={1.5} py={0.5} borderRadius="full"
+                bg={`${tone}.subtle`} borderWidth="1px" borderColor={`${tone}.solid`}
+              >
+                <Text fontSize="11px" fontWeight="bold" color={`${tone}.fg`}
+                      fontVariantNumeric="tabular-nums" whiteSpace="nowrap">
+                  {moved ? c.deltaFmt(diff) : "no change"}
+                </Text>
+              </Box>
+            </HStack>
+            <Text fontSize="11.5px" color="fg.muted" mt={1.5} fontVariantNumeric="tabular-nums">
+              Today {c.fmt(c.now)}
+            </Text>
+          </Box>
+        );
+      })}
     </HStack>
   );
 }
@@ -97,13 +159,11 @@ export function StatStrip({
 export function Waterfall({
   scenario,
   statusQuo,
-  payOwner,
 }: {
   scenario: ForecastResult;
   statusQuo: ForecastResult;
-  payOwner: boolean;
 }) {
-  const rows: Array<{ label: string; now: number; next: number; kind: "in" | "out" | "total" }> = [
+  const rows: Array<{ label: string; now: number; next: number; kind: "in" | "out" | "total" | "owner"; note?: string }> = [
     { label: "Revenue collected", now: statusQuo.revenue, next: scenario.revenue, kind: "in" },
     { label: "Job materials", now: -statusQuo.materials, next: -scenario.materials, kind: "out" },
     { label: "Processor fees", now: -statusQuo.processorFees, next: -scenario.processorFees, kind: "out" },
@@ -111,52 +171,60 @@ export function Waterfall({
     { label: "Employer tax + workers comp", now: -statusQuo.employerBurden, next: -scenario.employerBurden, kind: "out" },
     { label: "Operating costs", now: -statusQuo.costsTotal, next: -scenario.costsTotal, kind: "out" },
     {
-      label: "Profit before owner labor",
+      label: "Operating profit",
+      note: "before the owner's share",
       now: statusQuo.profitBeforeOwnerLabor,
       next: scenario.profitBeforeOwnerLabor,
       kind: "total",
     },
+    {
+      // Always present. Neither a business cost nor silent profit — the
+      // owner's own share of the work, on its own line so hiring someone to
+      // do those hours is a visible trade rather than a hidden one.
+      label: "LLC Owner share",
+      note: "accrued to the owner for hours they worked",
+      now: -statusQuo.ownerPay,
+      next: -scenario.ownerPay,
+      kind: "owner",
+    },
+    {
+      label: "Retained in the business",
+      note: "after the owner's share",
+      now: statusQuo.profitAfterOwnerLabor,
+      next: scenario.profitAfterOwnerLabor,
+      kind: "total",
+    },
   ];
-  if (payOwner) {
-    rows.push(
-      { label: "Owner labor", now: -statusQuo.ownerPay, next: -scenario.ownerPay, kind: "out" },
-      {
-        label: "Profit after owner labor",
-        now: statusQuo.profitAfterOwnerLabor,
-        next: scenario.profitAfterOwnerLabor,
-        kind: "total",
-      },
-    );
-  }
 
   const scale = Math.max(scenario.revenue, statusQuo.revenue, 1);
 
   return (
     <VStack align="stretch" gap={0} borderWidth="1px" borderRadius="md" overflow="hidden">
-      <HStack
-        px={3}
-        py={1.5}
-        bg="bg.subtle"
-        fontSize="10px"
-        letterSpacing="wide"
-        textTransform="uppercase"
-        color="fg.muted"
-      >
-        <Text flex="1">Line</Text>
-        <Text w="90px" textAlign="right">Now</Text>
-        <Text w="90px" textAlign="right">Scenario</Text>
+      {/* Headers at a readable weight. These were 10px muted micro-caps and
+          were effectively invisible — the comparison was on screen the whole
+          time and styled to be ignored. */}
+      <HStack px={3} py={2} bg="bg.subtle" fontSize="12px" fontWeight="semibold">
+        <Text flex="1" color="fg.muted">Line</Text>
+        <Text w="90px" textAlign="right" color="fg.muted">Today</Text>
+        <Text w="90px" textAlign="right">Forecast</Text>
         <Text w="80px" textAlign="right">Change</Text>
       </HStack>
       {rows.map((r, i) => {
         const diff = r.next - r.now;
         const good = r.kind === "out" ? diff > 0 : diff > 0;
         return (
-          <Box key={r.label} px={3} py={2} bg={r.kind === "total" ? "bg.subtle" : undefined}
+          <Box key={r.label} px={3} py={2}
+               bg={r.kind === "total" ? "bg.subtle" : r.kind === "owner" ? "purple.subtle" : undefined}
                borderTopWidth={i === 0 ? 0 : "1px"}>
             <HStack gap={2}>
-              <Text flex="1" fontSize="13px" fontWeight={r.kind === "total" ? "semibold" : "normal"}>
-                {r.label}
-              </Text>
+              <Box flex="1" minW={0}>
+                <Text fontSize="13px"
+                      fontWeight={r.kind === "total" || r.kind === "owner" ? "semibold" : "normal"}
+                      color={r.kind === "owner" ? "purple.fg" : undefined}>
+                  {r.label}
+                </Text>
+                {r.note && <Text fontSize="11px" color="fg.muted">{r.note}</Text>}
+              </Box>
               <Text w="90px" textAlign="right" fontSize="12px" color="fg.muted" fontVariantNumeric="tabular-nums">
                 {money(r.now)}
               </Text>
@@ -178,12 +246,12 @@ export function Waterfall({
             <Box mt={1.5} position="relative" h="10px">
               <Box
                 position="absolute" top="0" left="0" h="4px" borderRadius="sm"
-                bg={r.kind === "in" ? "blue.muted" : r.kind === "total" ? "green.muted" : "red.muted"}
+                bg={r.kind === "in" ? "blue.muted" : r.kind === "total" ? "green.muted" : r.kind === "owner" ? "purple.muted" : "red.muted"}
                 w={`${Math.min(100, (Math.abs(r.now) / scale) * 100)}%`}
               />
               <Box
                 position="absolute" top="5px" left="0" h="4px" borderRadius="sm"
-                bg={r.kind === "in" ? "blue.solid" : r.kind === "total" ? "green.solid" : "red.solid"}
+                bg={r.kind === "in" ? "blue.solid" : r.kind === "total" ? "green.solid" : r.kind === "owner" ? "purple.solid" : "red.solid"}
                 w={`${Math.min(100, (Math.abs(r.next) / scale) * 100)}%`}
               />
             </Box>
@@ -199,10 +267,14 @@ export function Waterfall({
 export function WorkerFairnessTable({
   scenario,
   statusQuo,
+  market,
 }: {
   scenario: ForecastResult;
   statusQuo: ForecastResult;
+  market?: MarketRateInfo;
 }) {
+  const lo = market?.low ?? MARKET_LOW;
+  const hi = market?.high ?? MARKET_HIGH;
   const rows = scenario.workers.filter((w) => w.clockedHours > 0);
   if (!rows.length) {
     return (
@@ -211,7 +283,7 @@ export function WorkerFairnessTable({
       </Text>
     );
   }
-  const maxRate = Math.max(...rows.map((w) => w.effectiveHourly), MARKET_HIGH, 1);
+  const maxRate = Math.max(...rows.map((w) => w.effectiveHourly), hi, 1);
 
   return (
     <VStack align="stretch" gap={0} borderWidth="1px" borderRadius="md" overflow="hidden">
@@ -221,7 +293,7 @@ export function WorkerFairnessTable({
         <Text w="52px" textAlign="right">Hours</Text>
         <Text w="76px" textAlign="right">Pay</Text>
         <Text w="120px">Per hour vs market</Text>
-        <Text w="70px" textAlign="right">Was</Text>
+        <Text w="70px" textAlign="right">Today</Text>
       </HStack>
       {rows.map((w, i) => {
         const before = statusQuo.workers.find((x) => x.userId === w.userId);
@@ -250,8 +322,8 @@ export function WorkerFairnessTable({
                 <Box position="relative" h="14px" bg="bg.subtle" borderRadius="sm" overflow="hidden">
                   <Box
                     position="absolute" top="0" bottom="0"
-                    left={`${(MARKET_LOW / maxRate) * 100}%`}
-                    w={`${((MARKET_HIGH - MARKET_LOW) / maxRate) * 100}%`}
+                    left={`${(lo / maxRate) * 100}%`}
+                    w={`${((hi - lo) / maxRate) * 100}%`}
                     bg="green.muted" opacity={0.55}
                   />
                   <Box
@@ -259,7 +331,7 @@ export function WorkerFairnessTable({
                     w={`${Math.min(100, (w.effectiveHourly / maxRate) * 100)}%`}
                     bg={
                       w.effectiveHourly < 7.25 ? "red.solid"
-                        : w.effectiveHourly < MARKET_LOW ? "orange.solid"
+                        : w.effectiveHourly < lo ? "orange.solid"
                         : "blue.solid"
                     }
                   />
@@ -288,9 +360,26 @@ export function WorkerFairnessTable({
       })}
       <Box px={3} py={1.5} bg="bg.subtle">
         <Text fontSize="11px" color="fg.muted">
-          Green band is the local market rate ($15–24/hr). Per-hour figures divide total pay by
-          hours actually clocked, drive time included.
+          Green band is the local market rate (${lo.toFixed(2)}–${hi.toFixed(2)}/hr). Per-hour
+          figures divide total pay by hours actually clocked, drive time included.
         </Text>
+        {(() => {
+          // The owner's rate is the number that answers "should I hire someone
+          // to do my hours" — replacing them costs roughly the market rate,
+          // so seeing what they currently accrue per hour is the whole trade.
+          const owner = rows.find((w) => w.isOwner);
+          if (!owner) return null;
+          const cheap = owner.effectiveHourly < lo;
+          return (
+            <Text fontSize="11px" color={cheap ? "orange.fg" : "fg.muted"} mt={1}>
+              You are accruing <strong>${owner.effectiveHourly.toFixed(2)}/hr</strong> for{" "}
+              {owner.clockedHours.toFixed(0)}h of your own work
+              {cheap
+                ? ` — under the $${lo.toFixed(2)}/hr it would cost to replace you. Hiring those hours out would cost more than you are currently taking.`
+                : ` — above the $${lo.toFixed(2)}/hr it would cost to replace you, so hiring those hours out would cost less than you are taking.`}
+            </Text>
+          );
+        })()}
       </Box>
     </VStack>
   );
@@ -334,6 +423,7 @@ export function WarningList({ warnings }: { warnings: ForecastResult["warnings"]
 // ── Costs, grouped by how they respond to volume ────────────────────────────
 
 const BEHAVIOR_LABEL: Record<string, string> = {
+  AS_IS: "As is — holds what you actually spent",
   FIXED: "Fixed — doesn't grow with volume",
   VARIABLE: "Variable — scales with revenue",
   PER_JOB: "Per job — scales with job count",
@@ -341,7 +431,33 @@ const BEHAVIOR_LABEL: Record<string, string> = {
   DISCRETIONARY: "Discretionary — you choose each period",
 };
 
-export function CostBreakdown({ scenario }: { scenario: ForecastResult }) {
+/** The five behaviors, for the per-row picker. Labels are short because they
+ *  sit in a table cell; the group headings carry the full explanation. */
+const BEHAVIOR_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "AS_IS", label: "As is" },
+  { value: "FIXED", label: "Fixed" },
+  { value: "VARIABLE", label: "Variable" },
+  { value: "PER_JOB", label: "Per job" },
+  { value: "ONE_TIME", label: "One-time" },
+  { value: "DISCRETIONARY", label: "Discretionary" },
+];
+
+export function CostBreakdown({
+  scenario,
+  statusQuo,
+  onRetag,
+}: {
+  scenario: ForecastResult;
+  statusQuo: ForecastResult;
+  /** Retag a category for this scenario. Advisory — it does NOT write the
+   *  EXPENSE_COST_BEHAVIOR setting; it rides along with the saved forecast. */
+  onRetag?: (category: string, behavior: string) => void;
+}) {
+  const todayByCategory = new Map(statusQuo.costs.map((c) => [c.category, c.amount]));
+  // statusQuo is simulated with the default assumptions, so its behavior is
+  // the configured one — the baseline to show a retag against.
+  const baseBehavior = new Map(statusQuo.costs.map((c) => [c.category, c.behavior]));
+
   const groups = new Map<string, typeof scenario.costs>();
   for (const c of scenario.costs) {
     if (!groups.has(c.behavior)) groups.set(c.behavior, []);
@@ -352,32 +468,115 @@ export function CostBreakdown({ scenario }: { scenario: ForecastResult }) {
 
   return (
     <VStack align="stretch" gap={2}>
+      <Text fontSize="11.5px" color="fg.muted">
+        Every category starts at <Text as="span" fontWeight="semibold">As is</Text> — the amount
+        you actually spent, unchanged by the other levers. Tag the ones you know scale, and they
+        follow volume. Tags belong to this scenario and save with it.
+      </Text>
+      <HStack px={2.5} fontSize="12px" fontWeight="semibold">
+        <Text flex="1" color="fg.muted">Category</Text>
+        <Text w="132px" color="fg.muted">Behaves as</Text>
+        <Text w="80px" textAlign="right" color="fg.muted">Today</Text>
+        <Text w="80px" textAlign="right">Forecast</Text>
+        <Text w="70px" textAlign="right">Change</Text>
+      </HStack>
       {order.filter((b) => groups.has(b)).map((b) => {
         const rows = groups.get(b)!;
         const sub = rows.reduce((s, r) => s + r.amount, 0);
+        const subToday = rows.reduce((s, r) => s + (todayByCategory.get(r.category) ?? 0), 0);
         return (
           <Box key={b} borderWidth="1px" borderRadius="md" p={2.5}>
-            <HStack justify="space-between" mb={1}>
-              <Text fontSize="11px" fontWeight="medium" color="fg.muted">{BEHAVIOR_LABEL[b] ?? b}</Text>
-              <Text fontSize="12px" fontWeight="semibold" fontVariantNumeric="tabular-nums">
-                {money(sub)} · {pct((sub / total) * 100, 0)}
+            <HStack gap={2} mb={1}>
+              <Text flex="1" fontSize="11px" fontWeight="medium" color="fg.muted">
+                {BEHAVIOR_LABEL[b] ?? b}
+              </Text>
+              <Box w="132px" />
+              <Text w="80px" textAlign="right" fontSize="12px" color="fg.muted"
+                    fontVariantNumeric="tabular-nums">{money(subToday)}</Text>
+              <Text w="80px" textAlign="right" fontSize="12px" fontWeight="semibold"
+                    fontVariantNumeric="tabular-nums">{money(sub)}</Text>
+              <Text w="70px" textAlign="right" fontSize="12px" fontVariantNumeric="tabular-nums"
+                    color={Math.abs(sub - subToday) < 0.5 ? "fg.muted" : sub > subToday ? "red.solid" : "green.solid"}>
+                {Math.abs(sub - subToday) < 0.5 ? "—" : money(sub - subToday)}
               </Text>
             </HStack>
-            {rows.sort((x, y) => y.amount - x.amount).map((r) => (
-              <HStack key={r.category} gap={2} py={0.5}>
-                <Text fontSize="12px" flex="1" truncate>{r.category}</Text>
-                <Box flex="1" h="5px" bg="bg.subtle" borderRadius="sm" overflow="hidden" maxW="140px">
-                  <Box h="100%" bg="orange.solid" w={`${Math.min(100, (r.amount / total) * 100)}%`} />
-                </Box>
-                <Text fontSize="12px" w="70px" textAlign="right" fontVariantNumeric="tabular-nums">
-                  {money(r.amount)}
-                </Text>
-              </HStack>
-            ))}
+            {rows.sort((x, y) => y.amount - x.amount).map((r) => {
+              const was = todayByCategory.get(r.category) ?? 0;
+              const diff = r.amount - was;
+              const original = baseBehavior.get(r.category);
+              return (
+                <HStack key={r.category} gap={2} py={1}>
+                  <HStack flex="1" gap={2} minW={0}>
+                    <Text fontSize="12px" truncate>{r.category}</Text>
+                    <Box flex="1" h="5px" bg="bg.subtle" borderRadius="sm" overflow="hidden" maxW="90px">
+                      <Box h="100%" bg="orange.solid" w={`${Math.min(100, (r.amount / total) * 100)}%`} />
+                    </Box>
+                  </HStack>
+                  <Box w="132px">
+                    {onRetag ? (
+                      <BehaviorPicker
+                        value={r.behavior}
+                        original={original}
+                        onChange={(v) => onRetag(r.category, v)}
+                      />
+                    ) : (
+                      <Text fontSize="11px" color="fg.muted">{r.behavior}</Text>
+                    )}
+
+                  </Box>
+                  <Text fontSize="12px" w="80px" textAlign="right" color="fg.muted"
+                        fontVariantNumeric="tabular-nums">{money(was)}</Text>
+                  <Text fontSize="12px" w="80px" textAlign="right"
+                        fontVariantNumeric="tabular-nums">{money(r.amount)}</Text>
+                  <Text fontSize="12px" w="70px" textAlign="right" fontVariantNumeric="tabular-nums"
+                        color={Math.abs(diff) < 0.5 ? "fg.muted" : diff > 0 ? "red.solid" : "green.solid"}>
+                    {Math.abs(diff) < 0.5 ? "—" : money(diff)}
+                  </Text>
+                </HStack>
+              );
+            })}
           </Box>
         );
       })}
     </VStack>
+  );
+}
+
+function BehaviorPicker({
+  value, original, onChange,
+}: {
+  value: string; original?: string; onChange: (v: string) => void;
+}) {
+  const collection = createListCollection({ items: BEHAVIOR_OPTIONS });
+  const changed = original !== undefined && original !== value;
+  return (
+    <Select.Root
+      collection={collection}
+      value={[value]}
+      onValueChange={(e) => { const v = e.value?.[0]; if (v) onChange(v); }}
+      size="xs"
+      positioning={{ strategy: "fixed", hideWhenDetached: true }}
+    >
+      <Select.Control>
+        <Select.Trigger
+          w="100%" px="1.5"
+          borderColor={changed ? "blue.solid" : undefined}
+          color={changed ? "blue.fg" : undefined}
+        >
+          <Select.ValueText />
+          <Select.Indicator />
+        </Select.Trigger>
+      </Select.Control>
+      <Select.Positioner>
+        <Select.Content minW="var(--reference-width)">
+          {collection.items.map((item) => (
+            <Select.Item key={item.value} item={item.value}>
+              <Select.ItemText>{item.label}</Select.ItemText>
+            </Select.Item>
+          ))}
+        </Select.Content>
+      </Select.Positioner>
+    </Select.Root>
   );
 }
 
@@ -564,13 +763,7 @@ export type ComparisonEntry = {
   window: string;
 };
 
-export function ComparisonPanel({
-  entries,
-  payOwner,
-}: {
-  entries: ComparisonEntry[];
-  payOwner: boolean;
-}) {
+export function ComparisonPanel({ entries }: { entries: ComparisonEntry[] }) {
   if (entries.length < 2) {
     return (
       <Text fontSize="13px" color="fg.muted">
@@ -580,8 +773,7 @@ export function ComparisonPanel({
       </Text>
     );
   }
-  const profitOf = (e: ComparisonEntry) =>
-    payOwner ? e.result.profitAfterOwnerLabor : e.result.profitBeforeOwnerLabor;
+  const profitOf = (e: ComparisonEntry) => e.result.profitAfterOwnerLabor;
   const maxAbs = Math.max(...entries.map((e) => Math.abs(profitOf(e))), 1);
 
   const metrics: Array<{ label: string; get: (e: ComparisonEntry) => string }> = [

@@ -3825,3 +3825,36 @@ model Forecast {
   @@index([createdById])
   @@index([archivedAt, updatedAt])
 }
+
+/// Generic cache for values fetched from external services.
+///
+/// Exists because in-memory caching is close to useless on serverless — every
+/// cold start is a fresh process — and the services behind these values are
+/// rate-limited (BLS ~25/day keyless), throttled (NWS), or billed per call
+/// (Mapbox geocoding). Before this, `/api/weather` had no server-side cache at
+/// all and every worker's browser poll was a fresh pair of OpenWeather calls.
+///
+/// NOT for anything with a natural owning row. Parcel data lives on Property,
+/// a Forecast's AI assessment lives on Forecast; those have a home and moving
+/// them here would be worse. This is only for values that belong to the
+/// business as a whole.
+///
+/// `expiresAt` is REQUIRED — an entry with no expiry is a leak, and the helper
+/// in lib/cache.ts will not write one. Expired rows are deliberately KEPT for
+/// a long grace period so a failed refresh can serve the last known-good value
+/// rather than nothing (see the stale-on-error path); pruning only removes
+/// entries that have been expired long enough to be useless.
+model CacheEntry {
+  /// Namespaced by the helper: "marketRate:<addr>|<soc>", "geocode:<address>".
+  key       String   @id
+  /// The declared namespace on its own, so entries can be inspected, counted
+  /// and invalidated as a group. Must be one of CACHE_NAMESPACES.
+  namespace String
+  value     Json
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([namespace])
+  @@index([expiresAt])
+}
