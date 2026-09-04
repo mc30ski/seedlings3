@@ -46,11 +46,18 @@ const ICONS: Record<AlertKind, LucideIcon> = {
 
 export const alertIcon = (kind: AlertKind): LucideIcon => ICONS[kind] ?? TriangleAlert;
 
-/** Chakra palette per severity. Extreme and Severe are red on purpose — a
- *  crew should not have to read the words to know which one matters. */
-export function alertTone(severity: WeatherAlert["severity"]): string {
-  if (severity === "Extreme" || severity === "Severe") return "red";
-  if (severity === "Moderate") return "orange";
+/** Chakra palette per alert. Extreme and Severe are red on purpose — a crew
+ *  should not have to read the words to know which one matters.
+ *
+ *  HEAT IS ALWAYS RED regardless of severity. The NWS files a Heat Advisory as
+ *  merely "Moderate", which rendered it in the same orange as the "unconfirmed
+ *  jobs" chip sitting inches away in the same header — two completely
+ *  different urgencies, identical colour. For an outdoor crew in a Carolina
+ *  summer, heat is the alert that actually puts someone in hospital. */
+export function alertTone(a: Pick<WeatherAlert, "severity" | "kind">): string {
+  if (a.kind === "heat") return "red";
+  if (a.severity === "Extreme" || a.severity === "Severe") return "red";
+  if (a.severity === "Moderate") return "orange";
   return "yellow";
 }
 

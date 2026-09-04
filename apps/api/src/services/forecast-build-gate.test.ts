@@ -52,16 +52,16 @@ function baseline(over: Partial<ForecastBaseline> = {}): ForecastBaseline {
     jobs: [
       // solo employee job
       { id: "j1", paid: 60, invoicePrice: 60, materials: 0, minutes: 30, dateKey: "2026-06-01",
-        crew: [{ userId: "emp", splitPercent: 100 }] },
+        crew: [{ userId: "emp", splitPercent: 100 }], recurring: true },
       // two-person crew
       { id: "j2", paid: 100, invoicePrice: 100, materials: 10, minutes: 40, dateKey: "2026-06-02",
-        crew: [{ userId: "emp", splitPercent: 50 }, { userId: "con", splitPercent: 50 }] },
+        crew: [{ userId: "emp", splitPercent: 50 }, { userId: "con", splitPercent: 50 }], recurring: true },
       // completed but never collected
       { id: "j3", paid: 0, invoicePrice: 55, materials: 0, minutes: 50, dateKey: "2026-06-03",
-        crew: [{ userId: "emp", splitPercent: 100 }] },
-      // cheap job, the repricing target
+        crew: [{ userId: "emp", splitPercent: 100 }], recurring: true },
+      // cheap job, the repricing target — and the sample's one-off
       { id: "j4", paid: 20, invoicePrice: 20, materials: 0, minutes: 45, dateKey: "2026-06-04",
-        crew: [{ userId: "con", splitPercent: 100 }] },
+        crew: [{ userId: "con", splitPercent: 100 }], recurring: false },
     ],
     workers: [
       // Emp works three of the four weeks, Con only the first — the shape a
@@ -435,7 +435,7 @@ describe("[build-gate] LLC Owner share is neither a cost nor silent profit", () 
     b.jobs = [
       ...b.jobs,
       { id: "j5", paid: 120, invoicePrice: 120, materials: 0, minutes: 60, dateKey: "2026-06-05",
-        crew: [{ userId: "own", splitPercent: 100 }] },
+        crew: [{ userId: "own", splitPercent: 100 }], recurring: true },
     ];
     return b;
   };
@@ -1184,5 +1184,75 @@ describe("[build-gate] every headline number can explain itself", () => {
     // too long for a tooltip anyway.
     expect(PARTS).toMatch(/function InfoDot/);
     expect(PARTS).toMatch(/aria-expanded=\{open\}/);
+  });
+});
+
+describe("[build-gate] the repeating/one-off split is reported, never modelled", () => {
+  it("splits revenue and job count by cadence", () => {
+    // Fixture: j1/j2/j3 recurring, j4 the one-off at $20.
+    const r = simulate(baseline(), A());
+    expect(r.oneOffRevenue).toBe(20);
+    expect(r.oneOffJobCount).toBe(1);
+    expect(r.recurringRevenue).toBe(160);
+    expect(r.recurringJobCount).toBe(3);
+    // j3 collected $0 but is still a job — counts, contributes nothing.
+    expect(r.recurringRevenue + r.oneOffRevenue).toBeCloseTo(r.revenue, 2);
+  });
+
+  it("a one-off is priced and scaled exactly like a route visit", () => {
+    // The operator's call: one-offs grow along with everything else, so no
+    // lever may treat them differently. If that ever changes it should be a
+    // deliberate new lever, not a silent divergence here.
+    const up = simulate(baseline(), A({ priceIncreasePercent: 10 }));
+    expect(up.oneOffRevenue).toBeCloseTo(22, 2);
+    expect(up.recurringRevenue).toBeCloseTo(176, 2);
+    const more = simulate(baseline(), A({ volumeMultiplier: 2 }));
+    expect(more.oneOffRevenue).toBeCloseTo(40, 2);
+    expect(more.recurringRevenue).toBeCloseTo(320, 2);
+  });
+
+  it("the two shares still sum to the whole when a hire invents revenue", () => {
+    // ADDED_CAPACITY revenue belongs to neither bucket. The UI divides by the
+    // sampled book rather than by total revenue so the percentages can't
+    // quietly stop summing to 100.
+    const parts = readFileSync(
+      join(REPO_ROOT, "apps/web/src/ui/tabs/ForecastTab.parts.tsx"), "utf8",
+    );
+    expect(parts).toMatch(
+      /const bookTotal = scenario\.recurringRevenue \+ scenario\.oneOffRevenue;/,
+    );
+  });
+
+  it("the baseline can tell a one-off from a route", () => {
+    const svc = readFileSync(SERVICE_PATH, "utf8");
+    expect(svc).toMatch(/occ\?\.workflow !== "ONE_OFF"/);
+    // A job filed as STANDARD with no cadence at all is effectively one-off.
+    expect(svc).toMatch(/occ\?\.frequencyDays \?\? occ\?\.job\?\.frequencyDays \?\? 0\) > 0/);
+  });
+
+  it("it renders under Revenue, where it qualifies the number", () => {
+    const parts = readFileSync(
+      join(REPO_ROOT, "apps/web/src/ui/tabs/ForecastTab.parts.tsx"), "utf8",
+    );
+    expect(parts).toMatch(/% repeating/);
+    expect(parts).toMatch(/% one-off/);
+    expect(parts).toMatch(/l\.kind === "in" && bookTotal > 0/);
+  });
+});
+
+describe("[build-gate] the capex row doesn't borrow the wrong column headers", () => {
+  it("its two captions are always visible, not hidden on desktop", () => {
+    // The row's numbers are Spent and Cash-after. Sitting silently under the
+    // "Today / Forecast" headers it read as "equipment spend changed from
+    // $6,375 to $7,849" — something the forecast cannot do.
+    const parts = readFileSync(
+      join(REPO_ROOT, "apps/web/src/ui/tabs/ForecastTab.parts.tsx"), "utf8",
+    );
+    const row = parts.slice(parts.indexOf("Equipment bought this window"));
+    const block = row.slice(0, row.indexOf("</Stack>"));
+    expect(block).toContain("Spent");
+    expect(block).toContain("Cash after");
+    // CompareCell hides its caption above md — wrong for this row.
+    expect(block).not.toContain("CompareCell");
   });
 });
