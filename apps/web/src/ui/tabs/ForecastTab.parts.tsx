@@ -143,7 +143,7 @@ const STAT_INFO: Record<string, string> = {
 /** Every line of the money flow, in plain terms. */
 const FLOW_INFO: Record<string, string> = {
   "Revenue collected":
-    "Cash actually collected on confirmed payments in this window — not what you invoiced. A job billed at $60 that paid $40 counts as $40 here, and one that paid nothing counts as nothing. Unpaid work is a collection problem, and counting it as revenue would hide a real loss.",
+    "Cash actually collected on confirmed payments in this window — not what you invoiced. A job billed at $60 that paid $40 counts as $40 here, and one that paid nothing counts as nothing. Unpaid work is a collection problem, and counting it as revenue would hide a real loss. The bar underneath splits it into work on a repeating cadence versus one-off callouts. That split is REPORTED ONLY — every lever treats the two identically, so a volume or price change moves one-offs exactly as it moves the route. It is there because the same revenue means something very different depending on how much of it comes back next month.",
   "Job materials":
     "Mulch, chemicals and anything else bought for a specific job. It comes off the top before the crew's split is calculated, so it reduces both what workers take and what the business keeps. These also carry a ledger row — counted once here, not again under Operating costs.",
   "Processor fees":
@@ -298,6 +298,12 @@ export function MoneyFlow({
 
   const [openInfo, setOpenInfo] = useState<string | null>(null);
 
+  // Share of the SAMPLED BOOK, not of total revenue — a hypothetical hire's
+  // invented revenue belongs to neither bucket, and dividing by it would make
+  // the two percentages quietly stop summing to 100.
+  const bookTotal = scenario.recurringRevenue + scenario.oneOffRevenue;
+  const recurringShare = bookTotal > 0 ? (scenario.recurringRevenue / bookTotal) * 100 : 0;
+
   return (
     <Box borderWidth="1px" borderRadius="md" overflow="hidden">
       <HStack px={3} py={2} bg="bg.emphasized" gap={2}>
@@ -334,6 +340,36 @@ export function MoneyFlow({
                   {money(l.amount)}
                 </Text>
               </HStack>
+              {/* How much of the revenue repeats. Reported, never modelled:
+                  every lever treats a one-off exactly like a route visit, on
+                  the call that one-offs grow along with everything else. It
+                  sits under Revenue because that is the number it qualifies —
+                  "$17,091" reads very differently at 76% recurring than at
+                  25%. */}
+              {l.kind === "in" && bookTotal > 0 && (
+                <Box pb={2}>
+                  <HStack h="6px" gap="2px" borderRadius="full" overflow="hidden" mb={1}>
+                    <Box h="full" bg="blue.solid" flex={`${recurringShare} 0 0%`} />
+                    <Box h="full" bg="blue.muted" flex={`${100 - recurringShare} 0 0%`} />
+                  </HStack>
+                  <HStack justify="space-between" gap={3} wrap="wrap">
+                    <Text fontSize="11.5px" color="fg.muted">
+                      <Text as="span" fontWeight="bold" color="blue.fg">
+                        {recurringShare.toFixed(0)}% repeating
+                      </Text>
+                      {" "}· {money(scenario.recurringRevenue)} over{" "}
+                      {scenario.recurringJobCount} visits
+                    </Text>
+                    <Text fontSize="11.5px" color="fg.muted">
+                      <Text as="span" fontWeight="semibold">
+                        {(100 - recurringShare).toFixed(0)}% one-off
+                      </Text>
+                      {" "}· {money(scenario.oneOffRevenue)} over{" "}
+                      {scenario.oneOffJobCount} jobs
+                    </Text>
+                  </HStack>
+                </Box>
+              )}
               {open && FLOW_INFO[l.label] && (
                 <Box pb={1.5}><InfoPanel>{FLOW_INFO[l.label]}</InfoPanel></Box>
               )}
@@ -467,15 +503,28 @@ export function Waterfall({
                 running this quarter's jobs. Same rule the P&amp;L uses.
               </Text>
             </Box>
+            {/* Captions ALWAYS visible, unlike every other row. This row's two
+                numbers are Spent and Cash-after — they are NOT Today and
+                Forecast, and sitting silently under those headers it read as
+                "equipment spend changed from $6,375 to $7,849", which is not
+                a thing the forecast can even do. */}
             <HStack gap={2} w={{ base: "100%", md: "auto" }}
-                    justify={{ base: "space-between", md: "flex-end" }}>
-              <CompareCell caption="Spent" w="90px" fontSize="13px" fontWeight="medium">
-                {money(-capitalPurchases)}
-              </CompareCell>
-              <CompareCell caption="Cash after" w="90px" fontSize="13px" fontWeight="bold"
-                           color={cashAfterCapEx < 0 ? "red.solid" : "green.solid"}>
-                {money(cashAfterCapEx)}
-              </CompareCell>
+                    justify={{ base: "space-between", md: "flex-end" }} align="start">
+              <Box w={{ base: "auto", md: "90px" }} textAlign={{ base: "left", md: "right" }}>
+                <Text fontSize="10px" color="fg.muted" textTransform="uppercase"
+                      letterSpacing="wide" lineHeight="1.2">Spent</Text>
+                <Text fontSize="13px" fontWeight="medium" fontVariantNumeric="tabular-nums">
+                  {money(-capitalPurchases)}
+                </Text>
+              </Box>
+              <Box w={{ base: "auto", md: "90px" }} textAlign={{ base: "left", md: "right" }}>
+                <Text fontSize="10px" color="fg.muted" textTransform="uppercase"
+                      letterSpacing="wide" lineHeight="1.2">Cash after</Text>
+                <Text fontSize="13px" fontWeight="bold" fontVariantNumeric="tabular-nums"
+                      color={cashAfterCapEx < 0 ? "red.solid" : "green.solid"}>
+                  {money(cashAfterCapEx)}
+                </Text>
+              </Box>
               <Box w={{ base: "auto", md: "80px" }} />
             </HStack>
           </Stack>

@@ -45,8 +45,8 @@ import DateInput from "@/src/ui/components/DateInput";
 import { WeatherIcon } from "@/src/ui/components/WeatherBar";
 import { useForecastByDate } from "@/src/lib/useForecastByDate";
 import { useWeatherAlerts } from "@/src/lib/useWeatherAlerts";
-import { alertsForDate, alertIcon, alertTone, whenLabel } from "@/src/lib/weatherAlerts";
-import { WeatherAlertBadge } from "@/src/ui/components/WeatherAlertBadge";
+import { alertsForDate, alertIcon, alertTone, topAlert, whenLabel } from "@/src/lib/weatherAlerts";
+import { WeatherAlertBadge, WeatherAlertDetail } from "@/src/ui/components/WeatherAlertBadge";
 import {
   useWorkdayGate,
   useTeamWorkdayDialog,
@@ -2833,6 +2833,26 @@ export default function JobsTab({
     return rows;
   }, [items, q, kind, statusFilter, typeFilter, overdueActive, overdueExpiryHours, unapprovedHoursActive, vipOnly, likedOnly, likedIds, isTrainee, highlightOccId, filterJobId, pinnedIds, isWorkerView, dateFrom, dateTo, showCanceled, showArchived, pausedRepeatingOnly, forAdmin, showAdminExtras, foreignRows]);
 
+  // Which advisory is expanded. Held here, not in the badge: the chip sits in
+  // a horizontal header row, so the body has to render below that row.
+  const [openAlertId, setOpenAlertId] = useState<string | null>(null);
+
+  // OPEN BY DEFAULT. A collapsed advisory is a chip that says "Heat" and
+  // nothing about what to do — the instruction text is the part that matters
+  // to someone about to spend eight hours outside in it. `topAlert` picks the
+  // most urgent one covering today, which is the one worth the space.
+  //
+  // The ref makes it a DEFAULT rather than a behaviour: it fires once per
+  // mount, so the weather poll refreshing `weatherAlerts` can't reopen a panel
+  // the crew deliberately closed.
+  const alertDefaultedRef = useRef(false);
+  useEffect(() => {
+    if (alertDefaultedRef.current || !weatherAlerts.length) return;
+    alertDefaultedRef.current = true;
+    const top = topAlert(weatherAlerts, bizToday());
+    if (top) setOpenAlertId(top.alert.id);
+  }, [weatherAlerts]);
+
   const dayGroups = useMemo(() => {
     const groups: { key: string; label: string; items: WorkerOccurrence[] }[] = [];
     const todayKey = bizDateKey(new Date());
@@ -3846,43 +3866,44 @@ export default function JobsTab({
 
       <Box position="relative">
         <VStack align="stretch" gap={3}>
-          {/* Severe-weather alerts for the whole feed, not just the days that
-              happen to have jobs.
+          {/* Advisories that land on days the feed ISN'T showing.
+              
+              The details now live behind the caret on each day-section chip,
+              so a full-width panel repeating them above the feed is noise.
+              But the reason that panel existed still holds: attaching alerts
+              only to day-section headers meant an advisory for a day with NO
+              scheduled work had nowhere to render and vanished — the title
+              bar showed a Heat Advisory and the feed showed nothing. An empty
+              day is exactly when a crew still needs to know; it's the day
+              you'd add work to.
 
-              Attaching these only to day-section headers meant an alert for a
-              day with NO scheduled work had nowhere to render and vanished
-              from the feed entirely — the title bar showed a Heat Advisory
-              and the feed showed nothing, because the advisory fell on a day
-              with no jobs. An empty day is exactly when a crew still needs to
-              know: it's the day you'd add work to. */}
-          {weatherAlerts.length > 0 && (
-            <VStack align="stretch" gap={1.5}>
-              {weatherAlerts.map((al) => {
-                const when = whenLabel(al, bizToday(), bizTomorrow());
-                const Icon = alertIcon(al.kind);
-                const tone = alertTone(al.severity);
-                return (
-                  <HStack key={al.id} gap={2} align="start" px={3} py={2}
-                          borderWidth="1px" borderLeftWidth="3px" borderRadius="md"
-                          borderColor={`${tone}.solid`} bg={`${tone}.subtle`}>
-                    <Box mt="2px" color={`${tone}.solid`} flexShrink={0} display="inline-flex">
-                      <Icon size={16} />
-                    </Box>
-                    <Box minW={0}>
-                      <Text fontSize="13px" fontWeight="semibold">
-                        {al.event}
-                        <Text as="span" fontWeight="normal" color="fg.muted"> · {when}</Text>
-                      </Text>
-                      <Text fontSize="12px" color="fg.muted">{al.headline}</Text>
-                      {al.instruction && (
-                        <Text fontSize="12px" mt={1}>{al.instruction}</Text>
-                      )}
-                    </Box>
-                  </HStack>
-                );
-              })}
-            </VStack>
-          )}
+              So this renders the LEFTOVERS only: alerts no visible day
+              section covers. Nothing is duplicated, and nothing is lost. */}
+          {(() => {
+            const shownDays = new Set(dayGroups.map((g) => g.key));
+            const orphans = weatherAlerts.filter(
+              (al) => !al.dateKeys.some((k) => shownDays.has(k)),
+            );
+            if (!orphans.length) return null;
+            return (
+              <Box>
+                <HStack gap={2} align="center" wrap="wrap" mb={1.5}>
+                  <Text fontSize="11px" color="fg.muted" textTransform="uppercase"
+                        letterSpacing="wide" fontWeight="semibold">
+                    Also ahead
+                  </Text>
+                  <WeatherAlertBadge alerts={orphans} density="compact"
+                                     max={orphans.length} expandable
+                                     openId={openAlertId}
+                                     onToggle={(id) => setOpenAlertId((v) => (v === id ? null : id))} />
+                </HStack>
+                {(() => {
+                  const opened = orphans.find((al) => al.id === openAlertId);
+                  return opened ? <WeatherAlertDetail alert={opened} /> : null;
+                })()}
+              </Box>
+            );
+          })()}
           {/* Client Requests moved above the filter bar — see the
               Dashboard section render for the actual mount point. */}
           {showAdminExtras && !viewAsUserIds?.length && (
@@ -3971,7 +3992,10 @@ export default function JobsTab({
                   <WeatherAlertBadge
                     alerts={alertsForDate(weatherAlerts, group.key)}
                     density="compact"
-                    max={1}
+                    max={2}
+                    expandable
+                    openId={openAlertId}
+                    onToggle={(id) => setOpenAlertId((v) => (v === id ? null : id))}
                   />
                   <Text fontSize="sm" fontWeight="bold" color="gray.600" whiteSpace="nowrap" textTransform="uppercase" letterSpacing="wide">
                     {group.label}
@@ -4116,6 +4140,13 @@ export default function JobsTab({
                 </HStack>
                 <Box flex="1" borderBottomWidth="2px" borderColor="gray.300" />
               </HStack>
+              {/* Expanded advisory — full width, BELOW the header row. Inside
+                  it, this was a flex child and pushed the date sideways. */}
+              {(() => {
+                const opened = alertsForDate(weatherAlerts, group.key)
+                  .find((al) => al.id === openAlertId);
+                return opened ? <WeatherAlertDetail alert={opened} /> : null;
+              })()}
               {!collapsedGroups.has(group.key) && <VStack align="stretch" gap={3}>
           {/* ═══════════════════════════════════════════════════════════
               CARD RENDER LOOP — dispatches between:

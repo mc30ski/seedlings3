@@ -188,19 +188,93 @@ describe("weather alerts — the undated surface can't contradict the dated ones
 describe("weather alerts — the job feed shows alerts regardless of scheduling", () => {
   const JOBS = readFileSync(join(REPO_ROOT, "apps/web/src/ui/tabs/JobsTab.tsx"), "utf8");
 
-  it("renders a feed-level banner, not only per-day badges", () => {
-    // The bug: alerts were attached ONLY to day-section headers, so an alert
-    // falling on a day with no scheduled jobs had nowhere to render and
-    // disappeared from the feed. The title bar showed a Heat Advisory and the
+  it("an alert on a day the feed isn't showing still renders", () => {
+    // THE INVARIANT, unchanged: alerts were once attached ONLY to day-section
+    // headers, so one falling on a day with no scheduled jobs had nowhere to
+    // render and disappeared. The title bar showed a Heat Advisory and the
     // feed showed nothing — because nothing was booked that day. An empty day
     // is exactly when the crew still needs to know; it's the day you'd add
     // work to.
-    expect(JOBS).toMatch(/weatherAlerts\.length > 0 && \(/);
-    expect(JOBS).toMatch(/weatherAlerts\.map\(\(al\) =>/);
+    //
+    // The MECHANISM changed: the full-width panel that used to repeat every
+    // alert above the feed is gone (details now sit behind the caret on each
+    // day chip), so the feed renders only the LEFTOVERS — alerts no visible
+    // day section covers. Same guarantee, nothing duplicated.
+    expect(JOBS).toMatch(/const shownDays = new Set\(dayGroups\.map\(\(g\) => g\.key\)\)/);
+    expect(JOBS).toMatch(/!al\.dateKeys\.some\(\(k\) => shownDays\.has\(k\)\)/);
+    expect(JOBS).toMatch(/if \(!orphans\.length\) return null;/);
+    expect(JOBS).toMatch(/alerts=\{orphans\}/);
   });
 
-  it("the banner says which day the alert is for", () => {
-    expect(JOBS).toMatch(/whenLabel\(al, bizToday\(\), bizTomorrow\(\)\)/);
+  it("the leftovers are labelled so they don't read as today", () => {
+    expect(JOBS).toMatch(/Also ahead/);
+  });
+
+  it("the expanded detail still says which day the alert is for", () => {
+    // whenLabel moved into the badge when the panel collapsed into it.
+    const badge = readFileSync(
+      join(REPO_ROOT, "apps/web/src/ui/components/WeatherAlertBadge.tsx"), "utf8",
+    );
+    expect(badge).toMatch(/whenLabel\(alert, bizToday\(\), bizTomorrow\(\)\)/);
+    expect(badge).toMatch(/alert\.instruction/);
+  });
+
+  it("every surface that shows a chip can expand it", () => {
+    // A chip you can't open is a dead end now that the panel is gone.
+    const matches = JOBS.match(/<WeatherAlertBadge[\s\S]{0,420}?\/>/g) ?? [];
+    expect(matches.length).toBeGreaterThan(0);
+    for (const m of matches) expect(m, `missing expandable: ${m}`).toMatch(/expandable/);
+  });
+
+  it("the expanded body renders OUTSIDE the header flex row", () => {
+    // The regression this replaced: the panel was emitted from inside the
+    // badge, became a flex sibling of the date and the job count, and shoved
+    // the whole header line sideways. The badge is controlled now and the
+    // body is a separate component the caller places below the header.
+    const badge = readFileSync(
+      join(REPO_ROOT, "apps/web/src/ui/components/WeatherAlertBadge.tsx"), "utf8",
+    );
+    expect(badge).toMatch(/export function WeatherAlertDetail/);
+    // No internal open state — it must be driven by the caller.
+    expect(badge).not.toMatch(/useState/);
+    expect(JOBS).toMatch(/<WeatherAlertDetail alert=\{opened\} \/>/);
+  });
+
+  it("the disclosure is the same filled triangle the day headers use", () => {
+    const badge = readFileSync(
+      join(REPO_ROOT, "apps/web/src/ui/components/WeatherAlertBadge.tsx"), "utf8",
+    );
+    expect(badge).toMatch(/open \? "\\u25BC" : "\\u25B6"/);
+  });
+
+  it("the most urgent advisory starts expanded", () => {
+    // A collapsed chip says "Heat" and nothing about what to do; the NWS
+    // instruction is the part that matters to someone about to spend the day
+    // outside in it.
+    expect(JOBS).toMatch(/const top = topAlert\(weatherAlerts, bizToday\(\)\);/);
+    expect(JOBS).toMatch(/setOpenAlertId\(top\.alert\.id\)/);
+  });
+
+  it("the weather poll cannot reopen a panel the crew closed", () => {
+    // weatherAlerts gets a new array identity on every refresh. Without the
+    // once-per-mount guard, the default would re-fire and the panel would keep
+    // springing back open while someone is trying to read the feed.
+    expect(JOBS).toMatch(/alertDefaultedRef/);
+    expect(JOBS).toMatch(/if \(alertDefaultedRef\.current \|\| !weatherAlerts\.length\) return;/);
+  });
+
+  it("heat is red, never the orange the unconfirmed chip already uses", () => {
+    const lib = readFileSync(join(REPO_ROOT, "apps/web/src/lib/weatherAlerts.ts"), "utf8");
+    expect(lib).toMatch(/if \(a\.kind === "heat"\) return "red";/);
+  });
+
+  it("advisory chips are filled, not a pale wash", () => {
+    const badge = readFileSync(
+      join(REPO_ROOT, "apps/web/src/ui/components/WeatherAlertBadge.tsx"), "utf8",
+    );
+    expect(badge).toMatch(/bg=\{`\$\{tone\}\.solid`\}/);
+    // Solid yellow with white text is unreadable.
+    expect(badge).toMatch(/tone === "yellow" \? "black" : "white"/);
   });
 
   it("per-day badges still exist for the days that do have work", () => {

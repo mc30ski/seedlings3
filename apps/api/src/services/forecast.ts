@@ -147,6 +147,11 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
               startedAt: true,
               completedAt: true,
               completionSplits: true,
+              // Recurrence, for reporting only. The occurrence's own frequency
+              // wins over the job's — an occurrence can be re-cadenced.
+              workflow: true,
+              frequencyDays: true,
+              job: { select: { frequencyDays: true } },
               expenses: { select: { cost: true } },
             },
           },
@@ -244,6 +249,11 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
       minutes: minutes != null && minutes > 0 && minutes < 600 ? minutes : null,
       dateKey: occ?.completedAt ? (etFormatDate(occ.completedAt) as string) : null,
       crew,
+      // A ONE_OFF workflow is explicit; otherwise a job with no cadence at all
+      // is effectively one-off however it was filed.
+      recurring:
+        occ?.workflow !== "ONE_OFF" &&
+        ((occ?.frequencyDays ?? occ?.job?.frequencyDays ?? 0) > 0),
     };
   });
 

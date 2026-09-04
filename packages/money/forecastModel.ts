@@ -47,6 +47,10 @@ export type ForecastJob = {
   /** ET date key of completion, for windowing and weekly rollups. */
   dateKey: string | null;
   crew: Array<{ userId: string; splitPercent: number }>;
+  /** Part of a repeating route, as opposed to a one-off callout. Reported
+   *  only — every lever treats the two identically, on the operator's call
+   *  that one-offs grow along with everything else. */
+  recurring: boolean;
 };
 
 export type ForecastWorker = {
@@ -462,6 +466,15 @@ export type ForecastResult = {
   laborPercentOfRevenue: number;
   workers: WorkerOutcome[];
   jobCount: number;
+  /** The repeating book vs one-off callouts, over the sampled jobs. Kept as
+   *  its own pair rather than a percentage so the UI can show dollars and
+   *  counts too — "76% recurring" means something different at 15 jobs than
+   *  at 200. Excludes any hypothetical hire's invented revenue, which belongs
+   *  to neither. */
+  recurringRevenue: number;
+  oneOffRevenue: number;
+  recurringJobCount: number;
+  oneOffJobCount: number;
   totalClockedHours: number;
   revenuePerClockedHour: number;
   warnings: ForecastWarning[];
@@ -528,6 +541,10 @@ export function simulate(baseline: ForecastBaseline, a: Assumptions): ForecastRe
   let revenue = 0;
   let materials = 0;
   let jobCount = 0;
+  let recurringRevenue = 0;
+  let oneOffRevenue = 0;
+  let recurringJobCount = 0;
+  let oneOffJobCount = 0;
 
   for (const job of baseline.jobs) {
     const crew = job.crew.filter((c) => roster.has(c.userId));
@@ -540,6 +557,8 @@ export function simulate(baseline: ForecastBaseline, a: Assumptions): ForecastRe
     revenue += paid;
     materials += job.materials;
     jobCount += 1;
+    if (job.recurring) { recurringRevenue += paid; recurringJobCount += 1; }
+    else { oneOffRevenue += paid; oneOffJobCount += 1; }
 
     // Rate card rides ON TOP of the share and is kept in its own ledger. Two
     // reasons to keep them apart rather than summing as we go: a rate card is
@@ -793,6 +812,12 @@ export function simulate(baseline: ForecastBaseline, a: Assumptions): ForecastRe
       revenue > 0 ? round2(((crewPay + ownerPay + employerBurden) / revenue) * 100) : 0,
     workers: outcomes.sort((x, y) => y.clockedHours - x.clockedHours),
     jobCount,
+    // Scaled by the same volume multiplier as revenue, so the split stays
+    // true rather than drifting the moment volume moves.
+    recurringRevenue: round2(recurringRevenue * vm),
+    oneOffRevenue: round2(oneOffRevenue * vm),
+    recurringJobCount: Math.round(recurringJobCount * vm),
+    oneOffJobCount: Math.round(oneOffJobCount * vm),
     totalClockedHours: round2(totalClockedHours),
     revenuePerClockedHour: totalClockedHours > 0 ? round2(revenue / totalClockedHours) : 0,
     warnings: buildWarnings(baseline, a, outcomes),
