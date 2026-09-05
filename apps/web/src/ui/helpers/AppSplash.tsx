@@ -53,6 +53,11 @@ const HOLD_DOMAIN_MS = 500;
 const HOLD_SLUG_MS = 550;
 const HOLD_BETWEEN_MS = 130;
 const HOLD_END_MS = 650;
+/** Caret blink period while typing the domain, before the ramp starts. */
+const BLINK_BASE_MS = 1000;
+/** Fastest the caret may blink. ~2.6 flashes/sec — under the three-per-second
+ *  ceiling in WCAG 2.3.1, which the raw speed ramp would breach. */
+const BLINK_FLOOR_MS = 380;
 
 const SESSION_FLAG = "seedlings_splash_animated";
 
@@ -334,6 +339,9 @@ function TypingAnimation({
 }) {
   const [text, setText] = useState("");
   const [history, setHistory] = useState<string[]>([]);
+  // Blink period, in ms. Tracks the typing speed rather than sitting at a
+  // fixed 1s — see blinkMs() below.
+  const [blink, setBlink] = useState(BLINK_BASE_MS);
   // Ref tracks current text so async cycles know where they are on
   // screen even after state updates React hasn't flushed yet.
   const currentRef = useRef("");
@@ -372,6 +380,18 @@ function TypingAnimation({
       Math.max(300, Math.round(HOLD_SLUG_MS * speedFactor(idx)));
     const holdBetweenMs = (idx: number) =>
       Math.max(80, Math.round(HOLD_BETWEEN_MS * speedFactor(idx)));
+    // The caret keeps pace with the typing: same speed ramp as everything
+    // else, so the whole line feels like it is accelerating rather than a
+    // fast typist next to a metronome.
+    //
+    // The floor is not cosmetic. At the ramp's own floor this would reach
+    // 240ms — over four flashes a second — and WCAG 2.3.1 draws the line at
+    // three. 380ms keeps it under that with room to spare, and it is still a
+    // visibly faster blink than where it starts.
+    const blinkMs = (idx: number) =>
+      idx < 0
+        ? BLINK_BASE_MS
+        : Math.max(BLINK_FLOOR_MS, Math.round(BLINK_BASE_MS * speedFactor(idx)));
 
     async function typeString(target: string, charMs: number) {
       while (currentRef.current.length < target.length && !cancelled) {
@@ -401,6 +421,7 @@ function TypingAnimation({
       // (before the erase) so history reflects "shown" not "current".
       for (let idx = 0; idx < slugs.length && !cancelled; idx++) {
         const slug = slugs[idx];
+        setBlink(blinkMs(idx));
         await typeString(`${DOMAIN_TEXT}/${slug}`, typeMs(idx));
         if (cancelled) return;
         setHistory((prev) => [...prev, slug]);
@@ -455,13 +476,20 @@ function TypingAnimation({
         {domainTail}
         <span style={{ color: "#a0aec0" }}>{slash}</span>
         {slugPart}
+        {/* The caret. HEIGHT IS LOAD-BEARING: this span has no text in it, so
+            an inline-block with no explicit height collapses to zero and the
+            bar has nothing to draw along — which is exactly how it shipped
+            invisible. Drawn as a filled 2px block rather than a border for
+            the same reason: nothing about it depends on content sizing it. */}
         <span
           style={{
             display: "inline-block",
-            width: "0.6em",
-            marginLeft: "1px",
-            borderRight: "2px solid #4a5568",
-            animation: "seedlings-splash-cursor-blink 1s step-end infinite",
+            width: "2px",
+            height: "1.05em",
+            marginLeft: "0.16em",
+            verticalAlign: "text-bottom",
+            background: "#4a5568",
+            animation: `seedlings-splash-cursor-blink ${blink}ms step-end infinite`,
           }}
         />
       </div>

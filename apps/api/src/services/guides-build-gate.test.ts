@@ -85,14 +85,51 @@ describe("guides build gate — media rules", () => {
     }
   });
 
-  it("assets are immutable — no update path exists", () => {
-    // `guideAsset.update(` specifically — NOT `updateMany`, which purge
-    // uses to detach assets from a guide it is destroying. Detaching an
-    // owner is not replacing content.
-    expect(
-      code(SERVICE),
-      "guideAsset.update would let a published page's media change without re-approval",
-    ).not.toMatch(/guideAsset\.update\(/);
+  it("asset BYTES are immutable — r2Key and contentType never change", () => {
+    // NARROWED 2026-09-04, deliberately, and the operator signed off.
+    //
+    // This used to forbid `guideAsset.update(` outright, on the rule that a
+    // published page's media must never change without an approver seeing it.
+    // Guides now reference media BY FILENAME rather than by cuid — authoring
+    // against an opaque id was unusable and broke silently whenever content
+    // moved between environments — and a name is a pointer, so replacing the
+    // file behind a name is a thing the operator explicitly asked for.
+    //
+    // WHAT IS GIVEN UP: replacing an image changes every published guide that
+    // references that name, immediately, without re-approval. finalizeAsset
+    // names the affected guides in the confirm dialog so it is a stated choice
+    // rather than a surprise, and audits the replacement.
+    //
+    // WHAT IS STILL GUARANTEED, and what this now enforces: the OBJECT is
+    // immutable. No update may move r2Key or contentType, so the bytes behind
+    // a given key never change and the superseded row remains an exact record
+    // of what a page used to show. Only the name pointer and the supersede
+    // bookkeeping may move.
+    const src = code(SERVICE);
+    const updates = [...src.matchAll(/guideAsset\.update\(\{[\s\S]{0,400}?\}\)/g)];
+    expect(updates.length, "expected the supersede path to still exist").toBeGreaterThan(0);
+    for (const [block] of updates) {
+      expect(block, "an asset update must never move r2Key").not.toMatch(/r2Key:/);
+      expect(block, "an asset update must never change contentType").not.toMatch(/contentType:/);
+      expect(block, "an asset update must never restate sizeBytes").not.toMatch(/sizeBytes:/);
+    }
+  });
+
+  it("replacing a name is audited with what it displaced", () => {
+    // The supersede is the one path that changes what a reader sees without
+    // an approval step. If it is not recorded, nothing anywhere says why a
+    // published guide started showing a different picture.
+    const src = code(SERVICE);
+    expect(src).toMatch(/replacedAssetId: holder\?\.id \?\? null/);
+    expect(src).toMatch(/supersededAt: new Date\(\)/);
+  });
+
+  it("a superseded asset stops resolving", () => {
+    // Otherwise "update the existing image" silently does nothing: the old
+    // row still answers to the name and the new bytes are never shown.
+    expect(code(SERVICE)).toMatch(
+      /originalFilename: name, supersededAt: null/,
+    );
   });
 
   it("the stored size comes from R2, not from the request", () => {

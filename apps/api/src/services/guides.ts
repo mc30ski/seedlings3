@@ -130,6 +130,47 @@ export function referencedAssetIds(markdown: string): string[] {
   return [...markdown.matchAll(/guide-asset:([a-z0-9]+)/gi)].map((m) => m[1]);
 }
 
+/** Media extensions a bare markdown target may name. Anything else in a link
+ *  is prose or an external URL and is left alone. */
+const MEDIA_EXT = /\.(png|jpe?g|gif|webp|svg|mp4|webm|mov|m4v)$/i;
+
+/**
+ * Asset names a body references, e.g. `![alt](grass-id-chart.png)`.
+ *
+ * A target counts only when it has no scheme and no path — `image.png`, never
+ * `https://…/image.png` or `./assets/image.png`. That keeps an external image
+ * URL working as an external image URL.
+ */
+export function referencedAssetNames(markdown: string): string[] {
+  const out = new Set<string>();
+  const targets = [
+    ...[...markdown.matchAll(/!\[[^\]]*\]\(([^)\s]+)\)/g)].map((m) => m[1]),
+    ...[...markdown.matchAll(/^:::video\s+(\S+)\s*$/gim)].map((m) => m[1]),
+  ];
+  for (const t of targets) {
+    if (t.includes(":") || t.includes("/")) continue; // scheme or path — not a name
+    if (MEDIA_EXT.test(t)) out.add(normalizeAssetName(t));
+  }
+  return [...out];
+}
+
+/**
+ * The stored form of an asset name.
+ *
+ * Lower-cased so `Chart.PNG` and `chart.png` are the same asset — a name-based
+ * reference that is case-sensitive would fail in exactly the way that wastes an
+ * afternoon. Uniqueness in the database is on this value.
+ */
+export function normalizeAssetName(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+/** The name a superseded row keeps: still readable, but no longer the bare
+ *  name, so the replacement can take it under the unique index. */
+export function supersededName(name: string, assetId: string): string {
+  return `${normalizeAssetName(name)}.superseded.${assetId}`;
+}
+
 // ── Catalog + read ───────────────────────────────────────────────────────────
 
 /**
@@ -899,6 +940,32 @@ export async function presignAssetUpload(
 }
 
 /**
+ * Published guides that display a given asset, by id OR by name.
+ *
+ * Used to tell an author what replacing an image would actually change before
+ * they confirm it — "3 published guides show this" is the difference between
+ * an informed choice and a blind one.
+ */
+async function guidesUsingAsset(
+  assetId: string,
+  filename: string,
+): Promise<Array<{ id: string; title: string; slug: string }>> {
+  return prisma.guide.findMany({
+    where: {
+      archivedAt: null,
+      currentVersion: {
+        OR: [
+          { contentMarkdown: { contains: `guide-asset:${assetId}` } },
+          { contentMarkdown: { contains: filename } },
+        ],
+      },
+    },
+    select: { id: true, title: true, slug: true },
+    take: 20,
+  });
+}
+
+/**
  * Record the asset AFTER the bytes have landed.
  *
  * Reads the true size back from R2 rather than trusting the browser: a
@@ -915,6 +982,15 @@ export async function finalizeAsset(
     altText?: string | null;
     guideId?: string | null;
     overrodeSizeLimit?: boolean;
+    /**
+     * Take over the name held by this asset.
+     *
+     * Names are unique because guides reference them, so an upload that
+     * reuses one is rejected with NAME_TAKEN and the details of the holder.
+     * The UI turns that into "update the existing image, or cancel"; choosing
+     * update sends the id back here.
+     */
+    replaceAssetId?: string | null;
   },
 ) {
   assertAuthor(viewer);
@@ -945,13 +1021,52 @@ export async function finalizeAsset(
     );
   }
 
+  // ── The name is the handle, so it has to be free ──────────────────────────
+  const name = normalizeAssetName(input.originalFilename);
+  const holder = await prisma.guideAsset.findFirst({
+    where: { originalFilename: name, supersededAt: null },
+    select: { id: true, originalFilename: true, sizeBytes: true, uploadedAt: true, kind: true },
+  });
+  if (holder && holder.id !== input.replaceAssetId) {
+    // Discard the bytes we just accepted: keeping them would leave an orphan
+    // in the bucket that nothing can ever reference.
+    await deleteObject(input.r2Key, BUCKET).catch(() => {});
+    throw new ServiceError(
+      "NAME_TAKEN",
+      `"${name}" is already used by another image.`,
+      409,
+      {
+        id: holder.id,
+        filename: holder.originalFilename,
+        kind: holder.kind,
+        sizeBytes: holder.sizeBytes,
+        uploadedAt: holder.uploadedAt,
+        // What replacing would actually change, so the prompt isn't a blind
+        // yes/no — a published guide showing new media without an approver
+        // seeing it is the tradeoff being made here.
+        publishedGuides: await guidesUsingAsset(holder.id, holder.originalFilename),
+      },
+    );
+  }
+
   return prisma.$transaction(async (tx) => {
+    if (holder) {
+      // Supersede rather than delete. The old row and its object stay as the
+      // record of what a published page used to show; only the NAME moves.
+      await tx.guideAsset.update({
+        where: { id: holder.id },
+        data: {
+          originalFilename: supersededName(holder.originalFilename, holder.id),
+          supersededAt: new Date(),
+        },
+      });
+    }
     const asset = await tx.guideAsset.create({
       data: {
         kind,
         r2Key: input.r2Key,
         contentType: head.contentType ?? input.contentType,
-        originalFilename: input.originalFilename,
+        originalFilename: name,
         sizeBytes: head.sizeBytes,
         altText: input.altText?.trim() || null,
         sizeOverride: !!overLimit,
@@ -965,7 +1080,18 @@ export async function finalizeAsset(
       sizeBytes: head.sizeBytes,
       contentType: asset.contentType,
       guideId: input.guideId ?? null,
+      filename: name,
+      // Snapshot what was displaced. Every guide referencing this name now
+      // shows different media, and this row is the only place that is recorded.
+      replacedAssetId: holder?.id ?? null,
+      replacedSizeBytes: holder?.sizeBytes ?? null,
     });
+    if (holder) {
+      await tx.guideAsset.update({
+        where: { id: holder.id },
+        data: { supersededById: asset.id },
+      });
+    }
     if (overLimit) {
       await writeAudit(tx, AUDIT.GUIDE_ASSET.SIZE_LIMIT_OVERRIDDEN, viewer.userId, {
         assetId: asset.id,
@@ -1075,6 +1201,54 @@ export async function assetUrl(viewer: GuideViewer, assetId: string): Promise<st
     mode: "inline",
     filename: asset.originalFilename,
   });
+}
+
+/**
+ * Resolve one markdown reference — an id OR a bare filename — to a signed URL.
+ *
+ * The name path deliberately excludes superseded rows: a replaced image must
+ * stop resolving, or "update the existing image" would silently do nothing.
+ */
+export async function assetUrlByRef(
+  viewer: GuideViewer,
+  ref: string,
+): Promise<{ id: string; url: string }> {
+  const byId = /^guide-asset:([a-z0-9]+)$/i.exec(ref.trim());
+  if (byId) return { id: byId[1], url: await assetUrl(viewer, byId[1]) };
+
+  const name = normalizeAssetName(ref);
+  const asset = await prisma.guideAsset.findFirst({
+    where: { originalFilename: name, supersededAt: null },
+    select: { id: true, r2Key: true, originalFilename: true },
+  });
+  if (!asset) throw new ServiceError("NOT_FOUND", "Asset not found.", 404);
+
+  if (viewer.kind === "worker") {
+    // Same rule as the id path: a worker may only fetch media a guide they
+    // can actually see references. Identical 404 either way, so "no such
+    // asset" and "an asset you may not see" stay indistinguishable.
+    const referenced = await prisma.guide.findFirst({
+      where: {
+        ...visibilityWhere(viewer),
+        currentVersion: {
+          OR: [
+            { contentMarkdown: { contains: name } },
+            { contentMarkdown: { contains: `guide-asset:${asset.id}` } },
+          ],
+        },
+      },
+      select: { id: true },
+    });
+    if (!referenced) throw new ServiceError("NOT_FOUND", "Asset not found.", 404);
+  }
+
+  return {
+    id: asset.id,
+    url: await getDownloadUrl(asset.r2Key, 3600, BUCKET, {
+      mode: "inline",
+      filename: asset.originalFilename,
+    }),
+  };
 }
 
 /** Guides whose markdown still references an asset, in ANY live version. */

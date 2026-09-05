@@ -22,6 +22,7 @@ import {
   finalizeAsset,
   listAssets,
   assetUrl,
+  assetUrlByRef,
   guidesReferencing,
   resolveGuideLinks,
   guidesLinkingTo,
@@ -119,6 +120,41 @@ export default async function guideRoutes(app: FastifyInstance) {
   app.get("/me/guides/assets/:id/url", workerGuard, async (req: any) => {
     const viewer = guideViewer(req);
     return { url: await assetUrl(viewer, String(req.params.id)) };
+  });
+
+  // Resolve a markdown reference — `guide-asset:<id>` OR a bare filename like
+  // `grass-id-chart.png`. The name form is what authors actually write; the id
+  // form stays so existing bodies keep working.
+  //
+  // view-as-allow: media visibility follows the GUIDE's published state, which
+  // is identical for every worker — there is no per-user state to impersonate,
+  // exactly as for /me/guides/assets/:id/url above.
+  //
+  // GET with repeated `?ref=` params, NOT a POST body: every /me/ route is
+  // read-only and the build gate enforces it. Repeated params rather than one
+  // comma-joined value because a filename may legally contain a comma.
+  //
+  // Batched so a guide with six images is one round trip instead of six.
+  app.get("/me/guides/assets/resolve", workerGuard, async (req: any) => {
+    const viewer = guideViewer(req);
+    const raw = (req.query ?? {}).ref;
+    const refs: string[] = (Array.isArray(raw) ? raw : raw == null ? [] : [raw])
+      .slice(0, 50)
+      .map((r: any) => String(r));
+    const out: Record<string, { id: string; url: string } | null> = {};
+    await Promise.all(
+      refs.map(async (ref) => {
+        try {
+          out[ref] = await assetUrlByRef(viewer, ref);
+        } catch {
+          // An unresolvable reference is a rendering problem, not a request
+          // failure — the rest of the guide is still worth reading, and the
+          // renderer shows a warning in place of the image.
+          out[ref] = null;
+        }
+      }),
+    );
+    return { assets: out };
   });
 
   // ── Authoring (admin+) ─────────────────────────────────────────────────

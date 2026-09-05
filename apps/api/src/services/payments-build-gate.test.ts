@@ -69,6 +69,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "fs";
+import { join } from "path";
 import type { WorkerType } from "@prisma/client";
 import {
   computeBreakdown,
@@ -1048,5 +1050,66 @@ describe("[build-gate] worker earnings display (computeMyOccurrenceNet)", () => 
     );
     // (100 + 50) × 1.00 × 0.80 = 120
     expect(result).toBeCloseTo(120, 5);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Re-pricing a finished job
+//
+// `promisedPayouts` is a DOLLAR snapshot taken from the price when splits are
+// persisted, and the reconciler tops employees up to it at approval. Changing
+// the price without re-snapshotting pays the crew against the old number —
+// silently, and in the direction that shorts them on a job that ran long.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("payments build gate — adjustOccurrencePrice keeps the promise honest", () => {
+  const JOBS = readFileSync(join(__dirname, "jobs.ts"), "utf8");
+  const fn = (() => {
+    const i = JOBS.indexOf("async adjustOccurrencePrice(");
+    expect(i, "adjustOccurrencePrice not found").toBeGreaterThan(-1);
+    return JOBS.slice(i, JOBS.indexOf("\n  async ", i + 1));
+  })();
+
+  it("refuses once a Payment row exists, confirmed or not", () => {
+    // Same rule as a team change. Rewriting money under a recorded payment is
+    // never less surprising than asking the operator to reject or revert.
+    expect(fn).toMatch(/if \(occ\.payment\) \{/);
+    expect(fn).toMatch(/PAYMENT_EXISTS/);
+  });
+
+  it("re-snapshots promisedPayouts from the NEW price", () => {
+    expect(fn).toMatch(/computeBreakdown\(\s*priceTotal,/);
+    // The snapshot has to reach the WRITE, not merely be computed. Asserting
+    // on the update's data is the difference between "we calculated it" and
+    // "we saved it" — a mutation that dropped it from the data object
+    // survived a looser check.
+    expect(fn).toMatch(
+      /data: \{ price, \.\.\.\(promised \? \{ promisedPayouts: promised as any \} : \{\}\) \}/,
+    );
+  });
+
+  it("the snapshot includes add-ons, which is what the client is billed", () => {
+    expect(fn).toMatch(/const priceTotal = price \+ addonTotal;/);
+  });
+
+  it("it reuses the existing splits rather than reallocating", () => {
+    // The operator already chose who did what. A price correction is not a
+    // reason to silently redistribute shares.
+    expect(fn).toMatch(/occ\.completionSplits as Array/);
+    expect(fn).toMatch(/splitPercent: x\.percent/);
+  });
+
+  it("price and promise land in ONE write", () => {
+    // Two updates leaves a window where the price is new and the promise is
+    // stale, and gives the audit trail two events for one decision.
+    const updates = [...fn.matchAll(/tx\.jobOccurrence\.update\(/g)];
+    expect(updates.length, "expected exactly one occurrence update").toBe(1);
+  });
+
+  it("both sides of the money change are audited", () => {
+    expect(fn).toMatch(/action: "price_adjusted"/);
+    expect(fn).toMatch(/priceBefore: before/);
+    expect(fn).toMatch(/promisedPayoutsBefore/);
+    expect(fn).toMatch(/promisedPayoutsAfter/);
   });
 });

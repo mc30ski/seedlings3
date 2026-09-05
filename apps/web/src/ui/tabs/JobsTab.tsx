@@ -1378,6 +1378,12 @@ export default function JobsTab({
   }, [editTimeOcc]);
   const [busyOccId, setBusyOccId] = useState<string | null>(null);
   const [addAddonOcc, setAddAddonOcc] = useState<WorkerOccurrence | null>(null);
+  // Re-price a finished visit — quoted three hours, took four. Admin+ only,
+  // and the server refuses once a Payment row exists.
+  const [priceEditOcc, setPriceEditOcc] = useState<WorkerOccurrence | null>(null);
+  const [priceEditValue, setPriceEditValue] = useState("");
+  const [priceEditReason, setPriceEditReason] = useState("");
+  const [priceEditBusy, setPriceEditBusy] = useState(false);
   const [addonTag, setAddonTag] = useState<string>("");
   const [addonCustomLabel, setAddonCustomLabel] = useState("");
   const [addonPrice, setAddonPrice] = useState("");
@@ -3893,13 +3899,13 @@ export default function JobsTab({
                     Also ahead
                   </Text>
                   <WeatherAlertBadge alerts={orphans} density="compact"
-                                     max={orphans.length} expandable
+                                     expandable
                                      openId={openAlertId}
                                      onToggle={(id) => setOpenAlertId((v) => (v === id ? null : id))} />
                 </HStack>
                 {(() => {
-                  const opened = orphans.find((al) => al.id === openAlertId);
-                  return opened ? <WeatherAlertDetail alert={opened} /> : null;
+                  const open = orphans.some((al) => al.id === openAlertId);
+                  return open ? <WeatherAlertDetail alerts={orphans} /> : null;
                 })()}
               </Box>
             );
@@ -3992,7 +3998,6 @@ export default function JobsTab({
                   <WeatherAlertBadge
                     alerts={alertsForDate(weatherAlerts, group.key)}
                     density="compact"
-                    max={2}
                     expandable
                     openId={openAlertId}
                     onToggle={(id) => setOpenAlertId((v) => (v === id ? null : id))}
@@ -4143,9 +4148,12 @@ export default function JobsTab({
               {/* Expanded advisory — full width, BELOW the header row. Inside
                   it, this was a flex child and pushed the date sideways. */}
               {(() => {
-                const opened = alertsForDate(weatherAlerts, group.key)
-                  .find((al) => al.id === openAlertId);
-                return opened ? <WeatherAlertDetail alert={opened} /> : null;
+                // Expanding the chip opens EVERY advisory for the day, not just
+                // the one the chip names — the chip collapses the rest into a
+                // "+N" and this is the only place they can be read.
+                const forDay = alertsForDate(weatherAlerts, group.key);
+                const open = forDay.some((al) => al.id === openAlertId);
+                return open ? <WeatherAlertDetail alerts={forDay} /> : null;
               })()}
               {!collapsedGroups.has(group.key) && <VStack align="stretch" gap={3}>
           {/* ═══════════════════════════════════════════════════════════
@@ -6894,6 +6902,27 @@ export default function JobsTab({
                               ${totalPrice(occ)!.toFixed(2)}{addonsAmt > 0 ? ` ($${(basePrice ?? 0).toFixed(2)} + $${addonsAmt.toFixed(2)})` : ""}{isEstimateOcc ? " (proposal)" : ""}
                             </Badge>
                           ); })()}
+                          {/* Re-price. Only before a payment exists — after
+                              that the server refuses and tells you to reject
+                              or revert first, so offering the button would be
+                              a dead end. */}
+                          {(isAdmin || isSuper) && !occ.payment && !isEstimateOcc && (
+                            <Button
+                              size="xs"
+                              variant="outline"
+                              colorPalette="blue"
+                              px="2"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPriceEditOcc(occ);
+                                setPriceEditValue(String(occ.price ?? ""));
+                                setPriceEditReason("");
+                              }}
+                              title="Change what this visit is billed at"
+                            >
+                              Adjust price
+                            </Button>
+                          )}
                           {occ.payment && (
                             <HStack gap={1}>
                               <Badge bg="green.700" color="white" fontSize="sm" px="3" py="0.5" borderRadius="full">
@@ -9936,6 +9965,104 @@ export default function JobsTab({
                     }}
                   >
                     Add
+                  </Button>
+                </HStack>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
+
+      {/* Adjust Price Dialog */}
+      <Dialog.Root
+        open={!!priceEditOcc}
+        onOpenChange={(e) => { if (!e.open) { setPriceEditOcc(null); setPriceEditValue(""); setPriceEditReason(""); } }}
+      >
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content mx="4" maxW="sm" w="full" rounded="2xl" p="4" shadow="lg">
+              <Dialog.CloseTrigger />
+              <Dialog.Header>
+                <Dialog.Title>Adjust price</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <ImpersonationWarning viewAsName={effectiveViewAsName} />
+                {priceEditOcc && (() => {
+                  const addons = addonTotal(priceEditOcc);
+                  const next = parseFloat(priceEditValue);
+                  const valid = Number.isFinite(next) && next >= 0;
+                  const before = priceEditOcc.price ?? 0;
+                  return (
+                    <VStack align="stretch" gap={3}>
+                      <Box>
+                        <Text fontSize="sm" fontWeight="medium" mb={1}>Base price *</Text>
+                        <CurrencyInput value={priceEditValue} onChange={setPriceEditValue} size="sm" />
+                        <Text fontSize="xs" color="fg.muted" mt={1}>
+                          Was ${before.toFixed(2)}
+                          {addons > 0 && ` · add-ons +$${addons.toFixed(2)} are separate and unchanged`}
+                        </Text>
+                      </Box>
+                      <Box>
+                        <Text fontSize="sm" fontWeight="medium" mb={1}>Reason (optional)</Text>
+                        <input
+                          type="text"
+                          value={priceEditReason}
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPriceEditReason(e.target.value)}
+                          placeholder="e.g. Took 4 hours, quoted 3"
+                          style={{ width: "100%", padding: "6px 8px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "14px" }}
+                        />
+                      </Box>
+                      {/* The crew's cut moves with the price. Saying so here
+                          is the difference between an informed change and a
+                          surprise on someone's paycheck. */}
+                      {valid && Math.abs(next - before) > 0.005 && (
+                        <Box
+                          p={2} borderRadius="md" fontSize="xs"
+                          bg={next > before ? "green.subtle" : "orange.subtle"}
+                          borderWidth="1px"
+                          borderColor={next > before ? "green.solid" : "orange.solid"}
+                        >
+                          Billed total goes from ${(before + addons).toFixed(2)} to{" "}
+                          ${(next + addons).toFixed(2)}. The crew's share is recalculated
+                          from it, so what each worker is owed changes too.
+                        </Box>
+                      )}
+                    </VStack>
+                  );
+                })()}
+              </Dialog.Body>
+              <Dialog.Footer>
+                <HStack gap={2} justify="end" w="full">
+                  <Button size="sm" variant="ghost" onClick={() => setPriceEditOcc(null)}>Cancel</Button>
+                  <Button
+                    size="sm"
+                    colorPalette="blue"
+                    loading={priceEditBusy}
+                    disabled={!Number.isFinite(parseFloat(priceEditValue)) || parseFloat(priceEditValue) < 0}
+                    onClick={async () => {
+                      if (!priceEditOcc) return;
+                      setPriceEditBusy(true);
+                      try {
+                        const next = parseFloat(priceEditValue);
+                        await apiPatch(`/api/admin/occurrences/${priceEditOcc.id}/price`, {
+                          price: next,
+                          reason: priceEditReason.trim() || undefined,
+                        });
+                        setItems((prev) => prev.map((o) => o.id === priceEditOcc.id ? { ...o, price: next } : o));
+                        publishInlineMessage({ type: "SUCCESS", text: "Price updated." });
+                        setPriceEditOcc(null);
+                        setPriceEditValue("");
+                        setPriceEditReason("");
+                      } catch (err) {
+                        // A 409 here means a payment already exists and names
+                        // the remedy — surface it verbatim.
+                        publishInlineMessage({ type: "ERROR", text: getErrorMessage("Couldn't change the price.", err) });
+                      }
+                      setPriceEditBusy(false);
+                    }}
+                  >
+                    Save
                   </Button>
                 </HStack>
               </Dialog.Footer>

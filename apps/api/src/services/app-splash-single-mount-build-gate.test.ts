@@ -126,3 +126,64 @@ describe("AppSplash single-mount build gate", () => {
     expect(doc).toContain("window.location.pathname !== '/'");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The splash caret has to be visible
+//
+// It shipped invisible: an empty <span> with `display: inline-block` and no
+// height collapses to zero, so the `border-right` that was meant to BE the
+// cursor had no length to draw along. The blink keyframes were fine — there
+// was simply nothing on screen to blink. Nothing catches that but looking at
+// it, and the splash is on screen for under two seconds.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("app splash — the typing caret actually renders", () => {
+  const SPLASH = readFileSync(
+    join(REPO_ROOT, "apps/web/src/ui/helpers/AppSplash.tsx"), "utf8",
+  );
+  /** The caret span: the one carrying the blink animation. */
+  const caret = (() => {
+    const i = SPLASH.indexOf("seedlings-splash-cursor-blink");
+    return SPLASH.slice(SPLASH.lastIndexOf("<span", i), SPLASH.indexOf("/>", i) + 2);
+  })();
+
+  it("sets an explicit height — it has no content to give it one", () => {
+    expect(caret).toMatch(/height:\s*"[^"]+"/);
+  });
+
+  it("is a filled block, not a border on an empty box", () => {
+    // A border needs a box with height; a background needs width and height.
+    // Both are stated now, but the filled form makes the dependency obvious.
+    expect(caret).toMatch(/background:\s*"#4a5568"/);
+    expect(caret).toMatch(/width:\s*"2px"/);
+  });
+
+  it("the blink period tracks the typing speed", () => {
+    // A caret ticking at a fixed 1s next to typing that accelerates reads as
+    // two unrelated clocks. It rides the same speedFactor ramp as everything
+    // else in the animation.
+    expect(SPLASH).toMatch(/const blinkMs = \(idx: number\)/);
+    expect(SPLASH).toMatch(/BLINK_BASE_MS \* speedFactor\(idx\)/);
+    expect(caret).toMatch(/\$\{blink\}ms/);
+  });
+
+  it("the fastest blink stays under three flashes a second", () => {
+    // WCAG 2.3.1. The raw ramp bottoms out at 0.24, which would drive a 1s
+    // base down to 240ms — over four a second. The floor is what keeps it
+    // legal, so it is asserted rather than left to whoever tunes the ramp.
+    const base = Number(/const BLINK_BASE_MS = (\d+)/.exec(SPLASH)?.[1]);
+    const floor = Number(/const BLINK_FLOOR_MS = (\d+)/.exec(SPLASH)?.[1]);
+    expect(base).toBeGreaterThan(0);
+    expect(floor).toBeGreaterThan(1000 / 3);
+    // And the floor has to actually bind — otherwise it is decoration.
+    const rampFloor = Number(/Math\.max\(([\d.]+), Math\.pow/.exec(SPLASH)?.[1]);
+    expect(base * rampFloor).toBeLessThan(floor);
+  });
+
+  it("the blink keyframes it names exist", () => {
+    // The animation silently does nothing if the name is wrong, which looks
+    // identical to a caret that renders but never blinks.
+    const css = readFileSync(join(REPO_ROOT, "apps/web/src/styles/globals.css"), "utf8");
+    expect(css).toMatch(/@keyframes seedlings-splash-cursor-blink/);
+  });
+});

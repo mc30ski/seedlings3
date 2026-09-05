@@ -1442,6 +1442,20 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   // ── Occurrence Add-on Services ───────────────────────────────────────────
 
+  // Re-price a completed visit. Admin+, and refused once a Payment row exists
+  // — the service explains the reject/revert remedy rather than silently
+  // rewriting money under a recorded payment.
+  app.patch("/admin/occurrences/:id/price", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const { price, reason } = (req.body || {}) as { price?: number; reason?: string };
+    if (price == null || !Number.isFinite(Number(price)) || Number(price) < 0) {
+      throw app.httpErrors.badRequest("price is required and must be zero or more");
+    }
+    return services.jobs.adjustOccurrencePrice(
+      uid, String(req.params.id), Number(price), reason ?? null,
+    );
+  });
+
   app.post("/admin/occurrences/:id/addons", adminGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const occurrenceId = String(req.params.id);
