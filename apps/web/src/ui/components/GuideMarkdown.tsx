@@ -49,36 +49,59 @@ const ASSET_RE = /guide-asset:([a-z0-9]+)/gi;
 const GUIDE_LINK_RE = /guide:([a-z0-9][a-z0-9-]*)/gi;
 const VIDEO_LINE_RE = /^:::video\s+(\S+)\s*$/gim;
 
-/** Resolve `guide-asset:<id>` tokens to signed URLs, once per id. */
-function useAssetUrls(markdown: string): Record<string, string> {
-  const ids = useMemo(() => {
+/** Media extensions a bare markdown target may name — mirrors the server's
+ *  MEDIA_EXT so the two agree on what counts as an asset reference. */
+const MEDIA_EXT = /\.(png|jpe?g|gif|webp|svg|mp4|webm|mov|m4v)$/i;
+const IMG_RE = /!\[[^\]]*\]\(([^)\s]+)\)/g;
+
+/** True for a bare asset name — no scheme, no path, a media extension. An
+ *  external image URL has to keep working as an external image URL. */
+function isAssetName(target: string): boolean {
+  return !target.includes(":") && !target.includes("/") && MEDIA_EXT.test(target);
+}
+
+/**
+ * Resolve markdown references to signed URLs — `guide-asset:<id>` tokens AND
+ * bare filenames like `grass-id-chart.png`.
+ *
+ * Keyed by the raw reference text, so substitution is a straight lookup and
+ * both forms share one code path. `null` means resolved-and-missing, which the
+ * renderer shows as a warning; `undefined` means still loading.
+ */
+function useAssetUrls(markdown: string): Record<string, string | null> {
+  const refs = useMemo(() => {
     const found = new Set<string>();
-    for (const m of markdown.matchAll(ASSET_RE)) found.add(m[1]);
+    for (const m of markdown.matchAll(ASSET_RE)) found.add(m[0]);
+    for (const m of markdown.matchAll(IMG_RE)) if (isAssetName(m[1])) found.add(m[1]);
+    for (const m of markdown.matchAll(VIDEO_LINE_RE)) if (isAssetName(m[1])) found.add(m[1]);
     return [...found];
   }, [markdown]);
-  const [urls, setUrls] = useState<Record<string, string>>({});
+  const [urls, setUrls] = useState<Record<string, string | null>>({});
 
   useEffect(() => {
     let cancelled = false;
+    if (refs.length === 0) { setUrls({}); return; }
     (async () => {
-      const entries = await Promise.all(
-        ids.map(async (id) => {
-          try {
-            const r = await apiGet<{ url: string }>(`/api/me/guides/assets/${id}/url`);
-            return [id, r.url] as const;
-          } catch {
-            // A missing asset must not take the whole page down — the rest
-            // of the guide is still worth reading.
-            return [id, ""] as const;
-          }
-        }),
-      );
-      if (!cancelled) setUrls(Object.fromEntries(entries));
+      try {
+        const qs = refs.map((ref) => `ref=${encodeURIComponent(ref)}`).join("&");
+        const r = await apiGet<{ assets: Record<string, { id: string; url: string } | null> }>(
+          `/api/me/guides/assets/resolve?${qs}`,
+        );
+        if (!cancelled) {
+          setUrls(Object.fromEntries(
+            refs.map((ref) => [ref, r.assets?.[ref]?.url ?? null]),
+          ));
+        }
+      } catch {
+        // A failed lookup must not take the whole page down — the rest of the
+        // guide is still worth reading.
+        if (!cancelled) setUrls(Object.fromEntries(refs.map((ref) => [ref, null])));
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [ids.join(",")]);
+  }, [refs.join(",")]);
 
   return urls;
 }
@@ -181,13 +204,14 @@ function VideoBlock({
   allowedDomains,
 }: {
   target: string;
-  assetUrls: Record<string, string>;
+  assetUrls: Record<string, string | null>;
   allowedDomains: string[];
 }) {
-  const assetMatch = /^guide-asset:([a-z0-9]+)$/i.exec(target);
+  const isAsset = /^guide-asset:[a-z0-9]+$/i.test(target) || isAssetName(target);
 
-  if (assetMatch) {
-    const url = assetUrls[assetMatch[1]];
+  if (isAsset) {
+    const url = assetUrls[target];
+    if (url === null) return <MissingAsset target={target} kind="video" />;
     if (!url) return <Text fontSize="xs" color="fg.muted">Loading video…</Text>;
     return (
       <Box my={3} borderRadius="md" overflow="hidden" borderWidth="1px" borderColor="gray.200">
@@ -248,6 +272,52 @@ function VideoBlock({
         referrerPolicy="strict-origin-when-cross-origin"
         style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: 0 }}
       />
+    </Box>
+  );
+}
+
+/**
+ * Swap every resolved reference for its signed URL, just before rendering.
+ *
+ * A reference that resolved to nothing is left ALONE rather than replaced with
+ * an empty string: the renderer would draw a broken-image glyph with no
+ * explanation, which is how a dangling reference stayed invisible for weeks.
+ * `missingIn` surfaces those instead.
+ */
+function substituteAssets(text: string, urls: Record<string, string | null>): string {
+  let out = text.replace(ASSET_RE, (whole) => urls[whole] || whole);
+  out = out.replace(IMG_RE, (whole, target: string) =>
+    isAssetName(target) && urls[target] ? whole.replace(target, urls[target]!) : whole,
+  );
+  return out;
+}
+
+/** References in this block that resolved to nothing. */
+function missingIn(text: string, urls: Record<string, string | null>): string[] {
+  const out = new Set<string>();
+  for (const m of text.matchAll(ASSET_RE)) if (urls[m[0]] === null) out.add(m[0]);
+  for (const m of text.matchAll(IMG_RE)) {
+    if (isAssetName(m[1]) && urls[m[1]] === null) out.add(m[1]);
+  }
+  return [...out];
+}
+
+/**
+ * A reference that points at nothing.
+ *
+ * Said out loud on purpose. The old behaviour rendered nothing at all, so a
+ * guide whose image had never been uploaded — or whose body carried an asset
+ * id from another environment — looked exactly like a guide with no image.
+ */
+function MissingAsset({ target, kind }: { target: string; kind: "image" | "video" }) {
+  return (
+    <Box my={3} px={2.5} py={2} borderRadius="md" bg="orange.subtle"
+         borderWidth="1px" borderLeftWidth="3px" borderColor="orange.solid">
+      <Text fontSize="12px" fontWeight="semibold">Missing {kind}</Text>
+      <Text fontSize="11.5px" color="fg.muted" wordBreak="break-all">
+        Nothing in the media library is called <strong>{target}</strong>. Upload it under
+        that name, or point this reference at a file that exists.
+      </Text>
     </Box>
   );
 }
@@ -356,12 +426,14 @@ export default function GuideMarkdown({
             allowedDomains={allowedEmbedDomains}
           />
         ) : (
-          <MarkdownContent key={i} linkRenderer={linkRenderer}>
-            {/* Swap asset tokens for signed URLs just before rendering. An
-                unresolved token renders as-is rather than as a broken
-                image, which reads as "still loading" instead of "gone". */}
-            {b.text.replace(ASSET_RE, (whole, id: string) => assetUrls[id] || whole)}
-          </MarkdownContent>
+          <Box key={i}>
+            <MarkdownContent linkRenderer={linkRenderer}>
+              {substituteAssets(b.text, assetUrls)}
+            </MarkdownContent>
+            {missingIn(b.text, assetUrls).map((ref) => (
+              <MissingAsset key={ref} target={ref} kind="image" />
+            ))}
+          </Box>
         ),
       )}
     </Box>

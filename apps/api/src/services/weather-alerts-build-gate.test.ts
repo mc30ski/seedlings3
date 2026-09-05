@@ -215,7 +215,7 @@ describe("weather alerts — the job feed shows alerts regardless of scheduling"
     const badge = readFileSync(
       join(REPO_ROOT, "apps/web/src/ui/components/WeatherAlertBadge.tsx"), "utf8",
     );
-    expect(badge).toMatch(/whenLabel\(alert, bizToday\(\), bizTomorrow\(\)\)/);
+    expect(badge).toMatch(/whenLabel\(alert, today, tomorrow\)/);
     expect(badge).toMatch(/alert\.instruction/);
   });
 
@@ -237,7 +237,7 @@ describe("weather alerts — the job feed shows alerts regardless of scheduling"
     expect(badge).toMatch(/export function WeatherAlertDetail/);
     // No internal open state — it must be driven by the caller.
     expect(badge).not.toMatch(/useState/);
-    expect(JOBS).toMatch(/<WeatherAlertDetail alert=\{opened\} \/>/);
+    expect(JOBS).toMatch(/<WeatherAlertDetail alerts=\{forDay\} \/>/);
   });
 
   it("the disclosure is the same filled triangle the day headers use", () => {
@@ -261,6 +261,35 @@ describe("weather alerts — the job feed shows alerts regardless of scheduling"
     // springing back open while someone is trying to read the feed.
     expect(JOBS).toMatch(/alertDefaultedRef/);
     expect(JOBS).toMatch(/if \(alertDefaultedRef\.current \|\| !weatherAlerts\.length\) return;/);
+  });
+
+  it("a day with several advisories shows ONE chip and a count", () => {
+    // Two chips side by side overflowed a phone header — the date, the job
+    // count and the collapse triangle were pushed off the right edge. The most
+    // urgent one shows; the rest become "+N".
+    const badge = readFileSync(
+      join(REPO_ROOT, "apps/web/src/ui/components/WeatherAlertBadge.tsx"), "utf8",
+    );
+    const compact = badge.slice(badge.indexOf('if (density === "compact")'));
+    const block = compact.slice(0, compact.indexOf("\n  }\n"));
+    // One chip, derived from topAlert — NOT a map over the array.
+    expect(block).toMatch(/const lead = topAlert\(alerts, today\)!/);
+    expect(block, "the compact chip must not render one element per alert")
+      .not.toMatch(/\.map\(/);
+    expect(block).toMatch(/const extra = alerts\.length - 1;/);
+    expect(block).toMatch(/\+\{extra\}/);
+  });
+
+  it("expanding shows EVERY advisory for that day, not just the named one", () => {
+    // The chip collapses the rest into "+N", so the expanded panel is the only
+    // place they can be read at all.
+    expect(JOBS).toMatch(/const forDay = alertsForDate\(weatherAlerts, group\.key\)/);
+    expect(JOBS).toMatch(/forDay\.some\(\(al\) => al\.id === openAlertId\)/);
+    const badge = readFileSync(
+      join(REPO_ROOT, "apps/web/src/ui/components/WeatherAlertBadge.tsx"), "utf8",
+    );
+    expect(badge).toMatch(/WeatherAlertDetail\(\{ alerts \}: \{ alerts: WeatherAlert\[\] \}\)/);
+    expect(badge).toMatch(/ordered\.map\(\(alert\)/);
   });
 
   it("heat is red, never the orange the unconfirmed chip already uses", () => {

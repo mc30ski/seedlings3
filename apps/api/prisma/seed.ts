@@ -7206,17 +7206,19 @@ async function seedGuides() {
   const digest = (md: string) =>
     require("crypto").createHash("sha256").update(md, "utf8").digest("hex");
 
-  const media = await seedGuideAssets();
-  /** Image markdown for a fixture, or "" when media isn't available. */
-  const img = (file: string, caption: string) => {
-    const id = media.get(file);
-    return id ? `![${caption}](guide-asset:${id})\n\n` : "";
-  };
-  /** Video directive for a fixture, or "" when media isn't available. */
-  const vid = (file: string) => {
-    const id = media.get(file);
-    return id ? `:::video guide-asset:${id}\n\n` : "";
-  };
+  await seedGuideAssets();
+  // Bodies reference media BY NAME, never by id.
+  //
+  // These used to emit `guide-asset:<cuid>`, which meant a seeded body carried
+  // ids that existed only in the environment that generated them — copy the
+  // guide to production and every image silently resolved to nothing. The
+  // filename is stable across environments, which is the whole point.
+  //
+  // Still emitted even when the upload failed: a name that resolves to nothing
+  // now renders a visible "missing image" warning, which is strictly better
+  // than a guide that quietly pretends it never had one.
+  const img = (file: string, caption: string) => `![${caption}](${file})\n\n`;
+  const vid = (file: string) => `:::video ${file}\n\n`;
 
   const bermuda = `# Fertilizing Bermuda grass
 

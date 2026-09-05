@@ -215,12 +215,27 @@ export const presignAsset = (input: {
   overrideSizeLimit?: boolean;
 }) => apiPost<PresignResult>("/api/guides/assets/upload-url", input);
 
+/** The 409 body when a name is already taken, so the caller can offer to
+ *  update the existing image instead of failing. */
+export type AssetNameTaken = {
+  id: string;
+  filename: string;
+  kind: string;
+  sizeBytes: number;
+  uploadedAt: string;
+  /** Guides whose CURRENT version shows it — what replacing would change. */
+  publishedGuides: Array<{ id: string; title: string; slug: string }>;
+};
+
 export const finalizeAsset = (input: {
   r2Key: string;
   contentType: string;
   originalFilename: string;
   altText?: string | null;
   guideId?: string | null;
+  /** Take over this asset's name, superseding it. Sent only after the
+   *  operator confirms the NAME_TAKEN prompt. */
+  replaceAssetId?: string | null;
 }) => apiPost<GuideAsset>("/api/guides/assets/finalize", input);
 
 export const fetchAssetReferences = (id: string) =>

@@ -619,6 +619,19 @@ export type ServicesJobs = {
     input: CreateOccurrenceInput,
   ): Promise<JobOccurrence>;
 
+  /** Change what a visit is billed at, after the work is done but before any
+   *  payment exists. Re-snapshots the promised payouts. */
+  adjustOccurrencePrice(
+    currentUserId: string,
+    occurrenceId: string,
+    price: number,
+    reason?: string | null,
+  ): Promise<{
+    price: number;
+    priceTotal: number;
+    promisedPayouts: Array<{ userId: string; net: number }> | null;
+  }>;
+
   updateOccurrence(
     currentUserId: string,
     occurrenceId: string,

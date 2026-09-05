@@ -3740,20 +3740,35 @@ model GuideAsset {
 
   /// Object key in the guide-media bucket. IMMUTABLE: an asset is never
   /// re-uploaded in place, because a published page's media would then
-  /// change without an approver seeing it. "Replacing" an image means a
-  /// new asset plus a page edit, which re-enters review.
-  r2Key            String  @unique
-  contentType      String
-  originalFilename String
+  /// change without an approver seeing it. "Replacing" an image writes a NEW
+  /// asset and supersedes this one — the bytes behind a given key never move.
+  r2Key       String @unique
+  contentType String
+
+  /// The name guides reference. UNIQUE, and lower-cased on the way in, so a
+  /// body can say `![alt](grass-id-chart.png)` and the system resolves it —
+  /// authoring against an opaque cuid was the wrong trade, and it broke
+  /// silently every time content moved between environments.
+  ///
+  /// Uniqueness is enforced across LIVE assets only. A superseded row keeps
+  /// its bytes for audit but has its name suffixed on the way out, which is
+  /// what frees the name for its replacement.
+  originalFilename String @unique
+
+  /// Set when a newer upload took this asset's name. The row and its object
+  /// stay — an audit trail of what a published page used to show — but
+  /// nothing resolves to it any more.
+  supersededAt   DateTime?
+  supersededById String?
   /// VERIFIED size read back from R2 after upload, not the size the
   /// browser declared. A presigned PUT is signed on content-type only, so
   /// the declared number is unenforceable — and an unchecked figure shown
   /// as metadata is exactly the kind of number that is wrong for a year.
-  sizeBytes        Int
+  sizeBytes      Int
   /// Alt text / caption. Required for images.
-  altText          String?
+  altText        String?
   /// Set when a Super knowingly uploaded past GUIDE_MAX_VIDEO_MB.
-  sizeOverride     Boolean @default(false)
+  sizeOverride   Boolean   @default(false)
 
   /// Optional owning guide — assets can also live unattached in the
   /// library and be referenced by several guides.

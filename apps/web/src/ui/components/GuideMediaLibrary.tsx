@@ -33,6 +33,7 @@ import {
   fetchAssets,
   presignAsset,
   finalizeAsset,
+  type AssetNameTaken,
   deleteAsset,
   assetToken,
   fmtBytes,
@@ -59,6 +60,12 @@ export default function GuideMediaLibrary({
   const [q, setQ] = useState("");
   const [deleteFor, setDeleteFor] = useState<GuideAsset | null>(null);
   const [pendingOverride, setPendingOverride] = useState<{ file: File; message: string } | null>(null);
+  // A name collision. Names are how guides reference media now, so the upload
+  // stops and asks rather than quietly creating a second "chart.png" that
+  // nothing can address unambiguously.
+  const [pendingReplace, setPendingReplace] = useState<
+    { file: File; r2Key: string; existing: AssetNameTaken } | null
+  >(null);
   const imageInput = useRef<HTMLInputElement | null>(null);
   const videoInput = useRef<HTMLInputElement | null>(null);
 
@@ -95,7 +102,7 @@ export default function GuideMediaLibrary({
   }, [q]);
 
   const upload = useCallback(
-    async (file: File, overrideSizeLimit = false) => {
+    async (file: File, overrideSizeLimit = false, replaceAssetId?: string) => {
       setBusy(true);
       try {
         const pre = await presignAsset({
@@ -122,12 +129,29 @@ export default function GuideMediaLibrary({
         });
         if (!put.ok) throw new Error(`Upload failed (${put.status})`);
 
-        await finalizeAsset({
-          r2Key: pre.r2Key,
-          contentType: file.type,
-          originalFilename: file.name,
+        try {
+          await finalizeAsset({
+            r2Key: pre.r2Key,
+            contentType: file.type,
+            originalFilename: file.name,
+            replaceAssetId,
+          });
+        } catch (err: any) {
+          const taken: AssetNameTaken | undefined =
+            err?.code === "NAME_TAKEN" ? err?.details : undefined;
+          if (taken) {
+            // The bytes are already in the bucket and the server discarded
+            // them, so confirming re-uploads. Cheap, and it keeps the flow
+            // from holding an orphan object while a dialog is open.
+            setPendingReplace({ file, r2Key: pre.r2Key, existing: taken });
+            return;
+          }
+          throw err;
+        }
+        publishInlineMessage({
+          type: "SUCCESS",
+          text: replaceAssetId ? `${file.name} updated.` : `${file.name} added.`,
         });
-        publishInlineMessage({ type: "SUCCESS", text: `${file.name} added.` });
         await load();
       } catch (err) {
         publishInlineMessage({ type: "ERROR", text: getErrorMessage("Upload failed.", err) });
@@ -373,6 +397,33 @@ export default function GuideMediaLibrary({
           if (p) void upload(p.file, true);
         }}
         onCancel={() => setPendingOverride(null)}
+      />
+
+      <ConfirmDialog
+        open={!!pendingReplace}
+        title={`"${pendingReplace?.existing.filename ?? ""}" already exists`}
+        message={
+          `A ${pendingReplace?.existing.kind === "VIDEO" ? "video" : "image"} with that name is ` +
+          `already in the library. Updating it replaces what every guide referencing ` +
+          `"${pendingReplace?.existing.filename ?? ""}" displays.` +
+          (pendingReplace?.existing.publishedGuides.length
+            ? ` Currently shown in: ${pendingReplace.existing.publishedGuides
+                .map((g) => g.title).join(", ")}.`
+            : " No published guide references it yet.")
+        }
+        warning={
+          pendingReplace?.existing.publishedGuides.length
+            ? "Those guides change immediately, without going back through approval."
+            : undefined
+        }
+        confirmLabel="Update the existing file"
+        confirmColorPalette="orange"
+        onConfirm={() => {
+          const p = pendingReplace;
+          setPendingReplace(null);
+          if (p) void upload(p.file, false, p.existing.id);
+        }}
+        onCancel={() => setPendingReplace(null)}
       />
     </Box>
   );

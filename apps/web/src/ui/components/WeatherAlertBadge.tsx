@@ -77,69 +77,68 @@ export function WeatherAlertBadge({
   const shown = [...alerts].slice(0, max);
 
   if (density === "compact") {
+    // ONE chip, never a row of them.
+    //
+    // Rendering every alert side by side overflowed a phone header the moment
+    // a second advisory existed — two chips pushed the date, the job count and
+    // the collapse triangle clean off the right edge. The most urgent one
+    // shows, the rest become a count, and expanding opens all of them.
+    const today = bizToday();
+    const lead = topAlert(alerts, today)!;
+    const a = lead.alert;
+    const Icon = alertIcon(a.kind);
+    const tone = alertTone(a);
+    const extra = alerts.length - 1;
+    const open = openId === a.id;
+
     return (
-      <HStack gap={1} flexWrap="wrap" align="center" flexShrink={0}>
-        {shown.map((a) => {
-          const Icon = alertIcon(a.kind);
-          const tone = alertTone(a);
-          const open = openId === a.id;
-          return (
-            <HStack
-              key={a.id}
-              {...(expandable
-                ? {
-                    as: "button" as const,
-                    type: "button" as const,
-                    // The header this sits in is itself clickable on some
-                    // surfaces; without this, expanding an advisory also
-                    // collapses the day.
-                    onClick: (e: any) => {
-                      // The day-section header this sits in toggles the whole
-                      // day on click. Without this, opening an advisory also
-                      // collapses the section it just appeared under.
-                      e.stopPropagation();
-                      onToggle?.(a.id);
-                    },
-                    "aria-expanded": open,
-                    "aria-label": `${a.event} — ${open ? "hide" : "show"} details`,
-                    cursor: "pointer",
-                  }
-                : { title: a.headline })}
-              gap={1}
-              px={1.5}
-              py={0.5}
-              align="center"
-              lineHeight="1"
-              borderRadius="full"
-              bg={`${tone}.solid`}
-              borderWidth="1px"
-              borderColor={`${tone}.solid`}
-              _hover={expandable ? { filter: "brightness(1.08)" } : undefined}
-            >
-              <Box as="span" color={onTone(tone)} display="inline-flex">
-                <Icon size={12} />
-              </Box>
-              <Text
-                fontSize="11px"
-                fontWeight="bold"
-                lineHeight="1"
-                color={onTone(tone)}
-                whiteSpace="nowrap"
-              >
-                {shortLabel(a)}
+      <HStack gap={1} align="center" flexShrink={0}>
+        <HStack
+          {...(expandable
+            ? {
+                as: "button" as const,
+                type: "button" as const,
+                // The day-section header this sits in toggles the whole day on
+                // click. Without this, opening an advisory also collapses the
+                // section it just appeared under.
+                onClick: (e: any) => { e.stopPropagation(); onToggle?.(a.id); },
+                "aria-expanded": open,
+                "aria-label": `${a.event}${extra > 0 ? ` and ${extra} more` : ""} — ${open ? "hide" : "show"} details`,
+                cursor: "pointer",
+              }
+            : { title: a.headline })}
+          gap={1}
+          px={1.5}
+          py={0.5}
+          align="center"
+          lineHeight="1"
+          borderRadius="full"
+          bg={`${tone}.solid`}
+          borderWidth="1px"
+          borderColor={`${tone}.solid`}
+          minW={0}
+          _hover={expandable ? { filter: "brightness(1.08)" } : undefined}
+        >
+          <Box as="span" color={onTone(tone)} display="inline-flex" flexShrink={0}>
+            <Icon size={12} />
+          </Box>
+          <Text fontSize="11px" fontWeight="bold" lineHeight="1" color={onTone(tone)} truncate>
+            {shortLabel(a)}
+          </Text>
+          {extra > 0 && (
+            <Box as="span" px={1} borderRadius="full" bg="whiteAlpha.400" flexShrink={0}>
+              <Text fontSize="10px" fontWeight="bold" lineHeight="1.4" color={onTone(tone)}>
+                +{extra}
               </Text>
-              {expandable && (
-                <Text as="span" fontSize="9px" lineHeight="1" color={onTone(tone)}
-                      opacity={0.9}>
-                  {open ? "\u25BC" : "\u25B6"}
-                </Text>
-              )}
-            </HStack>
-          );
-        })}
-        {alerts.length > shown.length && (
-          <Text fontSize="11px" color="fg.muted">+{alerts.length - shown.length}</Text>
-        )}
+            </Box>
+          )}
+          {expandable && (
+            <Text as="span" fontSize="9px" lineHeight="1" color={onTone(tone)}
+                  opacity={0.9} flexShrink={0}>
+              {open ? "\u25BC" : "\u25B6"}
+            </Text>
+          )}
+        </HStack>
       </HStack>
     );
   }
@@ -187,27 +186,44 @@ export function WeatherAlertBadge({
  * of the date and the job count and pushed them off their line. The caller
  * drops this below the header, where a full-width block belongs.
  */
-export function WeatherAlertDetail({ alert }: { alert: WeatherAlert }) {
-  const tone = alertTone(alert);
-  const Icon = alertIcon(alert.kind);
+export function WeatherAlertDetail({ alerts }: { alerts: WeatherAlert[] }) {
+  if (!alerts.length) return null;
+  const today = bizToday();
+  const tomorrow = bizTomorrow();
+  // Most urgent first, and the chip shows the same one — so expanding reads as
+  // "that one, plus these" rather than an unordered pile.
+  const ordered = [...alerts].sort((x, y) => {
+    const lead = topAlert(alerts, today)!.alert;
+    if (x.id === lead.id) return -1;
+    if (y.id === lead.id) return 1;
+    return 0;
+  });
   return (
-    <Box px={2.5} py={2} mb={2} borderRadius="md" bg={`${tone}.subtle`}
-         borderWidth="1px" borderLeftWidth="3px" borderColor={`${tone}.solid`}>
-      <HStack gap={2} align="start">
-        <Box as="span" color={`${tone}.solid`} mt="2px" flexShrink={0} display="inline-flex">
-          <Icon size={16} />
-        </Box>
-        <Box minW={0}>
-          <Text fontSize="13px" fontWeight="semibold">
-            {alert.event}
-            <Text as="span" fontWeight="normal" color="fg.muted">
-              {" "}· {whenLabel(alert, bizToday(), bizTomorrow())}
-            </Text>
-          </Text>
-          <Text fontSize="12px" color="fg.muted">{alert.headline}</Text>
-          {alert.instruction && <Text fontSize="12px" mt={1}>{alert.instruction}</Text>}
-        </Box>
-      </HStack>
+    <Box mb={2} display="flex" flexDirection="column" gap={1.5}>
+      {ordered.map((alert) => {
+        const tone = alertTone(alert);
+        const Icon = alertIcon(alert.kind);
+        return (
+          <Box key={alert.id} px={2.5} py={2} borderRadius="md" bg={`${tone}.subtle`}
+               borderWidth="1px" borderLeftWidth="3px" borderColor={`${tone}.solid`}>
+            <HStack gap={2} align="start">
+              <Box as="span" color={`${tone}.solid`} mt="2px" flexShrink={0} display="inline-flex">
+                <Icon size={16} />
+              </Box>
+              <Box minW={0}>
+                <Text fontSize="13px" fontWeight="semibold">
+                  {alert.event}
+                  <Text as="span" fontWeight="normal" color="fg.muted">
+                    {" "}· {whenLabel(alert, today, tomorrow)}
+                  </Text>
+                </Text>
+                <Text fontSize="12px" color="fg.muted">{alert.headline}</Text>
+                {alert.instruction && <Text fontSize="12px" mt={1}>{alert.instruction}</Text>}
+              </Box>
+            </HStack>
+          </Box>
+        );
+      })}
     </Box>
   );
 }

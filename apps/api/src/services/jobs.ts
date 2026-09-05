@@ -46,7 +46,8 @@ import {
   releaseHoldsForOccurrence,
   reactivateHoldsForOccurrence,
 } from "./supplies";
-import { computeNextOccurrenceStart } from "./payments";
+import { computeNextOccurrenceStart, loadRates } from "./payments";
+import { computeBreakdown } from "@repo/money";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Pause / resume side-effect helpers
@@ -1413,6 +1414,131 @@ export const jobs: ServicesJobs = {
         where: { id: occurrenceId },
         include: { assignees: true },
       });
+    });
+  },
+
+  /**
+   * Re-price a visit after the work is done.
+   *
+   * The case this exists for: quoted three hours, took four. Until now the
+   * only way to charge the difference was an add-on, and the base price had
+   * no edit path at all once the job left SCHEDULED.
+   *
+   * TWO THINGS MAKE THIS MORE THAN A FIELD WRITE.
+   *
+   * 1. `promisedPayouts` is a DOLLAR snapshot taken from the price at the
+   *    moment splits are persisted, and the reconciler tops employees up to
+   *    it at approval. Changing the price without re-snapshotting would pay
+   *    the crew against the old number — silently, and in the direction that
+   *    shorts them. So the snapshot is recomputed here from the SAME splits,
+   *    which preserves the allocation the operator already chose.
+   *
+   * 2. Once a Payment row exists the price is part of a settled record.
+   *    Blocked, exactly as team changes are, with the same remedy: reject or
+   *    revert the payment first. Rewriting money under a recorded payment is
+   *    never less surprising than asking for that.
+   */
+  async adjustOccurrencePrice(
+    currentUserId: string,
+    occurrenceId: string,
+    price: number,
+    reason?: string | null,
+  ) {
+    if (!Number.isFinite(price) || price < 0) {
+      throw new ServiceError("BAD_REQUEST", "Price must be zero or more.", 400);
+    }
+    return prisma.$transaction(async (tx) => {
+      const occ = await tx.jobOccurrence.findUnique({
+        where: { id: occurrenceId },
+        select: {
+          id: true, jobId: true, price: true, status: true,
+          completionSplits: true, promisedPayouts: true,
+          addons: { select: { price: true } },
+          payment: { select: { id: true, confirmed: true } },
+        },
+      });
+      if (!occ) throw new ServiceError("NOT_FOUND", "Occurrence not found.", 404);
+
+      if (occ.payment) {
+        const action = occ.payment.confirmed ? "revert" : "reject";
+        throw new ServiceError(
+          "PAYMENT_EXISTS",
+          `A payment has already been recorded for this job, so the price is locked. ${
+            action === "revert" ? "Revert" : "Reject"
+          } the payment first, then change the price.`,
+          409,
+        );
+      }
+
+      const before = occ.price ?? 0;
+
+      // Re-snapshot the payout contract against the new price, reusing the
+      // splits already on the occurrence. Nothing to do when splits haven't
+      // been taken yet — "Initiate Payment" will compute them fresh.
+      //
+      // Computed BEFORE the write so price and promise land in one update:
+      // two writes for one decision is two things to audit and a window where
+      // the price is new and the promise is stale.
+      const splits = (occ.completionSplits as Array<{ userId: string; percent: number }> | null) ?? null;
+      const addonTotal = (occ.addons ?? []).reduce((sum, a) => sum + (a.price ?? 0), 0);
+      const priceTotal = price + addonTotal;
+      let promised: any[] | null = null;
+
+      if (Array.isArray(splits) && splits.length) {
+        const rates = await loadRates(tx);
+        const expensesAgg = await tx.expense.aggregate({
+          where: { occurrenceId }, _sum: { cost: true },
+        });
+        const expenses = expensesAgg._sum.cost ?? 0;
+        const users = await tx.user.findMany({
+          where: { id: { in: splits.map((x) => x.userId) } },
+          select: { id: true, workerType: true },
+        });
+        const typeById = new Map(users.map((u) => [u.id, u.workerType]));
+        promised = computeBreakdown(
+          priceTotal,
+          expenses,
+          splits.map((x) => ({
+            userId: x.userId,
+            splitPercent: x.percent,
+            workerType: (typeById.get(x.userId) ?? null) as any,
+          })),
+          rates,
+        );
+      }
+
+      await tx.jobOccurrence.update({
+        where: { id: occurrenceId },
+        data: { price, ...(promised ? { promisedPayouts: promised as any } : {}) },
+      });
+
+      // Money: this changes what the client is billed AND what the crew is
+      // owed out of it. Both sides of the change are recorded, including the
+      // regenerated promise, because nothing else would explain why a
+      // worker's expected net moved.
+      await writeAudit(tx, AUDIT.PAYMENT.ADJUSTED, currentUserId, {
+        occurrenceId,
+        jobId: occ.jobId,
+        action: "price_adjusted",
+        priceBefore: before,
+        priceAfter: price,
+        addonTotal,
+        priceTotal,
+        status: occ.status,
+        reason: reason?.trim() || null,
+        promisedPayoutsBefore: (occ.promisedPayouts as any) ?? null,
+        promisedPayoutsAfter: promised
+          ? promised.map((r: any) => ({ userId: r.userId, net: r.net ?? null }))
+          : null,
+      });
+
+      return {
+        price,
+        priceTotal,
+        promisedPayouts: promised
+          ? promised.map((r: any) => ({ userId: r.userId, net: r.net }))
+          : null,
+      };
     });
   },
 
