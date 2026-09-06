@@ -170,6 +170,39 @@ function buildEmailSubject(dollarAmount: string): string {
   return `Your Seedlings service is complete - ${dollarAmount} due`;
 }
 
+/**
+ * Fold typographic punctuation to ASCII for a body that will be handed to a
+ * `mailto:` link.
+ *
+ * WHY THIS EXISTS. In CLAIMER mode the worker's own mail client composes the
+ * message. iOS Mail escalates a compose to RICH TEXT when the body contains
+ * characters it wants to style, and a rich-text message carries inline
+ * `color:` declarations with no matching `background-color` — which is
+ * exactly the shape Gmail's dark mode mishandles, leaving the recipient with
+ * near-invisible text. Smart quotes, em dashes and ellipses are the usual way
+ * they get in: a property display name, a contact's name, or operator-written
+ * promo copy pasted out of a document.
+ *
+ * PUNCTUATION ONLY. Accented letters are deliberately left alone — mangling
+ * "José" to "Jose" to dodge a rendering quirk is a worse bug than the one
+ * being fixed, and letters are not what triggers the escalation.
+ *
+ * This reduces the trigger; it cannot control what Mail ultimately emits.
+ * SERVER mode is the path with a guaranteed rendering, because there the
+ * message is composed here rather than on someone's phone.
+ */
+export function foldPunctuationForMailto(text: string): string {
+  return text
+    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")     // ' ' ‚ ‛
+    .replace(/[\u201C\u201D\u201E\u201F]/g, '"')     // " " „ ‟
+    .replace(/[\u2013\u2014\u2015]/g, "-")           // – — ―
+    .replace(/\u2026/g, "...")                        // …
+    .replace(/[\u00A0\u2007\u202F]/g, " ")           // non-breaking spaces
+    .replace(/[\u2022\u00B7]/g, "-")                  // • ·
+    .replace(/\u2122/g, "(TM)")
+    .replace(/\u00AE/g, "(R)");
+}
+
 function buildEmailBody(firstName: string, propLabel: string, dateStr: string, dollarAmount: string, url: string): string {
   return [
     `Hi ${firstName},`,
@@ -374,7 +407,20 @@ export const paymentRequests = {
       }
     }
 
-    return { token, url, amountDue, propertyLabel: propLabel, smsBody, emailSubject, emailBody, contacts };
+    // Fold the EMAIL body's punctuation last, after any promo append, so
+    // operator-written copy is covered too. Applied here rather than inside
+    // buildEmailBody because this is the value that reaches the worker's
+    // mail client — see foldPunctuationForMailto for why that matters.
+    //
+    // smsBody is deliberately untouched. SMS has never had this problem and
+    // is not worth the risk of changing.
+    return {
+      token, url, amountDue, propertyLabel: propLabel,
+      smsBody,
+      emailSubject: foldPunctuationForMailto(emailSubject),
+      emailBody: foldPunctuationForMailto(emailBody),
+      contacts,
+    };
   },
 
   /**
