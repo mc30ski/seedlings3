@@ -78,6 +78,7 @@ import {
   type PromisedRow,
 } from "./payments";
 import { computeMyOccurrenceNet } from "./workerEarnings";
+import { foldPunctuationForMailto } from "./paymentRequests";
 
 // Pin to the production-default rates so this file's assertions don't
 // silently slide if someone tunes the seed. Tests that vary rates do so
@@ -1111,5 +1112,131 @@ describe("payments build gate — adjustOccurrencePrice keeps the promise honest
     expect(fn).toMatch(/priceBefore: before/);
     expect(fn).toMatch(/promisedPayoutsBefore/);
     expect(fn).toMatch(/promisedPayoutsAfter/);
+  });
+});
+
+describe("payments build gate — the re-price control is reachable", () => {
+  const TAB = readFileSync(
+    join(__dirname, "../../../../apps/web/src/ui/tabs/JobsTab.tsx"), "utf8",
+  );
+
+  it("sits in the job's action row, beside Add Service", () => {
+    // It was first placed next to the price badge, in one of two blocks that
+    // render a price — so on the card the operator was actually looking at,
+    // it never appeared. The action row is the one place these controls
+    // reliably render together.
+    const i = TAB.indexOf("Adjust Price");
+    const addService = TAB.indexOf("Add Service");
+    expect(i).toBeGreaterThan(-1);
+    // Within a few hundred characters of Add Service = same button row.
+    expect(Math.abs(i - addService)).toBeLessThan(1200);
+  });
+
+  it("is hidden once a payment exists, so it is never a dead end", () => {
+    const start = TAB.indexOf("const canReprice =");
+    const block = TAB.slice(start, start + 400);
+    expect(block).toMatch(/!occ\.payment/);
+    expect(block).toMatch(/forAdmin \|\| isAdmin \|\| isSuper/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLAIMER mode means the worker's own device — on BOTH channels
+//
+// The setting says: "Set to 'Claimer' to have whoever finished the job send
+// the message from their own phone or email." SMS honoured that; email did
+// not. It POSTed to the server-send endpoint, so the invoice arrived from
+// notifications@seedlingslawncare.com with no reply thread and nothing in the
+// worker's Sent folder — while the app reported "Invoice emailed to …".
+//
+// The change that caused it was fixing a real iOS Mail rendering quirk by
+// swapping the MECHANISM rather than the message body. Half of Claimer mode
+// became Server mode, silently, and the setting's own description went stale.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("payments build gate — Claimer mode hands off to the worker's device", () => {
+  const COMMS = readFileSync(
+    join(__dirname, "../../../../apps/web/src/ui/components/PaymentCommsButtons.tsx"), "utf8",
+  );
+  /** Everything after the SERVER early-return is CLAIMER mode. */
+  const claimer = COMMS.slice(COMMS.indexOf('if (data.mode === "SERVER")'));
+
+  it("email opens the worker's mail client, not the server sender", () => {
+    expect(claimer).toMatch(/buildMailtoHref\(/);
+    expect(
+      claimer,
+      "server-send belongs to SERVER mode; CLAIMER must not call it",
+    ).not.toMatch(/send-payment-request-email/);
+  });
+
+  it("both channels record the handoff the same way", () => {
+    expect(claimer).toMatch(/comms-handoff`, \{ channel: "sms" \}/);
+    expect(claimer).toMatch(/comms-handoff`, \{ channel: "email" \}/);
+  });
+
+  it("neither channel claims the message was delivered", () => {
+    // Opening a compose window is not evidence anyone pressed send. SMS never
+    // claimed it; email used to.
+    expect(claimer).not.toMatch(/Invoice emailed to/);
+  });
+
+  it("email carries the CC list, exactly as SMS does", () => {
+    // Org policy is a visible CC and no silent BCC. Dropping it on one
+    // channel loses the copy that the office relies on.
+    expect(claimer).toMatch(/ccEmails: cc\.emails/);
+    expect(claimer).toMatch(/ccPhones: cc\.phones/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The mailto body that iOS Mail is about to re-compose
+//
+// In CLAIMER mode the worker's own client composes the message. iOS Mail
+// escalates to RICH TEXT when the body carries characters it wants to style,
+// and a rich-text message ships inline `color:` with no `background-color` —
+// the shape Gmail's dark mode mishandles, leaving near-invisible text. Smart
+// punctuation is how it gets in: a property display name, a contact's name,
+// or promo copy pasted out of a document.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("payments build gate — mailto body punctuation", () => {
+  it("folds the punctuation that triggers rich-text escalation", () => {
+    expect(foldPunctuationForMailto("Main House — Sheelah’s place"))
+      .toBe("Main House - Sheelah's place");
+    expect(foldPunctuationForMailto("“Spring special” … ends soon"))
+      .toBe('"Spring special" ... ends soon');
+    expect(foldPunctuationForMailto("30 days")).toBe("30 days");
+    expect(foldPunctuationForMailto("Seedlings™")).toBe("Seedlings(TM)");
+  });
+
+  it("leaves accented letters alone", () => {
+    // Mangling a customer's name to dodge a rendering quirk is a worse bug
+    // than the one being fixed, and letters aren't what escalates the compose.
+    expect(foldPunctuationForMailto("José Muñoz")).toBe("José Muñoz");
+  });
+
+  it("is a no-op on text that is already plain", () => {
+    const body = "Hi there,\n\nTotal due: $175.00\n\nView your invoice and pay: https://x.y/z";
+    expect(foldPunctuationForMailto(body)).toBe(body);
+  });
+
+  it("is applied to the email body AND subject, after the promo append", () => {
+    const SRC = readFileSync(join(__dirname, "paymentRequests.ts"), "utf8");
+    expect(SRC).toMatch(/emailSubject: foldPunctuationForMailto\(emailSubject\)/);
+    expect(SRC).toMatch(/emailBody: foldPunctuationForMailto\(emailBody\)/);
+    // After, not inside buildEmailBody — operator promo copy is appended
+    // later and is the most likely source of smart punctuation.
+    const ret = SRC.indexOf("emailBody: foldPunctuationForMailto");
+    const promo = SRC.indexOf("emailBody += emailPiggy.bodyAppend");
+    expect(promo).toBeGreaterThan(-1);
+    expect(ret).toBeGreaterThan(promo);
+  });
+
+  it("does not touch the SMS body", () => {
+    // SMS has never had this problem. Folding it would be an unforced risk
+    // to the one channel that works.
+    const SRC = readFileSync(join(__dirname, "paymentRequests.ts"), "utf8");
+    expect(SRC).not.toMatch(/smsBody: foldPunctuationForMailto/);
+    expect(SRC).toMatch(/\n      smsBody,\n/);
   });
 });

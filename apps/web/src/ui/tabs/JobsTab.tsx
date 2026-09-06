@@ -6902,27 +6902,6 @@ export default function JobsTab({
                               ${totalPrice(occ)!.toFixed(2)}{addonsAmt > 0 ? ` ($${(basePrice ?? 0).toFixed(2)} + $${addonsAmt.toFixed(2)})` : ""}{isEstimateOcc ? " (proposal)" : ""}
                             </Badge>
                           ); })()}
-                          {/* Re-price. Only before a payment exists — after
-                              that the server refuses and tells you to reject
-                              or revert first, so offering the button would be
-                              a dead end. */}
-                          {(isAdmin || isSuper) && !occ.payment && !isEstimateOcc && (
-                            <Button
-                              size="xs"
-                              variant="outline"
-                              colorPalette="blue"
-                              px="2"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setPriceEditOcc(occ);
-                                setPriceEditValue(String(occ.price ?? ""));
-                                setPriceEditReason("");
-                              }}
-                              title="Change what this visit is billed at"
-                            >
-                              Adjust price
-                            </Button>
-                          )}
                           {occ.payment && (
                             <HStack gap={1}>
                               <Badge bg="green.700" color="white" fontSize="sm" px="3" py="0.5" borderRadius="full">
@@ -8653,6 +8632,37 @@ export default function JobsTab({
                             onClick={(e) => { e.stopPropagation(); setAddAddonOcc(occ); }}
                           >
                             Add Service
+                          </Button>
+                        );
+                      })()}
+                      {/* Adjust Price — admin+ only, and only while no
+                          Payment row exists. Sits with Add Service and Manage
+                          Expenses because it is the same kind of action: it
+                          changes what the client is billed. Gated on the same
+                          editable-state helper, so it disappears once the job
+                          is closed. */}
+                      {(() => {
+                        const canReprice =
+                          occInEditableState(occ)
+                          && !isTaskOrReminder
+                          && !isEstimateOcc
+                          && !occ.payment
+                          && (forAdmin || isAdmin || isSuper);
+                        if (!canReprice) return null;
+                        return (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            colorPalette="blue"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPriceEditOcc(occ);
+                              setPriceEditValue(String(occ.price ?? ""));
+                              setPriceEditReason("");
+                            }}
+                            title="Change what this visit is billed at"
+                          >
+                            Adjust Price
                           </Button>
                         );
                       })()}

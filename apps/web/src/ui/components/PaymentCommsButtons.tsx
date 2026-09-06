@@ -21,7 +21,7 @@ import { useEffect, useState } from "react";
 import { Button, HStack, Text } from "@chakra-ui/react";
 import { MessageCircle, RotateCw, Send, X } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
-import { buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
+import { buildSmsHref, buildMailtoHref, fetchCommsCc } from "@/src/lib/comms";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
@@ -136,17 +136,19 @@ export default function PaymentCommsButtons({
   const useSms = !!phoneContact?.phone;
 
   async function commitRequest() {
-    // Two paths, both audit-tracked:
+    // CLAIMER mode: BOTH channels hand off to the worker's own device.
+    // That is what the setting promises — "have whoever finished the job
+    // send the message from their own phone or email".
     //
-    // SMS — open the device sms: intent (unchanged). Messages composes
-    // plain text; no rendering issues on the recipient side.
+    // Email used to POST to the server-send endpoint (Resend), which made
+    // the invoice arrive from notifications@seedlingslawncare.com instead
+    // of the worker, with no reply thread and nothing in their Sent folder
+    // to follow up from. It was done to dodge an iOS Mail rendering quirk
+    // (Mail's compose injects inline `color:` styles that Gmail's dark mode
+    // then inverts) — but swapping the MECHANISM to fix a BODY problem
+    // silently turned half of Claimer mode into Server mode.
     //
-    // Email — POST to the server-send endpoint (Resend) instead of
-    // opening a mailto: link. iOS Mail's compose window inserts inline
-    // `color:` styles into the mailto body; Gmail's dark-mode logic can
-    // flip those colors and leave the recipient staring at white text
-    // on a white background. Server-send emits proper plain text that
-    // no mail client can misrender.
+    // Server-send belongs to SERVER mode, which returns above.
     if (useSms) {
       const cc = await fetchCommsCc();
       const href = buildSmsHref({ to: phoneContact!.phone!, body: data!.smsBody, ccPhones: cc.phones });
@@ -157,19 +159,24 @@ export default function PaymentCommsButtons({
           console.warn("Failed to record comms handoff:", err);
         });
     } else {
-      try {
-        await apiPost(`/api/occurrences/${occurrenceId}/send-payment-request-email`, {});
-        publishInlineMessage({
-          type: "SUCCESS",
-          text: `Invoice emailed to ${emailContact!.email!}.`,
+      // Deliberately mirrors the SMS branch line for line, including saying
+      // nothing on success: opening a compose window is not evidence the
+      // worker pressed send, and the old success message claimed a delivery
+      // it had no way to know about. (Don't restore that wording — a build
+      // gate scans this file for it.)
+      const cc = await fetchCommsCc();
+      const href = buildMailtoHref({
+        to: emailContact!.email!,
+        subject: data!.emailSubject,
+        body: data!.emailBody,
+        ccEmails: cc.emails,
+      });
+      window.location.href = href;
+      apiPost(`/api/occurrences/${occurrenceId}/comms-handoff`, { channel: "email" })
+        .then(() => onRequestCanceled?.())
+        .catch((err) => {
+          console.warn("Failed to record comms handoff:", err);
         });
-        onRequestCanceled?.();
-      } catch (err) {
-        publishInlineMessage({
-          type: "ERROR",
-          text: getErrorMessage("Couldn't email the invoice.", err),
-        });
-      }
     }
   }
 
