@@ -24,6 +24,7 @@
 // Canonical spec: docs/features/job-materials.md
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { Prisma } from "@prisma/client";
 import { prisma } from "../db/prisma";
 import { ServiceError } from "../lib/errors";
 import { resolvePrivileges } from "../lib/privileges";
@@ -44,7 +45,7 @@ async function isAdminUser(userId: string): Promise<boolean> {
   return !!user?.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
 }
 
-const chargeInclude = {
+const chargeInclude = Prisma.validator<Prisma.InvoiceChargeInclude>()({
   createdBy: { select: { id: true, displayName: true } },
   // The optional, many-to-one ledger breadcrumb. Read for display only.
   businessExpense: true,
@@ -53,7 +54,7 @@ const chargeInclude = {
   supplyHold: {
     include: { supply: { select: { id: true, name: true, unit: true } } },
   },
-} as const;
+});
 
 /** ADMIN-ONLY, on every path. A job line raises what the CLIENT is billed, so
  *  it is not a worker's call to make. The message says WHY — a bare "forbidden"

@@ -9,6 +9,7 @@ Summary: how it all works together
 */
 
 import { prisma } from "../db/prisma";
+import { resolveHoursBaseline, type BaselineSource } from "../lib/hoursBaseline";
 import {
   Prisma,
   Role,
@@ -396,6 +397,59 @@ export async function loadHoursApprovalVarianceThreshold(): Promise<number> {
  * Threshold is passed in from the caller (read once per request via
  * loadHoursApprovalVarianceThreshold) so the database isn't hit per-row.
  */
+/**
+ * A job's previous visits in PERSON-minutes, most recent first, for use as the
+ * approval baseline.
+ *
+ * WALL-CLOCK x CREW. A two-person visit that took 30 minutes is 60 minutes of
+ * labour, and the estimate it may be compared against is also total labour.
+ *
+ * Excludes the occurrence being judged (`excludeOccurrenceId`) so a visit never
+ * helps set the standard it is measured by, and only looks at completions
+ * strictly BEFORE it so re-evaluating an old visit sees the history it had at
+ * the time rather than everything since.
+ *
+ * Observers do not count toward crew — they are not doing the work. The
+ * OR-with-null form is required: Postgres `role != 'observer'` drops NULL rows
+ * under three-valued logic, which silently undercounts the team.
+ */
+export async function loadPriorPersonMinutes(
+  client: Prisma.TransactionClient | typeof prisma,
+  jobId: string | null,
+  before: Date,
+  excludeOccurrenceId: string,
+): Promise<number[]> {
+  if (!jobId) return [];
+  const rows = await client.jobOccurrence.findMany({
+    where: {
+      jobId,
+      id: { not: excludeOccurrenceId },
+      workflow: { in: [OccurrenceWorkflow.STANDARD, OccurrenceWorkflow.ONE_OFF] },
+      completedAt: { not: null, lt: before },
+      startedAt: { not: null },
+    },
+    orderBy: { completedAt: "desc" },
+    // A little wider than the window: some rows will be discarded as unusable
+    // evidence, and the window should still fill.
+    take: 20,
+    select: {
+      startedAt: true,
+      completedAt: true,
+      totalPausedMs: true,
+      assignees: { select: { role: true } },
+    },
+  });
+  return rows.map((r) => {
+    const crew = Math.max(
+      1,
+      (r.assignees ?? []).filter((a) => a.role == null || a.role !== "observer").length,
+    );
+    const wallClockMin =
+      (r.completedAt!.getTime() - r.startedAt!.getTime() - (r.totalPausedMs ?? 0)) / 60000;
+    return wallClockMin * crew;
+  });
+}
+
 export function evaluateHoursApproval(args: {
   workflow: string;
   estimatedMinutes: number | null;
@@ -405,29 +459,65 @@ export function evaluateHoursApproval(args: {
   workerCount: number;
   currentUserId: string;
   varianceThreshold: number;
-}): { hoursApprovedAt: Date | null; hoursApprovedById: string | null } {
+  /** The job's previous visits in PERSON-minutes, most recent first. Empty or
+   *  omitted falls back to the estimate — which is what a one-off, or a job on
+   *  its first visits, correctly gets. */
+  priorPersonMinutes?: number[];
+}): {
+  hoursApprovedAt: Date | null;
+  hoursApprovedById: string | null;
+  /** What the decision was made against, for the audit trail. Null when there
+   *  was nothing to judge by. */
+  basis: {
+    source: BaselineSource;
+    baselinePersonMinutes: number;
+    actualPersonMinutes: number;
+    sampleCount: number;
+    variance: number;
+  } | null;
+} {
   const { workflow, estimatedMinutes, startedAt, completedAt, totalPausedMs, workerCount, currentUserId, varianceThreshold } = args;
   // Non-payroll workflows: stamp on completion so they never surface in the
   // unapproved-hours queue.
   if (workflow !== "STANDARD" && workflow !== "ONE_OFF") {
-    return { hoursApprovedAt: completedAt, hoursApprovedById: currentUserId };
+    return { hoursApprovedAt: completedAt, hoursApprovedById: currentUserId, basis: null };
   }
-  if (!estimatedMinutes || !startedAt) {
-    return { hoursApprovedAt: null, hoursApprovedById: null };
+  if (!startedAt) {
+    return { hoursApprovedAt: null, hoursApprovedById: null, basis: null };
   }
-  const adjustedEstimate = workerCount > 1 ? estimatedMinutes / workerCount : estimatedMinutes;
-  if (!adjustedEstimate) {
-    return { hoursApprovedAt: null, hoursApprovedById: null };
+  // WHAT THIS VISIT IS JUDGED AGAINST: the job's own recent median once it has
+  // enough history, otherwise the typed estimate. See lib/hoursBaseline.ts —
+  // the estimate never self-corrected, and on jobs with 5+ visits it sat a
+  // median of 50% away from reality.
+  const baseline = resolveHoursBaseline({
+    estimatedMinutes: estimatedMinutes ?? null,
+    priorPersonMinutes: args.priorPersonMinutes ?? [],
+  });
+  if (!baseline) {
+    return { hoursApprovedAt: null, hoursApprovedById: null, basis: null };
   }
-  const actualMinutes = Math.max(
+  // PERSON-MINUTES ON BOTH SIDES. The baseline is total labour for the visit,
+  // so the recorded wall-clock is multiplied by the crew before comparing.
+  // Dividing the baseline by crew instead is arithmetically identical but
+  // makes the units drift apart the moment either side is reused elsewhere.
+  const wallClockMinutes = Math.max(
     0,
     (completedAt.getTime() - new Date(startedAt).getTime() - (totalPausedMs ?? 0)) / 60000,
   );
-  const variance = Math.abs(actualMinutes - adjustedEstimate) / adjustedEstimate;
+  const actualPersonMinutes = wallClockMinutes * Math.max(1, workerCount);
+  const variance =
+    Math.abs(actualPersonMinutes - baseline.personMinutes) / baseline.personMinutes;
+  const basis = {
+    source: baseline.source,
+    baselinePersonMinutes: Math.round(baseline.personMinutes),
+    actualPersonMinutes: Math.round(actualPersonMinutes),
+    sampleCount: baseline.sampleCount,
+    variance: Math.round(variance * 100) / 100,
+  };
   if (variance <= varianceThreshold) {
-    return { hoursApprovedAt: completedAt, hoursApprovedById: currentUserId };
+    return { hoursApprovedAt: completedAt, hoursApprovedById: currentUserId, basis };
   }
-  return { hoursApprovedAt: null, hoursApprovedById: null };
+  return { hoursApprovedAt: null, hoursApprovedById: null, basis };
 }
 
 // Forward states that imply "someone is working on this occurrence." A
@@ -1820,6 +1910,12 @@ export const jobs: ServicesJobs = {
           workerCount: Math.max(1, activeAssignees),
           currentUserId,
           varianceThreshold,
+          priorPersonMinutes: await loadPriorPersonMinutes(
+            tx,
+            updated.jobId ?? null,
+            updated.completedAt,
+            occurrenceId,
+          ),
         });
         if (approval.hoursApprovedAt) {
           await tx.jobOccurrence.update({
@@ -3391,6 +3487,7 @@ export const jobs: ServicesJobs = {
       // Jobs filter until an admin/super reviews. Reverts (clearing
       // completedAt) drop the approval below in the SCHEDULED/IN_PROGRESS
       // branches so a re-completion gets re-evaluated.
+      let hoursApprovalBasis: ReturnType<typeof evaluateHoursApproval>["basis"] = null;
       if (
         (finalStatus === JobOccurrenceStatus.PENDING_PAYMENT ||
          finalStatus === JobOccurrenceStatus.CLOSED) &&
@@ -3447,11 +3544,21 @@ export const jobs: ServicesJobs = {
             workerCount: Math.max(1, activeAssignees),
             currentUserId,
             varianceThreshold,
+            priorPersonMinutes: await loadPriorPersonMinutes(
+              tx,
+              occ.jobId ?? null,
+              effectiveCompletedAt,
+              occurrenceId,
+            ),
           });
           if (approval.hoursApprovedAt) {
             data.hoursApprovedAt = approval.hoursApprovedAt;
             data.hoursApprovedById = approval.hoursApprovedById;
           }
+          // RECORD WHAT IT WAS JUDGED AGAINST. Without this, "why was this
+          // flagged" is unanswerable after the fact — the baseline is derived
+          // from a moving window and cannot be reconstructed later.
+          hoursApprovalBasis = approval.basis;
         }
       }
       // Splits + promised-payout snapshot are NOT set here anymore. They're
@@ -3577,6 +3684,11 @@ export const jobs: ServicesJobs = {
       await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, currentUserId, {
         occurrenceId,
         record: updated,
+        // WHAT THE HOURS DECISION WAS MADE AGAINST. The baseline is a median
+        // over a moving window of the job's own history, so it cannot be
+        // reconstructed after the fact — without recording it here, "why was
+        // this flagged" has no answer a week later.
+        ...(hoursApprovalBasis ? { hoursApproval: hoursApprovalBasis } : {}),
       });
 
       return updated;

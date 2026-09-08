@@ -61,10 +61,76 @@ const NO_FEES = { contractorFeePercent: 0, employeeMarginPercent: 0 } as any;
 /** Comments explaining what the code must NOT do are full of the very
  *  patterns these gates hunt for. Blank them out (preserving newlines so line
  *  numbers still point at the real offender) before scanning. */
-const stripComments = (src: string) =>
-  src
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
-    .replace(/(^|[^:])\/\/[^\n]*/g, (m, p1) => p1 + " ".repeat(m.length - p1.length));
+//
+// SCANNED, NOT REGEXED. The previous version ran a block-comment regex first
+// and a line-comment regex second, so a `/*` appearing INSIDE a line comment
+// opened a phantom block comment. `routes/worker.ts` line 1557 reads
+//
+//     // view-as-allow: not a /me/* route; scoping comes from workerView/...
+//
+// and that `/me/*` swallowed the next 2,843 lines — 37.6% of the file —
+// leaving every gate that scans it asserting against 62% of the source. A
+// `.not.toMatch` over a blanked region passes for free.
+//
+// This walks the source instead, tracking whether it is inside a string, a
+// line comment or a block comment, so a delimiter appearing inside any of
+// them is inert. Lengths and newlines are preserved exactly as before, so
+// reported line numbers still point at the real offender.
+const stripComments = (src: string): string => {
+  const out = src.split("");
+  let i = 0;
+  const n = src.length;
+  const blank = (from: number, to: number) => {
+    for (let k = from; k < to && k < n; k++) if (out[k] !== "\n") out[k] = " ";
+  };
+  while (i < n) {
+    const c = src[i];
+    const next = src[i + 1];
+    // Strings and template literals: a delimiter inside one is just text.
+    // A quote opens a string ONLY if it closes on the same line. JS string
+    // literals cannot span lines, and JSX prose is full of apostrophes —
+    // `<>That's {x}</>` would otherwise open a phantom string and swallow
+    // everything to the next apostrophe, including comment delimiters.
+    // Backticks genuinely span lines and keep the simple treatment.
+    if (c === '"' || c === "'") {
+      let j = i + 1;
+      let closed = false;
+      while (j < n && src[j] !== "\n") {
+        if (src[j] === "\\") { j += 2; continue; }
+        if (src[j] === c) { closed = true; break; }
+        j++;
+      }
+      if (!closed) { i++; continue; }
+      i = j + 1;
+      continue;
+    }
+    if (c === "`") {
+      i++;
+      while (i < n && src[i] !== "`") {
+        if (src[i] === "\\") i++;
+        i++;
+      }
+      i++;
+      continue;
+    }
+    if (c === "/" && next === "/") {
+      let j = i;
+      while (j < n && src[j] !== "\n") j++;
+      blank(i, j);
+      i = j;
+      continue;
+    }
+    if (c === "/" && next === "*") {
+      let j = i + 2;
+      while (j < n && !(src[j] === "*" && src[j + 1] === "/")) j++;
+      blank(i, Math.min(j + 2, n));
+      i = j + 2;
+      continue;
+    }
+    i++;
+  }
+  return out.join("");
+};
 
 function sourceFiles(dir: string, exts: RegExp, acc: string[] = []): string[] {
   for (const e of readdirSync(dir, { withFileTypes: true })) {
@@ -1990,6 +2056,75 @@ describe("[build-gate] supply photos", () => {
     expect(C).toMatch(/URL\.revokeObjectURL/);
     expect(TAB(), "the tab must release previews once they are uploaded")
       .toMatch(/URL\.revokeObjectURL\(sp\.preview\)/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("[build-gate] hours approval measures a job against itself", () => {
+  const JOBS = () => stripComments(readFileSync(join(__dirname, "./jobs.ts"), "utf8"));
+  const LIB = () => stripComments(readFileSync(join(__dirname, "../lib/hoursBaseline.ts"), "utf8"));
+
+  it("the baseline is the job's own median once it has history", () => {
+    // The typed estimate never self-corrected — nothing writes
+    // Job.estimatedMinutes but a human — and on jobs with 5+ visits it sat a
+    // median of 50% away from reality, putting ~59% of completions in the
+    // approval queue every month.
+    const J = JOBS();
+    expect(J).toMatch(/resolveHoursBaseline\(\{/);
+    expect(J, "the estimate must no longer be divided by crew at the call site")
+      .not.toMatch(/const adjustedEstimate = workerCount > 1/);
+    expect(LIB()).toMatch(/BASELINE_MIN_SAMPLES = 3/);
+  });
+
+  it("PERSON-MINUTES on both sides", () => {
+    // The estimate is total labour for the visit; a recorded duration is
+    // wall-clock. Comparing them directly makes a two-person job look half as
+    // long as it is. Both sides are person-minutes now.
+    const J = JOBS();
+    expect(J).toMatch(/actualPersonMinutes = wallClockMinutes \* Math\.max\(1, workerCount\)/);
+    expect(J, "the history loader must multiply wall-clock by crew")
+      .toMatch(/return wallClockMin \* crew;/);
+  });
+
+  it("a forgotten clock cannot define what normal looks like", () => {
+    // There is no "you forgot to stop it" recovery on a job clock the way
+    // there is on a workday, and production carries a 736-minute visit against
+    // a 45-minute estimate. Bounds keep it out of the evidence.
+    const L = LIB();
+    expect(L).toMatch(/EVIDENCE_MAX_MINUTES = 480/);
+    expect(L).toMatch(/personMinutes > 0 && personMinutes <= EVIDENCE_MAX_MINUTES/);
+    expect(L, "the median, not the mean — one bad row must not drag it")
+      .toMatch(/export function median/);
+  });
+
+  it("a visit never helps set the standard it is judged by", () => {
+    // Excludes itself, and only looks at completions strictly BEFORE it, so
+    // re-evaluating an old visit sees the history it had at the time.
+    const J = JOBS();
+    expect(J).toMatch(/id: \{ not: excludeOccurrenceId \}/);
+    expect(J).toMatch(/completedAt: \{ not: null, lt: before \}/);
+  });
+
+  it("every caller supplies the history — a missed one silently reverts", () => {
+    // `priorPersonMinutes` is optional so one-offs and first visits fall back
+    // to the estimate. That makes forgetting it at a call site invisible: the
+    // rule still runs, just against the number this change exists to stop
+    // using. All three sites must pass it.
+    const J = JOBS();
+    const WORKER = stripComments(readFileSync(join(__dirname, "../routes/worker.ts"), "utf8"));
+    const calls = (J + WORKER).match(/evaluateHoursApproval\(\{/g) ?? [];
+    const supplied = (J + WORKER).match(/priorPersonMinutes: await loadPriorPersonMinutes\(/g) ?? [];
+    expect(calls.length, "expected three call sites").toBe(3);
+    expect(supplied.length, "every call site must load the job's history").toBe(3);
+  });
+
+  it("the decision records what it was made against", () => {
+    // The baseline is a median over a moving window, so it cannot be
+    // reconstructed later. Without this, "why was this flagged" is
+    // unanswerable a week afterwards.
+    expect(JOBS()).toMatch(/hoursApproval: hoursApprovalBasis/);
+    expect(JOBS()).toMatch(/source: baseline\.source/);
   });
 });
 
