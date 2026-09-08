@@ -1456,6 +1456,154 @@ describe("[build-gate] what stock cost is derived, never stored", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+describe("[build-gate] the supply<->ledger breadcrumb is reachable from BOTH ends", () => {
+  const TAB = () => readFileSync(
+    join(__dirname, "../../../web/src/ui/tabs/SuppliesTab.tsx"), "utf8",
+  );
+  const LEDGER_TAB = () => readFileSync(
+    join(__dirname, "../../../web/src/ui/tabs/BusinessExpensesTab.tsx"), "utf8",
+  );
+  const ADMIN = () => readFileSync(join(__dirname, "../routes/admin.ts"), "utf8");
+
+  // AN ENDPOINT NOBODY CALLS IS NOT A FEATURE. The column, the service
+  // parameter, the PATCH route and the audit all shipped; the Supplies UI to
+  // SET a link never did, and the Buy route silently dropped the field. So the
+  // Ledger showed which purchases pointed at a row while nothing could create
+  // the pointer — half a feature that reads as a whole one from the schema.
+
+  it("a purchase can be pointed at a ledger row WHEN IT IS RECORDED", () => {
+    expect(ADMIN(), "the Buy route must forward the breadcrumb")
+      .toMatch(/businessExpenseId: b\.businessExpenseId != null/);
+    const T = TAB();
+    expect(T, "the Buy dialog must send it").toMatch(/businessExpenseId: bLedgerId/);
+    expect(T, "…and offer a picker to choose one").toMatch(/Link a ledger expense/);
+  });
+
+  it("and AFTER the fact, from the purchase's history row", () => {
+    const T = TAB();
+    expect(T).toMatch(/supply-purchases\/\$\{purchaseId\}\/ledger-link/);
+    expect(T, "a breadcrumb that cannot be cleared is a trap").toMatch(/setPurchaseLedgerLink\(evt\.row\.id, null\)/);
+    expect(ADMIN()).toMatch(/patch\("\/admin\/supply-purchases\/:id\/ledger-link"/);
+  });
+
+  it("the ledger row shows every purchase pointing at it", () => {
+    // MANY-TO-ONE: one $500 receipt covers several purchases, so this is a
+    // list. Rendering only the first is the bug that 500'd the whole Ledger
+    // tab when the relation was renamed to its plural.
+    expect(LEDGER_TAB()).toMatch(/\(e\.supplyPurchases \?\? \[\]\)\.map\(\(sp\) =>/);
+  });
+
+  it("no receipt may be uploaded from a supply purchase", () => {
+    // A receipt is evidence for a DEDUCTION and a supply purchase is not one.
+    // The old field uploaded against a BusinessExpense the purchase used to
+    // create; once it stopped creating one the upload silently never ran,
+    // while the toast still reported "receipt attached".
+    // Comments stripped: this history is deliberately recorded in prose right
+    // where the field used to be, and the gate must not fire on the warning.
+    const T = stripComments(TAB());
+    expect(T, "no receipt state may return here").not.toMatch(/bReceiptFile/);
+    expect(T, "and nothing may claim one was attached").not.toMatch(/receipt attached/);
+  });
+
+  it("nothing claims a reversal deletes a ledger row", () => {
+    // Recording a purchase creates no BusinessExpense, so reversing destroys
+    // no deduction. Saying otherwise is how a mistaken purchase stays on the
+    // books uncorrected.
+    const T = stripComments(TAB());
+    expect(T).not.toMatch(/deletes BE/);
+    expect(T).not.toMatch(/deletes the tax-ledger row/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("[build-gate] supply photos", () => {
+  const ADMIN = () => readFileSync(join(__dirname, "../routes/admin.ts"), "utf8");
+  const COMP = () => readFileSync(
+    join(__dirname, "../../../web/src/ui/components/SupplyPhotos.tsx"), "utf8",
+  );
+  const TAB = () => readFileSync(
+    join(__dirname, "../../../web/src/ui/tabs/SuppliesTab.tsx"), "utf8",
+  );
+
+  it("uses the one compression pipeline, not a second one", () => {
+    // compressOnly reads the org-wide PHOTO_MAX_EDGE_PX / PHOTO_JPEG_QUALITY
+    // settings and carries the iOS Safari canvas watchdog. A second encode
+    // path is a second thing to get wrong on a phone in a field.
+    expect(COMP()).toMatch(/import \{ compressOnly \}/);
+    expect(COMP()).toMatch(/await compressOnly\(file\)/);
+  });
+
+  it("shares the equipment-photos bucket rather than needing new infra", () => {
+    // A dedicated bucket needs a Cloudflare bucket and two Vercel env vars set
+    // by hand before uploads work at all. R2_GUIDE_MEDIA_BUCKET_NAME is unset
+    // in production today and Guides media 503s for exactly that reason.
+    const A = ADMIN();
+    const at = A.indexOf('app.post("/admin/supplies/:id/photos/upload-url"');
+    expect(at, "the upload-url route must exist").toBeGreaterThan(-1);
+    expect(A.slice(at, at + 700)).toMatch(/"equipment-photos"/);
+    expect(A.slice(at, at + 700)).toMatch(/`supply\/\$\{supplyId\}\//);
+  });
+
+  it("confirm refuses a key addressed to a different supply", () => {
+    // The key is built server-side but handed back by the client, so without
+    // this an object written under one supply's prefix could be attached to
+    // another's row.
+    expect(ADMIN()).toMatch(/key\.startsWith\(`supply\/\$\{supplyId\}\/`\)/);
+  });
+
+  it("the photo cap is enforced on the SERVER", () => {
+    // The component also checks, but a client-side cap is a suggestion.
+    const A = ADMIN();
+    expect(A).toMatch(/SUPPLY_PHOTO_LIMIT = 10/);
+    expect(A).toMatch(/count >= SUPPLY_PHOTO_LIMIT/);
+  });
+
+  it("deleting a photo snapshots it into the audit BEFORE it is gone", () => {
+    const A = ADMIN();
+    const at = A.indexOf('app.delete("/admin/supplies/:id/photos/:photoId"');
+    expect(at).toBeGreaterThan(-1);
+    const body = A.slice(at, at + 1400);
+    expect(body).toMatch(/action: "photo_deleted"/);
+    expect(body).toMatch(/fileName: existing\.fileName/);
+    expect(body).toMatch(/r2Key: existing\.r2Key/);
+  });
+
+  // ── THE ONE THAT MATTERS ────────────────────────────────────────────────
+  // Add Supply has no supply to attach a photo to, so files are staged and
+  // uploaded after create. That is precisely the shape of the receipt bug this
+  // feature replaced: the Buy dialog buffered a file, uploaded it behind a
+  // guard that silently became false, and reported "receipt attached" for a
+  // file it never sent. Staging is fine; staging that cannot fail loudly is
+  // not.
+  it("a staged upload cannot fail silently", () => {
+    const C = COMP();
+    expect(C, "the helper must throw, not resolve, on a failed PUT")
+      .toMatch(/if \(!res\.ok\) throw new Error/);
+    expect(C, "…and report how many actually landed").toMatch(/return uploaded;/);
+
+    const T = TAB();
+    expect(T, "the caller must catch the upload separately from the create")
+      .toMatch(/photoError/);
+    expect(T, "a partial failure must be a WARNING naming the count, not a success")
+      .toMatch(/photo\(s\) failed to upload/);
+    // The supply itself IS saved, so this must never read as a failed add.
+    expect(T).toMatch(/Supply added, but/);
+  });
+
+  it("staged files are visibly not-yet-saved, and their object URLs released", () => {
+    const C = COMP();
+    expect(C, "staged thumbnails must be distinguishable from stored ones")
+      .toMatch(/borderStyle="dashed"/);
+    expect(C).toMatch(/will upload when you save/);
+    expect(C).toMatch(/URL\.revokeObjectURL/);
+    expect(TAB(), "the tab must release previews once they are uploaded")
+      .toMatch(/URL\.revokeObjectURL\(sp\.preview\)/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 describe("[build-gate] a job title leads with the client", () => {
   // The title truncates from the right. Leading with the property left most
   // cards on a phone reading "Main House" and nothing else.

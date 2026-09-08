@@ -246,6 +246,10 @@ export const supplies: ServicesSupplies = {
         { name: { contains: q, mode: "insensitive" } },
         { upc: { contains: q, mode: "insensitive" } },
         { description: { contains: q, mode: "insensitive" } },
+        // The Group label is rendered as a badge beside the name, so it reads
+        // as part of the row — searching "Fuel" and getting nothing back makes
+        // the badge look like a filter that does not work.
+        { category: { contains: q, mode: "insensitive" } },
       ];
     }
     const rows = await prisma.supply.findMany({

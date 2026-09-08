@@ -410,6 +410,7 @@ model User {
 
   suppliesCreated          Supply[]
   supplyPurchasesCreated   SupplyPurchase[]
+  supplyPhotosUploaded     SupplyPhoto[]
   supplyHoldsCreated       SupplyHold[]
   supplyAdjustmentsCreated SupplyAdjustment[]
 
@@ -2599,10 +2600,38 @@ model Supply {
   purchases   SupplyPurchase[]
   holds       SupplyHold[]
   adjustments SupplyAdjustment[]
+  photos      SupplyPhoto[]
 
   @@index([archivedAt])
   @@index([upc])
   @@index([name])
+}
+
+/// Optional images of a supply — what the bag/roll/jug actually looks like, so
+/// the right thing gets bought and pulled. Mirrors EquipmentPhoto exactly: the
+/// bytes live in R2 and the row holds only the key, with URLs presigned on read.
+///
+/// SHARES THE equipment-photos BUCKET, under a `supply/<id>/` key prefix. The
+/// per-purpose bucket split exists so lifecycle rules and cleanup scripts stay
+/// scoped, and catalog-item imagery is one lifecycle — a supply photo lives
+/// exactly as long as the supply, the same as an equipment photo. A dedicated
+/// bucket would also need a Cloudflare bucket and two Vercel env vars set by
+/// hand before uploads worked at all; `R2_GUIDE_MEDIA_BUCKET_NAME` is unset in
+/// production today and Guides media 503s because of exactly that.
+model SupplyPhoto {
+  id           String   @id @default(cuid())
+  supplyId     String
+  supply       Supply   @relation(fields: [supplyId], references: [id], onDelete: Cascade)
+  r2Key        String
+  fileName     String?
+  contentType  String?
+  description  String?
+  sortOrder    Int      @default(0)
+  uploadedById String
+  uploadedBy   User     @relation(fields: [uploadedById], references: [id], onDelete: Restrict)
+  createdAt    DateTime @default(now())
+
+  @@index([supplyId])
 }
 
 model SupplyPurchase {
