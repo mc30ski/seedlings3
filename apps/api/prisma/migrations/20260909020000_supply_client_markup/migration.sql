@@ -1,0 +1,14 @@
+-- A supply's default charge can be a MARKUP on cost, not only a fixed amount.
+--
+-- The fixed price goes stale the moment prices move: mulch bought at $4.00 and
+-- billed at $4.20 keeps suggesting $4.20 after the next pallet costs $4.60. A
+-- markup is applied to the weighted average of the stock actually on hand
+-- (see apps/api/src/lib/supplyCost.ts), so the default follows the cost.
+--
+-- NULL MEANS "use the fixed price". The mode is not a second column: one value
+-- with one meaning cannot fall out of step with a flag beside it, and it keeps
+-- `0` a real markup (bill at cost) rather than a synonym for "unset".
+--
+-- Every existing supply keeps its fixed price — the column is nullable with no
+-- default, so nothing changes for a row until someone chooses a markup.
+ALTER TABLE "Supply" ADD COLUMN "clientMarkupPercent" DOUBLE PRECISION;

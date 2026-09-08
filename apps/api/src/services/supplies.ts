@@ -1,5 +1,11 @@
 import { Prisma } from "@prisma/client";
-import { fifoCost, type SupplyCostEvent, type SupplyCostResult } from "../lib/supplyCost";
+import {
+  fifoCost,
+  defaultClientUnitPrice,
+  resolvePullUnitPrice,
+  type SupplyCostEvent,
+  type SupplyCostResult,
+} from "../lib/supplyCost";
 import { getDownloadUrl } from "../lib/r2";
 import { prisma } from "../db/prisma";
 import { ServiceError } from "../lib/errors";
@@ -372,6 +378,10 @@ export const supplies: ServicesSupplies = {
         available: r.onHand - held,
         averageCost: cost?.averageCost ?? null,
         valueOnHand: cost?.valueOnHand ?? null,
+        // What to SUGGEST when this supply goes onto a job. Fixed, or the
+        // markup applied to the average above — resolved server-side so the
+        // list, the pull dialog and addHold cannot each compute it differently.
+        defaultClientPrice: defaultClientUnitPrice(r, cost?.averageCost ?? null),
         thumbnailUrl: thumbs.get(r.id) ?? null,
         photoCount: (r as any)._count?.photos ?? 0,
       };
@@ -396,6 +406,7 @@ export const supplies: ServicesSupplies = {
       available: row.onHand - held,
       averageCost: cost?.averageCost ?? null,
       valueOnHand: cost?.valueOnHand ?? null,
+      defaultClientPrice: defaultClientUnitPrice(row, cost?.averageCost ?? null),
       thumbnailUrl: await thumbnailFor(row),
       photoCount: (row as any)._count?.photos ?? 0,
     };
@@ -410,6 +421,12 @@ export const supplies: ServicesSupplies = {
 
     const category = await normalizeCategory(input.category);
     const clientUnitPrice = requireNonNegativeNum(input.clientUnitPrice, "Default client price");
+    // Null keeps the fixed price. `0` is a real markup — bill at cost — so
+    // this must not collapse to a truthiness check.
+    const clientMarkupPercent =
+      input.clientMarkupPercent == null
+        ? null
+        : requireNonNegativeNum(input.clientMarkupPercent, "Markup");
     const upc = input.upc ? input.upc.trim() || null : null;
     const description = input.description ? input.description.trim() || null : null;
 
@@ -421,6 +438,7 @@ export const supplies: ServicesSupplies = {
           unit,
           category,
           clientUnitPrice,
+          clientMarkupPercent,
           upc,
           description,
         },
@@ -462,6 +480,14 @@ export const supplies: ServicesSupplies = {
     if (input.clientUnitPrice !== undefined) {
       data.clientUnitPrice = requireNonNegativeNum(input.clientUnitPrice, "Default client price");
     }
+    // `"x" in input` rather than `!== undefined`: null is MEANINGFUL — it is
+    // how the operator switches back from a markup to the fixed price.
+    if ("clientMarkupPercent" in input) {
+      data.clientMarkupPercent =
+        input.clientMarkupPercent == null
+          ? null
+          : requireNonNegativeNum(input.clientMarkupPercent, "Markup");
+    }
     if (input.upc !== undefined) {
       data.upc = input.upc ? String(input.upc).trim() || null : null;
     }
@@ -485,6 +511,8 @@ export const supplies: ServicesSupplies = {
         // thing under the name that described it wrongly.
         clientUnitPriceBefore: existing.clientUnitPrice,
         clientUnitPriceAfter: updated.clientUnitPrice,
+        clientMarkupPercentBefore: existing.clientMarkupPercent,
+        clientMarkupPercentAfter: updated.clientMarkupPercent,
         categoryBefore: existing.category,
         categoryAfter: updated.category,
         unitBefore: existing.unit,
@@ -549,8 +577,6 @@ export const supplies: ServicesSupplies = {
     const unitCost = Math.round((totalCost / quantity) * 100) / 100;
 
     const date = resolveDate(input.date);
-    const vendor = input.vendor ? input.vendor.trim() || null : null;
-    const invoiceNumber = input.invoiceNumber ? input.invoiceNumber.trim() || null : null;
     const notes = input.notes ? input.notes.trim() || null : null;
 
     // NO LEDGER ROW. Recording a purchase tracks STOCK, not taxes.
@@ -571,8 +597,6 @@ export const supplies: ServicesSupplies = {
           unitCost,
           totalCost,
           date,
-          vendor,
-          invoiceNumber,
           notes,
           // Optional breadcrumb, set later from the Supplies tab. Never
           // populated automatically — nothing here creates a ledger row.
@@ -600,8 +624,6 @@ export const supplies: ServicesSupplies = {
         quantity,
         unitCost,
         totalCost,
-        vendor,
-        invoiceNumber,
         date: date.toISOString(),
         onHandBefore: supply.onHand,
         onHandAfter: supply.onHand + quantity,
@@ -651,8 +673,6 @@ export const supplies: ServicesSupplies = {
         quantity: purchase.quantity,
         unitCost: purchase.unitCost,
         totalCost: purchase.totalCost,
-        vendor: purchase.vendor,
-        invoiceNumber: purchase.invoiceNumber,
         date: purchase.date.toISOString(),
         onHandBefore: purchase.supply.onHand,
         onHandAfter: newOnHand,
@@ -818,10 +838,26 @@ export const supplies: ServicesSupplies = {
       // billed differently to different clients. Whatever is used is
       // snapshotted on the hold below, so repricing the catalog later never
       // moves a job that has already committed stock.
-      const unitPrice =
-        input.clientUnitPrice != null
-          ? requireNonNegativeNum(input.clientUnitPrice, "Client price")
-          : supply.clientUnitPrice;
+      // THE EFFECTIVE DEFAULT, not the raw fixed field. A supply priced as a
+      // markup has a `clientUnitPrice` that is no longer the number anyone
+      // means — reading it here would bill a stale figure whenever the pull
+      // came from anywhere that did not send an explicit price.
+      const priced = resolvePullUnitPrice(
+        input.clientUnitPrice == null
+          ? null
+          : requireNonNegativeNum(input.clientUnitPrice, "Client price"),
+        supply,
+        (await costBySupply([supply.id])).get(supply.id)?.averageCost ?? null,
+      );
+      if (!priced.ok) {
+        throw new ServiceError(
+          "NO_DEFAULT_PRICE",
+          `${supply.name} is priced as a markup on cost, and it has never been bought — ` +
+            `there is nothing to mark up. Enter what to charge for this job.`,
+          400,
+        );
+      }
+      const unitPrice = priced.unitPrice;
       const totalCharge = Math.round(quantity * unitPrice * 100) / 100;
       // The headline a CLIENT reads. Defaults to the supply's name — not
       // "Mulch × 5 bag", which is a stock movement written on an invoice.

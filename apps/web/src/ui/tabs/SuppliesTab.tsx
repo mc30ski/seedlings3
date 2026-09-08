@@ -82,6 +82,14 @@ type Supply = {
   averageCost: number | null;
   /** averageCost x onHand, or null. */
   valueOnHand: number | null;
+  /** Percent over average cost, INSTEAD of the fixed clientUnitPrice.
+   *  null = the fixed price is in use. */
+  clientMarkupPercent?: number | null;
+  /** What the server will suggest on a pull — the fixed price, or the markup
+   *  applied to averageCost. null when a markup has no cost to mark up yet.
+   *  RESOLVED SERVER-SIDE so the list, the pull dialog and addHold cannot each
+   *  arrive at a different number. */
+  defaultClientPrice?: number | null;
   /** Presigned URL of the FIRST photo, shipped with the list so a row needs
    *  no extra request. null when the supply has none. */
   thumbnailUrl?: string | null;
@@ -183,6 +191,10 @@ export default function SuppliesTab({
   const [fUnit, setFUnit] = useState("");
   const [fCategory, setFCategory] = useState("Supplies");
   const [fClientPrice, setFClientPrice] = useState("");
+  // "" = fixed price. Any number = markup on the average cost. Mirrors the
+  // server's encoding, where null means "use the fixed price" — one value with
+  // one meaning, rather than a mode flag that can disagree with the number.
+  const [fMarkupPct, setFMarkupPct] = useState("");
   const [fUpc, setFUpc] = useState("");
   const [fDescription, setFDescription] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
@@ -222,8 +234,6 @@ export default function SuppliesTab({
   // Total actually paid for the whole purchase, incl. tax/discounts.
   const [bTotalCost, setBTotalCost] = useState("");
   const [bDate, setBDate] = useState(bizToday());
-  const [bVendor, setBVendor] = useState("");
-  const [bInvoice, setBInvoice] = useState("");
   const [bNotes, setBNotes] = useState("");
   // NO RECEIPT HERE. A receipt is evidence for a DEDUCTION, and a supply
   // purchase is not one — it tracks stock. The receipt belongs to the Ledger
@@ -366,6 +376,7 @@ export default function SuppliesTab({
     setFUnit("");
     setFCategory("Supplies");
     setFClientPrice("");
+    setFMarkupPct("");
     setFUpc(prefill?.upc ?? "");
     setFDescription(prefill?.description ?? "");
     setEditOpen(true);
@@ -439,6 +450,7 @@ export default function SuppliesTab({
     setFUnit(s.unit);
     setFCategory(s.category || "Supplies");
     setFClientPrice(s.clientUnitPrice.toFixed(2));
+    setFMarkupPct(s.clientMarkupPercent == null ? "" : String(s.clientMarkupPercent));
     setFUpc(s.upc ?? "");
     setFDescription(s.description ?? "");
     setEditOpen(true);
@@ -458,6 +470,9 @@ export default function SuppliesTab({
       // "Fuel" badge on the list) survives.
       category: fCategory,
       clientUnitPrice: fClientPrice === "" ? 0 : Number(fClientPrice),
+      // Explicit null clears a markup and returns the supply to its fixed
+      // price — the key must be SENT, not omitted, for that to reach the API.
+      clientMarkupPercent: fMarkupPct.trim() === "" ? null : Number(fMarkupPct),
       // NO COST FIELD. This form establishes what a supply IS. What it cost is
       // recorded per purchase, on Buy, and the catalog's average is derived
       // from those — a cost typed here was a number nobody could keep true,
@@ -579,8 +594,6 @@ export default function SuppliesTab({
     // Total is the receipt figure — it varies every trip, so don't prefill.
     setBTotalCost("");
     setBDate(bizToday());
-    setBVendor("");
-    setBInvoice("");
     setBNotes("");
   }
 
@@ -602,8 +615,6 @@ export default function SuppliesTab({
         quantity: qty,
         totalCost: total,
         date: bDate,
-        vendor: bVendor.trim() || null,
-        invoiceNumber: bInvoice.trim() || null,
         notes: bNotes.trim() || null,
         businessExpenseId: bLedgerId,
       });
@@ -1010,9 +1021,32 @@ export default function SuppliesTab({
                               )}
                             </Text>
                           )}
-                          {/* Was "Cost per unit" for a worker, which reads as
-                              THEIR cost. It is what the client is billed. */}
-                          <Text>Client pays: <Text as="span" fontWeight="medium" color="orange.600">{fmtUSD(s.clientUnitPrice)}</Text></Text>
+                          {/* "RECOMMENDED", because this is only the default.
+                              What a client actually pays is set when the supply
+                              goes onto a job and can differ per client — "Client
+                              pays" stated it as settled fact, which is the same
+                              overreach as the "Cost per unit" label before it
+                              (that one read as the WORKER's cost). */}
+                          <Text>
+                            Recommended client cost:{" "}
+                            {s.defaultClientPrice == null ? (
+                              <Text as="span" color="fg.muted">
+                                &mdash; <Text as="span" fontSize="2xs">(needs a purchase first)</Text>
+                              </Text>
+                            ) : (
+                              <Text as="span" fontWeight="medium" color="orange.600">
+                                {fmtUSD(s.defaultClientPrice)}
+                              </Text>
+                            )}
+                            {/* SAY WHERE THE NUMBER CAME FROM. A markup figure
+                                that moves on its own is alarming unless the
+                                rule producing it is visible. */}
+                            {s.clientMarkupPercent != null && (
+                              <Text as="span" color="fg.muted" fontSize="2xs">
+                                {" "}(cost + {s.clientMarkupPercent}%)
+                              </Text>
+                            )}
+                          </Text>
                           {s.upc && <Text>UPC: {s.upc}</Text>}
                         </>
                       )}
@@ -1180,11 +1214,65 @@ export default function SuppliesTab({
                         (per {fUnit.trim() || "unit"}, optional)
                       </Text>
                     </Text>
-                    <CurrencyInput value={fClientPrice} onChange={setFClientPrice} size="sm" />
-                    <Text fontSize="xs" color="fg.muted" mt={1}>
-                      Only a starting point. You set what to charge when you add this supply to a
-                      job, and it can differ per client. Leave it blank if there is no usual price.
-                    </Text>
+                    {/* TWO WAYS TO SAY THE SAME THING. A fixed price goes
+                        stale the moment prices move — mulch bought at $4.00
+                        and billed at $4.20 keeps suggesting $4.20 after the
+                        next pallet costs $4.60. A markup follows the average
+                        cost of stock on hand instead. */}
+                    <HStack gap={1} mb={1.5}>
+                      <Button
+                        size="xs"
+                        variant={fMarkupPct.trim() === "" ? "solid" : "outline"}
+                        colorPalette={fMarkupPct.trim() === "" ? "blue" : "gray"}
+                        onClick={() => setFMarkupPct("")}
+                      >
+                        Fixed amount
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant={fMarkupPct.trim() !== "" ? "solid" : "outline"}
+                        colorPalette={fMarkupPct.trim() !== "" ? "blue" : "gray"}
+                        onClick={() => { if (fMarkupPct.trim() === "") setFMarkupPct("20"); }}
+                      >
+                        % over cost
+                      </Button>
+                    </HStack>
+
+                    {fMarkupPct.trim() === "" ? (
+                      <>
+                        <CurrencyInput value={fClientPrice} onChange={setFClientPrice} size="sm" />
+                        <Text fontSize="xs" color="fg.muted" mt={1}>
+                          Only a starting point. You set what to charge when you add this supply to
+                          a job, and it can differ per client. Leave it blank if there is no usual
+                          price.
+                        </Text>
+                      </>
+                    ) : (
+                      <>
+                        <HStack gap={2}>
+                          <Input
+                            size="sm"
+                            w="90px"
+                            value={fMarkupPct}
+                            onChange={(e) => setFMarkupPct(e.target.value)}
+                            placeholder="20"
+                          />
+                          <Text fontSize="sm" color="fg.muted">% over average cost</Text>
+                        </HStack>
+                        <Text fontSize="xs" color="fg.muted" mt={1}>
+                          {(() => {
+                            const pct = Number(fMarkupPct);
+                            const avg = editing?.averageCost ?? null;
+                            if (!Number.isFinite(pct)) return "Enter a percentage.";
+                            if (avg == null) {
+                              return "Follows what the stock costs. This supply has not been bought yet, so there is nothing to mark up — the job will ask you for a price until it has been.";
+                            }
+                            const out = Math.round(avg * (1 + pct / 100) * 100) / 100;
+                            return `Follows what the stock costs: ${fmtUSD(avg)} average + ${pct}% = ${fmtUSD(out)} today, and it moves as the average does.`;
+                          })()}
+                        </Text>
+                      </>
+                    )}
                   </Box>
                   <Box>
                     <Text fontSize="sm" mb={1}>
@@ -1310,14 +1398,6 @@ export default function SuppliesTab({
                         width: "100%",
                       }}
                     />
-                  </Box>
-                  <Box>
-                    <Text fontSize="sm" mb={1}>Vendor</Text>
-                    <Input value={bVendor} onChange={(e) => setBVendor(e.target.value)} size="sm" placeholder="e.g. Lowes, Pro Lawn Supply" />
-                  </Box>
-                  <Box>
-                    <Text fontSize="sm" mb={1}>Invoice #</Text>
-                    <Input value={bInvoice} onChange={(e) => setBInvoice(e.target.value)} size="sm" />
                   </Box>
                   <Box>
                     <Text fontSize="sm" mb={1}>Notes</Text>
@@ -1495,8 +1575,6 @@ export default function SuppliesTab({
                                 </HStack>
                                 <Text fontSize="xs" color="fg.muted">
                                   {fmtDateTime(evt.row.date)}
-                                  {evt.row.vendor ? ` · ${evt.row.vendor}` : ""}
-                                  {evt.row.invoiceNumber ? ` · #${evt.row.invoiceNumber}` : ""}
                                   {evt.row.createdBy?.displayName ? ` · by ${evt.row.createdBy.displayName}` : ""}
                                 </Text>
                                 {evt.row.notes && <Text fontSize="xs" color="fg.muted" mt={1}>{evt.row.notes}</Text>}

@@ -4,7 +4,12 @@
 // the supply-cost build gate. This file only asks whether the replay is right.
 
 import { describe, it, expect } from "vitest";
-import { fifoCost, type SupplyCostEvent } from "./supplyCost";
+import {
+  fifoCost,
+  defaultClientUnitPrice,
+  resolvePullUnitPrice,
+  type SupplyCostEvent,
+} from "./supplyCost";
 
 const d = (iso: string) => new Date(`${iso}T12:00:00.000Z`);
 // Written per-unit for readability; the EVENT carries the receipt total,
@@ -234,5 +239,81 @@ describe("fifoCost", () => {
     expect(
       fifoCost([buy("2026-05-21", 26, 3.99), use("2026-05-21", 26)]).quantityOnHand,
     ).toBe(0);
+  });
+});
+
+describe("defaultClientUnitPrice", () => {
+  it("a fixed price is used as typed, whatever the stock cost", () => {
+    expect(defaultClientUnitPrice({ clientUnitPrice: 5 }, 4.15)).toBe(5);
+    expect(defaultClientUnitPrice({ clientUnitPrice: 5, clientMarkupPercent: null }, 4.15)).toBe(5);
+    // …and a fixed price does not need any purchase history behind it.
+    expect(defaultClientUnitPrice({ clientUnitPrice: 5 }, null)).toBe(5);
+  });
+
+  it("a markup is applied to the AVERAGE COST, not to the fixed price", () => {
+    // The fixed field is deliberately non-zero here: reading it instead of the
+    // average is the obvious wiring mistake, and it would silently quote $22.
+    expect(defaultClientUnitPrice({ clientUnitPrice: 20, clientMarkupPercent: 10 }, 4.15))
+      .toBe(4.57);
+  });
+
+  it("the default MOVES as the average moves — that is the point", () => {
+    const rule = { clientUnitPrice: 0, clientMarkupPercent: 25 };
+    expect(defaultClientUnitPrice(rule, 4.0)).toBe(5);
+    expect(defaultClientUnitPrice(rule, 4.6)).toBe(5.75);
+  });
+
+  it("a markup with no purchase history has NO default, rather than a wrong one", () => {
+    // Falling back to the fixed price would quote a number the operator
+    // explicitly stopped using; falling back to zero would offer the stock
+    // free. Null makes the pull dialog ask.
+    expect(defaultClientUnitPrice({ clientUnitPrice: 9.99, clientMarkupPercent: 30 }, null))
+      .toBeNull();
+  });
+
+  it("zero percent is a real markup, not 'no markup configured'", () => {
+    // `0` and `null` are different answers: bill at cost, versus use the fixed
+    // price. A truthiness check here would silently swap one for the other.
+    expect(defaultClientUnitPrice({ clientUnitPrice: 20, clientMarkupPercent: 0 }, 4.15))
+      .toBe(4.15);
+  });
+
+  it("rounds to cents", () => {
+    expect(defaultClientUnitPrice({ clientUnitPrice: 0, clientMarkupPercent: 33 }, 1.95))
+      .toBe(2.59);
+  });
+});
+
+describe("resolvePullUnitPrice", () => {
+  const fixed = { clientUnitPrice: 5 };
+  const markup = { clientUnitPrice: 5, clientMarkupPercent: 20 };
+
+  it("a typed price wins over every default — this client, this job", () => {
+    expect(resolvePullUnitPrice(9, fixed, 4)).toEqual({ ok: true, unitPrice: 9 });
+    expect(resolvePullUnitPrice(9, markup, 4)).toEqual({ ok: true, unitPrice: 9 });
+  });
+
+  it("a typed ZERO is a real price, not a missing one", () => {
+    // Billing a client nothing for materials is a decision an operator is
+    // allowed to make; `|| default` would silently overwrite it.
+    expect(resolvePullUnitPrice(0, markup, 4)).toEqual({ ok: true, unitPrice: 0 });
+  });
+
+  it("falls back to the fixed price when nothing is typed", () => {
+    expect(resolvePullUnitPrice(null, fixed, 4)).toEqual({ ok: true, unitPrice: 5 });
+    expect(resolvePullUnitPrice(undefined, fixed, null)).toEqual({ ok: true, unitPrice: 5 });
+  });
+
+  it("falls back to the MARKUP, not the stale fixed field", () => {
+    // 4.00 + 20% = 4.80. Reading clientUnitPrice would quote 5.00 — the
+    // number the operator explicitly stopped using.
+    expect(resolvePullUnitPrice(null, markup, 4)).toEqual({ ok: true, unitPrice: 4.8 });
+  });
+
+  it("refuses rather than guessing when a markup has no cost behind it", () => {
+    expect(resolvePullUnitPrice(null, markup, null)).toEqual({
+      ok: false,
+      reason: "NO_DEFAULT_PRICE",
+    });
   });
 });
