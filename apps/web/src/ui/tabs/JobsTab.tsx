@@ -7016,7 +7016,7 @@ export default function JobsTab({
                             const basePrice = (occ.price || null) ?? (occ.proposalAmount || null);
                             const addonsAmt = addonTotal(occ);
                             const billedCharges = materialChargeTotal(occ);
-                            // ITEMIZED, not a bolded sum. "($85.00 + $15.00 +
+                            // ITEMISED, not a bolded sum. "($85.00 + $15.00 +
                             // $25.00)" is arithmetic the reader has to decode
                             // before it tells them anything — three unlabelled
                             // numbers that could be anything. On a card that is
@@ -7222,18 +7222,20 @@ export default function JobsTab({
                             // the reader to check 30% × $85 = $25.50 against a
                             // stated $30 and conclude the card is broken. It
                             // isn't — the basis was $100.
-                            // THIS BRANCHES. Under ITEMIZED, materials are
-                            // billed to the client on top and never touch the
-                            // crew's pool — subtracting them here under-reports
-                            // every worker's projected pay by their share of
-                            // the mulch. See lib/paymentMath.ts perWorkerShare.
+                            // NOTHING IS SUBTRACTED HERE. Materials are billed
+                            // to the client on top and never touch the crew's
+                            // pool. This once subtracted them, which
+                            // under-reported every worker's projected pay by
+                            // their share of the mulch. See
+                            // lib/paymentMath.ts perWorkerShare.
                             const chargesTot = (occ.invoiceCharges ?? []).reduce((s, e) => s + e.cost, 0);
                             const net = displayPriceVal;
                             // WHAT THE LINE IS ALLOWED TO SAY IT SUBTRACTS.
                             //
-                            // `net` above branches; the printed line did not.
-                            // It rendered "− $25.00 charges" whenever a charge
-                            // existed, so an ITEMIZED visit read
+                            // `net` above stopped subtracting charges; the
+                            // printed line did not. It rendered
+                            // "− $25.00 charges" whenever a charge existed, so
+                            // a visit read
                             // "$85 + $15 − $25 − $30" against a payout of $70.
                             // The arithmetic on screen came to $45. Nothing was
                             // miscalculated — the sentence described a

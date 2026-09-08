@@ -109,12 +109,14 @@ type BusinessExpense = {
   equipment?: { id: string; shortDesc?: string | null; brand?: string | null; model?: string | null; qrSlug?: string | null } | null;
   occurrenceId?: string | null;
   occurrence?: { id: string; startAt?: string | null; job?: { id: string; property?: { id: string; displayName?: string | null; client?: { displayName?: string | null } | null } | null } | null } | null;
-  supplyPurchase?: {
+  /** Supply purchases that point at this ledger row. A LIST: one $500 Lowe's
+   *  receipt can back several purchases, which is why the link is many-to-one. */
+  supplyPurchases?: Array<{
     id: string;
     quantity: number;
     unitCost: number;
     supply: { id: string; name: string; unit: string };
-  } | null;
+  }> | null;
   receiptR2Key?: string | null;
   receiptFileName?: string | null;
   receiptContentType?: string | null;
@@ -1697,8 +1699,9 @@ export default function BusinessExpensesTab() {
                           {e.occurrence.job.property.client?.displayName ? ` — ${e.occurrence.job.property.client.displayName}` : ""} →
                         </Badge>
                       )}
-                      {e.supplyPurchase && (
+                      {(e.supplyPurchases ?? []).map((sp) => (
                         <Badge
+                          key={sp.id}
                           size="sm"
                           colorPalette="blue"
                           variant="subtle"
@@ -1713,7 +1716,7 @@ export default function BusinessExpensesTab() {
                             try {
                               localStorage.setItem(
                                 "seedlings_supplies_pendingHighlight",
-                                e.supplyPurchase!.supply.id,
+                                sp.supply.id,
                               );
                             } catch {}
                             window.dispatchEvent(
@@ -1723,9 +1726,9 @@ export default function BusinessExpensesTab() {
                             );
                           }}
                         >
-                          Supply: {e.supplyPurchase.supply.name} × {e.supplyPurchase.quantity} →
+                          Supply: {sp.supply.name} × {sp.quantity} →
                         </Badge>
-                      )}
+                      ))}
                       {/* Equipment link — purchases tied to a specific piece
                           of equipment (repairs, accessories, fuel, etc.).
                           Clickable: stashes the equipment id in
@@ -2102,7 +2105,7 @@ export default function BusinessExpensesTab() {
                       }}
                       disabled={
                         !!editing &&
-                        (!!editing.occurrenceId || !!editing.supplyPurchase)
+                        (!!editing.occurrenceId || !!editing.supplyPurchases?.length)
                       }
                     />
                     {fType !== "EXPENSE" && (
@@ -2114,7 +2117,7 @@ export default function BusinessExpensesTab() {
                         . They're excluded from the P&L and Schedule C export.
                       </Text>
                     )}
-                    {editing && (editing.occurrenceId || editing.supplyPurchase) && (
+                    {editing && (editing.occurrenceId || editing.supplyPurchases?.length) && (
                       <Text fontSize="xs" color="fg.muted" mt={1}>
                         Type is locked because this entry is tied to a job or supply purchase.
                       </Text>

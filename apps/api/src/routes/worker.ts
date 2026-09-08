@@ -5,7 +5,7 @@ import { cached } from "../lib/cache";
 import { prisma } from "../db/prisma";
 import { getUploadUrl, getDownloadUrl, deleteObject } from "../lib/r2";
 import { etMidnight, etEndOfDay, etToday, etTomorrow, etAddDays, etFormatDate, etDaysBetween , type EtDateKey } from "../lib/dates";
-import { Role as RoleVal, JobOccurrenceStatus } from "@prisma/client";
+import { Prisma, Role as RoleVal, JobOccurrenceStatus } from "@prisma/client";
 import { ServiceError } from "../lib/errors";
 import { normalizePhone } from "../lib/phone";
 import { persistCompletionSplits } from "../services/payments";
@@ -701,13 +701,11 @@ export default async function workerRoutes(app: FastifyInstance) {
       const addonsTotal = (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
       const displayPrice = base + addonsTotal;
       if (displayPrice <= 0) return 0;
-      // THIS BRANCHES. Under ITEMIZED, material charges are billed to the
-      // client ON TOP and never come out of the crew's pool — subtracting
-      // them here under-reports every worker's projected pay by their share
-      // of the mulch. Under LEGACY they really did come out of the pool.
-      const chargesTotal = (occ.invoiceCharges ?? []).reduce((s, e) => s + (e.cost ?? 0), 0);
-      const net =
-        displayPrice;
+      // NOTHING IS SUBTRACTED HERE. Material charges are billed to the client
+      // ON TOP and never come out of the crew's pool. This once subtracted
+      // them, which under-reported every worker's projected pay by their share
+      // of the mulch.
+      const net = displayPrice;
       const active = (occ.assignees ?? []).filter((a) => a.role !== "observer");
       if (active.length === 0) return 0;
       const sharePer = net / active.length;
@@ -728,13 +726,13 @@ export default async function workerRoutes(app: FastifyInstance) {
       ).length;
     }
 
-    const moneySelect = {
+    const moneySelect = Prisma.validator<Prisma.JobOccurrenceSelect>()({
       price: true,
       proposalAmount: true,
       addons: { select: { price: true } },
       invoiceCharges: { select: { cost: true } },
       assignees: { select: { role: true, userId: true, user: { select: { workerType: true } } } },
-    } as const;
+    });
 
     // Reused for every "occurrences touching the subset" query. Empty in whole-team mode.
     const assigneeSubsetFilter = isSubset
@@ -4603,12 +4601,10 @@ export default async function workerRoutes(app: FastifyInstance) {
 
       // CHARGES NEVER COME OUT OF A WORKER'S PAY. This subtracted the
       // worker's pro-rata share of the job's invoice charges from what they
-      // earned — the OLD model, where an expense reduced the pool the crew
-      // split. It is wrong under both current models: under ITEMIZED the
-      // client pays the charges on top and the pool never sees them, and
-      // under LEGACY they came out of the pool BEFORE the split, so
-      // subtracting again double-counts them. Either way the worker's
-      // productivity stats were docked for materials they never paid for.
+      // earned — the OLD model, where a job "expense" reduced the pool the
+      // crew split. The client pays the charges on top and the pool never
+      // sees them, so the worker's productivity stats were docked for
+      // materials they never paid for.
       //
       // `totalExpenses` is kept as context — what was billed on the jobs they
       // worked — but it is not a deduction and no longer behaves like one.

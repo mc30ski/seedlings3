@@ -10,16 +10,26 @@ metadata:
 
 ## Canonical payment math
 
-Given a payment, expenses, and per-worker splits with worker types:
+Given a payment, its **invoice charges**, and per-worker splits with worker
+types:
 
 ```
-N         = collected − expenses                          (expenses come off the top)
+N         = collected − charges                           (charges come off the top)
 gross_i   = N × split_i                                   (worker i's share of the net)
 rate_i    = CONTRACTOR_PLATFORM_FEE_PERCENT (contractor or null workerType)
             EMPLOYEE_BUSINESS_MARGIN_PERCENT (employee or trainee)
 fee_i     = gross_i × rate_i
 net_i     = gross_i − fee_i
 ```
+
+**Say "charges", never "expenses".** These are `InvoiceCharge` rows — what the
+CLIENT is billed. They are NOT `BusinessExpense` and create no deduction; the
+old name is precisely how the two books got conflated. See
+[[reference-expenses-charges-supplies]].
+
+**Feed `computeBreakdown` the INVOICE, not labor alone.** `crewPool` is labor +
+services; `invoiceTotal` adds the charges. Passing labor-only and then
+subtracting charges takes materials out of the crew's pool a second time.
 
 Fee is applied to **each worker's own share**, not the pool. Class totals (`platformFeeTotal`, `businessMarginTotal`) are sums of per-worker fees, not a re-computation from the pool.
 
@@ -57,3 +67,4 @@ Admin can adjust `collected` on approval if the reported amount doesn't match wh
 - [[feedback-payments-build-gate]] — invariants that lock the math above.
 - [[project-tax-export-integrity]] — never export shortfall/overage as tax lines.
 - [[project-equipment-rental-income]] — equipment rental is income; separate from this file's math but on the same P&L.
+- [[reference-expenses-charges-supplies]] — the two-books model these charges live in.

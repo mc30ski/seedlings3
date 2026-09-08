@@ -33,7 +33,7 @@
 //      paid promised via topUp; contractors get $0).
 //
 //   3. Otherwise project the worker's expected net from the occurrence:
-//        N          = LEGACY ? max(0, labor + Σaddons - Σcharges) : labor + Σaddons
+//        N          = labor + Σaddons        (charges are billed on top, never in the pool)
 //        myPercent  = completionSplits[me].percent (when set)
 //                     ELSE  100 / non-observer-assignees (if I'm on the crew)
 //                     ELSE  0

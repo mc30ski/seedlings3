@@ -31,9 +31,9 @@ export type ViewerLike = {
 export type ProjectionOcc = {
   price?: number | null;
   proposalAmount?: number | null;
-  /** REQUIRED for any payout projection — `perWorkerShare` branches on it.
-   *  Optional here only so estimate previews (which have no occurrence row)
-   *  still typecheck; absent is treated as ITEMIZED, the current model. */
+  /** Services ARE in the crew's pool, so a missing `addons` under-reports the
+   *  projection. Optional here only so estimate previews (which have no
+   *  occurrence row) still typecheck; absent is treated as none. */
   addons?: Array<{ price?: number | null }> | null;
   invoiceCharges?: Array<{ cost: number }> | null;
   assignees?: Array<{ role?: string | null }> | null;

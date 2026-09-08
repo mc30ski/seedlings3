@@ -996,9 +996,8 @@ export async function workdaysCsv(start: Date, end: Date): Promise<CsvResult> {
     if (active.length === 0) return m;
     // THE INVOICE, not the labor. computeBreakdown computes
     // N = collected − charges, so feeding it labor-only and then subtracting
-    // the charges applies the LEGACY rule to every visit — on an ITEMIZED job
-    // it takes the mulch out of the crew's pool a second time. invoiceTotal
-    // branches, so the same call is right under both models.
+    // the charges takes the mulch out of the crew's pool a second time.
+    // invoiceTotal is the one rule — there is no era flag to branch on.
     const priceTotal = invoiceTotal({
       price: occ.price ?? 0,
       addons: occ.addons ?? [],

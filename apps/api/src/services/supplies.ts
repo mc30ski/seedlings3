@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "../db/prisma";
 import { ServiceError } from "../lib/errors";
 import { parseUserDate } from "../lib/dates";
@@ -86,17 +87,17 @@ function requireNonNegativeNum(n: unknown, label: string): number {
   return v;
 }
 
-const supplyInclude = {
+const supplyInclude = Prisma.validator<Prisma.SupplyInclude>()({
   createdBy: { select: { id: true, displayName: true } },
-} as const;
+});
 
-const purchaseInclude = {
+const purchaseInclude = Prisma.validator<Prisma.SupplyPurchaseInclude>()({
   supply: { select: { id: true, name: true, unit: true } },
   businessExpense: true,
   createdBy: { select: { id: true, displayName: true } },
-} as const;
+});
 
-const holdInclude = {
+const holdInclude = Prisma.validator<Prisma.SupplyHoldInclude>()({
   supply: { select: { id: true, name: true, unit: true } },
   invoiceCharge: true,
   createdBy: { select: { id: true, displayName: true } },
@@ -118,7 +119,7 @@ const holdInclude = {
       },
     },
   },
-} as const;
+});
 
 /**
  * Compute a supply's currently-held quantity (sum of ACTIVE holds). Used to
@@ -277,8 +278,8 @@ export const supplies: ServicesSupplies = {
     if (!unit) throw new ServiceError("INVALID_INPUT", "Unit is required.", 400);
 
     const category = await normalizeCategory(input.category);
-    const businessCost = requireNonNegativeNum(input.businessCost ?? 0, "Business cost");
-    const clientUnitPrice = requireNonNegativeNum(input.clientUnitPrice, "Job payout cost");
+    const businessCost = requireNonNegativeNum(input.businessCost ?? 0, "What you pay");
+    const clientUnitPrice = requireNonNegativeNum(input.clientUnitPrice, "Default client price");
     const upc = input.upc ? input.upc.trim() || null : null;
     const description = input.description ? input.description.trim() || null : null;
 
@@ -331,10 +332,10 @@ export const supplies: ServicesSupplies = {
     }
     if (input.category !== undefined) data.category = await normalizeCategory(input.category);
     if (input.businessCost !== undefined) {
-      data.businessCost = requireNonNegativeNum(input.businessCost ?? 0, "Business cost");
+      data.businessCost = requireNonNegativeNum(input.businessCost ?? 0, "What you pay");
     }
     if (input.clientUnitPrice !== undefined) {
-      data.clientUnitPrice = requireNonNegativeNum(input.clientUnitPrice, "Job payout cost");
+      data.clientUnitPrice = requireNonNegativeNum(input.clientUnitPrice, "Default client price");
     }
     if (input.upc !== undefined) {
       data.upc = input.upc ? String(input.upc).trim() || null : null;
