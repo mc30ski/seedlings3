@@ -1,0 +1,22 @@
+-- An inventory-backed line writes its own detail, until a human takes it over.
+--
+-- Pulling stock now fills `detail` from the hold — quantity, unit, and the
+-- per-unit price snapshotted at pull time — and REGENERATES it whenever the
+-- held quantity changes. Previously `adjustHold` re-priced the amount and left
+-- the words alone, so changing 6 bags to 5 produced a line reading
+-- "6 bags at $6.00" beside $30.00: an invoice contradicting itself in front of
+-- the client.
+--
+-- This flag records whether a human has written the detail themselves. Once
+-- true, nothing regenerates it.
+--
+-- STORED, NOT INFERRED. Comparing the current detail to what we would generate
+-- looks equivalent and is not: change the format string once and every
+-- existing line silently reads as custom forever, and it can never distinguish
+-- an operator who typed exactly that string from a generated one.
+--
+-- DEFAULT FALSE IS SAFE FOR EXISTING ROWS. Nothing regenerates a detail on its
+-- own — only an explicit quantity change does. So a historical line keeps the
+-- words it has until someone deliberately adjusts that line's quantity, and no
+-- invoice a client may already have opened is rewritten by this migration.
+ALTER TABLE "Expense" ADD COLUMN "detailIsCustom" BOOLEAN NOT NULL DEFAULT false;

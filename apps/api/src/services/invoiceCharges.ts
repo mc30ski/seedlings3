@@ -173,7 +173,19 @@ export const invoiceCharges: ServicesInvoiceCharges = {
         data.actualCost = ac;
       }
       if ("detail" in input) {
-        data.detail = input.detail?.trim() || null;
+        const typed = input.detail?.trim() || null;
+        data.detail = typed;
+        // TAKING OVER THE WORDS, or handing them back.
+        //
+        // An inventory-backed line writes its own detail from the hold and
+        // regenerates it whenever the quantity changes. Typing your own stops
+        // that — permanently, because otherwise the next quantity change would
+        // silently overwrite what you wrote. CLEARING it hands the line back:
+        // the next adjustment regenerates, and the line is auto again.
+        //
+        // On a one-off charge this flag is inert — nothing regenerates a
+        // detail that has no hold behind it.
+        data.detailIsCustom = typed != null;
       }
 
       // NO WRITE-THROUGH TO THE LEDGER. This used to sync cost, description,
@@ -205,6 +217,8 @@ export const invoiceCharges: ServicesInvoiceCharges = {
         actualCostAfter: updated.actualCost,
         detailBefore: charge.detail,
         detailAfter: updated.detail,
+        detailIsCustomBefore: charge.detailIsCustom,
+        detailIsCustomAfter: updated.detailIsCustom,
         descriptionBefore: charge.description,
         descriptionAfter: updated.description,
         fromInventory: !!charge.supplyHold,

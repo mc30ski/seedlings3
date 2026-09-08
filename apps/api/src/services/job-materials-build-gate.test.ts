@@ -1324,12 +1324,106 @@ describe("[build-gate] an inventory pull records what the stock cost us", () => 
     const SUP = stripComments(readFileSync(join(__dirname, "./supplies.ts"), "utf8"));
     expect(SUP).not.toMatch(/actualCost: Math\.round\(quantity \* supply\.businessCost/);
   });
-  it("changing the held quantity re-prices the line but keeps the words", () => {
+  it("changing the held quantity re-prices the line and keeps the NAME", () => {
     // The hold owns the STOCK. It once rewrote the description too, turning a
-    // line written for a client back into "Mulch × 5 bag".
+    // line written for a client back into "Mulch × 5 bag". The line's NAME is
+    // the operator's and is never regenerated.
     const SUP = stripComments(readFileSync(join(__dirname, "./supplies.ts"), "utf8"));
-    expect(SUP).toMatch(/data: \{ cost: newExpenseCost \}/);
+    expect(SUP).toMatch(/cost: newExpenseCost/);
     expect(SUP).toMatch(/const description = input\.description\?\.trim\(\) \|\| supply\.name;/);
+    expect(SUP, "adjusting must never rewrite the line name")
+      .not.toMatch(/data: \{[^}]*description:[^}]*\}[^;]*invoiceCharge\.update/);
+  });
+
+  it("quantity is stepped by buttons, not a native spinner", () => {
+    // A browser spinner on a number input is a ~10px target that AUTO-REPEATS
+    // AND ACCELERATES while held, so one press walks the value several steps —
+    // it read as the number jumping 1, 2, 4, 8. Driving the keyboard step
+    // proved the React handler always moved by exactly +1, so the control was
+    // the fault, not the state.
+    //
+    // Unusable on a phone besides, which is what this app is used on.
+    const DLG = readFileSync(
+      join(__dirname, "../../../web/src/ui/dialogs/ManageInvoiceChargesDialog.tsx"), "utf8",
+    );
+    expect(DLG, "the native spinner must be suppressed")
+      .toMatch(/-webkit-inner-spin-button/);
+    expect(DLG).toMatch(/aria-label="One more"/);
+    expect(DLG).toMatch(/aria-label="One fewer"/);
+    // The + must stop at what is actually in stock rather than letting the
+    // server refuse after the fact.
+    expect(DLG).toMatch(/>= pickedSupply\.available/);
+  });
+
+  it("the detail writes itself, and follows the quantity", () => {
+    // WHAT THIS FIXES: adjustHold re-priced the amount and left the words
+    // alone, so 6 bags -> 5 produced a line reading "6 bags at $6.00" beside
+    // $30.00 — an invoice contradicting itself in front of the client.
+    const SUP = stripComments(readFileSync(join(__dirname, "./supplies.ts"), "utf8"));
+    expect(SUP).toMatch(/export function supplyChargeDetail/);
+    // Generated on pull…
+    expect(SUP).toMatch(/detail: typedDetail \?\? supplyChargeDetail\(/);
+    // …and regenerated on every quantity change, unless a human took it over.
+    expect(SUP).toMatch(/hold\.invoiceCharge\?\.detailIsCustom/);
+    expect(SUP).toMatch(/detail: supplyChargeDetail\(qty, hold\.supply\.unit, hold\.clientUnitPrice\)/);
+
+    // PRICED FROM THE HOLD'S SNAPSHOT, never the catalog. What a client pays
+    // is chosen per pull and differs between clients for the same item.
+    expect(SUP, "the detail must not quote today's catalog price")
+      .not.toMatch(/supplyChargeDetail\([^)]*supply\.clientUnitPrice/);
+  });
+
+  it("the previewed detail is character-for-character what the server writes", () => {
+    // A preview that does not match what gets saved is worse than no preview.
+    // The template is duplicated across the API (which writes it) and the web
+    // (which previews it), so the two are pinned to each other here.
+    const SUP = readFileSync(join(__dirname, "./supplies.ts"), "utf8");
+    const DLG = readFileSync(
+      join(__dirname, "../../../web/src/ui/dialogs/ManageInvoiceChargesDialog.tsx"), "utf8",
+    );
+    const TEMPLATE = /\$\{(\w+)\} × \$\{([\w.?]+)\} @ \\?\$\$\{([\w.]+)\.toFixed\(2\)\}/;
+    const inApi = SUP.match(TEMPLATE);
+    const inWeb = DLG.match(TEMPLATE);
+    expect(inApi, "supplies.ts no longer builds the detail from the shared shape").toBeTruthy();
+    expect(inWeb, "the dialog no longer previews the detail").toBeTruthy();
+    // Same literal punctuation between the parts — the × and the @ are what a
+    // client reads, and a drift there is silent.
+    const shape = (m: RegExpMatchArray) => m[0].replace(/\$\{[^}]+\}/g, "%");
+    expect(shape(inWeb!), "the preview and the saved value have drifted apart")
+      .toBe(shape(inApi!));
+  });
+
+  it("leaving the detail blank is discoverable on the form", () => {
+    // The behaviour existed server-side and the form said nothing about it —
+    // the placeholder read as an instruction to write one yourself, so the
+    // feature may as well not have shipped.
+    const DLG = readFileSync(
+      join(__dirname, "../../../web/src/ui/dialogs/ManageInvoiceChargesDialog.tsx"), "utf8",
+    );
+    expect(DLG).toMatch(/written for you unless you type one/);
+    // THE EXAMPLE FOLLOWS THE SELECTIONS. It read "5 bags at $5.00 each" — a
+    // format that is not what gets saved, sitting directly above the Qty and
+    // price it was ignoring. An example that contradicts the fields beneath it
+    // teaches the wrong pattern to anyone who copies it.
+    expect(DLG).toMatch(/function detailPlaceholder\(\)/);
+    expect(DLG).toMatch(/placeholder=\{detailPlaceholder\(\)\}/);
+    expect(DLG, "the old off-format example must not survive")
+      .not.toMatch(/e\.g\. 5 bags at \$5\.00 each/);
+    expect(DLG).toMatch(/Leaving this blank writes/);
+    // …and a way back to auto once you have typed over it.
+    expect(DLG).toMatch(/Write it for me/);
+  });
+
+  it("whether a human wrote the detail is STORED, not inferred", () => {
+    // Comparing the detail to what we would have generated looks equivalent
+    // and is not: change the format once and every existing line silently
+    // reads as custom forever, and it can never tell an operator who typed
+    // exactly that string from a generated one.
+    const SCHEMA = readFileSync(join(__dirname, "../../prisma/schema.prisma"), "utf8");
+    expect(SCHEMA).toMatch(/detailIsCustom Boolean @default\(false\)/);
+    const CHARGES = stripComments(readFileSync(join(__dirname, "./invoiceCharges.ts"), "utf8"));
+    // Typing sets it; CLEARING the field hands the line back to auto.
+    expect(CHARGES).toMatch(/data\.detailIsCustom = typed != null;/);
   });
   it("recording a purchase still writes no ledger row", () => {
     // The deduction is the real card charge in the Ledger. A purchase may
@@ -1589,6 +1683,199 @@ describe("[build-gate] supply photos", () => {
       .toMatch(/photo\(s\) failed to upload/);
     // The supply itself IS saved, so this must never read as a failed add.
     expect(T).toMatch(/Supply added, but/);
+  });
+
+  it("the list row carries its own thumbnail — no request per row", () => {
+    // Equipment lazy-loads thumbnails behind an IntersectionObserver because a
+    // yard can hold hundreds of items. A supply catalog is small and presigning
+    // is a local signature computation, not a network call, so the URL ships
+    // with the row. One query for the page beats one request per row.
+    const SUP = stripComments(readFileSync(join(__dirname, "./supplies.ts"), "utf8"));
+    expect(SUP, "only the first photo is needed for a thumbnail").toMatch(/take: 1/);
+    expect(SUP).toMatch(/thumbnailUrl/);
+    expect(SUP).toMatch(/_count: \{ select: \{ photos: true \} \}/);
+    // A broken or expired object must not take the whole list down with it.
+    expect(SUP).toMatch(/} catch \{\s*return null;/);
+    expect(TAB()).toMatch(/s\.thumbnailUrl && \(/);
+  });
+
+  it("stock frozen by a paused series is surfaced, not silently missing", () => {
+    // A repeating job on hold KEEPS its hold: the crew committed that stock
+    // and resuming should find it set aside. But the pause is open-ended —
+    // resume asks for a fresh start date — so without a cue the units are
+    // simply gone from Available with nothing on screen explaining why.
+    //
+    // Releasing instead was rejected: releaseHoldsForOccurrence DELETES the
+    // paired InvoiceCharge, so auto-releasing on pause would quietly remove a
+    // line from a client's invoice and resuming would not put it back.
+    const T = TAB();
+    expect(T).toMatch(/const pausedHeld = /);
+    expect(T).toMatch(/for a paused series/);
+    // Visible on the COLLAPSED line — needing to expand to notice missing
+    // stock defeats the point.
+    expect(T).toMatch(/pausedHeld > 0 && \(/);
+  });
+
+  it("an occurrence status is never printed as its raw enum", () => {
+    // The claim row rendered `{h.occurrence.status}`, so it read
+    // "STREAM_PAUSED" — schema vocabulary that appears nowhere in the product.
+    // prettyStatus() maps it to "Repeating Paused" and every other tab uses
+    // it; its own comment says "Stream" is internal-only terminology.
+    const T = stripComments(TAB());
+    expect(T).toMatch(/prettyStatus\(h\.occurrence\.status\)/);
+    expect(T, "the raw enum must not be rendered")
+      .not.toMatch(/\{h\.occurrence\.status\}/);
+    expect(T, "and the shared colour helper goes with it")
+      .toMatch(/occurrenceStatusColor\(h\.occurrence\.status\)/);
+  });
+
+  it("arriving from the Ledger actually lands ON the supply", () => {
+    // THE ORIGINAL NEVER FIRED ONCE. It polled `supplies.find(...)` on an
+    // interval that closed over `supplies` as it was on the FIRST render —
+    // the empty array — so it searched nothing for four seconds and gave up,
+    // while the effect's re-run found the localStorage key already consumed.
+    // The link navigated to the tab and did nothing else.
+    //
+    // A stale closure inside setInterval is invisible in review and in types;
+    // only using the feature reveals it. So the gate bans the mechanism.
+    const T = stripComments(TAB());
+    expect(T, "no interval may poll a captured list for the pending row")
+      .not.toMatch(/setInterval\([^]{0,200}supplies\.find/);
+    // Held in a ref and resolved when `supplies` actually changes.
+    expect(T).toMatch(/pendingHighlight = useRef/);
+    expect(T).toMatch(/\}, \[supplies, includeArchived\]\)/);
+    // And it must be VISIBLE on arrival, which is the whole point.
+    expect(T).toMatch(/setHighlightedId\(found\.id\)/);
+    expect(T).toMatch(/scrollIntoView/);
+    expect(T).toMatch(/id=\{`supply-row-\$\{s\.id\}`\}/);
+  });
+
+  it("the breadcrumb clicks through in BOTH directions", () => {
+    // The Ledger already showed "Supply: Mulch x 30 ->" and navigated to
+    // Supplies. The return trip did not exist: a purchase named its ledger row
+    // as inert grey text, so the link was legible from one end only.
+    const TABS = TAB();
+    expect(TABS, "the supply purchase must link to its ledger row")
+      .toMatch(/seedlings_ledger_pendingHighlight/);
+    expect(TABS).toMatch(/detail: \{ tab: "ledger" \}/);
+
+    const LEDGER = readFileSync(
+      join(__dirname, "../../../web/src/ui/tabs/BusinessExpensesTab.tsx"), "utf8",
+    );
+    expect(LEDGER, "…and the Ledger must consume the handoff").toMatch(
+      /localStorage\.getItem\("seedlings_ledger_pendingHighlight"\)/,
+    );
+    // FETCHED BY ID. The list is filtered to a persisted date window, so
+    // searching the loaded rows would silently fail for older receipts — the
+    // very ones worth deep-linking to.
+    expect(LEDGER).toMatch(/admin\/business-expenses\/\$\{pending\}/);
+    expect(ADMIN()).toMatch(/app\.get\("\/admin\/business-expenses\/:id"/);
+    // One include feeds the list and the detail route, so they cannot drift.
+    expect(ADMIN()).toMatch(/const LEDGER_ROW_INCLUDE = /);
+    expect(ADMIN()).toMatch(/include: LEDGER_ROW_INCLUDE/);
+  });
+
+  it("the ledger picker is capped, debounced and race-guarded", () => {
+    // CAPPED: the endpoint returns the 40 most recent EXPENSE rows, or the 40
+    // best matches — never the whole ledger, which only grows.
+    const A = ADMIN();
+    const at = A.indexOf('app.get("/admin/ledger-charges"');
+    expect(at).toBeGreaterThan(-1);
+    const route = A.slice(at, at + 1200);
+    expect(route).toMatch(/take: 40/);
+    expect(route).toMatch(/orderBy: \{ date: "desc" \}/);
+    expect(route, "equity rows are not receipts").toMatch(/type: "EXPENSE"/);
+
+    // DEBOUNCED: bound straight to onChange this ran one request — and one
+    // ILIKE scan — per keystroke. RACE-GUARDED: it applied whichever response
+    // landed last, so a slow early request could overwrite a later one and
+    // show matches for a prefix of what was typed.
+    // The guard is asserted ON THE SETTER THAT APPLIES RESULTS, not merely
+    // present in the file: `seq === ledgerSeq.current` also appears in the
+    // `finally`, so a looser check passes with the real guard deleted.
+    // Verified by deleting it and watching this fail.
+    for (const [f, setter] of [
+      ["../../../web/src/ui/tabs/SuppliesTab.tsx", "setLedgerRows"],
+      ["../../../web/src/ui/dialogs/ManageInvoiceChargesDialog.tsx", "setLedgerCharges"],
+    ] as const) {
+      const src = stripComments(readFileSync(join(__dirname, f), "utf8"));
+      expect(src, `${f} must debounce the ledger search`).toMatch(/ledgerTimer/);
+      expect(src, `${f} must apply only the newest response`)
+        .toMatch(new RegExp(`if \\(seq === ledgerSeq\\.current\\) ${setter}\\(`));
+      expect(src, `${f} must not fetch straight from onChange`)
+        .not.toMatch(/onChange=\{\(e\) => void searchLedger/);
+    }
+  });
+
+  it("history 404s on a supply that does not exist", () => {
+    // findMany on an unknown id returns [], which renders as "No history yet"
+    // — the same thing a brand-new supply shows. A stale row (a list loaded
+    // before a delete, or before a dev reseed rebuilt every id) then reports
+    // "no history" for a supply with plenty, and nothing on screen suggests
+    // looking further.
+    const SUP = stripComments(readFileSync(join(__dirname, "./supplies.ts"), "utf8"));
+    const at = SUP.indexOf("async listHistory");
+    expect(at).toBeGreaterThan(-1);
+    // stripComments blanks comments to SPACES, preserving length, so offsets
+    // do not shrink — the window has to clear the prose above the check.
+    const body = SUP.slice(at, SUP.indexOf("async addHold", at));
+    expect(body).toMatch(/if \(!exists\) throw new ServiceError\("NOT_FOUND"/);
+    // …and it must come BEFORE the queries, or it is decoration.
+    expect(body.indexOf("!exists")).toBeLessThan(body.indexOf("findMany"));
+    // …and the tab must act on it rather than showing a dead row again.
+    expect(TAB()).toMatch(/That supply no longer exists/);
+  });
+
+  it("holds and releases appear in the history, not just purchases", () => {
+    // Stock leaving for a job, and coming back when that job is cancelled, are
+    // the movements an operator most needs to see. The timeline is a tagged
+    // union of all three kinds.
+    const SUP = stripComments(readFileSync(join(__dirname, "./supplies.ts"), "utf8"));
+    expect(SUP).toMatch(/kind: "PURCHASE"/);
+    expect(SUP).toMatch(/kind: "HOLD"/);
+    expect(SUP).toMatch(/kind: "ADJUSTMENT"/);
+    const T = TAB();
+    expect(T).toMatch(/evt\.kind === "HOLD"/);
+    expect(T, "a released hold must be labelled as such").toMatch(/"Released"/);
+  });
+
+  it("the claimed figure says UNITS, and the job count is separate", () => {
+    // `held` is `_sum: { quantity: true }` over ACTIVE holds — a quantity of
+    // stock, not a number of jobs. The label read "claimed by jobs: 2" while
+    // rendering it, so one job holding two blades reported two jobs and
+    // contradicted the list of holds directly beneath it.
+    //
+    // See [[feedback-names-carry-meaning]]: a label that names the wrong
+    // quantity is the same class of bug as a field that does.
+    // Comments stripped: the history is recorded in prose right where the
+    // label lives, and quoting the old wording must not trip the gate.
+    const T = stripComments(TAB());
+    expect(T, "the old label conflated units with jobs").not.toMatch(/claimed by jobs: /);
+    expect(T).toMatch(/claimed by\{" "\}/);
+    expect(T).toMatch(/job\$\{s\.activeHolds\.length === 1 \? "" : "s"\}/);
+  });
+
+  it("clicking a list thumbnail views the photos — it does not open the editor", () => {
+    // "Show me this thing" is the action a picture invites. Opening a form
+    // instead makes the image behave like a button that does something else.
+    const T = TAB();
+    expect(T).toMatch(/onClick=\{\(\) => void openGallery\(s\)\}/);
+    expect(T, "the thumbnail must not route to the editor")
+      .not.toMatch(/title=\{[^}]*photos[^}]*\}\s*onClick=\{\(\) => openEdit/);
+    // The row ships only the FIRST photo, so the rest are fetched on click.
+    expect(T).toMatch(/\/photos`\)/);
+  });
+
+  it("uses the SHARED lightbox rather than a fourth copy of one", () => {
+    // PhotoLightbox already backs the pay page and the promotion landing page:
+    // arrows, swipe, Escape, n/total. Equipment and Property each hand-rolled
+    // their own and they have already drifted apart.
+    expect(readFileSync(
+      join(__dirname, "../../../web/src/ui/components/SupplyPhotos.tsx"), "utf8",
+    )).toMatch(/import PhotoLightbox/);
+    expect(TAB()).toMatch(/import PhotoLightbox/);
+    // Descriptions must survive into the viewer, or writing one is pointless.
+    expect(TAB()).toMatch(/caption: p\.description/);
   });
 
   it("staged files are visibly not-yet-saved, and their object URLs released", () => {

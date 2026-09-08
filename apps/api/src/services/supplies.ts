@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { fifoCost, type SupplyCostEvent, type SupplyCostResult } from "../lib/supplyCost";
+import { getDownloadUrl } from "../lib/r2";
 import { prisma } from "../db/prisma";
 import { ServiceError } from "../lib/errors";
 import { parseUserDate } from "../lib/dates";
@@ -88,9 +89,53 @@ function requireNonNegativeNum(n: unknown, label: string): number {
   return v;
 }
 
+/**
+ * The client-visible detail for an inventory-backed line.
+ *
+ * "6 × 1 gallon @ $54.00". The multiplication sign is load-bearing: it reads
+ * as "six of these", so the unit never has to be a pluralizable noun. Real
+ * production units are "1 ft", "1 gallon", "3 oz (1 gallon mix)" and
+ * "2 CU FT" — the obvious `${qty} ${unit}s at $${price}` renders the third as
+ * "6 3 oz (1 gallon mix)s at $2.00".
+ *
+ * PRICED FROM THE HOLD'S SNAPSHOT, not the catalog. What a client pays is
+ * chosen per pull and can differ between clients for the same item; the
+ * catalog value is only what the pull dialog pre-fills.
+ */
+export function supplyChargeDetail(
+  quantity: number,
+  unit: string,
+  clientUnitPrice: number,
+): string {
+  return `${quantity} × ${unit} @ $${clientUnitPrice.toFixed(2)}`;
+}
+
 const supplyInclude = Prisma.validator<Prisma.SupplyInclude>()({
   createdBy: { select: { id: true, displayName: true } },
+  // FIRST PHOTO ONLY, for the list thumbnail. Equipment lazy-loads its
+  // thumbnails per row behind an IntersectionObserver because there can be
+  // hundreds of them; a supply catalog is small and presigning is a local
+  // signature computation, not a network call, so shipping the URL with the
+  // row costs less than one request per row would.
+  photos: {
+    orderBy: { sortOrder: "asc" },
+    take: 1,
+    select: { id: true, r2Key: true, description: true },
+  },
+  _count: { select: { photos: true } },
 });
+
+/** Presigned URL of a row's first photo, or null. Never throws — a broken
+ *  thumbnail must not take down the Supplies list. */
+async function thumbnailFor(row: { photos: Array<{ r2Key: string }> }): Promise<string | null> {
+  const first = row.photos?.[0];
+  if (!first) return null;
+  try {
+    return await getDownloadUrl(first.r2Key, 86400, "equipment-photos");
+  } catch {
+    return null;
+  }
+}
 
 const purchaseInclude = Prisma.validator<Prisma.SupplyPurchaseInclude>()({
   supply: { select: { id: true, name: true, unit: true } },
@@ -312,6 +357,11 @@ export const supplies: ServicesSupplies = {
     }
 
     const costs = await costBySupply(rows.map((r) => r.id));
+    const thumbs = new Map<string, string | null>(
+      await Promise.all(
+        rows.map(async (r) => [r.id, await thumbnailFor(r)] as [string, string | null]),
+      ),
+    );
 
     return rows.map((r) => {
       const held = heldById.get(r.id) ?? 0;
@@ -322,6 +372,8 @@ export const supplies: ServicesSupplies = {
         available: r.onHand - held,
         averageCost: cost?.averageCost ?? null,
         valueOnHand: cost?.valueOnHand ?? null,
+        thumbnailUrl: thumbs.get(r.id) ?? null,
+        photoCount: (r as any)._count?.photos ?? 0,
       };
       if (opts?.includeHoldDetails) {
         decorated.activeHolds = activeHoldsBySupply.get(r.id) ?? [];
@@ -344,6 +396,8 @@ export const supplies: ServicesSupplies = {
       available: row.onHand - held,
       averageCost: cost?.averageCost ?? null,
       valueOnHand: cost?.valueOnHand ?? null,
+      thumbnailUrl: await thumbnailFor(row),
+      photoCount: (row as any)._count?.photos ?? 0,
     };
   },
 
@@ -656,6 +710,15 @@ export const supplies: ServicesSupplies = {
     // BusinessExpense filter on the Accounting tab. Holds and adjustments
     // are operational (inventory movement), not money, so they pass through
     // unfiltered. See lib/businessStartCutoff.ts.
+    // A MISSING SUPPLY IS NOT AN EMPTY HISTORY. findMany on an id that does
+    // not exist returns [], which the UI renders as "No history yet" — the
+    // same thing a brand-new supply shows. So a stale row (a list loaded
+    // before the supply was deleted, or before a dev reseed rebuilt every id)
+    // reports "no history" for a supply that has plenty, and there is nothing
+    // on screen to suggest looking further.
+    const exists = await prisma.supply.findUnique({ where: { id: supplyId }, select: { id: true } });
+    if (!exists) throw new ServiceError("NOT_FOUND", "Supply not found.", 404);
+
     const cutoff = opts?.cutoff ?? null;
     const [purchases, holds, adjustments] = await Promise.all([
       prisma.supplyPurchase.findMany({
@@ -765,6 +828,7 @@ export const supplies: ServicesSupplies = {
       // The quantity belongs in the optional detail, where the operator can
       // phrase it: "5 bags at $5.00 each".
       const description = input.description?.trim() || supply.name;
+      const typedDetail = input.detail?.trim() || null;
 
       // No paired BusinessExpense — the BE was already recorded at purchase
       // time. Recording another here would inflate the tax ledger.
@@ -778,7 +842,11 @@ export const supplies: ServicesSupplies = {
           // Ledger is what gets reconciled against the accounting software.
           // Recording it here made a client charge look like a cost record.
           description,
-          detail: input.detail?.trim() || null,
+          // AUTO-GENERATED unless the operator wrote their own. Regenerated on
+          // every quantity change while `detailIsCustom` is false, so a line
+          // can never read "6 bags" beside a five-bag price.
+          detail: typedDetail ?? supplyChargeDetail(quantity, supply.unit, unitPrice),
+          detailIsCustom: typedDetail != null,
         },
       });
 
@@ -967,7 +1035,15 @@ export const supplies: ServicesSupplies = {
         // record; supplies are a stock-tracking layer above it.
         await tx.invoiceCharge.update({
           where: { id: hold.invoiceChargeId },
-          data: { cost: newExpenseCost },
+          data: {
+            cost: newExpenseCost,
+            // The detail follows the quantity for as long as it is ours.
+            // Leaving it behind is what produced "6 bags at $6.00" beside
+            // $30.00 — a line contradicting itself on the client's invoice.
+            ...(hold.invoiceCharge?.detailIsCustom
+              ? {}
+              : { detail: supplyChargeDetail(qty, hold.supply.unit, hold.clientUnitPrice) }),
+          },
         });
       }
 

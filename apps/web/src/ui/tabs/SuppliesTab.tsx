@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Badge,
   Box,
@@ -36,9 +36,12 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import { prettyStatus } from "@/src/lib/labels";
+import { occurrenceStatusColor } from "@/src/lib/statusColors";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import QRScannerDialog from "@/src/ui/dialogs/QRScannerDialog";
-import SupplyPhotos, { uploadStagedPhotos, type StagedPhoto } from "@/src/ui/components/SupplyPhotos";
+import SupplyPhotos, { uploadStagedPhotos, type StagedPhoto, type SupplyPhoto } from "@/src/ui/components/SupplyPhotos";
+import PhotoLightbox from "@/src/ui/components/PhotoLightbox";
 
 // Barcode formats to scan when looking up supplies. Stable reference so
 // QRScannerDialog's effect doesn't re-run on every parent render.
@@ -79,6 +82,10 @@ type Supply = {
   averageCost: number | null;
   /** averageCost x onHand, or null. */
   valueOnHand: number | null;
+  /** Presigned URL of the FIRST photo, shipped with the list so a row needs
+   *  no extra request. null when the supply has none. */
+  thumbnailUrl?: string | null;
+  photoCount?: number;
   clientUnitPrice: number;
   onHand: number;
   held: number;
@@ -157,7 +164,11 @@ export default function SuppliesTab({
   const [q, setQ] = useState("");
   const [includeArchived, setIncludeArchived] = useState(false);
   const [lowStockOnly, setLowStockOnly] = useState(false);
-  const [expandedClaims, setExpandedClaims] = useState<Set<string>>(new Set());
+  // WHICH ROWS ARE COLLAPSED, not which are expanded — so the default empty
+  // set means every claim breakdown is OPEN. Who is holding stock is the
+  // reason to look at this line at all; hiding it behind a click made the
+  // header number the only visible answer, and that number is units.
+  const [collapsedClaims, setCollapsedClaims] = useState<Set<string>>(new Set());
 
   // Worker uses the worker-readable endpoint (no per-job breakdown).
   // Admin/Super hit /admin/supplies which now returns activeHolds details.
@@ -177,6 +188,33 @@ export default function SuppliesTab({
   const [savingEdit, setSavingEdit] = useState(false);
   // Photos chosen while ADDING, before the supply exists to attach them to.
   const [stagedPhotos, setStagedPhotos] = useState<StagedPhoto[]>([]);
+
+  // Gallery opened from a LIST thumbnail. The row ships only the first photo's
+  // URL, so the rest are fetched on click — one request, only when someone
+  // actually wants to look.
+  const [galleryPhotos, setGalleryPhotos] = useState<SupplyPhoto[] | null>(null);
+  const [galleryIndex, setGalleryIndex] = useState(0);
+
+  async function openGallery(s: Supply) {
+    // Show the thumbnail we already have immediately, so the viewer opens on
+    // the tap rather than after a round-trip; the full set replaces it.
+    if (s.thumbnailUrl) {
+      setGalleryPhotos([{ id: "thumb", url: s.thumbnailUrl, sortOrder: 0 }]);
+      setGalleryIndex(0);
+    }
+    try {
+      const list = await apiGet<SupplyPhoto[]>(`/api/admin/supplies/${s.id}/photos`);
+      const photos = Array.isArray(list) ? list : [];
+      if (photos.length === 0) {
+        setGalleryPhotos(null);
+        return;
+      }
+      setGalleryPhotos(photos);
+    } catch (err) {
+      setGalleryPhotos(null);
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Couldn't load the photos.", err) });
+    }
+  }
 
   // Buy more dialog
   const [buyOpen, setBuyOpen] = useState<Supply | null>(null);
@@ -251,27 +289,63 @@ export default function SuppliesTab({
   }, []);
 
   // BusinessExpensesTab → Supplies handoff: the supply-purchase badge sets
-  // `seedlings_supplies_pendingHighlight = <supplyId>` and dispatches the
-  // navigate:superTab event. On mount, consume the key and open the History
-  // dialog for that supply so the user lands on the relevant context.
+  // `seedlings_supplies_pendingHighlight = <supplyId>` and dispatches
+  // navigate:superTab. Land on that supply: scroll it into view and ring it.
+  //
+  // THE PREVIOUS VERSION NEVER FIRED ONCE. It read the key on mount and then
+  // polled `supplies.find(...)` on an interval — but the interval closed over
+  // `supplies` AS IT WAS ON THE FIRST RENDER, which is the empty array. It
+  // searched that empty array every 80ms for four seconds and gave up. When
+  // the list did arrive the effect re-ran, but the key had already been
+  // consumed on the first pass, so it returned immediately. The result was a
+  // link that navigated to the tab and did nothing else — which is exactly
+  // what it looked like from the outside.
+  //
+  // No interval now: hold the id in a ref and act when `supplies` actually
+  // changes, so the lookup always sees the current list.
+  const pendingHighlight = useRef<string | null>(null);
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
+
   useEffect(() => {
-    let pending: string | null = null;
-    try { pending = localStorage.getItem("seedlings_supplies_pendingHighlight"); } catch {}
-    if (!pending) return;
-    try { localStorage.removeItem("seedlings_supplies_pendingHighlight"); } catch {}
-    // Wait for first load to complete, then look up the supply and open history.
-    const interval = setInterval(() => {
-      const found = supplies.find((s) => s.id === pending);
-      if (found) {
-        clearInterval(interval);
-        void openHistory(found);
+    try {
+      const v = localStorage.getItem("seedlings_supplies_pendingHighlight");
+      if (v) {
+        pendingHighlight.current = v;
+        localStorage.removeItem("seedlings_supplies_pendingHighlight");
       }
-    }, 80);
-    // Safety stop after 4s in case the supply was archived/deleted.
-    const stop = setTimeout(() => clearInterval(interval), 4000);
-    return () => { clearInterval(interval); clearTimeout(stop); };
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    const id = pendingHighlight.current;
+    if (!id || supplies.length === 0) return;
+    const found = supplies.find((s) => s.id === id);
+    if (!found) {
+      // Most likely archived, which the list hides by default. Reveal them
+      // once and let this effect run again on the reloaded list.
+      if (!includeArchived) {
+        setIncludeArchived(true);
+        return;
+      }
+      pendingHighlight.current = null;
+      publishInlineMessage({
+        type: "WARNING",
+        text: "That supply is no longer in the catalog.",
+      });
+      return;
+    }
+    pendingHighlight.current = null;
+    setHighlightedId(found.id);
+    // After paint, or the node is not in the document yet.
+    requestAnimationFrame(() => {
+      document
+        .getElementById(`supply-row-${found.id}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    const t = setTimeout(() => setHighlightedId(null), 4000);
+    return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [supplies.length > 0]);
+  }, [supplies, includeArchived]);
 
   // Debounced reload on filter changes
   useEffect(() => {
@@ -443,22 +517,43 @@ export default function SuppliesTab({
     }
   }
 
-  async function searchLedger(q: string) {
-    setLedgerQuery(q);
+  // DEBOUNCED AND RACE-GUARDED. Bound straight to onChange this fired one
+  // request — and one ILIKE scan of the ledger — PER KEYSTROKE: typing "Lowes"
+  // was five. It also applied whichever response landed last, so a slow early
+  // request could overwrite a later one and leave the list showing matches for
+  // a prefix of what was typed.
+  //
+  // 250ms matches the main supply-search debounce above; the sequence counter
+  // means only the newest response is ever applied.
+  const ledgerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ledgerSeq = useRef(0);
+
+  useEffect(() => () => { if (ledgerTimer.current) clearTimeout(ledgerTimer.current); }, []);
+
+  function searchLedger(q: string) {
+    setLedgerQuery(q);          // the field stays responsive
     setLedgerBusy(true);
-    try {
-      setLedgerRows(await apiGet<LedgerRow[]>(`/api/admin/ledger-charges?q=${encodeURIComponent(q)}`));
-    } catch {
-      /* keep the last list rather than emptying it mid-type */
-    } finally {
-      setLedgerBusy(false);
-    }
+    if (ledgerTimer.current) clearTimeout(ledgerTimer.current);
+    ledgerTimer.current = setTimeout(async () => {
+      const seq = ++ledgerSeq.current;
+      try {
+        const rows = await apiGet<LedgerRow[]>(
+          `/api/admin/ledger-charges?q=${encodeURIComponent(q)}`,
+        );
+        if (seq === ledgerSeq.current) setLedgerRows(rows);
+      } catch {
+        /* keep the last list rather than emptying it mid-type */
+      } finally {
+        if (seq === ledgerSeq.current) setLedgerBusy(false);
+      }
+    }, 250);
   }
 
   function openLedgerPicker(target: string) {
     setLedgerPickerFor(target);
     setLedgerRows([]);
-    void searchLedger("");
+    setLedgerQuery("");
+    searchLedger("");
   }
 
   /** Link or unlink an ALREADY-RECORDED purchase, from the History timeline. */
@@ -578,10 +673,23 @@ export default function SuppliesTab({
       const list = await apiGet<any[]>(historyEndpoint(s.id));
       setHistoryRows(Array.isArray(list) ? list : []);
     } catch (err) {
-      publishInlineMessage({
-        type: "ERROR",
-        text: getErrorMessage("Failed to load history.", err),
-      });
+      // A 404 means the row on screen is stale — the supply is gone, or the
+      // list predates a reseed. Say that, and refresh rather than leaving a
+      // dead row to be clicked again.
+      const msg = String((err as any)?.message ?? "");
+      if (msg.includes("404") || /not found/i.test(msg)) {
+        setHistoryOpen(null);
+        publishInlineMessage({
+          type: "WARNING",
+          text: "That supply no longer exists. Refreshing the list.",
+        });
+        void load();
+      } else {
+        publishInlineMessage({
+          type: "ERROR",
+          text: getErrorMessage("Failed to load history.", err),
+        });
+      }
     } finally {
       setHistoryLoading(false);
     }
@@ -734,10 +842,75 @@ export default function SuppliesTab({
         </Box>
       ) : (
         <VStack align="stretch" gap={1}>
-          {filtered.map((s) => (
-            <Card.Root key={s.id} variant="outline" opacity={s.archivedAt ? 0.6 : 1}>
+          {filtered.map((s) => {
+            // Units reserved by an occurrence whose repeating series is
+            // PAUSED. Held deliberately — the crew committed that stock and
+            // resuming should find it set aside — but the pause is open-ended
+            // (resume asks for a fresh start date), so it is called out rather
+            // than silently missing from Available.
+            const pausedHeld = (s.activeHolds ?? [])
+              .filter((h) => (h.occurrence?.status as string) === "STREAM_PAUSED")
+              .reduce((n, h) => n + h.quantity, 0);
+            return (
+            <Card.Root
+              key={s.id}
+              id={`supply-row-${s.id}`}
+              variant="outline"
+              opacity={s.archivedAt ? 0.6 : 1}
+              // Ringed for a few seconds after arriving from a ledger link, so
+              // the row that was navigated to is obvious on a long list.
+              borderColor={highlightedId === s.id ? "blue.solid" : undefined}
+              borderWidth={highlightedId === s.id ? "2px" : undefined}
+              boxShadow={highlightedId === s.id ? "0 0 0 3px var(--chakra-colors-blue-muted)" : undefined}
+              transition="box-shadow 150ms ease, border-color 150ms ease"
+            >
               <Card.Body p={3}>
                 <HStack justify="space-between" align="flex-start" gap={2} wrap="wrap">
+                  {/* Thumbnail, same 56px block Equipment uses. The URL ships
+                      with the list row, so this costs no request. Clicking
+                      opens the supply's gallery rather than a bare lightbox —
+                      the useful next action from a list is "show me this
+                      thing", and Edit is where the rest of the photos live. */}
+                  {s.thumbnailUrl && (
+                    <Box
+                      w="56px"
+                      h="56px"
+                      borderRadius="md"
+                      overflow="hidden"
+                      borderWidth="1px"
+                      borderColor="gray.200"
+                      flexShrink={0}
+                      position="relative"
+                      cursor="pointer"
+                      title={
+                        (s.photoCount ?? 1) > 1
+                          ? `${s.photoCount} photos — click to view`
+                          : "Click to view"
+                      }
+                      onClick={() => void openGallery(s)}
+                    >
+                      <img
+                        src={s.thumbnailUrl}
+                        alt={s.name}
+                        loading="lazy"
+                        style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                      />
+                      {(s.photoCount ?? 0) > 1 && (
+                        <Box
+                          position="absolute"
+                          bottom="0"
+                          right="0"
+                          bg="blackAlpha.700"
+                          color="white"
+                          fontSize="2xs"
+                          px="1"
+                          borderRadius="4px 0 0 0"
+                        >
+                          {s.photoCount}
+                        </Box>
+                      )}
+                    </Box>
+                  )}
                   <Box flex="1" minW={0}>
                     <HStack gap={2} wrap="wrap" mb={0.5}>
                       <Text fontSize="sm" fontWeight="semibold">{s.name}</Text>
@@ -769,7 +942,14 @@ export default function SuppliesTab({
                             Available: <Text as="span" fontWeight="medium" color={s.available <= 0 ? "orange.600" : "green.600"}>{s.available}</Text>
                             {s.held > 0 && (
                               <>
-                                <Text as="span" color="fg.muted"> (claimed by jobs: </Text>
+                                {/* UNITS, NOT JOBS. This said "claimed by
+                                    jobs: 2" while rendering `held`, which is
+                                    the SUM OF QUANTITIES across active holds —
+                                    so one job holding 2 blades read as two
+                                    jobs, and the expanded list below it showed
+                                    one. Both numbers are worth having; they
+                                    just have to say which is which. */}
+                                <Text as="span" color="fg.muted"> (</Text>
                                 <Text
                                   as="span"
                                   color="blue.600"
@@ -778,17 +958,38 @@ export default function SuppliesTab({
                                   textDecoration={s.activeHolds && s.activeHolds.length > 0 ? "underline" : "none"}
                                   onClick={() => {
                                     if (!s.activeHolds || s.activeHolds.length === 0) return;
-                                    setExpandedClaims((prev) => {
+                                    setCollapsedClaims((prev) => {
                                       const next = new Set(prev);
                                       if (next.has(s.id)) next.delete(s.id);
                                       else next.add(s.id);
                                       return next;
                                     });
                                   }}
-                                  title={s.activeHolds && s.activeHolds.length > 0 ? "Show which jobs claimed these" : ""}
+                                  title={
+                                    s.activeHolds && s.activeHolds.length > 0
+                                      ? collapsedClaims.has(s.id)
+                                        ? "Show which jobs claimed these"
+                                        : "Hide which jobs claimed these"
+                                      : ""
+                                  }
                                 >
                                   {s.held}
                                 </Text>
+                                <Text as="span" color="fg.muted">
+                                  {" "}claimed by{" "}
+                                  {s.activeHolds
+                                    ? `${s.activeHolds.length} job${s.activeHolds.length === 1 ? "" : "s"}`
+                                    : "a job"}
+                                </Text>
+                                {pausedHeld > 0 && (
+                                  <Text
+                                    as="span"
+                                    color="purple.600"
+                                    title="A repeating job on hold keeps its stock reserved. Resuming it asks for a new start date, so this can sit for a while."
+                                  >
+                                    , {pausedHeld} for a paused series
+                                  </Text>
+                                )}
                                 <Text as="span" color="fg.muted">)</Text>
                               </>
                             )}
@@ -821,8 +1022,15 @@ export default function SuppliesTab({
                     )}
                     {/* Per-job claim breakdown — admin/super only, expanded
                         on click of the "claimed by jobs: N" link above. */}
-                    {showAdminExtras && expandedClaims.has(s.id) && s.activeHolds && s.activeHolds.length > 0 && (
-                      <VStack align="stretch" gap={1} mt={2} pl={2} borderLeftWidth="2px" borderColor="blue.200">
+                    {showAdminExtras && !collapsedClaims.has(s.id) && s.activeHolds && s.activeHolds.length > 0 && (
+                      <VStack
+                        align="stretch"
+                        gap={1}
+                        mt={2}
+                        pl={2}
+                        borderLeftWidth="2px"
+                        borderColor={pausedHeld > 0 ? "purple.200" : "blue.200"}
+                      >
                         {s.activeHolds.map((h) => {
                           const job = h.occurrence?.job;
                           const propLabel = job?.property?.displayName ?? "(unknown property)";
@@ -862,9 +1070,30 @@ export default function SuppliesTab({
                                 {dateLabel ? ` (${dateLabel})` : ""}
                                 {h.occurrence?.id && <Text as="span" color="blue.600"> →</Text>}
                               </Text>
+                              {/* NEVER PRINT AN INTERNAL KEY. This rendered
+                                  the raw enum, so the row read "STREAM_PAUSED"
+                                  — "stream" is schema vocabulary that appears
+                                  nowhere in the product. `prettyStatus` maps it
+                                  to "Repeating Paused" and every other tab
+                                  already uses it; the colour helper is shared
+                                  for the same reason. */}
                               {h.occurrence?.status && (
-                                <Badge size="sm" colorPalette="gray" variant="subtle">
-                                  {h.occurrence.status}
+                                <Badge
+                                  size="sm"
+                                  colorPalette={occurrenceStatusColor(h.occurrence.status)}
+                                  variant="subtle"
+                                  // SAY WHY THE STOCK IS STILL GONE. A status
+                                  // badge alone leaves the operator to work out
+                                  // that a paused series keeps its reservation
+                                  // — and the pause has no end date, so this
+                                  // can sit for a season.
+                                  title={
+                                    (h.occurrence.status as string) === "STREAM_PAUSED"
+                                      ? "This repeating job is on hold and keeps its stock reserved. Resuming it asks for a new start date."
+                                      : undefined
+                                  }
+                                >
+                                  {prettyStatus(h.occurrence.status)}
                                 </Badge>
                               )}
                             </HStack>
@@ -905,7 +1134,8 @@ export default function SuppliesTab({
                 </HStack>
               </Card.Body>
             </Card.Root>
-          ))}
+            );
+          })}
         </VStack>
       )}
 
@@ -1011,6 +1241,16 @@ export default function SuppliesTab({
           </Dialog.Positioner>
         </Portal>
       </Dialog.Root>
+
+      {galleryPhotos && galleryPhotos.length > 0 && (
+        <PhotoLightbox
+          photos={galleryPhotos.map((p) => ({ url: p.url, caption: p.description }))}
+          index={Math.min(galleryIndex, galleryPhotos.length - 1)}
+          onClose={() => setGalleryPhotos(null)}
+          onPrev={() => setGalleryIndex((i) => (i > 0 ? i - 1 : i))}
+          onNext={() => setGalleryIndex((i) => (i < galleryPhotos.length - 1 ? i + 1 : i))}
+        />
+      )}
 
       {/* Buy More dialog */}
       <Dialog.Root open={!!buyOpen} onOpenChange={(e) => { if (!e.open) setBuyOpen(null); }}>
@@ -1118,7 +1358,7 @@ export default function SuppliesTab({
                             size="xs"
                             autoFocus
                             value={ledgerQuery}
-                            onChange={(e) => void searchLedger(e.target.value)}
+                            onChange={(e) => searchLedger(e.target.value)}
                             placeholder="Search the ledger by vendor or description"
                           />
                           <Button size="xs" variant="ghost" onClick={() => setLedgerPickerFor(null)}>✕</Button>
@@ -1269,10 +1509,37 @@ export default function SuppliesTab({
                                 <Box mt={1}>
                                   {evt.row.businessExpense ? (
                                     <HStack gap={2} fontSize="xs" wrap="wrap">
-                                      <Text color="fg.muted" flex="1" minW={0} truncate>
+                                      {/* CLICKS THROUGH TO THE LEDGER, the
+                                          mirror of the Ledger's "Supply: … →"
+                                          badge. Same handoff convention: stash
+                                          the id, dispatch the nav event, let
+                                          the destination consume it. */}
+                                      <Text
+                                        color="blue.600"
+                                        flex="1"
+                                        minW={0}
+                                        truncate
+                                        cursor="pointer"
+                                        textDecoration="underline"
+                                        title="Open this expense in the Ledger"
+                                        onClick={() => {
+                                          try {
+                                            localStorage.setItem(
+                                              "seedlings_ledger_pendingHighlight",
+                                              evt.row.businessExpense.id,
+                                            );
+                                          } catch {}
+                                          window.dispatchEvent(
+                                            new CustomEvent("navigate:superTab", {
+                                              detail: { tab: "ledger" },
+                                            }),
+                                          );
+                                        }}
+                                      >
                                         Ledger: {fmtUSD(evt.row.businessExpense.cost)}
                                         {evt.row.businessExpense.vendor ? ` · ${evt.row.businessExpense.vendor}` : ""}
                                         {evt.row.businessExpense.description ? ` — ${evt.row.businessExpense.description}` : ""}
+                                        {" →"}
                                       </Text>
                                       <Button
                                         size="xs"
@@ -1289,7 +1556,7 @@ export default function SuppliesTab({
                                           size="xs"
                                           autoFocus
                                           value={ledgerQuery}
-                                          onChange={(e) => void searchLedger(e.target.value)}
+                                          onChange={(e) => searchLedger(e.target.value)}
                                           placeholder="Search the ledger by vendor or description"
                                         />
                                         <Button size="xs" variant="ghost" onClick={() => setLedgerPickerFor(null)}>✕</Button>

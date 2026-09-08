@@ -680,6 +680,37 @@ export default function BusinessExpensesTab() {
     setDialogOpen(true);
   }
 
+  // Supplies → Ledger handoff. The "Ledger: …" breadcrumb on a supply
+  // purchase stashes the expense id and dispatches navigate:superTab; consume
+  // it here and open that entry.
+  //
+  // FETCHED BY ID, not found in `expenses`. The list is filtered to a
+  // PERSISTED date window (last 30 days by default), so a link to an older
+  // receipt would never appear in it — searching the loaded rows would fail
+  // silently for exactly the entries most worth deep-linking to.
+  useEffect(() => {
+    let pending: string | null = null;
+    try { pending = localStorage.getItem("seedlings_ledger_pendingHighlight"); } catch {}
+    if (!pending) return;
+    try { localStorage.removeItem("seedlings_ledger_pendingHighlight"); } catch {}
+    let cancelled = false;
+    (async () => {
+      try {
+        const row = await apiGet<BusinessExpense>(`/api/admin/business-expenses/${pending}`);
+        if (!cancelled && row) openView(row);
+      } catch (err) {
+        if (!cancelled) {
+          publishInlineMessage({
+            type: "WARNING",
+            text: getErrorMessage("That ledger entry could not be opened.", err),
+          });
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function openEdit(e: BusinessExpense) {
     populateForm(e);
     setViewMode(false);

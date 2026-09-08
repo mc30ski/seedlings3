@@ -6165,6 +6165,45 @@ Respond ONLY with valid JSON in this exact format:
   //   - qbEquityCsv          : CAPITAL_CONTRIBUTION + OWNER_DRAW
   //                            ("Owner's Investment" / "Owner's Draw" accounts)
 
+// TYPED, not `as const`. TypeScript only excess-property-checks a FRESH
+// object literal, so a detached `include` variable can name a relation
+// that does not exist and still compile — which is exactly how
+// `supplyPurchase` (renamed to `supplyPurchases` when the ledger link
+// became many-to-one) shipped to production and made every Ledger list
+// request a 500. The annotation restores the check at the declaration.
+const LEDGER_ROW_INCLUDE = Prisma.validator<Prisma.BusinessExpenseInclude>()({
+  createdBy: { select: { id: true, displayName: true, email: true } },
+  reconciledBy: { select: { id: true, displayName: true, email: true } },
+  recurrenceEndedBy: { select: { id: true, displayName: true, email: true } },
+  equipment: { select: { id: true, shortDesc: true, brand: true, model: true, qrSlug: true } },
+  occurrence: {
+    select: {
+      id: true,
+      startAt: true,
+      completedAt: true,
+      job: {
+        select: {
+          id: true,
+          property: {
+            select: { id: true, displayName: true, client: { select: { displayName: true } } },
+          },
+        },
+      },
+    },
+  },
+  // PLURAL. One receipt can back several supply purchases — that is the
+  // whole point of the many-to-one link — so this is a list, and a row
+  // may carry more than one badge.
+  supplyPurchases: {
+    select: {
+      id: true,
+      quantity: true,
+      unitCost: true,
+      supply: { select: { id: true, name: true, unit: true } },
+    },
+  },
+});
+
   app.get("/admin/business-expenses", superGuard, async (req: any) => {
     const q = (req.query || {}) as {
       from?: string;
@@ -6289,44 +6328,7 @@ Respond ONLY with valid JSON in this exact format:
     const limit = all ? undefined : Math.min(Math.max(1, isNaN(rawLimit) ? 20 : rawLimit), 200);
     const offset = all ? 0 : Math.max(0, isNaN(rawOffset) ? 0 : rawOffset);
 
-    // TYPED, not `as const`. TypeScript only excess-property-checks a FRESH
-    // object literal, so a detached `include` variable can name a relation
-    // that does not exist and still compile — which is exactly how
-    // `supplyPurchase` (renamed to `supplyPurchases` when the ledger link
-    // became many-to-one) shipped to production and made every Ledger list
-    // request a 500. The annotation restores the check at the declaration.
-    const include = Prisma.validator<Prisma.BusinessExpenseInclude>()({
-      createdBy: { select: { id: true, displayName: true, email: true } },
-      reconciledBy: { select: { id: true, displayName: true, email: true } },
-      recurrenceEndedBy: { select: { id: true, displayName: true, email: true } },
-      equipment: { select: { id: true, shortDesc: true, brand: true, model: true, qrSlug: true } },
-      occurrence: {
-        select: {
-          id: true,
-          startAt: true,
-          completedAt: true,
-          job: {
-            select: {
-              id: true,
-              property: {
-                select: { id: true, displayName: true, client: { select: { displayName: true } } },
-              },
-            },
-          },
-        },
-      },
-      // PLURAL. One receipt can back several supply purchases — that is the
-      // whole point of the many-to-one link — so this is a list, and a row
-      // may carry more than one badge.
-      supplyPurchases: {
-        select: {
-          id: true,
-          quantity: true,
-          unitCost: true,
-          supply: { select: { id: true, name: true, unit: true } },
-        },
-      },
-    });
+    const include = LEDGER_ROW_INCLUDE;
 
     const [rows, total] = await Promise.all([
       prisma.businessExpense.findMany({
@@ -6340,6 +6342,19 @@ Respond ONLY with valid JSON in this exact format:
     ]);
 
     return { rows, total };
+  });
+
+  // Fetch ONE row by id. The list is filtered to a persisted date window
+  // (last 30 days by default), so a deep link to an older receipt — the
+  // Supplies tab's "Ledger: …" breadcrumb, say — cannot rely on the row being
+  // in whatever the list currently holds.
+  app.get("/admin/business-expenses/:id", superGuard, async (req: any) => {
+    const row = await prisma.businessExpense.findUnique({
+      where: { id: String(req.params.id) },
+      include: LEDGER_ROW_INCLUDE,
+    });
+    if (!row) throw app.httpErrors.notFound("Ledger entry not found.");
+    return row;
   });
 
   app.post("/admin/business-expenses", superGuard, async (req: any) => {
