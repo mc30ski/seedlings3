@@ -28,6 +28,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import { compressOnly } from "@/src/lib/imageRedact";
+import PhotoLightbox from "@/src/ui/components/PhotoLightbox";
 
 export const SUPPLY_PHOTO_LIMIT = 10;
 
@@ -311,66 +312,18 @@ export default function SupplyPhotos({ supplyId, readOnly, staged = [], onStaged
         ) : null,
       )}
 
-      {viewerIndex != null && photos[viewerIndex] && (() => {
-        const photo = photos[viewerIndex];
-        const hasPrev = viewerIndex > 0;
-        const hasNext = viewerIndex < photos.length - 1;
-        const navigate = (dir: -1 | 1) => {
-          const next = viewerIndex + dir;
-          if (next >= 0 && next < photos.length) setViewerIndex(next);
-        };
-        return (
-          <Box
-            position="fixed"
-            inset="0"
-            zIndex={10000}
-            bg="blackAlpha.800"
-            display="flex"
-            flexDirection="column"
-            alignItems="center"
-            justifyContent="center"
-            onClick={(e) => { if (e.target === e.currentTarget) setViewerIndex(null); }}
-            onKeyDown={(e) => {
-              if (e.key === "ArrowLeft" && hasPrev) { e.preventDefault(); navigate(-1); }
-              else if (e.key === "ArrowRight" && hasNext) { e.preventDefault(); navigate(1); }
-              else if (e.key === "Escape") setViewerIndex(null);
-            }}
-            tabIndex={0}
-            ref={(el: HTMLDivElement | null) => el?.focus()}
-          >
-            {hasPrev && (
-              <Box position="absolute" left="3" top="50%" transform="translateY(-50%)" color="white" fontSize="2xl" cursor="pointer" p={2} onClick={(e) => { e.stopPropagation(); navigate(-1); }} userSelect="none">◀</Box>
-            )}
-            <img
-              src={photo.url}
-              alt={photo.description || "Supply photo"}
-              style={{ maxWidth: "90vw", maxHeight: "70vh", objectFit: "contain", borderRadius: "8px" }}
-              onClick={(e) => e.stopPropagation()}
-            />
-            {photo.description && (
-              <Box mt={3} px={4} py={2} bg="blackAlpha.600" borderRadius="md" maxW="90vw" onClick={(e) => e.stopPropagation()}>
-                <Text color="white" fontSize="sm" textAlign="center">{photo.description}</Text>
-              </Box>
-            )}
-            <HStack position="absolute" bottom="4" gap={3} onClick={(e) => e.stopPropagation()}>
-              <Text color="whiteAlpha.700" fontSize="sm">{viewerIndex + 1} / {photos.length}</Text>
-              {!readOnly && (
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  color="whiteAlpha.800"
-                  onClick={() => { setEditingId(photo.id); setEditDesc(photo.description ?? ""); setViewerIndex(null); }}
-                >
-                  Edit
-                </Button>
-              )}
-            </HStack>
-            {hasNext && (
-              <Box position="absolute" right="3" top="50%" transform="translateY(-50%)" color="white" fontSize="2xl" cursor="pointer" p={2} onClick={(e) => { e.stopPropagation(); navigate(1); }} userSelect="none">▶</Box>
-            )}
-          </Box>
-        );
-      })()}
+      {/* SHARED VIEWER, not a fourth copy. PhotoLightbox already backs the
+          pay page and the promotion landing page — arrows, swipe, Escape and
+          an n/total counter. Supply descriptions ride along as captions. */}
+      {viewerIndex != null && photos[viewerIndex] && (
+        <PhotoLightbox
+          photos={photos.map((p) => ({ url: p.url, caption: p.description }))}
+          index={viewerIndex}
+          onClose={() => setViewerIndex(null)}
+          onPrev={() => setViewerIndex((i) => (i != null && i > 0 ? i - 1 : i))}
+          onNext={() => setViewerIndex((i) => (i != null && i < photos.length - 1 ? i + 1 : i))}
+        />
+      )}
     </Box>
   );
 }

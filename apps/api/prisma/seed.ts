@@ -2422,7 +2422,20 @@ async function seedDatabase() {
   // it passed silently only because a paid visit used to be LEGACY, where
   // charges were excluded from the invoice.
   const holdTargets = await prisma.jobOccurrence.findMany({
-    where: { payment: null, price: { not: null }, workflow: "STANDARD", supplyHolds: { none: {} } },
+    // LIVE VISITS ONLY. Without the status filter this could land a hold on a
+    // CANCELED occurrence — a state the service makes unreachable, because
+    // cancelling releases holds (services/jobs.ts). The fixture then showed
+    // "8 claimed by 1 job" next to a job marked CANCELED, which reads as a
+    // product bug and is not one. A seed that manufactures impossible states
+    // sends you hunting for bugs that do not exist, the mirror of the seed
+    // that hid the two-basis payment divergence for months.
+    where: {
+      payment: null,
+      price: { not: null },
+      workflow: "STANDARD",
+      supplyHolds: { none: {} },
+      status: { in: ["SCHEDULED", "IN_PROGRESS"] },
+    },
     orderBy: { startAt: "asc" },
     take: 2,
     select: { id: true },
@@ -7245,6 +7258,39 @@ async function assertPrimaryContactInvariant() {
     throw new Error(`Seed produced ${jobPortionDrift.length} payment(s) whose job portion doesn't match the invoice.`);
   }
   console.log("✓ Job portion matches the invoice on every payment.");
+
+  // ── Hold-lifecycle invariant ────────────────────────────────────────
+  // A hold's state must agree with the occurrence it is on, because the
+  // service keeps them in step: cancelling RELEASES, closing CONSUMES
+  // (services/jobs.ts). So an ACTIVE hold on a CANCELED or CLOSED visit is a
+  // state the app cannot produce — stock reserved forever for work that is
+  // not happening, and `available` understated for good.
+  //
+  // The seed produced exactly that by picking hold targets without filtering
+  // status, and the Supplies row then read "8 claimed by 1 job" beside a job
+  // marked CANCELED. That is a fixture manufacturing an impossible state and
+  // sending you hunting for a bug that does not exist.
+  const strandedHolds = await prisma.supplyHold.findMany({
+    where: { status: "ACTIVE", occurrence: { status: { in: ["CANCELED", "CLOSED"] } } },
+    select: {
+      quantity: true,
+      supply: { select: { name: true } },
+      occurrence: { select: { id: true, status: true } },
+    },
+  });
+  if (strandedHolds.length > 0) {
+    console.error(
+      `\n✗ ${strandedHolds.length} ACTIVE supply hold(s) on a CANCELED/CLOSED occurrence — ` +
+        `a state the service cannot produce:`,
+    );
+    for (const h of strandedHolds) {
+      console.error(
+        `  - ${h.supply.name} x${h.quantity} on ${h.occurrence.id} (${h.occurrence.status})`,
+      );
+    }
+    throw new Error("Seed produced stranded supply holds.");
+  }
+  console.log("✓ Every supply hold agrees with its occurrence's status.");
 }
 
 // ── Main ────────────────────────────────────────────────────────────────────

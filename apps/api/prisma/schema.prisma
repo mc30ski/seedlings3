@@ -1598,6 +1598,22 @@ model InvoiceCharge {
   /// CLIENT-VISIBLE. Never put `actualCost` or a margin in it.
   detail String?
 
+  /// TRUE once a human has written this line's detail themselves.
+  ///
+  /// An inventory-backed line generates its detail from the hold — quantity,
+  /// unit and the per-unit price snapshotted at pull time — and REGENERATES it
+  /// whenever the held quantity changes. Without that, adjusting 6 bags to 5
+  /// re-priced the amount to $30.00 and left the detail reading "6 bags at
+  /// $6.00": an invoice line that contradicts itself, in front of the client.
+  ///
+  /// STORED, NOT INFERRED. The tempting shortcut is "if the detail equals what
+  /// we would have generated, it is ours" — but the day the format string
+  /// changes, every existing line silently looks custom forever, and it can
+  /// never tell an operator who typed exactly that string from a generated
+  /// one. Whether a human wrote the words is a fact about intent; it is not
+  /// recoverable from the words.
+  detailIsCustom Boolean @default(false)
+
   /// What we actually paid, for the whole line. OPTIONAL and purely
   /// informational — it feeds job margin, never the invoice and never the
   /// payout. Populated from `Supply.businessCost` when the line came from

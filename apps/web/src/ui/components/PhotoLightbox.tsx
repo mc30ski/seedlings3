@@ -18,7 +18,9 @@ export default function PhotoLightbox({
   onPrev,
   onNext,
 }: {
-  photos: { url: string }[];
+  /** `caption` is optional — callers that have no per-photo text omit it and
+   *  nothing renders, so existing callers are unaffected. */
+  photos: { url: string; caption?: string | null }[];
   index: number;
   onClose: () => void;
   onPrev: () => void;
@@ -115,6 +117,22 @@ export default function PhotoLightbox({
       >
         <X size={24} />
       </Box>
+      {current.caption && (
+        <Box
+          position="absolute"
+          bottom="12"
+          left="0"
+          right="0"
+          display="flex"
+          justifyContent="center"
+          px={4}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <Box bg="blackAlpha.700" borderRadius="md" px={4} py={2} maxW="90vw">
+            <Text color="white" fontSize="sm" textAlign="center">{current.caption}</Text>
+          </Box>
+        </Box>
+      )}
       <Text
         position="absolute"
         bottom="4"

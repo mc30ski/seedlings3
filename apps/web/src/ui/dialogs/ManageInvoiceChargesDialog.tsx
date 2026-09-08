@@ -7,7 +7,7 @@
 // a bank statement. The crew's share is unaffected — they split labor and
 // services only. See docs/features/job-materials.md.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
   Button,
@@ -156,13 +156,22 @@ function ChargeFields({
                 value={detail}
                 onChange={(e) => setDetail(e.target.value)}
                 size="sm"
-                placeholder="e.g. 25 bags at $6.00"
+                placeholder={
+                  derived
+                    ? `${derived.quantity} × ${derived.unit} @ $… (written for you)`
+                    : "e.g. 25 bags at $6.00"
+                }
               />
             </Box>
           </Stack>
+          {/* The detail on an inventory line writes itself and FOLLOWS THE
+              QUANTITY — that is what stops a line reading "6 bags at $6.00"
+              beside $30.00 after an adjustment. Typing your own stops that for
+              good, because otherwise the next quantity change would overwrite
+              your words. Clearing the field hands it back. */}
           <Text fontSize="2xs" color="fg.muted">
             {derived
-              ? `The name and amount follow the ${derived.quantity} ${derived.unit} pulled from inventory — change the quantity on the line to change them. The detail is yours to write.`
+              ? `The name and amount follow the ${derived.quantity} ${derived.unit} pulled from inventory — change the quantity on the line to change them. The detail writes itself and updates with the quantity; type your own to take it over, or clear the field to hand it back.`
               : "The client sees the line name, the detail, and the amount."}
           </Text>
         </VStack>
@@ -280,6 +289,41 @@ export default function ManageInvoiceChargesDialog({
   const [pickedDesc, setPickedDesc] = useState("");
   const [pickedDetail, setPickedDetail] = useState("");
 
+  // WHAT THE SERVER WILL WRITE if the detail is left blank. Must stay
+  // character-for-character identical to `supplyChargeDetail` in
+  // services/supplies.ts — a preview that does not match what gets saved is
+  // worse than no preview. A build gate asserts the two templates agree.
+  function autoDetailPreview(): string | null {
+    if (!pickedSupply) return null;
+    const qty = Number(pickedQty) || 0;
+    if (qty <= 0) return null;
+    const unitPrice =
+      pickedUnitPrice.trim() !== "" ? Number(pickedUnitPrice) : pickedSupply.clientUnitPrice;
+    if (!Number.isFinite(unitPrice)) return null;
+    return `${qty} × ${pickedSupply.unit} @ $${unitPrice.toFixed(2)}`;
+  }
+
+  /** Placeholder before a real preview is possible. Uses whatever IS known —
+   *  the unit as soon as a supply is picked, the price as soon as one is set —
+   *  so the field never shows an example that contradicts the selections
+   *  visible directly beneath it.
+   *
+   *  IN THE SAME SHAPE AS THE REAL THING. The old example read "5 bags at
+   *  $5.00 each", which is not the format that gets saved — it taught the
+   *  wrong pattern to anyone who copied it. */
+  function detailPlaceholder(): string {
+    const real = autoDetailPreview();
+    if (real) return real;
+    const unit = pickedSupply?.unit ?? "bag";
+    const qty = Number(pickedQty) || 5;
+    const price =
+      pickedUnitPrice.trim() !== ""
+        ? Number(pickedUnitPrice)
+        : (pickedSupply?.clientUnitPrice ?? 5);
+    const shown = Number.isFinite(price) ? price : 5;
+    return `e.g. ${qty} × ${unit} @ $${shown.toFixed(2)}`;
+  }
+
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editCost, setEditCost] = useState("");
   const [editDesc, setEditDesc] = useState("");
@@ -364,15 +408,28 @@ export default function ManageInvoiceChargesDialog({
     }
   }
 
-  async function searchLedger(q: string) {
+  // DEBOUNCED AND RACE-GUARDED — see the same comment in SuppliesTab. Bound
+  // straight to onChange this ran one request, and one ILIKE scan of the
+  // ledger, per keystroke, and applied whichever response landed last.
+  const ledgerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ledgerSeq = useRef(0);
+
+  useEffect(() => () => { if (ledgerTimer.current) clearTimeout(ledgerTimer.current); }, []);
+
+  function searchLedger(q: string) {
     setLedgerQuery(q);
     setLedgerBusy(true);
-    try {
-      setLedgerCharges(
-        await apiGet<LedgerCharge[]>(`/api/admin/ledger-charges?q=${encodeURIComponent(q)}`),
-      );
-    } catch { /* keep the last list rather than emptying it mid-type */ }
-    finally { setLedgerBusy(false); }
+    if (ledgerTimer.current) clearTimeout(ledgerTimer.current);
+    ledgerTimer.current = setTimeout(async () => {
+      const seq = ++ledgerSeq.current;
+      try {
+        const rows = await apiGet<LedgerCharge[]>(
+          `/api/admin/ledger-charges?q=${encodeURIComponent(q)}`,
+        );
+        if (seq === ledgerSeq.current) setLedgerCharges(rows);
+      } catch { /* keep the last list rather than emptying it mid-type */ }
+      finally { if (seq === ledgerSeq.current) setLedgerBusy(false); }
+    }, 250);
   }
 
   async function setLedgerLink(invoiceChargeId: string, businessExpenseId: string | null) {
@@ -813,7 +870,7 @@ export default function ManageInvoiceChargesDialog({
                                   <HStack gap={2}>
                                     <Input
                                       size="xs" autoFocus value={ledgerQuery}
-                                      onChange={(e) => void searchLedger(e.target.value)}
+                                      onChange={(e) => searchLedger(e.target.value)}
                                       placeholder="Search the ledger by vendor or description"
                                     />
                                     <Button size="xs" variant="ghost" onClick={() => setLinkingId(null)}>✕</Button>
@@ -952,16 +1009,48 @@ export default function ManageInvoiceChargesDialog({
                           placeholder={pickedSupply?.name ?? "e.g. Mulch"}
                         />
                       </Box>
+                      {/* LEAVING IT BLANK IS THE AUTO OPTION — there is no
+                          toggle, because a toggle would be a second thing to
+                          get wrong. The server writes the detail from the hold
+                          and keeps it in step with the quantity; typing here
+                          takes it over for good. None of that was visible on
+                          this form, so the feature may as well not have
+                          existed: the placeholder read like an instruction to
+                          write one yourself. */}
                       <Box>
                         <Text fontSize="2xs" color="fg.muted" mb={0.5}>
-                          Detail for the client (optional)
+                          Detail for the client{" "}
+                          <Text as="span" color="fg.muted">
+                            (written for you unless you type one)
+                          </Text>
                         </Text>
                         <Input
                           size="sm"
                           value={pickedDetail}
                           onChange={(e) => setPickedDetail(e.target.value)}
-                          placeholder="e.g. 5 bags at $5.00 each"
+                          placeholder={detailPlaceholder()}
                         />
+                        {!pickedDetail.trim() && (
+                          <Text fontSize="2xs" color="fg.muted" mt={0.5}>
+                            {autoDetailPreview()
+                              ? <>Leaving this blank writes <Text as="span" fontWeight="semibold">{autoDetailPreview()}</Text>, and keeps it correct if the quantity changes.</>
+                              : "Pick a supply and a quantity and this writes itself."}
+                          </Text>
+                        )}
+                        {pickedDetail.trim() && (
+                          <Text fontSize="2xs" color="fg.muted" mt={0.5}>
+                            Your wording — it will not be rewritten when the quantity changes.{" "}
+                            <Text
+                              as="span"
+                              color="blue.600"
+                              cursor="pointer"
+                              textDecoration="underline"
+                              onClick={() => setPickedDetail("")}
+                            >
+                              Write it for me
+                            </Text>
+                          </Text>
+                        )}
                       </Box>
 
                       {/* THE PRICE IS SET HERE, on the job, not in the
@@ -969,15 +1058,68 @@ export default function ManageInvoiceChargesDialog({
                           usually right; overtyping bills THIS client
                           differently, which was impossible before — the hold
                           simply took the catalog price. */}
-                      <HStack gap={2} align="end">
-                        <Box w="72px" flexShrink={0}>
+                      {/* WRAPS RATHER THAN CRUSHES. The summary sat in a
+                          `flex="1" minW={0}` box, so it absorbed every pixel
+                          the other controls did not want — and when the Qty
+                          stepper grew from one 72px input to three controls,
+                          it collapsed to a ~60px column and broke "Client is
+                          billed $87.00 (16 available)" across six lines.
+                          minW gives it a floor; wrap lets it take its own row
+                          on a narrow dialog instead of shredding. */}
+                      <HStack gap={2} align="end" wrap="wrap">
+                        {/* EXPLICIT − / + RATHER THAN THE NATIVE SPINNER.
+                            The browser's spinner on a number input is a ~10px
+                            target that AUTO-REPEATS AND ACCELERATES while held,
+                            so a normal press walks the value several steps —
+                            it read as the number jumping 1, 2, 4, 8. The
+                            keyboard step was always exactly +1, which is how
+                            we know the handler was never at fault.
+                            `appearance: none` removes the native control; the
+                            inventory rows in this same dialog already step this
+                            way, and buttons are the only usable option on a
+                            phone. */}
+                        <Box flexShrink={0}>
                           <Text fontSize="2xs" color="fg.muted" mb={0.5}>Qty</Text>
-                          <Input
-                            type="number" min={1} step={1}
-                            value={pickedQty}
-                            onChange={(e) => setPickedQty(e.target.value)}
-                            size="sm" placeholder="0"
-                          />
+                          <HStack gap={0.5}>
+                            <Button
+                              size="sm" variant="outline" px={2}
+                              disabled={(Number(pickedQty) || 0) <= 1}
+                              aria-label="One fewer"
+                              onClick={() =>
+                                setPickedQty(String(Math.max(1, (Number(pickedQty) || 0) - 1)))
+                              }
+                            >
+                              −
+                            </Button>
+                            <Input
+                              type="number" min={1} step={1}
+                              value={pickedQty}
+                              onChange={(e) => setPickedQty(e.target.value)}
+                              size="sm" placeholder="0" w="52px" textAlign="center" px={1}
+                              css={{
+                                "&::-webkit-outer-spin-button, &::-webkit-inner-spin-button": {
+                                  WebkitAppearance: "none",
+                                  margin: 0,
+                                },
+                                MozAppearance: "textfield",
+                              }}
+                            />
+                            <Button
+                              size="sm" variant="outline" px={2}
+                              aria-label="One more"
+                              disabled={
+                                !!pickedSupply && (Number(pickedQty) || 0) >= pickedSupply.available
+                              }
+                              title={
+                                pickedSupply && (Number(pickedQty) || 0) >= pickedSupply.available
+                                  ? `Only ${pickedSupply.available} ${pickedSupply.unit} in stock`
+                                  : "One more"
+                              }
+                              onClick={() => setPickedQty(String((Number(pickedQty) || 0) + 1))}
+                            >
+                              +
+                            </Button>
+                          </HStack>
                         </Box>
                         <Box w="110px" flexShrink={0}>
                           <Text fontSize="2xs" color="fg.muted" mb={0.5}>
@@ -995,7 +1137,7 @@ export default function ManageInvoiceChargesDialog({
                             size="sm"
                           />
                         </Box>
-                        <Box flex="1" minW={0}>
+                        <Box flex="1" minW="180px">
                           {pickedSupply && pickedQty && Number(pickedQty) > 0 && (() => {
                             const unit =
                               pickedUnitPrice.trim() === ""
@@ -1004,13 +1146,22 @@ export default function ManageInvoiceChargesDialog({
                             const total = Math.round(Number(pickedQty) * unit * 100) / 100;
                             return (
                               <Text fontSize="xs" color="fg.muted">
-                                Client is billed{" "}
-                                <Text as="span" fontWeight="semibold">${total.toFixed(2)}</Text>
+                                <Text as="span" whiteSpace="nowrap">
+                                  Client is billed{" "}
+                                  <Text as="span" fontWeight="semibold">${total.toFixed(2)}</Text>
+                                </Text>{" "}
                                 <Text
                                   as="span"
+                                  whiteSpace="nowrap"
                                   color={Number(pickedQty) > pickedSupply.available ? "red.600" : "fg.muted"}
-                                  ml={1}
                                 >
+                                  {/* NO UNIT HERE. "16 blade available" is
+                                      ungrammatical, and units like
+                                      "3 oz (1 gallon mix)" cannot be
+                                      pluralised at all — the same trap the
+                                      detail format was designed around. The
+                                      unit is already on the "Charge / blade"
+                                      label directly above. */}
                                   ({pickedSupply.available} available)
                                 </Text>
                               </Text>
