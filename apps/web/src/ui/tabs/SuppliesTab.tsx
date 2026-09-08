@@ -72,7 +72,13 @@ type Supply = {
   unit: string;
   upc?: string | null;
   category: string;
-  businessCost: number;
+  /** Weighted average cost of the units ON HAND, over FIFO layers replayed
+   *  from the purchase history. DERIVED — the server computes it and nothing
+   *  can set it. null when the supply has never been bought, which is not the
+   *  same as free. */
+  averageCost: number | null;
+  /** averageCost x onHand, or null. */
+  valueOnHand: number | null;
   clientUnitPrice: number;
   onHand: number;
   held: number;
@@ -94,7 +100,7 @@ function fmtUSD(n: number): string {
 // `bizToday()` returns today's date as YYYY-MM-DD in Eastern Time.
 
 type Props = {
-  /** Read-only mode hides all action buttons, the businessCost column,
+  /** Read-only mode hides all action buttons, the average-cost figure,
    *  and the archived filter. */
   readOnly?: boolean;
   /** Drives endpoint choice and which inventory details are surfaced.
@@ -155,7 +161,6 @@ export default function SuppliesTab({
   const [fUnit, setFUnit] = useState("");
   const [fCategory, setFCategory] = useState("Supplies");
   const [fClientPrice, setFClientPrice] = useState("");
-  const [fBusinessCost, setFBusinessCost] = useState("");
   const [fUpc, setFUpc] = useState("");
   const [fDescription, setFDescription] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
@@ -258,7 +263,6 @@ export default function SuppliesTab({
     setFUnit("");
     setFCategory("Supplies");
     setFClientPrice("");
-    setFBusinessCost("");
     setFUpc(prefill?.upc ?? "");
     setFDescription(prefill?.description ?? "");
     setEditOpen(true);
@@ -279,7 +283,7 @@ export default function SuppliesTab({
     try {
       const result = await apiGet<{
         code: string;
-        matchExisting: { id: string; name: string; unit: string; clientUnitPrice: number; businessCost: number; onHand: number; category: string } | null;
+        matchExisting: { id: string; name: string; unit: string; clientUnitPrice: number; onHand: number; category: string } | null;
         lookup: { found: boolean; title?: string; brand?: string; description?: string } | null;
       }>(`/api/admin/supplies/upc-lookup?code=${encodeURIComponent(code)}`);
 
@@ -331,7 +335,6 @@ export default function SuppliesTab({
     setFUnit(s.unit);
     setFCategory(s.category || "Supplies");
     setFClientPrice(s.clientUnitPrice.toFixed(2));
-    setFBusinessCost(s.businessCost > 0 ? s.businessCost.toFixed(2) : "");
     setFUpc(s.upc ?? "");
     setFDescription(s.description ?? "");
     setEditOpen(true);
@@ -351,12 +354,10 @@ export default function SuppliesTab({
       // "Fuel" badge on the list) survives.
       category: fCategory,
       clientUnitPrice: fClientPrice === "" ? 0 : Number(fClientPrice),
-      // WHAT WE PAID. The form never sent this, and the field on screen was a
-      // read-only box — so every supply added through the UI had a cost of $0
-      // until someone recorded a purchase. An inventory pull then wrote a
-      // charge whose actualCost was quantity × 0, and the job reported its
-      // materials as free.
-      businessCost: fBusinessCost === "" ? 0 : Number(fBusinessCost),
+      // NO COST FIELD. This form establishes what a supply IS. What it cost is
+      // recorded per purchase, on Buy, and the catalog's average is derived
+      // from those — a cost typed here was a number nobody could keep true,
+      // because every purchase silently overwrote it.
       upc: fUpc.trim() || null,
       description: fDescription.trim() || null,
     };
@@ -727,8 +728,22 @@ export default function SuppliesTab({
                               </>
                             )}
                           </Text>
-                          {/* What we paid is internal margin info — Super only. */}
-                          {showSuperExtras && <Text>You pay: {fmtUSD(s.businessCost)}</Text>}
+                          {/* AVERAGE OF WHAT IS STILL ON THE SHELF, oldest
+                              units first, so a price you have stopped paying
+                              leaves the figure as that stock is used. Internal
+                              margin info — Super only. An em dash rather than
+                              $0.00 when nothing has been bought: no purchase
+                              is not the same claim as free. */}
+                          {showSuperExtras && (
+                            <Text title="Weighted average of the units on hand, oldest used first">
+                              Average price:{" "}
+                              {s.averageCost == null ? (
+                                <Text as="span" color="fg.muted">&mdash;</Text>
+                              ) : (
+                                fmtUSD(s.averageCost)
+                              )}
+                            </Text>
+                          )}
                           {/* Was "Cost per unit" for a worker, which reads as
                               THEIR cost. It is what the client is billed. */}
                           <Text>Client pays: <Text as="span" fontWeight="medium" color="orange.600">{fmtUSD(s.clientUnitPrice)}</Text></Text>
@@ -849,25 +864,20 @@ export default function SuppliesTab({
                     <Text fontSize="sm" mb={1}>Unit *</Text>
                     <Input value={fUnit} onChange={(e) => setFUnit(e.target.value)} size="sm" placeholder="e.g. bag, spool, lb" />
                   </Box>
-                  {/* THE CATALOG KNOWS WHAT YOU PAY. IT DOES NOT KNOW WHAT A
-                      CLIENT WILL PAY.
+                  {/* THIS FORM ESTABLISHES WHAT A SUPPLY IS — nothing about
+                      quantity, and nothing about cost. Stock arrives through
+                      Buy, which records what that receipt cost, and the
+                      catalog's average price is derived from those purchases.
+                      A cost typed here was a number nobody could keep true:
+                      every purchase silently overwrote it.
+
+                      THE CATALOG DOES NOT KNOW WHAT A CLIENT WILL PAY either.
                       That is decided when the supply goes onto a job — the
                       same bag of mulch is billed differently to different
                       clients — so this screen asks for a DEFAULT, not a
                       price. It previously demanded the client price up front
                       as a required field, with buttons to "set from cost" as
                       though a fixed markup existed. */}
-                  <Box>
-                    <Text fontSize="sm" mb={1}>
-                      What you pay{" "}
-                      <Text as="span" color="fg.muted">(per {fUnit.trim() || "unit"})</Text> *
-                    </Text>
-                    <CurrencyInput value={fBusinessCost} onChange={setFBusinessCost} size="sm" />
-                    <Text fontSize="xs" color="fg.muted" mt={1}>
-                      What a job records as its material cost. Recording a purchase updates it to
-                      that receipt&rsquo;s per-unit price.
-                    </Text>
-                  </Box>
                   <Box>
                     <Text fontSize="sm" mb={1}>
                       Default charge to a client{" "}

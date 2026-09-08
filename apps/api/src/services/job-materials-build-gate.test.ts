@@ -1126,8 +1126,9 @@ describe("[build-gate] the ledger breadcrumb is reachable where charges are ente
 
 describe("[build-gate] the integrity check runs itself", () => {
   // "Remember to run the verification before promoting" is not a safeguard.
-  // The day it matters is a production migration that backfills every existing
-  // occurrence to LEGACY, and that is the day nobody wants an extra step.
+  // The day it matters is a production migration that rewrites what clients
+  // were invoiced and crews were paid, and that is the day nobody wants an
+  // extra step.
   const PKG = JSON.parse(readFileSync(join(__dirname, "../../package.json"), "utf8"));
   const DEPLOY = readFileSync(join(__dirname, "../../scripts/migrate-deploy.ts"), "utf8");
   const VERIFY = readFileSync(join(__dirname, "../../scripts/verify-ledger-integrity.ts"), "utf8");
@@ -1140,11 +1141,39 @@ describe("[build-gate] the integrity check runs itself", () => {
     expect(DEPLOY).toMatch(/prisma", "migrate", "deploy"/);
   });
 
-  it("a failure after migrating is a non-zero exit, not a warning", () => {
-    expect(DEPLOY).toMatch(/process\.exit\(after\.status \?\? 1\)/);
-    // …while a pre-existing failure must NOT block, or a broken database
+  it("blocks on what the deploy BROKE, not on what it inherited", () => {
+    // The two passes are diffed and only NEW problems are fatal.
+    //
+    // Blocking on any failure at all sounds safer and is not. Production
+    // carries 117 payments predating the per-split breakdown columns, whose
+    // `amount` means something different; a verifier that reads them the
+    // modern way reported 43 correct payments as damaged. Under a
+    // block-on-anything rule EVERY deploy goes red for inherited reasons, the
+    // operator learns the red means nothing, and the one that matters gets
+    // waved through.
+    expect(DEPLOY).toMatch(/const introduced = /);
+    expect(DEPLOY).toMatch(/!problemsBefore\.has\(m\)/);
+    expect(DEPLOY).toMatch(/INTRODUCED \$\{introduced\.length\} NEW INTEGRITY PROBLEM/);
+    expect(DEPLOY).toMatch(/process\.exit\(1\)/);
+    // Both passes must be CAPTURED, or there is nothing to diff.
+    expect(DEPLOY).toMatch(/runCapture\("npx", \["tsx", "scripts\/verify-ledger-integrity\.ts"\]\)/);
+    // …and a pre-existing failure must NOT block, or a broken database
     // becomes a database that can never be migrated forward.
     expect(DEPLOY).toMatch(/Not blocking/);
+  });
+
+  it("the verifier reads a split the same way the app does", () => {
+    // `PaymentSplit.amount` is the worker's NET where the per-split breakdown
+    // columns exist and their GROSS where they do not. services/payments.ts
+    // branches on exactly this; a verifier that does not is checking different
+    // books from the ones the app keeps.
+    expect(VERIFY).toMatch(/sp\.netAmount != null/);
+    expect(VERIFY).toMatch(/hasBreakdown/);
+    // Pre-breakdown rows are genuinely ambiguous — production holds 48 stored
+    // gross and 74 stored net — so either reading is accepted there, and only
+    // a row reconciling under NEITHER is a problem.
+    expect(VERIFY).toMatch(/asGross/);
+    expect(VERIFY).toMatch(/reconciles under neither reading/);
   });
 
   it("it catches the one way the unification could have gone wrong", () => {
@@ -1205,17 +1234,22 @@ describe("[build-gate] the Supplies UI says what the service actually does", () 
     expect(T).toMatch(/billed to the client|the CLIENT is charged/);
   });
 
-  it("what we PAY for a supply is settable, not just displayed", () => {
-    // The field was a read-only Box and the form never sent `businessCost`, so
-    // every supply added through the UI had a cost of $0 forever. An inventory
-    // pull then wrote a charge whose actualCost was quantity × 0 and the job
-    // reported its materials as free — overstating profit on real work. It
-    // could not be corrected either, short of recording a fake purchase.
+  it("the Add/Edit form asks nothing about cost or quantity", () => {
+    // ADD SUPPLY ESTABLISHES WHAT A SUPPLY IS. Stock and its price arrive
+    // through Buy, one purchase at a time, and the catalog's average is
+    // derived from those.
+    //
+    // A cost field here was a number nobody could keep true: it was labelled
+    // "What you pay", which reads as a policy the operator sets, while every
+    // recorded purchase silently overwrote it. So entering a receipt quietly
+    // restated what all existing stock had cost.
     const T = TAB();
-    expect(T).toMatch(/businessCost: fBusinessCost === "" \? 0 : Number\(fBusinessCost\)/);
-    expect(T).toMatch(/<CurrencyInput value=\{fBusinessCost\}/);
-    expect(T, "editing a supply must load its current cost")
-      .toMatch(/setFBusinessCost\(s\.businessCost > 0/);
+    expect(T, "no cost field may return to this form").not.toMatch(/fBusinessCost/);
+    expect(T, "and no cost may be sent from it").not.toMatch(/businessCost:/);
+    // The DEFAULT client charge stays — it is what a supply IS priced at to
+    // begin with, not a quantity or a cost.
+    expect(T).toMatch(/<CurrencyInput value=\{fClientPrice\}/);
+    expect(T).toMatch(/Default charge to a client/);
   });
 
   it("the column is named for what it holds: the CLIENT's price", () => {
@@ -1317,8 +1351,106 @@ describe("[build-gate] an inventory pull records what the stock cost us", () => 
     expect(SEED).toMatch(/supplies\.recordAdjustment\(/);
     // Purchases the way the SERVICE makes them: the receipt total is the
     // input, per-unit cost is derived, and one receipt may cover several.
-    expect(SEED).toMatch(/totalCost: Math\.round\(qty \* supply\.businessCost \* 100\) \/ 100/);
+    expect(SEED).toMatch(/totalCost: Math\.round\(qty \* unitPrice \* 100\) \/ 100/);
+    // A SECOND LAYER AT A DIFFERENT PRICE, or the fixture cannot exercise
+    // FIFO: every purchase at the same price makes any averaging rule look
+    // correct, including a wrong one.
+    expect(SEED, "restocks must not reuse the first purchase's price")
+      .toMatch(/totalCost: Math\.round\(20 \* 4\.6 \* 100\) \/ 100/);
+    expect(SEED, "an inventory-backed charge records no cost")
+      .not.toMatch(/actualCost: Math\.round\(h\.quantity/);
     expect(SEED).toMatch(/businessExpenseId: receipt\.id/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("[build-gate] what stock cost is derived, never stored", () => {
+  const SUPPLIES = () => stripComments(readFileSync(join(__dirname, "./supplies.ts"), "utf8"));
+  const SCHEMA = () => readFileSync(join(__dirname, "../../prisma/schema.prisma"), "utf8");
+  const TAB = () => readFileSync(
+    join(__dirname, "../../../web/src/ui/tabs/SuppliesTab.tsx"), "utf8",
+  );
+
+  it("no column stores a supply's cost", () => {
+    // `Supply.businessCost` held the most recent purchase price and every buy
+    // overwrote it, so recording a receipt silently restated what all existing
+    // stock had cost. Dropped in 20260908210000; the figure is now replayed
+    // from the purchases. A stored value that must be kept in step with an
+    // event log drifts out of it — that is the whole failure mode.
+    const code = SCHEMA().replace(/^\s*\/\/\/?[^\n]*$/gm, "");
+    expect(code, "a stored cost must not come back").not.toMatch(/businessCost/);
+    const MIG = readFileSync(
+      join(__dirname, "../../prisma/migrations/20260908210000_supply_cost_is_derived/migration.sql"),
+      "utf8",
+    );
+    expect(MIG).toMatch(/ALTER TABLE "Supply" DROP COLUMN "businessCost"/);
+  });
+
+  it("nothing in the service writes a cost onto the catalog", () => {
+    const S = SUPPLIES();
+    expect(S).not.toMatch(/businessCost/);
+    // recordPurchase must move STOCK and nothing else — the purchase row is
+    // itself the cost record.
+    expect(S).toMatch(/data: \{ onHand: \{ increment: quantity \} \}/);
+  });
+
+  it("the average is computed by the shared engine, not re-derived per caller", () => {
+    // Two call sites (list and getById) reading the same events is exactly how
+    // a list and a detail page start disagreeing about the same supply.
+    const S = SUPPLIES();
+    expect(S).toMatch(/import \{ fifoCost/);
+    expect(S).toMatch(/async function costBySupply/);
+    expect((S.match(/costBySupply\(/g) ?? []).length).toBeGreaterThanOrEqual(3);
+    expect(S, "list must not replay per row — that is an N+1")
+      .toMatch(/costBySupply\(rows\.map\(\(r\) => r\.id\)\)/);
+  });
+
+  it("only CONSUMED holds draw a layer", () => {
+    // An ACTIVE hold is stock RESERVED for a job, not stock off the shelf.
+    // Drawing its layer would make the average describe available units while
+    // the column beside it counts on-hand ones. RELEASED never left at all.
+    //
+    // SCOPED TO THE COST QUERY. Asserting `status: "CONSUMED"` against the
+    // whole file passes on any file that consumes a hold anywhere — which is
+    // this one. Verified by widening the filter to an `in` clause and watching
+    // this fail.
+    const S = SUPPLIES();
+    const at = S.indexOf("async function costBySupply");
+    expect(at, "costBySupply must exist to be checked").toBeGreaterThan(-1);
+    const body = S.slice(at, S.indexOf("export const supplies", at));
+    const holdQuery = body.slice(body.indexOf("supplyHold.findMany"));
+    expect(holdQuery.slice(0, 300)).toMatch(/status: "CONSUMED"/);
+    expect(holdQuery.slice(0, 300), "no other hold state may be drawn")
+      .not.toMatch(/ACTIVE|RELEASED|in: \[/);
+  });
+
+  it("the event's date is when it took effect, not when it was typed", () => {
+    // A purchase carries a user-entered `date`, so a back-dated receipt takes
+    // its place in history rather than being appended to it. A consumption
+    // uses `consumedAt`, which is cleared when a payment is reverted — which
+    // is why reverting restores the layer with no unwind logic.
+    const S = SUPPLIES();
+    expect(S).toMatch(/kind: "BUY", at: p\.date/);
+    // THE RECEIPT TOTAL, never the stored per-unit price. `unitCost` is a
+    // rounded display derivation; multiplying it back up by the unit count
+    // multiplies its rounding error — a 20 ft roll at $45.99 stores $2.30/ft
+    // and reports $46.00 on hand. Finely divided units make this worse, and
+    // supplies are stocked in the unit they are consumed in.
+    expect(S).toMatch(/totalCost: p\.totalCost/);
+    expect(S, "the rounded unit price must not be fed back into the layers")
+      .not.toMatch(/unitCost: p\.unitCost/);
+    expect(S).toMatch(/kind: "CONSUME", at: h\.consumedAt \?\? h\.createdAt/);
+    expect(S).toMatch(/kind: "ADJUST", at: a\.createdAt/);
+  });
+
+  it("the UI names it for what it is and shows no figure it cannot back", () => {
+    const T = TAB();
+    expect(T).toMatch(/Average price:/);
+    expect(T, "the old last-paid label must not survive").not.toMatch(/You pay:/);
+    // A supply never bought has no average. $0.00 would claim it was free.
+    expect(T).toMatch(/s\.averageCost == null \? \(/);
+    expect(T).toMatch(/&mdash;/);
   });
 });
 

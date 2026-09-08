@@ -299,19 +299,58 @@ Reverting a payment reactivates consumed holds and puts the stock back.
 A hold can never exceed what is available; `adjustHold` re-checks on every
 increment.
 
-### `businessCost` is a last-paid heuristic
+### What the stock cost: FIFO layers, derived
 
-This is the "what you pay" figure on the Supplies form, and it is
-**informational** — it never reaches a client's invoice or a payout.
+**Add Supply establishes what a supply IS** — name, unit, group, UPC,
+description, and an optional *default* client charge. It asks nothing about
+quantity or cost. Stock and its price arrive through **Buy**, one purchase at
+a time.
 
-`recordPurchase` takes the **receipt total** — it includes tax and any discount
-and is the figure that reconciles to a bank line — and derives the per-unit
-cost from it, then **overwrites `Supply.businessCost`** with that figure. So
-the catalog cost tracks the most recent purchase, and an `actualCost`
-snapshotted on an older job may not match today's catalog. That is intended:
-the snapshot says what those units cost, not what the next ones will.
+Each purchase is a **cost layer**: `quantity` units at `unitCost`, dated.
+Consumption draws the **oldest layer first**, so as stock is used the price of
+the oldest units drops out. What the list shows as **Average price** is the
+weighted average of the layers still on hand — a fact about inventory held,
+not a number anyone types.
+
+| Event | Ordered by | Effect on the layers |
+| --- | --- | --- |
+| Buy | `SupplyPurchase.date` | pushes `{quantity, unitCost}` |
+| Hold → CONSUMED | `consumedAt` | draws the oldest first |
+| Adjust **+** | `createdAt` | pushes at the current average |
+| Adjust **−** | `createdAt` | draws the oldest first |
+
+Ordering is by the date the event **took effect**, so a back-dated receipt
+takes its place in history rather than being appended to it.
+
+**A positive adjustment is a counting correction, not an acquisition.** Units
+found on the truck join at what the remaining stock already averages, so the
+average does not move. Pricing them at zero would report inventory as cheaper
+than it was because somebody miscounted.
+
+**Only CONSUMED holds draw.** An ACTIVE hold is stock reserved for a job, not
+stock off the shelf; drawing it would make the average describe available
+units while the column beside it counts on-hand ones.
+
+**A supply never bought shows an em dash, never $0.00.** No purchase is not
+the same claim as free.
+
+> **DERIVED, NEVER STORED — and that is load-bearing.** There was a
+> `Supply.businessCost` column holding the most recent purchase price, which
+> every buy silently overwrote, so recording a receipt quietly restated what
+> all existing stock had cost. Dropped in `20260908210000`.
+>
+> Replaying beats storing layers for two reasons the codebase has already been
+> bitten by: reverting a payment clears `consumedAt`, and a replayed layer
+> simply comes back rather than needing per-consumption unwind bookkeeping;
+> and correcting a past purchase would silently corrupt every stored layer
+> after it. The engine is `apps/api/src/lib/supplyCost.ts`.
+>
+> **Value on hand is summed from the layers, never rebuilt from the rounded
+> average** — 12 @ $6.50 + 6 @ $34.50 is exactly $285.00, but the average
+> rounds to $15.83 and 18 × $15.83 reports $284.94.
 
 Recording a purchase tracks **stock, not taxes**: it creates no ledger row.
+It may optionally point at one, as the many-to-one breadcrumb.
 
 ---
 
@@ -369,6 +408,8 @@ easy to nod along to and still misread a $350 total as $350 of work.
 - **Admin** — full add/edit/delete, the ledger-link picker, the invoice
   preview, and `actualCost` / per-line margin **on one-off charges only**
   (an inventory-backed line carries no cost, by design).
+- **Super** — additionally the supply catalog's **Average price**, the FIFO
+  figure for stock on hand.
 - **Client** — the invoice lines and the total. Nothing else.
 
 ---
