@@ -457,6 +457,24 @@ export default function PayrollTab({
                   {fmtPayrollMoney(rangeTotals.grossEarnings)}
                 </Text>
               </VStack>
+              {/* TIPS PAID THROUGH THE PAYCHECK. Rendered only when a period
+                  in range actually carried some: Gusto omits the column
+                  entirely until the first tipped run, and a permanent "$0.00
+                  Tips" on an operator who does not take tips is noise.
+                  Labelled "of gross" because it is a COMPONENT of the figure
+                  beside it — showing them side by side without saying so
+                  invites adding them. */}
+              {rangeTotals.paycheckTips > 0 && (
+                <VStack align="start" gap={0}>
+                  <Text fontSize="2xs" color="fg.muted" textTransform="uppercase" letterSpacing="wide">
+                    Tips
+                  </Text>
+                  <Text fontSize="sm" fontWeight="bold" fontVariantNumeric="tabular-nums" color="teal.700">
+                    {fmtPayrollMoney(rangeTotals.paycheckTips)}
+                  </Text>
+                  <Text fontSize="2xs" color="fg.muted">of gross</Text>
+                </VStack>
+              )}
               {/* What the business actually spent to run payroll: gross plus
                   the employer half of the taxes. The owner's number, and the
                   one that never appears anywhere else — the P&L carries an
@@ -615,6 +633,29 @@ export default function PayrollTab({
                               )}
                             </Text>
                           </HStack>
+                          {/* Only on a period that carried tips — see the
+                              range strip above for why this is conditional. */}
+                          {(() => {
+                            const tips = p.teamTotals
+                              ? p.teamTotals.paycheckTips
+                              : p.mine!.paycheckTips;
+                            if (tips == null || tips <= 0) return null;
+                            return (
+                              <HStack justify="space-between" gap={2}>
+                                <Text fontSize="2xs" color="fg.muted" letterSpacing="wide">
+                                  TIPS (IN GROSS)
+                                </Text>
+                                <Text
+                                  fontSize="xs"
+                                  fontWeight="medium"
+                                  color="teal.700"
+                                  fontVariantNumeric="tabular-nums"
+                                >
+                                  {fmtPayrollMoney(tips)}
+                                </Text>
+                              </HStack>
+                            );
+                          })()}
                           {/* Gross plus the employer half of the taxes —
                               the real cost of this run to the business.
                               Purple keeps it visibly a different KIND of
@@ -861,6 +902,9 @@ function EntryRow({
       <SimpleGrid columns={{ base: 2, md: 4 }} gap={2}>
         <Figure label="Hours" value={fmtPayrollHours(v.regularHours)} />
         <Figure label="Gross" value={fmtPayrollMoney(v.grossEarnings)} />
+        {v.paycheckTips != null && v.paycheckTips > 0 && (
+          <Figure label="Tips (in gross)" value={fmtPayrollMoney(v.paycheckTips)} />
+        )}
         <Figure label="Net pay" value={fmtPayrollMoney(v.netPay)} emphasis />
         <Figure label="Check" value={fmtPayrollMoney(v.checkAmount)} />
       </SimpleGrid>

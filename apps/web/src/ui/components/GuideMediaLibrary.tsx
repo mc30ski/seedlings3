@@ -35,7 +35,7 @@ import {
   finalizeAsset,
   type AssetNameTaken,
   deleteAsset,
-  assetToken,
+  assetMarkdown,
   fmtBytes,
   type GuideAsset,
   type MediaLimits,
@@ -313,11 +313,11 @@ export default function GuideMediaLibrary({
                     size="xs"
                     variant="ghost"
                     onClick={() => {
-                      void navigator.clipboard.writeText(
-                        a.kind === "VIDEO"
-                          ? `:::video ${assetToken(a.id)}`
-                          : `![${a.altText ?? a.originalFilename}](${assetToken(a.id)})`,
-                      );
+                      // BY NAME, not by id. This button was the main source
+                      // of id-form references, so every guide written through
+                      // the library carried text that renders nowhere but the
+                      // database it was written against.
+                      void navigator.clipboard.writeText(assetMarkdown(a));
                       publishInlineMessage({ type: "SUCCESS", text: "Markdown copied — paste it into a guide." });
                     }}
                   >

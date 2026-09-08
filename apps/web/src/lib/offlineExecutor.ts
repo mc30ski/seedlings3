@@ -39,7 +39,7 @@ export function initOfflineExecutor() {
         break;
       }
       case "ADD_EXPENSE":
-        await apiPost(`/api/occurrences/${occId}/expenses`, payload);
+        await apiPost(`/api/occurrences/${occId}/invoice-charges`, payload);
         break;
       case "POST_COMMENT":
         await apiPost(`/api/occurrences/${occId}/comments`, payload);

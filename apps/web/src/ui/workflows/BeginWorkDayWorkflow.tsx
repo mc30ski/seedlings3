@@ -28,7 +28,7 @@ import { type WorkerOccurrence } from "@/src/lib/types";
 import { fetchWorkdayToday, startWorkday, fmtWorkdayDate, type WorkdaySummary, type WorkdayTodayPayload } from "@/src/lib/workday";
 import { bumpWorkday } from "@/src/lib/bus";
 import { fmtDate, fmtDateOpts, bizDateKey } from "@/src/lib/dates";
-import { clientLabel, jobTypeLabel } from "@/src/lib/labels";
+import { clientLabel, jobTypeLabel, jobTitleLead, jobTitleTrail } from "@/src/lib/labels";
 import { resolveBillingMode, shortBillingChip } from "@/src/lib/equipmentBilling";
 import { useEquipmentBillingEnabled } from "@/src/lib/useEquipmentBillingEnabled";
 import { MapLink } from "@/src/ui/helpers/Link";
@@ -424,9 +424,13 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                                       </Box>
                                     )}
                                     <Text fontSize="sm" fontWeight="medium" minW={0} overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
-                                      {occ.job?.property?.displayName}
-                                      {occ.job?.property?.client?.displayName && (
-                                        <Text as="span" color="fg.muted" fontWeight="normal"> — {clientLabel(occ.job.property.client.displayName)}</Text>
+                                      {/* Client first — this list truncates on
+                                          a phone, and the property name alone
+                                          ("Main House") identifies nothing.
+                                          Matches the job card. */}
+                                      {jobTitleLead(occ.job?.property?.displayName, occ.job?.property?.client?.displayName)}
+                                      {jobTitleTrail(occ.job?.property?.displayName, occ.job?.property?.client?.displayName) && (
+                                        <Text as="span" color="fg.muted" fontWeight="normal"> — {jobTitleTrail(occ.job?.property?.displayName, occ.job?.property?.client?.displayName)}</Text>
                                       )}
                                     </Text>
                                   </HStack>
@@ -538,9 +542,9 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                         <Card.Body py="2" px="3">
                           <VStack align="start" gap={1}>
                             <Text fontSize="sm" fontWeight="semibold">
-                              {current.job?.property?.displayName}
-                              {current.job?.property?.client?.displayName && (
-                                <Text as="span" color="fg.muted" fontWeight="normal"> — {clientLabel(current.job.property.client.displayName)}</Text>
+                              {jobTitleLead(current.job?.property?.displayName, current.job?.property?.client?.displayName)}
+                              {jobTitleTrail(current.job?.property?.displayName, current.job?.property?.client?.displayName) && (
+                                <Text as="span" color="fg.muted" fontWeight="normal"> — {jobTitleTrail(current.job?.property?.displayName, current.job?.property?.client?.displayName)}</Text>
                               )}
                             </Text>
                             {address && <Text fontSize="xs" color="fg.muted">{address}</Text>}

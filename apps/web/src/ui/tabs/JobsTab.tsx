@@ -22,6 +22,9 @@ import {
   quickDateItemsBase,
   statusStates,
   totalPrice,
+  crewPool,
+  materialChargeTotal,
+  materialCostTotal,
 } from "@/src/ui/tabs/JobsTab.utils";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
@@ -62,7 +65,14 @@ import { getLocation } from "@/src/lib/geo";
 import { useOnSiteHint } from "@/src/lib/onSiteHint";
 import OnSiteHintBanner from "@/src/ui/components/OnSiteHintBanner";
 import { fmtDate, fmtDateTime, fmtDateWeekday, fmtDateOpts, fmtTimeOpts, bizDateKey, bizToday, bizYesterday, bizAddDays, bizAddYears, bizYearOf, bizDaysBetween, bizHourMinute, bizInstantFromEtParts, bizToLocalInputValue, bizParseLocalInputValue, type EtDateKey, bizTomorrow } from "@/src/lib/dates";
-import { prettyStatus, clientLabel, jobTypeLabel } from "@/src/lib/labels";
+import {
+  prettyStatus,
+  clientLabel,
+  jobTypeLabel,
+  jobTitleLead,
+  jobTitleTrail,
+  jobTitleText,
+} from "@/src/lib/labels";
 import { determineRoles } from "@/src/lib/roles";
 import { occurrenceStatusColor } from "@/src/lib/statusColors";
 import { isOccurrenceOverdue, loadPaymentRequestExpiryHours, DEFAULT_PAYMENT_REQUEST_EXPIRY_HOURS } from "@/src/lib/overdueRule";
@@ -88,8 +98,10 @@ import { Dashboard } from "@/src/ui/components/Dashboard";
 import { type ReceiptData } from "@/src/lib/receipt";
 import AcceptPaymentDialog from "@/src/ui/dialogs/AcceptPaymentDialog";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
-import ManageExpensesDialog from "@/src/ui/dialogs/ManageExpensesDialog";
-import PricingGuideDialog from "@/src/ui/dialogs/PricingGuideDialog";
+import ManageInvoiceChargesDialog from "@/src/ui/dialogs/ManageInvoiceChargesDialog";
+import ManageAddonsDialog from "@/src/ui/dialogs/ManageAddonsDialog";
+import InvoicePreviewDialog from "@/src/ui/dialogs/InvoicePreviewDialog";
+import { outstandingInvoiceAmount } from "@/src/ui/components/InvoiceAlreadySentNote";
 import { MapLink, TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch, navigateToProfile, bumpTitleBarEarnings } from "@/src/lib/bus";
 import { suggestedEquipment, parseEquipmentKindsConfig, type EquipmentKindConfig } from "@/src/lib/equipmentSuggestions";
@@ -97,7 +109,7 @@ import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/li
 import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
 import OccurrenceInstructions from "@/src/ui/components/OccurrenceInstructions";
 import PaymentCommsButtons from "@/src/ui/components/PaymentCommsButtons";
-import { jobTagLabel as _jobTagLabel, parseServiceTypesConfig, pricingJobTags, DEFAULT_SERVICE_TYPES, type ServiceTypeConfig } from "@/src/ui/components/JobTagPicker";
+import { jobTagLabel as _jobTagLabel, parseServiceTypesConfig, DEFAULT_SERVICE_TYPES, type ServiceTypeConfig } from "@/src/ui/components/JobTagPicker";
 import { parseAdminTags, adminTagLabel, adminTagColor } from "@/src/ui/components/AdminTagPicker";
 import TruncatedText from "@/src/ui/components/TruncatedText";
 import { useOffline } from "@/src/lib/offline";
@@ -1378,32 +1390,25 @@ export default function JobsTab({
   }, [editTimeOcc]);
   const [busyOccId, setBusyOccId] = useState<string | null>(null);
   const [addAddonOcc, setAddAddonOcc] = useState<WorkerOccurrence | null>(null);
+  // Captured when the dialog opens, because `isClaimer` only exists inside the
+  // per-card render. Today it is the same predicate that gates the button —
+  // carrying it explicitly means loosening one gate can't silently loosen the
+  // other.
+  const [addAddonCanRemove, setAddAddonCanRemove] = useState(false);
+  // Invoice preview — admin/super only, read-only, nothing stamped.
+  const [previewOccId, setPreviewOccId] = useState<string | null>(null);
   // Re-price a finished visit — quoted three hours, took four. Admin+ only,
   // and the server refuses once a Payment row exists.
   const [priceEditOcc, setPriceEditOcc] = useState<WorkerOccurrence | null>(null);
   const [priceEditValue, setPriceEditValue] = useState("");
   const [priceEditReason, setPriceEditReason] = useState("");
+  // CLIENT-VISIBLE detail for the labor line on the invoice. Distinct from
+  // the reason above, which is internal audit metadata.
+  const [priceEditDetail, setPriceEditDetail] = useState("");
   const [priceEditBusy, setPriceEditBusy] = useState(false);
-  const [addonTag, setAddonTag] = useState<string>("");
-  const [addonCustomLabel, setAddonCustomLabel] = useState("");
-  const [addonPrice, setAddonPrice] = useState("");
-  const [addonBusy, setAddonBusy] = useState(false);
   // Pricing entries (with jobTags bindings) — loaded when the add-on
   // dialog is open so we can show an inline reference price next to the
   // price input when the selected tag matches one of the entry's tags.
-  type PricingHintEntry = { key: string; parsedValue: { label: string; amount: number; unit: string; jobTags?: string[] | null; jobTag?: string | null } | null };
-  const [pricingHints, setPricingHints] = useState<PricingHintEntry[]>([]);
-  const [pricingGuideOpen, setPricingGuideOpen] = useState(false);
-  useEffect(() => {
-    if (!addAddonOcc) return;
-    apiGet<PricingHintEntry[]>(showAdminExtras ? "/api/admin/pricing" : "/api/pricing")
-      .then((list) => setPricingHints(Array.isArray(list) ? list : []))
-      .catch(() => setPricingHints([]));
-  }, [addAddonOcc, showAdminExtras]);
-  const addonHintEntry = useMemo(() => {
-    if (!addonTag) return null;
-    return pricingHints.find((p) => pricingJobTags(p.parsedValue).includes(addonTag)) ?? null;
-  }, [pricingHints, addonTag]);
   const [photoPromptOccId, setPhotoPromptOccId] = useState<string | null>(null);
   // "You just finished your last job — time to end your workday" prompt.
   // Set inside the photo-prompt dismissal handler so it can never race
@@ -1520,7 +1525,7 @@ export default function JobsTab({
   const [acceptPaymentOpen, setAcceptPaymentOpen] = useState(false);
   const [acceptPaymentOcc, setAcceptPaymentOcc] = useState<WorkerOccurrence | null>(null);
 
-  const [expenseDialogOccId, setExpenseDialogOccId] = useState<string | null>(null);
+  const [chargeDialogOccId, setChargeDialogOccId] = useState<string | null>(null);
 
   // Comments
   const [commentsOpenFor, setCommentsOpenFor] = useState<Set<string>>(new Set());
@@ -1606,9 +1611,9 @@ export default function JobsTab({
   const [promptOccJobId, setPromptOccJobId] = useState<string | null>(null);
   const [promptOccDefaults, setPromptOccDefaults] = useState<{ notes?: string | null; price?: number | null; estimatedMinutes?: number | null; jobTags?: string[] | null; jobType?: string | null }>({});
 
-  async function deleteExpense(expenseId: string) {
+  async function deleteInvoiceCharge(expenseId: string) {
     try {
-      await apiDelete(`/api/expenses/${expenseId}`);
+      await apiDelete(`/api/invoice-charges/${expenseId}`);
       publishInlineMessage({ type: "SUCCESS", text: "Expense deleted." });
       void load(false);
     } catch (err) {
@@ -4450,11 +4455,10 @@ export default function JobsTab({
                 borderStyle: "dashed",
                 opacity: ghostHighPriority ? 1 : 0.8,
               };
-              const ghostProp =
-                (occ.job?.property?.displayName ?? occ.title ?? "Job") +
-                (occ.job?.property?.client?.displayName
-                  ? ` — ${clientLabel(occ.job.property.client.displayName)}`
-                  : "");
+              const ghostProp = jobTitleText(
+                occ.job?.property?.displayName ?? occ.title,
+                occ.job?.property?.client?.displayName,
+              );
               if (cardMode === "ultra") {
                 return (
                   <Card.Root
@@ -4708,7 +4712,7 @@ export default function JobsTab({
                         {ghostChipLabel}
                       </Badge>
                       <Text fontWeight="medium" color="white" flex="1" minW={0} overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
-                        {propName}{clientName ? ` — ${clientLabel(clientName)}` : ""}
+                        {jobTitleText(propName, clientName)}
                       </Text>
                     </HStack>
                   </Card.Root>
@@ -4738,8 +4742,7 @@ export default function JobsTab({
                           </Text>
                         </HStack>
                         <Text fontSize="sm" fontWeight="semibold" color="white">
-                          {propName}
-                          {clientName ? ` — ${clientLabel(clientName)}` : ""}
+                          {jobTitleText(propName, clientName)}
                         </Text>
                         <Text fontSize="xs" color="gray.100">
                           {ghostExpired ? "Was due" : "Would post on"} {wouldBeDateKey ? fmtDate(wouldBeDateKey) : "—"} · {blockerLabel}
@@ -4814,10 +4817,12 @@ export default function JobsTab({
                 : "gray";
               const pinTitle = ghostIsTask ? (occ.title || "Task")
                 : ghostIsReminder ? (occ.title || "Reminder")
-                : (occ.job?.property?.displayName ?? "Job");
-              const pinClient = occ.job?.property?.client?.displayName
-                ? ` — ${clientLabel(occ.job.property.client.displayName)}`
-                : "";
+                : jobTitleLead(occ.job?.property?.displayName, occ.job?.property?.client?.displayName);
+              // Ghost/pin rows use the same order as a real card.
+              const pinClient = jobTitleTrail(
+                occ.job?.property?.displayName,
+                occ.job?.property?.client?.displayName,
+              );
               const pinTags = parseJobTags(occ).length > 0
                 ? ` · ${parseJobTags(occ).map(jobTagLabel).join(", ")}`
                 : "";
@@ -5458,16 +5463,16 @@ export default function JobsTab({
                         !!me?.privileges?.canPullInventory ||
                         !!me?.privileges?.canChargeBusinessExpenses;
                       // Admin/Super always pass — they can manage expenses on any job (e.g.
-                      // adding a custom expense on behalf of a contractor who lacks the
+                      // adding a one-off charge on behalf of a contractor who lacks the
                       // "Charge business expenses" privilege). Workers must be the claimer
                       // AND have at least one expense-related privilege.
                       // Followups are coordination items, not billable jobs — no expenses.
                       const canManage = isActive && !isFollowup && (forAdmin || isAdmin || isSuper || (isClaimer && hasAnyPriv));
                       if (!canManage) return null;
                       return (
-                        <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); setExpenseDialogOccId(occ.id); }}>
+                        <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); setChargeDialogOccId(occ.id); }}>
                           <CircleDollarSign size={14} />
-                          <Box as="span" ml={2}>{occ.expenses && occ.expenses.length > 0 ? "Manage expenses" : "Add expense"}</Box>
+                          <Box as="span" ml={2}>Edit Charges</Box>
                         </Button>
                       );
                     })()}
@@ -5623,6 +5628,13 @@ export default function JobsTab({
                     // helper the semi/expanded card uses, so the number
                     // shown here matches what they see when they expand.
                     const total = totalPrice(occ);
+                    // TWO NUMBERS, and the collapsed row has to show both.
+                    // `total` alone is what the CLIENT owes, which on a job
+                    // with materials reads as a much better day than the crew
+                    // is actually having. Labor leads; the rest trails, dimmer.
+                    const ultraLabor = crewPool(occ);
+                    const ultraRest =
+                      total != null ? Math.round((total - ultraLabor) * 100) / 100 : 0;
                     return (
                       <HStack
                         px="3"
@@ -5726,7 +5738,17 @@ export default function JobsTab({
                             fontWeight="bold"
                             lineHeight="1.3"
                           >
-                            ${Math.round(total).toLocaleString()}
+                            ${Math.round(ultraLabor).toLocaleString()}
+                            {ultraRest > 0 && (
+                              <Text
+                                as="span"
+                                fontWeight="normal"
+                                opacity={0.72}
+                                title={`Labor $${ultraLabor.toFixed(2)} + $${ultraRest.toFixed(2)} billed on top. The labor is the crew's pool; margin and fees come off it.`}
+                              >
+                                +${Math.round(ultraRest).toLocaleString()}
+                              </Text>
+                            )}
                           </Box>
                         )}
                         <Text
@@ -5739,7 +5761,7 @@ export default function JobsTab({
                           {assigneeText}
                         </Text>
                         {/* "..." menu on the ultra row too — same affordances
-                            (Like / Pin / Add expense / Share link) without
+                            (Like / Pin / Edit Charges / Share link) without
                             having to expand the card first. */}
                         {parcelButton}
                         {moreActionsMenu}
@@ -5819,10 +5841,16 @@ export default function JobsTab({
                             </>
                           ) : (
                             <>
+                              {/* CLIENT FIRST, property second.
+                                  A card title truncates from the right, and on
+                                  a phone that left most cards showing only
+                                  "Main House" — which says nothing about whose
+                                  job it is. The client is the identifying
+                                  half, so it survives the ellipsis. */}
                               {isVipClient && <span title={vipReason || "VIP Client"} style={{ cursor: "help" }}>⭐ </span>}
-                              {occ.job?.property?.displayName}
-                              {occ.job?.property?.client?.displayName && (
-                                <Text as="span" color="fg.muted" fontWeight="normal"> — {clientLabel(occ.job.property.client.displayName)}</Text>
+                              {jobTitleLead(occ.job?.property?.displayName, occ.job?.property?.client?.displayName)}
+                              {jobTitleTrail(occ.job?.property?.displayName, occ.job?.property?.client?.displayName) && (
+                                <Text as="span" color="fg.muted" fontWeight="normal"> — {jobTitleTrail(occ.job?.property?.displayName, occ.job?.property?.client?.displayName)}</Text>
                               )}
                               {isEstimateOcc && occ.title && (
                                 <Text as="span" color="fg.muted" fontWeight="normal"> · {occ.title}</Text>
@@ -6149,10 +6177,11 @@ export default function JobsTab({
                               </>
                             ) : (
                               <>
+                                {/* Client first — see the compact header. */}
                                 {isVipClient && <span title={vipReason || "VIP Client"} style={{ cursor: "help" }}>⭐ </span>}
-                                {occ.job?.property?.displayName}
-                                {occ.job?.property?.client?.displayName && (
-                                  <> — {clientLabel(occ.job.property.client.displayName)}</>
+                                {jobTitleLead(occ.job?.property?.displayName, occ.job?.property?.client?.displayName)}
+                                {jobTitleTrail(occ.job?.property?.displayName, occ.job?.property?.client?.displayName) && (
+                                  <> — {jobTitleTrail(occ.job?.property?.displayName, occ.job?.property?.client?.displayName)}</>
                                 )}
                               </>
                             )}
@@ -6522,7 +6551,7 @@ export default function JobsTab({
                   const verb = cr.kind === "RESCHEDULE" ? "Reschedule" : "Skip";
                   const action = cr.status === "DENIED" ? "dismissed" : "approved";
                   return (
-                    <Box mx="4" mt="2" p="2" bg="blue.50" borderWidth="1px" borderColor="blue.200" rounded="md">
+                    <Box mx="4" mt="2" p="2" bg="blue.50" borderWidth="1px" borderLeftWidth="3px" borderColor="blue.200" rounded="md">
                       <Text fontSize="xs" fontWeight="semibold" color="blue.800">
                         {verb} request {action} — note to client
                       </Text>
@@ -6614,16 +6643,88 @@ export default function JobsTab({
                         </Text>
                       ) : null}
                       {/* Price / payout / time */}
-                      {(() => { const basePrice = (occ.price || null) ?? (occ.proposalAmount || null); const addonsAmt = addonTotal(occ); const displayPrice = totalPrice(occ); return (
+                      {(() => { const basePrice = (occ.price || null) ?? (occ.proposalAmount || null); const addonsAmt = addonTotal(occ); const displayPrice = totalPrice(occ);
+                        // The invoice total, then what it is made of. Every
+                        // part ADDS UP to the total: labor + services in
+                        // parentheses (the pool), then the charges billed on
+                        // top. 85 + 15 + 25 = 125, and the badge reads that way
+                        // — a minus here would describe a total the arithmetic
+                        // doesn't reach.
+                        //
+                        const billedCharges = materialChargeTotal(occ);
+                        // WHOLE DOLLARS on a compact card — this badge only
+                        // renders on ultra and semi, where the figure is
+                        // scanned, not reconciled. Rounded UP so the card never
+                        // quotes a client less than the invoice.
+                        //
+                        // …unless the rounded parts stop adding up. Ceiling
+                        // each part independently can overshoot the ceiling of
+                        // the total ($85.40 + $15.40 + $25.40 = $126.20 reads
+                        // as "86 + 16 + 26" against a total of $127), and a
+                        // badge whose own arithmetic is visibly wrong is worse
+                        // than one with decimals. In that case the exact
+                        // figures stand. The expanded card always keeps them.
+                        const up = (n: number) => Math.ceil(n);
+                        const partsAddUp =
+                          displayPrice == null
+                          || up(displayPrice) === up(basePrice ?? 0) + up(addonsAmt) + up(billedCharges);
+                        const money = (n: number) =>
+                          partsAddUp ? `$${up(n).toLocaleString()}` : `$${n.toFixed(2)}`;
+                        // Every projected figure on a compact card reads the
+                        // same way: whole dollars, rounded up. Used for the
+                        // payout and tip badges below.
+                        const compactMoney = (n: number) => `$${up(n).toLocaleString()}`;
+                        // ONE parenthetical listing every component of the
+                        // total, in invoice order: labor, services, charges.
+                        // Charges used to sit outside the brackets, which read
+                        // as an adjustment applied to the total rather than a
+                        // part of it. Rendered only when there is more than one
+                        // component — "$85 ($85)" says nothing.
+                        const components = [money(basePrice ?? 0)];
+                        if (addonsAmt > 0) components.push(money(addonsAmt));
+                        if (billedCharges > 0) components.push(money(billedCharges));
+                        const poolParts =
+                          components.length > 1 ? ` (${components.join(" + ")})` : "";
+                        return (
                       <Box display="flex" gap={2} flexWrap="wrap" alignItems="center">
                         {displayPrice != null && (
-                          <Badge colorPalette="green" variant="solid" fontSize="xs" px="2" py="0.5" borderRadius="full">
-                            ${displayPrice.toFixed(2)}{addonsAmt > 0 ? ` ($${(basePrice ?? 0).toFixed(2)} + $${addonsAmt.toFixed(2)})` : ""}{isEstimateOcc ? " (proposal)" : ""}
+                          <Badge
+                            colorPalette="green"
+                            variant="solid"
+                            fontSize="xs"
+                            px="2"
+                            py="0.5"
+                            borderRadius="full"
+                            title={
+                              billedCharges > 0 || addonsAmt > 0
+                                ? `Invoice $${displayPrice.toFixed(2)} — labor $${(basePrice ?? 0).toFixed(2)}`
+                                  + (addonsAmt > 0 ? ` + services $${addonsAmt.toFixed(2)}` : "")
+                                  + (billedCharges > 0 ? `, charges $${billedCharges.toFixed(2)} billed on top` : "")
+                                  + ". The pool is labor and services; margin and fees come off it."
+                                : `Invoice $${displayPrice.toFixed(2)}`
+                            }
+                          >
+                            {money(displayPrice)}{poolParts}{isEstimateOcc ? " (proposal)" : ""}
                           </Badge>
                         )}
-                        {occ.payment && (
-                          <Badge bg="green.700" color="white" fontSize="xs" px="2" py="0.5" borderRadius="full">
-                            Paid: ${(occ.payment as any).amountPaid.toFixed(2)}
+                        {/* A payment ROW is not a payment. This said "Paid"
+                            the moment one existed, so a payment still waiting
+                            on admin approval showed green — and a confirmed
+                            $0 write-off rendered "Paid: $0.00". Both are the
+                            same mistake the invoice preview made. */}
+                        {occ.payment && (occ.payment as any).confirmed !== false && (
+                          <Badge
+                            bg={(occ.payment as any).amountPaid ? "green.700" : "gray.500"}
+                            color="white" fontSize="xs" px="2" py="0.5" borderRadius="full"
+                          >
+                            {(occ.payment as any).amountPaid
+                              ? `Paid: $${(occ.payment as any).amountPaid.toFixed(2)}`
+                              : "Closed — nothing collected"}
+                          </Badge>
+                        )}
+                        {occ.payment && (occ.payment as any).confirmed === false && (
+                          <Badge bg="blue.600" color="white" fontSize="xs" px="2" py="0.5" borderRadius="full">
+                            Pending approval: ${(occ.payment as any).amountPaid.toFixed(2)}
                           </Badge>
                         )}
                         {occ.payment && (occ.payment as any).receiptNumber && (
@@ -6672,7 +6773,7 @@ export default function JobsTab({
                             : singleIsOwner ? "purple" : "green";
                           return (
                             <Badge colorPalette={palette} variant="subtle" fontSize="xs" px="2" borderRadius="full">
-                              {label}: ${payout.toFixed(2)}
+                              {label}: {compactMoney(payout)}
                             </Badge>
                           );
                         })()}
@@ -6707,7 +6808,7 @@ export default function JobsTab({
                                   : `Client tipped $${tipTotal.toFixed(2)} — $${toWorkers.toFixed(2)} to the crew, $${(tipTotal - toWorkers).toFixed(2)} to the business. Paid on the payroll covering the date the client paid, which may differ from this job's payroll.`
                               }
                             >
-                              {showMine ? `Your tip: $${mine.toFixed(2)}` : `Tip: $${tipTotal.toFixed(2)}`}
+                              {showMine ? `Your tip: ${compactMoney(mine)}` : `Tip: ${compactMoney(tipTotal)}`}
                             </Badge>
                           );
                         })()}
@@ -6895,17 +6996,166 @@ export default function JobsTab({
                       </Text>
                     )}
                     {(totalPrice(occ) != null || occ.payment || ((occ.price || null) ?? (occ.proposalAmount || null)) != null) && (
-                      <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" p={2} bg="gray.50" fontSize="xs">
-                        <VStack align="start" gap={1}>
-                          {totalPrice(occ) != null && (() => { const basePrice = (occ.price || null) ?? (occ.proposalAmount || null); const addonsAmt = addonTotal(occ); return (
-                            <Badge colorPalette="green" variant="solid" fontSize="sm" px="3" py="0.5" borderRadius="full">
-                              ${totalPrice(occ)!.toFixed(2)}{addonsAmt > 0 ? ` ($${(basePrice ?? 0).toFixed(2)} + $${addonsAmt.toFixed(2)})` : ""}{isEstimateOcc ? " (proposal)" : ""}
-                            </Badge>
+                      // ONE badge, not a pill floating in a grey box. The
+                      // total, the payout and the math that connects them are
+                      // one thought — split across two surfaces, the reader has
+                      // to decide whether the small print below belongs to the
+                      // number above it. Kept as a tint rather than solid green
+                      // so the Paid / receipt / tip badges inside still read.
+                      <Box borderWidth="1px" borderColor="green.300" borderRadius="xl" p={2.5} bg="green.50" fontSize="xs" w="full">
+                        <VStack align="start" gap={1.5}>
+                          {totalPrice(occ) != null && (() => {
+                            // The EXPANDED card's price badge — a second copy of
+                            // the compact one, and it shipped showing
+                            // "$125.00 ($85.00 + $15.00)": the parts summed to
+                            // $100 against a stated $125, because the $25 of
+                            // charges that made up the difference was never
+                            // rendered. Same breakdown as the compact badge,
+                            // with decimals — this card
+                            // is read to be checked, not scanned.
+                            const basePrice = (occ.price || null) ?? (occ.proposalAmount || null);
+                            const addonsAmt = addonTotal(occ);
+                            const billedCharges = materialChargeTotal(occ);
+                            // ITEMIZED, not a bolded sum. "($85.00 + $15.00 +
+                            // $25.00)" is arithmetic the reader has to decode
+                            // before it tells them anything — three unlabelled
+                            // numbers that could be anything. On a card that is
+                            // read to be checked, the components get their
+                            // names and their own lines; the compact card keeps
+                            // the inline form, where space is the constraint.
+                            const lines: Array<[string, number]> = [
+                              ["Base labor", basePrice ?? 0],
+                            ];
+                            if (addonsAmt > 0) lines.push(["Added services", addonsAmt]);
+                            if (billedCharges > 0) lines.push(["Invoice charges", billedCharges]);
+                            return (
+                            <VStack align="stretch" gap={0.5} w="full">
+                              <HStack justify="space-between" align="baseline" gap={3}>
+                                <Text fontSize="xs" color="green.700" fontWeight="medium">
+                                  {isEstimateOcc ? "Proposal total" : "Invoice total"}
+                                </Text>
+                                <Text
+                                  fontSize="lg"
+                                  fontWeight="bold"
+                                  color="green.900"
+                                  lineHeight="1.2"
+                                  fontVariantNumeric="tabular-nums"
+                                >
+                                  ${totalPrice(occ)!.toFixed(2)}
+                                </Text>
+                              </HStack>
+                              {/* Only when it says something the total doesn't
+                                  — a visit with just labor needs no breakdown
+                                  of itself. */}
+                              {lines.length > 1 && (
+                                <VStack align="stretch" gap={0} pt={0.5}>
+                                  {lines.map(([label, amount]) => (
+                                    <HStack key={label} justify="space-between" gap={3}>
+                                      <Text color="green.800">{label}</Text>
+                                      <Text color="green.800" fontVariantNumeric="tabular-nums">
+                                        ${amount.toFixed(2)}
+                                      </Text>
+                                    </HStack>
+                                  ))}
+                                </VStack>
+                              )}
+                            </VStack>
                           ); })()}
+                          {/* JOB PROFIT — admin/super only.
+                              Revenue − crew − what the materials cost. The
+                              ordinary accounting line, which nothing on this
+                              card showed: every other figure here reports the
+                              client's money or the crew's, and the material
+                              markup ($25 billed on $20 of mulch) landed in
+                              neither. Gated on the SELECTED scope, never
+                              `forAdmin ||` — a Super on the Worker chip must
+                              not see the business's take. */}
+                          {(isAdmin || isSuper) && (() => {
+                            // CONFIRMED cash only. An unapproved payment's
+                            // splits are not final, so treating the row as
+                            // settled would report a profit off numbers that
+                            // are still going to move.
+                            const rawPay = occ.payment as any;
+                            const pay = rawPay && rawPay.confirmed !== false ? rawPay : null;
+                            // Actual cash once paid, the invoice before that.
+                            // Tips are the client's money for the crew, not
+                            // revenue on the job.
+                            const revenue = pay
+                              ? (pay.amountPaid ?? 0) - (pay.tipAmount ?? 0)
+                              : (totalPrice(occ) ?? 0);
+                            const rates = {
+                              contractorFeePercent: commissionPercent,
+                              employeeMarginPercent: marginPercent,
+                            };
+                            const crew = pay
+                              ? (pay.splits ?? []).reduce((t: number, sp: any) => t + (sp.amount ?? 0), 0)
+                              : projectTeamPayoutsForOcc(occ as any, rates);
+                            const charges = (occ.invoiceCharges ?? []) as any[];
+                            const matCost = materialCostTotal(occ);
+                            // A charge with no recorded cost is not a free
+                            // one. Say the profit is an upper bound rather
+                            // than quietly booking the whole markup.
+                            const missingCost = charges.filter(
+                              (c) => c.cost > 0 && c.actualCost == null,
+                            ).length;
+                            const processorFee = pay?.processorFeeAmount ?? 0;
+                            const profit =
+                              Math.round((revenue - crew - matCost - processorFee) * 100) / 100;
+                            if (revenue <= 0 && crew <= 0) return null;
+                            return (
+                              <Box
+                                w="full"
+                                mt={1}
+                                pt={1.5}
+                                borderTopWidth="1px"
+                                borderColor="green.200"
+                              >
+                                <HStack justify="space-between" align="baseline" gap={3}>
+                                  <Text fontSize="xs" fontWeight="semibold" color="green.900">
+                                    {pay ? "Job profit" : "Est. job profit"}
+                                  </Text>
+                                  <Text
+                                    fontSize="sm"
+                                    fontWeight="bold"
+                                    color={profit >= 0 ? "green.900" : "red.600"}
+                                    fontVariantNumeric="tabular-nums"
+                                  >
+                                    ${profit.toFixed(2)}
+                                  </Text>
+                                </HStack>
+                                <Text fontSize="2xs" color="fg.muted">
+                                  ${revenue.toFixed(2)} {pay ? "collected" : "invoice"} − $
+                                  {crew.toFixed(2)} crew
+                                  {matCost > 0 ? ` − $${matCost.toFixed(2)} materials` : ""}
+                                  {processorFee > 0 ? ` − $${processorFee.toFixed(2)} processor fee` : ""}
+                                </Text>
+                                {missingCost > 0 && (
+                                  <Text fontSize="2xs" color="orange.600">
+                                    Upper bound — no cost recorded on {missingCost}{" "}
+                                    {missingCost === 1 ? "charge" : "charges"}.
+                                  </Text>
+                                )}
+                              </Box>
+                            );
+                          })()}
                           {occ.payment && (
                             <HStack gap={1}>
-                              <Badge bg="green.700" color="white" fontSize="sm" px="3" py="0.5" borderRadius="full">
-                                Paid: ${(occ.payment as any).amountPaid.toFixed(2)}
+                              {/* See the compact twin — a row is not a payment. */}
+                              <Badge
+                                bg={
+                                  (occ.payment as any).confirmed === false
+                                    ? "blue.600"
+                                    : (occ.payment as any).amountPaid
+                                      ? "green.700"
+                                      : "gray.500"
+                                }
+                                color="white" fontSize="sm" px="3" py="0.5" borderRadius="full"
+                              >
+                                {(occ.payment as any).confirmed === false
+                                  ? `Pending approval: $${(occ.payment as any).amountPaid.toFixed(2)}`
+                                  : (occ.payment as any).amountPaid
+                                    ? `Paid: $${(occ.payment as any).amountPaid.toFixed(2)}`
+                                    : "Closed — nothing collected"}
                               </Badge>
                               {(occ.payment as any).receiptNumber && (
                                 <Badge variant="outline" colorPalette="green" fontSize="xs" px="2" py="0.5" borderRadius="full" fontFamily="mono">
@@ -6952,8 +7202,82 @@ export default function JobsTab({
                             const basePrice = ((occ.price || null) ?? (occ.proposalAmount || null))!;
                             const addonsAmt = addonTotal(occ);
                             const displayPriceVal = basePrice + addonsAmt;
-                            const expTotal = (occ.expenses ?? []).reduce((s, e) => s + e.cost, 0);
-                            const net = Math.max(0, displayPriceVal - expTotal);
+                            // The pool, spelled out. Collapsing labor and
+                            // services into one figure made the math
+                            // unverifiable: a worker reading "$100.00 − $25.00
+                            // charges" cannot tell whether the service they
+                            // added is in there at all. Named separately only
+                            // when there is a service to name.
+                            const poolPrefix =
+                              addonsAmt > 0
+                                ? `$${basePrice.toFixed(2)} base labor + $${addonsAmt.toFixed(2)} services`
+                                : `$${displayPriceVal.toFixed(2)}`;
+                            // A bare "(30%)" doesn't say 30% OF WHAT, and the
+                            // answer is not the invoice total — the rate is
+                            // applied to the pool (perWorkerShare →
+                            // displayPriceOf), never to the charges.
+                            //
+                            // NAMES THE POOL IT ACTUALLY USED. Saying "of
+                            // labor" on a visit carrying a $15 service invites
+                            // the reader to check 30% × $85 = $25.50 against a
+                            // stated $30 and conclude the card is broken. It
+                            // isn't — the basis was $100.
+                            // THIS BRANCHES. Under ITEMIZED, materials are
+                            // billed to the client on top and never touch the
+                            // crew's pool — subtracting them here under-reports
+                            // every worker's projected pay by their share of
+                            // the mulch. See lib/paymentMath.ts perWorkerShare.
+                            const chargesTot = (occ.invoiceCharges ?? []).reduce((s, e) => s + e.cost, 0);
+                            const net = displayPriceVal;
+                            // WHAT THE LINE IS ALLOWED TO SAY IT SUBTRACTS.
+                            //
+                            // `net` above branches; the printed line did not.
+                            // It rendered "− $25.00 charges" whenever a charge
+                            // existed, so an ITEMIZED visit read
+                            // "$85 + $15 − $25 − $30" against a payout of $70.
+                            // The arithmetic on screen came to $45. Nothing was
+                            // miscalculated — the sentence described a
+                            // subtraction the math never performs.
+                            //
+                            // Nothing takes charges out of the pool.
+                            // Materials are billed on top and never come out
+                            // of the pool, so a payout line never subtracts
+                            // them. Kept as a named zero rather than deleted so
+                            // the wording below still explains where they went.
+                            const chargesRaw = 0;
+                            // Only what actually came out of the pool belongs
+                            // in this line — which is now always nothing.
+                            const chargesDeducted = Math.min(chargesRaw, displayPriceVal);
+                            const chargesAbsorbed =
+                              Math.round((chargesRaw - chargesDeducted) * 100) / 100;
+                            const chargesPart =
+                              chargesDeducted > 0 ? ` − $${chargesDeducted.toFixed(2)} charges` : "";
+                            // A bare "(30%)" doesn't say 30% OF WHAT, and the
+                            // answer is not the invoice total — the rate is
+                            // applied to the pool (perWorkerShare →
+                            // displayPriceOf), never to the charges.
+                            //
+                            // NAMES THE POOL IT ACTUALLY USED. Saying "of
+                            // labor" on a visit carrying a $15 service invites
+                            // the reader to check 30% × $85 = $25.50 against a
+                            // stated $30 and conclude the card is broken. It
+                            // isn't — the basis was $100.
+                            const rateBasis =
+                              chargesDeducted > 0
+                                ? "of what's left"
+                                : addonsAmt > 0
+                                  ? "of labor + services"
+                                  : "of labor";
+                            // Charges that are NOT in the pool still appear in
+                            // the total on the badge above, so a worker who
+                            // can't find them in this line goes looking. Say
+                            // where they went.
+                            const chargesNote =
+                              chargesAbsorbed > 0
+                                ? `Materials ran $${chargesAbsorbed.toFixed(2)} past the price. The crew's pool is empty and the business absorbed the difference.`
+                                : chargesTot > 0 && chargesDeducted === 0
+                                  ? `$${chargesTot.toFixed(2)} charges are billed to the client on top — not part of the crew's pool.`
+                                  : null;
                             const activeAssignees = (occ.assignees ?? []).filter((a) => a.role !== "observer");
                             const rates = { contractorFeePercent: commissionPercent, employeeMarginPercent: marginPercent };
                             const isUnclaimed = activeAssignees.length === 0;
@@ -6977,8 +7301,11 @@ export default function JobsTab({
                                     </Badge>
                                   </HStack>
                                   <Text fontSize="xs" color="fg.muted">
-                                    ${displayPriceVal.toFixed(2)}{expTotal > 0 ? ` − $${expTotal.toFixed(2)} exp` : ""} − ${myDeduction.toFixed(2)} {viewerLabel} ({viewerRate}%)
+                                    {poolPrefix}{chargesPart} − ${myDeduction.toFixed(2)} {viewerLabel} ({viewerRate}% {rateBasis}) = ${myPayout.toFixed(2)}
                                   </Text>
+                                  {chargesNote && (
+                                    <Text fontSize="2xs" color="fg.muted">{chargesNote}</Text>
+                                  )}
                                 </Box>
                               );
                             }
@@ -7019,23 +7346,26 @@ export default function JobsTab({
                                     ${totalPayout.toFixed(2)}
                                   </Badge>
                                 </HStack>
-                                {workerCount > 1 && expTotal > 0 && (
+                                {workerCount > 1 && chargesDeducted > 0 && (
                                   <Text fontSize="xs" color="fg.muted">
-                                    ${displayPriceVal.toFixed(2)} − ${expTotal.toFixed(2)} exp = ${net.toFixed(2)} net
+                                    {poolPrefix}{chargesPart} = ${net.toFixed(2)} net
                                   </Text>
                                 )}
                                 {workerCount > 1 ? (
                                   <VStack align="start" gap={0} mt={0.5}>
                                     {rows.map((r) => (
                                       <Text key={r.userId} fontSize="xs" color="fg.muted">
-                                        {r.name}: ${r.share.toFixed(2)} share − ${r.deduction.toFixed(2)} {r.deductionLabel} ({r.ratePct}%) = ${r.payout.toFixed(2)}
+                                        {r.name}: ${r.share.toFixed(2)} share − ${r.deduction.toFixed(2)} {r.deductionLabel} ({r.ratePct}% of share) = ${r.payout.toFixed(2)}
                                       </Text>
                                     ))}
                                   </VStack>
                                 ) : (
                                   <Text fontSize="xs" color="fg.muted">
-                                    ${displayPriceVal.toFixed(2)}{expTotal > 0 ? ` − $${expTotal.toFixed(2)} exp` : ""} − ${rows[0].deduction.toFixed(2)} {rows[0].deductionLabel} ({rows[0].ratePct}%)
+                                    {poolPrefix}{chargesPart} − ${rows[0].deduction.toFixed(2)} {rows[0].deductionLabel} ({rows[0].ratePct}% {rateBasis}) = ${rows[0].payout.toFixed(2)}
                                   </Text>
+                                )}
+                                {chargesNote && (
+                                  <Text fontSize="2xs" color="fg.muted">{chargesNote}</Text>
                                 )}
                               </Box>
                             );
@@ -7306,7 +7636,7 @@ export default function JobsTab({
 
                     {occ.payment && (() => {
                       const pay = occ.payment as any;
-                      const expTotal = (occ.expenses ?? []).reduce((s, e) => s + e.cost, 0);
+                      const expTotal = (occ.invoiceCharges ?? []).reduce((s, e) => s + e.cost, 0);
                       const fee = pay.platformFeeAmount ?? 0;
                       const margin = pay.businessMarginAmount ?? 0;
                       const splitTotal = (pay.splits ?? []).reduce((s: number, sp: any) => s + sp.amount, 0);
@@ -7346,7 +7676,15 @@ export default function JobsTab({
                       return (
                         <Box mt={1} p={2} bg="green.50" rounded="sm">
                           <Text fontSize="xs" fontWeight="medium" color="green.700">
-                            Paid: ${pay.amountPaid.toFixed(2)} via {methodLabel(pay.method)}
+                            {/* THIRD site making the same claim. A confirmed
+                                $0 payment is a job closed with nothing
+                                collected, and an unapproved one has not been
+                                paid at all — see the two badges above. */}
+                            {pay.confirmed === false
+                              ? `Pending approval: $${pay.amountPaid.toFixed(2)} via ${methodLabel(pay.method)}`
+                              : pay.amountPaid
+                                ? `Paid: $${pay.amountPaid.toFixed(2)} via ${methodLabel(pay.method)}`
+                                : "Closed with nothing collected"}
                           </Text>
                           {pay.note && (
                             <Text fontSize="xs" color="green.600">{pay.note}</Text>
@@ -7400,72 +7738,49 @@ export default function JobsTab({
                     {/* Expenses */}
                     {/* Add-on services */}
                     {(occ.addons ?? []).length > 0 && (() => {
-                      // Removal allowed for claimer / admin / super while the
-                      // job is still editable (through completion and
-                      // unfinalized PENDING_PAYMENT). Removed add-ons are
-                      // hard-deleted (no carry-forward to next occurrence
-                      // exists anyway, so there's nothing to reconcile).
-                      const isActive = occInEditableState(occ);
-                      const canRemove = isActive && (forAdmin || isAdmin || isSuper || isClaimer);
+                      // READ-ONLY. Services are added and removed in the Edit
+                      // Services dialog, and nowhere else.
+                      //
+                      // Each line used to carry a bare red ✕: one tap on a
+                      // collapsed card, one confirm, and a line came off the
+                      // client's invoice — on a phone, in the field, next to
+                      // the line you were only trying to read. Taking money
+                      // off an invoice is not something to do in passing. The
+                      // card reports what is on the visit; the dialog is where
+                      // it changes, with every line in view at once.
                       return (
                       <Box mt={1} p={1} bg="green.50" rounded="sm" w="full" borderWidth="1px" borderColor="green.200">
                         <Text fontSize="xs" fontWeight="medium" color="green.700">
-                          Add-ons: +${addonTotal(occ).toFixed(2)}
+                          Added Services: +${addonTotal(occ).toFixed(2)}
                         </Text>
                         <VStack align="start" gap={0} mt={0.5}>
                           {(occ.addons ?? []).map((addon: any) => (
-                            <HStack key={addon.id} gap={1} align="center">
-                              <Text fontSize="xs" color="green.600">
-                                +${addon.price.toFixed(2)} — {addon.tag ? jobTagLabel(addon.tag) : addon.customLabel}
-                              </Text>
-                              {canRemove && (
-                                <Button
-                                  size="xs"
-                                  variant="ghost"
-                                  colorPalette="red"
-                                  px="1"
-                                  minW="auto"
-                                  title="Remove this service"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setConfirmAction({
-                                    title: "Remove this service?",
-                                    message: `+$${addon.price.toFixed(2)} — ${addon.tag ? jobTagLabel(addon.tag) : addon.customLabel} comes off this job, and off what the client is billed.`,
-                                    confirmLabel: "Remove",
-                                    colorPalette: "red",
-                                    onConfirm: async () => {
-                                    try {
-                                      await apiDelete(`/api/${forAdmin ? "admin/" : ""}occurrences/${occ.id}/addons/${addon.id}`);
-                                      setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, addons: (o.addons ?? []).filter((a: any) => a.id !== addon.id) } : o));
-                                      publishInlineMessage({ type: "SUCCESS", text: "Service removed." });
-                                    } catch (err) {
-                                      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to remove service.", err) });
-                                    }
-                                    },
-                                    });
-                                  }}
-                                >
-                                  <X size={11} />
-                                </Button>
-                              )}
-                            </HStack>
+                            <Text key={addon.id} fontSize="xs" color="green.600">
+                              +${addon.price.toFixed(2)} — {addon.tag ? jobTagLabel(addon.tag) : addon.customLabel}
+                            </Text>
                           ))}
                         </VStack>
                       </Box>
                       );
                     })()}
-                    {/* Expenses */}
-                    {occ.expenses && occ.expenses.length > 0 && (
+                    {/* Invoice charges */}
+                    {occ.invoiceCharges && occ.invoiceCharges.length > 0 && (
                       <Box mt={1} p={1} bg="red.50" rounded="sm" w="full" borderWidth="1px" borderColor="red.200">
                         <Text fontSize="xs" fontWeight="medium" color="red.700">
-                          Expenses: −${occ.expenses.reduce((s, e) => s + e.cost, 0).toFixed(2)}
+                          Invoice charges: −${occ.invoiceCharges.reduce((s, e) => s + e.cost, 0).toFixed(2)}
                         </Text>
                         <VStack align="start" gap={0} mt={0.5}>
-                          {occ.expenses.map((exp) => {
-                            // Inventory-backed expenses are paired with a SupplyHold
-                            // server-side; everything else is a custom out-of-pocket /
-                            // company-card expense. Tag both so the worker knows
-                            // which path the row came from at a glance.
+                          {occ.invoiceCharges.map((exp) => {
+                            // Inventory-backed charges are paired with a SupplyHold
+                            // server-side; everything else was typed in by hand.
+                            // Tag both so the worker knows which path the row came
+                            // from at a glance.
+                            //
+                            // The badge names the ROW, not a business expense.
+                            // "Custom Expense" was the last visible trace of the
+                            // model this rename exists to bury: it told a worker the
+                            // line was a company cost, when it is a line on the
+                            // client's invoice.
                             const fromInventory = !!(exp as any).supplyHold;
                             return (
                               <HStack key={exp.id} gap={1.5} align="center" wrap="wrap">
@@ -7478,7 +7793,7 @@ export default function JobsTab({
                                   </Badge>
                                 ) : (
                                   <Badge size="sm" colorPalette="orange" variant="subtle" borderRadius="full" px="2" fontSize="2xs">
-                                    Custom Expense
+                                    Added Charge
                                   </Badge>
                                 )}
                               </HStack>
@@ -7766,23 +8081,6 @@ export default function JobsTab({
                         the action row so it reads as "manage this job"
                         alongside the per-occurrence Claim/Start/etc.
                         actions. */}
-                    {(isAdmin || isSuper) && !isTaskOrReminder && occ.jobId && (
-                      <Button
-                        size="sm"
-                        variant="solid"
-                        colorPalette="blue"
-                        onClick={() =>
-                          openEventSearch(
-                            "jobsTabToServicesTabSearch",
-                            occ.job?.property?.displayName ?? "",
-                            true,
-                            `${occ.job?.id}:${occ.id}`,
-                          )
-                        }
-                      >
-                        Manage in Services
-                      </Button>
-                    )}
                     {(isAdmin || isSuper) && !isTaskOrReminder && !occ.jobId && isEstimateOcc && (
                       <Text fontSize="xs" color="orange.600">Stand-alone estimate — not yet linked to a Job Service</Text>
                     )}
@@ -7790,22 +8088,6 @@ export default function JobsTab({
                         an outlier completion left hoursApprovedAt = null. Opens
                         a confirm dialog with an "Edit Time" secondary
                         action so the admin can adjust before approving. */}
-                    {(isAdmin || isSuper) &&
-                      (occ.workflow === "STANDARD" || occ.workflow === "ONE_OFF") &&
-                      occ.completedAt && !occ.hoursApprovedAt && (
-                      <Button
-                        size="sm"
-                        variant="solid"
-                        colorPalette="orange"
-                        disabled={busyOccId === occ.id}
-                        onClick={(e: any) => {
-                          e.stopPropagation();
-                          openApproveHoursDialog(occ);
-                        }}
-                      >
-                        Review Hours
-                      </Button>
-                    )}
                     {/* Confirm client — must happen before Start */}
                     {needsConfirmation && (isClaimer || forAdmin) && (
                       <Button
@@ -7816,6 +8098,20 @@ export default function JobsTab({
                         onClick={() => openConfirmClientDialog(occ)}
                       >
                         Confirm Client
+                      </Button>
+                    )}
+                    {/* Primary action — Start / Complete / Accept Payment.
+                        Server enforces claimer-only (jobs.ts updateOccurrenceStatus),
+                        so we mirror that here instead of showing buttons that 403. */}
+                    {(isClaimer || forAdmin) && !isTaskOrReminder && occ.status === "SCHEDULED" && !isTentative && !needsConfirmation && (
+                      <Button
+                        size="sm"
+                        variant="solid"
+                        colorPalette="blue"
+                        loading={busyOccId === occ.id}
+                        onClick={() => openStartJobDialog(occ)}
+                      >
+                        {isEstimateOcc ? "Start Estimate" : "Start Job"}
                       </Button>
                     )}
                     {/* One-time next-visit date override — admin-only,
@@ -7838,29 +8134,6 @@ export default function JobsTab({
                         }}
                       />
                     )}
-                    {/* Primary action — Start / Complete / Accept Payment.
-                        Server enforces claimer-only (jobs.ts updateOccurrenceStatus),
-                        so we mirror that here instead of showing buttons that 403. */}
-                    {(isClaimer || forAdmin) && !isTaskOrReminder && occ.status === "SCHEDULED" && !isTentative && !needsConfirmation && (
-                      <Button
-                        size="sm"
-                        variant="solid"
-                        colorPalette="blue"
-                        loading={busyOccId === occ.id}
-                        onClick={() => openStartJobDialog(occ)}
-                      >
-                        {isEstimateOcc ? "Start Estimate" : "Start Job"}
-                      </Button>
-                    )}
-                    {/* Stale-time cleanup — when an admin previously flipped
-                     *  status back without going through Reset Job, the
-                     *  startedAt/completedAt fields can linger on a SCHEDULED
-                     *  card. Surface Reset Job so the admin can clear it. */}
-                    {forAdmin && (isAdmin || isSuper) && occ.status === "SCHEDULED" && (occ.startedAt || occ.completedAt) && (
-                      <Button size="sm" variant="outline" colorPalette="red" disabled={busyOccId === occ.id} onClick={() => setResetJobOcc(occ)}>
-                        Reset Job
-                      </Button>
-                    )}
                     {(isClaimer || forAdmin) && occ.status === "IN_PROGRESS" && (occ.workflow !== "ESTIMATE" && !occ.isEstimate) && (
                       <HStack gap={2} wrap="wrap">
                         <Button size="sm" variant="solid" colorPalette="blue" disabled={busyOccId === occ.id} onClick={() => setCompleteDialogOcc(occ)}>
@@ -7869,15 +8142,6 @@ export default function JobsTab({
                         <Button size="sm" variant="outline" colorPalette="orange" loading={busyOccId === occ.id} onClick={() => void pauseJob(occ)}>
                           Pause
                         </Button>
-                        {/* Admin-only "Reset Job" — clears time tracking
-                         *  and reverts the occurrence to SCHEDULED so it
-                         *  can be started over. Scheduled date is
-                         *  preserved. */}
-                        {forAdmin && (isAdmin || isSuper) && (
-                          <Button size="sm" variant="outline" colorPalette="red" disabled={busyOccId === occ.id} onClick={() => setResetJobOcc(occ)}>
-                            Reset Job
-                          </Button>
-                        )}
                       </HStack>
                     )}
                     {(isClaimer || forAdmin) && (occ.status as string) === "PAUSED" && (occ.workflow !== "ESTIMATE" && !occ.isEstimate) && (
@@ -7888,11 +8152,6 @@ export default function JobsTab({
                         <Button size="sm" variant="solid" colorPalette="blue" disabled={busyOccId === occ.id} onClick={() => setCompleteDialogOcc(occ)}>
                           Complete Job
                         </Button>
-                        {forAdmin && (isAdmin || isSuper) && (
-                          <Button size="sm" variant="outline" colorPalette="red" disabled={busyOccId === occ.id} onClick={() => setResetJobOcc(occ)}>
-                            Reset Job
-                          </Button>
-                        )}
                       </HStack>
                     )}
                     {(isClaimer || forAdmin) && occ.status === "IN_PROGRESS" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
@@ -8012,14 +8271,6 @@ export default function JobsTab({
                           </HStack>
                         );
                       })()}
-                      {/* Admin-only "Reset Job" — covers the accidentally-
-                       *  completed case. Only shown when there's no Payment
-                       *  row yet (paid jobs go through Revert Payment). */}
-                      {forAdmin && (isAdmin || isSuper) && !occ.payment && (
-                        <Button size="sm" variant="outline" colorPalette="red" disabled={busyOccId === occ.id} onClick={() => setResetJobOcc(occ)}>
-                          Reset Job
-                        </Button>
-                      )}
                     </>)}
                     {(isClaimer || isActiveAssignee || forAdmin) && occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
                       // w="full" forces this HStack onto its own row inside
@@ -8278,72 +8529,7 @@ export default function JobsTab({
                           Delete
                         </Button>
                       </>)}
-                      {/* Event complete/edit/delete buttons — admin only */}
-                      {isEvent && occ.status === "SCHEDULED" && (isAdmin || isSuper) && (<>
-                        <Button
-                          size="sm"
-                          variant="solid"
-                          colorPalette="yellow"
-                          disabled={isOffline}
-                          loading={busyOccId === occ.id}
-                          onClick={() => setConfirmAction({
-                            title: "Complete this event?",
-                            message: `"${occ.title}" moves out of the active list.`,
-                            confirmLabel: "Complete",
-                            colorPalette: "yellow",
-                            onConfirm: async () => {
-                              setBusyOccId(occ.id);
-                              try {
-                                await apiPost(`/api/admin/events/${occ.id}/complete`);
-                                publishInlineMessage({ type: "SUCCESS", text: "Event completed." });
-                                await load(false);
-                              } catch (err) {
-                                publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to complete event.", err) });
-                              }
-                              setBusyOccId(null);
-                            },
-                          })}
-                        >
-                          Complete
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={isOffline}
-                          onClick={() => {
-                            setEditingEvent(occ);
-                            setEventDialogOpen(true);
-                          }}
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          colorPalette="red"
-                          disabled={isOffline}
-                          onClick={() => {
-                            setConfirmAction({
-                              title: "Delete Event?",
-                              message: `Are you sure you want to delete "${occ.title}"?`,
-                              confirmLabel: "Delete",
-                              colorPalette: "red",
-                              onConfirm: async () => {
-                                try {
-                                  await apiDelete(`/api/admin/events/${occ.id}`);
-                                  publishInlineMessage({ type: "SUCCESS", text: "Event deleted." });
-                                  await load(false);
-                                } catch (err) {
-                                  publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to delete event.", err) });
-                                }
-                              },
-                            });
-                          }}
-                        >
-                          Delete
-                        </Button>
-                      </>)}
-                      {/* Followup complete — active assignee or admin */}
+                                            {/* Followup complete — active assignee or admin */}
                       {isFollowup && occ.status === "SCHEDULED" && (isActiveAssignee || isAdmin || isSuper) && (
                         <Button
                           size="sm"
@@ -8414,46 +8600,7 @@ export default function JobsTab({
                           Delete
                         </Button>
                       )}
-                      {/* Announcement complete/edit/delete buttons — admin only */}
-                      {isAnnouncement && forAdmin && (isAdmin || isSuper) && (<>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={isOffline}
-                          onClick={() => {
-                            setEditingAnnouncement(occ);
-                            setAnnouncementDialogOpen(true);
-                          }}
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          colorPalette="red"
-                          disabled={isOffline}
-                          onClick={() => {
-                            setConfirmAction({
-                              title: "Delete Announcement?",
-                              message: `Are you sure you want to delete "${occ.title}"?`,
-                              confirmLabel: "Delete",
-                              colorPalette: "red",
-                              onConfirm: async () => {
-                                try {
-                                  await apiDelete(`/api/admin/announcements/${occ.id}`);
-                                  publishInlineMessage({ type: "SUCCESS", text: "Announcement deleted." });
-                                  await load(false);
-                                } catch (err) {
-                                  publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to delete announcement.", err) });
-                                }
-                              },
-                            });
-                          }}
-                        >
-                          Delete
-                        </Button>
-                      </>)}
-                      {/* Light estimate edit/delete */}
+                                            {/* Light estimate edit/delete */}
                       {isLightEstimate && (isActiveAssignee || isAdmin || isSuper) && (
                         <Button
                           size="sm"
@@ -8512,31 +8659,7 @@ export default function JobsTab({
                           Reschedule
                         </Button>
                       )}
-                      {forAdmin && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
-                        <StatusButton
-                          id="occ-generate-estimate"
-                          itemId={occ.id}
-                          label={occ.generatedEstimate ? "Regenerate Estimate" : "Generate Estimate"}
-                          disabled={isOffline}
-                          title={isOffline ? "Requires internet" : undefined}
-                          onClick={async () => {
-                            try {
-                              publishInlineMessage({ type: "WARNING", text: "Generating AI estimate — please review before sending to the client." });
-                              const res = await apiPost<{ estimate: string; breakdown?: string }>(`/api/admin/occurrences/${occ.id}/generate-estimate`);
-                              publishInlineMessage({ type: "SUCCESS", text: "AI estimate generated. Review carefully before sharing with the client." });
-                              // Update the occurrence in local state
-                              setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, generatedEstimate: res.estimate, generatedEstimateBreakdown: res.breakdown ?? null } : o));
-                            } catch (err: any) {
-                              publishInlineMessage({ type: "ERROR", text: getErrorMessage("Estimate generation failed.", err) });
-                            }
-                          }}
-                          variant="outline"
-                          colorPalette="blue"
-                          busyId={statusButtonBusyId}
-                          setBusyId={setStatusButtonBusyId}
-                        />
-                      )}
-                      {/* Manage Team — two paths:
+                                            {/* Manage Team — two paths:
                           (1) Pre-start: claimer OR admin/super, before the
                               job has started. Original behavior.
                           (2) Post-completion in PENDING_PAYMENT: admin/super
@@ -8589,34 +8712,12 @@ export default function JobsTab({
                           toggles based on the resolved privileges from /me.
                           Only surfaces while the occurrence is in an active
                           state; admins do retroactive edits via Services. */}
-                      {(() => {
-                        const isActive = occInEditableState(occ);
-                        const hasAnyPriv =
-                          forAdmin ||
-                          !!me?.privileges?.canPullInventory ||
-                          !!me?.privileges?.canChargeBusinessExpenses;
-                        // Admin/Super always pass — they can manage expenses on any job (e.g.
-                        // adding a custom expense on behalf of a contractor who lacks the
-                        // "Charge business expenses" privilege). Workers must be the claimer
-                        // AND have at least one expense-related privilege.
-                        // Followups are coordination items, not billable jobs — no expenses.
-                        const canManage = isActive && !isFollowup && (forAdmin || isAdmin || isSuper || (isClaimer && hasAnyPriv));
-                        if (!canManage) return null;
-                        const hasExpenses = (occ.expenses?.length ?? 0) > 0;
-                        return (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={(e) => { e.stopPropagation(); setExpenseDialogOccId(occ.id); }}
-                          >
-                            {hasExpenses ? "Manage Expenses" : "Add Expense"}
-                          </Button>
-                        );
-                      })()}
-                      {/* Add Service (add-on) — claimer / admin / super, only
-                          on real jobs that are active. Tasks, reminders, and
-                          events don't carry add-ons. Mirrors the gating used
-                          on Add Expense so workers see both side-by-side. */}
+                      {/* Edit Services (add-ons) — claimer / admin / super,
+                          only on real jobs that are active. Tasks, reminders
+                          and events don't carry add-ons. Mirrors the gating
+                          used on Edit Charges so workers see both side-by-side.
+                          The same predicate gates removal inside the dialog —
+                          see addAddonCanRemove. */}
                       {(() => {
                         const isActive = occInEditableState(occ);
                         const canAdd =
@@ -8629,43 +8730,24 @@ export default function JobsTab({
                             size="sm"
                             variant="outline"
                             colorPalette="teal"
-                            onClick={(e) => { e.stopPropagation(); setAddAddonOcc(occ); }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setAddAddonCanRemove(
+                                isActive && (forAdmin || isAdmin || isSuper || isClaimer),
+                              );
+                              setAddAddonOcc(occ);
+                            }}
                           >
-                            Add Service
+                            Edit Services
                           </Button>
                         );
                       })()}
                       {/* Adjust Price — admin+ only, and only while no
-                          Payment row exists. Sits with Add Service and Manage
+                          Payment row exists. Sits with Edit Services and Manage
                           Expenses because it is the same kind of action: it
                           changes what the client is billed. Gated on the same
                           editable-state helper, so it disappears once the job
                           is closed. */}
-                      {(() => {
-                        const canReprice =
-                          occInEditableState(occ)
-                          && !isTaskOrReminder
-                          && !isEstimateOcc
-                          && !occ.payment
-                          && (forAdmin || isAdmin || isSuper);
-                        if (!canReprice) return null;
-                        return (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            colorPalette="blue"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setPriceEditOcc(occ);
-                              setPriceEditValue(String(occ.price ?? ""));
-                              setPriceEditReason("");
-                            }}
-                            title="Change what this visit is billed at"
-                          >
-                            Adjust Price
-                          </Button>
-                        );
-                      })()}
                       {isClaimer && !isTaskOrReminder && occ.status === "SCHEDULED" && (
                         <StatusButton
                           id="occ-unclaim"
@@ -8845,7 +8927,264 @@ export default function JobsTab({
                     same density cycle (ultra = hidden, semi/expanded
                     = visible) so ultra cards stay compact and the
                     row only appears once you've expanded the card. */}
-                <ElevatedActionRow occ={occ} scope={scope} cardMode={cardMode} onAfter={load} />
+                {/* Elevated rows. A button lives on the LOWEST role row
+                    that applies to it: Edit Services stays in the everyday row
+                    because a claimer can use it, but Edit Charges, Adjust Price
+                    and Invoice preview are admin-only and belong on the Admin
+                    row beside Cancel.
+
+                    Guarded by `!isCardCompact` so their visibility is
+                    unchanged — they were expanded-only before this moved. */}
+                <ElevatedActionRow
+                  occ={occ}
+                  scope={scope}
+                  cardMode={cardMode}
+                  onAfter={load}
+                  adminExtras={
+                    !isCardCompact && (isAdmin || isSuper) ? (
+                      <>
+                        {/* Jump to this job in Services. The one primary
+                            action on the Admin row, so it stays SOLID BLUE as
+                            it has always been — the rest of the row is
+                            outlined. Matching it to the row's purple made the
+                            main way into a job read like a secondary link. */}
+                        {!isTaskOrReminder && occ.jobId && (
+                          <Button
+                            size="sm"
+                            variant="solid"
+                            colorPalette="blue"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openEventSearch(
+                                "jobsTabToServicesTabSearch",
+                                occ.job?.property?.displayName ?? "",
+                                true,
+                                `${occ.job?.id}:${occ.id}`,
+                              );
+                            }}
+                          >
+                            Manage in Services
+                          </Button>
+                        )}
+                        {/* Approve the crew's clocked time. */}
+                        {(occ.workflow === "STANDARD" || occ.workflow === "ONE_OFF") &&
+                          occ.completedAt && !occ.hoursApprovedAt && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            colorPalette="purple"
+                            disabled={busyOccId === occ.id}
+                            onClick={(e) => { e.stopPropagation(); openApproveHoursDialog(occ); }}
+                          >
+                            Review Hours
+                          </Button>
+                        )}
+                        {/* Stale-time cleanup — when an admin previously
+                            flipped status back without going through Reset
+                            Job, startedAt/completedAt can linger on a
+                            SCHEDULED card. (The in-progress Reset Job lives
+                            with Complete/Pause, because it only reads as part
+                            of that flow.) */}
+                        {/* Reset Job — clears time tracking and reverts the
+                            occurrence to SCHEDULED. Three situations, all
+                            admin-only, so one button covers them: mid-run
+                            (IN_PROGRESS / PAUSED); accidentally completed
+                            (PENDING_PAYMENT with no Payment row yet — a paid
+                            job goes through Revert Payment instead); and
+                            stale-time cleanup on a SCHEDULED card whose
+                            startedAt/completedAt linger from an earlier
+                            status flip. */}
+                        {(occ.status === "IN_PROGRESS" ||
+                          (occ.status as string) === "PAUSED" ||
+                          (occ.status === "PENDING_PAYMENT" && !occ.payment) ||
+                          (occ.status === "SCHEDULED" && (occ.startedAt || occ.completedAt))) && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            colorPalette="red"
+                            disabled={busyOccId === occ.id}
+                            onClick={(e) => { e.stopPropagation(); setResetJobOcc(occ); }}
+                          >
+                            Reset Job
+                          </Button>
+                        )}
+  {/* Event complete/edit/delete buttons — admin only */}
+                        {isEvent && occ.status === "SCHEDULED" && (isAdmin || isSuper) && (<>
+                          <Button
+                            size="sm"
+                            variant="solid"
+                            colorPalette="yellow"
+                            disabled={isOffline}
+                            loading={busyOccId === occ.id}
+                            onClick={() => setConfirmAction({
+                              title: "Complete this event?",
+                              message: `"${occ.title}" moves out of the active list.`,
+                              confirmLabel: "Complete",
+                              colorPalette: "yellow",
+                              onConfirm: async () => {
+                                setBusyOccId(occ.id);
+                                try {
+                                  await apiPost(`/api/admin/events/${occ.id}/complete`);
+                                  publishInlineMessage({ type: "SUCCESS", text: "Event completed." });
+                                  await load(false);
+                                } catch (err) {
+                                  publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to complete event.", err) });
+                                }
+                                setBusyOccId(null);
+                              },
+                            })}
+                          >
+                            Complete
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={isOffline}
+                            onClick={() => {
+                              setEditingEvent(occ);
+                              setEventDialogOpen(true);
+                            }}
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            colorPalette="red"
+                            disabled={isOffline}
+                            onClick={() => {
+                              setConfirmAction({
+                                title: "Delete Event?",
+                                message: `Are you sure you want to delete "${occ.title}"?`,
+                                confirmLabel: "Delete",
+                                colorPalette: "red",
+                                onConfirm: async () => {
+                                  try {
+                                    await apiDelete(`/api/admin/events/${occ.id}`);
+                                    publishInlineMessage({ type: "SUCCESS", text: "Event deleted." });
+                                    await load(false);
+                                  } catch (err) {
+                                    publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to delete event.", err) });
+                                  }
+                                },
+                              });
+                            }}
+                          >
+                            Delete
+                          </Button>
+                        </>)}
+  {/* Announcement complete/edit/delete buttons — admin only */}
+                        {isAnnouncement && forAdmin && (isAdmin || isSuper) && (<>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={isOffline}
+                            onClick={() => {
+                              setEditingAnnouncement(occ);
+                              setAnnouncementDialogOpen(true);
+                            }}
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            colorPalette="red"
+                            disabled={isOffline}
+                            onClick={() => {
+                              setConfirmAction({
+                                title: "Delete Announcement?",
+                                message: `Are you sure you want to delete "${occ.title}"?`,
+                                confirmLabel: "Delete",
+                                colorPalette: "red",
+                                onConfirm: async () => {
+                                  try {
+                                    await apiDelete(`/api/admin/announcements/${occ.id}`);
+                                    publishInlineMessage({ type: "SUCCESS", text: "Announcement deleted." });
+                                    await load(false);
+                                  } catch (err) {
+                                    publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to delete announcement.", err) });
+                                  }
+                                },
+                              });
+                            }}
+                          >
+                            Delete
+                          </Button>
+                        </>)}
+  {/* Generating a client-facing estimate document is admin work.
+                            The row already gates the scope. */}
+                        {(occ.workflow === "ESTIMATE" || occ.isEstimate) && (
+                          <StatusButton
+                            id="occ-generate-estimate"
+                            itemId={occ.id}
+                            label={occ.generatedEstimate ? "Regenerate Estimate" : "Generate Estimate"}
+                            disabled={isOffline}
+                            title={isOffline ? "Requires internet" : undefined}
+                            onClick={async () => {
+                              try {
+                                publishInlineMessage({ type: "WARNING", text: "Generating AI estimate — please review before sending to the client." });
+                                const res = await apiPost<{ estimate: string; breakdown?: string }>(`/api/admin/occurrences/${occ.id}/generate-estimate`);
+                                publishInlineMessage({ type: "SUCCESS", text: "AI estimate generated. Review carefully before sharing with the client." });
+                                // Update the occurrence in local state
+                                setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, generatedEstimate: res.estimate, generatedEstimateBreakdown: res.breakdown ?? null } : o));
+                              } catch (err: any) {
+                                publishInlineMessage({ type: "ERROR", text: getErrorMessage("Estimate generation failed.", err) });
+                              }
+                            }}
+                            variant="outline"
+                            colorPalette="blue"
+                            busyId={statusButtonBusyId}
+                            setBusyId={setStatusButtonBusyId}
+                          />
+                        )}
+                        {occInEditableState(occ) && !isFollowup && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            colorPalette="purple"
+                            onClick={(e) => { e.stopPropagation(); setChargeDialogOccId(occ.id); }}
+                          >
+                            Edit Charges
+                          </Button>
+                        )}
+                        {occInEditableState(occ) && !isTaskOrReminder && !isEstimateOcc && !occ.payment && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            colorPalette="purple"
+                            title="Change what this visit is billed at"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPriceEditOcc(occ);
+                              // 2dp — a bare "65" reads as a quantity, and
+                              // every other CurrencyInput in the app is seeded
+                              // this way.
+                              setPriceEditValue(occ.price != null ? occ.price.toFixed(2) : "");
+                              setPriceEditDetail(String((occ as any).laborDetail ?? ""));
+                              setPriceEditReason("");
+                            }}
+                          >
+                            Adjust Price
+                          </Button>
+                        )}
+                        {/* No isActive gate: the point is to look before
+                            sending, and on a settled job it still answers
+                            "what does this invoice say now". */}
+                        {!isFollowup && !isTaskOrReminder && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            colorPalette="purple"
+                            onClick={(e) => { e.stopPropagation(); setPreviewOccId(occ.id); }}
+                          >
+                            Invoice preview
+                          </Button>
+                        )}
+                      </>
+                    ) : null
+                  }
+                />
               </Card.Root>
             );
           })}
@@ -9462,7 +9801,7 @@ export default function JobsTab({
                   <Text fontSize="sm" color="fg.muted">
                     The job has been rescheduled. Let the client know about the change:
                   </Text>
-                  <Box p={3} bg="blue.50" borderWidth="1px" borderColor="blue.200" rounded="md">
+                  <Box p={3} bg="blue.50" borderWidth="1px" borderLeftWidth="3px" borderColor="blue.200" rounded="md">
                     <Text fontSize="xs" color="blue.800">{rescheduleNotify?.message}</Text>
                   </Box>
                   <VStack align="stretch" gap={2}>
@@ -9568,14 +9907,22 @@ export default function JobsTab({
         </Portal>
       </Dialog.Root>
 
-      <ManageExpensesDialog
-        open={!!expenseDialogOccId}
-        onOpenChange={(o) => { if (!o) { setExpenseDialogOccId(null); void load(false); } }}
-        occurrenceId={expenseDialogOccId ?? ""}
+      <ManageInvoiceChargesDialog
+        open={!!chargeDialogOccId}
+        onOpenChange={(o: boolean) => { if (!o) { setChargeDialogOccId(null); void load(false); } }}
+        sentInvoiceAmount={(() => {
+          const occ = items.find((o) => o.id === chargeDialogOccId);
+          return outstandingInvoiceAmount(occ as any, occ ? totalPrice(occ) : null);
+        })()}
+        occurrenceId={chargeDialogOccId ?? ""}
         isAdmin={forAdmin}
+        // ROLE, not view. `forAdmin` is false on the Worker chip, which is
+        // where an admin who claimed their own job enters charges — the
+        // picker was hidden on the one surface that needed it.
+        canLinkLedger={hasAdminRole || hasSuperRole}
         disableInventory={(() => {
           // Tasks, reminders, events, followups, announcements: no inventory.
-          const occ = items.find((o) => o.id === expenseDialogOccId);
+          const occ = items.find((o) => o.id === chargeDialogOccId);
           const wf = (occ as any)?.workflow;
           return wf === "TASK" || wf === "REMINDER" || wf === "EVENT" || wf === "FOLLOWUP" || wf === "ANNOUNCEMENT";
         })()}
@@ -9608,7 +9955,7 @@ export default function JobsTab({
           defaultAmount={totalPrice(acceptPaymentOcc)}
           basePrice={acceptPaymentOcc.price ?? null}
           addonsTotal={addonTotal(acceptPaymentOcc)}
-          totalExpenses={(acceptPaymentOcc.expenses ?? []).reduce((s, e) => s + e.cost, 0)}
+          totalInvoiceCharges={(acceptPaymentOcc.invoiceCharges ?? []).reduce((s, e) => s + e.cost, 0)}
           commissionPercent={commissionPercent}
           marginPercent={marginPercent}
           // Admin OR super — the kill-switch only hides this from field
@@ -9639,18 +9986,6 @@ export default function JobsTab({
       )}
       {/* InsuranceUploadDialog was removed with the compliance-policy
           migration. The reactive sign wizard (Slice 3) mounts here. */}
-      {/* Pricing guide popup — opened from the "View pricing guide" chip
-          in the add-on dialog. Picks back into addonPrice when the user
-          taps a row. Pre-filters by the selected service type (if any),
-          since that's almost always what the worker is shopping for —
-          they can clear the search to see everything. */}
-      <PricingGuideDialog
-        open={pricingGuideOpen}
-        onOpenChange={setPricingGuideOpen}
-        endpoint={forAdmin ? "/api/admin/pricing" : "/api/pricing"}
-        initialSearch={addonTag ? jobTagLabel(addonTag) : ""}
-        onPick={(amount) => setAddonPrice(String(amount))}
-      />
 
       <ClaimAgreementDialog
         open={agreementDialogOpen}
@@ -9862,131 +10197,59 @@ export default function JobsTab({
         </Portal>
       </Dialog.Root>
 
-      {/* Add Service Dialog */}
-      <Dialog.Root open={!!addAddonOcc} onOpenChange={(e) => { if (!e.open) { setAddAddonOcc(null); setAddonTag(""); setAddonCustomLabel(""); setAddonPrice(""); } }}>
-        <Portal>
-          <Dialog.Backdrop />
-          <Dialog.Positioner>
-            <Dialog.Content mx="4" maxW="sm" w="full" rounded="2xl" p="4" shadow="lg">
-              <Dialog.CloseTrigger />
-              <Dialog.Header>
-                <Dialog.Title>Add Service</Dialog.Title>
-              </Dialog.Header>
-              <Dialog.Body>
-                <ImpersonationWarning viewAsName={effectiveViewAsName} />
-                <VStack align="stretch" gap={3}>
-                  <Box>
-                    <Text fontSize="xs" fontWeight="medium" mb={1}>Service type</Text>
-                    <Box display="flex" gap="4px" flexWrap="wrap">
-                      {serviceTypes.map((t) => (
-                        <Badge
-                          key={t.key}
-                          size="sm"
-                          colorPalette={addonTag === t.key ? "teal" : "gray"}
-                          variant={addonTag === t.key ? "solid" : "outline"}
-                          cursor="pointer"
-                          px="2"
-                          borderRadius="full"
-                          onClick={() => { setAddonTag(addonTag === t.key ? "" : t.key); setAddonCustomLabel(""); }}
-                        >
-                          {t.label}
-                        </Badge>
-                      ))}
-                    </Box>
-                  </Box>
-                  {!addonTag && (
-                    <Box>
-                      <Text fontSize="xs" fontWeight="medium" mb={1}>Or custom service</Text>
-                      <input
-                        type="text"
-                        value={addonCustomLabel}
-                        onChange={(e) => setAddonCustomLabel(e.target.value)}
-                        placeholder="e.g., Remove fallen branch"
-                        style={{ width: "100%", padding: "6px 8px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "14px" }}
-                      />
-                    </Box>
-                  )}
-                  <Box>
-                    <Text fontSize="xs" fontWeight="medium" mb={1}>Price *</Text>
-                    <CurrencyInput
-                      value={addonPrice}
-                      onChange={setAddonPrice}
-                      size="sm"
-                    />
-                    <HStack gap={2} mt={1.5} wrap="wrap">
-                      {addonHintEntry?.parsedValue && (
-                        <Badge
-                          size="sm"
-                          colorPalette="gray"
-                          variant="subtle"
-                          borderRadius="full"
-                          px="2"
-                          cursor="pointer"
-                          title="Tap to use as the price"
-                          onClick={() => setAddonPrice(String(addonHintEntry.parsedValue!.amount))}
-                        >
-                          Ref: ${addonHintEntry.parsedValue.amount.toFixed(2)} / {addonHintEntry.parsedValue.unit} · {addonHintEntry.parsedValue.label}
-                        </Badge>
-                      )}
-                      <Badge
-                        size="sm"
-                        colorPalette="blue"
-                        variant="outline"
-                        borderRadius="full"
-                        px="2"
-                        cursor="pointer"
-                        onClick={() => setPricingGuideOpen(true)}
-                      >
-                        View pricing guide ↗
-                      </Badge>
-                    </HStack>
-                  </Box>
-                </VStack>
-              </Dialog.Body>
-              <Dialog.Footer>
-                <HStack justify="flex-end" w="full">
-                  <Button variant="ghost" onClick={() => setAddAddonOcc(null)}>Cancel</Button>
-                  <Button
-                    colorPalette="teal"
-                    loading={addonBusy}
-                    disabled={!addonPrice || Number(addonPrice) <= 0 || (!addonTag && !addonCustomLabel.trim())}
-                    onClick={async () => {
-                      if (!addAddonOcc) return;
-                      setAddonBusy(true);
-                      try {
-                        const created = await apiPost<{ id: string; tag?: string; customLabel?: string; price: number }>(
-                          `/api/${forAdmin ? "admin/" : ""}occurrences/${addAddonOcc.id}/addons`,
-                          {
-                            tag: addonTag || undefined,
-                            customLabel: addonCustomLabel.trim() || undefined,
-                            price: Number(addonPrice),
-                          },
-                        );
-                        setItems((prev) => prev.map((o) => o.id === addAddonOcc.id ? { ...o, addons: [...(o.addons ?? []), created] } : o));
-                        publishInlineMessage({ type: "SUCCESS", text: "Service added." });
-                        setAddAddonOcc(null);
-                        setAddonTag("");
-                        setAddonCustomLabel("");
-                        setAddonPrice("");
-                      } catch (err) {
-                        publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to add service.", err) });
-                      }
-                      setAddonBusy(false);
-                    }}
-                  >
-                    Add
-                  </Button>
-                </HStack>
-              </Dialog.Footer>
-            </Dialog.Content>
-          </Dialog.Positioner>
-        </Portal>
-      </Dialog.Root>
+      {/* Edit Services Dialog */}
+      {/* Edit Services — the SHARED dialog, same one ServicesTab mounts.
+          This was a ~120-line inline copy with its own tag chips, price
+          input, pricing-hint lookup and guide mount. Two implementations of
+          one form is how the charges dialog ended up with an add form that
+          could set a field its edit form couldn't. */}
+      <ManageAddonsDialog
+        occurrenceId={addAddonOcc?.id ?? null}
+        onClose={() => { setAddAddonOcc(null); setAddAddonCanRemove(false); }}
+        serviceTypes={serviceTypes}
+        forAdmin={forAdmin}
+        viewAsName={effectiveViewAsName}
+        addons={(addAddonOcc?.addons ?? []) as any}
+        // Same rule the card's ✕ used before removal moved in here: claimer,
+        // admin or super, and only while the visit is still editable.
+        canRemove={addAddonCanRemove}
+        sentInvoiceAmount={
+          addAddonOcc
+            ? outstandingInvoiceAmount(addAddonOcc as any, totalPrice(addAddonOcc))
+            : null
+        }
+        onAdded={(created) => {
+          const target = addAddonOcc;
+          if (!target) return;
+          setItems((prev) =>
+            prev.map((o) =>
+              o.id === target.id ? { ...o, addons: [...(o.addons ?? []), created] } : o,
+            ),
+          );
+        }}
+        onRemoved={(addonId) => {
+          const target = addAddonOcc;
+          if (!target) return;
+          setItems((prev) =>
+            prev.map((o) =>
+              o.id === target.id
+                ? { ...o, addons: (o.addons ?? []).filter((a: any) => a.id !== addonId) }
+                : o,
+            ),
+          );
+        }}
+      />
+
+      <InvoicePreviewDialog
+        occurrenceId={previewOccId}
+        onClose={() => setPreviewOccId(null)}
+      />
+
 
       {/* Adjust Price Dialog */}
       <Dialog.Root
         open={!!priceEditOcc}
-        onOpenChange={(e) => { if (!e.open) { setPriceEditOcc(null); setPriceEditValue(""); setPriceEditReason(""); } }}
+        onOpenChange={(e) => { if (!e.open) { setPriceEditOcc(null); setPriceEditValue(""); setPriceEditReason(""); setPriceEditDetail(""); } }}
       >
         <Portal>
           <Dialog.Backdrop />
@@ -10003,8 +10266,30 @@ export default function JobsTab({
                   const next = parseFloat(priceEditValue);
                   const valid = Number.isFinite(next) && next >= 0;
                   const before = priceEditOcc.price ?? 0;
+                  const isRepeatingOcc =
+                    ((priceEditOcc as any).frequencyDays
+                      ?? (priceEditOcc.job as any)?.frequencyDays) != null;
                   return (
                     <VStack align="stretch" gap={3}>
+                      {/* THIS VISIT ONLY. adjustOccurrencePrice writes a single
+                          jobOccurrence row and never touches Job.defaultPrice,
+                          so the next generated visit comes back at the old
+                          rate. On a repeating job that is a silent revert —
+                          the operator thinks they've changed the price and
+                          finds it back a week later. Say so up front. */}
+                      {isRepeatingOcc && (
+                        <Box
+                          p={2} borderRadius="md" fontSize="xs"
+                          bg="blue.subtle" borderWidth="1px" borderLeftWidth="3px" borderColor="blue.solid"
+                        >
+                          <Text>
+                            <Text as="span" fontWeight="semibold">This visit only.</Text>{" "}
+                            This is a repeating job, and the next visit will be created at
+                            the job&rsquo;s usual price. To change the rate for good, edit
+                            the job&rsquo;s default price in Services.
+                          </Text>
+                        </Box>
+                      )}
                       <Box>
                         <Text fontSize="sm" fontWeight="medium" mb={1}>Base price *</Text>
                         <CurrencyInput value={priceEditValue} onChange={setPriceEditValue} size="sm" />
@@ -10013,8 +10298,32 @@ export default function JobsTab({
                           {addons > 0 && ` · add-ons +$${addons.toFixed(2)} are separate and unchanged`}
                         </Text>
                       </Box>
+                      {/* TWO DIFFERENT FIELDS, and conflating them is why
+                          this was reported as broken: the detail goes ON THE
+                          CLIENT'S INVOICE, the reason never leaves the audit
+                          log. Labelled so it's obvious which is which. */}
                       <Box>
-                        <Text fontSize="sm" fontWeight="medium" mb={1}>Reason (optional)</Text>
+                        <Text fontSize="sm" fontWeight="medium" mb={1}>
+                          Detail for the client{" "}
+                          <Text as="span" color="fg.muted" fontWeight="normal">(optional)</Text>
+                        </Text>
+                        <input
+                          type="text"
+                          value={priceEditDetail}
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPriceEditDetail(e.target.value)}
+                          placeholder="e.g. 3 hours at $50/hr"
+                          style={{ width: "100%", padding: "6px 8px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "14px" }}
+                        />
+                        <Text fontSize="2xs" color="fg.muted" mt={1}>
+                          Shown under this line on their invoice. Leave blank to show just
+                          the service and the amount.
+                        </Text>
+                      </Box>
+                      <Box>
+                        <Text fontSize="sm" fontWeight="medium" mb={1}>
+                          Reason{" "}
+                          <Text as="span" color="fg.muted" fontWeight="normal">(optional, internal)</Text>
+                        </Text>
                         <input
                           type="text"
                           value={priceEditReason}
@@ -10022,6 +10331,9 @@ export default function JobsTab({
                           placeholder="e.g. Took 4 hours, quoted 3"
                           style={{ width: "100%", padding: "6px 8px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "14px" }}
                         />
+                        <Text fontSize="2xs" color="fg.muted" mt={1}>
+                          Recorded in the audit log. The client never sees this.
+                        </Text>
                       </Box>
                       {/* The crew's cut moves with the price. Saying so here
                           is the difference between an informed change and a
@@ -10058,6 +10370,7 @@ export default function JobsTab({
                         await apiPatch(`/api/admin/occurrences/${priceEditOcc.id}/price`, {
                           price: next,
                           reason: priceEditReason.trim() || undefined,
+                          laborDetail: priceEditDetail.trim() || null,
                         });
                         setItems((prev) => prev.map((o) => o.id === priceEditOcc.id ? { ...o, price: next } : o));
                         publishInlineMessage({ type: "SUCCESS", text: "Price updated." });

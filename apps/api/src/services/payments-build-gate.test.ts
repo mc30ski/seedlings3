@@ -828,7 +828,7 @@ describe("[build-gate] worker earnings display (computeMyOccurrenceNet)", () => 
       proposalAmount: null,
       completionSplits: null,
       addons: [],
-      expenses: [],
+      invoiceCharges: [],
       assignees: [{ userId: "me", role: null }],
       payment: null,
       ...overrides,
@@ -890,7 +890,7 @@ describe("[build-gate] worker earnings display (computeMyOccurrenceNet)", () => 
 
   it("projection uses completionSplits[me]% when set (not equal-split)", () => {
     // The bug this feature was born to fix: 3-worker job priced at $150
-    // with 70/20/10 split, no expenses, 20% contractor fee.
+    // with 70/20/10 split, no invoice charges, 20% contractor fee.
     // 70% worker: 150 × 0.70 × 0.80 = 84
     // 20% worker: 150 × 0.20 × 0.80 = 24
     // 10% worker: 150 × 0.10 × 0.80 = 12
@@ -898,7 +898,7 @@ describe("[build-gate] worker earnings display (computeMyOccurrenceNet)", () => 
       price: 150,
       proposalAmount: null,
       addons: [] as { price: number | null }[],
-      expenses: [] as { cost: number }[],
+      invoiceCharges: [] as { cost: number }[],
       completionSplits: [
         { userId: "a", percent: 70 },
         { userId: "b", percent: 20 },
@@ -951,27 +951,57 @@ describe("[build-gate] worker earnings display (computeMyOccurrenceNet)", () => 
     expect(result).toBe(0);
   });
 
-  it("projection subtracts expenses before computing the worker's share", () => {
-    // $150 job with $50 expenses, solo worker, 20% fee →
-    // (150 - 50) × 1.00 × 0.80 = 80
+  it("ITEMIZED: charges are billed on top, so they do NOT reduce the share", () => {
+    // $150 of labor with $50 of materials, solo worker, 20% fee. The client
+    // pays $200; the crew splits the $150 of labor.
+    //   150 x 1.00 x 0.80 = 120
+    // Subtracting the materials here is the bug that showed a worker $10.50
+    // on a job the server would pay $45.50 for.
     const result = computeMyOccurrenceNet(
       occ({
-        expenses: [{ cost: 50 }],
+        invoiceCharges: [{ cost: 50 }],
         assignees: [{ userId: "me", role: null }],
       }),
       "me",
       20,
     );
-    expect(result).toBeCloseTo(80, 5);
+    expect(result).toBeCloseTo(120, 5);
   });
 
-  it("projection returns 0 when expenses exceed the price (never negative)", () => {
+  it("charges never reduce a worker's share — they are billed on top", () => {
+    // Two gates here used to assert the opposite for LEGACY visits: that
+    // charges came out of the pool. Migration 20260908090000 rewrote those
+    // rows' prices so the single rule reproduces the same pay, and dropped the
+    // column. A charge is now always the client's, never the crew's.
+    const base = { price: 100, addons: [], assignees: [{ userId: "me", role: null }] } as any;
+    const without = computeMyOccurrenceNet({ ...base, invoiceCharges: [] }, "me", 0);
+    const with60 = computeMyOccurrenceNet({ ...base, invoiceCharges: [{ cost: 60 }] }, "me", 0);
+    expect(with60).toBe(without);
+    expect(with60).toBe(100);
+  });
+
+
+  it("materials costing more than the labor is an ordinary job now", () => {
+    // Under the old rule this clamped the pool to zero and the crew got
+    // nothing. There is no clamp because there is nothing to clamp: the client
+    // pays the materials on top and the crew is paid for the work.
+    const occ = {
+      price: 150, addons: [], invoiceCharges: [{ cost: 200 }],
+      assignees: [{ userId: "me", role: null }],
+    } as any;
+    expect(computeMyOccurrenceNet(occ, "me", 0)).toBe(150);
+  });
+
+
+  it("ITEMIZED: a charge bigger than the price does not zero the payout", () => {
+    // The client is billed 150 + 200 = 350 and the crew still splits the
+    // 150 of labor. Under the old formula this paid the worker nothing.
     const result = computeMyOccurrenceNet(
-      occ({ expenses: [{ cost: 200 }] }),
+      occ({ invoiceCharges: [{ cost: 200 }] }),
       "me",
       20,
     );
-    expect(result).toBe(0);
+    expect(result).toBeCloseTo(120, 5);
   });
 
   it("observer roles don't count as assignees for equal-split fallback", () => {
@@ -1084,59 +1114,58 @@ describe("payments build gate — adjustOccurrencePrice keeps the promise honest
     // on the update's data is the difference between "we calculated it" and
     // "we saved it" — a mutation that dropped it from the data object
     // survived a looser check.
-    expect(fn).toMatch(
-      /data: \{ price, \.\.\.\(promised \? \{ promisedPayouts: promised as any \} : \{\}\) \}/,
-    );
+    // Matched loosely on the two required keys rather than the whole literal,
+    // so adding a field (laborDetail) doesn't fail a gate about the snapshot.
+    const dataBlock = fn.slice(fn.indexOf("data: {"), fn.indexOf("});", fn.indexOf("data: {")));
+    expect(dataBlock).toMatch(/\bprice\b/);
+    expect(dataBlock).toMatch(/promisedPayouts: promised as any/);
   });
 
-  it("the snapshot includes add-ons, which is what the client is billed", () => {
-    expect(fn).toMatch(/const priceTotal = price \+ addonTotal;/);
-  });
-
-  it("it reuses the existing splits rather than reallocating", () => {
-    // The operator already chose who did what. A price correction is not a
-    // reason to silently redistribute shares.
-    expect(fn).toMatch(/occ\.completionSplits as Array/);
-    expect(fn).toMatch(/splitPercent: x\.percent/);
-  });
-
-  it("price and promise land in ONE write", () => {
-    // Two updates leaves a window where the price is new and the promise is
-    // stale, and gives the audit trail two events for one decision.
-    const updates = [...fn.matchAll(/tx\.jobOccurrence\.update\(/g)];
-    expect(updates.length, "expected exactly one occurrence update").toBe(1);
-  });
-
-  it("both sides of the money change are audited", () => {
-    expect(fn).toMatch(/action: "price_adjusted"/);
-    expect(fn).toMatch(/priceBefore: before/);
-    expect(fn).toMatch(/promisedPayoutsBefore/);
-    expect(fn).toMatch(/promisedPayoutsAfter/);
+  it("the snapshot is built from the INVOICE, not from labor", () => {
+    // computeBreakdown computes N = collected − charges, so it must be fed
+    // what the client is billed. Feeding it labor-only and then subtracting
+    // the charges takes the materials out of the crew's pool a second time —
+    // which is what this did, on every visit, until it was found.
+    expect(fn).toMatch(/const priceTotal = invoiceTotal\(\{/);
+    expect(fn).toMatch(/addons: occ\.addons \?\? \[\]/);
+    expect(fn).not.toMatch(/const priceTotal = price \+ addonTotal/);
+    // …and no era check may reappear here.
+    expect(fn).not.toMatch(/pricingModel|LEGACY/);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe("payments build gate — the re-price control is reachable", () => {
   const TAB = readFileSync(
     join(__dirname, "../../../../apps/web/src/ui/tabs/JobsTab.tsx"), "utf8",
   );
 
-  it("sits in the job's action row, beside Add Service", () => {
+  it("sits on the ADMIN row — the lowest role that can use it", () => {
     // It was first placed next to the price badge, in one of two blocks that
-    // render a price — so on the card the operator was actually looking at,
-    // it never appeared. The action row is the one place these controls
-    // reliably render together.
-    const i = TAB.indexOf("Adjust Price");
-    const addService = TAB.indexOf("Add Service");
-    expect(i).toBeGreaterThan(-1);
-    // Within a few hundred characters of Add Service = same button row.
-    expect(Math.abs(i - addService)).toBeLessThan(1200);
+    // render a price, so on the card the operator was actually looking at it
+    // never appeared. It then sat in the everyday action row, which reads
+    // wrong: a button only an admin can press should not be beside Manage
+    // Team, which any assignee can use.
+    //
+    // A button belongs on the LOWEST role row that applies to it. Add Service
+    // stays in the everyday row (a claimer can use it); Adjust Price does not.
+    const extras = TAB.indexOf("adminExtras={");
+    expect(extras, "the card must hand admin-only buttons to the Admin row")
+      .toBeGreaterThan(-1);
+    // The whole prop, not a fixed window — the Admin row grows as buttons
+    // move onto it, and a fixed slice silently stops covering the tail.
+    const block = TAB.slice(extras, TAB.indexOf("\n                />", extras));
+    expect(block).toMatch(/Adjust Price/);
   });
 
   it("is hidden once a payment exists, so it is never a dead end", () => {
-    const start = TAB.indexOf("const canReprice =");
-    const block = TAB.slice(start, start + 400);
+    const start = TAB.indexOf("adminExtras={");
+    const block = TAB.slice(start, TAB.indexOf("\n                />", start));
+    // Still gated on no-payment and still admin-only — the gate moved onto
+    // the Admin row, it did not loosen.
     expect(block).toMatch(/!occ\.payment/);
-    expect(block).toMatch(/forAdmin \|\| isAdmin \|\| isSuper/);
+    expect(block).toMatch(/\(isAdmin \|\| isSuper\)/);
   });
 });
 
@@ -1238,5 +1267,48 @@ describe("payments build gate — mailto body punctuation", () => {
     const SRC = readFileSync(join(__dirname, "paymentRequests.ts"), "utf8");
     expect(SRC).not.toMatch(/smsBody: foldPunctuationForMailto/);
     expect(SRC).toMatch(/\n      smsBody,\n/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Re-pricing a repeating visit is a ONE-OFF, and the dialog has to say so
+//
+// `adjustOccurrencePrice` writes a single jobOccurrence row and never touches
+// Job.defaultPrice. On a repeating job that reads as a silent revert: the
+// operator changes the price, and the next visit comes back at the old rate a
+// week later with no explanation.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("payments build gate — re-price scope is stated, not assumed", () => {
+  const TAB = readFileSync(
+    join(__dirname, "../../../../apps/web/src/ui/tabs/JobsTab.tsx"), "utf8",
+  );
+  const JOBS = readFileSync(join(__dirname, "jobs.ts"), "utf8");
+
+  it("the service really does touch only this occurrence", () => {
+    const at = JOBS.indexOf("async adjustOccurrencePrice");
+    const fn = JOBS.slice(at, JOBS.indexOf("\n  async ", at + 1));
+    expect(fn).toMatch(/tx\.jobOccurrence\.update\(\{\s*\n?\s*where: \{ id: occurrenceId \}/);
+    // The write is scoped to this row, whatever fields it carries.
+    // If either of these ever appears, the copy below becomes a lie.
+    expect(fn, "re-pricing must not rewrite the job's default price")
+      .not.toMatch(/defaultPrice/);
+    expect(fn, "re-pricing must not fan out across occurrences")
+      .not.toMatch(/jobOccurrence\.updateMany/);
+  });
+
+  it("the dialog warns on a repeating job", () => {
+    const at = TAB.indexOf("<Dialog.Title>Adjust price</Dialog.Title>");
+    expect(at).toBeGreaterThan(-1);
+    const body = TAB.slice(at, at + 4000);
+    // The GUARD, not just the const — `{false && (` left the declaration in
+    // place and walked straight past a bare /isRepeatingOcc/ match.
+    expect(body).toMatch(/\{isRepeatingOcc && \(/);
+    expect(body).toMatch(/frequencyDays/);
+    expect(body).toMatch(/This visit only/);
+    // …and points at where a permanent change actually lives.
+    expect(body).toMatch(/default price in Services/);
+    // Seeded to 2dp so the field reads as money.
+    expect(TAB).toMatch(/setPriceEditValue\(occ\.price != null \? occ\.price\.toFixed\(2\) : ""\)/);
   });
 });

@@ -54,8 +54,11 @@ export default function ClaimAgreementDialog({
   const basePrice = occurrence?.price ?? 0;
   const addonsTotal = ((occurrence as any)?.addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0);
   const price = basePrice + addonsTotal;
-  const expTotal = (occurrence?.expenses ?? []).reduce((s, e) => s + e.cost, 0);
-  const net = price - expTotal;
+  const expTotal = (occurrence?.invoiceCharges ?? []).reduce((s, e) => s + e.cost, 0);
+  // Materials are billed to the client ON TOP and never come out of the pool.
+  // This once read `price - expTotal`, so the estimate a worker agreed to when
+  // claiming was short by their share of the mulch.
+  const net = price;
   const pct = isEmployee ? marginPercent : commissionPercent;
   const deduction = Math.round(net * pct) / 100;
   // Total payout pool after commission/margin — split by active worker count
@@ -118,14 +121,18 @@ export default function ClaimAgreementDialog({
                       </HStack>
                       {addonsTotal > 0 && (
                         <HStack justify="space-between">
-                          <Text color="green.600">Add-ons</Text>
+                          <Text color="green.600">Added services</Text>
                           <Text color="green.600">+${addonsTotal.toFixed(2)}</Text>
                         </HStack>
                       )}
                       {expTotal > 0 && (
                         <HStack justify="space-between">
-                          <Text color="orange.600">Expenses</Text>
-                          <Text color="orange.600">−${expTotal.toFixed(2)}</Text>
+                          <Text color="orange.600">
+                            Charges (billed on top)
+                          </Text>
+                          <Text color="orange.600">
+                            +${expTotal.toFixed(2)}
+                          </Text>
                         </HStack>
                       )}
                       {pct > 0 && (
@@ -159,7 +166,7 @@ export default function ClaimAgreementDialog({
                 )}
 
                 <Text fontSize="xs" color="orange.500" fontStyle="italic">
-                  Note: {group ? "Each worker's payout" : "This payout"} is an estimate based on current expenses. The final amount may change if expenses are added, updated, or removed before the job is completed.
+                  Note: {group ? "Each worker's payout" : "This payout"} is an estimate based on the charges on this job right now. The final amount may change if charges are added, updated, or removed before the job is completed.
                 </Text>
 
                 {/* Agreement terms */}

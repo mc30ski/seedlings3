@@ -88,11 +88,11 @@ async function clearDatabase() {
   await prisma.payrollPeriod.deleteMany();
   await prisma.payrollIdentity.deleteMany();
   // Supply chain (step-3): clear holds + adjustments + purchases before
-  // expenses/BEs so the FK dependencies unwind cleanly. Supplies themselves
+  // invoice charges/BEs so the FK dependencies unwind cleanly. Supplies themselves
   // get cleared after BusinessExpense (SupplyPurchase → BE is Restrict).
   await prisma.supplyAdjustment.deleteMany();
   await prisma.supplyHold.deleteMany();
-  await prisma.expense.deleteMany();
+  await prisma.invoiceCharge.deleteMany();
   await prisma.supplyPurchase.deleteMany();
   await prisma.businessExpense.deleteMany();
   await prisma.supply.deleteMany();
@@ -1823,18 +1823,70 @@ async function seedDatabase() {
   }
 
   // ── Payments (for completed occurrences) ──────────────────────────────────
-  // Each per-job expense also writes a paired BusinessExpense so the
-  // tax ledger reflects everything the company spent (matching MVP-2 model).
-  const expenseData: { occId: string; userId: string; cost: number; desc: string; category: string; vendor?: string }[] = [
-    { occId: cWillowbrook7.id, userId: ADMIN_WORKER_ID, cost: 25.0, desc: "Fuel for mowers", category: "Fuel", vendor: "Shell" },
-    { occId: cWillowbrook14.id, userId: ADMIN_WORKER_ID, cost: 28.0, desc: "Fuel for mowers", category: "Fuel", vendor: "Shell" },
-    { occId: cMartinez14.id, userId: EMPLOYEE_ID, cost: 12.5, desc: "Trimmer line replacement", category: "Supplies", vendor: "Stihl Pro Dealer" },
-    { occId: cHarrington7.id, userId: EMPLOYEE_ID, cost: 8.0, desc: "Edger blade", category: "Supplies", vendor: "Pro Lawn Supply" },
-    { occId: cSunrise7.id, userId: ADMIN_WORKER_ID, cost: 35.0, desc: "Fuel and 2-cycle oil", category: "Fuel", vendor: "Shell" },
-    { occId: cRiverBend7.id, userId: CONTRACTOR_ID, cost: 18.0, desc: "Mulch bags (2)", category: "Supplies", vendor: "Lowes" },
-    { occId: cThompson7.id, userId: CONTRACTOR_ID, cost: 15.0, desc: "Hedge trimmer fuel mix", category: "Supplies", vendor: "Pro Lawn Supply" },
+  //
+  // A job line is what the CLIENT is billed. It creates no deduction — the
+  // deduction is the real card charge in the Ledger, which a purchase may
+  // POINT at as a many-to-one breadcrumb (one $500 receipt covers several
+  // jobs). This seed produces all three link shapes: unlinked, sharing a
+  // receipt, and a 1:1 pair left over from the old dual-write.
+  type SeedCharge = {
+    occId: string; userId: string; cost: number; desc: string;
+    category: string; vendor?: string;
+    /** What we actually paid, where recorded. Deliberately absent on one row
+     *  so the "profit is an upper bound" path renders somewhere. */
+    actualCost?: number;
+    /** Share one receipt across jobs (many-to-one). */
+    sharedReceipt?: string;
+    /** A 1:1 ledger row, as the old dual-write produced. Still valid data —
+     *  the link is decorative either way. */
+    ownLedgerRow?: boolean;
+  };
+  const invoiceChargeData: SeedCharge[] = [
+    { occId: cWillowbrook7.id, userId: ADMIN_WORKER_ID, cost: 25.0, desc: "Fuel for mowers", category: "Fuel", vendor: "Shell", ownLedgerRow: true, actualCost: 25.0 },
+    { occId: cWillowbrook14.id, userId: ADMIN_WORKER_ID, cost: 28.0, desc: "Fuel for mowers", category: "Fuel", vendor: "Shell", ownLedgerRow: true, actualCost: 28.0 },
+    { occId: cMartinez14.id, userId: EMPLOYEE_ID, cost: 12.5, desc: "Trimmer line replacement", category: "Supplies", vendor: "Stihl Pro Dealer", ownLedgerRow: true, actualCost: 12.5 },
+    { occId: cSunrise7.id, userId: ADMIN_WORKER_ID, cost: 35.0, desc: "Fuel and 2-cycle oil", category: "Fuel", vendor: "Shell", ownLedgerRow: true, actualCost: 35.0 },
+    { occId: cHarrington7.id, userId: EMPLOYEE_ID, cost: 8.0, desc: "Edger blade", category: "Supplies", vendor: "Pro Lawn Supply", actualCost: 6.25 },
+    // Two jobs, one Lowe's receipt — the many-to-one breadcrumb.
+    { occId: cRiverBend7.id, userId: CONTRACTOR_ID, cost: 18.0, desc: "Mulch bags (2)", category: "Supplies", vendor: "Lowes", actualCost: 13.4, sharedReceipt: "lowes-run" },
+    { occId: cThompson7.id, userId: CONTRACTOR_ID, cost: 15.0, desc: "Hedge trimmer fuel mix", category: "Supplies", vendor: "Lowes", actualCost: 11.8, sharedReceipt: "lowes-run" },
+    // No actualCost — job profit must render as an upper bound.
     { occId: cObrien7.id, userId: EMPLOYEE_ID, cost: 6.0, desc: "Trash bags for debris", category: "Supplies", vendor: "Home Depot" },
   ];
+
+  // ── Add-on services ───────────────────────────────────────────────────────
+  //
+  // A service is WORK, so unlike a charge it lands in the crew's pool: adding
+  // one raises the invoice AND what the crew splits. Nothing in this seed
+  // created one for a long time, so the entire services path — the dialog, the
+  // "Added Services" block, the "+ $15.00 services" term in the payout line,
+  // and the catalog label resolution — had never run against a single row.
+  const addonData: {
+    occId: string; tag?: string; customLabel?: string; price: number; detail?: string;
+  }[] = [
+    // Catalog tag → must render as "Hedge", never the raw key.
+    { occId: cHarrington7.id, tag: "HEDGE", price: 15, detail: "5 bushes at $3.00 each" },
+    // Underscored catalog key — must never reach a client as "Leaf_cleanup".
+    { occId: cRiverBend7.id, tag: "LEAF_CLEANUP", price: 40 },
+    // Operator-typed label, no tag.
+    { occId: cThompson7.id, customLabel: "Remove fallen branches", price: 25, detail: "Storm debris by the fence" },
+    { occId: cMartinez14.id, tag: "EDGE", price: 20 },
+    // Two on one visit, so the "+ $X services" term sums rather than echoes.
+    { occId: cSunrise7.id, tag: "MULCH", price: 30, detail: "3 bags" },
+    { occId: cSunrise7.id, customLabel: "Haul off clippings", price: 12 },
+  ];
+  for (const a of addonData) {
+    await prisma.occurrenceAddon.create({
+      data: {
+        occurrenceId: a.occId,
+        tag: a.tag ?? null,
+        customLabel: a.customLabel ?? null,
+        price: a.price,
+        detail: a.detail ?? null,
+        createdById: ADMIN_WORKER_ID,
+      },
+    });
+  }
 
   console.log("  Creating payments...");
 
@@ -1908,6 +1960,42 @@ async function seedDatabase() {
     { occId: cTodaySunrise.id, amount: 350, method: "CHECK", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 150 }, { userId: EMPLOYEE_ID, amount: 100 }, { userId: CONTRACTOR_ID, amount: 100 }], createdAt: new Date(NOW.getTime() - 3 * 3_600_000) },
   ];
 
+  // A SERVICE IS ON THE INVOICE, so the client paid for it. The amounts above
+  // are hand-written to match each visit's base price; leaving them alone
+  // while attaching add-ons would have the crew splitting a pool the client
+  // never funded — which the seed's own job-portion invariant catches, and
+  // did. Raising the payment (and the splits, proportionally) is what makes
+  // the services path exercise the PAYOUT and not merely the display.
+  // The client is billed the materials ON TOP, so they paid for them. That
+  // money is the BUSINESS's — it never enters the crew's pool, so the splits
+  // below are untouched.
+  for (const p of paymentData) {
+    const charges = invoiceChargeData
+      .filter((e) => e.occId === p.occId)
+      .reduce((t, e) => t + e.cost, 0);
+    if (charges > 0) p.amount = Math.round((p.amount + charges) * 100) / 100;
+  }
+
+  for (const p of paymentData) {
+    const extra = addonData
+      .filter((a) => a.occId === p.occId)
+      .reduce((t, a) => t + a.price, 0);
+    if (extra <= 0) continue;
+    p.amount = Math.round((p.amount + extra) * 100) / 100;
+    // Split the extra the same way the visit itself was split, so the fixture
+    // stays internally consistent for any per-worker assertion.
+    const splitTotal = p.splits.reduce((t, sp) => t + sp.amount, 0);
+    let handedOut = 0;
+    p.splits.forEach((sp, i) => {
+      const share =
+        i === p.splits.length - 1
+          ? Math.round((extra - handedOut) * 100) / 100
+          : Math.round(extra * (sp.amount / splitTotal) * 100) / 100;
+      handedOut = Math.round((handedOut + share) * 100) / 100;
+      sp.amount = Math.round((sp.amount + share) * 100) / 100;
+    });
+  }
+
   for (const p of paymentData) {
     // Calculate platform fee (contractor splits) and business margin (employee/trainee splits)
     // ── Per-worker GROSS → FEE → NET, exactly as the app does it ─────
@@ -1926,15 +2014,15 @@ async function seedDatabase() {
     const rateFor = (userId: string) =>
       contractorIds.has(userId) ? PLATFORM_FEE_PCT : BUSINESS_MARGIN_PCT;
     // Expenses are REIMBURSED off the top before anyone is paid — same as
-    // computeBreakdown(collected, expenses, ...) in services/payments.ts,
-    // which splits (collected − expenses). The fixture's split amounts are
+    // computeBreakdown(collected, charges, ...) in services/payments.ts,
+    // which splits (collected − charges). The fixture's split amounts are
     // treated as proportions of the job portion so this stays exact
     // whatever the expense total is.
-    const occExpenses = expenseData
+    const occCharges = invoiceChargeData
       .filter((e) => e.occId === p.occId)
       .reduce((sum, e) => sum + e.cost, 0);
     const grossPool = p.splits.reduce((sum, sp) => sum + sp.amount, 0);
-    const payoutPool = Math.max(0, Math.round((grossPool - occExpenses) * 100) / 100);
+    const payoutPool = Math.max(0, Math.round((grossPool - occCharges) * 100) / 100);
     const computedSplits = p.splits.map((sp) => {
       const share = grossPool > 0 ? sp.amount / grossPool : 0;
       const gross = Math.round(payoutPool * share * 100) / 100;
@@ -2022,28 +2110,59 @@ async function seedDatabase() {
   }
 
   // ── Expenses ──────────────────────────────────────────────────────────────
-  console.log("  Creating expenses...");
+  console.log("  Creating invoice charges...");
 
 
-  for (const e of expenseData) {
-    const be = await prisma.businessExpense.create({
+  // One shared receipt per `sharedReceipt` key, pointed at by several job
+  // lines — the many-to-one breadcrumb. It is NOT any of their deductions;
+  // clearing it changes no number anywhere.
+  const sharedReceipts = new Map<string, string>();
+  for (const key of new Set(invoiceChargeData.map((e) => e.sharedReceipt).filter(Boolean) as string[])) {
+    const members = invoiceChargeData.filter((e) => e.sharedReceipt === key);
+    const receipt = await prisma.businessExpense.create({
       data: {
-        createdById: e.userId,
+        createdById: members[0].userId,
         date: new Date(),
-        cost: e.cost,
-        description: e.desc,
-        category: e.category,
-        vendor: e.vendor ?? null,
-        occurrenceId: e.occId,
+        // The real card charge covers everything on the run, plus items that
+        // never reached a job — a receipt is not the sum of its job lines.
+        cost: Math.round((members.reduce((t, m) => t + (m.actualCost ?? m.cost), 0) + 41.18) * 100) / 100,
+        description: "Lowes — supply run",
+        category: "Supplies",
+        vendor: "Lowes",
+        // NO occurrenceId. A shared receipt belongs to no single job.
       },
     });
-    await prisma.expense.create({
+    sharedReceipts.set(key, receipt.id);
+  }
+
+  for (const e of invoiceChargeData) {
+    let businessExpenseId: string | null = null;
+    if (e.ownLedgerRow) {
+      // A 1:1 ledger row, as the old dual-write produced. The link is
+      // decorative: deleting the receipt only clears the pointer.
+      const be = await prisma.businessExpense.create({
+        data: {
+          createdById: e.userId,
+          date: new Date(),
+          cost: e.cost,
+          description: e.desc,
+          category: e.category,
+          vendor: e.vendor ?? null,
+          occurrenceId: e.occId,
+        },
+      });
+      businessExpenseId = be.id;
+    } else if (e.sharedReceipt) {
+      businessExpenseId = sharedReceipts.get(e.sharedReceipt) ?? null;
+    }
+    await prisma.invoiceCharge.create({
       data: {
         occurrenceId: e.occId,
         createdById: e.userId,
         cost: e.cost,
         description: e.desc,
-        businessExpenseId: be.id,
+        actualCost: e.actualCost ?? null,
+        businessExpenseId,
       },
     });
   }
@@ -2163,7 +2282,7 @@ async function seedDatabase() {
     upc?: string;
     category: string;
     businessCost: number;
-    jobPayoutCost: number;
+    clientUnitPrice: number;
     description?: string;
     purchases: { ago: number; quantity: number; unitCost: number; vendor: string; invoiceNumber?: string }[];
   }[] = [
@@ -2174,7 +2293,7 @@ async function seedDatabase() {
       upc: "012345678901",
       category: "Supplies",
       businessCost: 4.0,
-      jobPayoutCost: 4.2,
+      clientUnitPrice: 4.2,
       description: "2 cu. ft. bags. Markup of $0.20/bag covers fetch time.",
       purchases: [
         { ago: 2, quantity: 30, unitCost: 4.0, vendor: "Lowes", invoiceNumber: "L-44120" },
@@ -2188,7 +2307,7 @@ async function seedDatabase() {
       upc: "022345678902",
       category: "Supplies",
       businessCost: 18.0,
-      jobPayoutCost: 18.0,
+      clientUnitPrice: 18.0,
       description: "Pro-grade square cross-section, 0.095\" gauge, 3 lb spool.",
       purchases: [
         { ago: 7, quantity: 8, unitCost: 18.0, vendor: "Stihl Pro Dealer" },
@@ -2200,7 +2319,7 @@ async function seedDatabase() {
       unit: "blade",
       category: "Supplies",
       businessCost: 6.5,
-      jobPayoutCost: 7.0,
+      clientUnitPrice: 7.0,
       purchases: [
         { ago: 11, quantity: 12, unitCost: 6.5, vendor: "Pro Lawn Supply" },
       ],
@@ -2211,7 +2330,7 @@ async function seedDatabase() {
       unit: "bag",
       category: "Supplies",
       businessCost: 32.0,
-      jobPayoutCost: 34.0,
+      clientUnitPrice: 34.0,
       description: "50 lb bag covers ~12,500 sq ft.",
       purchases: [
         { ago: 30, quantity: 6, unitCost: 32.0, vendor: "Pro Lawn Supply", invoiceNumber: "PLS-1042" },
@@ -2223,7 +2342,7 @@ async function seedDatabase() {
       unit: "bag",
       category: "Supplies",
       businessCost: 0.6,
-      jobPayoutCost: 0.75,
+      clientUnitPrice: 0.75,
       description: "55-gal contractor bags, 3 mil.",
       purchases: [
         { ago: 5, quantity: 50, unitCost: 0.6, vendor: "Costco" },
@@ -2235,7 +2354,7 @@ async function seedDatabase() {
       unit: "can",
       category: "Fuel",
       businessCost: 24.0,
-      jobPayoutCost: 24.0,
+      clientUnitPrice: 24.0,
       description: "TruFuel 50:1 quart cans. Categorized as Fuel (not Supplies).",
       purchases: [
         { ago: 4, quantity: 12, unitCost: 24.0, vendor: "Pro Lawn Supply" },
@@ -2253,7 +2372,7 @@ async function seedDatabase() {
         upc: s.upc ?? null,
         category: s.category,
         businessCost: s.businessCost,
-        jobPayoutCost: s.jobPayoutCost,
+        clientUnitPrice: s.clientUnitPrice,
         description: s.description ?? null,
         onHand: 0,
       },
@@ -2293,22 +2412,39 @@ async function seedDatabase() {
     }
   }
 
-  // Two ACTIVE holds against future occurrences — demo the reservation flow.
-  const holdSeeds: { supplyKey: string; occId: string; quantity: number }[] = [
-    { supplyKey: "MULCH", occId: cWillowbrook14.id, quantity: 8 },
-    { supplyKey: "TRIMMER_LINE", occId: cMartinez14.id, quantity: 1 },
-  ];
+  // Two ACTIVE holds — demo the reservation flow.
+  //
+  // UNPAID occurrences only. A hold creates an InvoiceCharge, which raises
+  // what the client owes; putting one on an already-paid visit leaves a job
+  // portion that no longer matches its invoice, and the seed's own
+  // conservation check refuses it. These were pinned to two paid fixtures and
+  // it passed silently only because a paid visit used to be LEGACY, where
+  // charges were excluded from the invoice.
+  const holdTargets = await prisma.jobOccurrence.findMany({
+    where: { payment: null, price: { not: null }, workflow: "STANDARD", supplyHolds: { none: {} } },
+    orderBy: { startAt: "asc" },
+    take: 2,
+    select: { id: true },
+  });
+  const holdSeeds: { supplyKey: string; occId: string; quantity: number }[] =
+    holdTargets.length < 2 ? [] : [
+      { supplyKey: "MULCH", occId: holdTargets[0].id, quantity: 8 },
+      { supplyKey: "TRIMMER_LINE", occId: holdTargets[1].id, quantity: 1 },
+    ];
   for (const h of holdSeeds) {
     const supplyId = createdSupplies[h.supplyKey];
     if (!supplyId) continue;
     const supply = await prisma.supply.findUniqueOrThrow({ where: { id: supplyId } });
-    const totalCharge = Math.round(h.quantity * supply.jobPayoutCost * 100) / 100;
-    const expense = await prisma.expense.create({
+    const totalCharge = Math.round(h.quantity * supply.clientUnitPrice * 100) / 100;
+    const invoiceCharge = await prisma.invoiceCharge.create({
       data: {
         occurrenceId: h.occId,
         createdById: EMPLOYEE_ID,
         cost: totalCharge,
-        description: `${supply.name} × ${h.quantity} ${supply.unit}`,
+        // What we paid, from the catalog — informational, job margin only.
+        actualCost: Math.round(h.quantity * supply.businessCost * 100) / 100,
+        detail: `${h.quantity} ${supply.unit} at $${supply.clientUnitPrice.toFixed(2)}`,
+        description: supply.name,
       },
     });
     await prisma.supplyHold.create({
@@ -2316,9 +2452,9 @@ async function seedDatabase() {
         supplyId,
         occurrenceId: h.occId,
         quantity: h.quantity,
-        jobPayoutCost: supply.jobPayoutCost,
+        clientUnitPrice: supply.clientUnitPrice,
         status: "ACTIVE",
-        expenseId: expense.id,
+        invoiceChargeId: invoiceCharge.id,
         createdById: EMPLOYEE_ID,
       },
     });
@@ -3880,6 +4016,9 @@ async function seedDatabase() {
   await seedVanityPageFixtures();
   await seedPayrollFixtures();
 
+  await seedJobMaterialScenarios();
+  await seedSupplyLifecycle();
+
   await applySettingSections();
 
   console.log("  Seed complete!");
@@ -3961,6 +4100,10 @@ async function seedPayrollFixtures() {
   const HEADERS = [
     "Last Name", "First Name", "Work Address", "Employee Type", "Payment",
     "Regular (Hours)", "Regular (Rate)", "Regular (Amount)", "Additional Earnings",
+    // Gusto INSERTS this ahead of Gross Earnings — it does not append — and
+    // only from the first period that actually carries tips. Placing it here
+    // keeps the fixture byte-faithful to a real export.
+    "Paycheck Tips",
     "Gross Earnings", "Employee Taxes", "Federal Income Tax (Employee)",
     "Social Security (Employee)", "Medicare (Employee)", "Additional Medicare (Employee)",
     "NC State Tax (Employee)", "Employer Taxes", "Social Security (Employer)",
@@ -4001,7 +4144,19 @@ async function seedPayrollFixtures() {
       // A little variable overtime/bonus, so "Additional Earnings" isn't
       // always zero and the gross isn't just hours x rate.
       const additional = i === 0 && p.userId === EMPLOYEE_ID ? 75 : 0;
-      const gross = Math.round((regular + additional) * 100) / 100;
+      // TIPS, on the two most recent weeks only — mirroring the real history,
+      // where the column simply did not exist before the first tipped run.
+      // One person is left BLANK rather than "0.00" on a tipped week: the
+      // real export does exactly that, and blank ≠ zero is the rule the whole
+      // parser hangs on. A "0.00" here would make that distinction untestable.
+      // `i` counts NEWEST first (i === 0 is the most recent run — see the
+      // `additional` line above). Tips began recently and continue, so they
+      // belong on the newest weeks; putting them on the oldest would model a
+      // business that stopped taking tips.
+      const tipsApply = i <= 1;
+      const tipped = tipsApply && p.userId !== TRAINEE_ID;
+      const tips = tipped ? 10.5 : 0;
+      const gross = Math.round((regular + additional + tips) * 100) / 100;
       const fed = Math.round(gross * 0.08 * 100) / 100;
       const state = Math.round(gross * 0.045 * 100) / 100;
       const ss = Math.round(gross * 0.062 * 100) / 100;
@@ -4013,7 +4168,8 @@ async function seedPayrollFixtures() {
       const erTaxes = Math.round((ss + med + futa + suta) * 100) / 100;
       const net = Math.round((gross - empTaxes) * 100) / 100;
       const erCost = Math.round((gross + erTaxes) * 100) / 100;
-      return { p, hours, regular, additional, gross, fed, state, ss, med, addlMed,
+      return { p, hours, regular, additional, tips, tipsApply, tipped, gross,
+               fed, state, ss, med, addlMed,
                empTaxes, futa, suta, erTaxes, net, erCost };
     });
 
@@ -4024,6 +4180,8 @@ async function seedPayrollFixtures() {
       [
         q(r.p.last), q(r.p.first), q(ADDRESS), q("Paid by the hour"), q("Direct Deposit"),
         q(money(r.hours)), q(money(r.p.rate)), q(money(r.regular)), q(money(r.additional)),
+        // Blank, not "0.00", for anyone who earned no tips on a tipped week.
+        q(r.tipsApply ? (r.tipped ? money(r.tips) : "") : ""),
         q(money(r.gross)), q(money(r.empTaxes)), q(money(r.fed)),
         q(money(r.ss)), q(money(r.med)), q(money(r.addlMed)), q(money(r.state)),
         q(money(r.erTaxes)), q(money(r.ss)), q(money(r.med)), q(money(r.futa)), q(money(r.suta)),
@@ -4038,7 +4196,9 @@ async function seedPayrollFixtures() {
     const totalsLine = [
       q("Payroll Totals"), q(""), q(""), q(""), q(""),
       q(money(sum((r) => r.hours))), q(""), q(money(sum((r) => r.regular))),
-      q(money(sum((r) => r.additional))), q(money(sum((r) => r.gross))),
+      q(money(sum((r) => r.additional))),
+      q(money(sum((r) => r.tips))),
+      q(money(sum((r) => r.gross))),
       q(money(sum((r) => r.empTaxes))), q(money(sum((r) => r.fed))),
       q(money(sum((r) => r.ss))), q(money(sum((r) => r.med))), q(money(sum((r) => r.addlMed))),
       q(money(sum((r) => r.state))), q(money(sum((r) => r.erTaxes))),
@@ -6080,13 +6240,13 @@ async function seedPaymentsBase() {
   console.log("    Supplies (minimal catalog)...");
   const paymentsSupplyCatalog: Array<{
     name: string; unit: string; category: string;
-    businessCost: number; jobPayoutCost: number;
+    businessCost: number; clientUnitPrice: number;
     description?: string; quantity: number;
   }> = [
-    { name: "Mulch — hardwood",        unit: "bag",   category: "Supplies",                businessCost: 4.00,  jobPayoutCost: 5.00,  description: "2 cu ft bagged hardwood mulch.", quantity: 30 },
-    { name: "Trimmer line 0.095",      unit: "spool", category: "Supplies",                businessCost: 18.00, jobPayoutCost: 18.00, description: "3 lb spool, 0.095\" gauge.",       quantity: 8 },
-    { name: "Heavy-duty trash bags",   unit: "bag",   category: "Supplies",                businessCost: 0.60,  jobPayoutCost: 0.75,  description: "55-gal contractor bags, 3 mil.", quantity: 50 },
-    { name: "Premixed 2-cycle fuel",   unit: "can",   category: "Fuel",                    businessCost: 24.00, jobPayoutCost: 24.00, description: "TruFuel 50:1 quart cans.",        quantity: 12 },
+    { name: "Mulch — hardwood",        unit: "bag",   category: "Supplies",                businessCost: 4.00,  clientUnitPrice: 5.00,  description: "2 cu ft bagged hardwood mulch.", quantity: 30 },
+    { name: "Trimmer line 0.095",      unit: "spool", category: "Supplies",                businessCost: 18.00, clientUnitPrice: 18.00, description: "3 lb spool, 0.095\" gauge.",       quantity: 8 },
+    { name: "Heavy-duty trash bags",   unit: "bag",   category: "Supplies",                businessCost: 0.60,  clientUnitPrice: 0.75,  description: "55-gal contractor bags, 3 mil.", quantity: 50 },
+    { name: "Premixed 2-cycle fuel",   unit: "can",   category: "Fuel",                    businessCost: 24.00, clientUnitPrice: 24.00, description: "TruFuel 50:1 quart cans.",        quantity: 12 },
   ];
   for (const s of paymentsSupplyCatalog) {
     const totalCost = Math.round(s.quantity * s.businessCost * 100) / 100;
@@ -6097,7 +6257,7 @@ async function seedPaymentsBase() {
         unit: s.unit,
         category: s.category,
         businessCost: s.businessCost,
-        jobPayoutCost: s.jobPayoutCost,
+        clientUnitPrice: s.clientUnitPrice,
         description: s.description ?? null,
         onHand: 0,
       },
@@ -6804,15 +6964,15 @@ async function assertPrimaryContactInvariant() {
     where: { writtenOff: false, skippedAt: null },
     include: {
       splits: { include: { user: { select: { workerType: true } } } },
-      occurrence: { select: { expenses: { select: { cost: true } } } },
+      occurrence: { select: { invoiceCharges: { select: { cost: true } } } },
     },
   });
   for (const pay of toReconcile) {
     if (pay.splits.length === 0) continue;
-    const expenses = (pay.occurrence?.expenses ?? []).reduce((a, e) => a + e.cost, 0);
+    const charges = (pay.occurrence?.invoiceCharges ?? []).reduce((a, e) => a + e.cost, 0);
     const pool = Math.max(
       0,
-      Math.round((pay.amountPaid - pay.tipAmount - pay.overageAmount - expenses) * 100) / 100,
+      Math.round((pay.amountPaid - pay.tipAmount - pay.overageAmount - charges) * 100) / 100,
     );
     const basis = pay.splits.map((sp) => sp.grossAmount ?? sp.amount);
     const basisTotal = basis.reduce((a, b) => a + b, 0);
@@ -6884,19 +7044,19 @@ async function assertPrimaryContactInvariant() {
     where: { writtenOff: false, skippedAt: null, OR: [{ tipAmount: { gt: 0 } }, { overageAmount: { gt: 0 } }] },
     include: {
       splits: { include: { user: { select: { workerType: true } } } },
-      occurrence: { select: { id: true, expenses: { select: { cost: true } } } },
+      occurrence: { select: { id: true, invoiceCharges: { select: { cost: true } } } },
     },
   });
   for (const pay of divergent) {
     const occId = pay.occurrence?.id;
     if (!occId || pay.splits.length === 0) continue;
-    const expenses = (pay.occurrence?.expenses ?? []).reduce((a, e) => a + e.cost, 0);
+    const charges = (pay.occurrence?.invoiceCharges ?? []).reduce((a, e) => a + e.cost, 0);
     // The invoice basis, as just settled by the reconciler.
     const invoicePool = pay.splits.reduce((a, sp) => a + (sp.grossAmount ?? sp.amount), 0);
     if (invoicePool <= 0) continue;
     // Everything the client handed over, which is what production's actual
     // breakdown is computed on.
-    const actualPool = Math.max(0, Math.round((pay.amountPaid - expenses) * 100) / 100);
+    const actualPool = Math.max(0, Math.round((pay.amountPaid - charges) * 100) / 100);
 
     await prisma.jobOccurrence.update({
       where: { id: occId },
@@ -6943,7 +7103,7 @@ async function assertPrimaryContactInvariant() {
       confirmed: true, writtenOff: false, skippedAt: null,
       tipAmount: 0, overageAmount: 0,
       splits: { some: {} },
-      occurrence: { status: "CLOSED", expenses: { none: {} } },
+      occurrence: { status: "CLOSED", invoiceCharges: { none: {} } },
     },
     include: { splits: true },
     orderBy: { id: "asc" },
@@ -7003,7 +7163,7 @@ async function assertPrimaryContactInvariant() {
       splits: { select: { amount: true, tipAmount: true } },
       occurrence: {
         select: {
-          expenses: { select: { cost: true } },
+          invoiceCharges: { select: { cost: true } },
           job: { select: { property: { select: { displayName: true } } } },
         },
       },
@@ -7014,17 +7174,17 @@ async function assertPrimaryContactInvariant() {
     if (pay.splits.length === 0) continue; // unapproved rows have no splits yet
     const nets = pay.splits.reduce((a, b) => a + b.amount, 0);
     const tips = pay.splits.reduce((a, b) => a + b.tipAmount, 0);
-    const expenses = (pay.occurrence?.expenses ?? []).reduce((a, e) => a + e.cost, 0);
+    const charges = (pay.occurrence?.invoiceCharges ?? []).reduce((a, e) => a + e.cost, 0);
     const accounted =
       nets + tips + (pay.platformFeeAmount ?? 0) + (pay.businessMarginAmount ?? 0) +
-      pay.tipToBusinessAmount + pay.overageAmount - pay.shortfallAmount + expenses;
+      pay.tipToBusinessAmount + pay.overageAmount - pay.shortfallAmount + charges;
     if (Math.abs(accounted - pay.amountPaid) >= 0.02) {
       drift.push(
         `  - "${pay.occurrence?.job?.property?.displayName ?? "?"}": paid $${pay.amountPaid.toFixed(2)} ` +
           `but accounted $${accounted.toFixed(2)} ` +
           `(workers $${nets.toFixed(2)} + tips $${tips.toFixed(2)} + fee $${(pay.platformFeeAmount ?? 0).toFixed(2)} ` +
           `+ margin $${(pay.businessMarginAmount ?? 0).toFixed(2)} + tipToBiz $${pay.tipToBusinessAmount.toFixed(2)} ` +
-          `+ overage $${pay.overageAmount.toFixed(2)} + expenses $${expenses.toFixed(2)})`,
+          `+ overage $${pay.overageAmount.toFixed(2)} + charges $${charges.toFixed(2)})`,
       );
     }
   }
@@ -7053,6 +7213,7 @@ async function assertPrimaryContactInvariant() {
         select: {
           price: true,
           addons: { select: { price: true } },
+          invoiceCharges: { select: { cost: true } },
           job: { select: { property: { select: { displayName: true } } } },
         },
       },
@@ -7062,7 +7223,13 @@ async function assertPrimaryContactInvariant() {
     if (pay.splits.length === 0) continue;
     const occ = pay.occurrence;
     if (!occ || occ.price == null) continue;
-    const invoice = occ.price + (occ.addons ?? []).reduce((a, x) => a + (x.price ?? 0), 0);
+    // The invoice is the work plus the materials billed on top. This once
+    // read `price + addons`, so a paid job carrying charges looked like a
+    // conservation failure and the only way to keep the seed green was to
+    // leave every such fixture underpaid.
+    const base = occ.price + (occ.addons ?? []).reduce((a, x) => a + (x.price ?? 0), 0);
+    const charges = (occ.invoiceCharges ?? []).reduce((a: number, x: any) => a + (x.cost ?? 0), 0);
+    const invoice = Math.round((base + charges) * 100) / 100;
     const jobPortion = Math.round((pay.amountPaid - pay.tipAmount - pay.overageAmount + pay.shortfallAmount) * 100) / 100;
     if (Math.abs(jobPortion - invoice) >= 0.02) {
       jobPortionDrift.push(
@@ -7645,4 +7812,301 @@ to grow back.
     where: { id: grassGuide.id },
     data: { currentVersionId: grassGuide.versions[0].id },
   });
+}
+
+/**
+ * Job-materials test bed — one client, four visits, every branch clickable.
+ *
+ * The point is that a person can open these and SEE the model behave, rather
+ * than trusting a unit test. Covers: the canonical itemized job, the same
+ * shape priced the old way, a charge at cost, and a charge with no cost
+ * recorded. Plus an unlinked ledger receipt to exercise the breadcrumb picker
+ * and a part-consumed supply to exercise the quantity stepper.
+ */
+async function seedJobMaterialScenarios() {
+  console.log("  Seeding job-materials scenarios...");
+
+  const client = await prisma.client.upsert({
+    where: { id: "seed-materials-client" },
+    create: {
+      id: "seed-materials-client",
+      type: "PERSON",
+      displayName: "Perdue — materials test bed",
+    },
+    update: {},
+  });
+  const property = await prisma.property.upsert({
+    where: { id: "seed-materials-prop" },
+    create: {
+      id: "seed-materials-prop",
+      clientId: client.id,
+      displayName: "Perdue — 44 Mulch Ln",
+      street1: "44 Mulch Ln",
+      city: "Chapel Hill",
+      state: "NC",
+      postalCode: "27514",
+      country: "USA",
+    },
+    update: {},
+  });
+  const job = await prisma.job.upsert({
+    where: { id: "seed-materials-job" },
+    create: {
+      id: "seed-materials-job",
+      propertyId: property.id,
+      kind: "SINGLE_ADDRESS",
+      status: "ACCEPTED",
+      description: "Mow + mulch — materials test bed",
+      defaultPrice: 150,
+    },
+    update: {},
+  });
+
+  // An unlinked $500 receipt. The mulch on several of these visits came off
+  // it — but nothing points at it until an operator says so, which is the
+  // whole point of the breadcrumb.
+  await prisma.businessExpense.upsert({
+    where: { id: "seed-materials-ledger" },
+    create: {
+      id: "seed-materials-ledger",
+      ledgerId: "seed-materials-ledger-001",
+      createdById: MICHAEL_ID,
+      date: daysAgo(3),
+      cost: 500,
+      description: "Lowe's — mulch, edging stone, misc",
+      category: "Supplies",
+      vendor: "Lowe's",
+    },
+    update: {},
+  });
+
+  const SCENARIOS: Array<{
+    id: string;
+    label: string;
+    price: number;
+    charges: Array<{ description: string; detail?: string; cost: number; actualCost: number | null }>;
+    /** Services — WORK, so unlike a charge these land in the crew's pool.
+     *  These fixtures are the only UNPAID visits in the dataset, which makes
+     *  them the only place the payout PROJECTION renders — and therefore the
+     *  only place "$150.00 base labor + $45.00 services − …" can be read off
+     *  a screen. Every add-on in the main seed sits on a paid visit, so that
+     *  wording had no coverage at all. */
+    addons?: Array<{ tag?: string; customLabel?: string; price: number; detail?: string }>;
+  }> = [
+    {
+      id: "seed-mat-canonical",
+      label: "Canonical — invoice $350, crew pool $150",
+      price: 150,
+      charges: [
+        { description: "Mulch", detail: "25 bags at $6.00", cost: 150, actualCost: 125 },
+        { description: "Edging stone", cost: 50, actualCost: 50 },
+      ],
+      // Catalog tag + a typed label, so both label paths render on one card.
+      addons: [
+        { tag: "HEDGE", price: 30, detail: "5 bushes at $6.00 each" },
+        { customLabel: "Haul off debris", price: 15 },
+      ],
+    },
+    {
+      id: "seed-mat-legacy",
+      label: "Materials cost more than the labor — invoice $350, crew pool $150",
+      price: 150,
+      charges: [
+        { description: "Mulch", detail: "25 bags at $6.00", cost: 150, actualCost: 150 },
+        { description: "Edging stone", cost: 50, actualCost: 50 },
+      ],
+      // A visit carrying both a service and charges: the service goes into
+      // the pool, the charges are billed on top of it.
+      addons: [{ tag: "LEAF_CLEANUP", price: 45 }],
+    },
+    {
+      id: "seed-mat-atcost",
+      label: "Charged at cost — zero material margin",
+      price: 120,
+      charges: [{ description: "Pine straw", detail: "10 bales at $5.00", cost: 50, actualCost: 50 }],
+    },
+    {
+      id: "seed-mat-nocost",
+      label: "No cost recorded — margin unknown, invoice unaffected",
+      price: 90,
+      charges: [{ description: "Dump fee", cost: 40, actualCost: null }],
+    },
+  ];
+
+  for (const [i, sc] of SCENARIOS.entries()) {
+    const occ = await prisma.jobOccurrence.upsert({
+      where: { id: sc.id },
+      create: {
+        id: sc.id,
+        jobId: job.id,
+        kind: "SINGLE_ADDRESS",
+        workflow: "STANDARD",
+        status: "PENDING_PAYMENT",
+        source: "MANUAL",
+        price: sc.price,
+        laborDetail: i === 0 ? "Mow, trim and edge" : null,
+        startAt: daysAgo(5 + i),
+        completedAt: daysAgo(5 + i),
+        notes: sc.label,
+      },
+      update: { price: sc.price, notes: sc.label },
+    });
+    await prisma.jobOccurrenceAssignee.upsert({
+      where: { occurrenceId_userId: { occurrenceId: occ.id, userId: EMPLOYEE_ID } },
+      create: { occurrenceId: occ.id, userId: EMPLOYEE_ID, assignedById: EMPLOYEE_ID },
+      update: {},
+    });
+    // Rebuild charges and services so a reseed is idempotent.
+    await prisma.invoiceCharge.deleteMany({ where: { occurrenceId: occ.id } });
+    await prisma.occurrenceAddon.deleteMany({ where: { occurrenceId: occ.id } });
+    for (const a of sc.addons ?? []) {
+      await prisma.occurrenceAddon.create({
+        data: {
+          occurrenceId: occ.id,
+          createdById: MICHAEL_ID,
+          tag: a.tag ?? null,
+          customLabel: a.customLabel ?? null,
+          price: a.price,
+          detail: a.detail ?? null,
+        },
+      });
+    }
+    for (const c of sc.charges) {
+      await prisma.invoiceCharge.create({
+        data: {
+          occurrenceId: occ.id,
+          createdById: MICHAEL_ID,
+          cost: c.cost,
+          actualCost: c.actualCost,
+          detail: c.detail ?? null,
+          description: c.description,
+          // Deliberately NOT linked. The operator links it by hand from the
+          // dialog — that is the breadcrumb flow this fixture exists to test.
+        },
+      });
+    }
+  }
+
+  console.log(`  ✓ Seeded ${SCENARIOS.length} job-materials scenarios + 1 unlinked ledger receipt`);
+}
+
+
+/**
+ * The SUPPLY LIFECYCLE, driven through the real service functions.
+ *
+ * The seed produced ACTIVE holds and nothing else: no CONSUMED hold (the state
+ * that actually decrements stock), no RELEASED hold, no manual adjustment, and
+ * every purchase carrying its own 1:1 ledger row — the dual-write shape the
+ * service stopped producing. So the paths that move physical stock had never
+ * run against seeded data, and any test reading dev saw a model that no longer
+ * exists.
+ *
+ * Written through `services.supplies` rather than with raw Prisma writes, for
+ * the same reason the payroll fixtures go through the real CSV parser: a
+ * regression in the stock math then fails the seed instead of shipping behind
+ * a green one.
+ */
+async function seedSupplyLifecycle() {
+  console.log("  Seeding supply lifecycle...");
+  const { supplies } = await import("../src/services/supplies");
+  const {
+    consumeHoldsForOccurrence,
+    releaseHoldsForOccurrence,
+  } = await import("../src/services/supplies");
+
+  const mulch = await prisma.supply.findFirst({ where: { name: { contains: "mulch", mode: "insensitive" }, archivedAt: null } });
+  const bags = await prisma.supply.findFirst({ where: { name: { contains: "trash bags", mode: "insensitive" }, archivedAt: null } });
+  const blade = await prisma.supply.findFirst({ where: { name: { contains: "Edger blade", mode: "insensitive" }, archivedAt: null } });
+  if (!mulch || !bags || !blade) {
+    console.log("    (supplies missing — skipped)");
+    return;
+  }
+
+  // Three occurrences that carry no holds yet, so each lands in one state.
+  const targets = await prisma.jobOccurrence.findMany({
+    // UNPAID only. Pulling stock onto a job creates an InvoiceCharge, which
+    // raises what the client owes — on a visit whose payment is already
+    // recorded that is a job portion that no longer matches its invoice, and
+    // the seed's own conservation check refuses it. (Under the old two-model
+    // split this passed silently, because a paid visit was LEGACY and its
+    // charges were excluded from the invoice.)
+    where: {
+      supplyHolds: { none: {} },
+      price: { not: null },
+      workflow: "STANDARD",
+      payment: null,
+    },
+    orderBy: { startAt: "desc" },
+    take: 3,
+    select: { id: true },
+  });
+  if (targets.length < 3) {
+    console.log("    (not enough occurrences — skipped)");
+    return;
+  }
+  const [consumedOcc, releasedOcc, activeOcc] = targets;
+
+  // 1. CONSUMED — the crew used it. Stock actually leaves the shelf, and the
+  //    charge stays on the client's invoice.
+  await supplies.addHold(ADMIN_WORKER_ID, consumedOcc.id, { supplyId: mulch.id, quantity: 6 });
+  await consumeHoldsForOccurrence(consumedOcc.id);
+
+  // 2. RELEASED — reserved, then the job was cancelled. Stock returns and the
+  //    charge is dropped; the hold keeps the record that it happened.
+  await supplies.addHold(ADMIN_WORKER_ID, releasedOcc.id, { supplyId: bags.id, quantity: 4 });
+  await releaseHoldsForOccurrence(releasedOcc.id);
+
+  // 3. ACTIVE, then adjusted UP and back DOWN through adjustHold — the +/-
+  //    path on the charges dialog, which reprices the paired charge. Left
+  //    ACTIVE so the dialog has a live one to drive.
+  const held = await supplies.addHold(ADMIN_WORKER_ID, activeOcc.id, { supplyId: blade.id, quantity: 1 });
+  await supplies.adjustHold(ADMIN_WORKER_ID, (held as any).id, 3);
+  await supplies.adjustHold(ADMIN_WORKER_ID, (held as any).id, 2);
+
+  // 4. A manual correction — a bag split open and was thrown away. Nothing
+  //    else in the seed exercised SupplyAdjustment, so `onHand` could only
+  //    ever be reconstructed from purchases and consumption.
+  await supplies.recordAdjustment(ADMIN_WORKER_ID, mulch.id, {
+    delta: -2,
+    reason: "Two bags split in the truck",
+  });
+
+  // 5. PURCHASES THE WAY THE SERVICE MAKES THEM: no ledger row of their own.
+  //    Recording a purchase tracks stock, not taxes — the deduction is the
+  //    real card charge in the Ledger. One receipt is then pointed at by two
+  //    purchases, which is the many-to-one breadcrumb the model allows.
+  // The RECEIPT TOTAL is what the service takes — per-unit cost is derived
+  // from it, because the number on the receipt includes tax and any discount
+  // and is the only figure that reconciles to a bank line.
+  await supplies.recordPurchase(ADMIN_WORKER_ID, mulch.id, {
+    quantity: 20,
+    totalCost: Math.round(20 * mulch.businessCost * 100) / 100,
+    vendor: "Lowes",
+    invoiceNumber: "LW-8842",
+  });
+  const receipt = await prisma.businessExpense.create({
+    data: {
+      ledgerId: "seed-supply-restock-001",
+      createdById: MICHAEL_ID,
+      type: "EXPENSE",
+      date: daysAgo(4, 9),
+      // The real card charge covers both purchases below AND items that never
+      // became inventory — a receipt is not the sum of its supply lines.
+      cost: 168.4,
+      description: "Pro Lawn Supply — restock run",
+      category: "Supplies",
+      vendor: "Pro Lawn Supply",
+    },
+  });
+  for (const [supply, qty] of [[bags, 100], [blade, 6]] as const) {
+    await supplies.recordPurchase(ADMIN_WORKER_ID, supply.id, {
+      quantity: qty,
+      totalCost: Math.round(qty * supply.businessCost * 100) / 100,
+      vendor: "Pro Lawn Supply",
+      businessExpenseId: receipt.id,
+    });
+  }
+
+  const counts = await prisma.supplyHold.groupBy({ by: ["status"], _count: true });
+  console.log(`    ✓ holds now: ${counts.map((c) => `${c._count} ${c.status}`).join(", ")}`);
 }

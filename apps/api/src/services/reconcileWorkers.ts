@@ -1,4 +1,5 @@
 import { prisma } from "../db/prisma";
+import { invoiceTotal } from "../lib/jobPricing";
 import { etFormatDate } from "../lib/dates";
 import { Role as RoleVal } from "@prisma/client";
 import {
@@ -333,7 +334,7 @@ export async function buildReconcileWorkers(
         completionSplits: true,
         promisedPayouts: true,
         addons: { select: { price: true } },
-        expenses: { select: { cost: true } },
+        invoiceCharges: { select: { cost: true } },
         job: {
           select: {
             property: {
@@ -607,11 +608,13 @@ export async function buildReconcileWorkers(
     );
     const fallbackPct = occ.assignees.length > 0 ? 100 / occ.assignees.length : 0;
 
-    const jobPriceTotal =
-      (occ.price ?? 0) +
-      (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
+    // THE INVOICE, not the labor. computeBreakdown computes
+    // N = collected − charges, so feeding it the itemized invoice yields the
+    // labor pool automatically under both models. Passing labor-only would
+    // reconcile the crew against a number the client was never billed.
+    const jobPriceTotal = invoiceTotal(occ as any);
     const computed: Map<string, { gross: number; fee: number; net: number }> = (() => {
-      const expTotal = (occ.expenses ?? []).reduce((s, e) => s + (e.cost ?? 0), 0);
+      const expTotal = (occ.invoiceCharges ?? []).reduce((s, e) => s + (e.cost ?? 0), 0);
       const workers: WorkerInput[] = occ.assignees.map((aa: any) => ({
         userId: aa.userId,
         workerType: aa.user?.workerType ?? null,

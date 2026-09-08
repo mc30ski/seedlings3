@@ -2,8 +2,6 @@ import { prisma } from "../db/prisma";
 import { ServiceError } from "../lib/errors";
 import { parseUserDate } from "../lib/dates";
 import { resolvePrivileges } from "../lib/privileges";
-import { loadCategoryLabels } from "./expenseCategories";
-import { generateLedgerId } from "../lib/ledgerId";
 import { writeAudit } from "../lib/auditLogger";
 import { AUDIT } from "../lib/auditActions";
 import type {
@@ -40,16 +38,25 @@ async function isAdminUser(userId: string): Promise<boolean> {
   return !!user?.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
 }
 
+/**
+ * A supply's category is a GROUPING LABEL — "Fuel", "Chemicals" — and nothing
+ * more. Its only consumer is a badge on the Supplies list.
+ *
+ * It used to be validated against the Schedule C line list and rejected
+ * anything else: `Invalid category: "X". Must be a Schedule C line.` That made
+ * sense when recording a purchase dual-wrote a BusinessExpense and the label
+ * chose the tax line. It stopped writing that ledger row — a purchase tracks
+ * stock, not taxes — but the validation stayed, so the service still demanded
+ * a tax category for an object that produces no deduction.
+ *
+ * Removing the picker from the dialog without this would have left a backend
+ * that rejects any label a future UI sends.
+ */
 async function normalizeCategory(raw: string | null | undefined): Promise<string> {
   const trimmed = (raw ?? "").trim();
   if (!trimmed) return DEFAULT_CATEGORY;
-  const labels = await loadCategoryLabels();
-  if (!labels.has(trimmed)) {
-    throw new ServiceError(
-      "INVALID_CATEGORY",
-      `Invalid category: "${trimmed}". Must be a Schedule C line.`,
-      400,
-    );
+  if (trimmed.length > 40) {
+    throw new ServiceError("INVALID_CATEGORY", "Category is too long (40 characters max).", 400);
   }
   return trimmed;
 }
@@ -91,7 +98,7 @@ const purchaseInclude = {
 
 const holdInclude = {
   supply: { select: { id: true, name: true, unit: true } },
-  expense: true,
+  invoiceCharge: true,
   createdBy: { select: { id: true, displayName: true } },
   occurrence: {
     select: {
@@ -118,6 +125,51 @@ const holdInclude = {
  * derive `available = onHand − held` at query/hold-creation time so the
  * physical onHand stays a single source of truth.
  */
+/**
+ * Take a row lock on the supply and return its CURRENT on-hand count.
+ *
+ * A re-read inside the transaction is not enough, and the code here claimed
+ * otherwise for a long time. At READ COMMITTED — Postgres's default, and
+ * Prisma's — two concurrent transactions both see the same snapshot, both
+ * compute the same availability and both pass. Two workers pulling the last
+ * bags of mulch at the same moment took twelve units off a shelf holding ten.
+ *
+ * `FOR UPDATE` serialises them on the Supply row: the second waits for the
+ * first to commit, then reads the state it left behind.
+ */
+/**
+ * Every CATALOG mutation is admin-or-super. Pulling stock onto a job is not —
+ * a claimer does that from the field, and the route already scopes it.
+ *
+ * The routes are all superGuard'd, so this is defence in depth rather than the
+ * only lock. It exists because the sibling service (invoiceCharges) guards
+ * itself the same way, and an inconsistency there is how a route eventually
+ * gets registered without a guard and nobody notices: an adversarial pass
+ * found a worker could reprice the catalog, restock it and adjust counts by
+ * calling these functions directly.
+ */
+async function requireCatalogAdmin(currentUserId: string, verb: string): Promise<void> {
+  const me = await prisma.user.findUnique({
+    where: { id: currentUserId },
+    include: { roles: true },
+  });
+  if (!me) throw new ServiceError("NOT_FOUND", "User not found.", 404);
+  if (!resolvePrivileges(me).isAdminOrSuper) {
+    throw new ServiceError(
+      "FORBIDDEN",
+      `Only an admin can ${verb} — it changes what every future job is billed.`,
+      403,
+    );
+  }
+}
+
+async function lockSupplyOnHand(tx: any, supplyId: string): Promise<number> {
+  const rows: Array<{ onHand: number }> = await tx.$queryRaw`
+    SELECT "onHand" FROM "Supply" WHERE "id" = ${supplyId} FOR UPDATE`;
+  if (!rows.length) throw new ServiceError("NOT_FOUND", "Supply not found.", 404);
+  return Number(rows[0].onHand);
+}
+
 async function activeHoldsTotal(tx: any, supplyId: string): Promise<number> {
   const r = await tx.supplyHold.aggregate({
     where: { supplyId, status: "ACTIVE" },
@@ -165,7 +217,7 @@ export const supplies: ServicesSupplies = {
         select: {
           id: true,
           quantity: true,
-          jobPayoutCost: true,
+          clientUnitPrice: true,
           createdAt: true,
           supplyId: true,
           createdBy: { select: { id: true, displayName: true } },
@@ -218,6 +270,7 @@ export const supplies: ServicesSupplies = {
   },
 
   async create(currentUserId, input) {
+    await requireCatalogAdmin(currentUserId, "add a supply");
     const name = (input.name ?? "").trim();
     if (!name) throw new ServiceError("INVALID_INPUT", "Name is required.", 400);
     const unit = (input.unit ?? "").trim();
@@ -225,7 +278,7 @@ export const supplies: ServicesSupplies = {
 
     const category = await normalizeCategory(input.category);
     const businessCost = requireNonNegativeNum(input.businessCost ?? 0, "Business cost");
-    const jobPayoutCost = requireNonNegativeNum(input.jobPayoutCost, "Job payout cost");
+    const clientUnitPrice = requireNonNegativeNum(input.clientUnitPrice, "Job payout cost");
     const upc = input.upc ? input.upc.trim() || null : null;
     const description = input.description ? input.description.trim() || null : null;
 
@@ -237,22 +290,23 @@ export const supplies: ServicesSupplies = {
           unit,
           category,
           businessCost,
-          jobPayoutCost,
+          clientUnitPrice,
           upc,
           description,
         },
         include: supplyInclude,
       });
-      // A new catalog row sets two prices that flow into money later:
-      // jobPayoutCost is what a worker gets charged per unit pulled, and
-      // category is the Schedule C line every purchase of it will file under.
+      // A new catalog row sets the price that flows into money later:
+      // clientUnitPrice is what the CLIENT is charged per unit pulled onto a
+      // job. `category` is a grouping label only — a supply files under no
+      // tax line, because buying one records no deduction.
       await writeAudit(tx, AUDIT.SUPPLY.CREATED, currentUserId, {
         supplyId: supply.id,
         name,
         unit,
         category,
         businessCost,
-        jobPayoutCost,
+        clientUnitPrice,
         upc,
       });
       return supply;
@@ -260,6 +314,7 @@ export const supplies: ServicesSupplies = {
   },
 
   async update(currentUserId, id, input) {
+    await requireCatalogAdmin(currentUserId, "change a supply");
     const existing = await prisma.supply.findUnique({ where: { id } });
     if (!existing) throw new ServiceError("NOT_FOUND", "Supply not found.", 404);
 
@@ -278,8 +333,8 @@ export const supplies: ServicesSupplies = {
     if (input.businessCost !== undefined) {
       data.businessCost = requireNonNegativeNum(input.businessCost ?? 0, "Business cost");
     }
-    if (input.jobPayoutCost !== undefined) {
-      data.jobPayoutCost = requireNonNegativeNum(input.jobPayoutCost, "Job payout cost");
+    if (input.clientUnitPrice !== undefined) {
+      data.clientUnitPrice = requireNonNegativeNum(input.clientUnitPrice, "Job payout cost");
     }
     if (input.upc !== undefined) {
       data.upc = input.upc ? String(input.upc).trim() || null : null;
@@ -291,15 +346,19 @@ export const supplies: ServicesSupplies = {
     return prisma.$transaction(async (tx) => {
       const updated = await tx.supply.update({ where: { id }, data, include: supplyInclude });
       // Repricing is a money change with a delayed blast radius:
-      // jobPayoutCost sets what every future hold deducts from a worker's
-      // payout, businessCost is the reference cost, and category re-files
-      // every future purchase on a different Schedule C line.
+      // clientUnitPrice sets what every future hold BILLS THE CLIENT, and
+      // businessCost is the reference cost the margin is measured against.
+      // Neither comes out of a worker's pay.
       await writeAudit(tx, AUDIT.SUPPLY.UPDATED, currentUserId, {
         supplyId: id,
         nameBefore: existing.name,
         nameAfter: updated.name,
-        jobPayoutCostBefore: existing.jobPayoutCost,
-        jobPayoutCostAfter: updated.jobPayoutCost,
+        // Renamed with the column. Audit rows written before 2026-09-08 carry
+        // `jobPayoutCostBefore/After` — the History tab renders metadata as
+        // raw JSON, so nothing breaks; the old key simply means the same
+        // thing under the name that described it wrongly.
+        clientUnitPriceBefore: existing.clientUnitPrice,
+        clientUnitPriceAfter: updated.clientUnitPrice,
         businessCostBefore: existing.businessCost,
         businessCostAfter: updated.businessCost,
         categoryBefore: existing.category,
@@ -313,6 +372,7 @@ export const supplies: ServicesSupplies = {
   },
 
   async archive(currentUserId, id) {
+    await requireCatalogAdmin(currentUserId, "archive a supply");
     const existing = await prisma.supply.findUnique({ where: { id } });
     if (!existing) throw new ServiceError("NOT_FOUND", "Supply not found.", 404);
     await prisma.$transaction(async (tx) => {
@@ -324,7 +384,7 @@ export const supplies: ServicesSupplies = {
         supplyId: id,
         name: existing.name,
         onHand: existing.onHand,
-        jobPayoutCost: existing.jobPayoutCost,
+        clientUnitPrice: existing.clientUnitPrice,
         businessCost: existing.businessCost,
       });
     });
@@ -332,6 +392,7 @@ export const supplies: ServicesSupplies = {
   },
 
   async unarchive(currentUserId, id) {
+    await requireCatalogAdmin(currentUserId, "unarchive a supply");
     const existing = await prisma.supply.findUnique({ where: { id } });
     if (!existing) throw new ServiceError("NOT_FOUND", "Supply not found.", 404);
     await prisma.$transaction(async (tx) => {
@@ -342,13 +403,14 @@ export const supplies: ServicesSupplies = {
         supplyId: id,
         name: existing.name,
         onHand: existing.onHand,
-        jobPayoutCost: existing.jobPayoutCost,
+        clientUnitPrice: existing.clientUnitPrice,
       });
     });
     return { archived: false };
   },
 
   async recordPurchase(currentUserId, supplyId, input) {
+    await requireCatalogAdmin(currentUserId, "record a purchase");
     const supply = await prisma.supply.findUnique({ where: { id: supplyId } });
     if (!supply) throw new ServiceError("NOT_FOUND", "Supply not found.", 404);
     if (supply.archivedAt) {
@@ -368,23 +430,17 @@ export const supplies: ServicesSupplies = {
     const invoiceNumber = input.invoiceNumber ? input.invoiceNumber.trim() || null : null;
     const notes = input.notes ? input.notes.trim() || null : null;
 
-    // Dual-write: BusinessExpense (tax ledger) + SupplyPurchase + onHand bump,
-    // all in one transaction. The BE description includes the supply name and
-    // qty so the ledger reads naturally without joining.
+    // NO LEDGER ROW. Recording a purchase tracks STOCK, not taxes.
+    //
+    // This used to dual-write a BusinessExpense, so the same money was
+    // deducted twice the moment the operator also entered the real card
+    // charge from their bank statement — which they must, because that is
+    // the actual record. The deduction is that charge; a purchase here may
+    // optionally point at it via `businessExpenseId`, as a MANY-TO-ONE
+    // breadcrumb (one $500 receipt covers several purchases).
+    //
+    // See docs/features/job-materials.md.
     return prisma.$transaction(async (tx) => {
-      const businessExpense = await tx.businessExpense.create({
-        data: {
-          ledgerId: generateLedgerId(),
-          createdById: currentUserId,
-          date,
-          cost: totalCost,
-          description: `${supply.name} × ${quantity} ${supply.unit}`,
-          category: supply.category,
-          vendor,
-          invoiceNumber,
-          notes,
-        },
-      });
       const purchase = await tx.supplyPurchase.create({
         data: {
           supplyId,
@@ -395,7 +451,9 @@ export const supplies: ServicesSupplies = {
           vendor,
           invoiceNumber,
           notes,
-          businessExpenseId: businessExpense.id,
+          // Optional breadcrumb, set later from the Supplies tab. Never
+          // populated automatically — nothing here creates a ledger row.
+          businessExpenseId: input.businessExpenseId ?? null,
           createdById: currentUserId,
         },
         include: purchaseInclude,
@@ -408,19 +466,17 @@ export const supplies: ServicesSupplies = {
           businessCost: unitCost,
         },
       });
-      // Real cash out the door: this creates a Schedule C deduction for
-      // `totalCost` and silently overwrites the catalog's businessCost,
-      // which changes the reference cost for every later report.
+      // Creates NO tax deduction — that is the card charge in the Ledger.
+      // It DOES silently overwrite the catalog's businessCost, which changes
+      // the reference cost for every later report, so both sides are recorded.
       await writeAudit(tx, AUDIT.SUPPLY.PURCHASE_RECORDED, currentUserId, {
         supplyId,
         supplyName: supply.name,
         purchaseId: purchase.id,
-        businessExpenseId: businessExpense.id,
-        ledgerId: businessExpense.ledgerId,
+        businessExpenseId: input.businessExpenseId ?? null,
         quantity,
         unitCost,
         totalCost,
-        category: supply.category,
         vendor,
         invoiceNumber,
         date: date.toISOString(),
@@ -434,6 +490,7 @@ export const supplies: ServicesSupplies = {
   },
 
   async reversePurchase(currentUserId, purchaseId) {
+    await requireCatalogAdmin(currentUserId, "reverse a purchase");
     const purchase = await prisma.supplyPurchase.findUnique({
       where: { id: purchaseId },
       include: { supply: true },
@@ -455,11 +512,16 @@ export const supplies: ServicesSupplies = {
         data: { onHand: { decrement: purchase.quantity } },
       });
       await tx.supplyPurchase.delete({ where: { id: purchaseId } });
-      // Schema FK is Restrict — explicit BE delete required.
-      await tx.businessExpense.delete({ where: { id: purchase.businessExpenseId } });
-      // Destroys a Schedule C deduction and removes stock that was paid for.
-      // Both rows are hard-deleted, so this snapshot is the only surviving
-      // evidence of the purchase that was un-filed.
+      // NO LEDGER DELETE. Recording a purchase creates no BusinessExpense, so
+      // reversing one destroys no deduction. `businessExpenseId` is now an
+      // optional MANY-TO-ONE breadcrumb — several purchases may point at one
+      // $500 receipt, and deleting that receipt because one purchase was
+      // reversed would erase a real deduction the operator entered from their
+      // bank statement. The FK is SetNull; the pointer simply goes away with
+      // the row. See docs/features/job-materials.md.
+      //
+      // Removes stock that was paid for, so the snapshot below is still the
+      // only surviving evidence of the reversed purchase.
       await writeAudit(tx, AUDIT.SUPPLY.PURCHASE_REVERSED, currentUserId, {
         supplyId: purchase.supplyId,
         supplyName: purchase.supply.name,
@@ -479,6 +541,7 @@ export const supplies: ServicesSupplies = {
   },
 
   async recordAdjustment(currentUserId, supplyId, input) {
+    await requireCatalogAdmin(currentUserId, "adjust stock");
     const supply = await prisma.supply.findUnique({ where: { id: supplyId } });
     if (!supply) throw new ServiceError("NOT_FOUND", "Supply not found.", 404);
 
@@ -607,10 +670,12 @@ export const supplies: ServicesSupplies = {
     }
 
     return prisma.$transaction(async (tx) => {
-      // Re-check availability inside the transaction. Two simultaneous holds
-      // could otherwise both pass an outer check and combine to over-allocate.
+      // LOCK FIRST, then count. The lock is what makes this safe — see
+      // lockSupplyOnHand. `supply.onHand` above was read outside the
+      // transaction and is stale by definition.
+      const onHand = await lockSupplyOnHand(tx, input.supplyId);
       const held = await activeHoldsTotal(tx, input.supplyId);
-      const available = supply.onHand - held;
+      const available = onHand - held;
       if (available < quantity) {
         throw new ServiceError(
           "INSUFFICIENT_INVENTORY",
@@ -619,17 +684,35 @@ export const supplies: ServicesSupplies = {
         );
       }
 
-      const totalCharge = Math.round(quantity * supply.jobPayoutCost * 100) / 100;
-      const description = `${supply.name} × ${quantity} ${supply.unit}`;
+      // THE PRICE IS DECIDED HERE, not in the catalog. The catalog value is a
+      // default the operator can override per job, because the same supply is
+      // billed differently to different clients. Whatever is used is
+      // snapshotted on the hold below, so repricing the catalog later never
+      // moves a job that has already committed stock.
+      const unitPrice =
+        input.clientUnitPrice != null
+          ? requireNonNegativeNum(input.clientUnitPrice, "Client price")
+          : supply.clientUnitPrice;
+      const totalCharge = Math.round(quantity * unitPrice * 100) / 100;
+      // The headline a CLIENT reads. Defaults to the supply's name — not
+      // "Mulch × 5 bag", which is a stock movement written on an invoice.
+      // The quantity belongs in the optional detail, where the operator can
+      // phrase it: "5 bags at $5.00 each".
+      const description = input.description?.trim() || supply.name;
 
       // No paired BusinessExpense — the BE was already recorded at purchase
       // time. Recording another here would inflate the tax ledger.
-      const expense = await tx.expense.create({
+      const invoiceCharge = await tx.invoiceCharge.create({
         data: {
           occurrenceId,
           createdById: currentUserId,
           cost: totalCharge,
+          // NO actualCost. What a client is billed has nothing to do with what
+          // we paid for the stock — that is the Ledger's business, and the
+          // Ledger is what gets reconciled against the accounting software.
+          // Recording it here made a client charge look like a cost record.
           description,
+          detail: input.detail?.trim() || null,
         },
       });
 
@@ -638,26 +721,27 @@ export const supplies: ServicesSupplies = {
           supplyId: input.supplyId,
           occurrenceId,
           quantity,
-          jobPayoutCost: supply.jobPayoutCost,
+          clientUnitPrice: unitPrice,
           status: "ACTIVE",
-          expenseId: expense.id,
+          invoiceChargeId: invoiceCharge.id,
           createdById: currentUserId,
         },
         include: holdInclude,
       });
-      // Pulling stock onto a job charges the worker: the paired Expense
-      // (qty x jobPayoutCost) is deducted from their payout for this
-      // occurrence. Snapshot the per-unit cost used, since the catalog
+      // Pulling stock onto a job bills the CLIENT: the paired InvoiceCharge
+      // (qty x clientUnitPrice) is added to their invoice, on top of labor. It
+      // does NOT come out of anyone's payout — the crew splits labor and
+      // services only. Snapshot the per-unit cost used, since the catalog
       // price can drift afterwards.
       await writeAudit(tx, AUDIT.SUPPLY.HOLD_CREATED, currentUserId, {
         supplyId: input.supplyId,
         supplyName: supply.name,
         holdId: hold.id,
-        expenseId: expense.id,
+        invoiceChargeId: invoiceCharge.id,
         occurrenceId,
         jobId: occ.jobId ?? null,
         quantity,
-        jobPayoutCost: supply.jobPayoutCost,
+        clientUnitPrice: supply.clientUnitPrice,
         totalCharge,
         onHand: supply.onHand,
         availableBefore: available,
@@ -673,7 +757,7 @@ export const supplies: ServicesSupplies = {
         occurrence: { include: { assignees: true } },
         // Both are hard-deleted below — read them first so the audit row
         // can preserve what the payout deduction actually was.
-        expense: true,
+        invoiceCharge: true,
         supply: { select: { id: true, name: true, unit: true } },
       },
     });
@@ -701,8 +785,8 @@ export const supplies: ServicesSupplies = {
         });
       }
       // Delete the paired Expense (cascade to remove payout deduction).
-      if (hold.expenseId) {
-        await tx.expense.delete({ where: { id: hold.expenseId } }).catch(() => {});
+      if (hold.invoiceChargeId) {
+        await tx.invoiceCharge.delete({ where: { id: hold.invoiceChargeId } }).catch(() => {});
       }
       await tx.supplyHold.delete({ where: { id: holdId } });
       // Reverses a payout deduction: the worker is credited back the paired
@@ -712,12 +796,12 @@ export const supplies: ServicesSupplies = {
         supplyId: hold.supplyId,
         supplyName: hold.supply.name,
         holdId,
-        expenseId: hold.expenseId,
+        invoiceChargeId: hold.invoiceChargeId,
         occurrenceId: hold.occurrenceId,
         jobId: hold.occurrence.jobId ?? null,
         quantity: hold.quantity,
-        jobPayoutCost: hold.jobPayoutCost,
-        expenseCostReversed: hold.expense?.cost ?? null,
+        clientUnitPrice: hold.clientUnitPrice,
+        invoiceChargeCostReversed: hold.invoiceCharge?.cost ?? null,
         holdStatusBefore: hold.status,
         onHandRestored: hold.status === "CONSUMED" ? hold.quantity : 0,
       });
@@ -736,7 +820,7 @@ export const supplies: ServicesSupplies = {
         supply: true,
         occurrence: { include: { assignees: true } },
         // Before-value for the repriced payout deduction.
-        expense: true,
+        invoiceCharge: true,
       },
     });
     if (!hold) throw new ServiceError("NOT_FOUND", "Hold not found.", 404);
@@ -779,8 +863,9 @@ export const supplies: ServicesSupplies = {
       // holds (including this one when it's still ACTIVE), so onHand − held
       // is the free pool beyond everything already reserved/consumed.
       if (delta > 0) {
+        const onHand = await lockSupplyOnHand(tx, hold.supplyId);
         const held = await activeHoldsTotal(tx, hold.supplyId);
-        const available = hold.supply.onHand - held;
+        const available = onHand - held;
         if (available < delta) {
           throw new ServiceError(
             "INSUFFICIENT_INVENTORY",
@@ -803,14 +888,20 @@ export const supplies: ServicesSupplies = {
 
       // Reprice the paired payout Expense off the hold's snapshot per-unit
       // cost (not the supply's current cost — snapshots don't drift).
-      const newExpenseCost = Math.round(qty * hold.jobPayoutCost * 100) / 100;
-      if (hold.expenseId) {
-        await tx.expense.update({
-          where: { id: hold.expenseId },
-          data: {
-            cost: newExpenseCost,
-            description: `${hold.supply.name} × ${qty} ${hold.supply.unit}`,
-          },
+      const newExpenseCost = Math.round(qty * hold.clientUnitPrice * 100) / 100;
+      if (hold.invoiceChargeId) {
+        // ONLY THE AMOUNT. The hold owns the STOCK, so changing the quantity
+        // re-prices the line from the unit price snapshotted at pull time —
+        // but the name and detail are the operator's words and appear on the
+        // client's invoice, so they are left alone. Overwriting them turned a
+        // line someone had written for a client back into "Mulch × 5 bag".
+        //
+        // No `actualCost` either: what a client is charged has nothing to do
+        // with what we paid. Cost lives in the Ledger, which is the tax
+        // record; supplies are a stock-tracking layer above it.
+        await tx.invoiceCharge.update({
+          where: { id: hold.invoiceChargeId },
+          data: { cost: newExpenseCost },
         });
       }
 
@@ -826,14 +917,14 @@ export const supplies: ServicesSupplies = {
         supplyId: hold.supplyId,
         supplyName: hold.supply.name,
         holdId,
-        expenseId: hold.expenseId,
+        invoiceChargeId: hold.invoiceChargeId,
         occurrenceId: hold.occurrenceId,
         jobId: hold.occurrence.jobId ?? null,
         quantityBefore: hold.quantity,
         quantityAfter: qty,
         quantityDelta: delta,
-        jobPayoutCost: hold.jobPayoutCost,
-        expenseCostBefore: hold.expense?.cost ?? null,
+        clientUnitPrice: hold.clientUnitPrice,
+        invoiceChargeCostBefore: hold.invoiceCharge?.cost ?? null,
         expenseCostAfter: newExpenseCost,
         holdStatus: hold.status,
         onHandDelta: hold.status === "CONSUMED" ? -delta : 0,
@@ -900,12 +991,12 @@ export async function releaseHoldsForOccurrence(
 
   await runInTx(tx, async (tx) => {
     for (const h of active) {
-      if (h.expenseId) {
-        await tx.expense.delete({ where: { id: h.expenseId } }).catch(() => {});
+      if (h.invoiceChargeId) {
+        await tx.invoiceCharge.delete({ where: { id: h.invoiceChargeId } }).catch(() => {});
       }
       await tx.supplyHold.update({
         where: { id: h.id },
-        data: { status: "RELEASED", releasedAt: new Date(), expenseId: null },
+        data: { status: "RELEASED", releasedAt: new Date(), invoiceChargeId: null },
       });
     }
   });

@@ -532,3 +532,51 @@ that carried tax figures and hid them in the UI would still be a leak.
 
 Migrations go through `prisma migrate dev` — never `db push` — and are
 applied to dev before any dependent code lands.
+
+
+---
+
+## Gusto adds columns
+
+`Paycheck Tips` appeared the first time a payroll period actually carried
+tips, **inserted ahead of `Gross Earnings`** rather than appended.
+
+Nothing broke. The parser maps by header NAME, not position, so every other
+column stayed aligned, the conservation check passed against Gusto's own
+totals row, and the import reported success. The column had no mapping, so it
+was read and discarded — the money was in the file and on no screen. The
+operator found it by noticing an absence.
+
+Three separate places had to know about it, and missing any one of them
+reproduces the same silence:
+
+1. the `NumericField` union,
+2. the parser's header map (`EXACT_NUMERIC`),
+3. `ALL_NUMERIC_FIELDS`, the SUPER projection list.
+
+**(3) is now a compile error.** `ALL_NUMERIC_FIELDS` is declared
+`as const satisfies readonly NumericField[]` — *not* annotated
+`: readonly NumericField[]`, which widens the literals and makes the
+exhaustiveness check vacuous. It was written the wrong way first and passed
+with a field deliberately deleted.
+
+**An unmapped column that carries a number is now reported.** The import
+result includes `unmappedColumns`, and the upload dialog shows them. Text
+columns are not reported — `Work Address` and `Employee Type` are legitimately
+unmapped and always will be.
+
+### Tips specifics
+
+- `paycheckTips` is a **component of `grossEarnings`**, never an addition to
+  it. Every surface labels it "in gross" / "of gross" for that reason.
+- **Blank is not zero.** On a tipped week one employee's cell is empty while
+  others carry a figure; that stays `NULL`. A period predating the column is
+  also `NULL` — which is not the same as a period that carried no tips, and
+  neither is `0.00`.
+- Tips are inside the conservation check, so a wrong total is refused before
+  anything is persisted.
+- `PayrollEntry.paycheckTips` is **not** `PaymentSplit.tipAmount`. One is what
+  Gusto actually paid; the other is what the app estimated was owed. The
+  estimate/actual firewall applies exactly as it does to wages.
+- Existing imports were **backfilled from `raw`**, which keeps every original
+  CSV row verbatim — no re-upload was needed.

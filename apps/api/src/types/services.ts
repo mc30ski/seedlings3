@@ -626,6 +626,7 @@ export type ServicesJobs = {
     occurrenceId: string,
     price: number,
     reason?: string | null,
+    laborDetail?: string | null,
   ): Promise<{
     price: number;
     priceTotal: number;
@@ -1045,50 +1046,61 @@ export type ServicesPayments = {
   listPendingApprovals(cutoff?: Date | null): Promise<any[]>;
 };
 
-export type ExpenseInput = {
+export type InvoiceChargeInput = {
+  /** What the CLIENT IS CHARGED for this line. Goes on the invoice. */
   cost: number;
+  /** The line name the client reads, e.g. "Mulch". */
   description: string;
-  // Tax-ledger fields — populated on the linked BusinessExpense row.
-  category?: string | null; // Schedule C label, defaults to "Supplies"
-  vendor?: string | null;
-  date?: string | null; // ISO date; defaults to today
+  /** What we actually paid. Optional and informational — job margin only,
+   *  never the invoice and never the payout. */
+  actualCost?: number | null;
+  /** CLIENT-VISIBLE detail, e.g. "25 bags at $6.00". Optional. */
+  detail?: string | null;
+  // NO category, vendor or date. An invoice charge writes no BusinessExpense,
+  // so there is no Schedule C line to file it against. Adding them back would
+  // collect a tax category that reaches nothing.
 };
 
-export type ExpensePatchInput = {
+export type InvoiceChargePatchInput = {
   cost?: number;
   description?: string;
-  category?: string | null;
-  vendor?: string | null;
-  date?: string | null;
+  /** Null CLEARS it — how an operator removes a cost entered by mistake, so
+   *  callers must distinguish "absent" from "null". */
+  actualCost?: number | null;
+  /** Null CLEARS it. */
+  detail?: string | null;
 };
 
-export type ServicesExpenses = {
-  addExpense(
+export type ServicesInvoiceCharges = {
+  addInvoiceCharge(
     currentUserId: string,
     occurrenceId: string,
-    input: ExpenseInput,
+    input: InvoiceChargeInput,
   ): Promise<any>;
 
-  updateExpense(
+  updateInvoiceCharge(
     currentUserId: string,
-    expenseId: string,
-    input: ExpensePatchInput,
+    invoiceChargeId: string,
+    input: InvoiceChargePatchInput,
   ): Promise<any>;
 
-  deleteExpense(
+  deleteInvoiceCharge(
     currentUserId: string,
-    expenseId: string,
+    invoiceChargeId: string,
   ): Promise<{ deleted: true }>;
 
-  adminAddExpense(
+  adminAddInvoiceCharge(
     currentUserId: string,
     occurrenceId: string,
-    input: ExpenseInput,
+    input: InvoiceChargeInput,
   ): Promise<any>;
 
-  adminDeleteExpense(currentUserId: string, expenseId: string): Promise<{ deleted: true }>;
+  adminDeleteInvoiceCharge(
+    currentUserId: string,
+    invoiceChargeId: string,
+  ): Promise<{ deleted: true }>;
 
-  listExpensesByOccurrence(occurrenceId: string): Promise<any[]>;
+  listInvoiceChargesByOccurrence(occurrenceId: string): Promise<any[]>;
 };
 
 export type SupplyCreateInput = {
@@ -1098,7 +1110,7 @@ export type SupplyCreateInput = {
   upc?: string | null;
   category?: string | null;
   businessCost?: number | null;
-  jobPayoutCost: number;
+  clientUnitPrice: number;
 };
 
 export type SupplyPatchInput = {
@@ -1108,7 +1120,7 @@ export type SupplyPatchInput = {
   upc?: string | null;
   category?: string | null;
   businessCost?: number | null;
-  jobPayoutCost?: number;
+  clientUnitPrice?: number;
 };
 
 export type SupplyPurchaseInput = {
@@ -1119,7 +1131,9 @@ export type SupplyPurchaseInput = {
   date?: string | null;
   vendor?: string | null;
   invoiceNumber?: string | null;
-  notes?: string | null;
+  notes?: string | null;  /** OPTIONAL, MANY-TO-ONE breadcrumb to a real ledger charge. Never set
+   *  automatically — recording a purchase creates no ledger row. */
+  businessExpenseId?: string | null;
 };
 
 export type SupplyAdjustmentInput = {
@@ -1130,6 +1144,22 @@ export type SupplyAdjustmentInput = {
 export type SupplyHoldInput = {
   supplyId: string;
   quantity: number;
+  /**
+   * What THIS client is charged per unit, for THIS job.
+   *
+   * The price is decided when the supply goes onto a job, not when the supply
+   * is catalogued — the same bag of mulch can be billed differently to two
+   * clients. The catalog carries a DEFAULT; this overrides it, and whatever is
+   * used is snapshotted on the hold so later repricing never moves it.
+   *
+   * Omit to use the supply's default.
+   */
+  clientUnitPrice?: number | null;
+  /** The headline a client reads. Defaults to the supply's name. */
+  description?: string | null;
+  /** Optional client-visible detail — "5 bags at $5.00 each". Same shape as
+   *  any other invoice charge; a supply line is not a special kind. */
+  detail?: string | null;
 };
 
 export type ServicesSupplies = {
@@ -1209,7 +1239,7 @@ export type Services = {
   properties: ServicesProperties;
   jobs: ServicesJobs;
   payments: ServicesPayments;
-  expenses: ServicesExpenses;
+  invoiceCharges: ServicesInvoiceCharges;
   settings: ServicesSettings;
   supplies: ServicesSupplies;
   groups: typeof import("../services/groups").groups;

@@ -6,6 +6,11 @@ import { writeAudit } from "../lib/auditLogger";
 import { AUDIT } from "../lib/auditActions";
 import { sendSMS, sendEmail } from "../lib/notifications";
 import { persistCompletionSplits } from "./payments";
+import { ServiceError } from "../lib/errors";
+import {
+  invoiceTotal, invoiceLines, crewPool, humanizeTag,
+  PRICED_OCCURRENCE_SELECT, type InvoiceLine,
+} from "../lib/jobPricing";
 
 const DEFAULT_BASE_URL = "https://www.seedlings.team";
 const DEFAULT_EXPIRY_HOURS = 72;
@@ -42,18 +47,17 @@ export async function buildPaymentUrl(token: string): Promise<string> {
   return `${base.replace(/\/+$/, "")}/pay/${token}`;
 }
 
+/**
+ * What the client is asked to pay. Delegates to the shared helper — this used
+ * to be `price + addons`, which never billed materials at all.
+ */
 async function computeAmountDue(occurrenceId: string, tx: Prisma.TransactionClient | typeof prisma = prisma): Promise<number> {
   const occ = await tx.jobOccurrence.findUnique({
     where: { id: occurrenceId },
-    select: {
-      price: true,
-      addons: { select: { price: true } },
-    },
+    select: PRICED_OCCURRENCE_SELECT,
   });
   if (!occ) return 0;
-  const base = occ.price ?? 0;
-  const addons = (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
-  return base + addons;
+  return invoiceTotal(occ);
 }
 
 /**
@@ -119,6 +123,104 @@ async function getContactsForOccurrence(occurrenceId: string) {
 // back to the friendly displayName only when no address is on file. This
 // matches the formatting used by JobsTab's getQuickMessage() so the
 // "Confirm Client" and "Request Payment" wordings stay in lockstep.
+/**
+ * Everything the client-facing invoice needs off a JobOccurrence.
+ *
+ * ONE list, shared by the real invoice (resolveToken) and the admin preview.
+ * Selecting too little is how an invoice silently loses a line, and a preview
+ * that selects a different set is a preview that lies.
+ */
+export const INVOICE_OCCURRENCE_SELECT = {
+  id: true,
+  startAt: true,
+  completedAt: true,
+  jobTags: true,
+  title: true,
+  price: true,
+  laborDetail: true,
+  addons: { select: { price: true, tag: true, customLabel: true, detail: true } },
+  invoiceCharges: { select: { cost: true, description: true, detail: true } },
+  job: {
+    select: {
+      property: {
+        select: { displayName: true, street1: true, city: true, state: true },
+      },
+    },
+  },
+} as const;
+
+/**
+ * The SERVICE_TYPES catalog as a key → label map.
+ *
+ * The client's invoice is not the place to print an internal enum key. An
+ * add-on picked from a preset carries its raw `tag`, so without this a client
+ * is invoiced for "HEDGE".
+ *
+ * Returns {} on a missing or malformed setting — callers fall back to
+ * `humanizeTag`, which is worse than the catalog but never worse than the key.
+ * A broken catalog must not fail an invoice.
+ */
+async function serviceLabelMap(): Promise<Record<string, string>> {
+  try {
+    const raw = await getSetting("SERVICE_TYPES");
+    if (!raw) return {};
+    const list = JSON.parse(raw) as Array<{ key?: string; label?: string }>;
+    if (!Array.isArray(list)) return {};
+    const map: Record<string, string> = {};
+    for (const t of list) if (t?.key && t?.label) map[t.key] = t.label;
+    return map;
+  } catch {
+    return {};
+  }
+}
+
+/** The label for the labor line. Catalog first, then humanize — the old
+ *  inline title-caser turned "LEAF_CLEANUP" into "Leaf_cleanup". */
+function jobLabelFor(
+  occ: { jobTags?: string | null; title?: string | null },
+  labels: Record<string, string> = {},
+): string {
+  const title = occ.title?.trim();
+  if (title) return title;
+  try {
+    const tags = occ.jobTags ? (JSON.parse(occ.jobTags) as string[]) : [];
+    if (tags.length) return tags.map((t) => labels[t] ?? humanizeTag(t)).join(", ");
+  } catch { /* malformed tags are not worth failing an invoice over */ }
+  return "Lawn service";
+}
+
+/**
+ * The invoice a client would see for this occurrence, as of right now.
+ *
+ * THE ONLY BUILDER. `resolveToken` renders it on the pay page; the admin
+ * preview renders the same object on the job card. A second implementation is
+ * how a preview starts showing a number the client never gets.
+ *
+ * Loads the catalog ONCE so no invoice can render half its lines with labels
+ * and half with raw keys.
+ */
+export async function buildInvoice(occ: any): Promise<{
+  amountDue: number;
+  lines: InvoiceLine[];
+  propertyLabel: string;
+  propertyAddress: string | null;
+  serviceDate: Date | null;
+}> {
+  const prop = occ.job?.property ?? null;
+  const labels = await serviceLabelMap();
+  return {
+    amountDue: invoiceTotal(occ),
+    // Sums to amountDue by construction — the build gate asserts it rather
+    // than trusting it.
+    lines: invoiceLines(occ, { laborLabel: jobLabelFor(occ, labels), serviceLabels: labels }),
+    propertyLabel: propertyLabel(prop),
+    propertyAddress: prop
+      ? [prop.street1, prop.city, prop.state].filter(Boolean).join(", ") || null
+      : null,
+    serviceDate: occ.completedAt ?? occ.startAt ?? null,
+  };
+}
+
 function propertyLabel(p: { displayName: string | null; street1: string | null; city: string | null; state: string | null } | null): string {
   if (!p) return "your property";
   const addr = [p.street1, p.city, p.state].filter(Boolean).join(", ");
@@ -719,9 +821,68 @@ export const paymentRequests = {
     });
   },
 
+  /**
+   * The invoice AS IT STANDS — what the client would be shown if a payment
+   * were requested right now.
+   *
+   * Not a record of anything. Nothing is stamped, no token is minted, no
+   * audit row is written, and the numbers move the moment a charge, a
+   * service or the price changes. It exists so an operator can see what they
+   * are about to send before they send it.
+   *
+   * Reads through `buildInvoice`, the same function the real pay page uses,
+   * so the preview cannot show a number the client wouldn't get.
+   */
+  async previewInvoice(occurrenceId: string) {
+    const occ = await prisma.jobOccurrence.findUnique({
+      where: { id: occurrenceId },
+      select: {
+        ...INVOICE_OCCURRENCE_SELECT,
+        // Context the operator needs to read the preview. None of it is ever
+        // shown to a client.
+        status: true,
+        paymentRequestSentAt: true,
+        payment: { select: { id: true, amountPaid: true, confirmed: true } },
+      },
+    });
+    if (!occ) throw new ServiceError("NOT_FOUND", "Occurrence not found.", 404);
+
+    const invoice = await buildInvoice(occ);
+    return {
+      occurrenceId: occ.id,
+      ...invoice,
+      // OPERATOR-ONLY, and deliberately NOT part of buildInvoice — the
+      // client's payload must never carry it. Read from the same shared
+      // helper the payout engine agrees with, so the warning on the preview
+      // quotes a number the crew will actually be paid.
+      crewPool: crewPool(occ as any),
+      /** True once a request went out — the client has seen a number, and
+       *  this preview may no longer match it. */
+      alreadySent: !!occ.paymentRequestSentAt,
+      /** True once money has actually landed: history, not a preview.
+       *
+       *  REQUIRES `confirmed`. This was `!!occ.payment` — the row's mere
+       *  existence — so a payment still awaiting admin approval made the
+       *  preview announce "This job is already paid". `confirmed` was in the
+       *  select the whole time and simply never read. */
+      settled: !!occ.payment?.confirmed,
+      /** A recorded but unapproved payment. Different sentence, different
+       *  action: nothing has landed yet, so the preview is still live. */
+      paymentPending: !!occ.payment && !occ.payment.confirmed,
+      /** Null rather than 0 when nothing was collected — "already paid
+       *  ($0.00)" is not a sentence about money. A confirmed $0 payment is a
+       *  write-off, and the banner says that instead. */
+      paidAmount: occ.payment?.amountPaid ? occ.payment.amountPaid : null,
+      /** Confirmed, but nothing collected. */
+      writtenOff: !!occ.payment?.confirmed && !occ.payment.amountPaid,
+    };
+  },
+
   async resolveToken(token: string): Promise<{
     occurrenceId: string;
     amountDue: number;
+    /** The itemization the client sees. Sums to amountDue. */
+    lines: InvoiceLine[];
     propertyLabel: string;
     propertyAddress: string | null;
     serviceDate: Date | null;
@@ -740,25 +901,10 @@ export const paymentRequests = {
     const occ = await prisma.jobOccurrence.findFirst({
       where: { paymentRequestToken: token },
       select: {
-        id: true,
+        // Everything the invoice needs, from the one shared list (which
+        // already carries id, startAt, completedAt, title and jobTags).
+        ...INVOICE_OCCURRENCE_SELECT,
         paymentRequestTokenCreatedAt: true,
-        startAt: true,
-        completedAt: true,
-        jobTags: true,
-        price: true,
-        addons: { select: { price: true } },
-        job: {
-          select: {
-            property: {
-              select: {
-                displayName: true,
-                street1: true,
-                city: true,
-                state: true,
-              },
-            },
-          },
-        },
         payment: {
           select: {
             id: true,
@@ -789,22 +935,11 @@ export const paymentRequests = {
     const expiresAt = created ? new Date(created.getTime() + expiryHours * 3600 * 1000) : null;
     if (expiresAt && Date.now() > expiresAt.getTime()) return null;
 
-    const base = occ.price ?? 0;
-    const addons = (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
-    const amountDue = base + addons;
-
-    const prop = occ.job?.property ?? null;
-    const propLabel = propertyLabel(prop);
-    const propAddress = prop
-      ? [prop.street1, prop.city, prop.state].filter(Boolean).join(", ") || null
-      : null;
+    const invoice = await buildInvoice(occ);
 
     return {
       occurrenceId: occ.id,
-      amountDue,
-      propertyLabel: propLabel,
-      propertyAddress: propAddress,
-      serviceDate: occ.completedAt ?? occ.startAt ?? null,
+      ...invoice,
       jobTags: occ.jobTags ?? null,
       payment: occ.payment,
       photos: occ.photos,
@@ -882,6 +1017,7 @@ export const paymentRequests = {
         paymentIntentMethod: true,
         paymentIntentAt: true,
         addons: { select: { price: true } },
+        invoiceCharges: { select: { cost: true } },
         job: {
           select: {
             id: true,
@@ -961,8 +1097,10 @@ export const paymentRequests = {
         ? new Date(o.paymentRequestTokenCreatedAt.getTime() + expiryHours * 3_600_000)
         : null;
       const claimer = o.assignees.find((a) => a.assignedById === a.userId) ?? null;
-      const amount =
-        (o.price ?? 0) + o.addons.reduce((s, a) => s + (a.price ?? 0), 0);
+      // THE INVOICE, not the labor. This is a receivable — the number the
+      // client was actually asked to pay. Labor-only under-reports every
+      // outstanding job by its materials.
+      const amount = invoiceTotal(o as any);
       return {
         occurrenceId: o.id,
         startAt: o.startAt,

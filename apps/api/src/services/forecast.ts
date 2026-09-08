@@ -152,7 +152,7 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
               workflow: true,
               frequencyDays: true,
               job: { select: { frequencyDays: true } },
-              expenses: { select: { cost: true } },
+              invoiceCharges: { select: { cost: true } },
             },
           },
           splits: { select: { userId: true, amount: true, grossAmount: true } },
@@ -174,7 +174,7 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
         // `expense` is the 1:1 back-link to a per-job Expense row. Its presence
         // means this ledger entry IS a job material, which the forecast already
         // subtracts separately — see the dedupe below.
-        select: { category: true, cost: true, date: true, expense: { select: { id: true } } },
+        select: { category: true, cost: true, date: true, invoiceCharges: { select: { id: true } } },
       }),
       loadRates(prisma),
       loadPayrollTaxEstimates(prisma),
@@ -214,7 +214,7 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
   // ── Jobs ─────────────────────────────────────────────────────────────────
   const jobs: ForecastJob[] = payments.map((p) => {
     const occ = p.occurrence;
-    const materials = occ?.expenses.reduce((s, e) => s + e.cost, 0) ?? 0;
+    const materials = occ?.invoiceCharges.reduce((s: number, e: { cost: number }) => s + e.cost, 0) ?? 0;
 
     // Crew percentages, in order of trustworthiness: the allocation the
     // claimer locked in at completion, then the realised gross split, then an
@@ -294,9 +294,22 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
   //    back — the toggle is the operator's, not ours.
   const byCategory = new Map<string, number>();
   const fixedByCategory = new Map<string, number>();
+  // A ledger row that a job line points at is STILL A REAL EXPENSE, and it is
+  // counted here like any other.
+  //
+  // It used to be skipped, on the reasoning that the old dual-write had
+  // already counted that money against the job. That reasoning is dead: a job
+  // charge is what the CLIENT is billed and creates no deduction, so the
+  // ledger row is the only place that money is recorded. Skipping it dropped
+  // real costs out of the forecast — silently, and by more every time an
+  // operator linked a receipt to a job, which the app actively invites.
+  //
+  // `jobMaterialsInLedger` is kept as a REPORTED figure only: how much of the
+  // expense side is traceable to a job. It is no longer subtracted from
+  // anything.
   let jobMaterialsInLedger = 0;
   for (const e of expenses) {
-    if (e.expense) { jobMaterialsInLedger += e.cost; continue; }
+    if (e.invoiceCharges.length) jobMaterialsInLedger += e.cost;
     const label = e.category ?? "Uncategorized";
     byCategory.set(label, (byCategory.get(label) ?? 0) + e.cost);
     if (isFixedAsset({ cost: e.cost, date: e.date }, fixedAssetMinCost)) {

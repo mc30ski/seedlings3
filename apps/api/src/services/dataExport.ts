@@ -93,7 +93,7 @@ export async function buildDataSnapshot(cutoff: Date | null): Promise<DataSnapsh
     prisma.jobOccurrenceAssignee.findMany(),
     prisma.payment.findMany({ where: { ...cutoffWhere("Payment", cutoff) }, orderBy: { createdAt: "asc" } }),
     prisma.paymentSplit.findMany({ where: { ...paymentSplitCutoffWhere(cutoff) }, orderBy: { createdAt: "asc" } }),
-    prisma.expense.findMany({
+    prisma.invoiceCharge.findMany({
       where: cutoff ? {
         OR: [
           { businessExpense: { date: { gte: cutoff } } },

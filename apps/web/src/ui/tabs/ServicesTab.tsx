@@ -51,7 +51,7 @@ import StatusButton from "@/src/ui/components/StatusButton";
 import JobDialog from "@/src/ui/dialogs/JobDialog";
 import JobDefaultGuidanceDialog from "@/src/ui/dialogs/JobDefaultGuidanceDialog";
 import OccurrenceDialog from "@/src/ui/dialogs/OccurrenceDialog";
-import AddAddonDialog from "@/src/ui/dialogs/AddAddonDialog";
+import ManageAddonsDialog from "@/src/ui/dialogs/ManageAddonsDialog";
 import EstimateDialog from "@/src/ui/dialogs/EstimateDialog";
 import { jobTagLabel as _jobTagLabel, JOB_TAGS, parseServiceTypesConfig, DEFAULT_SERVICE_TYPES, type ServiceTypeConfig } from "@/src/ui/components/JobTagPicker";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
@@ -64,7 +64,9 @@ import DefaultCrewDialog from "@/src/ui/dialogs/DefaultCrewDialog";
 import DeleteDialog, { type ToDeleteProps } from "@/src/ui/dialogs/DeleteDialog";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import AcceptPaymentDialog from "@/src/ui/dialogs/AcceptPaymentDialog";
-import AddExpenseDialog from "@/src/ui/dialogs/AddExpenseDialog";
+import ManageInvoiceChargesDialog from "@/src/ui/dialogs/ManageInvoiceChargesDialog";
+import { outstandingInvoiceAmount } from "@/src/ui/components/InvoiceAlreadySentNote";
+import { occInEditableState, totalPrice } from "@/src/ui/tabs/JobsTab.utils";
 import { MapLink, TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch, onEventSearchRun, navigateToProfile } from "@/src/lib/bus";
 import { suggestedEquipment, parseEquipmentKindsConfig, type EquipmentKindConfig } from "@/src/lib/equipmentSuggestions";
@@ -457,8 +459,8 @@ export default function ServicesTab({
 
   const [acceptPaymentOpen, setAcceptPaymentOpen] = useState(false);
   const [acceptPaymentOcc, setAcceptPaymentOcc] = useState<JobOccurrenceFull | null>(null);
-  const [expenseDialogOccId, setExpenseDialogOccId] = useState<string | null>(null);
-  const [expenseDialogJobId, setExpenseDialogJobId] = useState<string | null>(null);
+  const [chargeDialogOccId, setChargeDialogOccId] = useState<string | null>(null);
+  const [chargeDialogJobId, setChargeDialogJobId] = useState<string | null>(null);
   const [acceptPaymentJobId, setAcceptPaymentJobId] = useState<string>("");
 
   const [linkPickerOccId, setLinkPickerOccId] = useState<string | null>(null);
@@ -1975,16 +1977,16 @@ export default function ServicesTab({
                             )}
                             {(() => {
                               const addonsAmt = ((occ as any).addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0);
-                              const expTotal = (occ.expenses ?? []).reduce((s: number, e: any) => s + e.cost, 0);
+                              const expTotal = (occ.invoiceCharges ?? []).reduce((s: number, e: any) => s + e.cost, 0);
                               const grossPrice = occ.price != null ? occ.price + addonsAmt : null;
                               const net = grossPrice != null ? grossPrice - expTotal : null;
                               const assignees = (occ.assignees ?? []).filter((a: any) => a.role !== "observer");
 
-                              // Build simple price line: $50 + $14 add-ons − $5 exp = $59
+                              // Build simple price line: $50 + $14 services − $5 charges = $59
                               const parts: string[] = [];
                               if (occ.price != null) parts.push(`$${occ.price.toFixed(2)}`);
-                              if (addonsAmt > 0) parts.push(`$${addonsAmt.toFixed(2)} add-ons`);
-                              if (expTotal > 0) parts.push(`$${expTotal.toFixed(2)} exp`);
+                              if (addonsAmt > 0) parts.push(`$${addonsAmt.toFixed(2)} services`);
+                              if (expTotal > 0) parts.push(`$${expTotal.toFixed(2)} charges`);
 
                               return (
                                 <Box fontSize="xs" color="fg.muted">
@@ -1998,11 +2000,25 @@ export default function ServicesTab({
                                   ) : (
                                     <Text>Price: Not set</Text>
                                   )}
-                                  {occ.payment && (
-                                    <Text color="green.700" fontWeight="medium">
-                                      Paid: ${(occ.payment as any).amountPaid.toFixed(2)} via {methodLabel((occ.payment as any).method)}
+                                  {/* A payment ROW is not a payment — an
+                                      unapproved one has not landed, and a
+                                      confirmed $0 is a write-off. Same fix as
+                                      the job card's three sites. */}
+                                  {occ.payment && (() => {
+                                    const p_ = occ.payment as any;
+                                    return (
+                                    <Text
+                                      color={p_.confirmed === false ? "blue.700" : p_.amountPaid ? "green.700" : "fg.muted"}
+                                      fontWeight="medium"
+                                    >
+                                      {p_.confirmed === false
+                                      ? `Pending approval: $${p_.amountPaid.toFixed(2)} via ${methodLabel(p_.method)}`
+                                      : p_.amountPaid
+                                        ? `Paid: $${p_.amountPaid.toFixed(2)} via ${methodLabel(p_.method)}`
+                                        : "Closed with nothing collected"}
                                     </Text>
-                                  )}
+                                    );
+                                  })()}
                                   {assignees.length > 1 && net != null && (
                                     <Text color="fg.muted" mt={0.5}>
                                       ~${(net / assignees.length).toFixed(2)}/person if split evenly ({assignees.length} workers)
@@ -2015,7 +2031,7 @@ export default function ServicesTab({
                               // Per-worker payout breakdown: each worker's share × (1 − their own rate)
                               const addonsAmt = ((occ as any).addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0);
                               const grossPrice = occ.price! + addonsAmt;
-                              const expTotal = (occ.expenses ?? []).reduce((s: number, e: any) => s + e.cost, 0);
+                              const expTotal = (occ.invoiceCharges ?? []).reduce((s: number, e: any) => s + e.cost, 0);
                               const assignees = (occ.assignees ?? []).filter((a: any) => a.role !== "observer");
                               if (assignees.length === 0) return null;
                               const net = grossPrice - expTotal;
@@ -2141,7 +2157,7 @@ export default function ServicesTab({
                             )}
                             {occ.payment && (() => {
                               const pay = occ.payment as any;
-                              const expTotal = (occ.expenses ?? []).reduce((s: number, e: any) => s + e.cost, 0);
+                              const expTotal = (occ.invoiceCharges ?? []).reduce((s: number, e: any) => s + e.cost, 0);
                               const fee = pay.platformFeeAmount ?? 0;
                               const margin = pay.businessMarginAmount ?? 0;
                               // Same reconciliation rule as the JobsTab payout
@@ -2163,8 +2179,16 @@ export default function ServicesTab({
                               const unaccounted = Math.round((pay.amountPaid - (splitTotal + tipTotal + businessTotal - shortfall)) * 100) / 100;
                               return (
                                 <Box mt={1} p={2} bg="green.50" rounded="sm">
-                                  <Text fontSize="xs" fontWeight="medium" color="green.700">
-                                    Paid: ${pay.amountPaid.toFixed(2)} via {methodLabel(pay.method)}
+                                  <Text
+                                    fontSize="xs"
+                                    fontWeight="medium"
+                                    color={pay.confirmed === false ? "blue.700" : pay.amountPaid ? "green.700" : "fg.muted"}
+                                  >
+                                    {pay.confirmed === false
+                                      ? `Pending approval: $${pay.amountPaid.toFixed(2)} via ${methodLabel(pay.method)}`
+                                      : pay.amountPaid
+                                        ? `Paid: $${pay.amountPaid.toFixed(2)} via ${methodLabel(pay.method)}`
+                                        : "Closed with nothing collected"}
                                   </Text>
                                   {pay.receiptNumber && (
                                     <Text fontSize="xs" color="green.700" fontFamily="mono" mt={0.5}>
@@ -2191,7 +2215,7 @@ export default function ServicesTab({
                                       ))}
                                       {(expTotal > 0 || fee > 0 || margin > 0 || tipToBiz > 0 || overage > 0) && (
                                         <Box fontSize="xs" color="fg.muted" mt={0.5}>
-                                          {expTotal > 0 && <Text>Expenses: ${expTotal.toFixed(2)}</Text>}
+                                          {expTotal > 0 && <Text>Invoice charges: ${expTotal.toFixed(2)}</Text>}
                                           {fee > 0 && <Text>Commission ({pay.platformFeePercent}%): ${fee.toFixed(2)}</Text>}
                                           {margin > 0 && <Text>Margin ({pay.businessMarginPercent}%): ${margin.toFixed(2)}</Text>}
                                           {tipToBiz > 0 && <Text>Tip kept by business: ${tipToBiz.toFixed(2)}</Text>}
@@ -2220,66 +2244,36 @@ export default function ServicesTab({
 
                             {/* Add-on services */}
                             {((occ as any).addons ?? []).length > 0 && (() => {
-                              // Admin tab: removal allowed on active occurrences.
-                              const isActive =
-                                occ.status === "SCHEDULED" ||
-                                occ.status === "IN_PROGRESS" ||
-                                (occ.status as string) === "PAUSED";
+                              // READ-ONLY, same as the job card. Services are
+                              // added and removed in the Edit Services dialog,
+                              // which is the one surface that shows every line
+                              // on the visit at once. This list carried its own
+                              // ✕ — a second way to take money off a client's
+                              // invoice, in a different place, with its own
+                              // copy of the confirm text.
                               return (
                               <Box mt={1} p={1} bg="green.50" rounded="sm" borderWidth="1px" borderColor="green.200">
                                 <Text fontSize="xs" fontWeight="medium" color="green.700">
-                                  Add-ons: +${((occ as any).addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0).toFixed(2)}
+                                  Added Services: +${((occ as any).addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0).toFixed(2)}
                                 </Text>
                                 <VStack align="start" gap={0} mt={0.5}>
                                   {((occ as any).addons ?? []).map((addon: any) => (
-                                    <HStack key={addon.id} gap={1} align="center">
-                                      <Text fontSize="xs" color="green.600">
-                                        +${addon.price.toFixed(2)} — {addon.tag ? jobTagLabel(addon.tag) : addon.customLabel}
-                                      </Text>
-                                      {isActive && (
-                                        <Button
-                                          size="xs"
-                                          variant="ghost"
-                                          colorPalette="red"
-                                          px="1"
-                                          minW="auto"
-                                          title="Remove this service"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setConfirmAction({
-                                              title: "Remove this service?",
-                                              message: `+$${addon.price.toFixed(2)} — ${addon.tag ? jobTagLabel(addon.tag) : addon.customLabel} comes off this job, and off what the client is billed.`,
-                                              confirmLabel: "Remove",
-                                              colorPalette: "red",
-                                              onConfirm: async () => {
-                                                try {
-                                                  await apiDelete(`/api/admin/occurrences/${occ.id}/addons/${addon.id}`);
-                                                  publishInlineMessage({ type: "SUCCESS", text: "Service removed." });
-                                                  void loadDetail(job.id, true);
-                                                } catch (err) {
-                                                  publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to remove service.", err) });
-                                                }
-                                              },
-                                            });
-                                          }}
-                                        >
-                                          <X size={11} />
-                                        </Button>
-                                      )}
-                                    </HStack>
+                                    <Text key={addon.id} fontSize="xs" color="green.600">
+                                      +${addon.price.toFixed(2)} — {addon.tag ? jobTagLabel(addon.tag) : addon.customLabel}
+                                    </Text>
                                   ))}
                                 </VStack>
                               </Box>
                               );
                             })()}
                             {/* Expenses */}
-                            {occ.expenses && occ.expenses.length > 0 && (
+                            {occ.invoiceCharges && occ.invoiceCharges.length > 0 && (
                               <Box mt={1} p={1} bg="red.50" rounded="sm" borderWidth="1px" borderColor="red.200">
                                 <Text fontSize="xs" fontWeight="medium" color="red.700">
-                                  Expenses: −${occ.expenses.reduce((s: number, e: any) => s + e.cost, 0).toFixed(2)}
+                                  Expenses: −${occ.invoiceCharges.reduce((s: number, e: any) => s + e.cost, 0).toFixed(2)}
                                 </Text>
                                 <VStack align="start" gap={0} mt={0.5}>
-                                  {occ.expenses.map((exp: any) => (
+                                  {occ.invoiceCharges.map((exp: any) => (
                                     <Text key={exp.id} fontSize="xs" color="red.600">
                                       −${exp.cost.toFixed(2)} — {exp.description}
                                     </Text>
@@ -2669,8 +2663,10 @@ export default function ServicesTab({
                                   busyId={statusButtonBusyId}
                                   setBusyId={setStatusButtonBusyId}
                                 />
-                                {/* Add Service — admin-only entry on this
+                                {/* Edit Services — admin-only entry on this
                                     tab; matches the worker JobsTab affordance.
+                                    Adds AND removes: this dialog is the only
+                                    surface that takes a service off a visit.
                                     Active occurrences only. Tasks/events filter
                                     out via the surrounding occ.workflow check
                                     already handled in the parent block. */}
@@ -2678,7 +2674,7 @@ export default function ServicesTab({
                                   <StatusButton
                                     id="occ-add-service"
                                     itemId={occ.id}
-                                    label="Add Service"
+                                    label="Edit Services"
                                     onClick={async () => {
                                       setAddAddonJobId(job.id);
                                       setAddAddonOccId(occ.id);
@@ -3074,7 +3070,6 @@ export default function ServicesTab({
           defaultWorkflow={editingOccurrence.workflow}
           defaultOccTitle={(editingOccurrence as any).title ?? null}
           defaultFrequencyDays={(editingOccurrence as any).frequencyDays ?? null}
-          defaultAddons={(editingOccurrence as any).addons ?? []}
           defaultContactName={(editingOccurrence as any).contactName ?? null}
           defaultContactPhone={(editingOccurrence as any).contactPhone ?? null}
           defaultContactEmail={(editingOccurrence as any).contactEmail ?? null}
@@ -3131,12 +3126,41 @@ export default function ServicesTab({
         }}
       />
 
-      <AddAddonDialog
+      <ManageAddonsDialog
         occurrenceId={addAddonOccId}
         onClose={() => { setAddAddonOccId(null); setAddAddonJobId(null); }}
         serviceTypes={serviceTypes}
         forAdmin
+        // Adding a service changes what the client owes — warn when a
+        // request is already outstanding, same as the job card does.
+        sentInvoiceAmount={(() => {
+          if (!addAddonJobId || !addAddonOccId) return null;
+          const occ = jobDetails[addAddonJobId]?.occurrences?.find(
+            (o: any) => o.id === addAddonOccId,
+          ) as any;
+          return outstandingInvoiceAmount(occ, occ ? totalPrice(occ) : null);
+        })()}
+        // Services can be added AND removed here — this dialog is the only
+        // surface that removes one. Admin-only tab, so the gate is just
+        // "is the visit still editable".
+        addons={(() => {
+          if (!addAddonJobId || !addAddonOccId) return null;
+          const occ = jobDetails[addAddonJobId]?.occurrences?.find(
+            (o: any) => o.id === addAddonOccId,
+          ) as any;
+          return occ?.addons ?? null;
+        })()}
+        canRemove={(() => {
+          if (!addAddonJobId || !addAddonOccId) return false;
+          const occ = jobDetails[addAddonJobId]?.occurrences?.find(
+            (o: any) => o.id === addAddonOccId,
+          ) as any;
+          return !!occ && occInEditableState(occ);
+        })()}
         onAdded={() => {
+          if (addAddonJobId) void loadDetail(addAddonJobId, true);
+        }}
+        onRemoved={() => {
           if (addAddonJobId) void loadDetail(addAddonJobId, true);
         }}
       />
@@ -3177,7 +3201,7 @@ export default function ServicesTab({
           defaultAmount={(() => { const base = acceptPaymentOcc.price ?? 0; const addons = ((acceptPaymentOcc as any).addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0); return base + addons || null; })()}
           basePrice={acceptPaymentOcc.price ?? null}
           addonsTotal={((acceptPaymentOcc as any).addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0)}
-          totalExpenses={(acceptPaymentOcc.expenses ?? []).reduce((s: number, e: any) => s + e.cost, 0)}
+          totalInvoiceCharges={(acceptPaymentOcc.invoiceCharges ?? []).reduce((s: number, e: any) => s + e.cost, 0)}
           commissionPercent={commissionPercent}
           marginPercent={marginPercent}
           assignees={(acceptPaymentOcc.assignees ?? []).filter((a: any) => a.role !== "observer").map((a: any) => ({
@@ -3203,23 +3227,37 @@ export default function ServicesTab({
         />
       )}
 
-      <AddExpenseDialog
-        open={!!expenseDialogOccId}
-        onOpenChange={(o) => { if (!o) { setExpenseDialogOccId(null); setExpenseDialogJobId(null); } }}
-        endpoint={`/api/admin/occurrences/${expenseDialogOccId}/expenses`}
-        holdsEndpoint={`/api/admin/occurrences/${expenseDialogOccId}/supply-holds`}
+      {/* THE SAME DIALOG the job card uses. This tab used to mount its own
+          AddExpenseDialog — a second implementation of one form, which is
+          how an add form ends up able to set a field its edit form can't. */}
+      <ManageInvoiceChargesDialog
+        open={!!chargeDialogOccId}
+        onOpenChange={(o: boolean) => {
+          if (!o) {
+            if (chargeDialogJobId) void loadDetail(chargeDialogJobId, true);
+            setChargeDialogOccId(null);
+            setChargeDialogJobId(null);
+          }
+        }}
+        occurrenceId={chargeDialogOccId ?? ""}
+        isAdmin
+        sentInvoiceAmount={(() => {
+          if (!chargeDialogJobId || !chargeDialogOccId) return null;
+          const occ = jobDetails[chargeDialogJobId]?.occurrences?.find(
+            (o: any) => o.id === chargeDialogOccId,
+          ) as any;
+          return outstandingInvoiceAmount(occ, occ ? totalPrice(occ) : null);
+        })()}
         disableInventory={(() => {
           // Tasks, reminders, events, followups, announcements: no inventory.
-          if (!expenseDialogJobId || !expenseDialogOccId) return false;
-          const detail = jobDetails[expenseDialogJobId];
-          const occ = detail?.occurrences?.find((o: any) => o.id === expenseDialogOccId);
+          if (!chargeDialogJobId || !chargeDialogOccId) return false;
+          const detail = jobDetails[chargeDialogJobId];
+          const occ = detail?.occurrences?.find((o: any) => o.id === chargeDialogOccId);
           const wf = (occ as any)?.workflow;
           return wf === "TASK" || wf === "REMINDER" || wf === "EVENT" || wf === "FOLLOWUP" || wf === "ANNOUNCEMENT";
         })()}
-        onAdded={() => {
-          if (expenseDialogJobId) void loadDetail(expenseDialogJobId, true);
-          setExpenseDialogOccId(null);
-          setExpenseDialogJobId(null);
+        onChanged={() => {
+          if (chargeDialogJobId) void loadDetail(chargeDialogJobId, true);
         }}
       />
 

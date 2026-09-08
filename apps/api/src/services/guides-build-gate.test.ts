@@ -571,3 +571,54 @@ describe("guides build gate — pre-ship audit findings", () => {
     );
   });
 });
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("[build-gate] a guide references media BY NAME", () => {
+  // `guide-asset:<cuid>` is meaningful only in the database that minted it. A
+  // body carrying one renders nothing anywhere else, and the reader is told an
+  // internal id is "missing from the media library" — which is not something
+  // anyone can act on: you cannot upload a file named after a cuid.
+  //
+  // Names became the handle (see the GuideAsset unique-filename migration),
+  // but the media library's "Copy markdown" button kept emitting ids, so every
+  // guide written through the library reproduced the problem.
+  const web = (rel: string) =>
+    readFileSync(join(__dirname, "../../../web/src", rel), "utf8");
+
+  it("the copy button emits the name form", () => {
+    const LIB = web("ui/components/GuideMediaLibrary.tsx");
+    expect(LIB).toMatch(/writeText\(assetMarkdown\(a\)\)/);
+    expect(LIB, "the library must not hand out an id-form reference")
+      .not.toMatch(/assetToken\(a\.id\)/);
+  });
+
+  it("the name form falls back to the id only for a superseded asset", () => {
+    // A superseded file has handed its name to its replacement, so the id is
+    // the only handle it has left.
+    const G = web("lib/guides.ts");
+    expect(G).toMatch(/if \(a\.supersededAt \|\| !a\.originalFilename\) return assetToken\(a\.id\)/);
+    expect(G).toMatch(/return a\.originalFilename;/);
+  });
+
+  it("the editor's placeholder shows the name form", () => {
+    const T = web("ui/tabs/GuidesTab.tsx");
+    expect(T).toMatch(/!\[alt\]\(grass-id-chart\.png\)/);
+    expect(T, "the placeholder taught the id form").not.toMatch(/!\[alt\]\(guide-asset:<id>\)/);
+  });
+
+  it("a dead id reference is explained as an id, not as a missing upload", () => {
+    // "Upload it under that name" is impossible advice for a cuid.
+    const MD = web("ui/components/GuideMarkdown.tsx");
+    expect(MD).toMatch(/const isIdForm = \/\^guide-asset:\/i\.test\(target\.trim\(\)\)/);
+    expect(MD).toMatch(/doesn&rsquo;t\s*\n?\s*exist here/);
+    expect(MD).toMatch(/Replace it with the file&rsquo;s name/);
+  });
+
+  it("the id form still RESOLVES — existing bodies must keep working", () => {
+    const SVC = readFileSync(join(__dirname, "./guides.ts"), "utf8");
+    expect(SVC).toMatch(/const byId = \/\^guide-asset:\(\[a-z0-9\]\+\)\$\/i\.exec\(ref\.trim\(\)\)/);
+    expect(SVC).toMatch(/originalFilename: name, supersededAt: null/);
+  });
+});

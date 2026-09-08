@@ -658,12 +658,12 @@ function WorkerPayments({
                       );
                     })()}
                     {(() => {
-                      const expTotal = (item.occurrence?.expenses ?? []).reduce((s, e) => s + e.cost, 0);
+                      const expTotal = (item.occurrence?.invoiceCharges ?? []).reduce((s, e) => s + e.cost, 0);
                       return expTotal > 0 ? (
                         <VStack align="start" gap={0} mt={0.5}>
-                          {(item.occurrence?.expenses ?? []).map((exp) => (
+                          {(item.occurrence?.invoiceCharges ?? []).map((exp) => (
                             <Text key={exp.id} fontSize="xs" color="orange.600">
-                              Expense: ${exp.cost.toFixed(2)} — {exp.description}
+                              Charge: ${exp.cost.toFixed(2)} — {exp.description}
                             </Text>
                           ))}
                         </VStack>
@@ -673,7 +673,7 @@ function WorkerPayments({
                   {(() => {
                     // myAmount is the post-deduction payout (commission/margin/expenses already removed at acceptance time).
                     // Show informational context about what was deducted from the gross, but don't re-subtract.
-                    const expTotal = (item.occurrence?.expenses ?? []).reduce((s, e) => s + e.cost, 0);
+                    const expTotal = (item.occurrence?.invoiceCharges ?? []).reduce((s, e) => s + e.cost, 0);
                     const fee = item.payment.platformFeeAmount ?? 0;
                     const margin = item.payment.businessMarginAmount ?? 0;
                     const isPending = item.payment.confirmed === false;
@@ -733,7 +733,7 @@ function WorkerPayments({
                         )}
                         {expTotal > 0 && (
                           <Text fontSize="2xs" color="fg.muted">
-                            ${expTotal.toFixed(2)} expenses on job
+                            ${expTotal.toFixed(2)} charges on job
                           </Text>
                         )}
                         {fee > 0 && (
@@ -1026,8 +1026,8 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
   const [revertingPayment, setRevertingPayment] = useState<PaymentListItem | null>(null);
 
   // Delete expense state
-  const [deleteExpenseId, setDeleteExpenseId] = useState<string | null>(null);
-  const [deleteExpenseBusy, setDeleteExpenseBusy] = useState(false);
+  const [deleteChargeId, setDeleteChargeId] = useState<string | null>(null);
+  const [deleteChargeBusy, setDeleteChargeBusy] = useState(false);
 
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
 
@@ -1114,8 +1114,8 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
     [items]
   );
 
-  const totalExpenses = useMemo(
-    () => items.reduce((s, p) => s + (p.occurrence?.expenses ?? []).reduce((es, e) => es + e.cost, 0), 0),
+  const totalInvoiceCharges = useMemo(
+    () => items.reduce((s, p) => s + (p.occurrence?.invoiceCharges ?? []).reduce((es, e) => es + e.cost, 0), 0),
     [items]
   );
 
@@ -1276,7 +1276,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
   // is empty, the result matches the server's totals exactly.
   const displayedTotals = useMemo(() => {
     let grandTotal = 0;
-    let totalExpenses = 0;
+    let totalInvoiceCharges = 0;
     let totalPlatformFees = 0;
     let totalBusinessMargin = 0;
     let totalOverage = 0;
@@ -1294,7 +1294,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
     const personMap = new Map<string, { displayName: string | null; total: number; tips: number }>();
     const selectedPersons = personFilter.length > 0 ? new Set(personFilter) : null;
     for (const p of filteredItems) {
-      const expensesSum = (p.occurrence?.expenses ?? []).reduce((s, e) => s + e.cost, 0);
+      const chargesSum = (p.occurrence?.invoiceCharges ?? []).reduce((s, e) => s + e.cost, 0);
       // Effective worker payouts:
       //   • Confirmed payments → sum of materialized PaymentSplit.amount
       //   • Pending payments (no splits yet) → fall back to the
@@ -1311,7 +1311,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
         ? ((p.occurrence?.promisedPayouts ?? null) as Array<{ userId: string; net: number; fee: number; splitPercent: number; ratePercent: number; workerType: string | null }> | null)
         : null;
       grandTotal += p.amountPaid ?? 0;
-      totalExpenses += expensesSum;
+      totalInvoiceCharges += chargesSum;
       if (promised && promised.length > 0) {
         hasPendingProjection = true;
         // Project the canonical reconcileApproval outcome for the pending
@@ -1321,7 +1321,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
         // services/payments.ts → reconcileApproval; if you change the
         // logic on the server, update this block too. The canonical math
         // is locked in by the server's payments.test.ts suite.
-        const N = Math.max(0, (p.amountPaid ?? 0) - expensesSum);
+        const N = Math.max(0, (p.amountPaid ?? 0) - chargesSum);
         const totalPromisedPct = promised.reduce((s, r) => s + (r.splitPercent ?? 0), 0) || 100;
         let projectedWorkerPayouts = 0;
         let promisedCommission = 0;
@@ -1350,7 +1350,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
         // actually retains and what was promised. Locks in the
         // decomposition identity above.
         const promisedRetained = promisedCommission + promisedMargin;
-        const actualRetained = (p.amountPaid ?? 0) - expensesSum - projectedWorkerPayouts;
+        const actualRetained = (p.amountPaid ?? 0) - chargesSum - projectedWorkerPayouts;
         const delta = actualRetained - promisedRetained;
         if (delta > 0) totalOverage += delta;
         if (delta < 0) totalShortfall += -delta;
@@ -1370,7 +1370,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
         totalTipToBusiness += (p as any).tipToBusinessAmount ?? 0;
         totalShortfall += (p as any).shortfallAmount ?? 0;
       }
-      totalRevenue += (p.amountPaid ?? 0) - workerPayouts - expensesSum;
+      totalRevenue += (p.amountPaid ?? 0) - workerPayouts - chargesSum;
       // Per-person bucket. For confirmed payments, use the materialized
       // splits. For pending payments, use promisedPayouts so employees'
       // guaranteed amounts show up; contractors are intentionally NOT
@@ -1455,7 +1455,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
 
     return {
       grandTotal,
-      totalExpenses,
+      totalInvoiceCharges,
       totalPlatformFees,
       totalBusinessMargin,
       totalOverage,
@@ -2033,7 +2033,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
         // business-side summary as before.
         const workerScoped = personFilter.length > 0;
         const selectedEarnings = displayedTotals.personTotals.reduce((s, p) => s + p.total, 0);
-        const visibleExpenses = showJobs && !workerScoped ? displayedTotals.totalExpenses : 0;
+        const visibleCharges = showJobs && !workerScoped ? displayedTotals.totalInvoiceCharges : 0;
         const totalEquipCost = showEquip ? displayedTotals.totalEquipCost : 0;
         const visibleTotal = showJobs
           ? (workerScoped ? selectedEarnings : displayedTotals.grandTotal)
@@ -2044,7 +2044,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
         // → business cash flow), so it ADDS to the business total below.
         // See memory/project_equipment_rental_income.md for the policy.
         const equipmentIsBusinessIncome = !workerScoped;
-        const workerSidedeductions = workerScoped ? visibleExpenses + totalEquipCost : 0;
+        const workerSidedeductions = workerScoped ? visibleCharges + totalEquipCost : 0;
         const workerScopedNet = visibleTotal - workerSidedeductions;
         // Final Net to Business for the admin view: job-side retention
         // (Commission + Margin + Overage − Shortfall — covered by the
@@ -2101,10 +2101,10 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
               </Text>
             </>
           )}
-          {workerScoped && visibleExpenses > 0 && (
+          {workerScoped && visibleCharges > 0 && (
             <>
-              <Text fontSize="sm" color="orange.600">Expenses</Text>
-              <Text fontSize="sm" color="orange.600" textAlign="right">−${visibleExpenses.toFixed(2)}</Text>
+              <Text fontSize="sm" color="orange.600">Invoice charges</Text>
+              <Text fontSize="sm" color="orange.600" textAlign="right">−${visibleCharges.toFixed(2)}</Text>
             </>
           )}
           {/* Worker-scoped equipment: aggregating it at the top as a
@@ -2112,7 +2112,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
               (only contractors pay for equipment). Equipment is now
               attributed per-worker in the breakdown below. The combined
               Net line still sums correctly across all selected workers. */}
-          {workerScoped && showJobs && (visibleExpenses > 0 || totalEquipCost > 0) && (
+          {workerScoped && showJobs && (visibleCharges > 0 || totalEquipCost > 0) && (
             <>
               <Text fontSize="lg" fontWeight="bold" color="green.700">Combined Net</Text>
               <Text fontSize="lg" fontWeight="bold" color={workerScopedNet < 0 ? "red.700" : "green.700"} textAlign="right">${workerScopedNet.toFixed(2)}</Text>
@@ -2136,10 +2136,10 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
               expenses are a true deduction from job revenue (the
               business buys gas, mulch, etc. on the company card to
               service the job). Equipment is NOT shown here. */}
-          {!workerScoped && visibleExpenses > 0 && showJobs && (
+          {!workerScoped && visibleCharges > 0 && showJobs && (
             <>
-              <Text fontSize="sm" color="orange.600">Job Expenses</Text>
-              <Text fontSize="sm" color="orange.600" textAlign="right">−${visibleExpenses.toFixed(2)}</Text>
+              <Text fontSize="sm" color="orange.600">Invoice charges</Text>
+              <Text fontSize="sm" color="orange.600" textAlign="right">−${visibleCharges.toFixed(2)}</Text>
             </>
           )}
         </Box>
@@ -2195,7 +2195,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                 This is the line covered by the decomposition identity check
                 in `displayedTotals`. The next line (Equipment Rental
                 Income) adds on top to arrive at the final Net to Business. */}
-            <Text fontSize="sm" fontWeight="medium" color="blue.700" title="What the business kept on the visible job payments: collected − worker payouts (including their tips) − job expenses. Includes commission, margin, any overage, and the business's share of tips; net of shortfalls absorbed on underpaid jobs. Excludes equipment rental income (added separately below).">
+            <Text fontSize="sm" fontWeight="medium" color="blue.700" title="What the business kept on the visible job payments: collected − worker payouts (including their tips) − invoice charges. Includes commission, margin, any overage, and the business's share of tips; net of shortfalls absorbed on underpaid jobs. Excludes equipment rental income (added separately below).">
               Net from Jobs
             </Text>
             <Text fontSize="sm" fontWeight="medium" color="blue.700" textAlign="right">
@@ -2239,7 +2239,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
             borderColor="green.200"
           >
             <Text fontSize="xs" color="green.900" fontWeight="semibold" textTransform="uppercase" letterSpacing="wider" mb={1}>
-              {workerScoped ? "Per-person breakdown" : "Per-person (net of expenses & fees)"}
+              {workerScoped ? "Per-person breakdown" : "Per-person (net of charges & fees)"}
             </Text>
             <Box
               display="grid"
@@ -2674,13 +2674,13 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                       );
                     })()}
                     {(() => {
-                      const expTotal = (p.occurrence?.expenses ?? []).reduce((s, e) => s + e.cost, 0);
+                      const expTotal = (p.occurrence?.invoiceCharges ?? []).reduce((s, e) => s + e.cost, 0);
                       return expTotal > 0 ? (
                         <VStack align="start" gap={0} mt={0.5}>
-                          {(p.occurrence?.expenses ?? []).map((exp) => (
+                          {(p.occurrence?.invoiceCharges ?? []).map((exp) => (
                             <HStack key={exp.id} gap={1} w="full">
                               <Text fontSize="xs" color="orange.600" flex="1">
-                                Expense: ${exp.cost.toFixed(2)} — {exp.description}
+                                Charge: ${exp.cost.toFixed(2)} — {exp.description}
                               </Text>
                             </HStack>
                           ))}
@@ -2689,7 +2689,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                     })()}
                   </VStack>
                   {(() => {
-                    const expTotal = (p.occurrence?.expenses ?? []).reduce((s, e) => s + e.cost, 0);
+                    const expTotal = (p.occurrence?.invoiceCharges ?? []).reduce((s, e) => s + e.cost, 0);
                     const fee = p.platformFeeAmount ?? 0;
                     const margin = (p as any).businessMarginAmount ?? 0;
                     // Headline payout uses the SAME derivation as the rows
@@ -2911,7 +2911,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                         {!skipped && (
                           <Text fontSize="xs" color="fg.muted" mt={1}>
                             from ${p.amountPaid.toFixed(2)} paid
-                            {expTotal > 0 ? `, after $${expTotal.toFixed(2)} expenses` : ""}
+                            {expTotal > 0 ? `, after $${expTotal.toFixed(2)} in charges` : ""}
                           </Text>
                         )}
                         {/* When a payment carries a tip or an undesignated
@@ -2966,7 +2966,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                         {!skipped && tipTotal > 0 && (
                           <Text fontSize="xs" color="fg.muted" fontWeight="medium" mt={1}>
                             ${splitTotal.toFixed(2)} to workers + ${(fee + margin + tipToBusiness + overage).toFixed(2)} to business
-                            {expTotal > 0 ? ` + $${expTotal.toFixed(2)} expenses` : ""}
+                            {expTotal > 0 ? ` + $${expTotal.toFixed(2)} in charges` : ""}
                             {" = "}${p.amountPaid.toFixed(2)}
                           </Text>
                         )}
@@ -3291,14 +3291,14 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
       </Dialog.Root>
 
       {/* ── Delete Expense Confirmation ── */}
-      <Dialog.Root open={!!deleteExpenseId} onOpenChange={(e) => { if (!e.open) setDeleteExpenseId(null); }}>
+      <Dialog.Root open={!!deleteChargeId} onOpenChange={(e) => { if (!e.open) setDeleteChargeId(null); }}>
         <Portal>
           <Dialog.Backdrop />
           <Dialog.Positioner>
             <Dialog.Content mx="4" maxW="sm" w="full" rounded="2xl" p="4" shadow="lg">
               <Dialog.CloseTrigger />
               <Dialog.Header>
-                <Dialog.Title>Delete Expense</Dialog.Title>
+                <Dialog.Title>Delete invoice charge</Dialog.Title>
               </Dialog.Header>
               <Dialog.Body>
                 <Text>
@@ -3307,24 +3307,24 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
               </Dialog.Body>
               <Dialog.Footer>
                 <HStack justify="flex-end" w="full">
-                  <Button variant="ghost" onClick={() => setDeleteExpenseId(null)} disabled={deleteExpenseBusy}>
+                  <Button variant="ghost" onClick={() => setDeleteChargeId(null)} disabled={deleteChargeBusy}>
                     Cancel
                   </Button>
                   <Button
                     colorPalette="red"
-                    loading={deleteExpenseBusy}
+                    loading={deleteChargeBusy}
                     onClick={async () => {
-                      if (!deleteExpenseId) return;
-                      setDeleteExpenseBusy(true);
+                      if (!deleteChargeId) return;
+                      setDeleteChargeBusy(true);
                       try {
-                        await apiDelete(`/api/admin/expenses/${deleteExpenseId}`);
-                        publishInlineMessage({ type: "SUCCESS", text: "Expense deleted." });
-                        setDeleteExpenseId(null);
+                        await apiDelete(`/api/admin/invoice-charges/${deleteChargeId}`);
+                        publishInlineMessage({ type: "SUCCESS", text: "Invoice charge deleted." });
+                        setDeleteChargeId(null);
                         void load();
                       } catch (err) {
-                        publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to delete expense.", err) });
+                        publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to delete invoice charge.", err) });
                       } finally {
-                        setDeleteExpenseBusy(false);
+                        setDeleteChargeBusy(false);
                       }
                     }}
                   >

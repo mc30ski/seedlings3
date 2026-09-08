@@ -125,6 +125,7 @@ export type NumericField =
   | "medicareEmployer"
   | "futaEmployer"
   | "stateUnemploymentEmployer"
+  | "paycheckTips"
   | "netPay"
   | "reimbursements"
   | "donations"
@@ -137,6 +138,13 @@ const EXACT_NUMERIC: Record<string, NumericColumn> = {
   "Regular (Rate)": { field: "regularRate", additive: false },
   "Regular (Amount)": { field: "regularAmount", additive: true },
   "Additional Earnings": { field: "additionalEarnings", additive: true },
+  // Appears only once a period actually carries tips, and Gusto INSERTS it
+  // ahead of Gross Earnings rather than appending. Harmless because this map
+  // is keyed by header name — but for the same reason it was simply absent,
+  // and an absent mapping meant the column was read and thrown away.
+  // Already included in Gross Earnings: additive for period totals, never
+  // added to gross.
+  "Paycheck Tips": { field: "paycheckTips", additive: true },
   "Gross Earnings": { field: "grossEarnings", additive: true },
   "Employee Taxes": { field: "employeeTaxes", additive: true },
   "Federal Income Tax (Employee)": { field: "federalIncomeTax", additive: true },
@@ -243,6 +251,24 @@ export type ParsedPayrollPeriod = {
   };
   /** Header row exactly as it appeared, for provenance. */
   headers: string[];
+  /**
+   * Headers this parser does not recognise but which carry a NUMBER.
+   *
+   * THE REASON THIS EXISTS: Gusto added a "Paycheck Tips" column the first
+   * time a period carried tips. The parser maps by header name, so nothing
+   * broke and nothing warned — the column was read, found no mapping, and was
+   * dropped on the floor. The import reported success, the figures all
+   * reconciled, and the money was simply invisible in the application. The
+   * operator found it by noticing an absence.
+   *
+   * Silence is the wrong default for "your payroll provider sent us something
+   * we don't understand". A column we cannot map is reported so somebody
+   * decides, instead of the import deciding by omission.
+   *
+   * Text columns are NOT reported — "Work Address" and "Employee Type" are
+   * legitimately unmapped and always will be.
+   */
+  unmappedNumericHeaders: string[];
 };
 
 export class PayrollParseError extends Error {}
@@ -387,7 +413,24 @@ function parseSection(rows: string[][], sectionIdx: number): ParsedPayrollPeriod
     throw new PayrollParseError("Section has no employee rows.");
   }
 
-  return { periodStart, periodEnd, payDay, label, entries, totals, headers };
+  // Which unmapped headers actually carried a number. A header is only worth
+  // reporting if some row put a figure under it — Gusto emits several text
+  // columns that are legitimately unmapped and always will be.
+  const unmappedNumericHeaders = headers.filter((h, c) => {
+    if (numericCols[c]) return false;
+    const looksNumeric = (v: string) => {
+      const t = String(v ?? "").trim();
+      if (t === "") return false;
+      return /^-?\$?[\d,]+(\.\d+)?$/.test(t);
+    };
+    if (totals && looksNumeric(totals.raw[h] ?? "")) return true;
+    return entries.some((e) => looksNumeric(e.raw[h] ?? ""));
+  });
+
+  return {
+    periodStart, periodEnd, payDay, label, entries, totals, headers,
+    unmappedNumericHeaders,
+  };
 }
 
 // ── Conservation check ───────────────────────────────────────────────────────

@@ -33,7 +33,7 @@
 //      paid promised via topUp; contractors get $0).
 //
 //   3. Otherwise project the worker's expected net from the occurrence:
-//        N          = max(0, (price ?? proposalAmount ?? 0) + Σaddons - Σexpenses)
+//        N          = LEGACY ? max(0, labor + Σaddons - Σcharges) : labor + Σaddons
 //        myPercent  = completionSplits[me].percent (when set)
 //                     ELSE  100 / non-observer-assignees (if I'm on the crew)
 //                     ELSE  0
@@ -54,7 +54,7 @@ export type OccurrenceForEarnings = {
    *  and treated defensively (any non-array value is ignored). */
   completionSplits: unknown;
   addons: { price: number | null }[];
-  expenses: { cost: number }[];
+  invoiceCharges: { cost: number }[];
   /** Non-observer assignees only don't have to be pre-filtered — the
    *  helper does that itself. userId is required so we can locate the
    *  current worker in the crew. */
@@ -109,8 +109,10 @@ export function computeMyOccurrenceNet(
   const addonsTotal = (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
   const displayPrice = basePrice + addonsTotal;
   if (displayPrice <= 0) return 0;
-  const expTotal = (occ.expenses ?? []).reduce((s, e) => s + (e.cost ?? 0), 0);
-  const N = Math.max(0, displayPrice - expTotal);
+  // Material charges are billed to the client ON TOP and never touch the
+  // crew's pool, so the pool is the full labor + services figure. There is no
+  // era in which that differs — see lib/jobPricing.ts.
+  const N = displayPrice;
   if (N <= 0) return 0;
 
   let myPercent = 0;

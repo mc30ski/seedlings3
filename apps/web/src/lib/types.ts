@@ -452,7 +452,7 @@ export type JobOccurrenceFull = {
   linkGroupId?: string | null;
   assignees: JobOccurrenceAssigneeWithUser[];
   payment?: PaymentInfo | null;
-  expenses?: ExpenseItem[];
+  invoiceCharges?: InvoiceChargeItem[];
   _count?: { photos: number; comments?: number };
   createdAt?: string;
 };
@@ -495,12 +495,41 @@ export type JobDetail = JobListItem & {
   occurrences: JobOccurrenceFull[];
 };
 
-// ---- Expenses ----
+// ---- Invoice charges ----
+//
+// A line on the CLIENT'S INVOICE — what they are billed on top of labor.
+// NOT a business expense: adding one writes no ledger row and creates no
+// deduction. Named `ExpenseItem` until 2026-09-06, which is exactly how the
+// two books got conflated. See docs/features/job-materials.md.
 
-export type ExpenseItem = {
+export type InvoiceChargeItem = {
   id: string;
   occurrenceId?: string;
+  /** What the CLIENT IS CHARGED for this line — not a cost. Goes on the
+   *  invoice. See docs/features/job-materials.md. */
   cost: number;
+  /** Optional CLIENT-VISIBLE detail, e.g. "25 bags at $6.00". */
+  detail?: string | null;
+  /** What we actually paid, when recorded. Informational: job margin only,
+   *  never the invoice and never the payout. ADMIN-ONLY on the client. */
+  actualCost?: number | null;
+  /** The loosely-linked ledger charge, when one is pointed at. Decorative. */
+  businessExpenseId?: string | null;
+  businessExpense?: {
+    id?: string;
+    cost?: number | null;
+    description?: string | null;
+    vendor?: string | null;
+    date?: string | null;
+  } | null;
+  /** Set when this charge came from consuming inventory. Its amount and name
+   *  are DERIVED from quantity x Supply.clientUnitPrice. */
+  supplyHold?: {
+    id: string;
+    quantity: number;
+    status: "ACTIVE" | "CONSUMED" | "RELEASED";
+    supply?: { id: string; name: string; unit: string } | null;
+  } | null;
   description: string;
   createdById: string;
   createdBy?: { id: string; displayName?: string | null };
@@ -564,7 +593,7 @@ export type PaymentListItem = PaymentInfo & {
     id: string;
     jobId: string;
     startAt?: string | null;
-    expenses?: ExpenseItem[];
+    invoiceCharges?: InvoiceChargeItem[];
     // Promised-net snapshot taken at Take-Payment time. Each row is the
     // per-worker outcome the canonical math computed for the invoiced
     // amount, BEFORE the client pays. Used by the PaymentsTab card to
@@ -634,7 +663,7 @@ export type WorkerPaymentItem = {
     id: string;
     jobId: string;
     startAt?: string | null;
-    expenses?: ExpenseItem[];
+    invoiceCharges?: InvoiceChargeItem[];
     job: {
       id: string;
       property: { id: string; displayName: string; client?: { id: string; displayName: string } | null };
@@ -747,7 +776,7 @@ export type WorkerOccurrence = {
   paymentIntentMethod?: string | null;
   paymentIntentAt?: string | null;
   payment?: PaymentInfo | null;
-  expenses?: ExpenseItem[];
+  invoiceCharges?: InvoiceChargeItem[];
   _count?: { photos: number; comments?: number };
   photos?: { id: string; url: string; contentType?: string | null }[];
   job?: {

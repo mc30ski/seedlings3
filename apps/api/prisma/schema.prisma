@@ -387,7 +387,7 @@ model User {
   paymentsWrittenOff         Payment[]                 @relation("PaymentWriteOff")
   paymentsSkipped            Payment[]                 @relation("PaymentSkip")
   paymentSplits              PaymentSplit[]
-  expenses                   Expense[]
+  invoiceCharges             InvoiceCharge[]
   photos                     JobOccurrencePhoto[]
   settingsUpdated            Setting[]
   pinnedOccurrences          PinnedOccurrence[]
@@ -1072,6 +1072,7 @@ model JobClient {
   @@index([clientId])
 }
 
+
 model JobOccurrence {
   id String @id @default(cuid())
 
@@ -1089,10 +1090,17 @@ model JobOccurrence {
   source   JobOccurrenceSource @default(GENERATED)
   workflow OccurrenceWorkflow  @default(STANDARD)
 
-  jobType                    String? // Legacy/custom free-text job type
-  jobTags                    String? // JSON array of tags, e.g. ["MOW","TRIM","EDGE","BLOW"]
-  notes                      String?
-  price                      Float?
+  jobType String? // Legacy/custom free-text job type
+  jobTags String? // JSON array of tags, e.g. ["MOW","TRIM","EDGE","BLOW"]
+  notes   String?
+  price   Float?
+
+
+  /// Optional CLIENT-VISIBLE detail under the labor line on the invoice —
+  /// e.g. "3 hours at $50/hr". Presentational only. Typing an hourly
+  /// breakdown discloses your rate, so this is the operator's choice, never
+  /// derived.
+  laborDetail                String?
   estimatedMinutes           Int?
   frequencyDays              Int? // Overrides Job.frequencyDays when set
   proposalAmount             Float?
@@ -1276,7 +1284,7 @@ model JobOccurrence {
 
   assignees        JobOccurrenceAssignee[]
   payment          Payment?
-  expenses         Expense[]
+  invoiceCharges   InvoiceCharge[]
   businessExpenses BusinessExpense[]
   supplyHolds      SupplyHold[]
   addons           OccurrenceAddon[]
@@ -1555,7 +1563,19 @@ model PaymentSplit {
   @@index([ownerEarnings, createdAt])
 }
 
-model Expense {
+/// A LINE ON THE CLIENT'S INVOICE. Not a business expense, not a deduction.
+///
+/// Named `Expense` until 2026-09-06, which is precisely how the two books got
+/// conflated: adding one used to write a paired `BusinessExpense`, so the same
+/// money was deducted twice the moment the operator also entered the real card
+/// charge from their statement.
+///
+/// The physical table is still "Expense" (see @@map) — renaming it would break
+/// the deployed API the instant the migration ran, for no gain. Do not "clean
+/// that up" later; the mapping is the point.
+///
+/// See docs/features/job-materials.md.
+model InvoiceCharge {
   id String @id @default(cuid())
 
   occurrenceId String
@@ -1564,19 +1584,51 @@ model Expense {
   createdById String
   createdBy   User   @relation(fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
+  /// What the CLIENT IS CHARGED for this line. Despite the historical name
+  /// this has never been a cost figure in the payout math — it is the amount
+  /// the job is charged, and under the itemized model it is also the amount
+  /// added to the invoice.
   cost        Float
   description String
 
-  // 1:1 link to the BusinessExpense (tax ledger) row. Every Expense added on
-  // a job in MVP-step-2 onward gets a paired BusinessExpense — workers buy on
-  // the company card, so per-job spend IS a business expense.
-  businessExpenseId String?          @unique
+  /// Optional detail shown to the CLIENT under this line on the invoice —
+  /// e.g. "25 bags at $6.00". Presentational only; the charge is `cost`.
+  ///
+  /// CLIENT-VISIBLE. Never put `actualCost` or a margin in it.
+  detail String?
+
+  /// What we actually paid, for the whole line. OPTIONAL and purely
+  /// informational — it feeds job margin, never the invoice and never the
+  /// payout. Populated from `Supply.businessCost` when the line came from
+  /// inventory; typed by hand, or left null, for a one-off.
+  actualCost Float?
+
+  /// A LEDGER LINK THAT MEANS TWO DIFFERENT THINGS. Read this before writing
+  /// any code that follows it. Only the OCCURRENCE'S `pricingModel` tells
+  /// them apart:
+  ///
+  ///   LEGACY   — a real 1:1 pairing created by the old dual-write, when
+  ///              adding a job expense also created its Schedule C deduction.
+  ///              That ledger row IS this line's deduction. These rows still
+  ///              exist, still feed the P&L, and are left alone on purpose.
+  ///
+  ///   ITEMIZED — an OPTIONAL, MANY-TO-ONE breadcrumb the operator set by
+  ///              hand so they can remember what a receipt was for. That
+  ///              ledger row is a whole $500 Lowe's charge covering several
+  ///              jobs. It is DECORATIVE: no total reads it, and clearing it
+  ///              changes no number.
+  ///
+  /// CONSEQUENCE: a cascade that looks correct on a LEGACY row destroys a
+  /// $500 deduction on an ITEMIZED one. Deleting a job line must never delete
+  /// a BusinessExpense, and editing one must never write through to one.
+  /// SetNull, never Restrict, never cascaded.
+  businessExpenseId String?
   businessExpense   BusinessExpense? @relation(fields: [businessExpenseId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
-  // Back-relation: when this Expense was created by consuming inventory
-  // (MVP-step-3), the SupplyHold owns the link via SupplyHold.expenseId.
-  // No BusinessExpense is paired in this case — the BE was already recorded
-  // at purchase time, and double-recording would inflate tax-ledger totals.
+  // Back-relation: when this charge was created by consuming inventory, the
+  // SupplyHold owns the link via SupplyHold.invoiceChargeId. No
+  // BusinessExpense is paired — the deduction is the real card charge for the
+  // original purchase, recorded in the Ledger.
   supplyHold SupplyHold?
 
   createdAt DateTime @default(now())
@@ -1584,6 +1636,9 @@ model Expense {
 
   @@index([occurrenceId])
   @@index([createdById])
+  @@index([businessExpenseId])
+  /// Physical table name predates the rename. Do NOT change it.
+  @@map("Expense")
 }
 
 // BusinessExpense is the canonical Accounting ledger row. Despite the name,
@@ -1660,17 +1715,22 @@ model BusinessExpense {
 
   // Optional link to a job occurrence — set when the expense was incurred for
   // a specific job (worker buys gas on the company card). The corresponding
-  // per-Job Expense row drives payout reduction; this row is the tax ledger
-  // entry. Linked 1:1 via Expense.businessExpenseId.
-  occurrenceId String?
-  occurrence   JobOccurrence? @relation(fields: [occurrenceId], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  expense      Expense?
+  // per-job InvoiceCharge is what the client is billed; this row is the tax
+  // ledger entry. Linked via InvoiceCharge.businessExpenseId — see the field
+  // comment there, it means two different things.
+  occurrenceId   String?
+  occurrence     JobOccurrence?  @relation(fields: [occurrenceId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  /// MANY job lines may point at one receipt — a $500 Lowe's charge covers
+  /// several jobs. Non-empty is NOT evidence this row was created by a job:
+  /// post-rename it usually means an operator tagged a receipt as relevant.
+  invoiceCharges InvoiceCharge[]
 
   // Back-relation: when this BE was created by an inventory purchase
   // (MVP-step-3), the SupplyPurchase owns the link via
   // SupplyPurchase.businessExpenseId. Allows the tax-ledger UI to surface a
   // "Supply: Mulch ×10" badge and link back to the Supplies tab.
-  supplyPurchase SupplyPurchase?
+  /// Likewise a growing list — several purchases may share one receipt.
+  supplyPurchases SupplyPurchase[]
 
   // Optional receipt photo. Stored in the seedlings-receipts R2 bucket; the
   // R2 key is the canonical reference. Same anchor for all 3 expense
@@ -2421,6 +2481,11 @@ model OccurrenceAddon {
   tag          String?
   customLabel  String?
   price        Float
+  /// Optional CLIENT-VISIBLE detail on the invoice — e.g. "5 bushes at
+  /// $25.00 each". A service and a material charge are entered and rendered
+  /// identically; the only difference is that a service is WORK, so the crew
+  /// splits it. Presentational only.
+  detail       String?
   createdById  String
   createdBy    User          @relation(fields: [createdById], references: [id], onDelete: Restrict)
   createdAt    DateTime      @default(now())
@@ -2508,11 +2573,14 @@ model Supply {
   // Reference businessCost — typically updated to the most recent
   // SupplyPurchase.unitCost. Display-only / default for new purchases.
   businessCost  Float   @default(0)
-  // Per-unit charge to the job's payout when consumed. May exceed
-  // businessCost — the difference is implicit business margin (similar to
-  // platform fee / employee margin). Snapshot at hold time so retroactive
-  // edits don't reprice existing holds.
-  jobPayoutCost Float   @default(0)
+  /// What the CLIENT is charged per unit pulled onto a job, added to their
+  /// invoice on top of the labor price.
+  ///
+  /// It was called `jobPayoutCost`, from the model where materials came out
+  /// of the crew's pay. They never do — the client pays them — and the name
+  /// told every reader the opposite. May exceed `businessCost`; the
+  /// difference is the material margin.
+  clientUnitPrice Float @default(0)
   // Physical units in stock. Available = onHand − Σ(active holds), computed
   // at query time.
   onHand        Int     @default(0)
@@ -2552,8 +2620,12 @@ model SupplyPurchase {
   // Cascade): deleting the BE while a SupplyPurchase is linked would orphan
   // inventory; the BE-delete handler must reverse inventory and remove the
   // SupplyPurchase first.
-  businessExpenseId String          @unique
-  businessExpense   BusinessExpense @relation(fields: [businessExpenseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  /// OPTIONAL, MANY-TO-ONE breadcrumb to a real ledger charge — the same
+  /// decorative pointer InvoiceCharge carries. Several purchases may point at
+  /// one $500 receipt. Recording a purchase creates NO ledger row: it tracks
+  /// STOCK, not taxes. SetNull, never Restrict.
+  businessExpenseId String?
+  businessExpense   BusinessExpense? @relation(fields: [businessExpenseId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   createdById String
   createdBy   User     @relation(fields: [createdById], references: [id], onDelete: Restrict)
@@ -2562,6 +2634,7 @@ model SupplyPurchase {
 
   @@index([supplyId, date])
   @@index([date])
+  @@index([businessExpenseId])
 }
 
 model SupplyHold {
@@ -2573,15 +2646,18 @@ model SupplyHold {
   occurrenceId String
   occurrence   JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
-  quantity      Int
-  jobPayoutCost Float // per-unit charge snapshot at hold time
+  quantity        Int
+  /// The client price SNAPSHOT taken when the hold was created, so repricing
+  /// the catalog never reprices stock already committed to a job.
+  clientUnitPrice Float
   status        SupplyHoldStatus @default(ACTIVE)
 
-  // 1:1 link to the per-job Expense row that drives payout deduction.
-  // No paired BusinessExpense — the BE was created at purchase time;
-  // recording another at consumption would double-count for taxes.
-  expenseId String?  @unique
-  expense   Expense? @relation(fields: [expenseId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  // 1:1 link to the invoice charge this consumption put on the client's bill.
+  // No paired BusinessExpense — the deduction is the real card charge for the
+  // original purchase, recorded in the Ledger.
+  // Column is still "expenseId" (@map) — see the note on InvoiceCharge.
+  invoiceChargeId String?        @unique @map("expenseId")
+  invoiceCharge   InvoiceCharge? @relation(fields: [invoiceChargeId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   createdById String
   createdBy   User      @relation(fields: [createdById], references: [id], onDelete: Restrict)
@@ -3585,6 +3661,20 @@ model PayrollEntry {
   regularAmount Float?
 
   additionalEarnings Float?
+  /// Tips paid out through the paycheck. Gusto adds this column only once a
+  /// period actually carries tips, and it is INSERTED between Additional
+  /// Earnings and Gross Earnings rather than appended — harmless here because
+  /// the parser maps by header name, but it means the column simply did not
+  /// exist in any earlier export.
+  ///
+  /// Already inside `grossEarnings`; never add the two together.
+  ///
+  /// NOTE THIS IS NOT THE JOB-TIP FIELD. `PaymentSplit.tipAmount` is what the
+  /// app computed a worker was owed; this is what Gusto actually paid. They
+  /// are the estimate and the ground truth, and the firewall between imported
+  /// payroll and the app's own estimates applies here exactly as it does to
+  /// wages — see docs/features/payroll.md.
+  paycheckTips       Float?
   grossEarnings      Float?
 
   employeeTaxes              Float?

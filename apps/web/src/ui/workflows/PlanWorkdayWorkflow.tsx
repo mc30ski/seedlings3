@@ -745,7 +745,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
     // Compute summary from current occurrences (includes any changes made during workflow or outside)
     const activeOccs = occurrences.filter((o) => !releasedIds.includes(o.id));
     const totalCustomerCost = activeOccs.reduce((sum, o) => sum + (o.price ?? 0), 0);
-    const totalExpenses = activeOccs.reduce((sum, o) => sum + (o.expenses ?? []).reduce((s, e) => s + e.cost, 0), 0);
+    const totalExpenses = activeOccs.reduce((sum, o) => sum + (o.invoiceCharges ?? []).reduce((s, e) => s + e.cost, 0), 0);
     const totalEstMinutes = activeOccs.reduce((sum, o) => sum + (o.estimatedMinutes ?? 60), 0);
 
     return (

@@ -412,3 +412,49 @@ describe("netForJob — the make-whole double-count", () => {
     expect(netForJob(undefined, 52.5, 18.375, 0)).toBe(34.13);
   });
 });
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("[build-gate] a column Gusto adds must not vanish", () => {
+  const IMPORT = readFileSync(join(__dirname, "./payrollImport.ts"), "utf8");
+  const SERVICE = readFileSync(join(__dirname, "./payroll.ts"), "utf8");
+
+  it("Paycheck Tips is mapped and additive", () => {
+    expect(IMPORT).toMatch(/"Paycheck Tips": \{ field: "paycheckTips", additive: true \}/);
+  });
+
+  it("ALL_NUMERIC_FIELDS lists it, and cannot silently omit a future field", () => {
+    // Mapping the column is not enough — the projection lists are separate,
+    // hand-maintained arrays. Miss this one and the figure imports, sits in
+    // the database, and appears on no screen. That is what happened.
+    //
+    // The exhaustiveness check below only works because the array is
+    // `as const satisfies`, NOT annotated `: readonly NumericField[]` — the
+    // annotation widens the literals and makes Exclude<> always `never`. It
+    // was written that way first and passed with a field deliberately removed.
+    expect(SERVICE).toMatch(/"paycheckTips",/);
+    expect(SERVICE).toMatch(/\] as const satisfies readonly NumericField\[\];/);
+    expect(SERVICE).toMatch(/_MissingFromAllNumericFields/);
+    expect(SERVICE, "the annotation would erase the literal types")
+      .not.toMatch(/ALL_NUMERIC_FIELDS: readonly NumericField\[\]/);
+  });
+
+  it("an unmappable numeric column is reported rather than dropped", () => {
+    expect(IMPORT).toMatch(/unmappedNumericHeaders/);
+    expect(SERVICE).toMatch(/unmappedColumns: parsed\.unmappedNumericHeaders/);
+  });
+
+  it("tips reach the operator's totals", () => {
+    expect(SERVICE).toMatch(/paycheckTips: t\.values\?\.paycheckTips \?\? null/);
+    expect(SERVICE).toMatch(/select: \{ grossEarnings: true, paycheckTips: true, netPay: true \}/);
+  });
+
+  it("the seed carries a tipped period, so a render spec has something to see", () => {
+    const SEED = readFileSync(join(__dirname, "../../prisma/seed.ts"), "utf8");
+    expect(SEED).toMatch(/"Paycheck Tips",/);
+    // Blank, not "0.00", for someone who earned none on a tipped week —
+    // blank ≠ zero is the rule the parser hangs on and needs a live example.
+    expect(SEED).toMatch(/r\.tipsApply \? \(r\.tipped \? money\(r\.tips\) : ""\) : ""/);
+  });
+});

@@ -74,7 +74,7 @@ type Props = {
   basePrice?: number | null;
   /** Total addon amount — for breakdown display */
   addonsTotal?: number;
-  totalExpenses?: number;
+  totalInvoiceCharges?: number;
   commissionPercent?: number;
   marginPercent?: number;
   assignees: Assignee[];
@@ -121,7 +121,7 @@ export default function AcceptPaymentDialog({
   defaultAmount,
   basePrice,
   addonsTotal = 0,
-  totalExpenses = 0,
+  totalInvoiceCharges = 0,
   commissionPercent = 0,
   marginPercent = 0,
   assignees,
@@ -309,7 +309,7 @@ export default function AcceptPaymentDialog({
 
   // Per-worker breakdown for the entered amount, using the canonical
   // per-worker math (mirrors server's computeBreakdown).
-  //   N         = amount − expenses
+  //   N         = amount − invoice charges
   //   gross_i   = N × percent_i / 100
   //   rate_i    = contractorFee or employeeMargin (based on workerType)
   //   fee_i     = gross_i × rate_i / 100
@@ -319,7 +319,7 @@ export default function AcceptPaymentDialog({
   const breakdown = useMemo(() => {
     const amt = parseFloat(amountPaid);
     const validAmount = Number.isFinite(amt) && amt > 0;
-    const N = validAmount ? Math.max(0, amt - totalExpenses) : 0;
+    const N = validAmount ? Math.max(0, amt - totalInvoiceCharges) : 0;
     const rows = assignees.map((a) => {
       const pctStr = splits[a.userId] || "0";
       const pct = Number.parseFloat(pctStr);
@@ -345,7 +345,7 @@ export default function AcceptPaymentDialog({
     const businessMarginTotal = round2(rows.filter((r) => r.isEmployeeClass).reduce((s, r) => s + r.fee, 0));
     const totalPayout = round2(rows.reduce((s, r) => s + r.net, 0));
     return { rows, platformFeeTotal, businessMarginTotal, totalPayout, validAmount, N: round2(N) };
-  }, [amountPaid, assignees, splits, totalExpenses, commissionPercent, marginPercent]);
+  }, [amountPaid, assignees, splits, totalInvoiceCharges, commissionPercent, marginPercent]);
 
   const percentSum = useMemo(() => {
     return assignees.reduce((s, a) => {
@@ -848,9 +848,9 @@ export default function AcceptPaymentDialog({
                             ({enteredAmount > invoiceTotal ? "over" : "under"} invoice by ${Math.abs(enteredAmount - invoiceTotal).toFixed(2)})
                           </Text>
                         )}
-                        <HStack justify="space-between" color={totalExpenses > 0 ? "orange.600" : "fg.muted"}>
-                          <Text>− Expenses</Text>
-                          <Text>${totalExpenses.toFixed(2)}</Text>
+                        <HStack justify="space-between" color={totalInvoiceCharges > 0 ? "orange.600" : "fg.muted"}>
+                          <Text>− Invoice charges</Text>
+                          <Text>${totalInvoiceCharges.toFixed(2)}</Text>
                         </HStack>
                         <HStack justify="space-between" color={breakdown.platformFeeTotal > 0 ? "orange.600" : "fg.muted"}>
                           <Text>− Platform fee ({commissionPercent}% of contractor shares)</Text>

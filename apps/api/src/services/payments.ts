@@ -1,5 +1,6 @@
 import { randomBytes } from "crypto";
 import { prisma } from "../db/prisma";
+import { invoiceTotal, materialChargeTotal, PRICED_OCCURRENCE_SELECT } from "../lib/jobPricing";
 import { JobOccurrenceStatus, type WorkerType } from "@prisma/client";
 import { ServiceError } from "../lib/errors";
 import type { ServicesPayments } from "../types/services";
@@ -233,7 +234,7 @@ async function resolveWorkers(
 // percentages sum to 100 (±0.01) and every entry refers to a current
 // active (non-observer) assignee.
 //
-// `priceTotal` and `expenses` are used for the snapshot only — they're
+// `priceTotal` and the invoice-charge total are used for the snapshot only — they're
 // fetched fresh inside the tx so a stale request can't snapshot against
 // outdated price.
 export async function persistCompletionSplits(
@@ -266,8 +267,11 @@ export async function persistCompletionSplits(
     select: {
       id: true,
       status: true,
+      // pricingModel + invoiceCharges are REQUIRED — the promised snapshot is
+      // priced off invoiceTotal, which branches on the model.
       price: true,
       addons: { select: { price: true } },
+      invoiceCharges: { select: { cost: true } },
       assignees: { select: { userId: true, role: true } },
       payment: { select: { id: true, confirmed: true } },
     },
@@ -307,9 +311,20 @@ export async function persistCompletionSplits(
   }
 
   const rates = await loadRates(tx);
-  const expensesAgg = await tx.expense.aggregate({ where: { occurrenceId }, _sum: { cost: true } });
-  const expenses = expensesAgg._sum.cost ?? 0;
-  const priceTotal = (occ.price ?? 0) + (occ.addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0);
+  // `tx.expense.aggregate` used to live here. It survived the rename only
+  // because `tx` is loosely typed — the compiler never saw it, and it would
+  // have thrown at runtime on the first approval. Read off the selected
+  // relation instead, so the shape is checked.
+  const charges = materialChargeTotal(occ);
+  // THE INVOICE, not the labor. `computeBreakdown(collected, charges)`
+  // computes N = collected − charges, so feeding it the itemized invoice
+  // yields the labor pool automatically:
+  //   LEGACY    collected = 100, charges = 60  →  N = 40
+  //   ITEMIZED  collected = 160, charges = 60  →  N = 100
+  // Passing labor-only here would pay the crew out of a number the client was
+  // never billed. Same helper the invoice uses, so the promise is snapshotted
+  // against what the client will actually be asked to pay.
+  const priceTotal = invoiceTotal(occ);
 
   // Compute promised payouts (the snapshot) using the new splits + current
   // price + current expenses. This is the contract: at approval time the
@@ -324,7 +339,7 @@ export async function persistCompletionSplits(
     splitPercent: s.percent,
     workerType: (typeById.get(s.userId) ?? null) as WorkerType | null,
   }));
-  const promised = computeBreakdown(priceTotal, expenses, workers, rates);
+  const promised = computeBreakdown(priceTotal, charges, workers, rates);
 
   const prior = await tx.jobOccurrence.findUnique({
     where: { id: occurrenceId },
@@ -354,7 +369,7 @@ export async function persistCompletionSplits(
       net: r.net ?? null,
     })),
     priceTotal,
-    expenses,
+    invoiceCharges: charges,
   });
 
   return promised;
@@ -444,7 +459,7 @@ export const payments: ServicesPayments = {
       // worker seeing the pending row. Using reconcileApproval here
       // keeps pre- and post-approval values consistent.
       const rates = await loadRates(tx);
-      const expensesAgg = await tx.expense.aggregate({ where: { occurrenceId }, _sum: { cost: true } });
+      const expensesAgg = await tx.invoiceCharge.aggregate({ where: { occurrenceId }, _sum: { cost: true } });
       const totalExpenses = expensesAgg._sum.cost ?? 0;
       const users = await tx.user.findMany({
         where: { id: { in: completionSplits.map((s) => s.userId) } },
@@ -879,7 +894,7 @@ export const payments: ServicesPayments = {
                     property: { select: { id: true, displayName: true, client: { select: { id: true, displayName: true } } } },
                   },
                 },
-                expenses: {
+                invoiceCharges: {
                   select: { id: true, cost: true, description: true, createdById: true },
                   orderBy: { createdAt: "asc" as const },
                 },
@@ -997,7 +1012,7 @@ export const payments: ServicesPayments = {
                 user: { select: { id: true, displayName: true, email: true, workerType: true } },
               },
             },
-            expenses: {
+            invoiceCharges: {
               select: { id: true, cost: true, description: true, createdById: true },
               orderBy: { createdAt: "asc" as const },
             },
@@ -1032,9 +1047,9 @@ export const payments: ServicesPayments = {
       if ((p as any).skippedAt) continue;
       // Money-flow Total Revenue: what the business actually kept on this
       // payment. Independent of how fee/margin/overage decompose.
-      const expensesSum = (p.occurrence?.expenses ?? []).reduce((s: number, e: any) => s + (e.cost ?? 0), 0);
+      const chargesSum = (p.occurrence?.invoiceCharges ?? []).reduce((s: number, e: any) => s + (e.cost ?? 0), 0);
       const workerPayouts = p.splits.reduce((s, sp) => s + sp.amount, 0);
-      totalRevenue += (p.amountPaid ?? 0) - workerPayouts - expensesSum;
+      totalRevenue += (p.amountPaid ?? 0) - workerPayouts - chargesSum;
       totalOverage += (p as any).overageAmount ?? 0;
       totalShortfall += (p as any).shortfallAmount ?? 0;
       // Fee / margin totals come from the per-Payment denormalized fields
@@ -1064,7 +1079,7 @@ export const payments: ServicesPayments = {
       // (Fee/margin totals already accumulated above; don't double-count.)
       const fee = p.platformFeeAmount ?? 0;
       const margin = p.businessMarginAmount ?? 0;
-      const expenses = (p.occurrence?.expenses ?? []).reduce((s: number, e: any) => s + (e.cost ?? 0), 0);
+      const charges = (p.occurrence?.invoiceCharges ?? []).reduce((s: number, e: any) => s + (e.cost ?? 0), 0);
       const splitTotal = p.splits.reduce((s, sp) => s + sp.amount, 0);
       const feeableSplitTotal = p.splits
         .filter((sp) => sp.user.workerType !== "EMPLOYEE" && sp.user.workerType !== "TRAINEE")
@@ -1074,7 +1089,7 @@ export const payments: ServicesPayments = {
         .reduce((s, sp) => s + sp.amount, 0);
       for (const sp of p.splits) {
         const ratio = splitTotal > 0 ? sp.amount / splitTotal : 0;
-        const expenseShare = expenses * ratio;
+        const chargeShare = charges * ratio;
         const isFeeable = sp.user.workerType !== "EMPLOYEE" && sp.user.workerType !== "TRAINEE";
         const isEmployee = sp.user.workerType === "EMPLOYEE" || sp.user.workerType === "TRAINEE";
         const feeShare = isFeeable && feeableSplitTotal > 0
@@ -1083,7 +1098,7 @@ export const payments: ServicesPayments = {
         const marginShare = isEmployee && employeeSplitTotal > 0
           ? margin * (sp.amount / employeeSplitTotal)
           : 0;
-        const netAmount = sp.amount - feeShare - marginShare - expenseShare;
+        const netAmount = sp.amount - feeShare - marginShare - chargeShare;
         const existing = totalsMap.get(sp.userId);
         if (existing) {
           existing.total += netAmount;
@@ -1345,7 +1360,7 @@ export const payments: ServicesPayments = {
         - (payment.platformFeeAmount ?? 0)
         - (payment.businessMarginAmount ?? 0)
         - (payment.tipAmount ?? 0)
-        - ((await tx.expense.aggregate({ where: { occurrenceId }, _sum: { cost: true } }))._sum.cost ?? 0);
+        - ((await tx.invoiceCharge.aggregate({ where: { occurrenceId }, _sum: { cost: true } }))._sum.cost ?? 0);
       const splitAmount = Math.round((Math.max(0, totalPayout) / assigneeIds.length) * 100) / 100;
 
       const ownerSet = await loadOwnerSet(tx, assigneeIds);
@@ -1548,7 +1563,7 @@ export const payments: ServicesPayments = {
     // if no snapshot exists (pre-snapshot legacy data, or completion that
     // skipped the snapshot for any reason).
     const rates = await loadRates(prisma);
-    const expensesAgg = await prisma.expense.aggregate({ where: { occurrenceId: existing.occurrence.id }, _sum: { cost: true } });
+    const expensesAgg = await prisma.invoiceCharge.aggregate({ where: { occurrenceId: existing.occurrence.id }, _sum: { cost: true } });
     const totalExpenses = expensesAgg._sum.cost ?? 0;
     const workersList = await resolveWorkers(prisma, {
       id: existing.occurrence.id,

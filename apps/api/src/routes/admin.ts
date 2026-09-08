@@ -1,4 +1,5 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
+import { crewPool } from "../lib/jobPricing";
 import { randomUUID } from "crypto";
 import { services } from "../services";
 import { prisma } from "../db/prisma";
@@ -1447,19 +1448,25 @@ export default async function adminRoutes(app: FastifyInstance) {
   // rewriting money under a recorded payment.
   app.patch("/admin/occurrences/:id/price", adminGuard, async (req: any) => {
     const uid = await currentUserId(req);
-    const { price, reason } = (req.body || {}) as { price?: number; reason?: string };
+    const body = (req.body || {}) as { price?: number; reason?: string; laborDetail?: string | null };
+    const { price, reason } = body;
     if (price == null || !Number.isFinite(Number(price)) || Number(price) < 0) {
       throw app.httpErrors.badRequest("price is required and must be zero or more");
     }
     return services.jobs.adjustOccurrencePrice(
       uid, String(req.params.id), Number(price), reason ?? null,
+      // "in body" so an omitted field leaves the detail alone, while an
+      // explicit null clears it.
+      "laborDetail" in body ? (body.laborDetail ?? null) : undefined,
     );
   });
 
   app.post("/admin/occurrences/:id/addons", adminGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const occurrenceId = String(req.params.id);
-    const { tag, customLabel, price } = (req.body || {}) as { tag?: string; customLabel?: string; price: number };
+    const { tag, customLabel, price, detail } = (req.body || {}) as {
+      tag?: string; customLabel?: string; price: number; detail?: string;
+    };
     if (price == null || price <= 0) throw app.httpErrors.badRequest("price is required and must be positive");
     if (!tag && !customLabel) throw app.httpErrors.badRequest("Either tag or customLabel is required");
     return prisma.$transaction(async (tx) => {
@@ -1469,6 +1476,7 @@ export default async function adminRoutes(app: FastifyInstance) {
           tag: tag || null,
           customLabel: customLabel?.trim() || null,
           price: Number(price),
+          detail: detail?.trim() || null,
           createdById: uid,
         },
       });
@@ -1484,6 +1492,7 @@ export default async function adminRoutes(app: FastifyInstance) {
         addonId: addon.id,
         tag: addon.tag,
         customLabel: addon.customLabel,
+        detail: addon.detail,
         priceBefore: null,
         priceAfter: addon.price,
       });
@@ -2781,29 +2790,171 @@ export default async function adminRoutes(app: FastifyInstance) {
     return services.equipment.listUsage({ from, to, cutoff });
   });
 
-  // ── Admin Expenses ──
+  // ── Admin invoice charges ──
+  //
+  // A line on the CLIENT'S INVOICE. Not a business expense, not a deduction.
+  // These write no BusinessExpense — see docs/features/job-materials.md.
+  //
+  // GET / POST / PATCH / DELETE all have an admin twin. PATCH did not, once,
+  // and the admin dialog was PATCHing through the worker route — which worked
+  // only because the service is admin-gated internally, with no test to catch
+  // it if the worker guard ever tightened.
 
-  app.get("/admin/occurrences/:occurrenceId/expenses", adminGuard, async (req: any) => {
-    return services.expenses.listExpensesByOccurrence(String(req.params.occurrenceId));
+  // ── Invoice preview ──
+  //
+  // What the client would see if a payment were requested right now.
+  // ADMIN/SUPER ONLY — it exposes the whole invoice before anything is sent.
+  // Read-only: nothing is stamped, no token is minted.
+  app.get("/admin/occurrences/:id/invoice-preview", adminGuard, async (req: any) => {
+    return services.paymentRequests.previewInvoice(String(req.params.id));
   });
 
-  app.post("/admin/occurrences/:occurrenceId/expenses", adminGuard, async (req: any) => {
+  // ── The optional ledger breadcrumb ────────────────────────────────────
+  //
+  // A job line or a supply purchase MAY point at a real ledger charge so that
+  // six weeks later a $500 Lowe's receipt can tell you which jobs it went to.
+  //
+  // PURELY DECORATIVE. Many rows may point at one charge, no total reads it,
+  // and setting or clearing it changes no amount anywhere. That is why the
+  // audit below records `affectsMoney: false` — if that ever stops being true
+  // this feature has been misunderstood.
+
+  app.get("/admin/ledger-charges", adminGuard, async (req: any) => {
+    const q = String((req.query || {}).q ?? "").trim();
+    const rows = await prisma.businessExpense.findMany({
+      where: {
+        type: "EXPENSE",
+        ...(q
+          ? {
+              OR: [
+                { description: { contains: q, mode: "insensitive" as const } },
+                { vendor: { contains: q, mode: "insensitive" as const } },
+              ],
+            }
+          : {}),
+      },
+      orderBy: { date: "desc" },
+      take: 40,
+      select: {
+        id: true, date: true, cost: true, description: true,
+        vendor: true, category: true,
+        // How many jobs already point here — the operator's cue that this is
+        // a shared receipt, not a one-job charge.
+        _count: { select: { invoiceCharges: true } },
+      },
+    });
+    return rows.map((r) => ({
+      id: r.id, date: r.date, cost: r.cost, description: r.description,
+      vendor: r.vendor, category: r.category,
+      referencedByJobs: r._count.invoiceCharges,
+    }));
+  });
+
+  app.patch("/admin/invoice-charges/:id/ledger-link", adminGuard, async (req: any) => {
     const uid = await currentUserId(req);
-    const body = req.body || {};
-    return services.expenses.adminAddExpense(uid, String(req.params.occurrenceId), {
-      cost: Number(body.cost),
-      description: String(body.description ?? ""),
-      category: body.category != null ? String(body.category) : null,
-      vendor: body.vendor != null ? String(body.vendor) : null,
-      date: body.date != null ? String(body.date) : null,
+    const invoiceChargeId = String(req.params.id);
+    const businessExpenseId = (req.body || {}).businessExpenseId ?? null;
+    const before = await prisma.invoiceCharge.findUnique({
+      where: { id: invoiceChargeId },
+      select: { id: true, businessExpenseId: true, occurrenceId: true },
+    });
+    if (!before) throw app.httpErrors.notFound("Invoice charge not found.");
+    return prisma.$transaction(async (tx) => {
+      // ONLY the pointer. Never cost, never description — this is a
+      // reminder of what was bought, not a money edit.
+      const row = await tx.invoiceCharge.update({
+        where: { id: invoiceChargeId },
+        data: { businessExpenseId },
+        select: {
+          id: true, businessExpenseId: true,
+          businessExpense: {
+            select: { id: true, cost: true, description: true, vendor: true, category: true, date: true },
+          },
+        },
+      });
+      await writeAudit(tx, AUDIT.EXPENSE.UPDATED, uid, {
+        action: "ledger_link_changed",
+        invoiceChargeId,
+        occurrenceId: before.occurrenceId,
+        businessExpenseIdBefore: before.businessExpenseId,
+        businessExpenseIdAfter: businessExpenseId,
+        affectsMoney: false,
+      });
+      return row;
     });
   });
 
-  app.delete("/admin/expenses/:id", adminGuard, async (req: any) => {
-    // Deleting an expense removes a Schedule C ledger row and reverses a
-    // worker payout deduction — the audit row needs a real actor.
+  app.patch("/admin/supply-purchases/:id/ledger-link", adminGuard, async (req: any) => {
     const uid = await currentUserId(req);
-    return services.expenses.adminDeleteExpense(uid, String(req.params.id));
+    const purchaseId = String(req.params.id);
+    const businessExpenseId = (req.body || {}).businessExpenseId ?? null;
+    const before = await prisma.supplyPurchase.findUnique({
+      where: { id: purchaseId },
+      select: { id: true, businessExpenseId: true, supplyId: true },
+    });
+    if (!before) throw app.httpErrors.notFound("Supply purchase not found.");
+    return prisma.$transaction(async (tx) => {
+      const row = await tx.supplyPurchase.update({
+        where: { id: purchaseId },
+        data: { businessExpenseId },
+        select: {
+          id: true, businessExpenseId: true,
+          businessExpense: {
+            select: { id: true, cost: true, description: true, vendor: true, date: true },
+          },
+        },
+      });
+      await writeAudit(tx, AUDIT.SUPPLY.PURCHASE_RECORDED, uid, {
+        action: "ledger_link_changed",
+        purchaseId,
+        supplyId: before.supplyId,
+        businessExpenseIdBefore: before.businessExpenseId,
+        businessExpenseIdAfter: businessExpenseId,
+        affectsMoney: false,
+        affectsStock: false,
+      });
+      return row;
+    });
+  });
+
+  app.get("/admin/occurrences/:occurrenceId/invoice-charges", adminGuard, async (req: any) => {
+    return services.invoiceCharges.listInvoiceChargesByOccurrence(String(req.params.occurrenceId));
+  });
+
+  app.post("/admin/occurrences/:occurrenceId/invoice-charges", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const body = req.body || {};
+    // No category / vendor / date: an invoice charge writes no ledger row, so
+    // there is no Schedule C line to file it against.
+    return services.invoiceCharges.adminAddInvoiceCharge(uid, String(req.params.occurrenceId), {
+      cost: Number(body.cost),
+      description: String(body.description ?? ""),
+      actualCost:
+        body.actualCost != null && body.actualCost !== "" ? Number(body.actualCost) : null,
+      detail: body.detail != null ? String(body.detail) : null,
+    });
+  });
+
+  app.patch("/admin/invoice-charges/:id", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const body = req.body || {};
+    const input: any = {};
+    if (body.cost !== undefined) input.cost = Number(body.cost);
+    if (body.description !== undefined) input.description = String(body.description);
+    // "in body", not "!== undefined": null CLEARS the field.
+    if ("detail" in body) input.detail = body.detail != null ? String(body.detail) : null;
+    if ("actualCost" in body) {
+      input.actualCost =
+        body.actualCost != null && body.actualCost !== "" ? Number(body.actualCost) : null;
+    }
+    return services.invoiceCharges.updateInvoiceCharge(uid, String(req.params.id), input);
+  });
+
+  app.delete("/admin/invoice-charges/:id", adminGuard, async (req: any) => {
+    // Removing a charge lowers what the client owes. It touches no ledger row
+    // and no payout — the crew splits the labor.
+    const uid = await currentUserId(req);
+    return services.invoiceCharges.adminDeleteInvoiceCharge(uid, String(req.params.id));
   });
 
   // ── Estimate Proposal Actions ──
@@ -2931,7 +3082,7 @@ export default async function adminRoutes(app: FastifyInstance) {
           },
         },
         assignees: { include: { user: { select: { displayName: true } } } },
-        expenses: true,
+        invoiceCharges: true,
       },
     });
 
@@ -2975,7 +3126,10 @@ export default async function adminRoutes(app: FastifyInstance) {
       occ.notes ? `Notes: ${occ.notes}` : null,
       occ.proposalNotes ? `Team notes: ${occ.proposalNotes}` : null,
       occ.proposalAmount != null ? `Team proposed amount: $${occ.proposalAmount.toFixed(2)}` : null,
-      occ.expenses?.length ? `Expenses: ${occ.expenses.map((e: any) => `$${e.amount.toFixed(2)} (${e.description})`).join(", ")}` : null,
+      // `e.amount` — a field InvoiceCharge has never had; it is `cost`. `e` is
+      // `any`, so tsc never saw it and this threw a TypeError on every
+      // estimate for a job carrying a charge. Predates the rename.
+      occ.invoiceCharges?.length ? `Charges: ${occ.invoiceCharges.map((e: any) => `$${(e.cost ?? 0).toFixed(2)} (${e.description})`).join(", ")}` : null,
       prop?.accessNotes ? `Access notes: ${prop.accessNotes}` : null,
     ].filter(Boolean).join("\n");
 
@@ -3297,7 +3451,7 @@ Respond ONLY with valid JSON in this exact format:
         completionSplits: true,
         assignees: { select: { userId: true, role: true } },
         addons: { select: { price: true } },
-        expenses: { select: { cost: true } },
+        invoiceCharges: { select: { cost: true } },
         payment: {
           select: {
             confirmed: true,
@@ -3350,7 +3504,7 @@ Respond ONLY with valid JSON in this exact format:
             proposalAmount: occ.proposalAmount,
             completionSplits: occ.completionSplits,
             addons: occ.addons,
-            expenses: occ.expenses,
+            invoiceCharges: occ.invoiceCharges,
             assignees: occ.assignees,
             payment: paymentForUser,
           },
@@ -3462,7 +3616,7 @@ Respond ONLY with valid JSON in this exact format:
           proposalAmount: true,
           completionSplits: true,
           addons: { select: { price: true } },
-          expenses: { select: { cost: true } },
+          invoiceCharges: { select: { cost: true } },
           assignees: { select: { userId: true, role: true } },
           payment: {
             select: {
@@ -3678,7 +3832,7 @@ Respond ONLY with valid JSON in this exact format:
             },
           },
         },
-        expenses: {
+        invoiceCharges: {
           where: cutoff
             ? { OR: [
                 { businessExpense: { date: { gte: cutoff } } },
@@ -3768,7 +3922,7 @@ Respond ONLY with valid JSON in this exact format:
         ? Math.round((new Date(occ.completedAt).getTime() - new Date(occ.startedAt).getTime()) / 60000)
         : null;
 
-      const expenseTotal = occ.expenses.reduce((s, e) => s + e.cost, 0);
+      const expenseTotal = occ.invoiceCharges.reduce((s, e) => s + e.cost, 0);
       const dayKey = occ.completedAt ? etFormatDate(occ.completedAt) : null;
       const propId = occ.job?.property?.id;
 
@@ -3800,7 +3954,7 @@ Respond ONLY with valid JSON in this exact format:
               proposalAmount: (occ as any).proposalAmount ?? null,
               completionSplits: (occ as any).completionSplits,
               addons: (occ as any).addons ?? [],
-              expenses: occ.expenses,
+              invoiceCharges: occ.invoiceCharges,
               assignees: occ.assignees,
               payment: paymentForUser,
             },
@@ -3818,7 +3972,11 @@ Respond ONLY with valid JSON in this exact format:
           const expenseShare = expenseTotal * splitRatio;
           stat.totalEarnings += earnings;
           stat.totalExpenses += expenseShare;
-          stat.netEarnings += earnings - expenseShare;
+          // NOT a deduction — see the note on the worker-side twin in
+          // routes/worker.ts. Charges never come out of anyone's pay under
+          // either pricing model; this docked a worker's stats for materials
+          // the business billed to the client.
+          stat.netEarnings += earnings;
         }
 
         // Timing
@@ -4037,7 +4195,7 @@ Respond ONLY with valid JSON in this exact format:
       include: {
         assignees: { select: { userId: true, role: true } },
         payment: paymentIncludeWithCutoff(cutoff, { include: { splits: true } }),
-        expenses: expensesIncludeWithCutoff(cutoff),
+        invoiceCharges: expensesIncludeWithCutoff(cutoff),
         // Add-ons contribute to the price pool the compliance check projects
         // worker net from — without these, on-the-fly wage projection
         // underestimates by the addon amount for jobs that have any.
@@ -4069,7 +4227,7 @@ Respond ONLY with valid JSON in this exact format:
     // Financial summary
     const paidOccs = occurrences.filter((o) => o.payment);
     const totalRevenue = paidOccs.reduce((s, o) => s + (o.payment?.amountPaid ?? 0), 0);
-    const totalExpenses = occurrences.reduce((s, o) => s + o.expenses.reduce((es, e) => es + e.cost, 0), 0);
+    const totalExpenses = occurrences.reduce((s, o) => s + o.invoiceCharges.reduce((es, e) => es + e.cost, 0), 0);
     const netRevenue = totalRevenue - totalExpenses;
     const totalPlatformFees = paidOccs.reduce((s, o) => s + (o.payment?.platformFeeAmount ?? 0), 0);
     const totalBusinessMargin = paidOccs.reduce((s, o) => s + (o.payment?.businessMarginAmount ?? 0), 0);
@@ -4414,7 +4572,7 @@ Respond ONLY with valid JSON in this exact format:
       // Placeholder — populated after wageGross computes below.
       let totalEarnings = 0;
       const totalExpensesW = wJobs.reduce((s, o) => {
-        const occExpenses = o.expenses.reduce((es, e) => es + e.cost, 0);
+        const occExpenses = o.invoiceCharges.reduce((es, e) => es + e.cost, 0);
         const assigneeCount = o.assignees.filter((a) => a.role !== "observer").length;
         return s + (assigneeCount > 0 ? occExpenses / assigneeCount : 0);
       }, 0);
@@ -4474,11 +4632,16 @@ Respond ONLY with valid JSON in this exact format:
         }
         // (2) On-the-fly projection — applies for any occurrence that
         // hasn't had its snapshot stamped yet.
-        const priceTotal =
-          ((o as any).price ?? (o as any).proposalAmount ?? 0) +
-          ((o as any).addons ?? []).reduce((ss: number, a: any) => ss + (a.price ?? 0), 0);
-        const expTotal = (o.expenses ?? []).reduce((ss: number, e: any) => ss + (e.cost ?? 0), 0);
-        const N = Math.max(0, priceTotal - expTotal);
+        // The crew's pool. This computed `price + addons − charges`, the
+        // LEGACY rule applied to every visit — on an ITEMIZED job the client
+        // pays the materials on top and the pool never sees them, so the
+        // projection under-reported every worker by their share of the mulch.
+        // crewPool branches; it is the same helper the payout engine agrees
+        // with.
+        const N = crewPool({
+          price: (o as any).price ?? (o as any).proposalAmount ?? 0,
+          addons: (o as any).addons ?? [],
+        });
         const completionSplits = (o as any).completionSplits as Array<{ userId: string; percent: number }> | null | undefined;
         const splitPctById = new Map<string, number>(
           Array.isArray(completionSplits)
@@ -6356,7 +6519,7 @@ Respond ONLY with valid JSON in this exact format:
         recurrence: { not: null },
         recurrenceSeriesId: { not: null },
         occurrenceId: null,
-        supplyPurchase: { is: null },
+        supplyPurchases: { none: {} },
       },
       orderBy: { date: "desc" },
       select: {
@@ -6473,7 +6636,7 @@ Respond ONLY with valid JSON in this exact format:
     // If this BE is the tax-ledger pair of a job-level Expense, mirror
     // cost/description so the worker's payout deduction stays in sync with
     // the ledger. Other fields (category/vendor/date/etc) live only on the BE.
-    const linkedExpense = await prisma.expense.findFirst({
+    const linkedExpense = await prisma.invoiceCharge.findFirst({
       where: { businessExpenseId: id },
       select: { id: true },
     });
@@ -6564,19 +6727,17 @@ Respond ONLY with valid JSON in this exact format:
     }
     const updated = await prisma.$transaction(async (tx) => {
       const updated = await tx.businessExpense.update({ where: { id }, data });
+      // NO WRITE-THROUGH TO THE JOB. Editing a ledger row used to mirror
+      // cost/description onto the linked invoice charge — so correcting a
+      // receipt silently changed what a CLIENT was billed on a job, and on a
+      // many-to-one breadcrumb it would change the wrong job entirely.
+      //
+      // The two books reconcile in aggregate only. See
+      // docs/features/job-materials.md.
       const syncedFields: string[] = [];
-      if (linkedExpense) {
-        const expenseSync: any = {};
-        if ("cost" in data) expenseSync.cost = data.cost;
-        if ("description" in data) expenseSync.description = data.description;
-        if (Object.keys(expenseSync).length > 0) {
-          await tx.expense.update({ where: { id: linkedExpense.id }, data: expenseSync });
-          syncedFields.push(...Object.keys(expenseSync));
-        }
-      }
-      // Money: edits a Schedule C tax-ledger row (and mirrors cost onto the
-      // paired job Expense, which changes the worker's payout deduction). A
-      // cost/date change also silently clears the QuickBooks reconciliation.
+      // Money: edits a Schedule C tax-ledger row. It does NOT touch any job
+      // or any payout. A cost/date change silently clears the QuickBooks
+      // reconciliation.
       await writeAudit(tx, AUDIT.EXPENSE.UPDATED, uid, {
         businessExpenseId: id,
         ledgerId: existing.ledgerId,
@@ -6781,49 +6942,43 @@ Respond ONLY with valid JSON in this exact format:
   app.delete("/admin/business-expenses/:id", superGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const id = String(req.params.id);
-    // Snapshot the ledger row before anything is destroyed — after the
-    // cascade below nothing survives except this audit entry.
+    // Snapshot the ledger row before anything is destroyed.
     const beBefore = await prisma.businessExpense.findUnique({ where: { id } });
     if (!beBefore) throw app.httpErrors.notFound("Business expense not found.");
-    // Cascade: if this BE is paired with a job-level Expense, delete the
-    // Expense too. Otherwise the schema's ON DELETE SET NULL would leave the
-    // Expense in place — still reducing the worker's payout but no longer
-    // appearing in the tax ledger.
-    const linkedExpense = await prisma.expense.findFirst({
+
+    // WHAT HAPPENS TO THE THINGS POINTING AT THIS ROW: they lose the pointer,
+    // and nothing else.
+    //
+    // `businessExpenseId` used to mean two different things — a 1:1 pair from
+    // the old dual-write (delete together) or a decorative breadcrumb (unlink)
+    // — and only the occurrence's pricingModel told them apart. Getting it
+    // backwards destroyed a deduction twice.
+    //
+    // Unifying the pricing model removed the distinction. A job line is now
+    // always a charge the CLIENT was billed, and the ledger row is always the
+    // deduction; the two are independent facts. Deleting a receipt must not
+    // remove a line a client legitimately paid for, whenever it was written.
+    // So there is one behaviour, and no way to pick the wrong one.
+    const linked = await prisma.invoiceCharge.findMany({
       where: { businessExpenseId: id },
       select: { id: true, occurrenceId: true, cost: true, description: true },
     });
-    // If paired with a SupplyPurchase (step-3), reverse inventory and remove
-    // the SupplyPurchase row first — schema FK is Restrict so the BE delete
-    // would otherwise fail. Block if reversing would push onHand negative.
-    const linkedSupplyPurchase = await prisma.supplyPurchase.findFirst({
+
+    // INVENTORY IS NEVER REVERSED HERE. Recording a purchase no longer
+    // creates a ledger row, so a ledger row is not evidence that stock
+    // arrived — and several purchases may share one receipt. Deleting a
+    // receipt must not silently take bags of mulch off the shelf. The
+    // purchases just lose their pointer.
+    const referencingPurchases = await prisma.supplyPurchase.count({
       where: { businessExpenseId: id },
-      include: { supply: true },
     });
-    if (linkedSupplyPurchase) {
-      const newOnHand = linkedSupplyPurchase.supply.onHand - linkedSupplyPurchase.quantity;
-      if (newOnHand < 0) {
-        throw app.httpErrors.conflict(
-          `Cannot delete: reversing this purchase would push ${linkedSupplyPurchase.supply.name} stock to ${newOnHand}. Adjust inventory first.`,
-        );
-      }
-    }
+
     await prisma.$transaction(async (tx) => {
-      if (linkedExpense) {
-        await tx.expense.delete({ where: { id: linkedExpense.id } });
-      }
-      if (linkedSupplyPurchase) {
-        await tx.supply.update({
-          where: { id: linkedSupplyPurchase.supplyId },
-          data: { onHand: { decrement: linkedSupplyPurchase.quantity } },
-        });
-        await tx.supplyPurchase.delete({ where: { id: linkedSupplyPurchase.id } });
-      }
+      // The FK is SetNull, so the pointers clear themselves.
       await tx.businessExpense.delete({ where: { id } });
-      // Destructive money path: removes a Schedule C ledger row from the tax
-      // exports, deletes the paired job Expense (restoring the worker's
-      // payout), reverses Supply.onHand, and drops the SupplyPurchase. Every
-      // destroyed value is captured here because nothing else survives.
+      // Destructive money path: removes a Schedule C row from the tax
+      // exports. Every destroyed value is captured because nothing else
+      // survives.
       await writeAudit(tx, AUDIT.EXPENSE.DELETED, uid, {
         businessExpenseId: id,
         ledgerId: beBefore.ledgerId,
@@ -6844,20 +6999,16 @@ Respond ONLY with valid JSON in this exact format:
         reconciledAt: beBefore.reconciledAt ? beBefore.reconciledAt.toISOString() : null,
         receiptR2Key: beBefore.receiptR2Key,
         createdById: beBefore.createdById,
-        // Cascaded job-level Expense (worker payout deduction).
-        linkedExpenseId: linkedExpense?.id ?? null,
-        linkedExpenseOccurrenceId: linkedExpense?.occurrenceId ?? null,
-        linkedExpenseCostBefore: linkedExpense?.cost ?? null,
-        linkedExpenseDescription: linkedExpense?.description ?? null,
-        // Reversed supply purchase (inventory movement).
-        linkedSupplyPurchaseId: linkedSupplyPurchase?.id ?? null,
-        supplyId: linkedSupplyPurchase?.supplyId ?? null,
-        supplyName: linkedSupplyPurchase?.supply.name ?? null,
-        supplyQuantityReversed: linkedSupplyPurchase?.quantity ?? null,
-        supplyOnHandBefore: linkedSupplyPurchase?.supply.onHand ?? null,
-        supplyOnHandAfter: linkedSupplyPurchase
-          ? linkedSupplyPurchase.supply.onHand - linkedSupplyPurchase.quantity
-          : null,
+        // Nothing is destroyed any more — every linked job line simply loses
+        // its pointer. Recorded so the trail explains what became of them.
+        unlinkedInvoiceCharges: linked.map((l) => ({
+          invoiceChargeId: l.id,
+          occurrenceId: l.occurrenceId,
+          cost: l.cost,
+          description: l.description,
+        })),
+        unlinkedSupplyPurchases: referencingPurchases,
+        inventoryReversed: false,
       });
     });
     return { deleted: true };
@@ -7134,7 +7285,7 @@ Respond ONLY with valid JSON in this exact format:
       where: {
         recurrence: { not: null },
         occurrenceId: null,
-        supplyPurchase: { is: null },
+        supplyPurchases: { none: {} },
       },
       orderBy: { date: "desc" },
       select: {
@@ -7227,7 +7378,7 @@ Respond ONLY with valid JSON in this exact format:
       where: {
         recurrence: { not: null },
         occurrenceId: null,
-        supplyPurchase: { is: null },
+        supplyPurchases: { none: {} },
       },
       orderBy: { date: "desc" },
       select: {
@@ -7359,7 +7510,7 @@ Respond ONLY with valid JSON in this exact format:
                   include: {
                     assignees: { include: { user: true } },
                     payment: paymentIncludeWithCutoff(cutoff),
-                    expenses: expensesIncludeWithCutoff(cutoff),
+                    invoiceCharges: expensesIncludeWithCutoff(cutoff),
                   },
                 },
               },
@@ -7506,8 +7657,8 @@ Respond ONLY with valid JSON in this exact format:
                 const p = occ.payment;
                 lines.push(`          Payment: ${money(p.amountPaid)} via ${p.method} on ${date(p.createdAt)}`);
               }
-              if (occ.expenses.length > 0) {
-                for (const ex of occ.expenses) {
+              if (occ.invoiceCharges.length > 0) {
+                for (const ex of occ.invoiceCharges) {
                   lines.push(`          Expense: ${money(ex.cost)} — ${ex.description || "no description"}`);
                 }
               }
@@ -7555,7 +7706,7 @@ Respond ONLY with valid JSON in this exact format:
       upc: b.upc != null ? String(b.upc) : null,
       category: b.category != null ? String(b.category) : null,
       businessCost: b.businessCost != null ? Number(b.businessCost) : null,
-      jobPayoutCost: Number(b.jobPayoutCost ?? 0),
+      clientUnitPrice: Number(b.clientUnitPrice ?? 0),
     });
   });
 
@@ -7569,7 +7720,7 @@ Respond ONLY with valid JSON in this exact format:
     if ("upc" in b) input.upc = b.upc != null ? String(b.upc) : null;
     if ("category" in b) input.category = b.category != null ? String(b.category) : null;
     if ("businessCost" in b) input.businessCost = b.businessCost != null ? Number(b.businessCost) : null;
-    if ("jobPayoutCost" in b) input.jobPayoutCost = Number(b.jobPayoutCost);
+    if ("clientUnitPrice" in b) input.clientUnitPrice = Number(b.clientUnitPrice);
     return services.supplies.update(uid, String(req.params.id), input);
   });
 
@@ -7784,7 +7935,7 @@ Respond ONLY with valid JSON in this exact format:
 
     const matchExisting = await prisma.supply.findFirst({
       where: { upc: code, archivedAt: null },
-      select: { id: true, name: true, unit: true, jobPayoutCost: true, businessCost: true, onHand: true, category: true },
+      select: { id: true, name: true, unit: true, clientUnitPrice: true, businessCost: true, onHand: true, category: true },
     });
 
     let lookup: { found: boolean; title?: string; brand?: string; description?: string } | null = null;
@@ -7832,6 +7983,16 @@ Respond ONLY with valid JSON in this exact format:
     return services.supplies.addHold(uid, String(req.params.occurrenceId), {
       supplyId: String(b.supplyId ?? ""),
       quantity: Number(b.quantity),
+      // Optional per-job price. The catalog value is only a default — the
+      // same supply is billed differently to different clients.
+      clientUnitPrice:
+        b.clientUnitPrice == null || b.clientUnitPrice === ""
+          ? null
+          : Number(b.clientUnitPrice),
+      // Same shape as any other invoice charge: a headline and an optional
+      // client-visible detail.
+      description: b.description == null ? null : String(b.description),
+      detail: b.detail == null ? null : String(b.detail),
     });
   });
 

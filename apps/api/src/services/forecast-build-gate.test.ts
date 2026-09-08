@@ -1059,20 +1059,28 @@ describe("[build-gate] capital purchases are not running costs", () => {
   });
 });
 
-describe("[build-gate] job materials are counted once", () => {
-  it("the ledger row paired to a job Expense is skipped", () => {
-    // `expense` is the 1:1 back-link. Its presence means this ledger row IS a
-    // job material, already subtracted as `materials`.
+describe("[build-gate] every ledger row is a real expense", () => {
+  it("a ledger row linked to a job line is COUNTED, not skipped", () => {
+    // It used to be skipped: the 1:1 back-link meant "this is a job material,
+    // already counted against the job". That was true only under the old
+    // dual-write, where a job line WAS a deduction. It no longer is — a job
+    // charge is what the CLIENT is billed and creates no deduction, so the
+    // ledger row is the only record of that money.
+    //
+    // Skipping it dropped real costs out of the forecast, silently, and by
+    // more every time an operator linked a receipt to a job — which the app
+    // actively invites them to do.
     const svc = readFileSync(SERVICE_PATH, "utf8");
-    expect(svc).toMatch(/if \(e\.expense\) \{ jobMaterialsInLedger \+= e\.cost; continue; \}/);
+    expect(svc).not.toMatch(/jobMaterialsInLedger \+= e\.cost; continue;/);
+    expect(svc).toMatch(/if \(e\.invoiceCharges\.length\) jobMaterialsInLedger \+= e\.cost;/);
   });
 
   it("the query selects the link, or the check above is always false", () => {
     const svc = readFileSync(SERVICE_PATH, "utf8");
-    expect(svc).toMatch(/expense: \{ select: \{ id: true \} \}/);
+    expect(svc).toMatch(/invoiceCharges: \{ select: \{ id: true \} \}/);
   });
 
-  it("the deduplicated total is reported rather than silently dropped", () => {
+  it("the job-traceable total is REPORTED, and subtracted from nothing", () => {
     expect(baseline().actual).toHaveProperty("jobMaterialsInLedger");
   });
 });

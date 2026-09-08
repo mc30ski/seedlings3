@@ -244,7 +244,48 @@ export const fetchAssetReferences = (id: string) =>
 export const deleteAsset = (id: string) => apiDelete<{ ok: true }>(`/api/guides/assets/${id}`);
 
 /** The markdown token an author inserts to reference in-app media. */
+/**
+ * The id form. STILL RESOLVES, so existing bodies keep working — but do not
+ * write new references with it.
+ *
+ * An id is meaningful only in the database that minted it. A body carrying one
+ * renders nothing anywhere else, and the author is told an internal id is
+ * "missing from the media library", which is not something they can act on.
+ * Names are the handle; see assetRef below.
+ */
 export const assetToken = (id: string) => `guide-asset:${id}`;
+
+/**
+ * How a reference SHOULD be written: the file's name.
+ *
+ * Portable between environments, readable in the raw markdown, and the thing
+ * an author can actually type without opening the library first.
+ *
+ * A superseded asset is the exception — its name has been handed to the file
+ * that replaced it, so the id is the only handle it has left.
+ */
+export function assetRef(a: {
+  id: string;
+  originalFilename?: string | null;
+  supersededAt?: string | null;
+}): string {
+  if (a.supersededAt || !a.originalFilename) return assetToken(a.id);
+  return a.originalFilename;
+}
+
+/** The markdown to paste for one asset, in the portable form. */
+export function assetMarkdown(a: {
+  id: string;
+  kind?: string | null;
+  altText?: string | null;
+  originalFilename?: string | null;
+  supersededAt?: string | null;
+}): string {
+  const ref = assetRef(a);
+  return a.kind === "VIDEO"
+    ? `:::video ${ref}`
+    : `![${a.altText ?? a.originalFilename ?? "image"}](${ref})`;
+}
 
 export function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`;
