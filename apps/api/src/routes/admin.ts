@@ -7751,6 +7751,12 @@ Respond ONLY with valid JSON in this exact format:
       vendor: b.vendor != null ? String(b.vendor) : null,
       invoiceNumber: b.invoiceNumber != null ? String(b.invoiceNumber) : null,
       notes: b.notes != null ? String(b.notes) : null,
+      // OPTIONAL LEDGER BREADCRUMB, set at record time. The service has always
+      // accepted it and the seed used it, but this route dropped it — so the
+      // only way to link a purchase to its receipt was the separate
+      // ledger-link PATCH, which nothing in the UI called. Many purchases may
+      // point at one row; no total reads it.
+      businessExpenseId: b.businessExpenseId != null ? String(b.businessExpenseId) : null,
     });
   });
 
@@ -7766,6 +7772,133 @@ Respond ONLY with valid JSON in this exact format:
       delta: Number(b.delta),
       reason: String(b.reason ?? ""),
     });
+  });
+
+  // ── Supply photos ─────────────────────────────────────────────────────────
+  // Presign -> PUT -> confirm, the same three-step every photo surface uses.
+  // The browser uploads straight to R2 so image bytes never pass through the
+  // API, and the row is only written once the object is actually there.
+  //
+  // BUCKET: equipment-photos, under a `supply/<id>/` key prefix. See the
+  // SupplyPhoto model comment for why this shares rather than adding a bucket.
+  const SUPPLY_PHOTO_LIMIT = 10;
+
+  app.post("/admin/supplies/:id/photos/upload-url", superGuard, async (req: any) => {
+    const supplyId = String(req.params.id);
+    const { fileName, contentType } = (req.body || {}) as { fileName?: string; contentType?: string };
+    const name = fileName || `photo-${Date.now()}.jpg`;
+    const ct = contentType || "image/jpeg";
+    const key = `supply/${supplyId}/${Date.now()}-${name}`;
+    const uploadUrl = await getUploadUrl(key, ct, 300, "equipment-photos");
+    return { uploadUrl, key, contentType: ct };
+  });
+
+  app.post("/admin/supplies/:id/photos/confirm", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const supplyId = String(req.params.id);
+    const { key, fileName, contentType, description } = (req.body || {}) as {
+      key: string; fileName?: string; contentType?: string; description?: string;
+    };
+    if (!key) throw app.httpErrors.badRequest("key is required");
+    // The key is built server-side above, but the client hands it back — so
+    // check it still addresses THIS supply. Otherwise a confirm could attach
+    // an object written under another supply's prefix.
+    if (!key.startsWith(`supply/${supplyId}/`)) {
+      throw app.httpErrors.badRequest("That upload key does not belong to this supply.");
+    }
+    const count = await prisma.supplyPhoto.count({ where: { supplyId } });
+    if (count >= SUPPLY_PHOTO_LIMIT) {
+      throw app.httpErrors.badRequest(`Maximum ${SUPPLY_PHOTO_LIMIT} photos per supply.`);
+    }
+    return prisma.$transaction(async (tx) => {
+      const photo = await tx.supplyPhoto.create({
+        data: {
+          supplyId,
+          r2Key: key,
+          fileName: fileName ?? null,
+          contentType: contentType ?? null,
+          description: description?.trim() || null,
+          sortOrder: count,
+          uploadedById: uid,
+        },
+      });
+      await writeAudit(tx, AUDIT.SUPPLY.UPDATED, uid, {
+        supplyId,
+        photoId: photo.id,
+        action: "photo_added",
+        fileName: photo.fileName,
+        r2Key: photo.r2Key,
+        affectsMoney: false,
+        affectsStock: false,
+      });
+      return photo;
+    });
+  });
+
+  app.get("/admin/supplies/:id/photos", adminGuard, async (req: any) => {
+    const supplyId = String(req.params.id);
+    const photos = await prisma.supplyPhoto.findMany({
+      where: { supplyId },
+      orderBy: { sortOrder: "asc" },
+    });
+    return Promise.all(
+      photos.map(async (p) => ({
+        ...p,
+        url: await getDownloadUrl(p.r2Key, 86400, "equipment-photos"),
+      })),
+    );
+  });
+
+  app.patch("/admin/supplies/:id/photos/:photoId", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const supplyId = String(req.params.id);
+    const photoId = String(req.params.photoId);
+    const body = req.body || {};
+    const existing = await prisma.supplyPhoto.findFirst({ where: { id: photoId, supplyId } });
+    if (!existing) throw app.httpErrors.notFound("Photo not found.");
+    const data: any = {};
+    if ("description" in body) {
+      data.description = body.description != null ? String(body.description).trim() || null : null;
+    }
+    if ("sortOrder" in body) data.sortOrder = Number(body.sortOrder);
+    return prisma.$transaction(async (tx) => {
+      const photo = await tx.supplyPhoto.update({ where: { id: photoId }, data });
+      await writeAudit(tx, AUDIT.SUPPLY.UPDATED, uid, {
+        supplyId,
+        photoId,
+        action: "photo_updated",
+        descriptionBefore: existing.description,
+        descriptionAfter: photo.description,
+        affectsMoney: false,
+        affectsStock: false,
+      });
+      return photo;
+    });
+  });
+
+  app.delete("/admin/supplies/:id/photos/:photoId", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const supplyId = String(req.params.id);
+    const photoId = String(req.params.photoId);
+    const existing = await prisma.supplyPhoto.findFirst({ where: { id: photoId, supplyId } });
+    if (!existing) throw app.httpErrors.notFound("Photo not found.");
+    await prisma.$transaction(async (tx) => {
+      await tx.supplyPhoto.delete({ where: { id: photoId } });
+      // SNAPSHOT WHAT IS DESTROYED, before it is gone. The R2 object is left
+      // in place deliberately: deleting bytes on a row delete makes an
+      // accidental click unrecoverable, and an orphaned object costs cents.
+      await writeAudit(tx, AUDIT.SUPPLY.UPDATED, uid, {
+        supplyId,
+        photoId,
+        action: "photo_deleted",
+        fileName: existing.fileName,
+        description: existing.description,
+        r2Key: existing.r2Key,
+        affectsMoney: false,
+        affectsStock: false,
+      });
+    });
+    return { deleted: true };
   });
 
   app.get("/admin/supplies/:id/history", adminGuard, async (req: any) => {

@@ -38,7 +38,7 @@ import {
 } from "@/src/ui/components/InlineMessage";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import QRScannerDialog from "@/src/ui/dialogs/QRScannerDialog";
-import { compressOnly } from "@/src/lib/imageRedact";
+import SupplyPhotos, { uploadStagedPhotos, type StagedPhoto } from "@/src/ui/components/SupplyPhotos";
 
 // Barcode formats to scan when looking up supplies. Stable reference so
 // QRScannerDialog's effect doesn't re-run on every parent render.
@@ -90,6 +90,17 @@ type Supply = {
   activeHolds?: ActiveHold[];
 };
 
+
+/** A Ledger row offered by the picker. `referencedByJobs` is the operator's
+ *  cue that a receipt is already shared — many things may point at one row. */
+type LedgerRow = {
+  id: string;
+  date: string;
+  cost: number;
+  description?: string | null;
+  vendor?: string | null;
+  referencedByJobs: number;
+};
 
 function fmtUSD(n: number): string {
   return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -164,6 +175,8 @@ export default function SuppliesTab({
   const [fUpc, setFUpc] = useState("");
   const [fDescription, setFDescription] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
+  // Photos chosen while ADDING, before the supply exists to attach them to.
+  const [stagedPhotos, setStagedPhotos] = useState<StagedPhoto[]>([]);
 
   // Buy more dialog
   const [buyOpen, setBuyOpen] = useState<Supply | null>(null);
@@ -174,10 +187,25 @@ export default function SuppliesTab({
   const [bVendor, setBVendor] = useState("");
   const [bInvoice, setBInvoice] = useState("");
   const [bNotes, setBNotes] = useState("");
-  // Buffered receipt — picked in the dialog, uploaded against the new BE
-  // after the purchase is recorded so we can attach in one step.
-  const [bReceiptFile, setBReceiptFile] = useState<File | null>(null);
+  // NO RECEIPT HERE. A receipt is evidence for a DEDUCTION, and a supply
+  // purchase is not one — it tracks stock. The receipt belongs to the Ledger
+  // row where the real card charge is entered, which is what an audit looks
+  // at. This dialog used to buffer a file and upload it against the
+  // BusinessExpense the purchase created; purchases stopped creating one, so
+  // the upload silently never ran while the toast still said "receipt
+  // attached". See docs/features/job-materials.md.
+  //
+  // Optional ledger BREADCRUMB instead: point this purchase at the row that
+  // paid for it. Many purchases may share one $500 receipt. No total reads it.
+  const [bLedgerId, setBLedgerId] = useState<string | null>(null);
+  const [bLedgerLabel, setBLedgerLabel] = useState<string | null>(null);
   const [savingBuy, setSavingBuy] = useState(false);
+
+  // Ledger picker, shared by the Buy dialog and the purchase rows in History.
+  const [ledgerPickerFor, setLedgerPickerFor] = useState<string | null>(null);
+  const [ledgerQuery, setLedgerQuery] = useState("");
+  const [ledgerRows, setLedgerRows] = useState<LedgerRow[]>([]);
+  const [ledgerBusy, setLedgerBusy] = useState(false);
 
   // Adjust dialog
   const [adjustOpen, setAdjustOpen] = useState<Supply | null>(null);
@@ -259,6 +287,7 @@ export default function SuppliesTab({
 
   function openCreate(prefill?: { name?: string; description?: string; upc?: string }) {
     setEditing(null);
+    setStagedPhotos([]);
     setFName(prefill?.name ?? "");
     setFUnit("");
     setFCategory("Supplies");
@@ -331,6 +360,7 @@ export default function SuppliesTab({
 
   function openEdit(s: Supply) {
     setEditing(s);
+    setStagedPhotos([]);
     setFName(s.name);
     setFUnit(s.unit);
     setFCategory(s.category || "Supplies");
@@ -367,8 +397,39 @@ export default function SuppliesTab({
         await apiPatch(`/api/admin/supplies/${editing.id}`, payload);
         publishInlineMessage({ type: "SUCCESS", text: "Supply updated." });
       } else {
-        await apiPost("/api/admin/supplies", payload);
-        publishInlineMessage({ type: "SUCCESS", text: "Supply added." });
+        const created = await apiPost<{ id: string }>("/api/admin/supplies", payload);
+        // STAGED PHOTOS UPLOAD ONLY NOW — there was no supply to attach them
+        // to until this moment. The supply itself is already saved, so a
+        // failure here must NOT read as a failed add, and must not read as a
+        // success either: the Buy dialog used to buffer a receipt exactly like
+        // this behind a guard that silently went false, and reported "receipt
+        // attached" for a file it never sent. So this says what landed and
+        // what did not, by name.
+        let uploaded = 0;
+        let photoError: unknown = null;
+        if (stagedPhotos.length > 0) {
+          try {
+            uploaded = await uploadStagedPhotos(created.id, stagedPhotos);
+          } catch (e) {
+            photoError = e;
+          }
+        }
+        stagedPhotos.forEach((sp) => URL.revokeObjectURL(sp.preview));
+        setStagedPhotos([]);
+        if (photoError) {
+          publishInlineMessage({
+            type: "WARNING",
+            text:
+              `Supply added, but ${stagedPhotos.length - uploaded} of ${stagedPhotos.length} ` +
+              `photo(s) failed to upload: ${getErrorMessage("", photoError)} ` +
+              `Re-open the supply to add them.`,
+          });
+        } else {
+          publishInlineMessage({
+            type: "SUCCESS",
+            text: `Supply added${uploaded > 0 ? ` with ${uploaded} photo${uploaded === 1 ? "" : "s"}` : ""}.`,
+          });
+        }
       }
       setEditOpen(false);
       void load();
@@ -382,8 +443,43 @@ export default function SuppliesTab({
     }
   }
 
+  async function searchLedger(q: string) {
+    setLedgerQuery(q);
+    setLedgerBusy(true);
+    try {
+      setLedgerRows(await apiGet<LedgerRow[]>(`/api/admin/ledger-charges?q=${encodeURIComponent(q)}`));
+    } catch {
+      /* keep the last list rather than emptying it mid-type */
+    } finally {
+      setLedgerBusy(false);
+    }
+  }
+
+  function openLedgerPicker(target: string) {
+    setLedgerPickerFor(target);
+    setLedgerRows([]);
+    void searchLedger("");
+  }
+
+  /** Link or unlink an ALREADY-RECORDED purchase, from the History timeline. */
+  async function setPurchaseLedgerLink(purchaseId: string, businessExpenseId: string | null) {
+    try {
+      await apiPatch(`/api/admin/supply-purchases/${purchaseId}/ledger-link`, { businessExpenseId });
+      setLedgerPickerFor(null);
+      if (historyOpen) await openHistory(historyOpen);
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Couldn't change the ledger link.", err),
+      });
+    }
+  }
+
   function openBuy(s: Supply) {
     setBuyOpen(s);
+    setBLedgerId(null);
+    setBLedgerLabel(null);
+    setLedgerPickerFor(null);
     setBQty("");
     // Total is the receipt figure — it varies every trip, so don't prefill.
     setBTotalCost("");
@@ -391,7 +487,6 @@ export default function SuppliesTab({
     setBVendor("");
     setBInvoice("");
     setBNotes("");
-    setBReceiptFile(null);
   }
 
   async function recordPurchase() {
@@ -408,60 +503,21 @@ export default function SuppliesTab({
     }
     setSavingBuy(true);
     try {
-      const purchase = await apiPost<{
-        id: string;
-        businessExpense: { id: string };
-      }>(`/api/admin/supplies/${buyOpen.id}/purchases`, {
+      await apiPost(`/api/admin/supplies/${buyOpen.id}/purchases`, {
         quantity: qty,
         totalCost: total,
         date: bDate,
         vendor: bVendor.trim() || null,
         invoiceNumber: bInvoice.trim() || null,
         notes: bNotes.trim() || null,
+        businessExpenseId: bLedgerId,
       });
-
-      // Upload buffered receipt against the new BusinessExpense, if any.
-      // Failure here doesn't roll back the purchase — the BE just won't have
-      // a receipt yet; the user can attach via the BE list afterward.
-      if (bReceiptFile && purchase.businessExpense?.id) {
-        try {
-          const file = bReceiptFile;
-          const isPdf = file.type === "application/pdf";
-          const body: Blob = isPdf ? file : await compressOnly(file);
-          const contentType = isPdf ? "application/pdf" : "image/jpeg";
-          const beId = purchase.businessExpense.id;
-          const { uploadUrl, key } = await apiPost<{ uploadUrl: string; key: string }>(
-            `/api/admin/business-expenses/${beId}/receipt/upload-url`,
-            { fileName: file.name, contentType },
-          );
-          const uploadRes = await fetch(uploadUrl, {
-            method: "PUT",
-            body,
-            headers: { "Content-Type": contentType },
-          });
-          if (!uploadRes.ok) {
-            throw new Error(`Upload failed: ${uploadRes.status} ${uploadRes.statusText}`);
-          }
-          await apiPost(`/api/admin/business-expenses/${beId}/receipt`, {
-            key,
-            fileName: file.name,
-            contentType,
-          });
-        } catch (e) {
-          publishInlineMessage({
-            type: "WARNING",
-            text: `Purchase saved, but receipt upload failed: ${getErrorMessage("", e)}. Attach it later from the Expenses ledger.`,
-          });
-          setBuyOpen(null);
-          void load();
-          setSavingBuy(false);
-          return;
-        }
-      }
 
       publishInlineMessage({
         type: "SUCCESS",
-        text: `Recorded purchase: ${qty} ${buyOpen.unit} of ${buyOpen.name} for ${fmtUSD(total)}${bReceiptFile ? " · receipt attached" : ""}.`,
+        text:
+          `Recorded purchase: ${qty} ${buyOpen.unit} of ${buyOpen.name} for ${fmtUSD(total)}` +
+          `${bLedgerLabel ? ` · linked to ${bLedgerLabel}` : ""}.`,
       });
       setBuyOpen(null);
       void load();
@@ -532,7 +588,14 @@ export default function SuppliesTab({
   }
 
   async function reversePurchase(purchaseId: string, supplyName: string) {
-    if (!confirm(`Reverse this purchase of ${supplyName}? This deletes the tax-ledger row and decrements inventory.`)) {
+    // WAS: "This deletes the tax-ledger row and decrements inventory."
+    // It deletes no ledger row — recording a purchase creates none, and the
+    // optional breadcrumb is SetNull. Telling the operator a reversal destroys
+    // a deduction is how a mistaken purchase stays on the books uncorrected.
+    if (!confirm(
+      `Reverse this purchase of ${supplyName}? This removes the units from inventory ` +
+      `and deletes the purchase record. No ledger expense or deduction is affected.`,
+    )) {
       return;
     }
     try {
@@ -610,9 +673,11 @@ export default function SuppliesTab({
           </Text>
           <Text fontSize="xs" color="blue.800" mt={1.5}>
             When a job <Text as="span" fontWeight="semibold">pulls</Text> from inventory, the units
-            are <Text as="span" fontWeight="semibold">billed to the client</Text> at the job-payout
-            cost, on top of the labor price. They never come out of anyone&rsquo;s pay. That price
-            may carry a markup over what you paid (e.g. $4.00 → $4.20 for fuel and travel).
+            are <Text as="span" fontWeight="semibold">billed to the client</Text> on top of the
+            labor price, and never come out of anyone&rsquo;s pay. You set what to charge{" "}
+            <Text as="span" fontWeight="semibold">on the job</Text> — the same supply can be a
+            different price to a different client; the catalog only holds a default. It has nothing
+            to do with what you paid, which is the Ledger&rsquo;s business.
           </Text>
         </Box>
       )}
@@ -915,6 +980,23 @@ export default function SuppliesTab({
                     <Text fontSize="sm" mb={1}>Description <Text as="span" color="fg.muted" fontSize="xs">(optional)</Text></Text>
                     <Textarea value={fDescription} onChange={(e) => setFDescription(e.target.value)} size="sm" rows={2} />
                   </Box>
+                  {/* Photos. On Edit these upload immediately; on Add there is
+                      no supply to attach them to yet, so they are STAGED (shown
+                      dashed) and uploaded the moment it saves. */}
+                  <Box>
+                    <Text fontSize="sm" mb={1}>
+                      Photos <Text as="span" color="fg.muted" fontSize="xs">(optional)</Text>
+                    </Text>
+                    <SupplyPhotos
+                      supplyId={editing?.id ?? null}
+                      staged={stagedPhotos}
+                      onStagedChange={setStagedPhotos}
+                    />
+                    <Text fontSize="xs" color="fg.muted" mt={1}>
+                      What the bag, roll or jug actually looks like — so the right thing gets bought
+                      and the right thing gets pulled onto a job.
+                    </Text>
+                  </Box>
                 </VStack>
               </Dialog.Body>
               <Dialog.Footer>
@@ -946,8 +1028,8 @@ export default function SuppliesTab({
                     <Text fontSize="xs" color="green.800">
                       This adds units to the shelf. It records <Text as="span" fontWeight="semibold">no
                       tax entry</Text> — the deduction is the card charge you enter in the Ledger.
-                      Link this purchase to that Ledger row afterwards if you want the receipt to
-                      remember what it bought.
+                      Point this purchase at that Ledger row below if you want a record of what the
+                      receipt bought.
                     </Text>
                   </Box>
                   <HStack gap={2}>
@@ -1001,38 +1083,82 @@ export default function SuppliesTab({
                     <Text fontSize="sm" mb={1}>Notes</Text>
                     <Textarea value={bNotes} onChange={(e) => setBNotes(e.target.value)} size="sm" rows={2} />
                   </Box>
-                  {/* Receipt — buffered locally and uploaded against the
-                      newly-created BusinessExpense after the purchase saves. */}
+                  {/* LEDGER BREADCRUMB, optional and many-to-one.
+                      One $500 Lowes receipt covers several purchases, so this
+                      points at the row that paid for this stock — it does not
+                      create one, and no total reads it. The DEDUCTION is the
+                      card charge you enter in the Ledger from your statement.
+
+                      THIS REPLACED A RECEIPT UPLOAD. A receipt is evidence for
+                      a deduction and a supply purchase is not one, so it
+                      belongs on the Ledger row an audit actually looks at. The
+                      picker here also uploaded against a BusinessExpense the
+                      purchase used to create; once purchases stopped creating
+                      one it silently never ran, while the success toast still
+                      claimed "receipt attached". */}
                   <Box>
-                    <Text fontSize="sm" mb={1}>Receipt <Text as="span" color="fg.muted" fontSize="xs">(optional)</Text></Text>
-                    {bReceiptFile ? (
-                      <HStack
-                        gap={2}
-                        p={2}
-                        borderWidth="1px"
-                        borderColor="green.200"
-                        bg="green.50"
-                        borderRadius="md"
-                        fontSize="sm"
-                      >
-                        <Text flex="1" minW={0} truncate>{bReceiptFile.name}</Text>
+                    <Text fontSize="sm" mb={1}>
+                      Ledger expense <Text as="span" color="fg.muted" fontSize="xs">(optional)</Text>
+                    </Text>
+                    {bLedgerId ? (
+                      <HStack gap={2} fontSize="xs" wrap="wrap">
+                        <Text color="fg.muted" flex="1" minW={0} truncate>Ledger: {bLedgerLabel}</Text>
                         <Button
                           size="xs"
                           variant="ghost"
-                          colorPalette="red"
-                          onClick={() => setBReceiptFile(null)}
+                          onClick={() => { setBLedgerId(null); setBLedgerLabel(null); }}
                         >
-                          Remove
+                          Unlink
                         </Button>
                       </HStack>
+                    ) : ledgerPickerFor === "BUY" ? (
+                      <VStack align="stretch" gap={1} borderWidth="1px" borderColor="border" borderRadius="md" p={2}>
+                        <HStack gap={2}>
+                          <Input
+                            size="xs"
+                            autoFocus
+                            value={ledgerQuery}
+                            onChange={(e) => void searchLedger(e.target.value)}
+                            placeholder="Search the ledger by vendor or description"
+                          />
+                          <Button size="xs" variant="ghost" onClick={() => setLedgerPickerFor(null)}>✕</Button>
+                        </HStack>
+                        {ledgerBusy && <Text fontSize="2xs" color="fg.muted">Loading…</Text>}
+                        <VStack align="stretch" gap={0} maxH="180px" overflowY="auto">
+                          {ledgerRows.map((r) => (
+                            <Button
+                              key={r.id}
+                              size="xs"
+                              variant="ghost"
+                              justifyContent="start"
+                              onClick={() => {
+                                setBLedgerId(r.id);
+                                setBLedgerLabel(
+                                  `${fmtUSD(r.cost)} · ${r.vendor ? `${r.vendor} — ` : ""}${r.description ?? "expense"}`,
+                                );
+                                setLedgerPickerFor(null);
+                              }}
+                            >
+                              <Text fontSize="2xs" truncate>
+                                {fmtDate(r.date)} · {fmtUSD(r.cost)} ·{" "}
+                                {r.vendor ? `${r.vendor} — ` : ""}{r.description ?? "expense"}
+                              </Text>
+                            </Button>
+                          ))}
+                          {!ledgerBusy && ledgerRows.length === 0 && (
+                            <Text fontSize="2xs" color="fg.muted">No matching expenses.</Text>
+                          )}
+                        </VStack>
+                      </VStack>
                     ) : (
-                      <input
-                        type="file"
-                        accept="image/*,application/pdf"
-                        onChange={(e) => setBReceiptFile(e.target.files?.[0] ?? null)}
-                        style={{ fontSize: "13px" }}
-                      />
+                      <Button size="xs" variant="ghost" onClick={() => openLedgerPicker("BUY")}>
+                        Link a ledger expense
+                      </Button>
                     )}
+                    <Text fontSize="xs" color="fg.muted" mt={1}>
+                      A reminder of which purchase this receipt paid for. Several buys can point at
+                      one receipt. It records no deduction and changes no total.
+                    </Text>
                   </Box>
                 </VStack>
               </Dialog.Body>
@@ -1134,6 +1260,67 @@ export default function SuppliesTab({
                                   {evt.row.createdBy?.displayName ? ` · by ${evt.row.createdBy.displayName}` : ""}
                                 </Text>
                                 {evt.row.notes && <Text fontSize="xs" color="fg.muted" mt={1}>{evt.row.notes}</Text>}
+                                {/* THE OTHER HALF OF THE BREADCRUMB. The
+                                    Ledger already shows which purchases point
+                                    at a row; this is where the pointer gets
+                                    set, changed, or cleared after the fact —
+                                    the endpoint existed from the start and
+                                    nothing called it. */}
+                                <Box mt={1}>
+                                  {evt.row.businessExpense ? (
+                                    <HStack gap={2} fontSize="xs" wrap="wrap">
+                                      <Text color="fg.muted" flex="1" minW={0} truncate>
+                                        Ledger: {fmtUSD(evt.row.businessExpense.cost)}
+                                        {evt.row.businessExpense.vendor ? ` · ${evt.row.businessExpense.vendor}` : ""}
+                                        {evt.row.businessExpense.description ? ` — ${evt.row.businessExpense.description}` : ""}
+                                      </Text>
+                                      <Button
+                                        size="xs"
+                                        variant="ghost"
+                                        onClick={() => void setPurchaseLedgerLink(evt.row.id, null)}
+                                      >
+                                        Unlink
+                                      </Button>
+                                    </HStack>
+                                  ) : ledgerPickerFor === evt.row.id ? (
+                                    <VStack align="stretch" gap={1} borderWidth="1px" borderColor="border" borderRadius="md" p={2}>
+                                      <HStack gap={2}>
+                                        <Input
+                                          size="xs"
+                                          autoFocus
+                                          value={ledgerQuery}
+                                          onChange={(e) => void searchLedger(e.target.value)}
+                                          placeholder="Search the ledger by vendor or description"
+                                        />
+                                        <Button size="xs" variant="ghost" onClick={() => setLedgerPickerFor(null)}>✕</Button>
+                                      </HStack>
+                                      {ledgerBusy && <Text fontSize="2xs" color="fg.muted">Loading…</Text>}
+                                      <VStack align="stretch" gap={0} maxH="180px" overflowY="auto">
+                                        {ledgerRows.map((r) => (
+                                          <Button
+                                            key={r.id}
+                                            size="xs"
+                                            variant="ghost"
+                                            justifyContent="start"
+                                            onClick={() => void setPurchaseLedgerLink(evt.row.id, r.id)}
+                                          >
+                                            <Text fontSize="2xs" truncate>
+                                              {fmtDate(r.date)} · {fmtUSD(r.cost)} ·{" "}
+                                              {r.vendor ? `${r.vendor} — ` : ""}{r.description ?? "expense"}
+                                            </Text>
+                                          </Button>
+                                        ))}
+                                        {!ledgerBusy && ledgerRows.length === 0 && (
+                                          <Text fontSize="2xs" color="fg.muted">No matching expenses.</Text>
+                                        )}
+                                      </VStack>
+                                    </VStack>
+                                  ) : (
+                                    <Button size="xs" variant="ghost" onClick={() => openLedgerPicker(evt.row.id)}>
+                                      Link a ledger expense
+                                    </Button>
+                                  )}
+                                </Box>
                               </>
                             )}
                             {evt.kind === "HOLD" && (
@@ -1181,7 +1368,10 @@ export default function SuppliesTab({
                               variant="ghost"
                               colorPalette="red"
                               onClick={() => reversePurchase(evt.row.id, historyOpen?.name ?? "this supply")}
-                              title="Reverse purchase (deletes BE + decrements inventory)"
+                              // Said "deletes BE" — it deletes no
+                              // BusinessExpense. Recording a purchase creates
+                              // none, and the optional breadcrumb is SetNull.
+                              title="Reverse purchase — removes the units from inventory. No ledger expense is affected."
                             >
                               <RotateCcw size={12} />
                             </Button>
