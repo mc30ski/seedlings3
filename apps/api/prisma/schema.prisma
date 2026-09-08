@@ -2602,6 +2602,21 @@ model Supply {
   /// told every reader the opposite. May exceed `businessCost`; the
   /// difference is the material margin.
   clientUnitPrice Float @default(0)
+
+  /// Percent ON TOP of the average cost of stock on hand, as an alternative
+  /// to the fixed `clientUnitPrice` above. A markup keeps the default in step
+  /// with what the item now costs, instead of going stale the next time
+  /// prices move.
+  ///
+  /// NULL MEANS "use the fixed price" — the mode is not a separate column.
+  /// One value with one meaning cannot disagree with a flag beside it, and
+  /// `0` stays a real markup (bill at cost) rather than being swallowed by a
+  /// truthiness check.
+  ///
+  /// STILL ONLY A DEFAULT. What a client pays is chosen when the supply goes
+  /// onto a job and snapshotted onto the hold, so a markup that moves
+  /// tomorrow cannot re-rate what was billed today. See lib/supplyCost.ts.
+  clientMarkupPercent Float?
   // Physical units in stock. Available = onHand − Σ(active holds), computed
   // at query time.
   onHand        Int     @default(0)
@@ -2660,8 +2675,15 @@ model SupplyPurchase {
   unitCost      Float // per-unit cost at this purchase (snapshot)
   totalCost     Float // quantity × unitCost (denormalized for export)
   date          DateTime @default(now())
-  vendor        String?
-  invoiceNumber String?
+  /// NO vendor, and NO invoiceNumber. A receipt/invoice number describes the RECEIPT, which
+  /// is a Ledger fact — `BusinessExpense` is where both live and where they are
+  /// reconciled from. Carrying second copies here invited two answers to one
+  /// question, and production bore that out both ways: the invoice number was
+  /// never once filled in on a purchase (0 of 4, against 49 of 104 ledger
+  /// rows), while the vendor WAS — and promptly disagreed with itself, one
+  /// receipt reading "Lowes" on the purchase and "Lowe's Hardware" on the
+  /// ledger row it pointed at. Link the purchase to its ledger row instead;
+  /// both facts are then one click away and have a single owner.
   notes         String?
 
   // 1:1 link to the tax-ledger row created at the same time. Same dual-write

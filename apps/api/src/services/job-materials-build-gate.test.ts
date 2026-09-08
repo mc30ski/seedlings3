@@ -1284,7 +1284,10 @@ describe("[build-gate] the Supplies UI says what the service actually does", () 
     expect(DLG).toMatch(/clientUnitPrice: pickedUnitPrice\.trim\(\) === "" \? null : Number\(pickedUnitPrice\)/);
     expect(DLG).toMatch(/description: pickedDesc\.trim\(\) \|\| null/);
     const SUP = stripComments(readFileSync(join(__dirname, "./supplies.ts"), "utf8"));
-    expect(SUP).toMatch(/input\.clientUnitPrice != null/);
+    // A TYPED PRICE WINS over any catalog default. The precedence itself is
+    // proved by resolvePullUnitPrice's unit tests (including that a typed
+    // ZERO survives); this only holds the wiring that reaches it.
+    expect(SUP).toMatch(/input\.clientUnitPrice == null\s*\?\s*null/);
   });
   it("a supply's category is a grouping label, not a Schedule C line", () => {
     // Removing the picker from the DIALOG was half a fix. The service still
@@ -1425,6 +1428,104 @@ describe("[build-gate] an inventory pull records what the stock cost us", () => 
     // Typing sets it; CLEARING the field hands the line back to auto.
     expect(CHARGES).toMatch(/data\.detailIsCustom = typed != null;/);
   });
+  it("the default charge can be a fixed amount OR a markup on cost", () => {
+    // A fixed price goes stale the moment prices move: mulch bought at $4.00
+    // and billed at $4.20 keeps suggesting $4.20 after the next pallet costs
+    // $4.60. A markup follows the average cost of stock on hand.
+    const SCHEMA = readFileSync(join(__dirname, "../../prisma/schema.prisma"), "utf8");
+    expect(SCHEMA).toMatch(/clientMarkupPercent Float\?/);
+
+    // THE MODE IS NOT A SECOND COLUMN. Null means "use the fixed price", so
+    // one value carries one meaning and cannot fall out of step with a flag.
+    const code = SCHEMA.replace(/^\s*\/\/\/?[^\n]*$/gm, "");
+    expect(code).not.toMatch(/clientPriceMode|clientPriceIsMarkup/);
+
+    const LIB = stripComments(readFileSync(join(__dirname, "../lib/supplyCost.ts"), "utf8"));
+    // `0` must stay a real markup — bill at cost — not a synonym for "unset".
+    expect(LIB).toMatch(/if \(pct == null\) return rule\.clientUnitPrice;/);
+    expect(LIB, "a truthiness check would swallow a 0% markup")
+      .not.toMatch(/if \(!pct\)/);
+  });
+
+  it("one resolved default, not three call sites computing their own", () => {
+    // The list, the pull dialog and addHold each need "what should this cost
+    // the client". Any of them reading the raw fixed field would quote a stale
+    // number for a supply priced as a markup.
+    const SUP = stripComments(readFileSync(join(__dirname, "./supplies.ts"), "utf8"));
+    expect(SUP).toMatch(/defaultClientPrice: defaultClientUnitPrice\(/);
+    // ASSERTED POSITIVELY, INSIDE addHold. Banning a string only bans that
+    // spelling — the first version of this check passed while addHold read
+    // `supply.clientUnitPrice` under a different one.
+    const addHold = SUP.slice(SUP.indexOf("async addHold"), SUP.indexOf("async removeHold"));
+    expect(addHold, "addHold must resolve the price through the shared rule")
+      .toMatch(/resolvePullUnitPrice\(/);
+    // AND USE THE RESULT. Asserting only that the call exists let a mutation
+    // keep the call and then read the raw field on the next line.
+    expect(addHold).toMatch(/const unitPrice = priced\.unitPrice;/);
+    expect(addHold, "the raw fixed field must not be the price")
+      .not.toMatch(/unitPrice = supply\.clientUnitPrice/);
+    const DLG = stripComments(readFileSync(
+      join(__dirname, "../../../web/src/ui/dialogs/ManageInvoiceChargesDialog.tsx"), "utf8"));
+    expect(DLG, "the pull dialog must take the resolved default")
+      .toMatch(/clientUnitPrice: s\.defaultClientPrice \?\? null/);
+  });
+
+  it("a markup with no purchase history asks rather than quoting zero", () => {
+    // Nothing to mark up yet. $0.00 would read as free rather than unknown.
+    const SUP = stripComments(readFileSync(join(__dirname, "./supplies.ts"), "utf8"));
+    expect(SUP).toMatch(/NO_DEFAULT_PRICE/);
+    const DLG = readFileSync(
+      join(__dirname, "../../../web/src/ui/dialogs/ManageInvoiceChargesDialog.tsx"), "utf8");
+    expect(DLG).toMatch(/Enter what to charge/);
+    const TAB = readFileSync(
+      join(__dirname, "../../../web/src/ui/tabs/SuppliesTab.tsx"), "utf8");
+    expect(TAB).toMatch(/needs a purchase first/);
+  });
+
+  it("a purchase carries no receipt identity of its own", () => {
+    // A receipt/invoice number describes the RECEIPT, which is a Ledger fact.
+    // Carrying a second copy on SupplyPurchase gave one question two possible
+    // answers with neither authoritative — and production bore out which side
+    // was real: 0 of 4 supply purchases ever had one, against 49 of 104 ledger
+    // rows. Dropped in 20260909010000; the breadcrumb puts it one click away.
+    //
+    // Same reasoning that took the receipt UPLOAD off this form.
+    const SCHEMA = readFileSync(join(__dirname, "../../prisma/schema.prisma"), "utf8");
+    const supplyPurchase = SCHEMA.slice(
+      SCHEMA.indexOf("model SupplyPurchase"),
+      SCHEMA.indexOf("model SupplyHold"),
+    );
+    const code = supplyPurchase.replace(/^\s*\/\/\/?[^\n]*$/gm, "");
+    expect(code, "a receipt number must not return to SupplyPurchase")
+      .not.toMatch(/invoiceNumber/);
+    // VENDOR TOO. It duplicated BusinessExpense.vendor and had already
+    // diverged in production — one receipt read "Lowes" on the purchase and
+    // "Lowe's Hardware" on the ledger row it pointed at.
+    expect(code, "a vendor must not return to SupplyPurchase").not.toMatch(/vendor/);
+    // …and both must still exist where they belong.
+    const ledger = SCHEMA.slice(SCHEMA.indexOf("model BusinessExpense"));
+    expect(ledger).toMatch(/invoiceNumber/);
+    expect(ledger).toMatch(/vendor/);
+    const TAB = readFileSync(
+      join(__dirname, "../../../web/src/ui/tabs/SuppliesTab.tsx"), "utf8",
+    );
+    expect(TAB, "no Invoice # field on the Buy form").not.toMatch(/bInvoice/);
+    expect(TAB, "no Vendor field on the Buy form").not.toMatch(/bVendor/);
+
+    // THE DROP PRESERVES WHAT IT CAN. Unlike the invoice number, this column
+    // held data on every production row, so the migration copies each vendor
+    // up to its linked ledger row where that row had none — and never over a
+    // vendor the ledger already names, which is the reconciled record.
+    const MIG = readFileSync(
+      join(__dirname, "../../prisma/migrations/20260909030000_supply_purchase_drops_vendor/migration.sql"),
+      "utf8",
+    );
+    expect(MIG).toMatch(/UPDATE "BusinessExpense"/);
+    expect(MIG).toMatch(/AND b\."vendor" IS NULL/);
+    expect(MIG.indexOf("UPDATE"), "the backfill must run BEFORE the drop")
+      .toBeLessThan(MIG.indexOf("DROP COLUMN"));
+  });
+
   it("recording a purchase still writes no ledger row", () => {
     // The deduction is the real card charge in the Ledger. A purchase may
     // POINT at one — many-to-one — but never creates one.
@@ -1493,7 +1594,10 @@ describe("[build-gate] what stock cost is derived, never stored", () => {
     // Two call sites (list and getById) reading the same events is exactly how
     // a list and a detail page start disagreeing about the same supply.
     const S = SUPPLIES();
-    expect(S).toMatch(/import \{ fifoCost/);
+    // Asserts the DEPENDENCY, not the import's line breaks — reformatting the
+    // import list is not a regression and must not read as one.
+    expect(S).toMatch(/from "\.\.\/lib\/supplyCost"/);
+    expect(S).toMatch(/\bfifoCost\(/);
     expect(S).toMatch(/async function costBySupply/);
     expect((S.match(/costBySupply\(/g) ?? []).length).toBeGreaterThanOrEqual(3);
     expect(S, "list must not replay per row — that is an N+1")

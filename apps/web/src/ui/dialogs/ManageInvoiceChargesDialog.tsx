@@ -78,7 +78,12 @@ type SupplyOption = {
   id: string;
   name: string;
   unit: string;
-  clientUnitPrice: number;
+  /** The catalog's EFFECTIVE default charge, resolved server-side: the fixed
+   *  price, or a markup applied to average cost. null when a markup has no
+   *  purchase history behind it yet, in which case the operator must price the
+   *  pull themselves. Never recompute this here — three call sites arriving at
+   *  three answers is the failure this replaced. */
+  clientUnitPrice: number | null;
   available: number;
 };
 
@@ -298,7 +303,7 @@ export default function ManageInvoiceChargesDialog({
     const qty = Number(pickedQty) || 0;
     if (qty <= 0) return null;
     const unitPrice =
-      pickedUnitPrice.trim() !== "" ? Number(pickedUnitPrice) : pickedSupply.clientUnitPrice;
+      pickedUnitPrice.trim() !== "" ? Number(pickedUnitPrice) : (pickedSupply.clientUnitPrice ?? NaN);
     if (!Number.isFinite(unitPrice)) return null;
     return `${qty} × ${pickedSupply.unit} @ $${unitPrice.toFixed(2)}`;
   }
@@ -342,7 +347,11 @@ export default function ManageInvoiceChargesDialog({
     () =>
       createListCollection({
         items: supplies.map((s) => ({
-          label: `${s.name} — ${s.available} ${s.unit} avail @ $${s.clientUnitPrice.toFixed(2)}/${s.unit}`,
+          label:
+            `${s.name} — ${s.available} ${s.unit} avail` +
+            (s.clientUnitPrice == null
+              ? " · price on pull"
+              : ` @ $${s.clientUnitPrice.toFixed(2)}/${s.unit}`),
           value: s.id,
         })),
       }),
@@ -376,7 +385,7 @@ export default function ManageInvoiceChargesDialog({
               id: s.id,
               name: s.name,
               unit: s.unit,
-              clientUnitPrice: Number(s.clientUnitPrice ?? 0),
+              clientUnitPrice: s.defaultClientPrice ?? null,
               available: Number(s.available ?? 0),
             })),
         );
@@ -555,7 +564,7 @@ export default function ManageInvoiceChargesDialog({
               id: s.id,
               name: s.name,
               unit: s.unit,
-              clientUnitPrice: Number(s.clientUnitPrice ?? 0),
+              clientUnitPrice: s.defaultClientPrice ?? null,
               available: Number(s.available ?? 0),
             })),
         );
@@ -1130,7 +1139,7 @@ export default function ManageInvoiceChargesDialog({
                               pickedUnitPrice !== ""
                                 ? pickedUnitPrice
                                 : pickedSupply
-                                  ? pickedSupply.clientUnitPrice.toFixed(2)
+                                  ? (pickedSupply.clientUnitPrice?.toFixed(2) ?? "")
                                   : ""
                             }
                             onChange={setPickedUnitPrice}
@@ -1143,6 +1152,18 @@ export default function ManageInvoiceChargesDialog({
                               pickedUnitPrice.trim() === ""
                                 ? pickedSupply.clientUnitPrice
                                 : Number(pickedUnitPrice);
+                            // NO PRICE, NO TOTAL. A supply priced as a markup
+                            // that has never been bought has nothing to mark
+                            // up, so there is no default to quote — showing
+                            // "$0.00" would read as free rather than unknown.
+                            if (unit == null || !Number.isFinite(unit)) {
+                              return (
+                                <Text fontSize="xs" color="orange.600">
+                                  Enter what to charge — this supply is priced as a markup and has
+                                  no purchase history yet.
+                                </Text>
+                              );
+                            }
                             const total = Math.round(Number(pickedQty) * unit * 100) / 100;
                             return (
                               <Text fontSize="xs" color="fg.muted">

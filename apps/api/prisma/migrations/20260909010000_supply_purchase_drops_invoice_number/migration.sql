@@ -1,0 +1,14 @@
+-- A receipt number is a Ledger fact, not a stock fact.
+--
+-- `SupplyPurchase.invoiceNumber` duplicated `BusinessExpense.invoiceNumber`,
+-- so the same question had two possible answers and neither was authoritative.
+-- The Ledger row is the record that gets reconciled against the accounting
+-- software; a purchase points at it with the optional many-to-one breadcrumb,
+-- which puts the number one click away.
+--
+-- NO DATA LOST. Verified read-only against production on 2026-09-08:
+--   SupplyPurchase : 4 rows, 0 with an invoiceNumber
+--   BusinessExpense: 104 rows, 49 with an invoiceNumber
+-- The field was never used on the side being dropped, and is well used on the
+-- side that keeps it.
+ALTER TABLE "SupplyPurchase" DROP COLUMN "invoiceNumber";

@@ -1842,16 +1842,16 @@ async function seedDatabase() {
     ownLedgerRow?: boolean;
   };
   const invoiceChargeData: SeedCharge[] = [
-    { occId: cWillowbrook7.id, userId: ADMIN_WORKER_ID, cost: 25.0, desc: "Fuel for mowers", category: "Fuel", vendor: "Shell", ownLedgerRow: true, actualCost: 25.0 },
-    { occId: cWillowbrook14.id, userId: ADMIN_WORKER_ID, cost: 28.0, desc: "Fuel for mowers", category: "Fuel", vendor: "Shell", ownLedgerRow: true, actualCost: 28.0 },
-    { occId: cMartinez14.id, userId: EMPLOYEE_ID, cost: 12.5, desc: "Trimmer line replacement", category: "Supplies", vendor: "Stihl Pro Dealer", ownLedgerRow: true, actualCost: 12.5 },
-    { occId: cSunrise7.id, userId: ADMIN_WORKER_ID, cost: 35.0, desc: "Fuel and 2-cycle oil", category: "Fuel", vendor: "Shell", ownLedgerRow: true, actualCost: 35.0 },
-    { occId: cHarrington7.id, userId: EMPLOYEE_ID, cost: 8.0, desc: "Edger blade", category: "Supplies", vendor: "Pro Lawn Supply", actualCost: 6.25 },
+    { occId: cWillowbrook7.id, userId: ADMIN_WORKER_ID, cost: 25.0, desc: "Fuel for mowers", category: "Fuel", ownLedgerRow: true, actualCost: 25.0 },
+    { occId: cWillowbrook14.id, userId: ADMIN_WORKER_ID, cost: 28.0, desc: "Fuel for mowers", category: "Fuel", ownLedgerRow: true, actualCost: 28.0 },
+    { occId: cMartinez14.id, userId: EMPLOYEE_ID, cost: 12.5, desc: "Trimmer line replacement", category: "Supplies", ownLedgerRow: true, actualCost: 12.5 },
+    { occId: cSunrise7.id, userId: ADMIN_WORKER_ID, cost: 35.0, desc: "Fuel and 2-cycle oil", category: "Fuel", ownLedgerRow: true, actualCost: 35.0 },
+    { occId: cHarrington7.id, userId: EMPLOYEE_ID, cost: 8.0, desc: "Edger blade", category: "Supplies", actualCost: 6.25 },
     // Two jobs, one Lowe's receipt — the many-to-one breadcrumb.
-    { occId: cRiverBend7.id, userId: CONTRACTOR_ID, cost: 18.0, desc: "Mulch bags (2)", category: "Supplies", vendor: "Lowes", actualCost: 13.4, sharedReceipt: "lowes-run" },
-    { occId: cThompson7.id, userId: CONTRACTOR_ID, cost: 15.0, desc: "Hedge trimmer fuel mix", category: "Supplies", vendor: "Lowes", actualCost: 11.8, sharedReceipt: "lowes-run" },
+    { occId: cRiverBend7.id, userId: CONTRACTOR_ID, cost: 18.0, desc: "Mulch bags (2)", category: "Supplies", actualCost: 13.4, sharedReceipt: "lowes-run" },
+    { occId: cThompson7.id, userId: CONTRACTOR_ID, cost: 15.0, desc: "Hedge trimmer fuel mix", category: "Supplies", actualCost: 11.8, sharedReceipt: "lowes-run" },
     // No actualCost — job profit must render as an upper bound.
-    { occId: cObrien7.id, userId: EMPLOYEE_ID, cost: 6.0, desc: "Trash bags for debris", category: "Supplies", vendor: "Home Depot" },
+    { occId: cObrien7.id, userId: EMPLOYEE_ID, cost: 6.0, desc: "Trash bags for debris", category: "Supplies" },
   ];
 
   // ── Add-on services ───────────────────────────────────────────────────────
@@ -2183,33 +2183,33 @@ async function seedDatabase() {
     // excluded from qb-expenses.csv. The negative `ago` values date these
     // a few days into the future relative to seed-time "today", so the
     // threshold (cost ≥ $500 AND date ≥ 2026-05-28) catches them.
-    { ago: -2, cost: 4250.00, desc: "Commercial zero-turn mower (Ferris IS 3200Z 61\")", category: "Depreciation", vendor: "Ferris Dealer", notes: "5-yr useful life; place in service immediately." },
-    { ago: -1, cost: 875.00, desc: "Trailer ramp gate replacement", category: "Repairs and maintenance", vendor: "Big Tex", notes: "Threshold capital purchase — depreciate." },
+    { ago: -2, cost: 4250.00, desc: "Commercial zero-turn mower (Ferris IS 3200Z 61\")", category: "Depreciation", notes: "5-yr useful life; place in service immediately." },
+    { ago: -1, cost: 875.00, desc: "Trailer ramp gate replacement", category: "Repairs and maintenance", notes: "Threshold capital purchase — depreciate." },
     // Today / this week
-    { ago: 0, cost: 64.27, desc: "Diesel for trailer truck", category: "Fuel", vendor: "Shell" },
-    { ago: 3, cost: 142.50, desc: "Trimmer line bulk pack", category: "Supplies", vendor: "Stihl Pro Dealer" },
+    { ago: 0, cost: 64.27, desc: "Diesel for trailer truck", category: "Fuel" },
+    { ago: 3, cost: 142.50, desc: "Trimmer line bulk pack", category: "Supplies" },
     // Meals — exercises the 50%-deductible split rendering on the
     // P&L (parent + deductible/non-deductible children + footnote)
     // and the "Estimated taxable operating income" line below NOI.
-    { ago: 1, cost: 28.45, desc: "Client meeting lunch (Springfield Diner)", category: "Meals", vendor: "Springfield Diner" },
-    { ago: 5, cost: 18.62, desc: "Crew lunch — out-of-town job", category: "Meals", vendor: "Wendy's" },
-    { ago: 12, cost: 42.10, desc: "Vendor meeting — coffee + lunch", category: "Meals", vendor: "Panera" },
+    { ago: 1, cost: 28.45, desc: "Client meeting lunch (Springfield Diner)", category: "Meals" },
+    { ago: 5, cost: 18.62, desc: "Crew lunch — out-of-town job", category: "Meals" },
+    { ago: 12, cost: 42.10, desc: "Vendor meeting — coffee + lunch", category: "Meals" },
     // This month, prior weeks
-    { ago: 14, cost: 89.43, desc: "Truck oil change & inspection", category: "Vehicle Maintenance", vendor: "Jiffy Lube", notes: "Receipt in glovebox" },
-    { ago: 18, cost: 47.21, desc: "Office supplies (paper, pens, toner)", category: "Office expense", vendor: "Staples" },
-    { ago: 33, cost: 125.00, desc: "Facebook Ads — neighborhood targeting", category: "Advertising", vendor: "Meta", recurrence: "MONTHLY" },
-    { ago: 35, cost: 18.99, desc: "QuickBooks Online — monthly", category: "Office expense", vendor: "Intuit", recurrence: "MONTHLY" },
+    { ago: 14, cost: 89.43, desc: "Truck oil change & inspection", category: "Vehicle Maintenance", notes: "Receipt in glovebox" },
+    { ago: 18, cost: 47.21, desc: "Office supplies (paper, pens, toner)", category: "Office expense" },
+    { ago: 33, cost: 125.00, desc: "Facebook Ads — neighborhood targeting", category: "Advertising", recurrence: "MONTHLY" },
+    { ago: 35, cost: 18.99, desc: "QuickBooks Online — monthly", category: "Office expense", recurrence: "MONTHLY" },
     // Earlier this year
-    { ago: 38, cost: 1250.00, desc: "New backpack blower (Echo PB-8010T)", category: "Supplies", vendor: "Pro Lawn Supply" },
-    { ago: 65, cost: 18.99, desc: "QuickBooks Online — monthly", category: "Office expense", vendor: "Intuit", recurrence: "MONTHLY" },
-    { ago: 72, cost: 215.85, desc: "Mower deck repair (welding + new blades)", category: "Repairs and maintenance", vendor: "Mike's Mower Shop" },
-    { ago: 95, cost: 285.00, desc: "General liability insurance", category: "Insurance", vendor: "State Farm Commercial", recurrence: "QUARTERLY" },
-    { ago: 124, cost: 75.00, desc: "Logo redesign (vector files)", category: "Advertising", vendor: "Fiverr designer" },
+    { ago: 38, cost: 1250.00, desc: "New backpack blower (Echo PB-8010T)", category: "Supplies" },
+    { ago: 65, cost: 18.99, desc: "QuickBooks Online — monthly", category: "Office expense", recurrence: "MONTHLY" },
+    { ago: 72, cost: 215.85, desc: "Mower deck repair (welding + new blades)", category: "Repairs and maintenance" },
+    { ago: 95, cost: 285.00, desc: "General liability insurance", category: "Insurance", recurrence: "QUARTERLY" },
+    { ago: 124, cost: 75.00, desc: "Logo redesign (vector files)", category: "Advertising" },
     // Last year (for "all time" totals)
-    { ago: 188, cost: 285.00, desc: "General liability insurance", category: "Insurance", vendor: "State Farm Commercial", recurrence: "QUARTERLY" },
-    { ago: 240, cost: 12.50, desc: "Bank wire fee", category: "Other", vendor: "Chase Business" },
-    { ago: 320, cost: 595.00, desc: "Tax prep (small business return)", category: "Legal and professional services", vendor: "H&R Block" },
-    { ago: 358, cost: 320.00, desc: "Annual business license renewal", category: "Taxes and licenses", vendor: "City of Springfield", recurrence: "ANNUALLY" },
+    { ago: 188, cost: 285.00, desc: "General liability insurance", category: "Insurance", recurrence: "QUARTERLY" },
+    { ago: 240, cost: 12.50, desc: "Bank wire fee", category: "Other" },
+    { ago: 320, cost: 595.00, desc: "Tax prep (small business return)", category: "Legal and professional services" },
+    { ago: 358, cost: 320.00, desc: "Annual business license renewal", category: "Taxes and licenses", recurrence: "ANNUALLY" },
   ];
 
   for (const e of businessExpenseData) {
@@ -2286,7 +2286,7 @@ async function seedDatabase() {
     unitCost: number;
     clientUnitPrice: number;
     description?: string;
-    purchases: { ago: number; quantity: number; unitCost: number; vendor: string; invoiceNumber?: string }[];
+    purchases: { ago: number; quantity: number; unitCost: number }[];
   }[] = [
     {
       key: "MULCH",
@@ -2298,8 +2298,8 @@ async function seedDatabase() {
       clientUnitPrice: 4.2,
       description: "2 cu. ft. bags. Markup of $0.20/bag covers fetch time.",
       purchases: [
-        { ago: 2, quantity: 30, unitCost: 4.0, vendor: "Lowes", invoiceNumber: "L-44120" },
-        { ago: 16, quantity: 24, unitCost: 3.85, vendor: "Home Depot", invoiceNumber: "HD-22988" },
+        { ago: 2, quantity: 30, unitCost: 4.0 },
+        { ago: 16, quantity: 24, unitCost: 3.85 },
       ],
     },
     {
@@ -2312,7 +2312,7 @@ async function seedDatabase() {
       clientUnitPrice: 18.0,
       description: "Pro-grade square cross-section, 0.095\" gauge, 3 lb spool.",
       purchases: [
-        { ago: 7, quantity: 8, unitCost: 18.0, vendor: "Stihl Pro Dealer" },
+        { ago: 7, quantity: 8, unitCost: 18.0 },
       ],
     },
     {
@@ -2323,7 +2323,7 @@ async function seedDatabase() {
       unitCost: 6.5,
       clientUnitPrice: 7.0,
       purchases: [
-        { ago: 11, quantity: 12, unitCost: 6.5, vendor: "Pro Lawn Supply" },
+        { ago: 11, quantity: 12, unitCost: 6.5 },
       ],
     },
     {
@@ -2335,7 +2335,7 @@ async function seedDatabase() {
       clientUnitPrice: 34.0,
       description: "50 lb bag covers ~12,500 sq ft.",
       purchases: [
-        { ago: 30, quantity: 6, unitCost: 32.0, vendor: "Pro Lawn Supply", invoiceNumber: "PLS-1042" },
+        { ago: 30, quantity: 6, unitCost: 32.0 },
       ],
     },
     {
@@ -2347,7 +2347,7 @@ async function seedDatabase() {
       clientUnitPrice: 0.75,
       description: "55-gal contractor bags, 3 mil.",
       purchases: [
-        { ago: 5, quantity: 50, unitCost: 0.6, vendor: "Costco" },
+        { ago: 5, quantity: 50, unitCost: 0.6 },
       ],
     },
     {
@@ -2359,7 +2359,7 @@ async function seedDatabase() {
       clientUnitPrice: 24.0,
       description: "TruFuel 50:1 quart cans. Categorized as Fuel (not Supplies).",
       purchases: [
-        { ago: 4, quantity: 12, unitCost: 24.0, vendor: "Pro Lawn Supply" },
+        { ago: 4, quantity: 12, unitCost: 24.0 },
       ],
     },
   ];
@@ -2389,8 +2389,6 @@ async function seedDatabase() {
           cost: totalCost,
           description: `${s.name} × ${p.quantity} ${s.unit}`,
           category: s.category,
-          vendor: p.vendor,
-          invoiceNumber: p.invoiceNumber ?? null,
         },
       });
       await prisma.supplyPurchase.create({
@@ -2400,8 +2398,6 @@ async function seedDatabase() {
           unitCost: p.unitCost,
           totalCost,
           date: daysAgo(p.ago, 10),
-          vendor: p.vendor,
-          invoiceNumber: p.invoiceNumber ?? null,
           businessExpenseId: be.id,
           createdById: ADMIN_WORKER_ID,
         },
@@ -6292,7 +6288,6 @@ async function seedPaymentsBase() {
         unitCost: s.unitCost,
         totalCost,
         date: daysAgo(7, 10),
-        vendor: "Pro Lawn Supply",
         businessExpenseId: be.id,
         createdById: ADMIN_WORKER_ID,
       },
@@ -8132,7 +8127,6 @@ async function seedSupplyLifecycle() {
     // where every purchase costs the same cannot exercise FIFO at all.
     totalCost: Math.round(20 * 4.6 * 100) / 100,
     vendor: "Lowes",
-    invoiceNumber: "LW-8842",
   });
   const receipt = await prisma.businessExpense.create({
     data: {
@@ -8152,7 +8146,6 @@ async function seedSupplyLifecycle() {
     await supplies.recordPurchase(ADMIN_WORKER_ID, supply.id, {
       quantity: qty,
       totalCost: Math.round(qty * unitPrice * 100) / 100,
-      vendor: "Pro Lawn Supply",
       businessExpenseId: receipt.id,
     });
   }

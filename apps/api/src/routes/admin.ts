@@ -7730,6 +7730,7 @@ const LEDGER_ROW_INCLUDE = Prisma.validator<Prisma.BusinessExpenseInclude>()({
       upc: b.upc != null ? String(b.upc) : null,
       category: b.category != null ? String(b.category) : null,
       clientUnitPrice: Number(b.clientUnitPrice ?? 0),
+      clientMarkupPercent: b.clientMarkupPercent == null ? null : Number(b.clientMarkupPercent),
     });
   });
 
@@ -7743,6 +7744,11 @@ const LEDGER_ROW_INCLUDE = Prisma.validator<Prisma.BusinessExpenseInclude>()({
     if ("upc" in b) input.upc = b.upc != null ? String(b.upc) : null;
     if ("category" in b) input.category = b.category != null ? String(b.category) : null;
     if ("clientUnitPrice" in b) input.clientUnitPrice = Number(b.clientUnitPrice);
+    // Present-and-null is how a markup is cleared, so forward the key itself.
+    if ("clientMarkupPercent" in b) {
+      input.clientMarkupPercent =
+        b.clientMarkupPercent == null ? null : Number(b.clientMarkupPercent);
+    }
     return services.supplies.update(uid, String(req.params.id), input);
   });
 
@@ -7763,8 +7769,6 @@ const LEDGER_ROW_INCLUDE = Prisma.validator<Prisma.BusinessExpenseInclude>()({
       quantity: Number(b.quantity),
       totalCost: Number(b.totalCost),
       date: b.date != null ? String(b.date) : null,
-      vendor: b.vendor != null ? String(b.vendor) : null,
-      invoiceNumber: b.invoiceNumber != null ? String(b.invoiceNumber) : null,
       notes: b.notes != null ? String(b.notes) : null,
       // OPTIONAL LEDGER BREADCRUMB, set at record time. The service has always
       // accepted it and the seed used it, but this route dropped it — so the

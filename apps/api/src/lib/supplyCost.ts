@@ -213,3 +213,77 @@ export function fifoCost(events: SupplyCostEvent[]): SupplyCostResult {
     layers,
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The catalog's DEFAULT charge to a client.
+//
+// Two ways to express it, and a supply uses one or the other:
+//
+//   • A FIXED amount        — `clientUnitPrice`, typed once.
+//   • A MARKUP on cost      — `clientMarkupPercent`, applied to the weighted
+//                             average of the stock actually on hand, so the
+//                             default follows what the item now costs instead
+//                             of going stale the next time prices move.
+//
+// WHICH MODE IS IN USE IS NOT A THIRD FIELD. `clientMarkupPercent` is null for
+// a fixed price and set for a markup — one value, one meaning, and no mode
+// flag that can disagree with the number beside it.
+//
+// EITHER WAY THIS IS ONLY A DEFAULT. What a client actually pays is chosen
+// when the supply goes onto a job, snapshotted onto the hold, and never
+// re-rated afterwards — so a markup that moves tomorrow cannot change what
+// was billed today.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type SupplyPricingRule = {
+  /** The typed per-unit price. Used when `clientMarkupPercent` is null. */
+  clientUnitPrice: number;
+  /** Percent ON TOP of average cost. Null = use the fixed price instead. */
+  clientMarkupPercent?: number | null;
+};
+
+/**
+ * The default per-unit charge to suggest for this supply, or null when a
+ * markup is configured but there is no cost to mark up yet.
+ *
+ * A markup with no purchase history has no honest answer: falling back to the
+ * fixed price would quote a number the operator explicitly stopped using, and
+ * falling back to zero would offer the stock for free. Null makes the pull
+ * dialog ask, which is the correct behaviour for "we have never bought this".
+ */
+export function defaultClientUnitPrice(
+  rule: SupplyPricingRule,
+  averageCost: number | null,
+): number | null {
+  const pct = rule.clientMarkupPercent;
+  if (pct == null) return rule.clientUnitPrice;
+  if (averageCost == null) return null;
+  return Math.round(averageCost * (1 + pct / 100) * 100) / 100;
+}
+
+/**
+ * What a pull should charge per unit: the operator's typed price if there is
+ * one, otherwise the catalog's default.
+ *
+ * LIFTED OUT OF `addHold` SO IT CAN BE TESTED. Inside a transaction this
+ * decision was only reachable through a database, so the coverage on it was a
+ * source scan asserting the right function got called — which a mutation that
+ * kept the call and ignored its result walked straight past. A pure function
+ * takes the rule out of the untestable region entirely.
+ */
+export type PullPrice =
+  | { ok: true; unitPrice: number }
+  /** A markup with nothing to mark up. The caller must ask for a price. */
+  | { ok: false; reason: "NO_DEFAULT_PRICE" };
+
+export function resolvePullUnitPrice(
+  typed: number | null | undefined,
+  rule: SupplyPricingRule,
+  averageCost: number | null,
+): PullPrice {
+  // A typed price always wins — it is this client, on this job.
+  if (typed != null) return { ok: true, unitPrice: typed };
+  const fallback = defaultClientUnitPrice(rule, averageCost);
+  if (fallback == null) return { ok: false, reason: "NO_DEFAULT_PRICE" };
+  return { ok: true, unitPrice: fallback };
+}

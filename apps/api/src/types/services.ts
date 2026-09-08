@@ -1112,6 +1112,9 @@ export type SupplyCreateInput = {
   /** DEFAULT charge to a client per unit. What the stock COST is not settable
    *  here — it is derived from the purchases; see lib/supplyCost.ts. */
   clientUnitPrice: number;
+  /** Percent on top of average cost, INSTEAD of the fixed price above.
+   *  Null uses the fixed price; `0` is a real markup (bill at cost). */
+  clientMarkupPercent?: number | null;
 };
 
 export type SupplyPatchInput = {
@@ -1121,6 +1124,8 @@ export type SupplyPatchInput = {
   upc?: string | null;
   category?: string | null;
   clientUnitPrice?: number;
+  /** Present-and-null switches a markup back to the fixed price. */
+  clientMarkupPercent?: number | null;
 };
 
 export type SupplyPurchaseInput = {
@@ -1129,8 +1134,6 @@ export type SupplyPurchaseInput = {
   // the receipt/bank-statement figure. Per-unit cost is derived from this.
   totalCost: number;
   date?: string | null;
-  vendor?: string | null;
-  invoiceNumber?: string | null;
   notes?: string | null;  /** OPTIONAL, MANY-TO-ONE breadcrumb to a real ledger charge. Never set
    *  automatically — recording a purchase creates no ledger row. */
   businessExpenseId?: string | null;
