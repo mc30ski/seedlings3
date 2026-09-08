@@ -9,7 +9,7 @@ import { clients } from "./clients";
 import { properties } from "./properties";
 import { jobs } from "./jobs";
 import { payments } from "./payments";
-import { expenses } from "./expenses";
+import { invoiceCharges } from "./invoiceCharges";
 import { settings } from "./settings";
 import { supplies } from "./supplies";
 import { groups } from "./groups";
@@ -33,7 +33,7 @@ export const services: Services = {
   properties,
   jobs,
   payments,
-  expenses,
+  invoiceCharges,
   settings,
   supplies,
   groups,

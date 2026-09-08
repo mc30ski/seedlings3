@@ -87,7 +87,6 @@ type Props = {
   /** Job's frequencyDays — used to warn if "Repeating" is selected without frequency */
   jobFrequencyDays?: number | null;
   /** Existing add-on services (for UPDATE mode) */
-  defaultAddons?: { id: string; tag?: string | null; customLabel?: string | null; price: number }[];
   /** Estimate-specific fields */
   defaultContactName?: string | null;
   defaultContactPhone?: string | null;
@@ -134,7 +133,6 @@ export default function OccurrenceDialog({
   title,
   submitLabel,
   preventOutsideClose,
-  defaultAddons,
   defaultContactName,
   defaultContactPhone,
   defaultContactEmail,
@@ -151,11 +149,6 @@ export default function OccurrenceDialog({
   const [busy, setBusy] = useState(false);
   const dlgErr = useDialogError();
   /** Saved add-on awaiting a delete confirmation. */
-  const [deleteAddon, setDeleteAddon] = useState<{ id: string; label: string } | null>(null);
-  /** Saved expense awaiting a delete confirmation. */
-  const [deleteExpense, setDeleteExpense] = useState<
-    { idx: number; id: string; label: string } | null
-  >(null);
   const [status, setStatus] = useState("");
   // Destructive-transition confirm: changing CLOSED → SCHEDULED / PENDING_PAYMENT
   // triggers the server's revert cascade in services/jobs.ts (deletes the
@@ -175,14 +168,6 @@ export default function OccurrenceDialog({
   const [occTitle, setOccTitle] = useState("");
   const [workflow, setWorkflow] = useState(defaultWorkflow ?? "STANDARD");
   // Tasks, reminders, events, followups, and announcements aren't service
-  // work — they don't touch inventory. Hide the inventory picker entirely
-  // on those workflows (server enforces too).
-  const inventoryEligible =
-    workflow !== "TASK" &&
-    workflow !== "REMINDER" &&
-    workflow !== "EVENT" &&
-    workflow !== "FOLLOWUP" &&
-    workflow !== "ANNOUNCEMENT";
   const [isTentative, setIsTentative] = useState(false);
   const [isAdminOnly, setIsAdminOnly] = useState(false);
   const [occFrequencyDays, setOccFrequencyDays] = useState("");
@@ -200,77 +185,11 @@ export default function OccurrenceDialog({
   // by default but can be de-selected so this instance is created without it.
   const [jobGuidanceNote, setJobGuidanceNote] = useState<string | null>(null);
   const [includeGuidanceNote, setIncludeGuidanceNote] = useState(true);
-  const [addons, setAddons] = useState<{ id: string; tag?: string | null; customLabel?: string | null; price: number }[]>([]);
-  const [addonTag, setAddonTag] = useState("");
-  const [addonCustomLabel, setAddonCustomLabel] = useState("");
-  const [addonPrice, setAddonPrice] = useState("");
 
   // Inline expenses. Custom rows create a paired BusinessExpense on save;
   // inventory rows create a SupplyHold + Expense pair via the supply-holds
   // endpoint. `fromInventory` flags rows already loaded from the DB; new
   // inventory rows carry `pendingHold` until they're POSTed on save.
-  type InlineExpense = {
-    id?: string;
-    cost: number;
-    description: string;
-    category: string;
-    isNew?: boolean;
-    fromInventory?: boolean;
-    pendingHold?: { supplyId: string; quantity: number; unit: string };
-  };
-  const [expenses, setExpenses] = useState<InlineExpense[]>([]);
-  const [newExpCost, setNewExpCost] = useState("");
-  const [newExpDesc, setNewExpDesc] = useState("");
-  const [newExpCategory, setNewExpCategory] = useState("Supplies");
-
-  // "Custom" vs "From inventory" mode toggle for the inline add row.
-  const [addMode, setAddMode] = useState<"custom" | "inventory">("custom");
-  type SupplyOption = {
-    id: string;
-    name: string;
-    unit: string;
-    jobPayoutCost: number;
-    available: number;
-  };
-  const [suppliesAvail, setSuppliesAvail] = useState<SupplyOption[]>([]);
-  const [pickedSupplyId, setPickedSupplyId] = useState("");
-  const [pickedQty, setPickedQty] = useState("");
-  const supplyCollection = useMemo(
-    () =>
-      createListCollection({
-        items: suppliesAvail.map((s) => ({
-          label: `${s.name} — ${s.available} ${s.unit} avail @ $${s.jobPayoutCost.toFixed(2)}/${s.unit}`,
-          value: s.id,
-        })),
-      }),
-    [suppliesAvail],
-  );
-  const pickedSupply = useMemo(
-    () => suppliesAvail.find((s) => s.id === pickedSupplyId) ?? null,
-    [suppliesAvail, pickedSupplyId],
-  );
-  const expenseCategoryItems = useMemo(
-    () => [
-      { label: "Advertising (line 8)", value: "Advertising" },
-      { label: "Car and truck expenses (line 9)", value: "Car and truck expenses" },
-      { label: "Contract labor (line 11)", value: "Contract labor" },
-      { label: "Depreciation (line 13)", value: "Depreciation" },
-      { label: "Insurance (line 15)", value: "Insurance" },
-      { label: "Legal and professional services (line 17)", value: "Legal and professional services" },
-      { label: "Office expense (line 18)", value: "Office expense" },
-      { label: "Rent or lease — vehicles/equipment (line 20a)", value: "Rent or lease — vehicles/equipment" },
-      { label: "Rent or lease — other business property (line 20b)", value: "Rent or lease — other business property" },
-      { label: "Repairs and maintenance (line 21)", value: "Repairs and maintenance" },
-      { label: "Supplies (line 22)", value: "Supplies" },
-      { label: "Taxes and licenses (line 23)", value: "Taxes and licenses" },
-      { label: "Travel (line 24a)", value: "Travel" },
-      { label: "Meals (line 24b)", value: "Meals" },
-      { label: "Utilities (line 25)", value: "Utilities" },
-      { label: "Other (line 27a)", value: "Other" },
-    ],
-    [],
-  );
-  const expenseCategoryCollection = useMemo(() => createListCollection({ items: expenseCategoryItems }), [expenseCategoryItems]);
 
   type WorkerItem = { id: string; displayName?: string | null; email?: string | null };
   const [workers, setWorkers] = useState<WorkerItem[]>([]);
@@ -313,16 +232,6 @@ export default function OccurrenceDialog({
       setEstimateAddress(defaultEstimateAddress ?? "");
       setProposalAmount(defaultProposalAmount != null ? defaultProposalAmount.toFixed(2) : "");
       setProposalNotes(defaultProposalNotes ?? "");
-      setExpenses([]);
-      setNewExpCost("");
-      setNewExpDesc("");
-      setAddMode("custom");
-      setPickedSupplyId("");
-      setPickedQty("");
-      setAddons(defaultAddons ?? []);
-      setAddonTag("");
-      setAddonCustomLabel("");
-      setAddonPrice("");
       setSelectedAssignees(new Set((defaultAssignees ?? []).map((a) => a.userId)));
     }
     prevOpenRef.current = open;
@@ -346,38 +255,6 @@ export default function OccurrenceDialog({
     // Load supplies (worker-readable list — works for any role) for the
     // inline inventory picker. Filters out archived; computes available =
     // onHand − active holds server-side.
-    apiGet<any[]>("/api/supplies")
-      .then((list) => {
-        if (!Array.isArray(list)) return setSuppliesAvail([]);
-        setSuppliesAvail(
-          list
-            .filter((s) => !s.archivedAt)
-            .map((s) => ({
-              id: s.id,
-              name: s.name,
-              unit: s.unit,
-              jobPayoutCost: Number(s.jobPayoutCost ?? 0),
-              available: Number(s.available ?? 0),
-            })),
-        );
-      })
-      .catch(() => setSuppliesAvail([]));
-    // Load existing expenses for UPDATE mode
-    if (mode === "UPDATE" && occurrenceId && isAdmin) {
-      apiGet<any[]>(`/api/admin/occurrences/${occurrenceId}/expenses`)
-        .then((list) => setExpenses(
-          (Array.isArray(list) ? list : []).map((e) => ({
-            id: e.id,
-            cost: e.cost,
-            description: e.description,
-            // Read from the linked BusinessExpense if present (set when the
-            // worker logged the expense post-MVP-2). Falls back to "Supplies".
-            category: e.businessExpense?.category ?? "Supplies",
-            fromInventory: !!e.supplyHold,
-          }))
-        ))
-        .catch(() => {});
-    }
   }, [open]);
 
   async function handleSave(bypassRevertConfirm = false) {
@@ -457,50 +334,19 @@ export default function OccurrenceDialog({
       if (mode === "CREATE") {
         const endpoint = createEndpoint ?? `/api/admin/jobs/${jobId}/occurrences`;
         const created = await apiPost<{ id: string }>(endpoint, occPayload);
-        // Create any inline expenses against the new occurrence
         const newOccId = created?.id;
-        if (newOccId && expenses.length > 0) {
-          // Use admin endpoint if this dialog was opened in admin context
-          const useAdmin = isAdmin || (createEndpoint ?? "").includes("/admin/");
-          const expEndpoint = useAdmin
-            ? `/api/admin/occurrences/${newOccId}/expenses`
-            : `/api/occurrences/${newOccId}/expenses`;
-          const holdsEndpointNew = useAdmin
-            ? `/api/admin/occurrences/${newOccId}/supply-holds`
-            : `/api/occurrences/${newOccId}/supply-holds`;
-          for (const exp of expenses) {
-            try {
-              if (exp.pendingHold) {
-                await apiPost(holdsEndpointNew, {
-                  supplyId: exp.pendingHold.supplyId,
-                  quantity: exp.pendingHold.quantity,
-                });
-              } else {
-                await apiPost(expEndpoint, { cost: exp.cost, description: exp.description, category: exp.category });
-              }
-            } catch (err) {
-              console.error("Failed to create expense:", err);
-            }
-          }
-        }
+        // NO CHARGE CREATION HERE. Charges used to be posted one at a
+        // time after the occurrence came back, with every failure swallowed
+        // to console.error — so a charge could silently not exist while the
+        // operator watched it in a list. Add them from the job card, where
+        // one shared dialog handles them with real error reporting.
         // Save property photo selections if changed
         if (newOccId && propertyPhotoIds !== null) {
           try {
             await apiPut(`/api/admin/occurrences/${newOccId}/property-photos`, { propertyPhotoIds });
           } catch (err) { console.error("Failed to save property photos:", err); }
         }
-        // Save add-on services
-        if (newOccId && addons.length > 0) {
-          for (const addon of addons) {
-            try {
-              await apiPost(`/api/admin/occurrences/${newOccId}/addons`, {
-                tag: addon.tag || undefined,
-                customLabel: addon.customLabel || undefined,
-                price: addon.price,
-              });
-            } catch (err) { console.error("Failed to create addon:", err); }
-          }
-        }
+        // NO ADD-ON CREATION HERE — see the note in the body.
         publishInlineMessage({ type: "SUCCESS", text: "Occurrence created." });
       } else {
         const body: Record<string, unknown> = {
@@ -538,23 +384,8 @@ export default function OccurrenceDialog({
           body.proposalNotes = proposalNotes.trim() || null;
         }
         await apiPatch(`/api/admin/occurrences/${occurrenceId}`, body);
-        // Create new expenses (custom or inventory), delete removed ones
-        if (isAdmin && occurrenceId) {
-          for (const exp of expenses) {
-            if (exp.isNew) {
-              try {
-                if (exp.pendingHold) {
-                  await apiPost(`/api/admin/occurrences/${occurrenceId}/supply-holds`, {
-                    supplyId: exp.pendingHold.supplyId,
-                    quantity: exp.pendingHold.quantity,
-                  });
-                } else {
-                  await apiPost(`/api/admin/occurrences/${occurrenceId}/expenses`, { cost: exp.cost, description: exp.description, category: exp.category });
-                }
-              } catch {}
-            }
-          }
-        }
+        // NO CHARGE CREATION HERE either — and note the `catch {}` this
+        // replaced: a failed charge vanished with no message at all.
         // Save property photo selections if changed
         if (occurrenceId && propertyPhotoIds !== null) {
           try {
@@ -824,220 +655,20 @@ export default function OccurrenceDialog({
                     rows={2}
                   />
                 </div>
-                <div>
-                  <Text mb="1">Expenses <Text as="span" color="fg.muted" fontSize="xs">(optional)</Text></Text>
-                  <Box mb={2} p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" borderRadius="md">
-                    <Text fontSize="xs" color="blue.800">
-                      Each expense added here is also recorded as a business expense (categorized for
-                      Schedule C) and should be paid on the company account. Default category is{" "}
-                      <Text as="span" fontWeight="semibold">Supplies</Text> — change per row if it fits a different tax line.
-                    </Text>
-                  </Box>
-                  {expenses.length > 0 && (
-                    <VStack align="stretch" gap={1} mb={2}>
-                      {expenses.map((exp, idx) => (
-                        <HStack key={exp.id ?? `new-${idx}`} gap={2} fontSize="xs">
-                          <Text color="orange.600" flex="1">
-                            ${exp.cost.toFixed(2)} — {exp.description}
-                            {exp.fromInventory ? (
-                              <Text as="span" color="blue.600" ml={1}>· Inventory</Text>
-                            ) : (
-                              <Text as="span" color="fg.muted" ml={1}>· {exp.category}</Text>
-                            )}
-                          </Text>
-                          <Button
-                            size="xs"
-                            variant="ghost"
-                            colorPalette="red"
-                            aria-label={`Remove expense: ${exp.description}`}
-                            onClick={() => {
-                              // A row that was never saved is just local state
-                              // — dropping it costs nothing, so no dialog.
-                              if (!(exp.id && !exp.isNew && isAdmin)) {
-                                setExpenses((prev) => prev.filter((_, i) => i !== idx));
-                                return;
-                              }
-                              // A saved expense is a Schedule C record. This is
-                              // a tiny ✕ next to a list row on a phone; it does
-                              // not get to delete a tax line on one tap.
-                              setDeleteExpense({ idx, id: exp.id, label: `$${exp.cost.toFixed(2)} — ${exp.description}` });
-                            }}
-                          >
-                            ✕
-                          </Button>
-                        </HStack>
-                      ))}
-                    </VStack>
-                  )}
-                  {inventoryEligible && (
-                    <HStack gap={1} mb={2} wrap="wrap">
-                      <Button
-                        size="xs"
-                        variant={addMode === "custom" ? "solid" : "outline"}
-                        onClick={() => setAddMode("custom")}
-                      >
-                        Custom
-                      </Button>
-                      <Button
-                        size="xs"
-                        variant={addMode === "inventory" ? "solid" : "outline"}
-                        colorPalette={addMode === "inventory" ? "blue" : "gray"}
-                        onClick={() => setAddMode("inventory")}
-                        disabled={suppliesAvail.length === 0}
-                        title={suppliesAvail.length === 0 ? "No supplies in inventory yet" : "Pull from inventory"}
-                      >
-                        From inventory
-                      </Button>
-                    </HStack>
-                  )}
-                  {inventoryEligible && addMode === "inventory" ? (
-                    <VStack align="stretch" gap={2}>
-                      <Select.Root
-                        collection={supplyCollection}
-                        value={pickedSupplyId ? [pickedSupplyId] : []}
-                        onValueChange={(e) => setPickedSupplyId(e.value?.[0] ?? "")}
-                        size="sm"
-                        positioning={{ strategy: "fixed", hideWhenDetached: true }}
-                      >
-                        <Select.Control>
-                          <Select.Trigger w="full">
-                            <Select.ValueText placeholder="Pick a supply…" />
-                          </Select.Trigger>
-                        </Select.Control>
-                        <Select.Positioner>
-                          <Select.Content>
-                            {supplyCollection.items.map((it) => (
-                              <Select.Item key={it.value} item={it.value}>
-                                <Select.ItemText>{it.label}</Select.ItemText>
-                              </Select.Item>
-                            ))}
-                          </Select.Content>
-                        </Select.Positioner>
-                      </Select.Root>
-                      <HStack gap={2}>
-                        <Box w="80px" flexShrink={0}>
-                          <Input
-                            type="number"
-                            min={1}
-                            step={1}
-                            value={pickedQty}
-                            onChange={(e) => setPickedQty(e.target.value)}
-                            size="sm"
-                            placeholder="Qty"
-                          />
-                        </Box>
-                        <Box flex="1">
-                          {pickedSupply && pickedQty && Number(pickedQty) > 0 && (
-                            <Text fontSize="xs" color="fg.muted">
-                              {Number(pickedQty)} {pickedSupply.unit} × ${pickedSupply.jobPayoutCost.toFixed(2)} = ${(Number(pickedQty) * pickedSupply.jobPayoutCost).toFixed(2)}
-                              <Text as="span" color={Number(pickedQty) > pickedSupply.available ? "red.600" : "fg.muted"} ml={1}>
-                                ({pickedSupply.available} available)
-                              </Text>
-                            </Text>
-                          )}
-                        </Box>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          colorPalette="blue"
-                          disabled={
-                            !pickedSupplyId ||
-                            !pickedQty ||
-                            !Number.isInteger(Number(pickedQty)) ||
-                            Number(pickedQty) <= 0 ||
-                            !!(pickedSupply && Number(pickedQty) > pickedSupply.available)
-                          }
-                          onClick={() => {
-                            if (!pickedSupply) return;
-                            const qty = Math.round(Number(pickedQty));
-                            const cost = Math.round(qty * pickedSupply.jobPayoutCost * 100) / 100;
-                            setExpenses((prev) => [
-                              ...prev,
-                              {
-                                cost,
-                                description: `${pickedSupply.name} × ${qty} ${pickedSupply.unit}`,
-                                category: "Supplies",
-                                isNew: true,
-                                fromInventory: true,
-                                pendingHold: { supplyId: pickedSupply.id, quantity: qty, unit: pickedSupply.unit },
-                              },
-                            ]);
-                            // Optimistically reduce available so user can't double-add past stock
-                            setSuppliesAvail((prev) =>
-                              prev.map((s) => (s.id === pickedSupply.id ? { ...s, available: s.available - qty } : s)),
-                            );
-                            setPickedSupplyId("");
-                            setPickedQty("");
-                          }}
-                        >
-                          Add
-                        </Button>
-                      </HStack>
-                    </VStack>
-                  ) : (
-                  <VStack align="stretch" gap={2}>
-                    <HStack gap={2}>
-                      <Box w="90px" flexShrink={0}>
-                        <CurrencyInput
-                          value={newExpCost}
-                          onChange={setNewExpCost}
-                          size="sm"
-                          placeholder="Cost"
-                        />
-                      </Box>
-                      <Input
-                        value={newExpDesc}
-                        onChange={(e) => setNewExpDesc(e.target.value)}
-                        placeholder="Description"
-                        size="sm"
-                        flex="1"
-                      />
-                    </HStack>
-                    <HStack gap={2}>
-                      <Box flex="1">
-                        <Select.Root
-                          collection={expenseCategoryCollection}
-                          value={[newExpCategory]}
-                          onValueChange={(e) => setNewExpCategory(e.value?.[0] ?? "Supplies")}
-                          size="sm"
-                          positioning={{ strategy: "fixed", hideWhenDetached: true }}
-                        >
-                          <Select.Control>
-                            <Select.Trigger w="full">
-                              <Select.ValueText placeholder="Supplies (line 22)" />
-                            </Select.Trigger>
-                          </Select.Control>
-                          <Select.Positioner>
-                            <Select.Content>
-                              {expenseCategoryItems.map((it) => (
-                                <Select.Item key={it.value} item={it.value}>
-                                  <Select.ItemText>{it.label}</Select.ItemText>
-                                </Select.Item>
-                              ))}
-                            </Select.Content>
-                          </Select.Positioner>
-                        </Select.Root>
-                      </Box>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      colorPalette="orange"
-                      disabled={!newExpCost || !newExpDesc.trim()}
-                      onClick={() => {
-                        const cost = parseFloat(newExpCost);
-                        if (isNaN(cost) || cost <= 0) return;
-                        setExpenses((prev) => [...prev, { cost, description: newExpDesc.trim(), category: newExpCategory, isNew: true }]);
-                        setNewExpCost("");
-                        setNewExpDesc("");
-                        setNewExpCategory("Supplies");
-                      }}
-                    >
-                      Add
-                    </Button>
-                    </HStack>
-                  </VStack>
-                  )}
-                </div>
+                {/* INVOICE CHARGES ARE NOT EDITED HERE.
+                    In CREATE mode this never worked properly: charges were
+                    local state posted one-by-one after the occurrence came
+                    back, with failures swallowed to console.error.
+
+                    In UPDATE mode it duplicated the job card, which does the
+                    same job through the shared ManageInvoiceChargesDialog —
+                    the only surface that collects the client-visible detail
+                    and "what we paid", and the only one that renders the
+                    ledger-link picker.
+
+                    A charge belongs to a visit that exists. Create the
+                    occurrence, then add charges from its card.
+                    See docs/features/job-materials.md. */}
                 {mode === "CREATE" && workers.length > 0 && (
                   <div>
                     <Text mb="1">Assignees <Text as="span" color="fg.muted" fontSize="xs">(optional)</Text></Text>
@@ -1143,110 +774,18 @@ export default function OccurrenceDialog({
                   </Box>
                 )}
 
-                {/* Add-on services — not for estimates */}
-                {workflow !== "ESTIMATE" && (
-                  <Box mt={2} borderWidth="1px" borderColor="gray.200" borderRadius="md" p={2} bg="gray.50">
-                    <VStack align="start" gap={2}>
-                      <Text fontSize="xs" fontWeight="semibold" color="fg.muted">Add-on Services</Text>
-                      {addons.map((addon) => (
-                        <HStack key={addon.id} justify="space-between" w="full" fontSize="xs">
-                          <Text>{addon.tag ? jobTagLabel(addon.tag) : addon.customLabel}</Text>
-                          <HStack gap={2}>
-                            <Text fontWeight="semibold">+${addon.price.toFixed(2)}</Text>
-                            <Button size="xs" variant="ghost" colorPalette="red" px="1" minW="0"
-                              aria-label={`Remove add-on: ${addon.tag ? jobTagLabel(addon.tag) : addon.customLabel}`}
-                              onClick={() => {
-                              // Never-saved rows are local state only.
-                              if (!(mode === "UPDATE" && addon.id && !addon.id.startsWith("_new_"))) {
-                                setAddons((prev) => prev.filter((a) => a.id !== addon.id));
-                                return;
-                              }
-                              setDeleteAddon({
-                                id: addon.id,
-                                label: `${addon.tag ? jobTagLabel(addon.tag) : addon.customLabel} (+$${addon.price.toFixed(2)})`,
-                              });
-                            }}>
-                              <X size={10} />
-                            </Button>
-                          </HStack>
-                        </HStack>
-                      ))}
-                      <Box w="full">
-                        <Text fontSize="xs" fontWeight="medium" mb={1}>Add a service</Text>
-                        <Box display="flex" gap="4px" flexWrap="wrap" mb={2}>
-                          {(() => {
-                            const usedTags = new Set([...jobTags, ...addons.map((a) => a.tag).filter(Boolean) as string[]]);
-                            const allTags = (jobTagsConfig ?? JOB_TAGS.map((k) => ({ key: k, label: jobTagLabel(k) }))).map((t) => typeof t === "string" ? t : t.key);
-                            return allTags.filter((tag) => !usedTags.has(tag));
-                          })().map((tag) => (
-                            <Badge
-                              key={tag}
-                              size="sm"
-                              colorPalette={addonTag === tag ? "blue" : "gray"}
-                              variant={addonTag === tag ? "solid" : "outline"}
-                              cursor="pointer"
-                              px="2"
-                              borderRadius="full"
-                              onClick={() => { setAddonTag(addonTag === tag ? "" : tag); setAddonCustomLabel(""); }}
-                            >
-                              {jobTagLabel(tag)}
-                            </Badge>
-                          ))}
-                        </Box>
-                        {!addonTag && (
-                          <Box mb={2}>
-                            <input
-                              type="text"
-                              value={addonCustomLabel}
-                              onChange={(e) => setAddonCustomLabel(e.target.value)}
-                              placeholder="Or custom service..."
-                              style={{ width: "100%", padding: "6px 8px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "13px" }}
-                            />
-                          </Box>
-                        )}
-                        <HStack gap={2}>
-                          <Box flex="1">
-                            <CurrencyInput value={addonPrice} onChange={setAddonPrice} size="sm" />
-                          </Box>
-                          <Button
-                            size="xs"
-                            colorPalette="blue"
-                            disabled={!addonPrice || Number(addonPrice) <= 0 || (!addonTag && !addonCustomLabel.trim())}
-                            onClick={async () => {
-                              const newAddon = {
-                                id: `_new_${Date.now()}`,
-                                tag: addonTag || null,
-                                customLabel: addonCustomLabel.trim() || null,
-                                price: Number(addonPrice),
-                              };
-                              // If UPDATE mode, save immediately to API
-                              if (mode === "UPDATE" && occurrenceId) {
-                                try {
-                                  const created = await apiPost<any>(`/api/admin/occurrences/${occurrenceId}/addons`, {
-                                    tag: addonTag || undefined,
-                                    customLabel: addonCustomLabel.trim() || undefined,
-                                    price: Number(addonPrice),
-                                  });
-                                  setAddons((prev) => [...prev, created]);
-                                } catch (err) {
-                                  dlgErr.setError(getErrorMessage("Failed.", err));
-                                  return;
-                                }
-                              } else {
-                                setAddons((prev) => [...prev, newAddon]);
-                              }
-                              setAddonTag("");
-                              setAddonCustomLabel("");
-                              setAddonPrice("");
-                            }}
-                          >
-                            + Add
-                          </Button>
-                        </HStack>
-                      </Box>
-                    </VStack>
-                  </Box>
-                )}
+                {/* ADD-ON SERVICES ARE NOT EDITED HERE.
+                    In CREATE mode this never worked: `addons` was local state
+                    posted one at a time after the occurrence came back, with
+                    every failure swallowed to console.error — so a service
+                    added before hitting Create could silently not exist while
+                    the operator watched it in a list.
+
+                    In UPDATE mode it duplicated the job card, which adds
+                    services through the shared ManageAddonsDialog — the only
+                    surface that collects the client-visible detail.
+
+                    A service belongs to a visit that exists. */}
               </VStack>
             </Dialog.Body>
 
@@ -1276,62 +815,6 @@ export default function OccurrenceDialog({
         </Dialog.Positioner>
       </Portal>
     </Dialog.Root>
-    <ConfirmDialog
-      open={!!deleteAddon}
-      title="Remove this service?"
-      message={
-        deleteAddon
-          ? `${deleteAddon.label} comes off this job, and off what the client is billed.`
-          : ""
-      }
-      confirmLabel="Remove"
-      confirmColorPalette="red"
-      onConfirm={() => {
-        const target = deleteAddon;
-        setDeleteAddon(null);
-        if (!target) return;
-        void (async () => {
-          try {
-            await apiDelete(`/api/admin/occurrences/${occurrenceId}/addons/${target.id}`);
-            setAddons((prev) => prev.filter((a) => a.id !== target.id));
-          } catch (err: any) {
-            // Was `catch {}`, which dropped the row from the list regardless
-            // — the add-on stayed on the job and kept being billed.
-            dlgErr.setError(getErrorMessage("Could not remove the service.", err));
-          }
-        })();
-      }}
-      onCancel={() => setDeleteAddon(null)}
-    />
-    <ConfirmDialog
-      open={!!deleteExpense}
-      title="Delete this expense?"
-      message={
-        deleteExpense
-          ? `${deleteExpense.label} will be removed from this job and from the business expense records.`
-          : ""
-      }
-      warning="This also removes it from the Schedule C categorization. It cannot be undone from the UI."
-      confirmLabel="Delete expense"
-      confirmColorPalette="red"
-      onConfirm={() => {
-        const target = deleteExpense;
-        setDeleteExpense(null);
-        if (!target) return;
-        void (async () => {
-          try {
-            await apiDelete(`/api/admin/expenses/${target.id}`);
-            setExpenses((prev) => prev.filter((_, i) => i !== target.idx));
-          } catch (err: any) {
-            // Previously this was `catch {}` and the row was dropped from
-            // the list anyway — so a failed delete looked exactly like a
-            // successful one, and the expense quietly stayed on the books.
-            dlgErr.setError(getErrorMessage("Could not delete the expense.", err));
-          }
-        })();
-      }}
-      onCancel={() => setDeleteExpense(null)}
-    />
     <ConfirmDialog
       open={revertConfirmOpen}
       title="Revert this paid job?"

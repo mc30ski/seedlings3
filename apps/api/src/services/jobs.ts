@@ -33,6 +33,7 @@ export const GHOST_EXPIRED_GRACE_DAYS = 7;
 export const GHOST_EXPIRING_SOON_DAYS = 3;
 
 import { AUDIT } from "../lib/auditActions";
+import { invoiceTotal } from "../lib/jobPricing";
 import { writeAudit } from "../lib/auditLogger";
 import { etMidnight, etEndOfDay, etToday, etFormatDate, etDaysBetween, etAddDays, type EtDateKey } from "../lib/dates";
 import { ServiceError } from "../lib/errors";
@@ -623,7 +624,7 @@ export const jobs: ServicesJobs = {
                 collectedBy: { select: { id: true, displayName: true } },
               },
             }),
-            expenses: expensesIncludeWithCutoff(cutoff, {
+            invoiceCharges: expensesIncludeWithCutoff(cutoff, {
               include: {
                 createdBy: { select: { id: true, displayName: true } },
                 businessExpense: { select: { category: true, vendor: true, date: true } },
@@ -968,13 +969,18 @@ export const jobs: ServicesJobs = {
         where: { id: occurrenceId },
         data: { status: JobOccurrenceStatus.CLOSED, completedAt },
       });
-      // Sync any linked BusinessExpense.date to the completion timestamp —
-      // matches the markComplete path so manual SQL inspection + future
-      // reads stay accurate. See deriveJobExpenseDate.
-      await tx.businessExpense.updateMany({
-        where: { occurrenceId },
-        data: { date: completedAt },
-      });
+      // A JOB STATUS CHANGE MUST NOT RE-DATE A LEDGER ROW.
+      //
+      // This used to push `completedAt` onto every BusinessExpense linked to
+      // the occurrence. That link is now MANY-TO-ONE: a row tagged to a job is
+      // a real card charge, often a $500 receipt shared with several other
+      // jobs, and moving its date moves a deduction between tax periods —
+      // across a year boundary at the worst time of year — on behalf of one
+      // of the jobs pointing at it.
+      //
+      // It was also redundant: the tax exports anchor job-linked rows on
+      // `occurrence.completedAt` regardless of the stored date (see
+      // expenseAnchorDateWhere in services/exports.ts).
 
       let nextOccurrence = null;
       const freq = (occ as any).frequencyDays;
@@ -1088,10 +1094,6 @@ export const jobs: ServicesJobs = {
         where: { id: occurrenceId },
         data: { status: JobOccurrenceStatus.CLOSED, completedAt },
       });
-      await tx.businessExpense.updateMany({
-        where: { occurrenceId },
-        data: { date: completedAt },
-      });
 
       let nextOccurrence = null;
       const freq = (occ as any).frequencyDays;
@@ -1201,10 +1203,6 @@ export const jobs: ServicesJobs = {
       await tx.jobOccurrence.update({
         where: { id: occurrenceId },
         data: { status: JobOccurrenceStatus.CLOSED, completedAt },
-      });
-      await tx.businessExpense.updateMany({
-        where: { occurrenceId },
-        data: { date: completedAt },
       });
 
       let nextOccurrence = null;
@@ -1443,6 +1441,11 @@ export const jobs: ServicesJobs = {
     occurrenceId: string,
     price: number,
     reason?: string | null,
+    /** CLIENT-VISIBLE detail for the labor line on the invoice, e.g.
+     *  "3 hours at $50/hr". Distinct from `reason`, which is internal audit
+     *  metadata the client never sees. Undefined leaves it alone; null or ""
+     *  clears it. */
+    laborDetail?: string | null,
   ) {
     if (!Number.isFinite(price) || price < 0) {
       throw new ServiceError("BAD_REQUEST", "Price must be zero or more.", 400);
@@ -1451,7 +1454,7 @@ export const jobs: ServicesJobs = {
       const occ = await tx.jobOccurrence.findUnique({
         where: { id: occurrenceId },
         select: {
-          id: true, jobId: true, price: true, status: true,
+          id: true, jobId: true, price: true, status: true, laborDetail: true,
           completionSplits: true, promisedPayouts: true,
           addons: { select: { price: true } },
           payment: { select: { id: true, confirmed: true } },
@@ -1481,15 +1484,27 @@ export const jobs: ServicesJobs = {
       // the price is new and the promise is stale.
       const splits = (occ.completionSplits as Array<{ userId: string; percent: number }> | null) ?? null;
       const addonTotal = (occ.addons ?? []).reduce((sum, a) => sum + (a.price ?? 0), 0);
-      const priceTotal = price + addonTotal;
+      // THE INVOICE, not the labor. computeBreakdown computes
+      // N = collected − charges, so it must be fed what the client is billed.
+      // This once read `price + addonTotal` and then subtracted the charges,
+      // which re-snapshotted the payout contract BELOW what approvePayment
+      // computes from the same occurrence — and the reconciler tops employees
+      // up to this number, so adjusting a price by $1 quietly cut the crew by
+      // the cost of the mulch. It also went into the audit row, so the record
+      // of the change was wrong too.
+      const chargesAgg = await tx.invoiceCharge.aggregate({
+        where: { occurrenceId }, _sum: { cost: true },
+      });
+      const expenses = chargesAgg._sum.cost ?? 0;
+      const priceTotal = invoiceTotal({
+        price,
+        addons: occ.addons ?? [],
+        invoiceCharges: [{ cost: expenses }],
+      });
       let promised: any[] | null = null;
 
       if (Array.isArray(splits) && splits.length) {
         const rates = await loadRates(tx);
-        const expensesAgg = await tx.expense.aggregate({
-          where: { occurrenceId }, _sum: { cost: true },
-        });
-        const expenses = expensesAgg._sum.cost ?? 0;
         const users = await tx.user.findMany({
           where: { id: { in: splits.map((x) => x.userId) } },
           select: { id: true, workerType: true },
@@ -1509,7 +1524,14 @@ export const jobs: ServicesJobs = {
 
       await tx.jobOccurrence.update({
         where: { id: occurrenceId },
-        data: { price, ...(promised ? { promisedPayouts: promised as any } : {}) },
+        data: {
+          price,
+          ...(promised ? { promisedPayouts: promised as any } : {}),
+          // `undefined` means "not supplied, leave it"; null/"" clears it.
+          ...(laborDetail !== undefined
+            ? { laborDetail: laborDetail?.trim() || null }
+            : {}),
+        },
       });
 
       // Money: this changes what the client is billed AND what the crew is
@@ -1517,6 +1539,9 @@ export const jobs: ServicesJobs = {
       // regenerated promise, because nothing else would explain why a
       // worker's expected net moved.
       await writeAudit(tx, AUDIT.PAYMENT.ADJUSTED, currentUserId, {
+        laborDetailBefore: occ.laborDetail ?? null,
+        laborDetailAfter:
+          laborDetail !== undefined ? (laborDetail?.trim() || null) : (occ.laborDetail ?? null),
         occurrenceId,
         jobId: occ.jobId,
         action: "price_adjusted",
@@ -1750,10 +1775,6 @@ export const jobs: ServicesJobs = {
       if (completedAtChanged || (startAtChanged && !completedAtAfter)) {
         const targetDate = completedAtAfter ?? updated.startAt;
         if (targetDate) {
-          await tx.businessExpense.updateMany({
-            where: { occurrenceId },
-            data: { date: targetDate },
-          });
         }
       }
 
@@ -2146,7 +2167,7 @@ export const jobs: ServicesJobs = {
             collectedBy: { select: { id: true, displayName: true, email: true } },
           },
         },
-        expenses: {
+        invoiceCharges: {
           include: {
             createdBy: { select: { id: true, displayName: true } },
             businessExpense: { select: { category: true, vendor: true, date: true } },
@@ -2596,7 +2617,7 @@ export const jobs: ServicesJobs = {
             collectedBy: { select: { id: true, displayName: true, email: true } },
           },
         },
-        expenses: {
+        invoiceCharges: {
           include: {
             createdBy: { select: { id: true, displayName: true } },
             businessExpense: { select: { category: true, vendor: true, date: true } },
@@ -2705,7 +2726,7 @@ export const jobs: ServicesJobs = {
             collectedBy: { select: { id: true, displayName: true, email: true } },
           },
         },
-        expenses: {
+        invoiceCharges: {
           include: {
             createdBy: { select: { id: true, displayName: true } },
             businessExpense: { select: { category: true, vendor: true, date: true } },
@@ -3530,10 +3551,6 @@ export const jobs: ServicesJobs = {
       ) {
         const targetDate = completedAtAfter ?? updated.startAt;
         if (targetDate) {
-          await tx.businessExpense.updateMany({
-            where: { occurrenceId },
-            data: { date: targetDate },
-          });
         }
       }
 

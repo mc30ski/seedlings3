@@ -2179,9 +2179,17 @@ export default function BusinessExpensesTab() {
                       <Box>
                         <Text fontSize="sm" mb={1}>Category (Schedule C line)</Text>
                         <CategoryDropdown value={fCategory} onChange={setFCategory} />
+                        {/* "Legacy" was my word for it and said nothing about
+                            what happens. On the LEDGER the category IS the
+                            Schedule C mapping, so a string that is not one of
+                            the configured lines lands in "Unmapped" on the
+                            P&L. That is worth flagging — but as the
+                            consequence, not as a vintage. */}
                         {fCategory && !selectableCategories.some((c) => c.label === fCategory) && (
                           <Text fontSize="xs" color="orange.600" mt={1}>
-                            Legacy category "{fCategory}" — pick a Schedule C category to update it.
+                            &ldquo;{fCategory}&rdquo; isn&rsquo;t one of your Schedule C lines, so
+                            this row lands under <Text as="span" fontWeight="semibold">Unmapped</Text>{" "}
+                            on the P&amp;L. Pick a line to file it properly.
                           </Text>
                         )}
                         <Box mt={2} p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" borderRadius="md">
@@ -2640,8 +2648,9 @@ function CategoryDropdown(props: { value: string; onChange: (v: string) => void 
     [selectableCategories],
   );
   const collection = useMemo(() => createListCollection({ items }), [items]);
-  // If the stored value is a legacy / unrecognized string, show __NONE__ in
-  // the picker so the user is prompted to pick a real one.
+  // A stored value that is not one of the configured Schedule C lines shows as
+  // __NONE__, so the picker prompts for a real one rather than displaying a
+  // label it cannot map.
   const current = value && selectableCategories.some((c) => c.label === value) ? value : "__NONE__";
   return (
     <Select.Root

@@ -67,13 +67,46 @@ export function occInEditableState(occ: any): boolean {
   }
 }
 
-/** Occurrence total = base price (or proposal) + add-ons. Null when
- *  base is unpriced and there are no add-ons. */
+/** Sum of what the CLIENT is charged for material lines. `cost` is the
+ *  CHARGE — see InvoiceCharge.cost in schema.prisma. */
+export function materialChargeTotal(occ: any): number {
+  return (occ?.invoiceCharges ?? []).reduce((s: number, e: any) => s + (e.cost ?? 0), 0);
+}
+
+/** What we actually paid for those lines, where recorded. ADMIN-ONLY —
+ *  never render this on a client-facing surface. */
+export function materialCostTotal(occ: any): number {
+  return (occ?.invoiceCharges ?? []).reduce((s: number, e: any) => s + (e.actualCost ?? 0), 0);
+}
+
+/**
+ * What the crew splits, before margin and per-worker fees.
+ *
+ * Labor plus add-on work. Materials are billed to the client ON TOP and never
+ * enter the pool. Mirrors crewPool() in apps/api/src/lib/jobPricing.ts and
+ * agrees with perWorkerShare() in lib/paymentMath.ts; the server is
+ * authoritative and this exists so the card can project without a round trip.
+ */
+export function crewPool(occ: any): number {
+  return ((occ.price || null) ?? (occ.proposalAmount || null) ?? 0) + addonTotal(occ);
+}
+
+/**
+ * What the CLIENT OWES: the work plus the materials billed on top.
+ *
+ * Null when the base is unpriced and there is nothing else on the invoice.
+ */
 export function totalPrice(occ: any): number | null {
   const base = (occ.price || null) ?? (occ.proposalAmount || null);
-  if (base == null) return addonTotal(occ) > 0 ? addonTotal(occ) : null;
-  return base + addonTotal(occ);
+  const addons = addonTotal(occ);
+  const materials = materialChargeTotal(occ);
+  if (base == null) {
+    const rest = addons + materials;
+    return rest > 0 ? rest : null;
+  }
+  return base + addons + materials;
 }
+
 
 /** Robust jobTags reader — accepts already-parsed arrays or JSON
  *  strings, returns [] on either absent or malformed. */

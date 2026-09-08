@@ -1,4 +1,5 @@
 import { FastifyInstance } from "fastify";
+import { scrubNulDeep, scrubNulInPlace } from "./lib/scrubNulBytes";
 import cors, { type FastifyCorsOptions } from "@fastify/cors";
 import sensible from "@fastify/sensible";
 import { getVersionInfo } from "./lib/version";
@@ -164,6 +165,26 @@ export async function registerRoutes(app: FastifyInstance) {
   // (an array of "name;dur=ms" strings) before the response is sent.
   app.addHook("onRequest", (req, _reply, done) => {
     (req as any)._t0 = Date.now();
+    done();
+  });
+
+  // ---------- NUL scrub
+  // Postgres `text` rejects U+0000, and the driver's error is a bare 500 that
+  // names no field. A NUL pasted out of a PDF into ONE input therefore breaks
+  // a whole form with an unactionable message — which is exactly how the
+  // Ledger's Add Expense failed in production on 2026-09-07.
+  //
+  // preValidation, so it runs after the JSON body is parsed and before any
+  // handler or schema sees it. Every route is covered; no call site has to
+  // remember. See lib/scrubNulBytes.ts for why the scope is NUL alone.
+  app.addHook("preValidation", (req, _reply, done) => {
+    if (req.body && typeof req.body === "object") {
+      req.body = scrubNulDeep(req.body);
+    }
+    // IN PLACE for the query: Fastify exposes `request.query` behind a
+    // getter, so assigning to it is a silent no-op. The unit tests were green
+    // while this leg did nothing at all.
+    scrubNulInPlace(req.query);
     done();
   });
   app.addHook("onSend", (req, reply, payload, done) => {

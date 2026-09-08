@@ -64,12 +64,20 @@ export const ADMIN_VISIBLE_FIELDS = [
   "checkAmount",
 ] as const satisfies readonly NumericField[];
 
-/** Every numeric field. SUPER only — the one view with nothing withheld. */
-export const ALL_NUMERIC_FIELDS: readonly NumericField[] = [
+/** Every numeric field. SUPER only — the one view with nothing withheld.
+ *
+ *  `as const satisfies` and NOT `: readonly NumericField[]` — the annotation
+ *  widens each entry to NumericField, which erases the literal types the
+ *  exhaustiveness check below needs. With the annotation the check compiles
+ *  to Exclude<NumericField, NumericField> = never and passes no matter what
+ *  is missing. It did, and I only found out by deleting an entry and watching
+ *  the build stay green. */
+export const ALL_NUMERIC_FIELDS = [
   "regularHours",
   "regularRate",
   "regularAmount",
   "additionalEarnings",
+  "paycheckTips",
   "grossEarnings",
   "employeeTaxes",
   "federalIncomeTax",
@@ -87,7 +95,29 @@ export const ALL_NUMERIC_FIELDS: readonly NumericField[] = [
   "donations",
   "checkAmount",
   "employerCost",
-];
+] as const satisfies readonly NumericField[];
+
+/**
+ * ALL_NUMERIC_FIELDS must list EVERY NumericField.
+ *
+ * It is a hand-maintained array, and when Gusto's "Paycheck Tips" column
+ * arrived it had to be added in three places — the field union, the parser's
+ * header map, and here. Miss this one and the column imports correctly and
+ * then vanishes from every projection: the data is in the database and no
+ * screen in the application shows it. That is exactly what happened, and
+ * nothing failed.
+ *
+ * This makes the third place a COMPILE ERROR rather than a silent omission.
+ * If `Missing` is not `never`, its name is the field you forgot.
+ */
+type _MissingFromAllNumericFields = Exclude<
+  NumericField,
+  (typeof ALL_NUMERIC_FIELDS)[number]
+>;
+const _allNumericFieldsAreExhaustive: _MissingFromAllNumericFields extends never
+  ? true
+  : ["ALL_NUMERIC_FIELDS is missing", _MissingFromAllNumericFields] = true;
+void _allNumericFieldsAreExhaustive;
 
 /**
  * The employer's side of the ledger: what the BUSINESS paid on top of
@@ -177,6 +207,16 @@ export type ImportResult = {
   changed: boolean;
   /** Rows whose name has no confirmed identity yet — the review queue. */
   unmatched: Array<{ lastName: string; firstName: string }>;
+  /**
+   * Numeric columns in the file that this importer has no mapping for.
+   *
+   * Gusto adds columns. "Paycheck Tips" appeared the first time a period
+   * carried tips, imported cleanly, reconciled against the totals row, and
+   * was silently discarded — the money existed in the CSV and on no screen.
+   * Reporting it puts the decision in front of a person instead of letting
+   * the import make it by omission.
+   */
+  unmappedColumns: string[];
 };
 
 /**
@@ -354,6 +394,7 @@ async function persistPeriod(
       replaced,
       changed,
       unmatched,
+      unmappedColumns: parsed.unmappedNumericHeaders,
     };
   });
 }
@@ -400,6 +441,8 @@ function entryToRow(
     regularRate: v.regularRate ?? null,
     regularAmount: v.regularAmount ?? null,
     additionalEarnings: v.additionalEarnings ?? null,
+    // Already inside grossEarnings — a component of it, never an addition.
+    paycheckTips: v.paycheckTips ?? null,
     grossEarnings: v.grossEarnings ?? null,
     employeeTaxes: v.employeeTaxes ?? null,
     federalIncomeTax: v.federalIncomeTax ?? null,
@@ -436,12 +479,17 @@ export type PayrollPeriodSummary = {
   /** Present only for admin/super. Workers get their own numbers, not the team's. */
   teamTotals?: {
     grossEarnings: number | null;
+    /** Tips paid through the paycheck this period. A COMPONENT of
+     *  grossEarnings — displayed beside it, never added to it. Null when the
+     *  period predates Gusto emitting the column at all, which is different
+     *  from a period that carried no tips. */
+    paycheckTips: number | null;
     netPay: number | null;
     /** SUPER ONLY — absent from an admin payload. */
     employerCost?: number | null;
   };
   /** Worker view: their own figures for this period, if they have a row. */
-  mine?: { grossEarnings: number | null; netPay: number | null };
+  mine?: { grossEarnings: number | null; paycheckTips: number | null; netPay: number | null };
   entryCount?: number;
   unmatchedCount?: number;
 };
@@ -465,7 +513,7 @@ export async function listPeriods(viewer: PayrollViewer): Promise<PayrollPeriodS
       include: {
         entries: {
           where: { userId: viewer.userId },
-          select: { grossEarnings: true, netPay: true },
+          select: { grossEarnings: true, paycheckTips: true, netPay: true },
         },
       },
     });
@@ -477,6 +525,7 @@ export async function listPeriods(viewer: PayrollViewer): Promise<PayrollPeriodS
       label: p.label,
       mine: {
         grossEarnings: p.entries[0]?.grossEarnings ?? null,
+        paycheckTips: p.entries[0]?.paycheckTips ?? null,
         netPay: p.entries[0]?.netPay ?? null,
       },
     }));
@@ -499,6 +548,7 @@ export async function listPeriods(viewer: PayrollViewer): Promise<PayrollPeriodS
       label: p.label,
       teamTotals: {
         grossEarnings: t.values?.grossEarnings ?? null,
+        paycheckTips: t.values?.paycheckTips ?? null,
         netPay: t.values?.netPay ?? null,
         // SUPER ONLY. `employerCost` is in TAX_AND_EMPLOYER_FIELDS — the
         // list of everything an admin must not receive — so shipping it in

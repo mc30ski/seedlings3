@@ -31,8 +31,11 @@ export type ViewerLike = {
 export type ProjectionOcc = {
   price?: number | null;
   proposalAmount?: number | null;
+  /** REQUIRED for any payout projection — `perWorkerShare` branches on it.
+   *  Optional here only so estimate previews (which have no occurrence row)
+   *  still typecheck; absent is treated as ITEMIZED, the current model. */
   addons?: Array<{ price?: number | null }> | null;
-  expenses?: Array<{ cost: number }> | null;
+  invoiceCharges?: Array<{ cost: number }> | null;
   assignees?: Array<{ role?: string | null }> | null;
 };
 
@@ -69,9 +72,10 @@ export function displayPriceOf(occ: ProjectionOcc): number {
   return base + addons;
 }
 
-/** Sum of expenses on the occurrence; null-safe. */
-export function expensesTotal(occ: ProjectionOcc): number {
-  return (occ.expenses ?? []).reduce((s, e) => s + (e.cost ?? 0), 0);
+/** Sum of what the CLIENT is charged in invoice lines; null-safe.
+ *  NOT a cost figure — see docs/features/job-materials.md. */
+export function invoiceChargesTotal(occ: ProjectionOcc): number {
+  return (occ.invoiceCharges ?? []).reduce((s, e) => s + (e.cost ?? 0), 0);
 }
 
 /**
@@ -85,18 +89,18 @@ export function activeAssigneeCount(occ: ProjectionOcc): number {
 }
 
 /**
- * Per-worker share of the distributable pool — gross-of-fee.
+ * One worker's share of the pool, before their margin or fee.
  *
- *   share = (displayPrice − expenses) / activeWorkerCount
- *
- * This is the building block every per-worker projection uses. Split
- * FIRST (matches the canonical server formula); fees come off the share,
- * never off the pool.
+ * The pool is labor + services; materials are billed to the client on top and
+ * never enter it.
  */
 export function perWorkerShare(occ: ProjectionOcc): number {
-  const net = Math.max(0, displayPriceOf(occ) - expensesTotal(occ));
-  return net / activeAssigneeCount(occ);
+  // Materials are billed to the client ON TOP and never enter the pool, so
+  // the pool is simply what the job is priced at. One rule, always — see
+  // apps/api/src/lib/jobPricing.ts.
+  return displayPriceOf(occ) / activeAssigneeCount(occ);
 }
+
 
 /**
  * Estimate the viewer's payout on an unpaid job. Use this on any UI

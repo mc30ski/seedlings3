@@ -340,7 +340,7 @@ export default function StatisticsTab({ myId }: Props = {}) {
                           </Box>
                           <Box display="grid" gridTemplateColumns={{ base: "repeat(2, 1fr)", md: "repeat(4, 1fr)" }} gap={3}>
                             <StatBox label="Gross Earnings" value={`$${w.totalEarnings.toFixed(2)}`} />
-                            <StatBox label="Expenses" value={`$${w.totalExpenses.toFixed(2)}`} />
+                            <StatBox label="Charges on jobs" value={`$${w.totalExpenses.toFixed(2)}`} />
                             <StatBox label="Earnings/Job" value={w.jobsCompleted > 0 ? `$${(w.netEarnings / w.jobsCompleted).toFixed(2)}` : "—"} />
                             <StatBox label="Earnings/Hour" value={w.totalActualMinutes > 0 ? `$${(w.netEarnings / (w.totalActualMinutes / 60)).toFixed(2)}` : "—"} />
                           </Box>

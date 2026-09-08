@@ -956,7 +956,7 @@ export async function superListWorkdaysForDate(workdayDate: string): Promise<{
         completionSplits: true,
         assignees: { select: { userId: true, role: true } },
         addons: { select: { price: true } },
-        expenses: { select: { cost: true } },
+        invoiceCharges: { select: { cost: true } },
         payment: {
           select: {
             confirmed: true,
@@ -986,7 +986,7 @@ export async function superListWorkdaysForDate(workdayDate: string): Promise<{
             proposalAmount: occ.proposalAmount,
             completionSplits: occ.completionSplits,
             addons: occ.addons,
-            expenses: occ.expenses,
+            invoiceCharges: occ.invoiceCharges,
             assignees: occ.assignees,
             payment: paymentForUser,
           },

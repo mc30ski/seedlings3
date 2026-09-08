@@ -1,4 +1,5 @@
 import { prisma } from "../db/prisma";
+import { invoiceTotal } from "../lib/jobPricing";
 import { etFormatDate } from "../lib/dates";
 import {
   loadExpenseCategories,
@@ -60,7 +61,7 @@ async function loadCashBasisWageEvents(
       completionSplits: true,
       promisedPayouts: true,
       addons: { select: { price: true } },
-      expenses: { select: { cost: true } },
+      invoiceCharges: { select: { cost: true } },
       assignees: {
         // SQL NULL-safety on role (see equipment.ts / exports.ts pattern).
         where: { OR: [{ role: null }, { role: { not: "observer" } }] },
@@ -116,10 +117,17 @@ async function loadCashBasisWageEvents(
       splitPercent: splitPctById.get(a.userId) ?? fallbackPct,
       workerType: a.user.workerType,
     }));
-    const priceTotal =
-      (occ.price ?? occ.proposalAmount ?? 0) +
-      occ.addons.reduce((s, a) => s + (a.price ?? 0), 0);
-    const expTotal = occ.expenses.reduce((s, e) => s + (e.cost ?? 0), 0);
+    // THE INVOICE, not the labor. computeBreakdown computes
+    // N = collected − charges, so feeding it labor-only and then subtracting
+    // the charges applies the LEGACY rule to every visit — on an ITEMIZED job
+    // it takes the mulch out of the crew's pool a second time. invoiceTotal
+    // branches, so the same call is right under both models.
+    const priceTotal = invoiceTotal({
+      price: occ.price ?? occ.proposalAmount ?? 0,
+      addons: occ.addons,
+      invoiceCharges: occ.invoiceCharges,
+    });
+    const expTotal = occ.invoiceCharges.reduce((s, e) => s + (e.cost ?? 0), 0);
     const fallbackBreakdown = computeBreakdown(priceTotal, expTotal, workersList, rates);
 
     for (const a of w2Assignees) {

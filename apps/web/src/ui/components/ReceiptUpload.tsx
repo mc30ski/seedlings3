@@ -12,7 +12,7 @@ import {
 
 type Props = {
   /** BusinessExpense id. The receipt is anchored on the BE so it works for
-   *  Step 1 (freestanding), Step 2 (job-Expense pair), or Step 3 (supply
+   *  Step 1 (freestanding), Step 2 (a job-linked row), or Step 3 (supply
    *  purchase) without changing this component. */
   businessExpenseId: string | null;
   /** Existing receipt metadata, if any. Pass null when no receipt yet. */
@@ -35,8 +35,9 @@ type Props = {
   /** Compact mode for inline use in dense forms (e.g. Buy More dialog). */
   compact?: boolean;
   /** Override the API base for the receipt endpoints. Defaults to the
-   *  admin business-expense routes. Pass e.g. `/api/expenses/<id>` to use
-   *  the claimer-accessible job-expense receipt routes. */
+   *  admin business-expense routes. Job-line receipt routes were removed —
+   *  an invoice charge has no ledger row to attach one to, and the receipt
+   *  belongs to the LEDGER row anyway. See docs/features/job-materials.md. */
   apiBase?: string;
 };
 

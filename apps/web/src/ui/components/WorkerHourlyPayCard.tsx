@@ -39,7 +39,7 @@ export type BreakdownJob = {
   tags: string[];
   basePrice: number;
   addonsTotal: number;
-  expensesTotal: number;
+  invoiceChargesTotal: number;
   net: number;
   myPercent: number;
   shareSource: "completionSplits" | "even-split" | "none";
@@ -971,7 +971,7 @@ function BreakdownPanel({
                   <Text fontFamily="mono" mt={1} opacity={0.85}>
                     ({fmtUSDPrecise(j.basePrice)}
                     {j.addonsTotal > 0 ? ` + ${fmtUSDPrecise(j.addonsTotal)} addons` : ""}
-                    {j.expensesTotal > 0 ? ` − ${fmtUSDPrecise(j.expensesTotal)} exp` : ""}
+                    {j.invoiceChargesTotal > 0 ? ` − ${fmtUSDPrecise(j.invoiceChargesTotal)} charges` : ""}
                     ) = <b>{fmtUSDPrecise(j.net)}</b> net
                   </Text>
                   <Text fontFamily="mono" opacity={0.85}>

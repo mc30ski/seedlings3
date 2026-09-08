@@ -308,16 +308,40 @@ function missingIn(text: string, urls: Record<string, string | null>): string[] 
  * Said out loud on purpose. The old behaviour rendered nothing at all, so a
  * guide whose image had never been uploaded — or whose body carried an asset
  * id from another environment — looked exactly like a guide with no image.
+ *
+ * TWO REFERENCE FORMS, TWO DIFFERENT PROBLEMS, and one message for both told
+ * the author to do something impossible:
+ *
+ *   "Nothing in the media library is called guide-asset:cmtjfqy7m00ykgn5f…
+ *    Upload it under that name."
+ *
+ * You cannot upload a file named after an internal id. A dead
+ * `guide-asset:<id>` is not a missing upload — it is a reference to a row that
+ * does not exist HERE, which is exactly what happens when a body written in
+ * one environment is copied into another. The fix is to rewrite the reference
+ * as the file's NAME, which is the whole reason names became referenceable.
  */
 function MissingAsset({ target, kind }: { target: string; kind: "image" | "video" }) {
+  const isIdForm = /^guide-asset:/i.test(target.trim());
+  const example = kind === "video" ? "striping-demo.webm" : "grass-id-chart.png";
   return (
     <Box my={3} px={2.5} py={2} borderRadius="md" bg="orange.subtle"
          borderWidth="1px" borderLeftWidth="3px" borderColor="orange.solid">
       <Text fontSize="12px" fontWeight="semibold">Missing {kind}</Text>
-      <Text fontSize="11.5px" color="fg.muted" wordBreak="break-all">
-        Nothing in the media library is called <strong>{target}</strong>. Upload it under
-        that name, or point this reference at a file that exists.
-      </Text>
+      {isIdForm ? (
+        <Text fontSize="11.5px" color="fg.muted" wordBreak="break-all">
+          This points at an internal id (<strong>{target}</strong>) that doesn&rsquo;t
+          exist here — usually because the text was copied from another
+          environment. Replace it with the file&rsquo;s name, e.g.{" "}
+          <Text as="span" fontFamily="mono">{`![${kind === "video" ? "" : "alt text"}](${example})`}</Text>,
+          and upload that file to the media library if it isn&rsquo;t there yet.
+        </Text>
+      ) : (
+        <Text fontSize="11.5px" color="fg.muted" wordBreak="break-all">
+          Nothing in the media library is called <strong>{target}</strong>. Upload it under
+          that name, or point this reference at a file that exists.
+        </Text>
+      )}
     </Box>
   );
 }

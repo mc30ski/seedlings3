@@ -44,7 +44,7 @@ const ACTION_LABEL: Record<string, { text: string; color: string }> = {
   START_JOB: { text: "Start", color: "green" },
   COMPLETE_JOB: { text: "Complete", color: "blue" },
   ADD_PHOTO: { text: "Photo", color: "purple" },
-  ADD_EXPENSE: { text: "Expense", color: "orange" },
+  ADD_EXPENSE: { text: "Invoice charge", color: "orange" },
   POST_COMMENT: { text: "Comment", color: "cyan" },
   SET_REMINDER: { text: "Reminder", color: "yellow" },
   CLEAR_REMINDER: { text: "Clear Reminder", color: "gray" },

@@ -741,7 +741,7 @@ function GuideDetailView({
                 rows={16}
                 fontFamily="mono"
                 fontSize="sm"
-                placeholder={"# Heading\n\nText, **bold**, lists…\n\n![alt](guide-asset:<id>)\n\n:::video guide-asset:<id>"}
+                placeholder={"# Heading\n\nText, **bold**, lists…\n\n![alt](grass-id-chart.png)\n\n:::video striping-demo.webm"}
               />
               <Input
                 size="sm"

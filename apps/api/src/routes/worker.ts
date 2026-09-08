@@ -249,7 +249,7 @@ export default async function workerRoutes(app: FastifyInstance) {
           proposalAmount: true,
           completionSplits: true,
           addons: { select: { price: true } },
-          expenses: { select: { cost: true } },
+          invoiceCharges: { select: { cost: true } },
           assignees: { select: { userId: true, role: true } },
           payment: {
             select: {
@@ -315,7 +315,7 @@ export default async function workerRoutes(app: FastifyInstance) {
           proposalAmount: true,
           completionSplits: true,
           addons: { select: { price: true } },
-          expenses: { select: { cost: true } },
+          invoiceCharges: { select: { cost: true } },
           assignees: { select: { userId: true, role: true } },
           payment: {
             select: {
@@ -369,7 +369,7 @@ export default async function workerRoutes(app: FastifyInstance) {
           proposalAmount: true,
           completionSplits: true,
           addons: { select: { price: true } },
-          expenses: { select: { cost: true } },
+          invoiceCharges: { select: { cost: true } },
           assignees: { select: { userId: true, role: true } },
           payment: {
             select: {
@@ -398,7 +398,7 @@ export default async function workerRoutes(app: FastifyInstance) {
           price: true,
           proposalAmount: true,
           addons: { select: { price: true } },
-          expenses: { select: { cost: true } },
+          invoiceCharges: { select: { cost: true } },
         },
       }),
       // Weekly trend: completed real jobs in the last 13 weeks (by completedAt).
@@ -420,7 +420,7 @@ export default async function workerRoutes(app: FastifyInstance) {
           proposalAmount: true,
           completionSplits: true,
           addons: { select: { price: true } },
-          expenses: { select: { cost: true } },
+          invoiceCharges: { select: { cost: true } },
           assignees: { select: { userId: true, role: true } },
           payment: {
             select: {
@@ -567,7 +567,7 @@ export default async function workerRoutes(app: FastifyInstance) {
           proposalAmount: true,
           completionSplits: true,
           addons: { select: { price: true } },
-          expenses: { select: { cost: true } },
+          invoiceCharges: { select: { cost: true } },
           assignees: { select: { userId: true, role: true } },
           payment: {
             select: {
@@ -690,7 +690,7 @@ export default async function workerRoutes(app: FastifyInstance) {
       price: number | null;
       proposalAmount: number | null;
       addons: { price: number | null }[];
-      expenses: { cost: number }[];
+      invoiceCharges: { cost: number }[];
       assignees: { role: string | null; userId: string; user: { workerType: string | null } | null }[];
     };
     // In subset mode, only sum payouts for workers in the selected set. The share-per-
@@ -701,8 +701,13 @@ export default async function workerRoutes(app: FastifyInstance) {
       const addonsTotal = (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
       const displayPrice = base + addonsTotal;
       if (displayPrice <= 0) return 0;
-      const expTotal = (occ.expenses ?? []).reduce((s, e) => s + (e.cost ?? 0), 0);
-      const net = Math.max(0, displayPrice - expTotal);
+      // THIS BRANCHES. Under ITEMIZED, material charges are billed to the
+      // client ON TOP and never come out of the crew's pool — subtracting
+      // them here under-reports every worker's projected pay by their share
+      // of the mulch. Under LEGACY they really did come out of the pool.
+      const chargesTotal = (occ.invoiceCharges ?? []).reduce((s, e) => s + (e.cost ?? 0), 0);
+      const net =
+        displayPrice;
       const active = (occ.assignees ?? []).filter((a) => a.role !== "observer");
       if (active.length === 0) return 0;
       const sharePer = net / active.length;
@@ -727,7 +732,7 @@ export default async function workerRoutes(app: FastifyInstance) {
       price: true,
       proposalAmount: true,
       addons: { select: { price: true } },
-      expenses: { select: { cost: true } },
+      invoiceCharges: { select: { cost: true } },
       assignees: { select: { role: true, userId: true, user: { select: { workerType: true } } } },
     } as const;
 
@@ -842,7 +847,7 @@ export default async function workerRoutes(app: FastifyInstance) {
           isAdminOnly: false,
           assignees: { none: {} },
         },
-        select: { price: true, proposalAmount: true, addons: { select: { price: true } }, expenses: { select: { cost: true } } },
+        select: { price: true, proposalAmount: true, addons: { select: { price: true } }, invoiceCharges: { select: { cost: true } } },
       }),
       prisma.jobOccurrence.findMany({
         where: {
@@ -1027,8 +1032,11 @@ export default async function workerRoutes(app: FastifyInstance) {
       const addonsTotal = (o.addons ?? []).reduce((sum: number, a: any) => sum + (a.price ?? 0), 0);
       const displayPrice = base + addonsTotal;
       if (displayPrice <= 0) return s;
-      const expTotal = (o.expenses ?? []).reduce((sum: number, e: any) => sum + (e.cost ?? 0), 0);
-      const net = Math.max(0, displayPrice - expTotal);
+      // Branches — see workerEarnings.ts. `o.expenses` also survived the
+      // rename here only because `o` is any-typed.
+      const chargesTot = (o.invoiceCharges ?? []).reduce((sum: number, e: any) => sum + (e.cost ?? 0), 0);
+      const net =
+        displayPrice;
       const deduction = Math.round(net * conPct) / 100;
       return s + Math.max(0, net - deduction);
     }, 0);
@@ -2564,7 +2572,7 @@ export default async function workerRoutes(app: FastifyInstance) {
           proposalAmount: true,
           completionSplits: true,
           addons: { select: { price: true } },
-          expenses: { select: { cost: true } },
+          invoiceCharges: { select: { cost: true } },
           assignees: { select: { userId: true, role: true } },
           payment: {
             select: {
@@ -2661,7 +2669,7 @@ export default async function workerRoutes(app: FastifyInstance) {
           proposalAmount: true,
           completionSplits: true,
           addons: { select: { price: true } },
-          expenses: { select: { cost: true } },
+          invoiceCharges: { select: { cost: true } },
           assignees: { select: { userId: true, role: true } },
         },
       });
@@ -2784,7 +2792,7 @@ export default async function workerRoutes(app: FastifyInstance) {
           proposalAmount: true,
           completionSplits: true,
           addons: { select: { price: true } },
-          expenses: { select: { cost: true } },
+          invoiceCharges: { select: { cost: true } },
           assignees: { select: { userId: true, role: true } },
           payment: {
             select: {
@@ -2868,7 +2876,7 @@ export default async function workerRoutes(app: FastifyInstance) {
           proposalAmount: true,
           completionSplits: true,
           addons: { select: { price: true } },
-          expenses: { select: { cost: true } },
+          invoiceCharges: { select: { cost: true } },
           assignees: { select: { userId: true, role: true } },
         },
       });
@@ -3510,211 +3518,71 @@ export default async function workerRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  // ── Expenses (claimer only) ──
+  // ── Invoice charges (claimer only) ──
+  //
+  // A line on the CLIENT'S INVOICE — what they are billed on top of labor.
+  // NOT a business expense: these write no ledger row and create no
+  // deduction. Every mutation is ADMIN-ONLY in the service (a job line raises
+  // what the client owes); these routes stay under workerGuard so an admin
+  // without the WORKER role still reaches them, and the service does the
+  // real gate. See docs/features/job-materials.md.
 
-  app.get("/occurrences/:id/expenses", workerGuard, async (req: any) => {
-    return services.expenses.listExpensesByOccurrence(String(req.params.id));
+  app.get("/occurrences/:id/invoice-charges", workerGuard, async (req: any) => {
+    return services.invoiceCharges.listInvoiceChargesByOccurrence(String(req.params.id));
   });
 
-  app.post("/occurrences/:id/expenses", workerGuard, async (req: any) => {
+  app.post("/occurrences/:id/invoice-charges", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const body = req.body || {};
-    return services.expenses.addExpense(uid, String(req.params.id), {
+    // No category / vendor / date — there is no Schedule C line to file an
+    // invoice charge against.
+    return services.invoiceCharges.addInvoiceCharge(uid, String(req.params.id), {
       cost: Number(body.cost),
       description: String(body.description ?? ""),
-      category: body.category != null ? String(body.category) : null,
-      vendor: body.vendor != null ? String(body.vendor) : null,
-      date: body.date != null ? String(body.date) : null,
+      actualCost:
+        body.actualCost != null && body.actualCost !== "" ? Number(body.actualCost) : null,
+      detail: body.detail != null ? String(body.detail) : null,
     });
   });
 
-  app.patch("/expenses/:id", workerGuard, async (req: any) => {
+  app.patch("/invoice-charges/:id", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const body = req.body || {};
     const input: any = {};
     if (body.cost !== undefined) input.cost = Number(body.cost);
     if (body.description !== undefined) input.description = String(body.description);
-    if ("category" in body) input.category = body.category != null ? String(body.category) : null;
-    if ("vendor" in body) input.vendor = body.vendor != null ? String(body.vendor) : null;
-    if ("date" in body) input.date = body.date != null ? String(body.date) : null;
-    return services.expenses.updateExpense(uid, String(req.params.id), input);
+    // "in body", not "!== undefined": null is meaningful — it CLEARS the
+    // field, which is how an operator removes a detail or a cost entered by
+    // mistake.
+    if ("detail" in body) input.detail = body.detail != null ? String(body.detail) : null;
+    if ("actualCost" in body) {
+      input.actualCost =
+        body.actualCost != null && body.actualCost !== "" ? Number(body.actualCost) : null;
+    }
+    return services.invoiceCharges.updateInvoiceCharge(uid, String(req.params.id), input);
   });
 
-  app.delete("/expenses/:id", workerGuard, async (req: any) => {
+  app.delete("/invoice-charges/:id", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
-    return services.expenses.deleteExpense(uid, String(req.params.id));
+    return services.invoiceCharges.deleteInvoiceCharge(uid, String(req.params.id));
   });
 
-  // ── Job-expense receipts ──
+  // ── Job-line receipts: REMOVED ─────────────────────────────────────────
   //
-  // Receipt routes for one-off job expenses, keyed on the job Expense id
-  // (what the Manage Expenses dialog has). The receipt itself lives on the
-  // paired BusinessExpense. Open to the occurrence's claimer as well as any
-  // admin/super — so a claimer who paid a company-account expense can attach
-  // the receipt themselves. Guarded by requireApproved (not workerGuard) so
-  // an admin without the WORKER role still passes; the per-expense claimer/
-  // admin check happens in resolveExpenseBe.
-  const approvedGuard = {
-    preHandler: (req: FastifyRequest, reply: FastifyReply) =>
-      app.requireApproved(req, reply),
-  };
+  // There were four routes here (receipt upload-url / attach / read / delete)
+  // that resolved a job line to `Expense.businessExpenseId` and then wrote to
+  // that LEDGER row's receipt columns.
+  //
+  // A receipt belongs to the LEDGER row — that is the record which has to
+  // survive an audit, and it is where BusinessExpensesTab attaches one.
+  //
+  // On a new invoice charge the link is null and the upload 409'd. Worse, on
+  // a line carrying the optional breadcrumb it attached the photo to a
+  // receipt SHARED WITH OTHER JOBS, and replacing it deleted the previous
+  // file. An invoice charge is what the client pays; if a per-line photo is
+  // ever wanted it needs its own columns and its own R2 namespace — never the
+  // ledger's. See docs/features/job-materials.md.
 
-  async function resolveExpenseBe(uid: string, expenseId: string): Promise<string> {
-    const expense = await prisma.expense.findUnique({
-      where: { id: expenseId },
-      select: {
-        businessExpenseId: true,
-        occurrence: {
-          select: { assignees: { select: { userId: true, assignedById: true } } },
-        },
-      },
-    });
-    if (!expense) throw app.httpErrors.notFound("Expense not found.");
-    if (!expense.businessExpenseId) {
-      throw app.httpErrors.conflict(
-        "This expense has no business-expense ledger row to hold a receipt.",
-      );
-    }
-    const me = await prisma.user.findUnique({
-      where: { id: uid },
-      include: { roles: true },
-    });
-    const isAdminOrSuper = !!me?.roles?.some(
-      (r) => r.role === "ADMIN" || r.role === "SUPER",
-    );
-    const isClaimer = expense.occurrence.assignees.some(
-      (a) => a.userId === uid && a.assignedById === uid,
-    );
-    if (!isAdminOrSuper && !isClaimer) {
-      throw app.httpErrors.forbidden(
-        "Only the claimer or an admin can manage this expense's receipt.",
-      );
-    }
-    return expense.businessExpenseId;
-  }
-
-  app.post("/expenses/:expenseId/receipt/upload-url", approvedGuard, async (req: any) => {
-    const uid = await currentUserId(req);
-    const beId = await resolveExpenseBe(uid, String(req.params.expenseId));
-    const b = req.body || {};
-    const fileName = String(b.fileName ?? "receipt").trim();
-    const contentType = String(b.contentType ?? "image/jpeg");
-    if (!/^image\/|^application\/pdf$/.test(contentType)) {
-      throw app.httpErrors.badRequest("Receipt must be an image or PDF.");
-    }
-    const safeName = fileName.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80);
-    const key = `receipts/${beId}/${Date.now()}-${safeName}`;
-    const uploadUrl = await getUploadUrl(key, contentType, 300, "receipts");
-    return { uploadUrl, key, contentType, fileName: safeName };
-  });
-
-  app.post("/expenses/:expenseId/receipt", approvedGuard, async (req: any) => {
-    const uid = await currentUserId(req);
-    const beId = await resolveExpenseBe(uid, String(req.params.expenseId));
-    const b = req.body || {};
-    const key = String(b.key ?? "");
-    const fileName = String(b.fileName ?? "");
-    const contentType = String(b.contentType ?? "");
-    if (!key.startsWith(`receipts/${beId}/`)) {
-      throw app.httpErrors.badRequest("Receipt key does not belong to this expense.");
-    }
-    const prev = await prisma.businessExpense.findUnique({
-      where: { id: beId },
-      select: { receiptR2Key: true, receiptFileName: true, cost: true, description: true, occurrenceId: true },
-    });
-    if (prev?.receiptR2Key && prev.receiptR2Key !== key) {
-      await deleteObject(prev.receiptR2Key, "receipts").catch(() => {});
-    }
-    return prisma.$transaction(async (tx) => {
-      const updated = await tx.businessExpense.update({
-        where: { id: beId },
-        data: {
-          receiptR2Key: key,
-          receiptFileName: fileName || null,
-          receiptContentType: contentType || null,
-          receiptUploadedAt: new Date(),
-        },
-        select: {
-          id: true,
-          receiptR2Key: true,
-          receiptFileName: true,
-          receiptContentType: true,
-          receiptUploadedAt: true,
-        },
-      });
-      // Records attaching tax substantiation to an expense, and the prior
-      // receipt object it replaced (that R2 object was deleted above).
-      await writeAudit(tx, AUDIT.EXPENSE.RECEIPT_ATTACHED, uid, {
-        businessExpenseId: beId,
-        expenseId: String(req.params.expenseId),
-        occurrenceId: prev?.occurrenceId ?? null,
-        cost: prev?.cost ?? null,
-        description: prev?.description ?? null,
-        beforeReceiptR2Key: prev?.receiptR2Key ?? null,
-        afterReceiptR2Key: key,
-        beforeReceiptFileName: prev?.receiptFileName ?? null,
-        afterReceiptFileName: fileName || null,
-        replacedPriorReceipt: !!(prev?.receiptR2Key && prev.receiptR2Key !== key),
-        contentType: contentType || null,
-      });
-      return updated;
-    });
-  });
-
-  app.get("/expenses/:expenseId/receipt-url", approvedGuard, async (req: any) => {
-    const uid = await currentUserId(req);
-    const beId = await resolveExpenseBe(uid, String(req.params.expenseId));
-    const be = await prisma.businessExpense.findUnique({
-      where: { id: beId },
-      select: { receiptR2Key: true, receiptContentType: true, receiptFileName: true },
-    });
-    if (!be?.receiptR2Key) throw app.httpErrors.notFound("No receipt uploaded.");
-    const url = await getDownloadUrl(be.receiptR2Key, 3600, "receipts");
-    return { url, contentType: be.receiptContentType, fileName: be.receiptFileName };
-  });
-
-  app.delete("/expenses/:expenseId/receipt", approvedGuard, async (req: any) => {
-    const uid = await currentUserId(req);
-    const beId = await resolveExpenseBe(uid, String(req.params.expenseId));
-    const be = await prisma.businessExpense.findUnique({
-      where: { id: beId },
-      select: {
-        receiptR2Key: true,
-        receiptFileName: true,
-        receiptContentType: true,
-        receiptUploadedAt: true,
-        cost: true,
-        description: true,
-        occurrenceId: true,
-      },
-    });
-    if (be?.receiptR2Key) await deleteObject(be.receiptR2Key, "receipts").catch(() => {});
-    await prisma.$transaction(async (tx) => {
-      // Records destruction of an expense's tax substantiation — the R2 object
-      // is already gone, so this snapshot is all that remains of the receipt.
-      await writeAudit(tx, AUDIT.EXPENSE.RECEIPT_DELETED, uid, {
-        businessExpenseId: beId,
-        expenseId: String(req.params.expenseId),
-        occurrenceId: be?.occurrenceId ?? null,
-        cost: be?.cost ?? null,
-        description: be?.description ?? null,
-        deletedReceiptR2Key: be?.receiptR2Key ?? null,
-        deletedReceiptFileName: be?.receiptFileName ?? null,
-        deletedReceiptContentType: be?.receiptContentType ?? null,
-        deletedReceiptUploadedAt: be?.receiptUploadedAt?.toISOString() ?? null,
-      });
-      await tx.businessExpense.update({
-        where: { id: beId },
-        data: {
-          receiptR2Key: null,
-          receiptFileName: null,
-          receiptContentType: null,
-          receiptUploadedAt: null,
-        },
-      });
-    });
-    return { deleted: true };
-  });
 
   // ── Supplies (claimer / admin) ──
   //
@@ -3743,7 +3611,9 @@ export default async function workerRoutes(app: FastifyInstance) {
   app.post("/occurrences/:id/addons", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const occurrenceId = String(req.params.id);
-    const { tag, customLabel, price } = (req.body || {}) as { tag?: string; customLabel?: string; price: number };
+    const { tag, customLabel, price, detail } = (req.body || {}) as {
+      tag?: string; customLabel?: string; price: number; detail?: string;
+    };
     if (price == null || price <= 0) throw app.httpErrors.badRequest("price is required and must be positive");
     if (!tag && !customLabel) throw app.httpErrors.badRequest("Either tag or customLabel is required");
 
@@ -3785,6 +3655,11 @@ export default async function workerRoutes(app: FastifyInstance) {
           tag: tag || null,
           customLabel: customLabel?.trim() || null,
           price: Number(price),
+          // CLIENT-VISIBLE line detail, e.g. "5 bushes at $25.00 each". Same
+          // shape an invoice charge carries — a service and a material line
+          // are entered and rendered identically. This route used to drop it
+          // on the floor while the admin twin persisted it.
+          detail: detail?.trim() || null,
           createdById: uid,
         },
       });
@@ -3795,6 +3670,7 @@ export default async function workerRoutes(app: FastifyInstance) {
         jobId: occ.jobId ?? null,
         tag: addon.tag,
         customLabel: addon.customLabel,
+        detail: addon.detail,
         beforePrice: null,
         afterPrice: addon.price,
         occurrenceStatus: occ.status,
@@ -3860,6 +3736,16 @@ export default async function workerRoutes(app: FastifyInstance) {
     return services.supplies.addHold(uid, String(req.params.id), {
       supplyId: String(b.supplyId ?? ""),
       quantity: Number(b.quantity),
+      // Optional per-job price. The catalog value is only a default — the
+      // same supply is billed differently to different clients.
+      clientUnitPrice:
+        b.clientUnitPrice == null || b.clientUnitPrice === ""
+          ? null
+          : Number(b.clientUnitPrice),
+      // Same shape as any other invoice charge: a headline and an optional
+      // client-visible detail.
+      description: b.description == null ? null : String(b.description),
+      detail: b.detail == null ? null : String(b.detail),
     });
   });
 
@@ -4398,7 +4284,7 @@ export default async function workerRoutes(app: FastifyInstance) {
         proposalAmount: true,
         completionSplits: true,
         addons: { select: { price: true } },
-        expenses: { select: { cost: true } },
+        invoiceCharges: { select: { cost: true } },
         assignees: { select: { userId: true, role: true } },
         // Always selected — the extra columns are cheap and keeping the
         // select shape static makes Prisma's generic typing tractable.
@@ -4431,7 +4317,7 @@ export default async function workerRoutes(app: FastifyInstance) {
       tags: string[];
       basePrice: number;
       addonsTotal: number;
-      expensesTotal: number;
+      invoiceChargesTotal: number;
       net: number;
       myPercent: number;
       shareSource: "completionSplits" | "even-split" | "none";
@@ -4447,7 +4333,7 @@ export default async function workerRoutes(app: FastifyInstance) {
           proposalAmount: occ.proposalAmount,
           completionSplits: occ.completionSplits,
           addons: occ.addons,
-          expenses: occ.expenses,
+          invoiceCharges: occ.invoiceCharges,
           assignees: occ.assignees,
           payment: null, // force projection path — this is an ESTIMATE
         },
@@ -4460,8 +4346,10 @@ export default async function workerRoutes(app: FastifyInstance) {
         const basePrice = (occ.price ?? occ.proposalAmount ?? 0);
         const addonsTotal = (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
         const displayPrice = basePrice + addonsTotal;
-        const expensesTotal = (occ.expenses ?? []).reduce((s, e) => s + (e.cost ?? 0), 0);
-        const net = Math.max(0, displayPrice - expensesTotal);
+        // Materials are billed on top and never enter the pool — see
+        // workerEarnings.ts.
+        const chargesTotal2 = (occ.invoiceCharges ?? []).reduce((s, e) => s + (e.cost ?? 0), 0);
+        const net = displayPrice;
 
         // Re-derive myPercent so we can show the user which source we
         // used and what number was applied — mirrors the helper's
@@ -4509,7 +4397,7 @@ export default async function workerRoutes(app: FastifyInstance) {
           tags,
           basePrice,
           addonsTotal,
-          expensesTotal,
+          invoiceChargesTotal: chargesTotal2,
           net,
           myPercent,
           shareSource,
@@ -4622,7 +4510,7 @@ export default async function workerRoutes(app: FastifyInstance) {
           where: cutoff ? { createdAt: { gte: cutoff } } : undefined,
           select: { amountPaid: true, method: true, confirmed: true, skippedAt: true, platformFeeAmount: true, businessMarginAmount: true, splits: { select: { userId: true, amount: true } } },
         },
-        expenses: {
+        invoiceCharges: {
           where: cutoff
             ? { OR: [
                 { businessExpense: { date: { gte: cutoff } } },
@@ -4666,7 +4554,7 @@ export default async function workerRoutes(app: FastifyInstance) {
       jobsCompleted++;
       const actualMinutes = occ.startedAt && occ.completedAt
         ? Math.round((new Date(occ.completedAt).getTime() - new Date(occ.startedAt).getTime()) / 60000) : null;
-      const expenseTotal = occ.expenses.reduce((s, e) => s + e.cost, 0);
+      const expenseTotal = occ.invoiceCharges.reduce((s, e) => s + e.cost, 0);
       // Skipped payments: pretend it never happened — earnings for
       // this occurrence contribute $0 to worker statistics.
       let earnings: number;
@@ -4686,7 +4574,7 @@ export default async function workerRoutes(app: FastifyInstance) {
             proposalAmount: (occ as any).proposalAmount ?? null,
             completionSplits: (occ as any).completionSplits,
             addons: (occ as any).addons ?? [],
-            expenses: occ.expenses,
+            invoiceCharges: occ.invoiceCharges,
             assignees: occ.assignees,
             payment: paymentForMe,
           },
@@ -4713,7 +4601,18 @@ export default async function workerRoutes(app: FastifyInstance) {
       if (occ.job?.property?.id) propertySet.add(occ.job.property.id);
     }
 
-    const netEarnings = totalEarnings - totalExpenses;
+      // CHARGES NEVER COME OUT OF A WORKER'S PAY. This subtracted the
+      // worker's pro-rata share of the job's invoice charges from what they
+      // earned — the OLD model, where an expense reduced the pool the crew
+      // split. It is wrong under both current models: under ITEMIZED the
+      // client pays the charges on top and the pool never sees them, and
+      // under LEGACY they came out of the pool BEFORE the split, so
+      // subtracting again double-counts them. Either way the worker's
+      // productivity stats were docked for materials they never paid for.
+      //
+      // `totalExpenses` is kept as context — what was billed on the jobs they
+      // worked — but it is not a deduction and no longer behaves like one.
+    const netEarnings = totalEarnings;
     const allDays = new Set(Object.keys(jobsByDay));
 
     return {

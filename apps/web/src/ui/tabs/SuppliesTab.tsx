@@ -39,7 +39,6 @@ import {
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import QRScannerDialog from "@/src/ui/dialogs/QRScannerDialog";
 import { compressOnly } from "@/src/lib/imageRedact";
-import { useExpenseCategories } from "@/src/lib/useExpenseCategories";
 
 // Barcode formats to scan when looking up supplies. Stable reference so
 // QRScannerDialog's effect doesn't re-run on every parent render.
@@ -48,7 +47,7 @@ const UPC_FORMATS = ["upc_a", "upc_e", "ean_13", "ean_8"];
 type ActiveHold = {
   id: string;
   quantity: number;
-  jobPayoutCost: number;
+  clientUnitPrice: number;
   createdAt: string;
   createdBy?: { id: string; displayName?: string | null } | null;
   occurrence?: {
@@ -74,7 +73,7 @@ type Supply = {
   upc?: string | null;
   category: string;
   businessCost: number;
-  jobPayoutCost: number;
+  clientUnitPrice: number;
   onHand: number;
   held: number;
   available: number;
@@ -135,7 +134,6 @@ export default function SuppliesTab({
   const showAdminExtras = effScope.isAdmin || effScope.isSuper;
   const showSuperExtras = effScope.isSuper;
 
-  const { selectableCategories } = useExpenseCategories();
   const [supplies, setSupplies] = useState<Supply[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -156,7 +154,8 @@ export default function SuppliesTab({
   const [fName, setFName] = useState("");
   const [fUnit, setFUnit] = useState("");
   const [fCategory, setFCategory] = useState("Supplies");
-  const [fJobPayoutCost, setFJobPayoutCost] = useState("");
+  const [fClientPrice, setFClientPrice] = useState("");
+  const [fBusinessCost, setFBusinessCost] = useState("");
   const [fUpc, setFUpc] = useState("");
   const [fDescription, setFDescription] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
@@ -193,18 +192,6 @@ export default function SuppliesTab({
   const [scanOpen, setScanOpen] = useState(false);
   const [scanLookingUp, setScanLookingUp] = useState(false);
 
-  const categoryItems = useMemo(
-    () =>
-      selectableCategories.map((c) => ({
-        label: `${c.label} (line ${c.scheduleCLine})`,
-        value: c.label,
-      })),
-    [selectableCategories],
-  );
-  const categoryCollection = useMemo(
-    () => createListCollection({ items: categoryItems }),
-    [categoryItems],
-  );
 
   async function load() {
     setLoading(true);
@@ -270,7 +257,8 @@ export default function SuppliesTab({
     setFName(prefill?.name ?? "");
     setFUnit("");
     setFCategory("Supplies");
-    setFJobPayoutCost("");
+    setFClientPrice("");
+    setFBusinessCost("");
     setFUpc(prefill?.upc ?? "");
     setFDescription(prefill?.description ?? "");
     setEditOpen(true);
@@ -291,7 +279,7 @@ export default function SuppliesTab({
     try {
       const result = await apiGet<{
         code: string;
-        matchExisting: { id: string; name: string; unit: string; jobPayoutCost: number; businessCost: number; onHand: number; category: string } | null;
+        matchExisting: { id: string; name: string; unit: string; clientUnitPrice: number; businessCost: number; onHand: number; category: string } | null;
         lookup: { found: boolean; title?: string; brand?: string; description?: string } | null;
       }>(`/api/admin/supplies/upc-lookup?code=${encodeURIComponent(code)}`);
 
@@ -342,7 +330,8 @@ export default function SuppliesTab({
     setFName(s.name);
     setFUnit(s.unit);
     setFCategory(s.category || "Supplies");
-    setFJobPayoutCost(s.jobPayoutCost.toFixed(2));
+    setFClientPrice(s.clientUnitPrice.toFixed(2));
+    setFBusinessCost(s.businessCost > 0 ? s.businessCost.toFixed(2) : "");
     setFUpc(s.upc ?? "");
     setFDescription(s.description ?? "");
     setEditOpen(true);
@@ -356,8 +345,18 @@ export default function SuppliesTab({
     const payload: any = {
       name: fName.trim(),
       unit: fUnit.trim(),
+      // NOT a tax category. A supply purchase creates no deduction, so there
+      // is no Schedule C line to pick — the dialog no longer offers one. The
+      // stored value is carried through untouched so existing grouping (the
+      // "Fuel" badge on the list) survives.
       category: fCategory,
-      jobPayoutCost: fJobPayoutCost === "" ? 0 : Number(fJobPayoutCost),
+      clientUnitPrice: fClientPrice === "" ? 0 : Number(fClientPrice),
+      // WHAT WE PAID. The form never sent this, and the field on screen was a
+      // read-only box — so every supply added through the UI had a cost of $0
+      // until someone recorded a purchase. An inventory pull then wrote a
+      // charge whose actualCost was quantity × 0, and the job reported its
+      // materials as free.
+      businessCost: fBusinessCost === "" ? 0 : Number(fBusinessCost),
       upc: fUpc.trim() || null,
       description: fDescription.trim() || null,
     };
@@ -602,10 +601,17 @@ export default function SuppliesTab({
       {showSuperExtras && (
         <Box mb={3} p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" borderRadius="md">
           <Text fontSize="xs" color="blue.800">
-            Each <Text as="span" fontWeight="semibold">purchase</Text> creates a Business Expense (tax ledger) right away.
-            When a job <Text as="span" fontWeight="semibold">consumes</Text> from inventory, only the worker's payout is
-            deducted — no second tax entry, since the deduction was already taken at purchase time.
-            The job-payout cost may include a markup over the business cost (e.g. $4.00 → $4.20 for fuel/travel).
+            Supplies track <Text as="span" fontWeight="semibold">stock, not taxes</Text>. Recording a
+            purchase adds units to the shelf and creates <Text as="span" fontWeight="semibold">no
+            tax entry</Text> — the deduction is the real card charge you enter in the Ledger from
+            your statement. You can optionally point a purchase at that Ledger row as a reminder of
+            what it bought; one receipt can cover several purchases.
+          </Text>
+          <Text fontSize="xs" color="blue.800" mt={1.5}>
+            When a job <Text as="span" fontWeight="semibold">pulls</Text> from inventory, the units
+            are <Text as="span" fontWeight="semibold">billed to the client</Text> at the job-payout
+            cost, on top of the labor price. They never come out of anyone&rsquo;s pay. That price
+            may carry a markup over what you paid (e.g. $4.00 → $4.20 for fuel and travel).
           </Text>
         </Box>
       )}
@@ -721,9 +727,11 @@ export default function SuppliesTab({
                               </>
                             )}
                           </Text>
-                          {/* businessCost is internal margin info — Super only. */}
-                          {showSuperExtras && <Text>Buy: {fmtUSD(s.businessCost)}</Text>}
-                          <Text>{!showSuperExtras ? "Cost per unit" : "Charge"}: <Text as="span" fontWeight="medium" color="orange.600">{fmtUSD(s.jobPayoutCost)}</Text></Text>
+                          {/* What we paid is internal margin info — Super only. */}
+                          {showSuperExtras && <Text>You pay: {fmtUSD(s.businessCost)}</Text>}
+                          {/* Was "Cost per unit" for a worker, which reads as
+                              THEIR cost. It is what the client is billed. */}
+                          <Text>Client pays: <Text as="span" fontWeight="medium" color="orange.600">{fmtUSD(s.clientUnitPrice)}</Text></Text>
                           {s.upc && <Text>UPC: {s.upc}</Text>}
                         </>
                       )}
@@ -841,61 +849,53 @@ export default function SuppliesTab({
                     <Text fontSize="sm" mb={1}>Unit *</Text>
                     <Input value={fUnit} onChange={(e) => setFUnit(e.target.value)} size="sm" placeholder="e.g. bag, spool, lb" />
                   </Box>
-                  <HStack gap={2} align="start">
-                    <Box flex="1">
-                      <Text fontSize="sm" mb={1}>Last paid (per unit)</Text>
-                      <Box
-                        fontSize="sm"
-                        px={2}
-                        py="6px"
-                        bg="bg.subtle"
-                        borderWidth="1px"
-                        borderColor="border.muted"
-                        borderRadius="md"
-                        color="fg.muted"
-                      >
-                        {editing && editing.businessCost > 0
-                          ? `${fmtUSD(editing.businessCost)}`
-                          : "—"}
-                      </Box>
-                    </Box>
-                    <Box flex="1">
-                      <Text fontSize="sm" mb={1}>Job payout cost (per unit) *</Text>
-                      <CurrencyInput value={fJobPayoutCost} onChange={setFJobPayoutCost} size="sm" />
-                    </Box>
-                  </HStack>
-                  <Text fontSize="xs" color="fg.muted">
-                    Last paid is derived from your most recent purchase — it updates automatically and isn't edited here. Job payout cost is what's deducted from the worker's payout per unit consumed; set it equal to what you pay for no markup, or higher to bake in margin (e.g. travel/fuel to fetch the supply).
-                  </Text>
+                  {/* THE CATALOG KNOWS WHAT YOU PAY. IT DOES NOT KNOW WHAT A
+                      CLIENT WILL PAY.
+                      That is decided when the supply goes onto a job — the
+                      same bag of mulch is billed differently to different
+                      clients — so this screen asks for a DEFAULT, not a
+                      price. It previously demanded the client price up front
+                      as a required field, with buttons to "set from cost" as
+                      though a fixed markup existed. */}
                   <Box>
-                    <Text fontSize="sm" mb={1}>Schedule C category</Text>
-                    <Select.Root
-                      collection={categoryCollection}
-                      value={[fCategory]}
-                      onValueChange={(e) => setFCategory(e.value?.[0] ?? "Supplies")}
-                      size="sm"
-                      positioning={{ strategy: "fixed", hideWhenDetached: true }}
-                    >
-                      <Select.Control>
-                        <Select.Trigger w="full">
-                          <Select.ValueText placeholder="Supplies (line 22)" />
-                        </Select.Trigger>
-                      </Select.Control>
-                      <Select.Positioner>
-                        <Select.Content>
-                          {categoryItems.map((it) => (
-                            <Select.Item key={it.value} item={it.value}>
-                              <Select.ItemText>{it.label}</Select.ItemText>
-                            </Select.Item>
-                          ))}
-                        </Select.Content>
-                      </Select.Positioner>
-                    </Select.Root>
-                    <Box mt={1} p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" borderRadius="md">
-                      <Text fontSize="xs" color="blue.800">
-                        Most lawn-care consumables belong on <Text as="span" fontWeight="semibold">Supplies (line 22)</Text>. Override only if this item maps to a different Schedule C line — e.g. fuel as Car and truck expenses.
+                    <Text fontSize="sm" mb={1}>
+                      What you pay{" "}
+                      <Text as="span" color="fg.muted">(per {fUnit.trim() || "unit"})</Text> *
+                    </Text>
+                    <CurrencyInput value={fBusinessCost} onChange={setFBusinessCost} size="sm" />
+                    <Text fontSize="xs" color="fg.muted" mt={1}>
+                      What a job records as its material cost. Recording a purchase updates it to
+                      that receipt&rsquo;s per-unit price.
+                    </Text>
+                  </Box>
+                  <Box>
+                    <Text fontSize="sm" mb={1}>
+                      Default charge to a client{" "}
+                      <Text as="span" color="fg.muted">
+                        (per {fUnit.trim() || "unit"}, optional)
                       </Text>
-                    </Box>
+                    </Text>
+                    <CurrencyInput value={fClientPrice} onChange={setFClientPrice} size="sm" />
+                    <Text fontSize="xs" color="fg.muted" mt={1}>
+                      Only a starting point. You set what to charge when you add this supply to a
+                      job, and it can differ per client. Leave it blank if there is no usual price.
+                    </Text>
+                  </Box>
+                  <Box>
+                    <Text fontSize="sm" mb={1}>
+                      Group <Text as="span" color="fg.muted" fontSize="xs">(optional)</Text>
+                    </Text>
+                    <Input
+                      size="sm"
+                      value={fCategory === "Supplies" ? "" : fCategory}
+                      onChange={(e) => setFCategory(e.target.value.trim() || "Supplies")}
+                      placeholder="e.g. Fuel, Chemicals"
+                    />
+                    <Text fontSize="xs" color="fg.muted" mt={1}>
+                      Just a label for the list &mdash; it shows as a badge next to the name.
+                      It is <Text as="span" fontWeight="semibold">not</Text> a tax category:
+                      buying a supply records no deduction.
+                    </Text>
                   </Box>
                   <Box>
                     <Text fontSize="sm" mb={1}>UPC <Text as="span" color="fg.muted" fontSize="xs">(optional)</Text></Text>
@@ -934,8 +934,10 @@ export default function SuppliesTab({
                 <VStack align="stretch" gap={3}>
                   <Box p={2} bg="green.50" borderWidth="1px" borderColor="green.200" borderRadius="md">
                     <Text fontSize="xs" color="green.800">
-                      Recording a purchase creates a Business Expense (tax ledger entry, category{" "}
-                      <Text as="span" fontWeight="semibold">{buyOpen?.category}</Text>) and adds units to inventory in one step.
+                      This adds units to the shelf. It records <Text as="span" fontWeight="semibold">no
+                      tax entry</Text> — the deduction is the card charge you enter in the Ledger.
+                      Link this purchase to that Ledger row afterwards if you want the receipt to
+                      remember what it bought.
                     </Text>
                   </Box>
                   <HStack gap={2}>
@@ -1135,7 +1137,7 @@ export default function SuppliesTab({
                                     {evt.row.status === "ACTIVE" ? "Hold" : evt.row.status === "CONSUMED" ? "Used" : "Released"}
                                   </Badge>
                                   <Text fontSize="sm" fontWeight="medium">
-                                    −{evt.row.quantity} @ {fmtUSD(evt.row.jobPayoutCost)}
+                                    −{evt.row.quantity} @ {fmtUSD(evt.row.clientUnitPrice)}
                                   </Text>
                                 </HStack>
                                 <Text fontSize="xs" color="fg.muted">

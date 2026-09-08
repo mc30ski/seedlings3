@@ -420,10 +420,17 @@ export function ElevatedActionRow({
   scope,
   onAfter,
   cardMode,
+  adminExtras,
 }: {
   occ: WorkerOccurrence;
   scope: { isAdmin: boolean; isSuper: boolean };
   onAfter: () => void;
+  /** Admin-only buttons that belong on the ADMIN row rather than the
+   *  everyday one. A button lives on the LOWEST role row that applies to
+   *  it — an action only an admin can take reads wrong sitting next to
+   *  Manage Team, which any assignee can use. Passed in rather than built
+   *  here because these open dialogs the card owns. */
+  adminExtras?: React.ReactNode;
   /** Optional density passthrough — when the enclosing card is in
    *  "ultra" mode, we hide the elevated row so ultra cards stay a
    *  clean single-line scan. Tapping the card cycles to semi and
@@ -494,7 +501,10 @@ export function ElevatedActionRow({
   // CLOSED (ESTIMATE).
   const canArchive = scope.isSuper && canAdminTransition(workflow, status, "ARCHIVED");
 
-  const showAdminRow = canAdminCancel;
+  // The row must appear when it carries EXTRAS even if Cancel isn't
+  // available for this status — otherwise those buttons vanish entirely
+  // on, say, an already-cancelled job.
+  const showAdminRow = canAdminCancel || !!adminExtras;
   const showSuperRow = canReopen || canForceNext || canArchive;
   if (!showAdminRow && !showSuperRow) return null;
   // Follow the card's density cycle — elevated actions are secondary
@@ -574,10 +584,15 @@ export function ElevatedActionRow({
           bg="blackAlpha.50"
           wrap="wrap"
         >
+          {/* Buttons are size="sm", matching the everyday row. These rows
+              were a compact strip when they only held Cancel/Reopen/Archive;
+              now that they carry primary actions (Manage in Services, Add
+              Charge, …) a smaller size reads as a lesser row. */}
           <Badge size="xs" variant="subtle" colorPalette="purple">Admin</Badge>
+          {adminExtras}
           {canAdminCancel && (
-            <Button size="xs" variant="outline" colorPalette="red" onClick={adminCancel} disabled={!!busy}>
-              {busy === "cancel" ? <Spinner size="xs" /> : <Ban size={12} />}
+            <Button size="sm" variant="outline" colorPalette="red" onClick={adminCancel} disabled={!!busy}>
+              {busy === "cancel" ? <Spinner size="sm" /> : <Ban size={14} />}
               <Text ml={1}>Cancel</Text>
             </Button>
           )}
@@ -597,20 +612,20 @@ export function ElevatedActionRow({
             <HStack gap={0.5}><Zap size={9} /><Text>Super</Text></HStack>
           </Badge>
           {canReopen && (
-            <Button size="xs" variant="outline" colorPalette="orange" onClick={superReopen} disabled={!!busy}>
-              {busy === "reopen" ? <Spinner size="xs" /> : <RotateCcw size={12} />}
+            <Button size="sm" variant="outline" colorPalette="orange" onClick={superReopen} disabled={!!busy}>
+              {busy === "reopen" ? <Spinner size="sm" /> : <RotateCcw size={14} />}
               <Text ml={1}>Reopen</Text>
             </Button>
           )}
           {canForceNext && (
-            <Button size="xs" variant="outline" colorPalette="orange" onClick={superForceNext} disabled={!!busy}>
-              {busy === "force-next" ? <Spinner size="xs" /> : <FastForward size={12} />}
+            <Button size="sm" variant="outline" colorPalette="orange" onClick={superForceNext} disabled={!!busy}>
+              {busy === "force-next" ? <Spinner size="sm" /> : <FastForward size={14} />}
               <Text ml={1}>Force next</Text>
             </Button>
           )}
           {canArchive && (
-            <Button size="xs" variant="outline" colorPalette="red" onClick={superArchive} disabled={!!busy}>
-              {busy === "archive" ? <Spinner size="xs" /> : <Archive size={12} />}
+            <Button size="sm" variant="outline" colorPalette="red" onClick={superArchive} disabled={!!busy}>
+              {busy === "archive" ? <Spinner size="sm" /> : <Archive size={14} />}
               <Text ml={1}>Archive</Text>
             </Button>
           )}

@@ -73,22 +73,26 @@ const BASELINE: Record<string, number> = {
   // writes (createPayment = 1 Payment + N PaymentSplits under one
   // PAYMENT.CREATED row), so a count well below the mutation total is
   // expected and healthy here.
-  "apps/api/src/services/jobs.ts": 44,
+  "apps/api/src/services/jobs.ts": 39,
   // Raised 32 → 33 on 2026-08-31 by the guaranteed-payout removal, NOT by a
   // coverage regression. The GP endpoint was a single mutation with TWO
   // audit branches (GUARANTEED_PAYOUT_STARTED / _ENDED), so deleting it
   // removed 1 mutation site and 2 writeAudit calls — the ratio gets worse
   // even though every remaining mutation is exactly as audited as before.
-  "apps/api/src/routes/admin.ts": 33,
+  "apps/api/src/routes/admin.ts": 29,
   "apps/api/src/services/payments.ts": 20,
   "apps/api/src/routes/worker.ts": 18,
-  "apps/api/src/services/supplies.ts": 16,
+  "apps/api/src/services/supplies.ts": 14,
   // Background sync worker — queue/state bookkeeping, not user actions.
   // Best candidate for dropping to 0 via audit-allow comments.
   "apps/api/src/services/documentSyncWorker.ts": 15,
   "apps/api/src/services/promotions.ts": 13,
   "apps/api/src/services/equipment.ts": 13,
-  "apps/api/src/services/expenses.ts": 9,
+  // invoiceCharges.ts (was expenses.ts). The two "unaudited" sites are the
+  // supply.update + supplyHold.update that release inventory inside
+  // deleteInvoiceCharge — one audited action, and the DELETED row already
+  // snapshots supplyHoldStatusBefore / supplyHoldQuantity.
+  "apps/api/src/services/invoiceCharges.ts": 2,
   "apps/api/src/services/policies.ts": 7,
   "apps/api/src/services/groups.ts": 4,
   "apps/api/src/services/vanityPages.ts": 4,

@@ -24,6 +24,10 @@ export type PayrollValues = Partial<{
   regularRate: number | null;
   regularAmount: number | null;
   additionalEarnings: number | null;
+  /** Tips paid through the paycheck. A COMPONENT of grossEarnings — display
+   *  it beside gross, never added to it. Null on any period that predates
+   *  Gusto emitting the column, which is not the same as "no tips". */
+  paycheckTips: number | null;
   grossEarnings: number | null;
   employeeTaxes: number | null;
   federalIncomeTax: number | null;
@@ -52,6 +56,8 @@ export type PayrollPeriodSummary = {
   /** Operator views only. */
   teamTotals?: {
     grossEarnings: number | null;
+    /** Component of grossEarnings — see PayrollValues.paycheckTips. */
+    paycheckTips: number | null;
     netPay: number | null;
     /**
      * SUPER ONLY. Optional because an admin payload genuinely omits it —
@@ -61,7 +67,7 @@ export type PayrollPeriodSummary = {
     employerCost?: number | null;
   };
   /** Worker view only — their own figures for the period. */
-  mine?: { grossEarnings: number | null; netPay: number | null };
+  mine?: { grossEarnings: number | null; paycheckTips: number | null; netPay: number | null };
   entryCount?: number;
   unmatchedCount?: number;
 };
@@ -121,6 +127,9 @@ export type ImportedPeriod = {
   /** On a replace, whether the file actually differed from what was stored. */
   changed: boolean;
   unmatched: Array<{ lastName: string; firstName: string }>;
+  /** Numeric columns in the file the importer has no mapping for. Optional so
+   *  an older server payload still parses. */
+  unmappedColumns?: string[];
 };
 
 /** Present when the server refused the file. */
@@ -331,18 +340,34 @@ export function filterPeriodsByRange<T extends { payDay: string }>(
  * actually contributed so the UI can be honest about it.
  */
 export function sumMine(
-  periods: Array<{ mine?: { grossEarnings: number | null; netPay: number | null } }>,
-): { netPay: number; grossEarnings: number; counted: number } {
+  periods: Array<{
+    mine?: {
+      grossEarnings: number | null;
+      paycheckTips?: number | null;
+      netPay: number | null;
+    };
+  }>,
+): { netPay: number; grossEarnings: number; paycheckTips: number; counted: number } {
   let netPay = 0;
   let grossEarnings = 0;
+  let paycheckTips = 0;
   let counted = 0;
   for (const p of periods) {
     if (!p.mine) continue;
     if (p.mine.netPay != null) netPay += p.mine.netPay;
     if (p.mine.grossEarnings != null) grossEarnings += p.mine.grossEarnings;
+    // Tips are INSIDE gross — summed separately so they can be shown, never
+    // added to it. Null across every period means Gusto has never emitted the
+    // column, which is not the same as a period that carried no tips.
+    if (p.mine.paycheckTips != null) paycheckTips += p.mine.paycheckTips;
     counted += 1;
   }
-  return { netPay: round2(netPay), grossEarnings: round2(grossEarnings), counted };
+  return {
+    netPay: round2(netPay),
+    grossEarnings: round2(grossEarnings),
+    paycheckTips: round2(paycheckTips),
+    counted,
+  };
 }
 
 /** Same, for the operator view's team totals. */
@@ -350,13 +375,21 @@ export function sumTeam(
   periods: Array<{
     teamTotals?: {
       grossEarnings: number | null;
+      paycheckTips?: number | null;
       netPay: number | null;
       employerCost?: number | null;
     };
   }>,
-): { netPay: number; grossEarnings: number; employerCost: number; counted: number } {
+): {
+  netPay: number;
+  grossEarnings: number;
+  paycheckTips: number;
+  employerCost: number;
+  counted: number;
+} {
   let netPay = 0;
   let grossEarnings = 0;
+  let paycheckTips = 0;
   let employerCost = 0;
   let counted = 0;
   for (const p of periods) {
@@ -364,11 +397,14 @@ export function sumTeam(
     if (p.teamTotals.netPay != null) netPay += p.teamTotals.netPay;
     if (p.teamTotals.grossEarnings != null) grossEarnings += p.teamTotals.grossEarnings;
     if (p.teamTotals.employerCost != null) employerCost += p.teamTotals.employerCost;
+    // See sumMine — a component of gross, never an addition to it.
+    if (p.teamTotals.paycheckTips != null) paycheckTips += p.teamTotals.paycheckTips;
     counted += 1;
   }
   return {
     netPay: round2(netPay),
     grossEarnings: round2(grossEarnings),
+    paycheckTips: round2(paycheckTips),
     employerCost: round2(employerCost),
     counted,
   };

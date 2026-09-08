@@ -331,6 +331,35 @@ export default function HistoryTab({ role = "worker" }: TabRolePropType) {
       return `Promotion — ${promoId}`;
     }
 
+    // Payments. Right now only the price adjustment has a summary — the
+    // rest fall through to the empty string they have always rendered.
+    //
+    // `reason` is the operator's internal note, typed on the Adjust Price
+    // dialog and shown to nobody. It lived only in the raw-JSON expander
+    // for a while, which made the field pointless: an input whose value you
+    // could reach only by knowing this tab existed, finding the row, and
+    // reading a metadata blob. Rendering it here is the whole reason to
+    // collect it.
+    if (action?.startsWith("PAYMENT_")) {
+      if (md.action === "price_adjusted") {
+        const before = typeof md.priceBefore === "number" ? md.priceBefore : null;
+        const after = typeof md.priceAfter === "number" ? md.priceAfter : null;
+        const reason = typeof md.reason === "string" ? md.reason.trim() : "";
+        const suffix = reason ? ` — ${reason}` : "";
+        // The dialog can change the client-visible detail without moving the
+        // price. Saying "changed $65.00 → $65.00" there would read as a bug.
+        const detailMoved =
+          (md.laborDetailBefore ?? null) !== (md.laborDetailAfter ?? null);
+        if (before !== null && after !== null && before !== after) {
+          return `Price changed ${dollars(before)} → ${dollars(after)}${suffix}`;
+        }
+        if (detailMoved) return `Invoice detail updated${suffix}`;
+        if (after !== null) return `Price set ${dollars(after)}${suffix}`;
+        return `Price adjusted${suffix}`;
+      }
+      return "";
+    }
+
     // Promo opt-out / opt-in — per-contact, per-channel. Metadata
     // includes { contactId, clientId, channel, source, reason? }.
     if (action?.startsWith("PROMO_OPT_")) {
@@ -556,6 +585,12 @@ export default function HistoryTab({ role = "worker" }: TabRolePropType) {
       </Stack>
     </Box>
   );
+}
+
+/** Money in a summary line. Always two decimals — "$65 → $80.5" reads as a
+ *  typo. */
+function dollars(n: number): string {
+  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function formatMetadata(row: AuditItem): string {

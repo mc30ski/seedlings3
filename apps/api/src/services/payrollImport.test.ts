@@ -316,3 +316,92 @@ describe("parseGustoPayrollJournal — failure modes", () => {
     expect(checkConservation(periods[1])).toEqual([]);
   });
 });
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Paycheck Tips — the column Gusto added, and the class of failure it exposed.
+//
+// It arrived the first time a payroll period carried tips: INSERTED ahead of
+// Gross Earnings rather than appended. The parser maps by header NAME, so
+// nothing misaligned and nothing broke. It simply had no mapping, was read,
+// and was dropped. The import reported success, every figure reconciled
+// against Gusto's own totals row, and the money appeared on no screen in the
+// application. The operator found it by noticing an absence.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TIPPED_CSV = [
+  '"Payroll Journal Report"',
+  "",
+  '"Seedlings Lawn Care, LLC"',
+  "",
+  '"Employee Earnings"',
+  '"Weekly Payroll payroll period"," 08/31/2026 - 09/06/2026"',
+  '"Pay day"," 09/11/2026"',
+  '"Last Name","First Name","Work Address","Employee Type","Payment","Regular (Hours)","Regular (Rate)","Regular (Amount)","Additional Earnings","Paycheck Tips","Gross Earnings","Employee Taxes","Federal Income Tax (Employee)","Social Security (Employee)","Medicare (Employee)","Additional Medicare (Employee)","NC State Tax (Employee)","Employer Taxes","Social Security (Employer)","Medicare (Employer)","FUTA (Employer)","NC Unemployment Tax (Employer)","Net Pay","Reimbursements","Donations","Check Amount","Employer Cost"',
+  '"Serrano","Caleb","225 Stony Branch Trl, Chapel Hill, NC 27516","Paid by the hour","Direct Deposit","2.27","7.25","16.46","51.79","10.50","78.75","6.03","0.00","4.88","1.15","0.00","0.00","7.29","4.88","1.15","0.47","0.79","72.72","0.00","0.00","72.72","86.04"',
+  '"Torres","Justin","225 Stony Branch Trl, Chapel Hill, NC 27516","Paid by the hour","Direct Deposit","5.91","7.25","42.85","134.27","","177.12","13.55","0.00","10.98","2.57","0.00","0.00","16.38","10.98","2.57","1.06","1.77","163.57","0.00","0.00","163.57","193.50"',
+  '"Wanderski","Jacob","225 Stony Branch Trl, Chapel Hill, NC 27516","Paid by the hour","Direct Deposit","8.47","7.25","61.41","222.96","10.50","294.87","24.57","0.00","18.29","4.28","0.00","2.00","22.57","18.29","4.28","","","270.30","0.00","0.00","270.30","317.44"',
+  '"Payroll Totals","","","","","16.65","7.25","120.72","409.02","21.00","550.74","44.15","0.00","34.15","8.00","0.00","2.00","46.24","34.15","8.00","1.53","2.56","506.59","0.00","0.00","506.59","596.98"',
+].join("\n");
+
+describe("Paycheck Tips", () => {
+  it("is read, not dropped", () => {
+    const p = parseGustoPayrollJournal(TIPPED_CSV)[0];
+    const byName = Object.fromEntries(p.entries.map((e) => [e.rawLastName, e]));
+    expect(byName.Serrano.values.paycheckTips).toBe(10.5);
+    expect(byName.Wanderski.values.paycheckTips).toBe(10.5);
+    expect(p.totals.values.paycheckTips).toBe(21);
+  });
+
+  it("keeps a blank tips cell NULL, not zero", () => {
+    // Justin's cell is "". Collapsing that to 0 asserts Gusto computed a zero
+    // tip for him, which it did not — the same rule that governs every other
+    // column here.
+    const p = parseGustoPayrollJournal(TIPPED_CSV)[0];
+    const justin = p.entries.find((e) => e.rawLastName === "Torres")!;
+    expect(justin.values.paycheckTips).toBeNull();
+  });
+
+  it("does not disturb the columns Gusto inserted it in front of", () => {
+    // Inserted ahead of Gross Earnings. A positional parser would shift every
+    // column after it; this one maps by name.
+    const p = parseGustoPayrollJournal(TIPPED_CSV)[0];
+    const caleb = p.entries.find((e) => e.rawLastName === "Serrano")!;
+    expect(caleb.values.grossEarnings).toBe(78.75);
+    expect(caleb.values.additionalEarnings).toBe(51.79);
+    expect(caleb.values.netPay).toBe(72.72);
+    expect(caleb.values.employerCost).toBe(86.04);
+  });
+
+  it("is a COMPONENT of gross, never an addition to it", () => {
+    // 16.46 regular + 51.79 additional + 10.50 tips = 78.75 gross.
+    const p = parseGustoPayrollJournal(TIPPED_CSV)[0];
+    const c = p.entries.find((e) => e.rawLastName === "Serrano")!.values;
+    const parts = (c.regularAmount ?? 0) + (c.additionalEarnings ?? 0) + (c.paycheckTips ?? 0);
+    expect(Math.round(parts * 100) / 100).toBe(c.grossEarnings);
+  });
+
+  it("is covered by the conservation check", () => {
+    // A wrong tip total must be refused before anything is written, like any
+    // other additive column.
+    const bad = TIPPED_CSV.replace('"409.02","21.00"', '"409.02","99.00"');
+    const p = parseGustoPayrollJournal(bad)[0];
+    const mismatches = checkConservation(p);
+    expect(mismatches.map((m) => m.field)).toContain("paycheckTips");
+  });
+
+  it("reports a numeric column it cannot map, and ignores a text one", () => {
+    // THE SYSTEMIC HALF. A column with no mapping used to vanish in silence.
+    const withUnknown = TIPPED_CSV
+      .replace('"Paycheck Tips",', '"Paycheck Tips","Holiday Bonus","Uniform Note",')
+      .replace('"10.50","78.75"', '"10.50","25.00","issued","78.75"')
+      .replace('"","177.12"', '"","25.00","issued","177.12"')
+      .replace('"10.50","294.87"', '"10.50","25.00","issued","294.87"')
+      .replace('"21.00","550.74"', '"21.00","75.00","","550.74"');
+    const p = parseGustoPayrollJournal(withUnknown)[0];
+    expect(p.unmappedNumericHeaders).toContain("Holiday Bonus");
+    expect(p.unmappedNumericHeaders).not.toContain("Uniform Note");
+    // …and a file we fully understand reports nothing.
+    expect(parseGustoPayrollJournal(TIPPED_CSV)[0].unmappedNumericHeaders).toEqual([]);
+  });
+});

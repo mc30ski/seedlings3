@@ -237,6 +237,35 @@ export default function PayrollUploadDialog({
                         </HStack>
                       ))}
                     </VStack>
+                    {/* A COLUMN WE DID NOT UNDERSTAND.
+                        Gusto adds columns — "Paycheck Tips" arrived the first
+                        time a period carried tips. It imported cleanly,
+                        reconciled against the totals row, and was discarded,
+                        so the money was in the file and on no screen. The
+                        import must not make that decision quietly. */}
+                    {result.some((p) => (p.unmappedColumns?.length ?? 0) > 0) && (
+                      <Box
+                        mt={2}
+                        p={2}
+                        bg="orange.subtle"
+                        borderWidth="1px"
+                        borderLeftWidth="3px"
+                        borderColor="orange.solid"
+                        borderRadius="md"
+                      >
+                        <Text fontSize="xs" fontWeight="semibold" color="orange.fg">
+                          This file has columns the importer doesn&apos;t recognise
+                        </Text>
+                        <Text fontSize="2xs" color="orange.fg" mt={0.5}>
+                          {[...new Set(result.flatMap((p) => p.unmappedColumns ?? []))].join(", ")}
+                        </Text>
+                        <Text fontSize="2xs" color="fg.muted" mt={1}>
+                          Everything else imported and the totals reconcile — but these
+                          figures are stored and not shown anywhere. Send this to whoever
+                          maintains the importer.
+                        </Text>
+                      </Box>
+                    )}
                     {result.some((p) => p.unmatched.length > 0) && (
                       <Text fontSize="2xs" color="green.800" mt={2}>
                         Names that aren&apos;t linked to an app user yet are listed on the

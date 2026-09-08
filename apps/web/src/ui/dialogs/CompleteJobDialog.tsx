@@ -126,7 +126,7 @@ export default function CompleteJobDialog({
     const initialMin = Math.max(0, Math.round(initialPausedMs / 60000));
     setOffHours(String(Math.floor(initialMin / 60)));
     setOffMinutes(String(initialMin % 60));
-    apiGet<Expense[]>(`/api/occurrences/${occurrenceId}/expenses`)
+    apiGet<Expense[]>(`/api/occurrences/${occurrenceId}/invoice-charges`)
       .then((list) => setExpenses(Array.isArray(list) ? list : []))
       .catch(() => setExpenses([]))
       .finally(() => setLoading(false));
@@ -365,7 +365,7 @@ export default function CompleteJobDialog({
                     </HStack>
                     {totalExpenses > 0 && (
                       <HStack justify="space-between" fontSize="sm">
-                        <Text color="orange.600">Total Expenses</Text>
+                        <Text color="orange.600">Total invoice charges</Text>
                         <Text color="orange.600">−${totalExpenses.toFixed(2)}</Text>
                       </HStack>
                     )}
@@ -381,7 +381,7 @@ export default function CompleteJobDialog({
                 {/* Expenses (read-only — managed on Admin Services tab) */}
                 {expenses.length > 0 && (
                   <Box>
-                    <Text fontSize="sm" fontWeight="medium" mb={1}>Expenses</Text>
+                    <Text fontSize="sm" fontWeight="medium" mb={1}>Invoice charges</Text>
                     <VStack align="stretch" gap={1}>
                       {expenses.map((exp) => (
                         <Text key={exp.id} fontSize="xs" color="orange.600">
@@ -389,7 +389,7 @@ export default function CompleteJobDialog({
                         </Text>
                       ))}
                     </VStack>
-                    <Text fontSize="2xs" color="fg.muted" mt={1}>Expenses are managed on the Admin Services tab.</Text>
+                    <Text fontSize="2xs" color="fg.muted" mt={1}>Invoice charges are managed on the Admin Services tab.</Text>
                   </Box>
                 )}
               </VStack>

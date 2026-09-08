@@ -1,4 +1,5 @@
 import { prisma } from "../db/prisma";
+import { invoiceTotal } from "../lib/jobPricing";
 import { etFormatDate, etFormatTimeOpts } from "../lib/dates";
 import { loadExpenseCategories } from "./expenseCategories";
 import {
@@ -879,7 +880,7 @@ export async function workdaysCsv(start: Date, end: Date): Promise<CsvResult> {
         completionSplits: true,
         promisedPayouts: true,
         addons: { select: { price: true } },
-        expenses: { select: { cost: true } },
+        invoiceCharges: { select: { cost: true } },
         assignees: {
           // role IS NULL is the common "regular worker" case — SQL
           // would drop those rows with a bare `role != 'observer'`
@@ -993,10 +994,17 @@ export async function workdaysCsv(start: Date, end: Date): Promise<CsvResult> {
     const m = new Map<string, number>();
     const active = occ.assignees ?? [];
     if (active.length === 0) return m;
-    const priceTotal =
-      (occ.price ?? 0) +
-      (occ.addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0);
-    const expTotal = (occ.expenses ?? []).reduce(
+    // THE INVOICE, not the labor. computeBreakdown computes
+    // N = collected − charges, so feeding it labor-only and then subtracting
+    // the charges applies the LEGACY rule to every visit — on an ITEMIZED job
+    // it takes the mulch out of the crew's pool a second time. invoiceTotal
+    // branches, so the same call is right under both models.
+    const priceTotal = invoiceTotal({
+      price: occ.price ?? 0,
+      addons: occ.addons ?? [],
+      invoiceCharges: occ.invoiceCharges ?? [],
+    });
+    const expTotal = (occ.invoiceCharges ?? []).reduce(
       (s: number, e: any) => s + (e.cost ?? 0),
       0,
     );

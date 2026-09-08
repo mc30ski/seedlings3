@@ -127,6 +127,48 @@ export function clientLabel(name: string | null | undefined): string {
   return `${name} JOB`;
 }
 
+// ── Job card titles ──────────────────────────────────────────────────────────
+//
+// CLIENT FIRST, property second: "Patty Reed JOB — Main House".
+//
+// A card title truncates from the right, and on a phone that left most cards
+// reading just "Main House" — which identifies nothing. The client is the half
+// worth keeping when there is only room for one.
+//
+// Six places built this string by hand and the swap missed two of them, so the
+// list showed both orders at once. One helper now, so the next surface cannot
+// disagree.
+
+/** The part that must survive truncation. Falls back to the property when a
+ *  job has no client, so a title is never empty. */
+export function jobTitleLead(
+  propertyName: string | null | undefined,
+  clientName: string | null | undefined,
+  fallback = "Job",
+): string {
+  if (clientName) return clientLabel(clientName);
+  return propertyName || fallback;
+}
+
+/** The part that may be dropped — empty when it would only repeat the lead. */
+export function jobTitleTrail(
+  propertyName: string | null | undefined,
+  clientName: string | null | undefined,
+): string {
+  return clientName && propertyName ? propertyName : "";
+}
+
+/** Both, joined. For the callers that need a plain string. */
+export function jobTitleText(
+  propertyName: string | null | undefined,
+  clientName: string | null | undefined,
+  fallback = "Job",
+): string {
+  const lead = jobTitleLead(propertyName, clientName, fallback);
+  const trail = jobTitleTrail(propertyName, clientName);
+  return trail ? `${lead} — ${trail}` : lead;
+}
+
 export function notifyEquipmentUpdated() {
   try {
     window.dispatchEvent(new CustomEvent("seedlings3:equipment-updated"));

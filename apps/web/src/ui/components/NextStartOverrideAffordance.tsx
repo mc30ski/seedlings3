@@ -5,8 +5,11 @@
 //   • Payment has not yet been confirmed (once confirmed, the next
 //     occurrence has been generated and the override window is closed).
 //
-// When set, shows a chip: `Next visit: Aug 7 (usually Aug 8)`. When not
-// set, shows a small link: `Shift next visit date`. Clicking either
+// When set, reads `Next: Aug 7 (usually Aug 8)`; when not set, `Shift next
+// visit date`. BOTH are size="sm" variant="outline" buttons, matching every
+// other control in the card's action row — this was an xs ghost "link" and a
+// bare chip, which read as broken sitting between real buttons. Clicking
+// either
 // opens a small editor dialog with:
 //   • Date input (pre-filled with current override, or blank)
 //   • Helper: "Usually the next visit lands on Fri, Aug 8"
@@ -169,38 +172,35 @@ export default function NextStartOverrideAffordance({
 
   return (
     <>
-      {/* Inline surface on the card. Either a chip (override set) or a
-          small ghost link (no override). Compact enough to slot
-          alongside the existing action row without dominating it. */}
+      {/* Inline surface on the card. Same size and variant either way, so it
+          sits in the action row as a peer rather than an oddity. The set
+          state keeps a tinted fill so "a value is set" still reads at a
+          glance. */}
       {hasOverride ? (
-        <HStack
-          gap={1}
-          px={2}
-          py={1}
-          borderRadius="md"
+        <Button
+          size="sm"
+          variant="outline"
+          colorPalette="purple"
           bg="purple.50"
-          borderWidth="1px"
-          borderColor="purple.200"
-          cursor="pointer"
           onClick={openEditor}
           title={`Usually the next visit would be ${fmtDateKey(usualKey)}. This one is shifted.`}
         >
-          <CalendarClock size={12} color="var(--chakra-colors-purple-700)" />
-          <Text fontSize="xs" fontWeight="medium" color="purple.900">
+          <CalendarClock size={14} />
+          <Text as="span" ml={1} fontWeight="medium">
             Next: {fmtDateKey(nextStartOverride!)}
           </Text>
-          <Text fontSize="2xs" color="purple.700">
+          <Text as="span" ml={1} fontSize="xs" opacity={0.75}>
             (usually {fmtDateKey(usualKey)})
           </Text>
-        </HStack>
+        </Button>
       ) : (
         <Button
-          size="xs"
-          variant="ghost"
+          size="sm"
+          variant="outline"
           colorPalette="purple"
           onClick={openEditor}
         >
-          <CalendarClock size={12} />
+          <CalendarClock size={14} />
           <Text as="span" ml={1}>Shift next visit date</Text>
         </Button>
       )}
