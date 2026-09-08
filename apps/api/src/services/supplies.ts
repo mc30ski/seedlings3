@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { fifoCost, type SupplyCostEvent, type SupplyCostResult } from "../lib/supplyCost";
 import { prisma } from "../db/prisma";
 import { ServiceError } from "../lib/errors";
 import { parseUserDate } from "../lib/dates";
@@ -179,6 +180,62 @@ async function activeHoldsTotal(tx: any, supplyId: string): Promise<number> {
   return r._sum.quantity ?? 0;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// What the stock on hand cost, derived from the event log.
+//
+// THREE QUERIES FOR THE WHOLE PAGE, not three per supply. The Supplies tab
+// lists every supply, so a per-row replay would be a textbook N+1.
+//
+// The average is NEVER stored. `Supply.businessCost` used to hold it and was
+// overwritten by each purchase; see lib/supplyCost.ts for why deriving it is
+// what makes reverting a payment and correcting a receipt come out right.
+// ─────────────────────────────────────────────────────────────────────────────
+async function costBySupply(supplyIds: string[]): Promise<Map<string, SupplyCostResult>> {
+  const out = new Map<string, SupplyCostResult>();
+  if (supplyIds.length === 0) return out;
+
+  const [purchases, consumed, adjustments] = await Promise.all([
+    prisma.supplyPurchase.findMany({
+      where: { supplyId: { in: supplyIds } },
+      // totalCost, NOT unitCost. The stored unitCost is a rounded display
+      // derivation; feeding it back in multiplies its rounding error by the
+      // unit count. See lib/supplyCost.ts.
+      select: { supplyId: true, quantity: true, totalCost: true, date: true },
+    }),
+    // ONLY status CONSUMED. An ACTIVE hold is stock reserved for a job, not
+    // stock off the shelf — drawing its layer would make the average describe
+    // available units while the column beside it counts on-hand ones.
+    // RELEASED never left at all.
+    prisma.supplyHold.findMany({
+      where: { supplyId: { in: supplyIds }, status: "CONSUMED" },
+      select: { supplyId: true, quantity: true, consumedAt: true, createdAt: true },
+    }),
+    prisma.supplyAdjustment.findMany({
+      where: { supplyId: { in: supplyIds } },
+      select: { supplyId: true, delta: true, createdAt: true },
+    }),
+  ]);
+
+  const events = new Map<string, SupplyCostEvent[]>();
+  const push = (id: string, e: SupplyCostEvent) => {
+    const list = events.get(id);
+    if (list) list.push(e);
+    else events.set(id, [e]);
+  };
+  for (const p of purchases)
+    push(p.supplyId, { kind: "BUY", at: p.date, quantity: p.quantity, totalCost: p.totalCost });
+  for (const h of consumed)
+    // `consumedAt` is set when the hold is consumed and cleared when a payment
+    // is reverted, so it is the event's real date. createdAt is a fallback for
+    // any row predating that column being populated.
+    push(h.supplyId, { kind: "CONSUME", at: h.consumedAt ?? h.createdAt, quantity: h.quantity });
+  for (const a of adjustments)
+    push(a.supplyId, { kind: "ADJUST", at: a.createdAt, delta: a.delta });
+
+  for (const id of supplyIds) out.set(id, fifoCost(events.get(id) ?? []));
+  return out;
+}
+
 export const supplies: ServicesSupplies = {
   async list(opts) {
     const where: any = {};
@@ -250,9 +307,18 @@ export const supplies: ServicesSupplies = {
       }
     }
 
+    const costs = await costBySupply(rows.map((r) => r.id));
+
     return rows.map((r) => {
       const held = heldById.get(r.id) ?? 0;
-      const decorated: any = { ...r, held, available: r.onHand - held };
+      const cost = costs.get(r.id);
+      const decorated: any = {
+        ...r,
+        held,
+        available: r.onHand - held,
+        averageCost: cost?.averageCost ?? null,
+        valueOnHand: cost?.valueOnHand ?? null,
+      };
       if (opts?.includeHoldDetails) {
         decorated.activeHolds = activeHoldsBySupply.get(r.id) ?? [];
       }
@@ -267,7 +333,14 @@ export const supplies: ServicesSupplies = {
     });
     if (!row) return null;
     const held = await activeHoldsTotal(prisma, id);
-    return { ...row, held, available: row.onHand - held };
+    const cost = (await costBySupply([id])).get(id);
+    return {
+      ...row,
+      held,
+      available: row.onHand - held,
+      averageCost: cost?.averageCost ?? null,
+      valueOnHand: cost?.valueOnHand ?? null,
+    };
   },
 
   async create(currentUserId, input) {
@@ -278,7 +351,6 @@ export const supplies: ServicesSupplies = {
     if (!unit) throw new ServiceError("INVALID_INPUT", "Unit is required.", 400);
 
     const category = await normalizeCategory(input.category);
-    const businessCost = requireNonNegativeNum(input.businessCost ?? 0, "What you pay");
     const clientUnitPrice = requireNonNegativeNum(input.clientUnitPrice, "Default client price");
     const upc = input.upc ? input.upc.trim() || null : null;
     const description = input.description ? input.description.trim() || null : null;
@@ -290,7 +362,6 @@ export const supplies: ServicesSupplies = {
           name,
           unit,
           category,
-          businessCost,
           clientUnitPrice,
           upc,
           description,
@@ -306,7 +377,6 @@ export const supplies: ServicesSupplies = {
         name,
         unit,
         category,
-        businessCost,
         clientUnitPrice,
         upc,
       });
@@ -331,9 +401,6 @@ export const supplies: ServicesSupplies = {
       data.unit = v;
     }
     if (input.category !== undefined) data.category = await normalizeCategory(input.category);
-    if (input.businessCost !== undefined) {
-      data.businessCost = requireNonNegativeNum(input.businessCost ?? 0, "What you pay");
-    }
     if (input.clientUnitPrice !== undefined) {
       data.clientUnitPrice = requireNonNegativeNum(input.clientUnitPrice, "Default client price");
     }
@@ -347,9 +414,9 @@ export const supplies: ServicesSupplies = {
     return prisma.$transaction(async (tx) => {
       const updated = await tx.supply.update({ where: { id }, data, include: supplyInclude });
       // Repricing is a money change with a delayed blast radius:
-      // clientUnitPrice sets what every future hold BILLS THE CLIENT, and
-      // businessCost is the reference cost the margin is measured against.
-      // Neither comes out of a worker's pay.
+      // clientUnitPrice sets the DEFAULT a future hold bills the client, and
+      // it never comes out of a worker's pay. What the stock cost is not
+      // settable here at all — it is derived from the purchases.
       await writeAudit(tx, AUDIT.SUPPLY.UPDATED, currentUserId, {
         supplyId: id,
         nameBefore: existing.name,
@@ -360,8 +427,6 @@ export const supplies: ServicesSupplies = {
         // thing under the name that described it wrongly.
         clientUnitPriceBefore: existing.clientUnitPrice,
         clientUnitPriceAfter: updated.clientUnitPrice,
-        businessCostBefore: existing.businessCost,
-        businessCostAfter: updated.businessCost,
         categoryBefore: existing.category,
         categoryAfter: updated.category,
         unitBefore: existing.unit,
@@ -386,7 +451,6 @@ export const supplies: ServicesSupplies = {
         name: existing.name,
         onHand: existing.onHand,
         clientUnitPrice: existing.clientUnitPrice,
-        businessCost: existing.businessCost,
       });
     });
     return { archived: true };
@@ -461,15 +525,15 @@ export const supplies: ServicesSupplies = {
       });
       await tx.supply.update({
         where: { id: supplyId },
-        data: {
-          onHand: { increment: quantity },
-          // last-paid heuristic — keeps the catalog's reference cost current
-          businessCost: unitCost,
-        },
+        data: { onHand: { increment: quantity } },
       });
-      // Creates NO tax deduction — that is the card charge in the Ledger.
-      // It DOES silently overwrite the catalog's businessCost, which changes
-      // the reference cost for every later report, so both sides are recorded.
+      // NOTHING ELSE IS WRITTEN. This row IS the cost record: it is a FIFO
+      // layer of `quantity` units at `unitCost`, and the catalog's average is
+      // replayed from it. The catalog used to carry a `businessCost` that
+      // every purchase silently overwrote, so recording a receipt quietly
+      // restated what all existing stock had cost.
+      //
+      // Creates NO tax deduction either — that is the card charge in the Ledger.
       await writeAudit(tx, AUDIT.SUPPLY.PURCHASE_RECORDED, currentUserId, {
         supplyId,
         supplyName: supply.name,
@@ -483,8 +547,6 @@ export const supplies: ServicesSupplies = {
         date: date.toISOString(),
         onHandBefore: supply.onHand,
         onHandAfter: supply.onHand + quantity,
-        businessCostBefore: supply.businessCost,
-        businessCostAfter: unitCost,
       });
       return purchase;
     });
@@ -579,7 +641,6 @@ export const supplies: ServicesSupplies = {
         reason,
         onHandBefore: supply.onHand,
         onHandAfter: newOnHand,
-        businessCost: supply.businessCost,
       });
       return adjustment;
     });

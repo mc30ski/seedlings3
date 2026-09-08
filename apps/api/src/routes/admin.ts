@@ -7714,7 +7714,6 @@ Respond ONLY with valid JSON in this exact format:
       unit: String(b.unit ?? ""),
       upc: b.upc != null ? String(b.upc) : null,
       category: b.category != null ? String(b.category) : null,
-      businessCost: b.businessCost != null ? Number(b.businessCost) : null,
       clientUnitPrice: Number(b.clientUnitPrice ?? 0),
     });
   });
@@ -7728,7 +7727,6 @@ Respond ONLY with valid JSON in this exact format:
     if ("unit" in b) input.unit = String(b.unit);
     if ("upc" in b) input.upc = b.upc != null ? String(b.upc) : null;
     if ("category" in b) input.category = b.category != null ? String(b.category) : null;
-    if ("businessCost" in b) input.businessCost = b.businessCost != null ? Number(b.businessCost) : null;
     if ("clientUnitPrice" in b) input.clientUnitPrice = Number(b.clientUnitPrice);
     return services.supplies.update(uid, String(req.params.id), input);
   });
@@ -7944,7 +7942,7 @@ Respond ONLY with valid JSON in this exact format:
 
     const matchExisting = await prisma.supply.findFirst({
       where: { upc: code, archivedAt: null },
-      select: { id: true, name: true, unit: true, clientUnitPrice: true, businessCost: true, onHand: true, category: true },
+      select: { id: true, name: true, unit: true, clientUnitPrice: true, onHand: true, category: true },
     });
 
     let lookup: { found: boolean; title?: string; brand?: string; description?: string } | null = null;

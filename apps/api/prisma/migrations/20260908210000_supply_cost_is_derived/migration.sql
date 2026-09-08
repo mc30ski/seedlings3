@@ -1,0 +1,36 @@
+-- What a supply's stock cost is DERIVED from its purchases, not stored.
+--
+-- `Supply.businessCost` was a single number labelled "what you pay". It read
+-- as a policy the operator sets and behaved as "what you happened to pay most
+-- recently": every `recordPurchase` silently overwrote it, so entering a
+-- receipt quietly restated what all existing stock had cost. It described no
+-- real quantity — not what the units on the shelf cost, not what the next one
+-- will cost.
+--
+-- It is replaced by FIFO cost layers replayed from the event log that already
+-- exists (SupplyPurchase.quantity/unitCost/date, SupplyHold.consumedAt,
+-- SupplyAdjustment.delta/createdAt). Consumption draws the oldest layer first,
+-- so as stock is used the price of the oldest units drops out of the average.
+-- See apps/api/src/lib/supplyCost.ts.
+--
+-- NO DATA IS LOST. Every purchase keeps its own `unitCost` and `totalCost`
+-- snapshot — those are the layers. This column held only the most recent of
+-- them, which is recoverable from the purchases at any time.
+--
+-- NOTHING COMPUTED WITH IT. Verified across the API before dropping: no P&L,
+-- forecast, export, payout or invoice path read this column. It reached the
+-- Supplies list as a display figure and audit metadata, and nowhere else. So
+-- this cannot move a client's bill, a worker's pay, or a deduction.
+--
+-- VERIFIED AGAINST PRODUCTION (read-only, 2026-09-08): replaying purchases −
+-- consumption + adjustments reproduces the current on-hand for all three
+-- supplies exactly, so FIFO starts from the event log with no opening balance.
+--
+--   Mulch Glue        on hand 1  = 1 bought                    − 0 used
+--   Roundup           on hand 21 = 21 bought                   − 0 used
+--   Timberline Mulch  on hand 0  = 26 bought                   − 26 used
+--
+-- Historical audit rows written before this carry `businessCostBefore/After`
+-- in their metadata. The History tab renders metadata as raw JSON, so they
+-- keep rendering; they simply describe a column that no longer exists.
+ALTER TABLE "Supply" DROP COLUMN "businessCost";

@@ -2570,9 +2570,13 @@ model Supply {
   // Defaults to "Supplies"; can be overridden per supply (e.g. "Car and
   // truck expenses" if you ever want to track fuel as inventory).
   category      String  @default("Supplies")
-  // Reference businessCost — typically updated to the most recent
-  // SupplyPurchase.unitCost. Display-only / default for new purchases.
-  businessCost  Float   @default(0)
+  /// WHAT THE STOCK COST IS NOT STORED HERE. There was a `businessCost`
+  /// column holding the most recent purchase price; every buy overwrote it,
+  /// so recording a receipt silently restated what all existing stock had
+  /// cost. It is now derived as a weighted average over FIFO cost layers
+  /// replayed from `purchases` / `holds` / `adjustments` — see
+  /// apps/api/src/lib/supplyCost.ts. Do not reintroduce a stored cost: a
+  /// column that must be kept in step with an event log drifts out of it.
   /// What the CLIENT is charged per unit pulled onto a job, added to their
   /// invoice on top of the labor price.
   ///

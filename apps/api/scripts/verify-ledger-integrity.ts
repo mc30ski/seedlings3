@@ -56,15 +56,59 @@ async function main() {
     where: { confirmed: true, skippedAt: null },
     include: { splits: true, occurrence: { include: { addons: true, invoiceCharges: true } } },
   });
+  //
+  // `PaymentSplit.amount` MEANS TWO DIFFERENT THINGS, and which one depends on
+  // when the row was written. `reconcileApproval` gained the per-split
+  // breakdown columns (`grossAmount`/`feeAmount`/`netAmount`) in May 2026, and
+  // the app itself branches on `splits.every(sp => sp.netAmount != null)` —
+  // `splitsHaveBreakdown` in services/payments.ts. This must branch the same
+  // way or it is not checking the same books the app keeps.
+  //
+  //   WITH a breakdown (275 of 392 in production, everything from June 2026
+  //   on) `amount` is what the worker was PAID: the fees and the material
+  //   charges are separate components and are added alongside it. This is the
+  //   strict identity, it is what all current code writes, and it must hold
+  //   for every such row — production has zero exceptions.
+  //
+  //   WITHOUT a breakdown, the era is genuinely ambiguous and the data itself
+  //   is not uniform: of 117 such payments, 48 store `amount` GROSS (fees
+  //   inside) and 74 store it NET (fees outside). Nothing on the row says
+  //   which, so the honest check is that it reconciles under ONE of the two
+  //   readings — and every one of the 117 does. Only a row that reconciles
+  //   under NEITHER is a real problem.
+  //
+  // Assuming a single reading made 43 correct March-April payments report as
+  // damaged. A verifier that cries wolf on rows it cannot be right about is
+  // worse than no verifier: it is the check standing between a migration and
+  // production, and 43 false alarms are how a real one gets waved through.
   for (const p of payments as any) {
     if (!p.occurrence) continue;
     const splitTotal = r2(p.splits.reduce((s: number, x: any) => s + (x.amount ?? 0), 0));
     const tips = r2(p.splits.reduce((s: number, x: any) => s + (x.tipAmount ?? 0), 0));
-    const biz = r2((p.platformFeeAmount ?? 0) + (p.businessMarginAmount ?? 0)
-      + (p.tipToBusinessAmount ?? 0) + (p.overageAmount ?? 0) + materialChargeTotal(p.occurrence));
-    const accounted = r2(splitTotal + tips + biz - (p.shortfallAmount ?? 0));
-    if (Math.abs(accounted - (p.amountPaid ?? 0)) > 0.02)
-      note(`payment ${p.id}: components ${accounted} != collected ${p.amountPaid}`);
+    const common = splitTotal + tips
+      + (p.tipToBusinessAmount ?? 0) + (p.overageAmount ?? 0)
+      - (p.shortfallAmount ?? 0);
+    const separate = (p.platformFeeAmount ?? 0) + (p.businessMarginAmount ?? 0)
+      + materialChargeTotal(p.occurrence);
+    const collected = p.amountPaid ?? 0;
+
+    const asNet = r2(common + separate);   // `amount` excludes fees + charges
+    const asGross = r2(common);            // `amount` already contains them
+
+    const hasBreakdown = p.splits.length > 0
+      && p.splits.every((sp: any) => sp.netAmount != null);
+
+    const ok = hasBreakdown
+      ? Math.abs(asNet - collected) <= 0.02
+      : Math.abs(asNet - collected) <= 0.02 || Math.abs(asGross - collected) <= 0.02;
+
+    if (!ok)
+      note(
+        hasBreakdown
+          ? `payment ${p.id}: components ${asNet} != collected ${collected}`
+          : `payment ${p.id}: reconciles under neither reading ` +
+            `(net ${asNet}, gross ${asGross}) != collected ${collected}`,
+      );
   }
 
   // A ledger row may be pointed at by any number of job lines — the link is a

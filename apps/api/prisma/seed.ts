@@ -2281,7 +2281,9 @@ async function seedDatabase() {
     unit: string;
     upc?: string;
     category: string;
-    businessCost: number;
+    /** What a unit costs to BUY in this fixture. Drives the seeded
+     *  purchases; it is not written to the Supply, which stores no cost. */
+    unitCost: number;
     clientUnitPrice: number;
     description?: string;
     purchases: { ago: number; quantity: number; unitCost: number; vendor: string; invoiceNumber?: string }[];
@@ -2292,7 +2294,7 @@ async function seedDatabase() {
       unit: "bag",
       upc: "012345678901",
       category: "Supplies",
-      businessCost: 4.0,
+      unitCost: 4.0,
       clientUnitPrice: 4.2,
       description: "2 cu. ft. bags. Markup of $0.20/bag covers fetch time.",
       purchases: [
@@ -2306,7 +2308,7 @@ async function seedDatabase() {
       unit: "spool",
       upc: "022345678902",
       category: "Supplies",
-      businessCost: 18.0,
+      unitCost: 18.0,
       clientUnitPrice: 18.0,
       description: "Pro-grade square cross-section, 0.095\" gauge, 3 lb spool.",
       purchases: [
@@ -2318,7 +2320,7 @@ async function seedDatabase() {
       name: "Edger blade",
       unit: "blade",
       category: "Supplies",
-      businessCost: 6.5,
+      unitCost: 6.5,
       clientUnitPrice: 7.0,
       purchases: [
         { ago: 11, quantity: 12, unitCost: 6.5, vendor: "Pro Lawn Supply" },
@@ -2329,7 +2331,7 @@ async function seedDatabase() {
       name: "Granular fertilizer 24-4-8",
       unit: "bag",
       category: "Supplies",
-      businessCost: 32.0,
+      unitCost: 32.0,
       clientUnitPrice: 34.0,
       description: "50 lb bag covers ~12,500 sq ft.",
       purchases: [
@@ -2341,7 +2343,7 @@ async function seedDatabase() {
       name: "Heavy-duty trash bags",
       unit: "bag",
       category: "Supplies",
-      businessCost: 0.6,
+      unitCost: 0.6,
       clientUnitPrice: 0.75,
       description: "55-gal contractor bags, 3 mil.",
       purchases: [
@@ -2353,7 +2355,7 @@ async function seedDatabase() {
       name: "Premixed 2-cycle fuel",
       unit: "can",
       category: "Fuel",
-      businessCost: 24.0,
+      unitCost: 24.0,
       clientUnitPrice: 24.0,
       description: "TruFuel 50:1 quart cans. Categorized as Fuel (not Supplies).",
       purchases: [
@@ -2371,7 +2373,6 @@ async function seedDatabase() {
         unit: s.unit,
         upc: s.upc ?? null,
         category: s.category,
-        businessCost: s.businessCost,
         clientUnitPrice: s.clientUnitPrice,
         description: s.description ?? null,
         onHand: 0,
@@ -2407,7 +2408,7 @@ async function seedDatabase() {
       });
       await prisma.supply.update({
         where: { id: created.id },
-        data: { onHand: { increment: p.quantity }, businessCost: p.unitCost },
+        data: { onHand: { increment: p.quantity } },
       });
     }
   }
@@ -2441,8 +2442,8 @@ async function seedDatabase() {
         occurrenceId: h.occId,
         createdById: EMPLOYEE_ID,
         cost: totalCharge,
-        // What we paid, from the catalog — informational, job margin only.
-        actualCost: Math.round(h.quantity * supply.businessCost * 100) / 100,
+        // NO actualCost. A supply line is what the CLIENT is billed; what the
+        // stock cost is the Ledger's business. See docs/features/job-materials.md.
         detail: `${h.quantity} ${supply.unit} at $${supply.clientUnitPrice.toFixed(2)}`,
         description: supply.name,
       },
@@ -6240,23 +6241,22 @@ async function seedPaymentsBase() {
   console.log("    Supplies (minimal catalog)...");
   const paymentsSupplyCatalog: Array<{
     name: string; unit: string; category: string;
-    businessCost: number; clientUnitPrice: number;
+    unitCost: number; clientUnitPrice: number;
     description?: string; quantity: number;
   }> = [
-    { name: "Mulch — hardwood",        unit: "bag",   category: "Supplies",                businessCost: 4.00,  clientUnitPrice: 5.00,  description: "2 cu ft bagged hardwood mulch.", quantity: 30 },
-    { name: "Trimmer line 0.095",      unit: "spool", category: "Supplies",                businessCost: 18.00, clientUnitPrice: 18.00, description: "3 lb spool, 0.095\" gauge.",       quantity: 8 },
-    { name: "Heavy-duty trash bags",   unit: "bag",   category: "Supplies",                businessCost: 0.60,  clientUnitPrice: 0.75,  description: "55-gal contractor bags, 3 mil.", quantity: 50 },
-    { name: "Premixed 2-cycle fuel",   unit: "can",   category: "Fuel",                    businessCost: 24.00, clientUnitPrice: 24.00, description: "TruFuel 50:1 quart cans.",        quantity: 12 },
+    { name: "Mulch — hardwood",        unit: "bag",   category: "Supplies",                unitCost: 4.00,  clientUnitPrice: 5.00,  description: "2 cu ft bagged hardwood mulch.", quantity: 30 },
+    { name: "Trimmer line 0.095",      unit: "spool", category: "Supplies",                unitCost: 18.00, clientUnitPrice: 18.00, description: "3 lb spool, 0.095\" gauge.",       quantity: 8 },
+    { name: "Heavy-duty trash bags",   unit: "bag",   category: "Supplies",                unitCost: 0.60,  clientUnitPrice: 0.75,  description: "55-gal contractor bags, 3 mil.", quantity: 50 },
+    { name: "Premixed 2-cycle fuel",   unit: "can",   category: "Fuel",                    unitCost: 24.00, clientUnitPrice: 24.00, description: "TruFuel 50:1 quart cans.",        quantity: 12 },
   ];
   for (const s of paymentsSupplyCatalog) {
-    const totalCost = Math.round(s.quantity * s.businessCost * 100) / 100;
+    const totalCost = Math.round(s.quantity * s.unitCost * 100) / 100;
     const created = await prisma.supply.create({
       data: {
         createdById: ADMIN_WORKER_ID,
         name: s.name,
         unit: s.unit,
         category: s.category,
-        businessCost: s.businessCost,
         clientUnitPrice: s.clientUnitPrice,
         description: s.description ?? null,
         onHand: 0,
@@ -6276,7 +6276,7 @@ async function seedPaymentsBase() {
       data: {
         supplyId: created.id,
         quantity: s.quantity,
-        unitCost: s.businessCost,
+        unitCost: s.unitCost,
         totalCost,
         date: daysAgo(7, 10),
         vendor: "Pro Lawn Supply",
@@ -8080,7 +8080,11 @@ async function seedSupplyLifecycle() {
   // and is the only figure that reconciles to a bank line.
   await supplies.recordPurchase(ADMIN_WORKER_ID, mulch.id, {
     quantity: 20,
-    totalCost: Math.round(20 * mulch.businessCost * 100) / 100,
+    // A SECOND LAYER AT A DIFFERENT PRICE. The first mulch purchase was
+    // $4.00/bag; this restock is $4.60, so the catalog's average sits between
+    // the two and moves toward $4.60 as the older bags are used. A fixture
+    // where every purchase costs the same cannot exercise FIFO at all.
+    totalCost: Math.round(20 * 4.6 * 100) / 100,
     vendor: "Lowes",
     invoiceNumber: "LW-8842",
   });
@@ -8098,10 +8102,10 @@ async function seedSupplyLifecycle() {
       vendor: "Pro Lawn Supply",
     },
   });
-  for (const [supply, qty] of [[bags, 100], [blade, 6]] as const) {
+  for (const [supply, qty, unitPrice] of [[bags, 100, 0.72], [blade, 6, 34.5]] as const) {
     await supplies.recordPurchase(ADMIN_WORKER_ID, supply.id, {
       quantity: qty,
-      totalCost: Math.round(qty * supply.businessCost * 100) / 100,
+      totalCost: Math.round(qty * unitPrice * 100) / 100,
       vendor: "Pro Lawn Supply",
       businessExpenseId: receipt.id,
     });

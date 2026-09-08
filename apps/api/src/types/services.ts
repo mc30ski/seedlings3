@@ -1109,7 +1109,8 @@ export type SupplyCreateInput = {
   unit: string;
   upc?: string | null;
   category?: string | null;
-  businessCost?: number | null;
+  /** DEFAULT charge to a client per unit. What the stock COST is not settable
+   *  here — it is derived from the purchases; see lib/supplyCost.ts. */
   clientUnitPrice: number;
 };
 
@@ -1119,7 +1120,6 @@ export type SupplyPatchInput = {
   unit?: string;
   upc?: string | null;
   category?: string | null;
-  businessCost?: number | null;
   clientUnitPrice?: number;
 };
 

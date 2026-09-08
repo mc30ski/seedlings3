@@ -35,6 +35,17 @@ never cascade; a cascade here has destroyed a real deduction twice. Deleting a
 ledger row unlinks job lines and purchases, never deletes them, and never
 reverses stock.
 
+**What the stock COST is derived, never stored.** Add Supply establishes what
+a supply IS (no quantity, no cost); **Buy** records each purchase's price and
+date; **Adjust** corrects the count with no price. The catalog's **Average
+price** is the weighted average over FIFO cost layers replayed from those
+events — consumption draws the oldest layer first, so a price you have stopped
+paying leaves the figure as that stock is used. Engine:
+`apps/api/src/lib/supplyCost.ts`. `Supply.businessCost` was dropped
+(`20260908210000`) because every purchase silently overwrote it. Do not
+reintroduce a stored cost: replaying is what makes reverting a payment and
+correcting a back-dated receipt come out right by themselves.
+
 **What a client pays is decided when the supply goes on the job**, not in the
 catalog — the same mulch can be $5 to one client and $9 to another;
 `Supply.clientUnitPrice` (renamed from the lying `jobPayoutCost`) is only a
