@@ -3642,6 +3642,12 @@ async function seedDatabase() {
       notes: "Annual safety training — required for all workers.",
       startAt: daysAgo(3, 9),
       completedAt: daysAgo(3, 11),
+      // STAMPED, because the service stamps it. A non-payroll workflow is
+      // auto-approved the instant it completes (evaluateHoursApproval), so a
+      // completed EVENT with a null hoursApprovedAt is a state the app cannot
+      // reach — and writing one here is the seed manufacturing an impossible
+      // row, the same class as the hold that sat ACTIVE on a cancelled job.
+      hoursApprovedAt: daysAgo(3, 11),
       status: "CLOSED",
       source: "MANUAL",
       workflow: "EVENT",
@@ -7286,6 +7292,32 @@ async function assertPrimaryContactInvariant() {
     throw new Error("Seed produced stranded supply holds.");
   }
   console.log("✓ Every supply hold agrees with its occurrence's status.");
+
+  // ── Hours-approval invariant ────────────────────────────────────────
+  // `evaluateHoursApproval` stamps any workflow that is not STANDARD or
+  // ONE_OFF at the moment it completes, so estimates, tasks, reminders and
+  // events never enter the review queue. A completed one with a null
+  // `hoursApprovedAt` is therefore a state the service cannot produce.
+  //
+  // Production carried 19 such rows from before that rule existed. They were
+  // invisible because every consumer filters by workflow — and that is the
+  // hazard: a count of "completed and unapproved" written without the
+  // workflow clause reported 19 jobs awaiting approval when the answer was
+  // none. Backfilled by 20260909040000; this stops the seed reintroducing it.
+  const unstampedNonPayroll = await prisma.jobOccurrence.count({
+    where: {
+      completedAt: { not: null },
+      hoursApprovedAt: null,
+      workflow: { notIn: ["STANDARD", "ONE_OFF"] },
+    },
+  });
+  if (unstampedNonPayroll > 0) {
+    throw new Error(
+      `${unstampedNonPayroll} completed non-payroll occurrence(s) have no hoursApprovedAt — ` +
+        `a state evaluateHoursApproval cannot produce.`,
+    );
+  }
+  console.log("✓ Every completed non-payroll occurrence has its hours stamped.");
 }
 
 // ── Main ────────────────────────────────────────────────────────────────────

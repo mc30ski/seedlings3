@@ -9,7 +9,11 @@ import { Prisma, Role as RoleVal, JobOccurrenceStatus } from "@prisma/client";
 import { ServiceError } from "../lib/errors";
 import { normalizePhone } from "../lib/phone";
 import { persistCompletionSplits } from "../services/payments";
-import { evaluateHoursApproval, loadHoursApprovalVarianceThreshold } from "../services/jobs";
+import {
+  evaluateHoursApproval,
+  loadHoursApprovalVarianceThreshold,
+  loadPriorPersonMinutes,
+} from "../services/jobs";
 import { computeMyOccurrenceNet } from "../services/workerEarnings";
 import {
   resolveCutoff,
@@ -2220,6 +2224,15 @@ export default async function workerRoutes(app: FastifyInstance) {
         workerCount: Math.max(1, activeAssignees),
         currentUserId: uid,
         varianceThreshold,
+        // Judged against the job's own recent history once it has enough, the
+        // same as a completion — otherwise correcting a timestamp would be
+        // re-checked against the stale estimate and stay flagged forever.
+        priorPersonMinutes: await loadPriorPersonMinutes(
+          prisma,
+          (occ as any).jobId ?? null,
+          new Date(newEnd),
+          occId,
+        ),
       });
       data.hoursApprovedAt = approval.hoursApprovedAt;
       data.hoursApprovedById = approval.hoursApprovedById;

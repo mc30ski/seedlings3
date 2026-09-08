@@ -46,6 +46,30 @@ paying leaves the figure as that stock is used. Engine:
 reintroduce a stored cost: replaying is what makes reverting a payment and
 correcting a back-dated receipt come out right by themselves.
 
+**The catalog's default charge is a FIXED amount or a % OVER AVERAGE COST**
+(`Supply.clientMarkupPercent` — null means use the fixed price; `0` is a real
+markup, so never a truthiness check). A markup with no purchase history has no
+default and the pull asks. Resolved once server-side by `resolvePullUnitPrice`
+so the list, the pull dialog and `addHold` cannot disagree.
+
+**A supply purchase carries NO vendor and NO invoice number** — both are Ledger
+facts (`BusinessExpense`), and duplicating them had already produced two
+answers in production ("Lowes" vs "Lowe's Hardware" on the same receipt). Same
+reason there is no receipt upload on a purchase: a receipt is evidence for a
+DEDUCTION. Link the purchase to its ledger row instead — settable at Buy time
+and from the History timeline, and clickable through from either end.
+
+**An inventory line's client-visible detail writes itself** — `6 × 1 gallon @
+$54.00`, regenerated whenever the held quantity changes, until a human types
+their own (`InvoiceCharge.detailIsCustom`, stored not inferred). The `×` form
+is deliberate: real units are `1 ft`, `3 oz (1 gallon mix)`, `2 CU FT` and none
+of them pluralise.
+
+**Supply photos** live in R2 under the `equipment-photos` bucket with a
+`supply/<id>/` prefix — deliberately sharing rather than adding a bucket that
+needs env vars set by hand (`R2_GUIDE_MEDIA_BUCKET_NAME` is unset in prod and
+Guides media 503s for exactly that).
+
 **What a client pays is decided when the supply goes on the job**, not in the
 catalog — the same mulch can be $5 to one client and $9 to another;
 `Supply.clientUnitPrice` (renamed from the lying `jobPayoutCost`) is only a
