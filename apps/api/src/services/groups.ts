@@ -10,7 +10,7 @@ type Tx = Prisma.TransactionClient;
 // uncommitted member rows written moments earlier.
 type AnyClient = Tx | typeof prisma;
 
-const groupInclude = {
+const groupInclude = Prisma.validator<Prisma.GroupInclude>()({
   claimer: { select: { id: true, displayName: true, email: true, workerType: true } },
   members: {
     include: {
@@ -25,7 +25,7 @@ const groupInclude = {
     },
     orderBy: { sortOrder: "asc" as const },
   },
-} as const;
+});
 
 const IN_FLIGHT_STATUSES = ["SCHEDULED", "IN_PROGRESS", "PAUSED"] as const;
 

@@ -457,10 +457,21 @@ is 0, filtered by the export's Prisma where clause).
 
 ## 9. Business expenses & the Accounting tab Cash Flow view
 
-**Business Expenses tab** holds manually-entered, out-of-pocket business
-expenses (fuel, supplies, dump fees, etc.), each categorized to a Schedule C
-line. Per-job expenses and supply purchases also create paired BusinessExpense
-records.
+**Business Expenses tab** (the **Ledger**) holds manually-entered,
+out-of-pocket business expenses (fuel, supplies, dump fees, etc.), each
+categorized to a Schedule C line. **It is the ONLY source of deductions.**
+
+> **Nothing on a job writes here.** Adding a charge to a job, editing one,
+> deleting one, recording a supply purchase and pulling stock all create **no**
+> BusinessExpense. They once did, and the result was that entering the real
+> card charge from the bank statement — which the operator must — deducted the
+> same money twice. A build gate walks every source file and fails on a ledger
+> write outside this tab's own routes. See
+> [`docs/features/job-materials.md`](features/job-materials.md).
+>
+> A job charge or a supply purchase MAY carry an optional, many-to-one pointer
+> at a ledger row, so one $500 receipt can say which jobs it covered. **No
+> total reads that pointer.**
 
 **Processor fees are NOT BusinessExpense entries** — they live on Payment
 records and are reported separately.
@@ -526,7 +537,11 @@ These rules MUST hold. Violating them corrupts the tax picture.
 
 1. **Tax/QuickBooks exports use only raw cash-flow fields:**
    `Payment.amountPaid` / `Payment.grossCharged`, `PaymentSplit.amount`,
-   `Expense.cost` / `BusinessExpense.cost`, `Payment.processorFeeAmount`.
+   **`BusinessExpense.cost`**, `Payment.processorFeeAmount`.
+   **`InvoiceCharge.cost` (table `Expense`) is NOT one of them** — it is what
+   the CLIENT was billed for materials, not money the business spent.
+   Exporting it would invent a deduction on top of the real receipt already
+   entered in the Ledger. The exports read `businessExpense` only.
 2. **Internal allocation fields never appear as tax line items:**
    `shortfallAmount`, `overageAmount`, `businessMarginAmount`,
    `platformFeeAmount`, per-worker margin/fee breakdowns. These are

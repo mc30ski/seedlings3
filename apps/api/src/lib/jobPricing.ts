@@ -127,7 +127,7 @@ export type InvoiceLine = {
  * leaves to trust.
  *
  * NOTHING INTERNAL LEAVES HERE. No `actualCost`, no margin, no supply unit
- * cost. Under LEGACY, material lines are omitted entirely because they were
+ * cost. Material lines were once omitted from the invoice entirely because they were
  * never billed — showing them would invent a charge the client never owed.
  */
 export function invoiceLines(occ: PricedOccurrence & {

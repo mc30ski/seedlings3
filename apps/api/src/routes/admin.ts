@@ -21,7 +21,7 @@ import {
 } from "../lib/dates";
 import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
-import { Role as RoleVal } from "@prisma/client";
+import { Prisma, Role as RoleVal } from "@prisma/client";
 import {
   JobKind,
   JobStatus,
@@ -4633,7 +4633,7 @@ Respond ONLY with valid JSON in this exact format:
         // (2) On-the-fly projection — applies for any occurrence that
         // hasn't had its snapshot stamped yet.
         // The crew's pool. This computed `price + addons − charges`, the
-        // LEGACY rule applied to every visit — on an ITEMIZED job the client
+        // materials taken out of the crew's pool a second time — the client
         // pays the materials on top and the pool never sees them, so the
         // projection under-reported every worker by their share of the mulch.
         // crewPool branches; it is the same helper the payout engine agrees
@@ -6289,7 +6289,13 @@ Respond ONLY with valid JSON in this exact format:
     const limit = all ? undefined : Math.min(Math.max(1, isNaN(rawLimit) ? 20 : rawLimit), 200);
     const offset = all ? 0 : Math.max(0, isNaN(rawOffset) ? 0 : rawOffset);
 
-    const include = {
+    // TYPED, not `as const`. TypeScript only excess-property-checks a FRESH
+    // object literal, so a detached `include` variable can name a relation
+    // that does not exist and still compile — which is exactly how
+    // `supplyPurchase` (renamed to `supplyPurchases` when the ledger link
+    // became many-to-one) shipped to production and made every Ledger list
+    // request a 500. The annotation restores the check at the declaration.
+    const include = Prisma.validator<Prisma.BusinessExpenseInclude>()({
       createdBy: { select: { id: true, displayName: true, email: true } },
       reconciledBy: { select: { id: true, displayName: true, email: true } },
       recurrenceEndedBy: { select: { id: true, displayName: true, email: true } },
@@ -6309,7 +6315,10 @@ Respond ONLY with valid JSON in this exact format:
           },
         },
       },
-      supplyPurchase: {
+      // PLURAL. One receipt can back several supply purchases — that is the
+      // whole point of the many-to-one link — so this is a list, and a row
+      // may carry more than one badge.
+      supplyPurchases: {
         select: {
           id: true,
           quantity: true,
@@ -6317,7 +6326,7 @@ Respond ONLY with valid JSON in this exact format:
           supply: { select: { id: true, name: true, unit: true } },
         },
       },
-    } as const;
+    });
 
     const [rows, total] = await Promise.all([
       prisma.businessExpense.findMany({

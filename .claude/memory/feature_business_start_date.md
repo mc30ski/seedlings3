@@ -17,7 +17,7 @@ The Business Start Date feature lets the operator present a clean slate from a c
 - `resolveCutoff(req)` — returns the effective cutoff for the current request (null = filter off; Super reveal header also returns null).
 - `cutoffWhere(model, cutoff)` — Pattern A: top-level money table filter. Returns `{}` when cutoff is null.
 - `paymentSplitCutoffWhere(cutoff)` — PaymentSplit anchors via parent `payment.createdAt`. NEVER use PaymentSplit.createdAt directly — it jumps on re-approval.
-- `expenseCutoffWhere(cutoff)` — Expense anchors via paired BusinessExpense.date when present, falls back to Expense.createdAt.
+- `expenseCutoffWhere(cutoff)` — InvoiceCharge (table `Expense`) anchors via the LINKED BusinessExpense.date when present, else its own createdAt. **This predates the two-books split and is now questionable**: that link is a many-to-one breadcrumb no total is supposed to read, so a June charge pointing at a January receipt is judged by the receipt's date. Latent, not live — 0 of 7 linked production rows currently disagree. See [[reference-expenses-charges-supplies]].
 - `paymentIncludeWithCutoff(cutoff, extras)` / `expensesIncludeWithCutoff(cutoff, extras)` — Pattern B: filtered includes on JobOccurrence so operations/statistics aggregations skip pre-cutoff money with no math changes.
 - `occurrenceWorkDateCutoff(cutoff)` — Pattern C: for employee earnings aggregations that iterate JobOccurrence directly. Filters on `completedAt ?? startedAt ?? startAt`.
 
@@ -28,7 +28,7 @@ Per-table date anchors (canonical):
 | Payment | `createdAt` | Stable; doesn't move on approval |
 | PaymentSplit | `payment.createdAt` (traversed) | SPLIT'S OWN createdAt is unreliable — re-created on approval |
 | BusinessExpense | `date` (user-entered) | Both EXPENSE and equity entries |
-| Expense | `businessExpense.date` if paired, else `createdAt` | Keeps the 1:1 pair consistent |
+| InvoiceCharge (`Expense`) | linked `businessExpense.date` if set, else `createdAt` | Written when the link was a 1:1 pair; it is now a many-to-one breadcrumb — see the note above |
 | Checkout | `releasedAt` | For CHARGE views only. Usage views use `checkedOutAt`. |
 | AuditEvent | `createdAt` | |
 | SupplyPurchase | `date` | |

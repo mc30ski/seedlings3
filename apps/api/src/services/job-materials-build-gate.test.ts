@@ -1707,6 +1707,49 @@ describe("[build-gate] invoice detail fields have an input, not just a column", 
     expect(TAB).toMatch(/setPriceEditDetail\(String\(\(occ as any\)\.laborDetail \?\? ""\)\)/);
   });
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // SHIPPED TO PRODUCTION, 2026-09-08. Every Ledger list request 500'd the
+  // moment the deploy landed, because this route's `include` still named
+  // `supplyPurchase` — renamed to `supplyPurchases` when the ledger link
+  // became many-to-one. Both apps typechecked clean.
+  //
+  // WHY TYPESCRIPT MISSED IT: excess-property checking only applies to a
+  // FRESH object literal written at the call site. Lift the include into its
+  // own `const` and TypeScript stops checking its keys entirely — it can name
+  // any relation at all and still compile. The error only appears at runtime,
+  // from the database, as a bare 500.
+  //
+  // The fix is `Prisma.validator<Prisma.<Model>Include>()({ ... })`, which
+  // restores the key check AND keeps the literal type, so the payload types
+  // inferred downstream stay narrow — a bare `: Prisma.XInclude` annotation
+  // checks the keys but widens the result, breaking callers that read nested
+  // relations. A plain annotation is accepted here for includes nothing
+  // infers from. This gate makes sure the next detached include carries one.
+  it("a detached Prisma include/select is type-annotated, not `as const`", () => {
+    const API_SRC = join(__dirname, "..");
+    const DECL = /\bconst\s+(\w*(?:include|select|Include|Select))\s*(:[^=]*)?=\s*\{/g;
+    const offenders: string[] = [];
+    for (const file of sourceFiles(API_SRC, /\.ts$/)) {
+      const rel = relative(API_SRC, file);
+      if (rel.endsWith(".test.ts")) continue;
+      const src = stripComments(readFileSync(file, "utf8"));
+      for (const m of src.matchAll(DECL)) {
+        const annotation = (m[2] ?? "").trim();
+        if (/^:\s*Prisma\.\w+(Include|Select)\b/.test(annotation)) continue;
+        offenders.push(
+          `${rel}:${src.slice(0, m.index).split("\n").length} — const ${m[1]}`,
+        );
+      }
+    }
+    expect(
+      offenders,
+      "A Prisma include/select lifted into its own const is NOT key-checked by " +
+        "TypeScript — a renamed relation compiles and 500s in production. " +
+        "Wrap it in `Prisma.validator<Prisma.<Model>Include>()({ ... })`, or " +
+        "inline it at the call site.",
+    ).toEqual([]);
+  });
+
   it("no invoice-visible field is render-only", () => {
     // Each detail the invoice can show must have a writer somewhere.
     const api = readFileSync(join(__dirname, "../routes/admin.ts"), "utf8")

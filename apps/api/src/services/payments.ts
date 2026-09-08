@@ -267,8 +267,9 @@ export async function persistCompletionSplits(
     select: {
       id: true,
       status: true,
-      // pricingModel + invoiceCharges are REQUIRED — the promised snapshot is
-      // priced off invoiceTotal, which branches on the model.
+      // addons + invoiceCharges are REQUIRED — the promised snapshot is priced
+      // off invoiceTotal, and a missing relation silently prices the visit as
+      // if it carried no services or materials.
       price: true,
       addons: { select: { price: true } },
       invoiceCharges: { select: { cost: true } },
@@ -319,8 +320,11 @@ export async function persistCompletionSplits(
   // THE INVOICE, not the labor. `computeBreakdown(collected, charges)`
   // computes N = collected − charges, so feeding it the itemized invoice
   // yields the labor pool automatically:
-  //   LEGACY    collected = 100, charges = 60  →  N = 40
-  //   ITEMIZED  collected = 160, charges = 60  →  N = 100
+  //   collected = 160, charges = 60  →  N = 100  (the crew's pool)
+  //
+  // Historical visits that invoiced 100 with 60 of charges were rewritten to
+  // price = 40 by 20260908090000_unify_pricing_model, so this one rule
+  // reproduces them exactly. See docs/features/job-materials.md.
   // Passing labor-only here would pay the crew out of a number the client was
   // never billed. Same helper the invoice uses, so the promise is snapshotted
   // against what the client will actually be asked to pay.

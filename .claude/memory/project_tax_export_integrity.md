@@ -20,7 +20,15 @@ phantom deductions on a cash-basis return.
 | Gross revenue | `Payment.amountPaid` | What actually landed in the bank |
 | Wages (W-2) | `PaymentSplit.amount` where `user.workerType` ∈ {EMPLOYEE, TRAINEE} | Already includes topUp for made-whole cases |
 | 1099 / subcontractor | `PaymentSplit.amount` where `user.workerType` = CONTRACTOR | Reflects pro-rata payouts after underpay |
-| Business expenses | `Expense.cost` (or `BusinessExpense` table for tax-ledger fields) | Schedule C-aligned via `BusinessExpense.category` |
+| Business expenses | **`BusinessExpense.cost` ONLY** | Schedule C-aligned via `BusinessExpense.category` |
+
+> **`InvoiceCharge.cost` (table `Expense`) IS NOT A DEDUCTION.** It is what the
+> CLIENT is billed for materials. An earlier version of this note listed it as
+> a tax-safe expense source; exporting it would invent a deduction for money
+> that was never spent, on top of the real receipt entered in the Ledger — the
+> exact double-count this whole model exists to prevent. The exports read
+> `businessExpense` only, and that is correct. See
+> [[reference-expenses-charges-supplies]].
 
 ## Internal-only fields (NEVER export as tax lines)
 
@@ -30,7 +38,7 @@ accounting events on cash basis.
 
 - `Payment.shortfallAmount` — money the business "expected vs. didn't get." Not a deductible bad-debt expense (cash basis = only recognize what you collect).
 - `Payment.overageAmount` — extra above expected. Already included in `amountPaid`; don't add again.
-- `Payment.platformFeeAmount` / `businessMarginAmount` — represent the promised cut on the invoiced amount. Already implicit in `amountPaid` − `Σ PaymentSplit.amount` − `Σ Expense.cost`. Don't add as separate revenue lines.
+- `Payment.platformFeeAmount` / `businessMarginAmount` — represent the promised cut on the invoiced amount. Already implicit in `amountPaid` − `Σ PaymentSplit.amount` − `Σ InvoiceCharge.cost`. Don't add as separate revenue lines. (That last term is the payout math taking charges off the top — it is not a deduction.)
 - `Payment.adjustedFromAmount` — audit field for "originally reported value." Not a transaction.
 - `Payment.writtenOff` — flag for filtering reports. Not a separate expense; the write-off's financial impact is already captured by `amountPaid` ≈ 0 + `PaymentSplit.amount` > 0 (employee made whole).
 - `JobOccurrence.promisedPayouts` — snapshot at completion. Reference data; not a transaction.

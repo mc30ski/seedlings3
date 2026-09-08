@@ -61,13 +61,15 @@ either in the crew's pool or a pass-through.
 | --- | --- | --- | --- | --- |
 | **Labor** | typed | — | **yes** | — |
 | **Service** (add-on) | typed | — | **yes** | — |
-| **Material — from inventory** | derived per unit | from the `Supply` | no | draws down |
+| **Material — from inventory** | typed per job (catalog default) | **none** | no | draws down |
 | **Material — one-off** | typed | typed, **optional** | no | none |
 
 - **Invoice total** = sum of every line. **Derived, never typed.**
 - **Crew pool** = labor + services. What the crew is *paid* is this figure
   after margin and per-worker fees — see `packages/money`.
-- **Job margin** = labor margin + (material charge − material cost).
+- **Job margin** = labor margin + (material charge − material cost), where a
+  cost exists. Inventory-backed lines carry none — their cost lives in the
+  Ledger — so job margin is an upper bound on jobs served off our own shelf.
 
 ### A service and a material charge are entered the same way
 
@@ -116,47 +118,48 @@ job at all.
 
 ---
 
-## `pricingModel` — stamped per row, never inferred
+## One pricing model. There is no era flag.
 
-```prisma
-enum JobPricingModel { LEGACY ITEMIZED }
-```
+There was a `JobPricingModel { LEGACY ITEMIZED }` enum on `JobOccurrence`,
+stamped per row, because historical visits never billed their materials: a $100
+mow with $60 of mulch invoiced $100 and paid the crew out of $40. Reproducing
+that needed a rule that travelled with the row, so every money calculation
+branched — **nineteen sites across eight files, and the same "forgot to branch"
+bug shipped in six of them**, including `adjustOccurrencePrice`, which is the
+payout *contract*.
 
-`JobOccurrence.pricingModel` records which rule a visit was created under. It
-is stamped at creation and **never** inferred from a cutoff date, because the
-P&L and the Forecast tab **replay** historical visits — the rule has to travel
-with the row.
-
-- `LEGACY` — materials were never billed to the client. They came out of the
-  crew's pool. Every visit existing before the change is backfilled to this.
-- `ITEMIZED` — materials are billed on top; the pool is labor + services.
-
-### `crewPool` BRANCHES. This is the most dangerous function in the codebase.
+It was never necessary. Both facts are reproducible by rewriting the DATA:
 
 ```
-ITEMIZED  materials billed on top      → pool = laborAndServices
-LEGACY    materials came out of pool   → pool = max(0, laborAndServices − materialCharges)
+LEGACY   : invoice = base,             pool = base − charges
+ITEMIZED : invoice = price + charges,  pool = price
 ```
 
-Verify against the payout engine, which is authoritative —
-`computeBreakdown(collected, charges, …)` computes `N = collected − charges`:
+Set `price = base − charges` and the itemized rule reproduces **both** exactly.
+Migration `20260908090000_unify_pricing_model` did that and dropped the column
+and the enum. It refuses to run rather than half-apply if any row would go
+negative; production had none (516 occurrences, 9 carrying charges).
+
+**Never reintroduce an era flag.** If a historical fact needs preserving,
+rewrite the data so one rule reproduces it. The gates fail on any occurrence of
+`pricingModel` or `LEGACY` in either app.
+
+### The two functions
 
 ```
-LEGACY    collected = 100, charges = 60  →  the crew is paid 40
-ITEMIZED  collected = 160, charges = 60  →  the crew is paid 100
+crewPool(occ)     = laborAndServices(occ)
+invoiceTotal(occ) = laborAndServices(occ) + materialChargeTotal(occ)
 ```
 
-A version of this returned 100 for **both**, and the job card promised a pool
-the crew was never going to see. The gate asserts `crewPool` against
-`computeBreakdown` rather than against a hand-typed number, because a typed
-number is exactly how that bug got locked in.
+Both live in `apps/api/src/lib/jobPricing.ts` and nothing may inline either.
+The gate asserts `crewPool` against the payout engine —
+`computeBreakdown(collected, charges)` computes `N = collected − charges` —
+rather than against a hand-typed number, because a typed number is exactly how
+the earlier bug got locked in.
 
-**`invoiceTotal` must build on the raw base, not on `crewPool`** — `crewPool`
-subtracts materials under LEGACY, and subtracting them again would bill the
-client less than the labor was worth.
-
-**`packages/money` needs zero changes.** Feeding `computeBreakdown` the
-itemized invoice and the material charges yields the labor pool automatically.
+**Feed `computeBreakdown` the INVOICE, not labor alone.** `packages/money`
+needs no changes: given the itemized invoice and the material charges it
+returns the labor pool automatically.
 
 ---
 
@@ -168,22 +171,21 @@ later a $500 Lowe's charge can tell you which jobs it went to.
 
 `onDelete: SetNull`. Never `Restrict`. Never cascaded.
 
-**It means two different things.** Only the occurrence's `pricingModel` tells
-them apart:
+**It is a breadcrumb and nothing more. No total reads it.** Clearing it
+changes no number anywhere — not the invoice, not the payout, not the P&L, not
+the Forecast. It exists so a human can answer "which jobs did that receipt go
+to?", and that is its whole job.
 
-- **`LEGACY`** — a real 1:1 pair created by the old dual-write. That ledger row
-  **is** this line's deduction. These rows still exist, still feed the P&L, and
-  are left alone on purpose.
-- **`ITEMIZED`** — a decorative breadcrumb. **No total reads it.** Clearing it
-  changes no number.
-
-A cascade that looks correct on a LEGACY row destroys a $500 deduction on an
-ITEMIZED one. This has cost a deduction twice.
+It once meant two things — on pre-itemized rows it was a real 1:1 pair created
+by the old dual-write, and *that* ledger row was the line's deduction. Those
+pairs are gone: the unification rewrote the data so the ledger row is always
+the deduction and the job line never is. A cascade through this pointer used to
+destroy a $500 deduction depending on which era the row belonged to. **It has
+cost a deduction twice. Never cascade through it.**
 
 ### Deleting a ledger charge
 
-- LEGACY pairs die with the row.
-- ITEMIZED breadcrumbs just lose the pointer.
+- Job lines and supply purchases are **unlinked**, never deleted.
 - **Inventory is never reversed.** A ledger row is no longer evidence that
   stock arrived, and several purchases may share one receipt.
 
@@ -196,8 +198,9 @@ client was billed — and on a many-to-one link it would change the wrong job.
 
 ## Worked example
 
-Labor $150. 25 bags of mulch billed at $6 (cost $5 each). $50 of edging stone
-at cost. One employee, 35% margin.
+Labor $150. 25 bags of mulch billed at $6, bought for the job and entered as
+**one-off charges** with their cost typed in. $50 of edging stone at cost. One
+employee, 35% margin.
 
 | Line | Charge | Cost |
 |---|---|---|
@@ -207,12 +210,16 @@ at cost. One employee, 35% margin.
 | **Invoice total** | **$350** | |
 
 - **Crew pool** = $150 (labor). The employee's gross share is $150.
-- **Material margin** = ($150 − $125) + ($50 − $50) = **$25**.
+- **Material margin** = ($150 − $125) + ($50 − $50) = **$25**. Had the mulch
+  come **off our own shelf** instead, the line would carry no cost at all and
+  this figure would read $0 — what those bags cost sits in the Ledger, against
+  the receipt that stocked them.
 - The client pays $350; the business banks the materials at cost-plus-$25 and
   pays the crew out of the $150 of labor.
 
-Priced under `LEGACY`, the same job invoices **$150** and the pool is
-**$0** — which is the defect the itemized model exists to fix.
+Before the model was unified, this same job invoiced **$150** and left the
+pool at **$0** — the crew absorbing $175 of materials the client was never
+billed for. That is the defect this exists to fix.
 
 ---
 
@@ -259,18 +266,26 @@ someone click into a 403.
 
 ## Inventory lifecycle
 
-Pulling stock onto a job creates a `SupplyHold` and a paired `InvoiceCharge` at
-`quantity × Supply.jobPayoutCost`, with `actualCost` from
-`Supply.businessCost`. The charge's **amount and name are derived** — editing
-them directly desyncs the two and the next `+`/`−` overwrites whatever was
-typed, so the server refuses with a 409. `detail` stays editable.
+Pulling stock onto a job creates a `SupplyHold` and a paired `InvoiceCharge`.
 
-> `actualCost` was left NULL on every inventory pull until 2026-09-07. This is
-> the one case where the cost is known exactly, and job profit was reporting
-> "no cost recorded" and showing an upper bound on jobs whose materials came
-> off our own shelf. It is now set on creation and **re-derived whenever the
-> held quantity changes** — leaving it behind would state the margin on a
-> quantity no longer on the job.
+**The price is decided per job, not in the catalog.** The same mulch can be
+$5.00 to one client and $9.00 to another — `Supply.clientUnitPrice` is only an
+optional *default* the pull dialog pre-fills. Likewise the line's name defaults
+to the supply's but is the operator's to change, and `detail` is free text
+("25 bags at $6.00").
+
+**The line records no cost.** Not `actualCost`, not the catalog's
+`businessCost`, nothing. What we paid is a `BusinessExpense` in the Ledger;
+importing a cost into a client charge makes the approximate stock layer look
+authoritative. Migration `20260908170000_supply_charge_is_not_a_cost_record`
+cleared the values a brief earlier version wrote.
+
+**Nothing about the line is locked.** An inventory-backed charge is an ordinary
+invoice line — name, detail and amount all editable. It used to refuse edits
+with a 409 on the grounds that the amount was "derived"; that made a supply
+line a second-class citizen on the invoice for no benefit. The hold owns the
+**stock** only: changing the held quantity re-prices the amount and leaves the
+wording alone.
 
 ### Stock states, and what each one moves
 
@@ -285,6 +300,9 @@ A hold can never exceed what is available; `adjustHold` re-checks on every
 increment.
 
 ### `businessCost` is a last-paid heuristic
+
+This is the "what you pay" figure on the Supplies form, and it is
+**informational** — it never reaches a client's invoice or a payout.
 
 `recordPurchase` takes the **receipt total** — it includes tax and any discount
 and is the figure that reconciles to a bank line — and derives the per-unit
@@ -304,9 +322,13 @@ receipt and the admin preview all read it, so a line can never appear on one
 and be missing from another — and the sum equals `invoiceTotal`, which the gate
 asserts rather than trusts.
 
-**Nothing internal leaves.** No `actualCost`, no margin, no supply unit cost.
-Under LEGACY, material lines are omitted entirely — showing them would invent a
-charge the client never owed.
+**Nothing internal leaves.** No `actualCost`, no margin, no supply unit cost,
+no ledger link.
+
+> The unification made 9 historical production invoices itemise where they
+> previously showed one line. Same total, same payout, same deduction — but a
+> client reopening a months-old link sees "$183.23 + $279.27" where they once
+> saw "$462.50". That was a deliberate, accepted trade.
 
 **Never print an internal key.** An add-on carries a raw `tag` (`HEDGE`,
 `LEAF_CLEANUP`). Resolution order: typed custom label → the `SERVICE_TYPES`
@@ -344,8 +366,9 @@ easy to nod along to and still misread a $350 total as $350 of work.
 
 - **Worker** — a read-only list of charges, and copy explaining these don't come
   out of their pay.
-- **Admin** — full add/edit/delete, the ledger-link picker, `actualCost` and
-  per-line margin, and the invoice preview.
+- **Admin** — full add/edit/delete, the ledger-link picker, the invoice
+  preview, and `actualCost` / per-line margin **on one-off charges only**
+  (an inventory-backed line carries no cost, by design).
 - **Client** — the invoice lines and the total. Nothing else.
 
 ---
@@ -368,13 +391,18 @@ easy to nod along to and still misread a $350 total as $350 of work.
 `apps/api/src/services/job-materials-build-gate.test.ts` — run with
 `cd apps/api && npm run test:build-gate`.
 
-The two structural gates matter most:
+The structural gates matter most:
 
 - **"only the Ledger writes the Ledger"** walks every source file and fails on
   a ledger write outside `/admin/business-expenses/*`. Reviewing by memory
   finds the sites someone thought of; this finds all of them.
 - **"a job line is an invoice charge, never an expense"** walks both apps and
-  fails on the retired vocabulary.
+  fails on the retired vocabulary, `pricingModel` and `LEGACY` included.
+- **"a detached Prisma include/select is type-annotated"** — an include lifted
+  into its own `const` is NOT key-checked by TypeScript, so it can name a
+  relation that no longer exists and still compile. That is how a renamed
+  relation took the whole Ledger tab down in production on 2026-09-08 with both
+  apps typechecking clean. Use `Prisma.validator<Prisma.XInclude>()({ … })`.
 
 Both strip comments before scanning, so this history can stay legible in prose.
 
