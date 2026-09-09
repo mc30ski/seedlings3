@@ -52,6 +52,31 @@ export function bumpWorkday() {
 }
 
 /**
+ * Ask the global MileageReminderInterceptor to consider nudging the
+ * worker about their driving log, right after they clocked in or out.
+ *
+ * Deliberately a SEPARATE event from `bumpWorkday()`. That one means
+ * "workday state may have changed" and fires from a dozen places
+ * including background refreshes and the offline queue draining — a
+ * dialog on every one of those would be intolerable. This one fires
+ * only from a person's own explicit start/end, and the interceptor
+ * still checks whether there is anything worth saying before it opens.
+ *
+ *   "start" — clocked in with a vehicle assigned and no session open.
+ *   "stop"  — clocked out with a session still running.
+ *
+ * Never fired for an admin acting as someone else: the mileage
+ * endpoints are self-only server-side (driverUserId === caller), so
+ * the prompt would offer an action the caller cannot take.
+ */
+export function promptMileageReminder(mode: "start" | "stop") {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent("seedlings:mileage-reminder", { detail: { mode } }),
+  );
+}
+
+/**
  * Refresh the MY ACTIVITIES section and nothing else.
  *
  * Its children fetch independently, so "refresh this section" has to

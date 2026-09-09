@@ -18,7 +18,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Badge, Box, Button, Card, HStack, SimpleGrid, Spinner, Text, VStack } from "@chakra-ui/react";
-import { BarChart3, Users } from "lucide-react";
+import { BarChart3, Truck, Users } from "lucide-react";
 import { Dashboard } from "@/src/ui/components/Dashboard";
 import { FiArrowRight, FiCalendar, FiCheckCircle, FiMoon, FiPlay, FiRefreshCw, FiSun } from "react-icons/fi";
 import { computeDatesFromPreset, type DatePreset } from "@/src/lib/datePresets";
@@ -32,7 +32,7 @@ import { fetchWorkdayToday } from "@/src/lib/workday";
 import WorkerHourlyPayCard from "@/src/ui/components/WorkerHourlyPayCard";
 import AllWorkersHourlyPayCards from "@/src/ui/components/AllWorkersHourlyPayCards";
 import type { Me } from "@/src/lib/types";
-import { OperationsPanel } from "@/src/ui/tabs/HomeTab.parts";
+import { MyVehiclesSection, OperationsPanel } from "@/src/ui/tabs/HomeTab.parts";
 import {
   AdminViewAsBadges,
   AdminViewAsSelector,
@@ -336,6 +336,23 @@ export default function HomeTab({
       value: string;
       onChange: (value: string) => void;
     };
+  } | null>(null);
+
+  // MY VEHICLES owns its own fetch on the same contract, plus one extra
+  // flag: `hasVehicles`. The section can only know whether the scoped
+  // worker drives anything AFTER its first load, and the frame has to
+  // disappear entirely in that case rather than render an empty card — so
+  // the answer has to come back up here where the frame is decided.
+  const [myVehiclesApi, setMyVehiclesApi] = useState<{
+    refresh: () => Promise<void>;
+    loading: boolean;
+    summary: React.ReactNode;
+    timeframe: {
+      options: ReadonlyArray<{ label: string; value: string }>;
+      value: string;
+      onChange: (value: string) => void;
+    };
+    hasVehicles: boolean;
   } | null>(null);
 
   const usingSelfViewAs =
@@ -1477,8 +1494,36 @@ export default function HomeTab({
           />
         )}
 
+        {/* MY VEHICLES — per-vehicle driving over the section's own
+            timeframe, for whichever worker the page is scoped to.
 
+            Same single-user gate as the two pay sections above: "my
+            vehicles" has no meaning averaged across a team, and the
+            aggregate/subset views already have their own per-worker
+            surfaces. Under a single-worker view-as it shows THAT worker's
+            vehicles — the endpoint takes viewAsUserId for exactly that.
 
+            Self-hiding twice over: the frame is dropped entirely when the
+            scoped worker has no assigned vehicle (`hasVehicles`), so a
+            worker who never drives gets no empty section — matching the
+            MileageStrip's rule directly above. */}
+        {!isAggregate && !isSubset && myVehiclesApi?.hasVehicles !== false && (
+          <Dashboard
+            storageKey="seedlings:homeTab:myVehiclesOpen"
+            title="My vehicles"
+            icon={Truck}
+            variant="neutral"
+            onRefresh={myVehiclesApi?.refresh}
+            refreshing={!!myVehiclesApi?.loading}
+            collapsedSummarySlot={myVehiclesApi?.summary}
+            timeframe={myVehiclesApi?.timeframe}
+          >
+            <MyVehiclesSection
+              viewAsUserId={viewAsUserId ?? null}
+              onReady={setMyVehiclesApi}
+            />
+          </Dashboard>
+        )}
 
 
       </VStack>

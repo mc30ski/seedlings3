@@ -1,5 +1,5 @@
 import { apiGet, apiPost, apiPatch } from "@/src/lib/api";
-import { bumpWorkday } from "@/src/lib/bus";
+import { bumpWorkday, promptMileageReminder } from "@/src/lib/bus";
 import { bizToLocalInputValue, bizParseLocalInputValue, fmtTimeOpts, fmtDateOpts } from "@/src/lib/dates";
 
 // Worker-workday client types — mirror services/workdays.ts exactly. Keep
@@ -76,6 +76,25 @@ function asQuery(opts?: AsParam): string {
   return `?viewAsUserId=${encodeURIComponent(opts.viewAsUserId)}`;
 }
 
+/** Opt OUT of the post-start / post-end driving-log reminder. Set it
+ *  from a caller that has ALREADY asked about mileage in its own flow —
+ *  BeginWorkDayWorkflow offers a vehicle step before it clocks anyone
+ *  in, and re-asking the moment that workflow closes reads as a nag
+ *  rather than a reminder. */
+type MileagePromptOpt = { skipMileagePrompt?: boolean };
+
+/** Fire the driving-log reminder unless this call was an admin acting
+ *  as another worker (mileage is self-only server-side) or the caller
+ *  already handled the prompt itself. `startWorkday` / `endWorkday` are
+ *  the choke point every surface goes through — the strip, the banner,
+ *  the start-job gate — so hooking them here is what makes the reminder
+ *  behave the same everywhere instead of once per surface. */
+function maybePromptMileage(mode: "start" | "stop", opts?: AsParam & MileagePromptOpt) {
+  if (opts?.viewAsUserId) return;
+  if (opts?.skipMileagePrompt) return;
+  promptMileageReminder(mode);
+}
+
 export async function fetchWorkdayToday(opts?: AsParam): Promise<WorkdayTodayPayload> {
   return apiGet<WorkdayTodayPayload>(`/api/me/workday/today${asQuery(opts)}`);
 }
@@ -89,13 +108,14 @@ export async function fetchWorkdayToday(opts?: AsParam): Promise<WorkdayTodayPay
 
 export async function startWorkday(
   input: { startedAt?: string | null },
-  opts?: AsParam,
+  opts?: AsParam & MileagePromptOpt,
 ): Promise<{ workday: WorkdaySummary; created: boolean }> {
   const r = await apiPost<{ workday: WorkdaySummary; created: boolean }>(
     `/api/me/workday/start${asQuery(opts)}`,
     input,
   );
   bumpWorkday();
+  maybePromptMileage("start", opts);
   return r;
 }
 
@@ -137,10 +157,11 @@ export async function endWorkday(
     endedAt?: string | null;
     totalPausedMs?: number | null;
   },
-  opts?: AsParam,
+  opts?: AsParam & MileagePromptOpt,
 ): Promise<WorkdaySummary> {
   const r = await apiPost<WorkdaySummary>(`/api/me/workday/end${asQuery(opts)}`, input);
   bumpWorkday();
+  maybePromptMileage("stop", opts);
   return r;
 }
 
