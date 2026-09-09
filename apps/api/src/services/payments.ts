@@ -166,6 +166,185 @@ export function computeNextOccurrenceStart(
   return { startAt: snappedStart, endAt: snappedEnd, snappedForward: true, overrideUsed, rawStartAt: nextStart };
 }
 
+/**
+ * Everything a source occurrence hands to the next one in its series.
+ *
+ * Read as a shape rather than a Prisma type so both callers can pass the
+ * row they already fetched. The `job` half is what the occurrence falls
+ * back to for the fields it doesn't carry itself.
+ */
+type NextOccurrenceSource = {
+  id: string;
+  jobId: string | null;
+  kind: any;
+  isAdminOnly?: boolean | null;
+  jobType?: string | null;
+  jobTags?: string | null;
+  notes?: string | null;
+  price?: number | null;
+  estimatedMinutes?: number | null;
+  frequencyDays?: number | null;
+  guidanceNote?: string | null;
+  job: {
+    notes?: string | null;
+    defaultPrice?: number | null;
+    estimatedMinutes?: number | null;
+    defaultGroupId?: string | null;
+    defaultAssignees?: Array<{ userId: string; role: string | null }>;
+  } | null;
+};
+
+/**
+ * Create the next visit in a repeating series, with everything that
+ * travels with it.
+ *
+ * ONE implementation, TWO callers:
+ *   • approvePayment — the normal path; the next visit is generated when
+ *     the money lands.
+ *   • forceCreateNextOccurrence — the admin escape hatch for when the
+ *     visit has to exist BEFORE the payment does (a client asks for an
+ *     extra service on the next visit while this one is still awaiting
+ *     payment, say).
+ *
+ * These were two hand-maintained copies and they had drifted. The forced
+ * one silently dropped the guidance note, the reference photos and the
+ * likes, and it ignored the job's default CREW in favour of the per-user
+ * default assignees — so forcing a visit early produced a visibly
+ * different visit from the one the crew would have got a week later, and
+ * the difference was invisible until someone showed up without the
+ * reference photos. Anything that should ride along on a new visit now
+ * has exactly one place to be added.
+ *
+ * The caller owns the transaction, the duplicate check, and the decision
+ * to create at all.
+ */
+async function createNextOccurrenceFrom(
+  tx: any,
+  source: NextOccurrenceSource,
+  next: { startAt: Date; endAt: Date | null },
+): Promise<any> {
+  const created = await tx.jobOccurrence.create({
+    data: {
+      jobId: source.jobId!,
+      kind: source.kind,
+      startAt: next.startAt,
+      endAt: next.endAt,
+      status: "SCHEDULED",
+      source: "GENERATED",
+      workflow: "STANDARD",
+      isAdminOnly: !!source.isAdminOnly,
+      jobType: source.jobType ?? null,
+      jobTags: source.jobTags ?? null,
+      // A pinned note is a note about THIS visit — it never rides forward.
+      pinnedNote: null,
+      pinnedNoteRepeats: true,
+      notes: source.notes ?? source.job?.notes ?? null,
+      price: source.price ?? source.job?.defaultPrice ?? null,
+      estimatedMinutes: source.estimatedMinutes ?? source.job?.estimatedMinutes ?? null,
+      frequencyDays: source.frequencyDays ?? null,
+      // Standing guidance for the property — carries with the photos below.
+      guidanceNote: source.guidanceNote ?? null,
+    } as any,
+  });
+
+  // Roster: the job's default CREW wins; failing that its per-user default
+  // assignees; failing both the visit is left unassigned for someone to
+  // claim. An archived crew falls through to unassigned rather than
+  // resurrecting a disbanded team.
+  let assigneeSource: Array<{ userId: string; role: string | null }> = [];
+  let attachedGroupId: string | null = null;
+  const defaultGroupId = source.job?.defaultGroupId ?? null;
+  if (defaultGroupId) {
+    const group = await tx.group.findUnique({
+      where: { id: defaultGroupId },
+      include: { members: { select: { userId: true, role: true } } },
+    });
+    if (group && !group.archivedAt) {
+      attachedGroupId = group.id;
+      assigneeSource = [
+        { userId: group.claimerUserId, role: null },
+        ...group.members.map((m: any) => ({
+          userId: m.userId,
+          role: m.role === "observer" ? "observer" : null,
+        })),
+      ];
+    }
+  } else {
+    assigneeSource = (source.job?.defaultAssignees ?? []).map((d) => ({
+      userId: d.userId,
+      role: d.role ?? null,
+    }));
+  }
+  if (attachedGroupId) {
+    await tx.jobOccurrence.update({
+      where: { id: created.id },
+      data: { assignedGroupId: attachedGroupId },
+    });
+  }
+  if (assigneeSource.length > 0) {
+    // First entry is the claimer (assignedById === self); everyone after is
+    // assigned BY the claimer. Same convention as a manual claim.
+    const claimerId = assigneeSource[0].userId;
+    await tx.jobOccurrenceAssignee.createMany({
+      data: assigneeSource.map((d, i) => ({
+        occurrenceId: created.id,
+        userId: d.userId,
+        role: d.role ?? null,
+        assignedById: i === 0 ? d.userId : claimerId,
+      })),
+      skipDuplicates: true,
+    });
+  }
+
+  // Carry-alongs: who liked the visit, the property reference photos the
+  // crew works from, and any instruction explicitly marked as repeating.
+  const existingLikes = await tx.likedOccurrence.findMany({
+    where: { occurrenceId: source.id },
+    select: { userId: true },
+  });
+  if (existingLikes.length > 0) {
+    await tx.likedOccurrence.createMany({
+      data: existingLikes.map((l: any) => ({ userId: l.userId, occurrenceId: created.id })),
+      skipDuplicates: true,
+    });
+  }
+  const existingPropertyPhotos = await tx.occurrencePropertyPhoto.findMany({
+    where: { occurrenceId: source.id },
+    select: { propertyPhotoId: true },
+  });
+  if (existingPropertyPhotos.length > 0) {
+    await tx.occurrencePropertyPhoto.createMany({
+      data: existingPropertyPhotos.map((p: any) => ({
+        occurrenceId: created.id,
+        propertyPhotoId: p.propertyPhotoId,
+      })),
+      skipDuplicates: true,
+    });
+  }
+  const carryForwardInstructions = await tx.occurrenceInstruction.findMany({
+    where: { occurrenceId: source.id, repeats: true },
+  });
+  if (carryForwardInstructions.length > 0) {
+    await tx.occurrenceInstruction.createMany({
+      data: carryForwardInstructions.map((i: any) => ({
+        occurrenceId: created.id,
+        text: i.text,
+        isPreset: i.isPreset,
+        repeats: i.repeats,
+        sortOrder: i.sortOrder,
+      })),
+    });
+  }
+
+  return {
+    occurrence: created,
+    assigneeUserIds: assigneeSource.map((a) => a.userId),
+    attachedGroupId,
+    carriedInstructionCount: carryForwardInstructions.length,
+    carriedPhotoCount: existingPropertyPhotos.length,
+  };
+}
+
 
 
 // Reads the two rate settings from the DB. Either may be 0/missing.
@@ -738,6 +917,11 @@ export const payments: ServicesPayments = {
         job: {
           select: {
             id: true, status: true, frequencyDays: true, defaultPrice: true, estimatedMinutes: true, notes: true, kind: true,
+            // defaultGroupId is what lets a job's default CREW take the next
+            // visit. Missing from this select is why the forced path used to
+            // fall through to the per-user defaults and produce a
+            // differently-assigned visit from the one approval would make.
+            defaultGroupId: true,
             defaultAssignees: { where: { active: true }, select: { userId: true, role: true } },
           },
         },
@@ -759,57 +943,16 @@ export const payments: ServicesPayments = {
       );
 
     return prisma.$transaction(async (tx) => {
-      const nextOccurrence = await tx.jobOccurrence.create({
-        data: {
-          jobId: fullOcc.jobId!,
-          kind: fullOcc.kind,
-          startAt: nextStart,
-          endAt: nextEnd,
-          status: "SCHEDULED",
-          source: "GENERATED",
-          workflow: "STANDARD",
-          isAdminOnly: !!fullOcc.isAdminOnly,
-          jobType: fullOcc.jobType ?? null,
-          jobTags: (fullOcc as any).jobTags ?? null,
-          pinnedNote: null,
-          pinnedNoteRepeats: true,
-          notes: fullOcc.notes ?? fullOcc.job?.notes ?? null,
-          price: fullOcc.price ?? fullOcc.job?.defaultPrice ?? null,
-          estimatedMinutes: fullOcc.estimatedMinutes ?? fullOcc.job?.estimatedMinutes ?? null,
-          frequencyDays: fullOcc.frequencyDays ?? null,
-        } as any,
-      });
-
-      // Assign from job's default team
-      const defaults = fullOcc.job?.defaultAssignees ?? [];
-      if (defaults.length > 0) {
-        const claimerId = defaults[0].userId;
-        await tx.jobOccurrenceAssignee.createMany({
-          data: defaults.map((d, i) => ({
-            occurrenceId: nextOccurrence.id,
-            userId: d.userId,
-            role: d.role ?? null,
-            assignedById: i === 0 ? d.userId : claimerId,
-          })),
-          skipDuplicates: true,
-        });
-      }
-
-      // Carry forward instructions
-      const carryForwardInstructions = await tx.occurrenceInstruction.findMany({
-        where: { occurrenceId, repeats: true },
-      });
-      if (carryForwardInstructions.length > 0) {
-        await tx.occurrenceInstruction.createMany({
-          data: carryForwardInstructions.map((i) => ({
-            occurrenceId: nextOccurrence.id,
-            text: i.text,
-            isPreset: i.isPreset,
-            repeats: i.repeats,
-            sortOrder: i.sortOrder,
-          })),
-        });
-      }
+      // Same builder the approval path uses — see createNextOccurrenceFrom.
+      // Forcing a visit early must produce the SAME visit approval would
+      // have produced a week later, down to the crew, the guidance note
+      // and the reference photos.
+      const built = await createNextOccurrenceFrom(
+        tx,
+        fullOcc as any,
+        { startAt: nextStart, endAt: nextEnd },
+      );
+      const nextOccurrence = built.occurrence;
 
       // Clear the skip reason on the payment
       if (fullOcc.payment) {
@@ -834,8 +977,10 @@ export const payments: ServicesPayments = {
         frequencyDays: effectiveFreq,
         snappedForward,
         overrideUsed,
-        assigneeUserIds: (fullOcc.job?.defaultAssignees ?? []).map((d) => d.userId),
-        carriedInstructionCount: carryForwardInstructions.length,
+        assigneeUserIds: built.assigneeUserIds,
+        attachedGroupId: built.attachedGroupId,
+        carriedInstructionCount: built.carriedInstructionCount,
+        carriedPhotoCount: built.carriedPhotoCount,
         clearedNextOccurrenceSkipReason: fullOcc.payment?.nextOccurrenceSkipReason ?? null,
       });
 
@@ -1903,120 +2048,29 @@ export const payments: ServicesPayments = {
           nextOccurrence = existingNext;
           nextOccurrenceSkipReason = "duplicate_exists";
         } else {
-          nextOccurrence = await tx.jobOccurrence.create({
-            data: {
-              jobId: fullOcc.jobId,
-              kind: fullOcc.kind,
-              startAt: nextStart,
-              endAt: nextEnd,
-              status: "SCHEDULED",
-              source: "GENERATED",
-              workflow: "STANDARD",
-              isAdminOnly,
-              jobType: fullOcc.jobType ?? null,
-              jobTags: (fullOcc as any).jobTags ?? null,
-              pinnedNote: null,
-              pinnedNoteRepeats: true,
-              notes: fullOcc.notes ?? fullOcc.job.notes ?? null,
-              price: fullOcc.price ?? fullOcc.job.defaultPrice ?? null,
-              estimatedMinutes: fullOcc.estimatedMinutes ?? fullOcc.job.estimatedMinutes ?? null,
-              frequencyDays: fullOcc.frequencyDays ?? null,
-              // Guidance description carries forward with the guidance photos.
-              guidanceNote: (fullOcc as any).guidanceNote ?? null,
-            } as any,
-          });
-
-          // Assign next occurrence from the job's default crew. Group
-          // default wins; otherwise per-user defaults. Archived default
-          // groups fall through to unassigned (admin can claim).
-          let nextAssigneeSource: { userId: string; role: string | null }[] = [];
-          let nextAttachedGroupId: string | null = null;
-          const defaultGroupId = (fullOcc.job as any)?.defaultGroupId as string | null | undefined;
-          if (defaultGroupId) {
-            const group = await tx.group.findUnique({
-              where: { id: defaultGroupId },
-              include: { members: { select: { userId: true, role: true } } },
-            });
-            if (group && !group.archivedAt) {
-              nextAttachedGroupId = group.id;
-              nextAssigneeSource = [
-                { userId: group.claimerUserId, role: null },
-                ...group.members.map((m) => ({
-                  userId: m.userId,
-                  role: m.role === "observer" ? ("observer" as const) : null,
-                })),
-              ];
-            }
-          } else {
-            const defaults = fullOcc.job?.defaultAssignees ?? [];
-            nextAssigneeSource = defaults.map((d) => ({ userId: d.userId, role: d.role ?? null }));
-          }
-          if (nextAttachedGroupId) {
-            await tx.jobOccurrence.update({
-              where: { id: nextOccurrence.id },
-              data: { assignedGroupId: nextAttachedGroupId },
-            });
-          }
-          if (nextAssigneeSource.length > 0) {
-            const claimerId = nextAssigneeSource[0].userId;
-            await tx.jobOccurrenceAssignee.createMany({
-              data: nextAssigneeSource.map((d, i) => ({
-                occurrenceId: nextOccurrence.id,
-                userId: d.userId,
-                role: d.role ?? null,
-                assignedById: i === 0 ? d.userId : claimerId,
-              })),
-              skipDuplicates: true,
-            });
-          }
+          // Same builder the admin force-next path uses — see
+          // createNextOccurrenceFrom. Everything that rides along with a new
+          // visit (crew, guidance note, reference photos, likes, repeating
+          // instructions) is decided in that one place.
+          const built = await createNextOccurrenceFrom(
+            tx,
+            { ...(fullOcc as any), isAdminOnly },
+            { startAt: nextStart, endAt: nextEnd },
+          );
+          nextOccurrence = built.occurrence;
         }
       }
 
-      // Carry over likes + property photo instructions + repeating
-      // occurrence instructions to the new occurrence.
+      // Likes, reference photos and repeating instructions are carried by
+      // createNextOccurrenceFrom above, as part of building the visit.
       //
-      // Only when we CREATED the next occurrence in this transaction.
-      // When the dedupe matched a pre-existing SCHEDULED occurrence
-      // (skipReason === "duplicate_exists"), it may have been created by
-      // an unrelated path (admin manual create, prior force-create, etc.)
-      // and stamping it with this Payment's carryover data would silently
-      // overwrite legitimate state on a row that wasn't ours to touch.
-      if (nextOccurrence && nextOccurrenceSkipReason !== "duplicate_exists") {
-        const existingLikes = await tx.likedOccurrence.findMany({
-          where: { occurrenceId: existing.occurrence.id },
-          select: { userId: true },
-        });
-        if (existingLikes.length > 0) {
-          await tx.likedOccurrence.createMany({
-            data: existingLikes.map((l) => ({ userId: l.userId, occurrenceId: nextOccurrence.id })),
-            skipDuplicates: true,
-          });
-        }
-        const existingPropertyPhotos = await tx.occurrencePropertyPhoto.findMany({
-          where: { occurrenceId: existing.occurrence.id },
-          select: { propertyPhotoId: true },
-        });
-        if (existingPropertyPhotos.length > 0) {
-          await tx.occurrencePropertyPhoto.createMany({
-            data: existingPropertyPhotos.map((p) => ({ occurrenceId: nextOccurrence.id, propertyPhotoId: p.propertyPhotoId })),
-            skipDuplicates: true,
-          });
-        }
-        const carryForwardInstructions = await tx.occurrenceInstruction.findMany({
-          where: { occurrenceId: existing.occurrence.id, repeats: true },
-        });
-        if (carryForwardInstructions.length > 0) {
-          await tx.occurrenceInstruction.createMany({
-            data: carryForwardInstructions.map((i) => ({
-              occurrenceId: nextOccurrence.id,
-              text: i.text,
-              isPreset: i.isPreset,
-              repeats: i.repeats,
-              sortOrder: i.sortOrder,
-            })),
-          });
-        }
-      }
+      // They used to be copied HERE instead, guarded on
+      // `skipReason !== "duplicate_exists"` — because when the dedupe
+      // matches a pre-existing SCHEDULED visit (an admin force-created it,
+      // say) that row belongs to another path and stamping this payment's
+      // carryover onto it would overwrite legitimate state. That guard is
+      // still honoured, and more simply: the copy now happens only inside
+      // the create branch, so a deduped visit is never touched at all.
 
       // Stamp the skip reason on the payment so the card / Payments tab
       // can surface "Next occurrence was NOT auto-created: <reason>" later.

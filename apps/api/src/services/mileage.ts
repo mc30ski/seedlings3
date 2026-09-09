@@ -735,6 +735,105 @@ export async function vehicleTotalsForRange(
   };
 }
 
+/**
+ * Per-vehicle driving summary for ONE driver over a date range — the data
+ * behind Home → MY VEHICLES.
+ *
+ * Scoped to the driver, not the vehicle: `vehicleTotalsForRange` above
+ * answers "how far did this truck go", which is the fleet question and the
+ * wrong one here. A worker sharing the crew van with two other people must
+ * see their own miles on it, not the van's.
+ *
+ * Every assigned vehicle comes back, including ones with no driving in the
+ * window — "you have this truck and put nothing on it this month" is a real
+ * answer, and silently dropping the row makes the section look broken.
+ * Open sessions are counted separately: their mileage is not known yet
+ * (there is no ending odometer), so folding them into totalMiles would
+ * report a number that changes when the session closes.
+ */
+export async function assignedVehicleSummaryForUser(
+  userId: string,
+  opts: { fromDate?: string; toDate?: string } = {},
+): Promise<
+  Array<{
+    vehicleId: string;
+    displayName: string;
+    make: string | null;
+    vehicleModel: string | null;
+    year: number | null;
+    plate: string | null;
+    currentOdometer: number | null;
+    totalMiles: number;
+    approvedMiles: number;
+    unapprovedMiles: number;
+    sessionCount: number;
+    openSessionCount: number;
+    lastDrivenOn: string | null;
+  }>
+> {
+  const { listAssignedVehiclesForUser } = await import("./vehicles");
+  const vehicles = await listAssignedVehiclesForUser(userId);
+  if (vehicles.length === 0) return [];
+
+  const where: Record<string, any> = {
+    driverUserId: userId,
+    vehicleId: { in: vehicles.map((v) => v.id) },
+  };
+  if (opts.fromDate || opts.toDate) {
+    where.entryDate = {};
+    if (opts.fromDate) where.entryDate.gte = opts.fromDate;
+    if (opts.toDate) where.entryDate.lte = opts.toDate;
+  }
+  const entries = await prisma.mileageEntry.findMany({
+    where,
+    select: {
+      vehicleId: true,
+      miles: true,
+      approvedAt: true,
+      endedAt: true,
+      entryDate: true,
+    },
+  });
+
+  const byVehicle = new Map<string, typeof entries>();
+  for (const e of entries) {
+    const list = byVehicle.get(e.vehicleId);
+    if (list) list.push(e);
+    else byVehicle.set(e.vehicleId, [e]);
+  }
+
+  return vehicles.map((v) => {
+    const rows = byVehicle.get(v.id) ?? [];
+    const closed = rows.filter((r) => r.endedAt != null);
+    const totalMiles = closed.reduce((sum, r) => sum + (r.miles ?? 0), 0);
+    const approvedMiles = closed
+      .filter((r) => r.approvedAt != null)
+      .reduce((sum, r) => sum + (r.miles ?? 0), 0);
+    // Most recent day this driver put anything on this vehicle — open
+    // sessions count, since "driving it right now" is the freshest answer
+    // there is.
+    const lastDrivenOn = rows.reduce<string | null>(
+      (latest, r) => (latest == null || r.entryDate > latest ? r.entryDate : latest),
+      null,
+    );
+    return {
+      vehicleId: v.id,
+      displayName: v.displayName,
+      make: v.make ?? null,
+      vehicleModel: v.vehicleModel ?? null,
+      year: v.year ?? null,
+      plate: v.plate ?? null,
+      currentOdometer: v.currentOdometer ?? null,
+      totalMiles,
+      approvedMiles,
+      unapprovedMiles: totalMiles - approvedMiles,
+      sessionCount: closed.length,
+      openSessionCount: rows.length - closed.length,
+      lastDrivenOn,
+    };
+  });
+}
+
 export function todayEntryDate(): string {
   return etToday();
 }

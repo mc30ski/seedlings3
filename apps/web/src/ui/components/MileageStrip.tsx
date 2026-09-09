@@ -674,21 +674,32 @@ function formatElapsed(ms: number): string {
 // Start/Stop Dialog) because Chakra v3's focus-management races when
 // the second Dialog's Portal mounts while the first is still
 // unmounting — clicks get eaten and the user sees nothing.
-function CompactMileageDialog({
+export function CompactMileageDialog({
   openEntries,
   vehiclesWithoutOpenSession,
+  remind,
   onClose,
   onDone,
 }: {
   openEntries: OpenEntry[];
   vehiclesWithoutOpenSession: Vehicle[];
+  /** When set, the dialog opens on a REMINDER step ahead of the normal
+   *  flow — the post-workday nudge (see MileageReminderInterceptor).
+   *  "start" = you clocked in and aren't logging a drive yet;
+   *  "stop"  = you clocked out with a session still running.
+   *  The reminder is always dismissible: it is a nudge, never a gate,
+   *  and "Not now" closes without touching anything. Folded into THIS
+   *  dialog rather than shown as its own Dialog.Root ahead of it,
+   *  because a second Portal mounting while the first unmounts is the
+   *  focus race this component was rewritten to avoid. */
+  remind?: "start" | "stop";
   onClose: () => void;
   onDone: () => void;
 }) {
   // If there's exactly one thing to do, skip the picker step entirely
   // and open the odometer step directly. Most workers have one vehicle
   // — no need to click through a picker with one item.
-  const initialStep: Step = (() => {
+  const workStep: Step = (() => {
     if (openEntries.length === 1 && vehiclesWithoutOpenSession.length === 0) {
       return { kind: "stop", entry: openEntries[0] };
     }
@@ -697,7 +708,9 @@ function CompactMileageDialog({
     }
     return { kind: "pick" };
   })();
+  const initialStep: Step = remind ? { kind: "remind" } : workStep;
   type Step =
+    | { kind: "remind" }
     | { kind: "pick" }
     | { kind: "start"; vehicle: Vehicle }
     | { kind: "stop"; entry: OpenEntry };
@@ -797,11 +810,13 @@ function CompactMileageDialog({
   }
 
   const title =
-    step.kind === "pick"
-      ? "Mileage"
-      : step.kind === "start"
-        ? `Start driving ${step.vehicle.displayName}`
-        : `Stop ${step.entry.vehicle.displayName}`;
+    step.kind === "remind"
+      ? (remind === "stop" ? "You're still logging miles" : "Start your driving log?")
+      : step.kind === "pick"
+        ? "Mileage"
+        : step.kind === "start"
+          ? `Start driving ${step.vehicle.displayName}`
+          : `Stop ${step.entry.vehicle.displayName}`;
 
   return (
     <Dialog.Root
@@ -817,6 +832,61 @@ function CompactMileageDialog({
               <Dialog.Title>{title}</Dialog.Title>
             </Dialog.Header>
             <Dialog.Body>
+              {step.kind === "remind" && (
+                <VStack align="stretch" gap={3}>
+                  {remind === "stop" ? (
+                    <>
+                      <Text fontSize="sm">
+                        Your workday is closed, but{" "}
+                        {openEntries.length === 1
+                          ? `the ${openEntries[0].vehicle.displayName} session is`
+                          : `${openEntries.length} driving sessions are`}{" "}
+                        still running.
+                      </Text>
+                      <VStack align="stretch" gap={1}>
+                        {openEntries.map((e) => (
+                          <HStack
+                            key={e.id}
+                            justify="space-between"
+                            bg="orange.50"
+                            borderWidth="1px"
+                            borderColor="orange.200"
+                            borderRadius="md"
+                            px={2}
+                            py={1.5}
+                          >
+                            <Text fontSize="xs" fontWeight="semibold">{e.vehicle.displayName}</Text>
+                            <Text fontSize="2xs" color="fg.muted">
+                              from {e.startOdometer.toLocaleString()} mi
+                            </Text>
+                          </HStack>
+                        ))}
+                      </VStack>
+                      <Text fontSize="2xs" color="fg.muted">
+                        You don't have to close it now — an open session keeps running and
+                        you can stop it later from your Home screen or the Vehicles tab.
+                        Closing it while you still remember the odometer is easier.
+                      </Text>
+                    </>
+                  ) : (
+                    <>
+                      <Text fontSize="sm">
+                        You're on the clock and{" "}
+                        {vehiclesWithoutOpenSession.length === 1
+                          ? vehiclesWithoutOpenSession[0].displayName + " is"
+                          : `${vehiclesWithoutOpenSession.length} vehicles are`}{" "}
+                        assigned to you. Want to start the driving log too?
+                      </Text>
+                      <Text fontSize="2xs" color="fg.muted">
+                        Only if you're driving today — this is a reminder, not a
+                        requirement. Starting now is the one moment the odometer
+                        reading is still in front of you; it can't be recovered later.
+                      </Text>
+                    </>
+                  )}
+                </VStack>
+              )}
+
               {step.kind === "pick" && (
                 <VStack align="stretch" gap={2}>
                   {openEntries.map((entry) => (
@@ -910,16 +980,38 @@ function CompactMileageDialog({
             </Dialog.Body>
             <Dialog.Footer>
               <HStack gap={2} w="full" justify="flex-end">
-                {step.kind === "pick" ? (
+                {step.kind === "remind" ? (
+                  <>
+                    {/* Dismissal is the FIRST button and reads as a real
+                        choice, not a nag to click past. The user asked for
+                        a reminder they can ignore — so ignoring it must be
+                        one tap, with nothing left behind. */}
+                    <Button variant="ghost" onClick={onClose}>
+                      {remind === "stop" ? "Leave it running" : "Not now"}
+                    </Button>
+                    <Button colorPalette="orange" onClick={() => setStep(workStep)}>
+                      {remind === "stop" ? "Stop driving" : "Start driving"}
+                    </Button>
+                  </>
+                ) : step.kind === "pick" ? (
                   <Button variant="ghost" onClick={onClose}>Cancel</Button>
                 ) : (
                   <>
                     {/* Back to picker only when we actually had a picker
                         step (i.e. multiple options were available). */}
-                    {(openEntries.length + vehiclesWithoutOpenSession.length) > 1 && (
+                    {((openEntries.length + vehiclesWithoutOpenSession.length) > 1 || !!remind) && (
                       <Button
                         variant="ghost"
-                        onClick={() => setStep({ kind: "pick" })}
+                        onClick={() =>
+                          setStep(
+                            // Back goes to whichever step we actually came
+                            // from — the picker when there was one, else
+                            // the reminder that opened this dialog.
+                            (openEntries.length + vehiclesWithoutOpenSession.length) > 1
+                              ? { kind: "pick" }
+                              : { kind: "remind" },
+                          )
+                        }
                         disabled={busy}
                       >
                         Back

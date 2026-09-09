@@ -360,17 +360,12 @@ export function WorkdayBanner({ viewAsUserId }: { viewAsUserId?: string | null }
   const state = payload.today.state;
   const openMileageCount = payload.openMileageEntries.length;
   const activeCheckoutCount = payload.activeCheckouts.length;
-  const endBlocked = openMileageCount + activeCheckoutCount > 0;
-  const blockerSummary = (() => {
-    const parts: string[] = [];
-    if (openMileageCount > 0) {
-      parts.push(`${openMileageCount} mileage`);
-    }
-    if (activeCheckoutCount > 0) {
-      parts.push(`${activeCheckoutCount} equipment`);
-    }
-    return parts.join(" + ");
-  })();
+  // Only equipment blocks the End button now — see attemptEnd for why
+  // open mileage became a reminder instead of a gate. `openMileageCount`
+  // is still read: the mileage banner below uses it, and an open session
+  // is still called out on the clock line, just not as a blocker.
+  const endBlocked = activeCheckoutCount > 0;
+  const blockerSummary = `${activeCheckoutCount} equipment`;
   // Detail tiles shown when a workday banner is expanded. Kept in a
   // helper so IN_PROGRESS / PAUSED / COMPLETED share the layout.
   // Rendered as a responsive tile grid so label + value stay
@@ -412,18 +407,22 @@ export function WorkdayBanner({ viewAsUserId }: { viewAsUserId?: string | null }
   // of a permanent red banner sitting on the tab with no context.
   // The mileage/checkout banners below give the user the affordances
   // to actually resolve the block.
+  // Open MILEAGE no longer blocks the end. An open session is a
+  // reminder, not a gate: the workday clock and the driving log are
+  // separate records, and refusing to close the first because the
+  // second is still running left workers stuck with no way forward on
+  // this surface (the WorkdayStrip's End dialog has always allowed it,
+  // leaving blank sessions open). Ending now fires the global
+  // driving-log reminder instead — see MileageReminderInterceptor.
+  //
+  // Equipment checkouts still block: that is company property in
+  // someone's hands, and the checkout has to be released by a person,
+  // not acknowledged by a dialog.
   function attemptEnd() {
-    if (openMileageCount + activeCheckoutCount > 0) {
-      const parts: string[] = [];
-      if (openMileageCount > 0) {
-        parts.push(`${openMileageCount} open mileage session${openMileageCount === 1 ? "" : "s"}`);
-      }
-      if (activeCheckoutCount > 0) {
-        parts.push(`${activeCheckoutCount} active equipment checkout${activeCheckoutCount === 1 ? "" : "s"}`);
-      }
+    if (activeCheckoutCount > 0) {
       publishInlineMessage({
         type: "ERROR",
-        text: `Can't end workday — close ${parts.join(" and ")} first.`,
+        text: `Can't end workday — close ${activeCheckoutCount} active equipment checkout${activeCheckoutCount === 1 ? "" : "s"} first.`,
       });
       return;
     }
@@ -483,6 +482,7 @@ export function WorkdayBanner({ viewAsUserId }: { viewAsUserId?: string | null }
         const priorPending = payload.openPrior.length > 0;
         return (
         <CompactBanner
+          testId="workday-banner"
           palette="orange"
           icon={<Clock size={16} />}
           glow={glowNotStarted}
@@ -531,6 +531,7 @@ export function WorkdayBanner({ viewAsUserId }: { viewAsUserId?: string | null }
 
       {state === "IN_PROGRESS" && (
         <CompactBanner
+          testId="workday-banner"
           palette="blue"
           icon={<Play size={16} />}
           glow={glowInProgress}
@@ -556,19 +557,27 @@ export function WorkdayBanner({ viewAsUserId }: { viewAsUserId?: string | null }
           <Text as="span">
             since {fmtTimeOpts(payload.today.workday.startedAt, { hour: "numeric", minute: "2-digit" })}
           </Text>
-          {endBlocked && (
+          {endBlocked ? (
             <>
               {" · "}
               <Text as="span" color="red.700" fontWeight="semibold">
                 End blocked ({blockerSummary} open below)
               </Text>
             </>
-          )}
+          ) : openMileageCount > 0 ? (
+            <>
+              {" · "}
+              <Text as="span" color="orange.700" fontWeight="semibold">
+                {openMileageCount} driving session{openMileageCount === 1 ? "" : "s"} running
+              </Text>
+            </>
+          ) : null}
         </CompactBanner>
       )}
 
       {state === "PAUSED" && (
         <CompactBanner
+          testId="workday-banner"
           palette="yellow"
           icon={<Pause size={16} />}
           expandedContent={workdayDetail(payload.today.workday)}
@@ -590,19 +599,27 @@ export function WorkdayBanner({ viewAsUserId }: { viewAsUserId?: string | null }
           ]}
         >
           <Text as="span" fontWeight="semibold">Workday paused.</Text>
-          {endBlocked && (
+          {endBlocked ? (
             <>
               {" · "}
               <Text as="span" color="red.700" fontWeight="semibold">
                 End blocked ({blockerSummary} open below)
               </Text>
             </>
-          )}
+          ) : openMileageCount > 0 ? (
+            <>
+              {" · "}
+              <Text as="span" color="orange.700" fontWeight="semibold">
+                {openMileageCount} driving session{openMileageCount === 1 ? "" : "s"} running
+              </Text>
+            </>
+          ) : null}
         </CompactBanner>
       )}
 
       {state === "COMPLETED" && (
         <CompactBanner
+          testId="workday-banner"
           palette="gray"
           icon={<CheckCircle2 size={16} />}
           expandedContent={workdayDetail(payload.today.workday)}

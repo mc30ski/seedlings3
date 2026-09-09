@@ -2130,6 +2130,251 @@ describe("[build-gate] hours approval measures a job against itself", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+describe("[build-gate] Home's vehicle summary is per-driver and self-hiding", () => {
+  const web = (rel: string) => readFileSync(join(__dirname, "../../../web/src/", rel), "utf8");
+
+  it("the summary is scoped to the DRIVER, not the vehicle", () => {
+    // Two workers share the crew van. "How far did the van go" is the
+    // fleet question the Super Vehicles tab answers; this section answers
+    // "how far did I take it". Dropping driverUserId from the query would
+    // still return plausible numbers — just everyone else's mixed in.
+    const M = readFileSync(join(__dirname, "./mileage.ts"), "utf8");
+    const at = M.indexOf("export async function assignedVehicleSummaryForUser");
+    expect(at, "the summary service must exist").toBeGreaterThan(-1);
+    const body = M.slice(at, M.indexOf("\nexport ", at + 10));
+    expect(body, "entries must be filtered to the driver").toMatch(/driverUserId: userId/);
+    expect(body, "…and to the vehicles that driver is assigned").toMatch(/vehicleId: \{ in:/);
+    // Open sessions have no ending odometer, so their miles are unknown —
+    // folding them into the total reports a figure that changes later.
+    expect(body, "only closed sessions contribute miles")
+      .toMatch(/const closed = rows\.filter\(\(r\) => r\.endedAt != null\)/);
+    expect(body, "open sessions are counted separately").toMatch(/openSessionCount/);
+  });
+
+  it("the endpoint is view-as aware, not annotated away", () => {
+    // /me/vehicles carries a `view-as-allow` annotation whose stated
+    // reason is that the MileageStrip is self-service only. This section
+    // is NOT — an admin with the Home worker picker on one worker must see
+    // that worker's vehicles — so it needs the real override, gated on
+    // ADMIN/SUPER. Reusing /me/vehicles here would have rendered the
+    // admin's own vehicles under the worker's name.
+    const R = readFileSync(join(__dirname, "../routes/worker.ts"), "utf8");
+    const at = R.indexOf('app.get("/me/vehicle-summary"');
+    expect(at, "the endpoint must exist").toBeGreaterThan(-1);
+    const handler = R.slice(at, at + 1400);
+    expect(handler, "must accept viewAsUserId").toContain("viewAsUserId");
+    expect(handler, "must gate the override on ADMIN/SUPER")
+      .toMatch(/isAdmin[\s\S]{0,200}?forbidden/);
+  });
+
+  it("the section disappears for a worker with no vehicles", () => {
+    // An empty frame on a page of sections reads as a broken section. The
+    // MileageStrip already self-hides on the same condition, so the two
+    // are consistent for a worker who never drives.
+    const P = web("ui/tabs/HomeTab.parts.tsx").replace(/\s+/g, " ");
+    expect(P, "the section returns nothing when the list is empty")
+      .toMatch(/if \(!rows \|\| rows\.length === 0\) return null;/);
+    const H = web("ui/tabs/HomeTab.tsx").replace(/\s+/g, " ");
+    expect(H, "…and the FRAME is dropped too, not just its contents")
+      .toMatch(/myVehiclesApi\?\.hasVehicles !== false/);
+  });
+
+  it("it follows the Home section contract the other sections follow", () => {
+    const H = web("ui/tabs/HomeTab.tsx");
+    const at = H.indexOf('storageKey="seedlings:homeTab:myVehiclesOpen"');
+    expect(at, "the section needs its own persisted collapse key").toBeGreaterThan(-1);
+    const frame = H.slice(at - 400, at + 700);
+    // Same four wires every other Home section hands its Dashboard.
+    for (const wire of ["onRefresh=", "refreshing=", "collapsedSummarySlot=", "timeframe="]) {
+      expect(frame, `the frame must pass ${wire}`).toContain(wire);
+    }
+    // Per-person surfaces are hidden in the team views — matching the two
+    // pay sections directly above it.
+    expect(frame, "hidden in the aggregate and subset team views")
+      .toMatch(/!isAggregate && !isSubset/);
+  });
+
+  it("the timeframe list widens for an admin inspecting a worker", () => {
+    // Same split as the pay card: a worker gets the short list, an admin
+    // looking at one worker gets the longer arc.
+    const P = web("ui/tabs/HomeTab.parts.tsx").replace(/\s+/g, " ");
+    const at = P.indexOf("export function MyVehiclesSection");
+    const body = P.slice(at, at + 1600);
+    expect(body).toMatch(/isAdminView \? ADMIN_PERIODS : WORKER_PERIODS/);
+    expect(body, "the chosen window must survive a reload")
+      .toMatch(/usePersistedPeriod\( "homeMyVehicles_period"/);
+  });
+});
+
+describe("[build-gate] a forced next visit is the same visit approval would make", () => {
+  const svc = (rel: string) => readFileSync(join(__dirname, rel), "utf8");
+
+  it("both paths build the next occurrence through one function", () => {
+    // These were two hand-maintained copies and they drifted: the forced
+    // one dropped the guidance note, the reference photos and the likes,
+    // and ignored the job's default CREW. Forcing a visit early therefore
+    // produced a visibly different visit from the one the crew would have
+    // got a week later — and nothing failed, so nobody noticed until a
+    // crew showed up without the reference photos.
+    const P = svc("./payments.ts");
+    expect(P, "the shared builder must exist").toContain("async function createNextOccurrenceFrom(");
+    // Exactly two callers: approvePayment's auto-create and the admin
+    // force-next escape hatch.
+    const calls = P.match(/await createNextOccurrenceFrom\(/g) ?? [];
+    expect(calls.length, "expected both paths to call the shared builder").toBe(2);
+    // …and NOTHING else in the file creates a repeating next visit by hand.
+    // One create belongs to the builder; any second one is a third copy
+    // growing back.
+    const creates = P.match(/jobOccurrence\.create\(/g) ?? [];
+    expect(creates.length, "a second hand-rolled next-visit create has appeared").toBe(1);
+  });
+
+  it("everything that rides along with a new visit is carried in that one place", () => {
+    const P = svc("./payments.ts");
+    const at = P.indexOf("async function createNextOccurrenceFrom(");
+    const body = P.slice(at, P.indexOf("\n}", at));
+    // The four carry-alongs, each of which the forced path used to drop.
+    expect(body, "guidance note must carry").toMatch(/guidanceNote: source\.guidanceNote/);
+    expect(body, "reference photos must carry").toContain("occurrencePropertyPhoto.findMany");
+    expect(body, "likes must carry").toContain("likedOccurrence.findMany");
+    expect(body, "repeating instructions must carry")
+      .toMatch(/occurrenceInstruction\.findMany\([\s\S]{0,120}?repeats: true/);
+    // The crew outranks the per-user defaults — the specific thing the
+    // forced path got wrong.
+    // Asserted on the READ of the job's crew id, not just the variable
+    // name — `const defaultGroupId = null` leaves the name in place and
+    // silently sends every visit down the per-user-defaults branch, which
+    // is exactly the shape of the bug this replaces.
+    expect(body, "the crew must be read from the source job")
+      .toMatch(/source\.job\?\.defaultGroupId/);
+    expect(body, "a default crew must win over default assignees")
+      .toMatch(/if \(defaultGroupId\)[\s\S]{0,400}?group\.claimerUserId/);
+    expect(body, "…and the per-user defaults are the fallback, not the default")
+      .toMatch(/\} else \{[\s\S]{0,200}?defaultAssignees/);
+    // A pinned note is about THIS visit and must never ride forward.
+    expect(body, "pinned notes must not carry").toMatch(/pinnedNote: null/);
+  });
+
+  it("the forced path actually selects what the builder needs", () => {
+    // defaultGroupId missing from force-next's `select` is what silently
+    // sent it down the per-user-defaults branch. Reading a field the query
+    // never fetched is undefined, not an error — so this can regress
+    // without a single test failing.
+    const P = svc("./payments.ts");
+    const at = P.indexOf("async forceCreateNextOccurrence(");
+    const fetchBlock = P.slice(at, P.indexOf("$transaction", at));
+    expect(fetchBlock, "force-next must select defaultGroupId").toContain("defaultGroupId: true");
+    expect(fetchBlock, "force-next must select the default assignees")
+      .toContain("defaultAssignees:");
+  });
+
+  it("a deduped visit is never stamped over", () => {
+    // When the dedupe matches a visit that already exists — exactly what
+    // happens after an admin force-creates one and the payment lands later
+    // — that row belongs to another path. Copying this payment's carryover
+    // onto it would overwrite whatever the admin put there, which is the
+    // entire reason force-next is usable for "add a service to the next
+    // visit before this one is paid".
+    const P = svc("./payments.ts");
+    const at = P.indexOf('nextOccurrenceSkipReason = "duplicate_exists"');
+    expect(at, "the dedupe branch must exist").toBeGreaterThan(-1);
+    // The builder is called in the ELSE branch only, so a matched row is
+    // returned untouched.
+    const after = P.slice(at, at + 700);
+    expect(after).toMatch(/\} else \{[\s\S]{0,400}?createNextOccurrenceFrom/);
+    expect(P.slice(at, at + 200), "the matched row is returned as-is")
+      .not.toContain("createMany");
+  });
+});
+
+describe("[build-gate] the driving log is reminded, never gated", () => {
+  const web = (rel: string) =>
+    readFileSync(join(__dirname, "../../../web/src/", rel), "utf8");
+
+  it("start and end fire the reminder from the one place every surface goes through", () => {
+    // A workday starts/ends from the strip, the MY ACTIVITIES banner, the
+    // start-job gate and the workday workflow. Hooking the shared client
+    // is what makes the reminder behave identically on all of them; a
+    // per-surface copy is how three of the four end up without it.
+    const W = web("lib/workday.ts");
+    expect(W, "startWorkday must nudge about the driving log")
+      .toMatch(/workday\/start[\s\S]{0,240}?maybePromptMileage\("start"/);
+    expect(W, "endWorkday must nudge about the driving log")
+      .toMatch(/workday\/end[\s\S]{0,240}?maybePromptMileage\("stop"/);
+  });
+
+  it("the reminder is suppressed for an admin acting as someone else", () => {
+    // /api/me/mileage/* is self-only server-side (driverUserId === caller),
+    // so prompting an impersonating admin offers an action the request
+    // would be refused for.
+    const W = web("lib/workday.ts").replace(/\s+/g, " ");
+    expect(W).toMatch(/function maybePromptMileage[^}]*if \(opts\?\.viewAsUserId\) return;/);
+  });
+
+  it("it rides its own event, not the general workday broadcast", () => {
+    // bumpWorkday() fires from background refreshes and the offline queue
+    // draining. A dialog on every one of those is intolerable, so the
+    // reminder gets a distinct event that only an explicit start/end
+    // raises.
+    const B = web("lib/bus.ts");
+    expect(B).toContain("seedlings:mileage-reminder");
+    expect(B, "the reminder must not be folded into bumpWorkday")
+      .toMatch(/export function bumpWorkday\(\)[\s\S]{0,220}?workday-changed/);
+    const bump = B.slice(B.indexOf("export function bumpWorkday"));
+    expect(bump.slice(0, bump.indexOf("}")), "bumpWorkday must not raise the reminder")
+      .not.toContain("mileage-reminder");
+  });
+
+  it("open mileage does not block ending a workday on any surface", () => {
+    // The user's rule: "it's just a reminder, I don't have to end it."
+    // The MY ACTIVITIES banner used to refuse the End outright, which the
+    // WorkdayStrip never did — that asymmetry is what made the reminder
+    // unreachable from Home.
+    const S = readFileSync(join(__dirname, "../../../web/src/ui/tabs/JobsTab.workday.tsx"), "utf8");
+    const at = S.indexOf("function attemptEnd");
+    const body = S.slice(at, S.indexOf("\n  }", at));
+    expect(body, "attemptEnd must not refuse on open mileage")
+      .not.toMatch(/openMileageCount\s*[>+]/);
+    expect(body, "…but equipment still blocks — that is property in someone's hands")
+      .toMatch(/activeCheckoutCount > 0/);
+    // And the server never blocked it either, so nothing here is fighting
+    // an API rule.
+    const api = readFileSync(join(__dirname, "./workdays.ts"), "utf8");
+    const end = api.slice(api.indexOf("export async function endWorkday"));
+    expect(end.slice(0, 2000), "endWorkday has no mileage precondition")
+      .not.toMatch(/mileage/i);
+  });
+
+  it("the prompt is dismissible and self-suppressing", () => {
+    const I = readFileSync(
+      join(__dirname, "../../../web/src/ui/components/MileageReminderInterceptor.tsx"),
+      "utf8",
+    ).replace(/\s+/g, " ");
+    // Nothing to say → say nothing. Both directions bail before opening.
+    expect(I, "no open session means no stop reminder")
+      .toMatch(/if \(opens\.length === 0\) return;/);
+    expect(I, "no assignable vehicle means no start reminder")
+      .toMatch(/if \(opens\.length > 0 \|\| withoutSession\.length === 0\) return;/);
+    // The dialog it opens carries a one-tap way out in both directions.
+    const M = readFileSync(
+      join(__dirname, "../../../web/src/ui/components/MileageStrip.tsx"),
+      "utf8",
+    ).replace(/\s+/g, " ");
+    expect(M).toMatch(/remind === "stop" \? "Leave it running" : "Not now"/);
+  });
+
+  it("the workflow that already asks does not ask twice", () => {
+    // BeginWorkDayWorkflow offers a vehicle + odometer step BEFORE it
+    // clocks anyone in, and that step is skippable. Re-asking the instant
+    // it closes turns a reminder into a nag.
+    const B = readFileSync(
+      join(__dirname, "../../../web/src/ui/workflows/BeginWorkDayWorkflow.tsx"),
+      "utf8",
+    ).replace(/\s+/g, " ");
+    expect(B).toMatch(/startWorkday\( \{ startedAt: null \},[\s\S]*?skipMileagePrompt: true/);
+  });
+});
+
 describe("[build-gate] every Money tab explains itself", () => {
   const web = (rel: string) =>
     readFileSync(join(__dirname, "../../../web/src/ui/tabs/", rel), "utf8");

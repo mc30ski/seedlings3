@@ -5613,6 +5613,36 @@ export default async function workerRoutes(app: FastifyInstance) {
     return listAssignedVehiclesForUser(uid);
   });
 
+  // Per-vehicle driving summary for Home → MY VEHICLES. View-as aware:
+  // an admin with the Home worker picker on ONE worker sees that worker's
+  // vehicles and their miles, which is the whole point of the picker.
+  // Without the override this would render the ADMIN's own vehicles under
+  // the worker's name — the exact bug class docs/VIEW_AS_ENDPOINTS.md
+  // exists to prevent.
+  app.get("/me/vehicle-summary", workerGuard, async (req: any) => {
+    const { assignedVehicleSummaryForUser } = await import("../services/mileage");
+    const callerUid = await currentUserId(req);
+    const { viewAsUserId, from, to } = (req.query || {}) as {
+      viewAsUserId?: string;
+      from?: string;
+      to?: string;
+    };
+    let uid = callerUid;
+    if (viewAsUserId && viewAsUserId !== callerUid) {
+      const caller = await prisma.user.findUnique({
+        where: { id: callerUid },
+        include: { roles: true },
+      });
+      const isAdmin = caller?.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+      if (!isAdmin) throw app.httpErrors.forbidden("Only admins can view another worker's vehicles.");
+      uid = viewAsUserId;
+    }
+    return assignedVehicleSummaryForUser(uid, {
+      fromDate: from ? String(from) : undefined,
+      toDate: to ? String(to) : undefined,
+    });
+  });
+
   // view-as-allow: caller's own currently-open mileage sessions. Feeds
   // the MileageStrip and the End-workday dialog's "close open sessions"
   // prompt — both self-service surfaces.

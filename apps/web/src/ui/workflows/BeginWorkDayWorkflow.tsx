@@ -1008,7 +1008,15 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                           try {
                             // startedAt null = server stamps "now", the same
                             // as the Home strip's Start button.
-                            await startWorkday({ startedAt: null });
+                            await startWorkday(
+                              { startedAt: null },
+                              // This workflow offers its own vehicle /
+                              // odometer step BEFORE clocking anyone in, so
+                              // the global reminder would re-ask a question
+                              // the worker just answered — including when
+                              // they deliberately skipped it.
+                              { skipMileagePrompt: true },
+                            );
                             publishInlineMessage({ type: "SUCCESS", text: "Workday started." });
                             setStep("ready");
                           } catch (err) {

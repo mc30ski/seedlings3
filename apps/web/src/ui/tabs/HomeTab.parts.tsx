@@ -18,18 +18,21 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Box, Button, Card, HStack, IconButton, Select, SimpleGrid, Spinner, Text, VStack, createListCollection } from "@chakra-ui/react";
+import { Badge, Box, Button, Card, HStack, IconButton, Select, SimpleGrid, Spinner, Text, VStack, createListCollection } from "@chakra-ui/react";
 import {
   Activity, AlertTriangle, Briefcase, Building2, Calendar, CheckCircle2,
   ChevronsUpDown, Clock, DollarSign, FileText, Hammer, Percent, RefreshCw,
   Star, TrendingDown, TrendingUp, Truck, Users, Wrench, XCircle,
 } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
-import { bizAddDays, bizToday } from "@/src/lib/dates";
+import { bizAddDays, bizToday, fmtDateKey, type EtDateKey } from "@/src/lib/dates";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import MiniStatCard from "@/src/ui/components/MiniStatCard";
 import {
+  ADMIN_PERIODS,
+  DEFAULT_PERIOD,
   SUPER_PERIODS,
+  WORKER_PERIODS,
   periodKey,
   periodTimeframe,
   usePersistedPeriod,
@@ -532,4 +535,240 @@ function OpsSection({
       </Card.Body>
     </Card.Root>
   );
+}
+
+// ─── My Vehicles (per-driver) ────────────────────────────────────────────
+// Home → MY VEHICLES. One row per vehicle assigned to the scoped worker,
+// summarising THEIR driving on it over the section's timeframe.
+//
+// Scoped to the driver, not the vehicle: two workers can share the crew
+// van, and "how far did the van go" is the fleet question the Super
+// Vehicles tab answers. This section answers "how far did I take it".
+//
+// Self-hiding: a worker with no assigned vehicle gets nothing at all —
+// not an empty frame. Same rule the MileageStrip follows, and the reason
+// the section can sit unconditionally in the page body.
+export function MyVehiclesSection({
+  viewAsUserId,
+  onReady,
+}: {
+  /** Set when an admin has the Home worker picker on ONE worker. The
+   *  endpoint is view-as aware, so the rows belong to that worker. */
+  viewAsUserId?: string | null;
+  onReady?: (api: {
+    refresh: () => Promise<void>;
+    loading: boolean;
+    summary: React.ReactNode;
+    timeframe: ReturnType<typeof periodTimeframe>;
+    /** False once we know the scoped worker has no vehicles — the caller
+     *  unmounts the whole frame rather than render an empty section. */
+    hasVehicles: boolean;
+  }) => void;
+} = {}) {
+  const isAdminView = !!viewAsUserId;
+  // Same split as the pay card: a worker gets the short list ("how am I
+  // doing lately"), an admin inspecting one worker gets the long one.
+  const periods = isAdminView ? ADMIN_PERIODS : WORKER_PERIODS;
+  const [period, setPeriod] = usePersistedPeriod(
+    "homeMyVehicles_period",
+    periods,
+    DEFAULT_PERIOD,
+  );
+  const [rows, setRows] = useState<VehicleSummaryRow[] | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const range = useMemo(() => periodToRange(period), [period]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const qs = new URLSearchParams({ from: range.from, to: range.to });
+      if (viewAsUserId) qs.set("viewAsUserId", viewAsUserId);
+      const d = await apiGet<VehicleSummaryRow[]>(`/api/me/vehicle-summary?${qs.toString()}`);
+      setRows(Array.isArray(d) ? d : []);
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Failed to load vehicle summary.", err),
+      });
+      // Leave the previous rows in place on a failed refresh — blanking
+      // them would collapse the section out from under the reader.
+      setRows((prev) => prev ?? []);
+    } finally {
+      setLoading(false);
+    }
+  }, [range.from, range.to, viewAsUserId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  // Re-read when a mileage session starts or stops anywhere on the page,
+  // so the totals agree with the strip the reader just used.
+  useEffect(() => {
+    const onChange = () => void load();
+    window.addEventListener("seedlings:workday-changed", onChange);
+    return () => window.removeEventListener("seedlings:workday-changed", onChange);
+  }, [load]);
+
+  const totals = useMemo(() => {
+    const list = rows ?? [];
+    return {
+      miles: list.reduce((s, r) => s + r.totalMiles, 0),
+      sessions: list.reduce((s, r) => s + r.sessionCount, 0),
+      unapproved: list.reduce((s, r) => s + r.unapprovedMiles, 0),
+      open: list.reduce((s, r) => s + r.openSessionCount, 0),
+    };
+  }, [rows]);
+
+  // Collapsed-header summary. The timeframe LEADS and always shows —
+  // "128 mi" with no window attached is unreadable. Same rule as the pay
+  // and Insights sections.
+  const summaryNode = useMemo(
+    () => (
+      <Text fontSize="xs" color="fg.muted" lineClamp={1}>
+        {period.label}
+        {rows ? (
+          <>
+            {" · "}
+            <Box as="span" fontWeight="bold">{fmtMiles(totals.miles)}</Box> mi
+            {" · "}
+            <Box as="span" fontWeight="bold">{totals.sessions}</Box>{" "}
+            {totals.sessions === 1 ? "trip" : "trips"}
+            {totals.open > 0 && (
+              <>
+                {" · "}
+                <Box as="span" fontWeight="bold" color="orange.700">
+                  {totals.open} driving now
+                </Box>
+              </>
+            )}
+          </>
+        ) : null}
+      </Text>
+    ),
+    [period.label, rows, totals],
+  );
+
+  useEffect(() => {
+    onReady?.({
+      refresh: load,
+      loading,
+      summary: summaryNode,
+      timeframe: periodTimeframe(periods, period, setPeriod),
+      // `rows === null` means "not loaded yet" — treat that as HAS
+      // vehicles so the frame doesn't flash out and back in on every
+      // period change. Only a loaded, genuinely empty list hides it.
+      hasVehicles: rows === null || rows.length > 0,
+    });
+  }, [onReady, load, loading, summaryNode, periods, period, setPeriod, rows]);
+
+  if (loading && rows === null) {
+    return <HStack justify="center" py={4}><Spinner size="sm" /></HStack>;
+  }
+  if (!rows || rows.length === 0) return null;
+
+  return (
+    /* Stable hook for the e2e spec. The section's own title text sits in
+       the Dashboard header ABOVE this subtree, so a "div containing the
+       title" selector resolves to the header, not the content. */
+    <VStack align="stretch" gap={3} data-testid="my-vehicles">
+      {/* Fleet-wide-for-me totals first, then the per-vehicle detail —
+          same shape as the Insights sections: the number you came for,
+          then the breakdown that explains it. */}
+      <SimpleGrid columns={{ base: 2, sm: 4 }} gap={2}>
+        <MiniStatCard label="Miles" value={fmtMiles(totals.miles)} color="blue" icon={Truck} />
+        <MiniStatCard
+          label="Trips"
+          value={String(totals.sessions)}
+          hint={totals.open > 0 ? `${totals.open} still open` : undefined}
+          color={totals.open > 0 ? "orange" : "gray"}
+        />
+        <MiniStatCard label="Vehicles" value={String(rows.length)} color="gray" />
+        <MiniStatCard
+          label="Unapproved"
+          value={fmtMiles(totals.unapproved)}
+          hint={totals.unapproved > 0 ? "awaiting review" : "all reviewed"}
+          color={totals.unapproved > 0 ? "orange" : "green"}
+        />
+      </SimpleGrid>
+
+      <VStack align="stretch" gap={2}>
+        {rows.map((r) => {
+          const modelLine = [r.year, r.make, r.vehicleModel].filter(Boolean).join(" ");
+          return (
+            <Box
+              key={r.vehicleId}
+              p={2.5}
+              borderWidth="1px"
+              borderRadius="md"
+              borderColor={r.openSessionCount > 0 ? "orange.300" : "gray.200"}
+              bg={r.openSessionCount > 0 ? "orange.50" : "white"}
+            >
+              <HStack justify="space-between" align="flex-start" gap={2} wrap="wrap">
+                <VStack align="start" gap={0} minW={0} flex="1">
+                  <HStack gap={2} wrap="wrap">
+                    <Text fontSize="sm" fontWeight="semibold" lineClamp={1}>
+                      {r.displayName}
+                    </Text>
+                    {r.openSessionCount > 0 && (
+                      <Badge size="sm" colorPalette="orange" variant="solid" fontSize="2xs">
+                        Driving now
+                      </Badge>
+                    )}
+                  </HStack>
+                  <HStack gap={2} wrap="wrap" fontSize="2xs" color="fg.muted">
+                    {modelLine && <Text>{modelLine}</Text>}
+                    {r.plate && <Text>· {r.plate}</Text>}
+                    {r.currentOdometer != null && (
+                      <Text>· {r.currentOdometer.toLocaleString()} mi on the clock</Text>
+                    )}
+                  </HStack>
+                </VStack>
+                <VStack align="end" gap={0} flexShrink={0}>
+                  <Text fontSize="md" fontWeight="bold" lineHeight="1.1">
+                    {fmtMiles(r.totalMiles)} <Text as="span" fontSize="2xs" fontWeight="normal">mi</Text>
+                  </Text>
+                  <Text fontSize="2xs" color="fg.muted">
+                    {r.sessionCount} {r.sessionCount === 1 ? "trip" : "trips"}
+                    {r.lastDrivenOn ? ` · last ${fmtDateKey(r.lastDrivenOn as EtDateKey)}` : ""}
+                  </Text>
+                </VStack>
+              </HStack>
+              {r.unapprovedMiles > 0 && (
+                <Text fontSize="2xs" color="orange.700" mt={1}>
+                  {fmtMiles(r.unapprovedMiles)} mi still awaiting review
+                </Text>
+              )}
+              {r.sessionCount === 0 && r.openSessionCount === 0 && (
+                <Text fontSize="2xs" color="fg.muted" mt={1}>
+                  Nothing recorded in this window.
+                </Text>
+              )}
+            </Box>
+          );
+        })}
+      </VStack>
+    </VStack>
+  );
+}
+
+type VehicleSummaryRow = {
+  vehicleId: string;
+  displayName: string;
+  make: string | null;
+  vehicleModel: string | null;
+  year: number | null;
+  plate: string | null;
+  currentOdometer: number | null;
+  totalMiles: number;
+  approvedMiles: number;
+  unapprovedMiles: number;
+  sessionCount: number;
+  openSessionCount: number;
+  lastDrivenOn: string | null;
+};
+
+/** Miles read as whole numbers everywhere else in the app; a trip of
+ *  4.5 keeps its half so short hops don't all render as "5". */
+function fmtMiles(n: number): string {
+  return Number.isInteger(n) ? n.toLocaleString() : n.toFixed(1);
 }

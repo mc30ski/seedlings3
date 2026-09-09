@@ -7,6 +7,7 @@ import OnClockBubble from "@/src/ui/components/OnClockBubble";
 import { useOffline } from "@/src/lib/offline";
 import OfflineQueueDialog from "@/src/ui/dialogs/OfflineQueueDialog";
 import PolicyGateInterceptor from "@/src/ui/components/PolicyGateInterceptor";
+import MileageReminderInterceptor from "@/src/ui/components/MileageReminderInterceptor";
 import { apiGet } from "@/src/lib/api";
 import { setCompressionDefaults } from "@/src/lib/imageRedact";
 import { bizDateKey, bizToday, bizTomorrow, bizYesterday, bizAddDays, bizHour } from "@/src/lib/dates";
@@ -4825,6 +4826,10 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
           policies list, and opens the sign wizard. Self-hides when no
           worker is signed in or there's nothing to sign. */}
       <PolicyGateInterceptor />
+      {/* Post-clock-in / post-clock-out driving-log nudge. Root-mounted for
+          the same reason as the policy gate: the workday can be started or
+          ended from several surfaces and this one listener covers them all. */}
+      <MileageReminderInterceptor />
 
       {/* Network Info Dialog */}
       <Dialog.Root open={networkInfoOpen} onOpenChange={(e) => setNetworkInfoOpen(e.open)}>
