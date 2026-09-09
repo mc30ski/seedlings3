@@ -21,6 +21,7 @@ import {
   createListCollection,
 } from "@chakra-ui/react";
 import { ChevronRight, Eye } from "lucide-react";
+import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 import { apiGet, apiPatch, apiPost, apiDelete } from "@/src/lib/api";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
@@ -208,10 +209,39 @@ type ContactRow = {
   promoSmsOptedOut: boolean;
 };
 
+/** Super-only tab, so there is one audience and one version of the copy.
+ *
+ *  EVERY CLAIM IS A RULE THE SERVICE ENFORCES — the cooldown, the
+ *  one-SMS-per-message limit, the opt-out skip and the CAN-SPAM footer are all
+ *  in services/promotions.ts. */
+function PromotionsExplainer() {
+  return (
+    <TabExplainer storageKey="seedlings:promotionsTab:guideOpen" title="How promotions reach clients">
+      <ExplainerText>
+        Promotions <Em>ride along</Em> on messages you already send — an active campaign is
+        appended to an outgoing invoice by email or text, rather than sent as its own blast. The
+        invoice page can also display one.
+      </ExplainerText>
+      <ExplainerText>
+        <Em>Nobody is contacted twice.</Em> A contact who opted out of a channel is skipped on that
+        channel, and the same campaign will not reach the same person again inside its cooldown
+        window. A text carries <Em>at most one</Em> promotion — the most recently started wins —
+        because texts are billed per segment; email can carry several.
+      </ExplainerText>
+      <ExplainerText>
+        Every email footer carries your business address and a one-click opt-out link, which is what
+        the law requires. Campaigns are editable while <Em>Draft</Em> or <Em>Paused</Em>; an active
+        one is locked so the copy cannot change under a message already going out.
+      </ExplainerText>
+    </TabExplainer>
+  );
+}
+
 export default function PromotionsTab() {
   const [view, setView] = useState<"campaigns" | "contacts">("campaigns");
   return (
     <VStack align="stretch" gap={4} px={2} py={2}>
+      <PromotionsExplainer />
       <Tabs.Root value={view} onValueChange={(e) => setView(e.value as any)} size="sm">
         <Tabs.List>
           <Tabs.Trigger value="campaigns">Campaigns</Tabs.Trigger>

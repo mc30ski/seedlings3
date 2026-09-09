@@ -14,6 +14,7 @@ import {
 } from "@chakra-ui/react";
 import { AlertCircle, AlertTriangle, CheckCircle2, ExternalLink, Info, Search } from "lucide-react";
 import { apiPost } from "@/src/lib/api";
+import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 import { fmtDateTime } from "@/src/lib/dates";
 import {
   publishInlineMessage,
@@ -148,6 +149,20 @@ export default function AuditTab() {
 
   return (
     <Box>
+      <Box mb={3}>
+      <TabExplainer storageKey="seedlings:auditTab:guideOpen" title="What the Audit checks">
+        <ExplainerText>
+          Runs a set of <Em>data-integrity checks</Em> across the app and reports what looks wrong:
+          duplicate clients, properties, jobs or visits; a recurring job with no next visit
+          scheduled; an unclaimed job with no guidance; and jobs whose real time has drifted from
+          their estimate.
+        </ExplainerText>
+        <ExplainerText>
+          <Em>It only reads.</Em> Nothing here fixes anything — each finding links to the record so
+          you can decide. A finding is a question worth asking, not proof of a mistake.
+        </ExplainerText>
+      </TabExplainer>
+      </Box>
       <Text fontWeight="bold" fontSize="lg" mb={1}>System Audit</Text>
       <Text fontSize="sm" color="fg.muted" mb={4}>
         Select which checks to run. The audit scans the system for potential data issues but does not take any action.

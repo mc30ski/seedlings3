@@ -54,6 +54,7 @@ import { AdminViewAsSelector, AdminViewAsBadges, type AdminWorker } from "@/src/
 import { EQUIPMENT_KIND, EQUIPMENT_STATUS } from "@/src/lib/types";
 import { parseEquipmentKindsConfig, type EquipmentKindConfig } from "@/src/lib/equipmentSuggestions";
 import { Dashboard } from "@/src/ui/components/Dashboard";
+import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 import {
   SUPER_PERIODS,
   periodKey,
@@ -1704,6 +1705,88 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
 
   return (
     <Box w="full">
+      {/* Role-tailored orientation. Worker copy branches again on
+          worker type because the money story is completely different
+          per class: contractors are billed for what they take out,
+          employees never are, and trainees cannot reserve at all
+          (see canWorkerReserve + the workerRateBadge below). */}
+      <Box mb={3}>
+        <TabExplainer
+          storageKey={`seedlings:inventoryTab:guideOpen:${showSuperExtras ? "super" : showAdminExtras ? "admin" : "worker"}`}
+          title="How Inventory works"
+        >
+          {showSuperExtras ? (
+            <>
+              <ExplainerText>
+                The whole fleet — every piece, what state it is in, who is holding it and
+                which kits it belongs to. You have every admin control here (edit, force a
+                piece back from whoever has it, maintenance in and out, retire and
+                un-retire) plus the two that are yours alone: <Em>adding a new piece</Em>{" "}
+                and permanently deleting one that is already retired.
+              </ExplainerText>
+              <ExplainerText>
+                You can also reserve, check out or return <Em>on behalf of a worker</Em> —
+                the QR scan is bypassed and the audit trail records that you pulled the
+                lever, not them. Insights covers today&rsquo;s fleet state, rental income
+                for the window, the leaderboard and what is sitting idle; Team Usage below
+                is the raw checkout log, grouped by person, piece, kit or day.
+              </ExplainerText>
+            </>
+          ) : showAdminExtras ? (
+            <>
+              <ExplainerText>
+                The whole fleet — every piece, what state it is in, who is holding it and
+                which kits it belongs to. You can edit a piece,{" "}
+                <Em>force-release</Em> one a worker still has out, move it in and out of
+                maintenance, and retire or un-retire it. Team Usage below is every
+                worker&rsquo;s checkout history, grouped by person, piece, kit or day.
+              </ExplainerText>
+              <ExplainerText>
+                Adding a new piece and deleting a retired one are Super-only — putting
+                equipment on the books is a capital decision. There is no
+                act-on-behalf button for you either, but turning on <Em>view-as</Em> for a
+                worker gives you their own reserve and return buttons when you need them.
+              </ExplainerText>
+            </>
+          ) : (
+            <>
+              <ExplainerText>
+                Every piece of equipment and whether it is free right now.{" "}
+                <Em>Reserve</Em> one to hold it, then scan its QR sticker to check it out;
+                returning it is just a confirm, no scan needed. Your list puts pinned
+                pieces first, then whatever you are holding, then what is available. The
+                scan button up top only finds a piece in the list — it does not claim it.
+              </ExplainerText>
+              {isTrainee ? (
+                <ExplainerText>
+                  Some pieces require a signed policy before anyone can take them out. As
+                  a trainee you can browse, pin and read up on anything, but{" "}
+                  <Em>reserving is off</Em> — an admin checks equipment out to you.
+                  Nothing here is ever billed to you.
+                </ExplainerText>
+              ) : me?.workerType === "EMPLOYEE" ? (
+                <ExplainerText>
+                  Some pieces require a signed policy first — if you have not signed it,
+                  Reserve opens that document before anything else. Equipment is{" "}
+                  <Em>not billed to you</Em>; your cards read &ldquo;No charge&rdquo;
+                  because the business carries the cost of the tools you work with.
+                </ExplainerText>
+              ) : (
+                <ExplainerText>
+                  Some pieces require a signed policy first — if you have not signed it,
+                  Reserve opens that document before anything else. Equipment you take out
+                  is billed to you: a card shows either a flat daily rate or a per-job rate
+                  capped at that daily figure, and the real charge is worked out{" "}
+                  <Em>when you return it</Em>, from the days you actually had it. If you
+                  lead a crew, the reserve picker lets you take a piece out for the crew
+                  rather than yourself — the cost then splits across the crew&rsquo;s
+                  contractors, and any employees or trainees in it pay nothing.
+                </ExplainerText>
+              )}
+            </>
+          )}
+        </TabExplainer>
+      </Box>
       {/* Top toolbar — tab-level actions only (refresh, scan-to-find,
           admin Add). Section-scoped controls (search / compact /
           kind / status / liked / active-filter chips) live inside
@@ -2466,10 +2549,20 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                       const chip = shortBillingChip(resolveBillingMode(e.dailyRate, e.equivalentJobs, equipmentBillingEnabled));
                       const wt = me?.workerType;
                       const palette = wt === "EMPLOYEE" ? "blue" : wt === "TRAINEE" ? "green" : "orange";
-                      const rate = wt === "CONTRACTOR" ? e.dailyRate : null;
+                      // A contractor's pill comes from the SAME resolved
+                      // billing mode the full card and the reserve dialog
+                      // use — never from the raw dailyRate. Reading the
+                      // column directly ignored both the
+                      // EQUIPMENT_BILLING_ENABLED master toggle (compact
+                      // said "$4.00/day" while the full card said
+                      // "$0.00/day") and per-job billing (it showed the
+                      // daily cap as if it were a flat daily rate).
+                      // Employees and trainees are never billed, so they
+                      // keep reading "No charge" regardless of the chip.
+                      const isBillable = wt !== "EMPLOYEE" && wt !== "TRAINEE";
                       const workerPill = showWorkerExtras
-                        ? rate != null && rate > 0
-                          ? <Badge key="w" colorPalette={palette} variant="subtle" fontSize="xs" px="1.5" borderRadius="full">${rate.toFixed(2)}/day</Badge>
+                        ? isBillable && chip
+                          ? <Badge key="w" colorPalette={palette} variant="subtle" fontSize="xs" px="1.5" borderRadius="full">{chip}</Badge>
                           : <Badge key="w" colorPalette={palette} variant="subtle" fontSize="xs" px="1.5" borderRadius="full">No charge</Badge>
                         : null;
                       const adminPill = showAdminExtras && chip

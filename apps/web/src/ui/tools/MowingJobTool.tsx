@@ -28,6 +28,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { Calculator, Copy, FileText, Sparkles, TriangleAlert } from "lucide-react";
+import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 import { jobTagLabel, pricingJobTags } from "@/src/ui/components/JobTagPicker";
 import PricingPicker from "@/src/ui/components/PricingPicker";
 import { usePricingPicker } from "@/src/lib/usePricingPicker";
@@ -286,6 +287,23 @@ export default function MowingJobTool() {
 
   return (
     <VStack align="stretch" gap={4} p={4} maxW="900px" mx="auto">
+      <TabExplainer storageKey="seedlings:toolsMowingTab:guideOpen" title="What this estimator does">
+        <ExplainerText>
+          Prices a mow before you quote it. Choose how the base is measured — flat residential, per
+          acre, by time, or a custom figure — then toggle the add-on services. <Em>Full Service</Em>{" "}
+          is a one-tap preset for trim, edge and blow; every service stays individually editable.
+        </ExplainerText>
+        <ExplainerText>
+          The service list and its rates come <Em>from your Pricing tab</Em>, not from anything
+          hard-coded here — change a rate there and this follows. Picking a frequency shows what the
+          same job comes to over a year.
+        </ExplainerText>
+        <ExplainerText>
+          <Em>Nothing is saved.</Em> This writes no job, no estimate and no setting — it is a
+          calculator. <Em>Copy</Em> puts the breakdown on your clipboard; &ldquo;Use for new
+          estimate&rdquo; is not built yet and is deliberately disabled.
+        </ExplainerText>
+      </TabExplainer>
       <Box>
         <HStack gap={2} align="center" mb={1}>
           <Calculator size={20} />

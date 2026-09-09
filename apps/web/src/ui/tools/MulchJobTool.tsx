@@ -27,6 +27,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { Calculator, Copy, FileText, Plus, Trash2, TriangleAlert } from "lucide-react";
+import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 import PricingPicker from "@/src/ui/components/PricingPicker";
 import { usePricingPicker } from "@/src/lib/usePricingPicker";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
@@ -218,6 +219,23 @@ export default function MulchJobTool() {
     // etc. — without this the tool sits flush-left under the tab bar and
     // reads as misaligned compared to other tabs.
     <VStack align="stretch" gap={4} p={4} maxW="900px" mx="auto">
+      <TabExplainer storageKey="seedlings:toolsMulchTab:guideOpen" title="What this estimator does">
+        <ExplainerText>
+          Turns bed measurements into cubic yards and a price. Add a bed per area, entering either
+          length &times; width or a square-foot figure directly, then set the depth — the volume and
+          the total follow.
+        </ExplainerText>
+        <ExplainerText>
+          The rate comes <Em>from your Pricing tab</Em> — the mulch entry configured there. You can
+          override it inline for a one-off quote, and doing so <Em>changes nothing</Em> in settings;
+          the next estimate starts from the configured rate again.
+        </ExplainerText>
+        <ExplainerText>
+          <Em>Nothing is saved.</Em> No job, no estimate, no setting — it is a calculator.{" "}
+          <Em>Copy</Em> puts the breakdown on your clipboard; &ldquo;Use for new estimate&rdquo; is
+          not built yet and is deliberately disabled.
+        </ExplainerText>
+      </TabExplainer>
       <Box>
         <HStack gap={2} align="center" mb={1}>
           <Calculator size={20} />

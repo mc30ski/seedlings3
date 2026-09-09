@@ -22,6 +22,7 @@ import {
 } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { Dashboard } from "@/src/ui/components/Dashboard";
+import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -164,6 +165,57 @@ export default function CollectionsTab({
   return (
     <Box w="full">
       <VStack align="stretch" gap={3}>
+        {/* Role-tailored orientation. Kits are admin-authored and
+            read-only for workers, so the worker copy leads with what
+            a kit is FOR (a job telling you what to bring) rather than
+            with controls they do not have. */}
+        <TabExplainer
+          storageKey={`seedlings:collectionsTab:guideOpen:${showSuperExtras ? "super" : showAdminExtras ? "admin" : "worker"}`}
+          title="What Collections are"
+        >
+          {showSuperExtras ? (
+            <>
+              <ExplainerText>
+                Named kits — equipment that travels together, so a job can say
+                &ldquo;bring the mowing kit&rdquo; instead of listing six pieces. Create,
+                edit and delete them here. A kit is <Em>a label over equipment</Em>, so
+                deleting one never touches the equipment itself.
+              </ExplainerText>
+              <ExplainerText>
+                <Em>Insights</Em> is yours alone: kits carrying retired pieces (the ones
+                to repack), kits ranked by how much of them is actually available right
+                now, and which kits the most jobs depend on.
+              </ExplainerText>
+            </>
+          ) : showAdminExtras ? (
+            <>
+              <ExplainerText>
+                Named kits — equipment that travels together, so a job can say
+                &ldquo;bring the mowing kit&rdquo; instead of listing six pieces. Create,
+                edit and delete them here. A kit is <Em>a label over equipment</Em>, so
+                deleting one never touches the equipment itself.
+              </ExplainerText>
+              <ExplainerText>
+                The blue badge counts the jobs pinned to that kit, and a member marked{" "}
+                <Em>(retired)</Em> is one to swap out — jobs keep recommending the kit
+                either way. Click any member to open it on the Inventory tab.
+              </ExplainerText>
+            </>
+          ) : (
+            <>
+              <ExplainerText>
+                The kits your admin has grouped together — when a job tells you to bring
+                one, this is what is in it, and what each piece&rsquo;s status is right
+                now. <Em>Read-only</Em>; kits are built and changed by an admin.
+              </ExplainerText>
+              <ExplainerText>
+                A green check marks a piece you are already holding, and the whole card
+                turns green once any of the kit is in your hands. Tap a piece to open it
+                on the Inventory tab, where you can reserve it.
+              </ExplainerText>
+            </>
+          )}
+        </TabExplainer>
         <HStack justify="space-between">
           <Text fontWeight="semibold">Equipment collections</Text>
           {showAdminExtras && (
@@ -172,12 +224,6 @@ export default function CollectionsTab({
             </Button>
           )}
         </HStack>
-        {!showAdminExtras && (
-          <Text fontSize="xs" color="fg.muted">
-            Kits your administrator has grouped together. View only — a
-            green check marks kits you're currently using.
-          </Text>
-        )}
 
         {showSuperExtras && <CollectionsInsightsSection collections={collections} />}
 

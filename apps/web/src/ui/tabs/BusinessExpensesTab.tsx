@@ -61,6 +61,7 @@ import {
 } from "@chakra-ui/react";
 import { CalendarClock, CheckCircle2, ChevronDown, ChevronUp, CornerUpLeft, Eye, Flag, Info, Paperclip, Pencil, Plus, Repeat, Search, Trash2, X } from "lucide-react";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
+import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 import { bizToday, bizAddDays, bizStartOfMonth, bizStartOfYear, fmtDate, fmtDateOpts } from "@/src/lib/dates";
 import {
   publishInlineMessage,
@@ -351,7 +352,6 @@ export default function BusinessExpensesTab() {
   // Collapsible "When to capitalize vs expense" reference panel. Default
   // closed so the tab opens clean; opens once per user-preference (persisted
   // localStorage) for operators who want it visible while logging.
-  const [assetRuleOpen, setAssetRuleOpen] = usePersistedState<boolean>("be_assetRuleOpen", false);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
 
@@ -1184,6 +1184,7 @@ export default function BusinessExpensesTab() {
 
   return (
     <Box w="full" position="relative">
+
       {/* Full-tab loading overlay — same pattern used by Payments, Clients,
           Equipment, etc. Dims everything and centers a Spinner on top while
           a new timeframe or filter is being fetched. */}
@@ -1204,52 +1205,66 @@ export default function BusinessExpensesTab() {
         </HStack>
       </HStack>
 
-      {/* Combined info + capitalize-vs-expense reference. The always-
-          visible label describes the Ledger's scope (Expenses, Owner
-          Withdrawals, Capital Contributions — mirrors the type
-          filter's three options); expanding reveals the capitalize-vs-
-          expense rules table. Collapsed by default so the tab doesn't
-          lead with rules; the open state persists per operator. */}
-      <CollapsibleNote
-        open={assetRuleOpen}
-        onToggle={() => setAssetRuleOpen(!assetRuleOpen)}
-        palette="blue"
-        label={
-          <>
-            Ledger of Business <b>Expenses</b>, Owner <b>Withdrawals</b> (draws), and Capital <b>Contributions</b>
-            <Text as="span" color="blue.600" fontWeight="normal"> · when to capitalize vs expense</Text>
-          </>
-        }
-      >
-        <Text fontSize="sm" color="blue.900" mb={2} textAlign="left">
-          <Text as="span" fontWeight="semibold">Rule of thumb:</Text>{" "}
-          record anything over <Text as="span" fontWeight="semibold">${fixedAssetThreshold}</Text> as a fixed asset when purchased — your CPA decides at tax time whether to depreciate over multiple years or take the full Section 179 deduction (usually 179 for small businesses).
-        </Text>
-        <Box borderWidth="1px" borderColor="blue.200" borderRadius="md" bg="white" overflow="hidden">
-          <Box as="table" w="full" fontSize="xs">
-            <Box as="thead" bg="blue.100">
-              <Box as="tr">
-                <Box as="th" textAlign="left" px="2" py="1.5" color="blue.900" fontWeight="semibold">Item</Box>
-                <Box as="th" textAlign="left" px="2" py="1.5" color="blue.900" fontWeight="semibold">How to record</Box>
+      {/* ONE explainer, not two. This tab had a CollapsibleNote carrying the
+          capitalize-vs-expense reference, and a second TabExplainer was added
+          above the header — so the tab opened with two blue disclosures
+          saying overlapping things. Merged: what the Ledger is, what it does
+          NOT record, and the fixed-asset rule, in one place.
+
+          Sits BELOW the header so the tab leads with its own name, and
+          carries its own bottom margin — the root Box has no gap, so a child
+          without a margin butts straight against the next one. */}
+      <Box mb={3}>
+        <TabExplainer storageKey="seedlings:ledgerTab:guideOpen" title="What the Ledger is">
+          <ExplainerText>
+            The <Em>tax record</Em> — real money off a card or bank statement, entered by hand. It
+            holds three kinds of row: <Em>expenses</Em>, which carry a Schedule C line and are the
+            only deductions that exist anywhere in this app; and <Em>owner withdrawals (draws)</Em>{" "}
+            and <Em>capital contributions</Em>, which are equity movements and carry no Schedule C
+            line at all.
+          </ExplainerText>
+          <ExplainerText>
+            <Em>Nothing on a job writes here.</Em> Charging a client for materials, or recording a
+            supply purchase, creates no entry — those bill the client and track stock. Enter the
+            real card charge here as well; the two are different books and both are needed.
+          </ExplainerText>
+          <ExplainerText>
+            A job charge or supply purchase can <Em>point at</Em> a row here as a breadcrumb, so a
+            $500 receipt can say which jobs it covered. It is a reminder only — no total reads it,
+            and clearing it changes no number.
+          </ExplainerText>
+          <ExplainerText>
+            <Em>Capitalize or expense?</Em> Rule of thumb: record anything over{" "}
+            <Em>${fixedAssetThreshold}</Em> as a fixed asset when purchased — your CPA decides at
+            tax time whether to depreciate it over several years or take the full Section 179
+            deduction (usually 179 for a small business).
+          </ExplainerText>
+          <Box borderWidth="1px" borderColor="blue.200" borderRadius="md" bg="white" overflow="hidden">
+            <Box as="table" w="full" fontSize="xs">
+              <Box as="thead" bg="blue.100">
+                <Box as="tr">
+                  <Box as="th" textAlign="left" px="2" py="1.5" color="blue.900" fontWeight="semibold">Item</Box>
+                  <Box as="th" textAlign="left" px="2" py="1.5" color="blue.900" fontWeight="semibold">How to record</Box>
+                </Box>
+              </Box>
+              <Box as="tbody">
+                {[
+                  { item: "Commercial mower $2,000+", how: "Fixed asset — depreciate or Section 179" },
+                  { item: "Trailer $1,500+", how: "Fixed asset — depreciate or Section 179" },
+                  { item: "Trimmer $300", how: "Expense immediately — Equipment & Tools" },
+                  { item: "Blower $250", how: "Expense immediately — Equipment & Tools" },
+                  { item: "Shovel $30", how: "Expense immediately — Supplies & Materials" },
+                ].map((row, i) => (
+                  <Box as="tr" key={i} borderTopWidth={i === 0 ? "0" : "1px"} borderTopColor="blue.100">
+                    <Box as="td" px="2" py="1.5" color="fg.default">{row.item}</Box>
+                    <Box as="td" px="2" py="1.5" color="fg.default">{row.how}</Box>
+                  </Box>
+                ))}
               </Box>
             </Box>
-            <Box as="tbody">
-              {[
-                { item: "Commercial mower $2,000+", how: "Fixed asset — depreciate or Section 179" },
-                { item: "Trailer $1,500+", how: "Fixed asset — depreciate or Section 179" },
-                { item: "Trimmer $300", how: "Expense immediately — Equipment & Tools" },
-                { item: "Blower $250", how: "Expense immediately — Equipment & Tools" },
-                { item: "Shovel $30", how: "Expense immediately — Supplies & Materials" },
-              ].map((row, i) => (
-                <Box as="tr" key={i} borderTopWidth={i === 0 ? "0" : "1px"} borderTopColor="blue.100">
-                  <Box as="td" px="2" py="1.5" color="fg.default">{row.item}</Box>
-                  <Box as="td" px="2" py="1.5" color="fg.default">{row.how}</Box>
-                </Box>
-              ))}
-            </Box>
           </Box>
-        </Box>
-      </CollapsibleNote>
+        </TabExplainer>
+      </Box>
 
       {/* Due to record — recurring expenses whose next expected instance
           has arrived (or is within the lead window). Hidden when nothing
@@ -2859,59 +2874,6 @@ function RecurrenceSelect(props: { value: string; onChange: (v: string) => void 
         </Select.Content>
       </Select.Positioner>
     </Select.Root>
-  );
-}
-
-// Single-source-of-truth collapsible info card. Used for the equipment-
-// rental CPA reminder and the capitalize-vs-expense rule so they render
-// pixel-identically — only the colors differ.
-function CollapsibleNote(props: {
-  open: boolean;
-  onToggle: () => void;
-  /** Chakra palette name — "red" / "blue" / etc. Drives border/bg/icon/text colors. */
-  palette: string;
-  /** Text (or ReactNode when the label needs inline formatting like <b>). */
-  label: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  const { open, onToggle, palette, label, children } = props;
-  const iconColor = `var(--chakra-colors-${palette}-700)`;
-  return (
-    <Card.Root variant="outline" mb={3} borderColor={`${palette}.300`} bg={`${palette}.50`}>
-      <Box
-        as="button"
-        w="full"
-        px="3"
-        py="2"
-        textAlign="left"
-        display="flex"
-        alignItems="center"
-        justifyContent="space-between"
-        gap="2"
-        cursor="pointer"
-        onClick={onToggle}
-        _hover={{ bg: `${palette}.100` }}
-      >
-        <HStack gap={2} flex="1" minW="0" alignItems="center">
-          <Box flexShrink={0} display="inline-flex" alignItems="center" justifyContent="center">
-            <Info size={14} color={iconColor} />
-          </Box>
-          <Text fontSize="sm" fontWeight="semibold" color={`${palette}.800`} textAlign="left">
-            {label}
-          </Text>
-        </HStack>
-        <Box flexShrink={0} display="inline-flex" alignItems="center" justifyContent="center">
-          {open
-            ? <ChevronUp size={14} color={iconColor} />
-            : <ChevronDown size={14} color={iconColor} />}
-        </Box>
-      </Box>
-      {open && (
-        <Box px="3" pb="3" pt="0">
-          {children}
-        </Box>
-      )}
-    </Card.Root>
   );
 }
 

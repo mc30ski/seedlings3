@@ -34,6 +34,7 @@ import { openEventSearch } from "@/src/lib/bus";
 import { fmtDate, fmtDateTime, bizDateKey, bizTomorrow, bizDaysBetween, bizHourMinute, bizInstantFromEtParts, type EtDateKey } from "@/src/lib/dates";
 import AddressAutocomplete from "@/src/ui/components/AddressAutocomplete";
 import { AdminWorkerPicker, RoutesOperationsPanel, SectionExpander } from "@/src/ui/tabs/PreviewRoutesTab.parts";
+import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 
 type RouteJob = {
   id: string;
@@ -482,6 +483,58 @@ export default function PreviewRoutesTab({ scope }: Props) {
           </Box>
         </>
       )}
+      {/* Role-tailored orientation. Replaces nothing — the one-line AI
+          disclaimer below stays, because it has to be visible without
+          opening anything. */}
+      <Box mb={3}>
+        <TabExplainer
+          storageKey={`seedlings:routesTab:guideOpen:${scope.isSuper ? "super" : scope.isAdmin ? "admin" : "worker"}`}
+          title="How Routes plans a day"
+        >
+          {scope.isSuper ? (
+            <>
+              <ExplainerText>
+                Pick a date and a worker, and this orders their stops for that day from
+                driving distances and an AI pass, then lets you claim and move jobs onto the
+                plan. Moves made from here <Em>skip the written-reason requirement</Em> — the
+                planner records itself as the source.
+              </ExplainerText>
+              <ExplainerText>
+                <Em>Operations</Em> above the picker is yours alone: team miles, drive time,
+                sessions, active drivers and the top drivers and vehicles for a rolling
+                period.
+              </ExplainerText>
+            </>
+          ) : scope.isAdmin ? (
+            <>
+              <ExplainerText>
+                Pick a date and a worker, and this orders their stops for that day from
+                driving distances and an AI pass. Leave the picker on <Em>Me</Em> to plan your
+                own; pick a worker and the claim and reschedule actions run on their behalf.
+              </ExplainerText>
+              <ExplainerText>
+                Moves made from here skip the written-reason requirement a manual reschedule
+                needs — the planner records itself as the source. The team travel rollup at
+                the top is Super-only.
+              </ExplainerText>
+            </>
+          ) : (
+            <>
+              <ExplainerText>
+                Pick a day and this suggests the order to drive it, from real driving
+                distances plus an AI pass over your claimed and claimable jobs. It is a
+                suggestion — nothing changes until you act on a stop.
+              </ExplainerText>
+              <ExplainerText>
+                From the plan you can <Em>claim</Em> an unclaimed job and pull it onto the
+                day. The usual rules still apply: a tentative or administered job cannot be
+                claimed here either, and as a contractor you are still held to jobs within two
+                days.
+              </ExplainerText>
+            </>
+          )}
+        </TabExplainer>
+      </Box>
       {/* Tiny AI disclaimer — one line, muted (was previously a
           full yellow card that dominated the first render). */}
       <Text fontSize="xs" color="fg.muted" mb={3}>

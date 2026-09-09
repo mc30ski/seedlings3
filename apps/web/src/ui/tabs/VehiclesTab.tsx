@@ -57,6 +57,7 @@ import {
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 import { Dashboard } from "@/src/ui/components/Dashboard";
+import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 
 type Vehicle = {
   id: string;
@@ -160,6 +161,58 @@ export default function VehiclesTab({ scope }: { scope: VehiclesTabScope }) {
 
   return (
     <VStack align="stretch" gap={3} p={3}>
+      {/* Role-tailored orientation. Admin and worker copy are close
+          but not identical: both are read-only here (every mutation
+          and the mileage drill-down are superGuard-ed), but a worker
+          needs pointing at the MileageStrip on Home, where their own
+          driving actually gets recorded. */}
+      <TabExplainer
+        storageKey={`seedlings:vehiclesTab:guideOpen:${showSuperExtras ? "super" : scope.isAdmin ? "admin" : "worker"}`}
+        title="What Vehicles tracks"
+      >
+        {showSuperExtras ? (
+          <>
+            <ExplainerText>
+              The company vehicles — make and model, plate, current odometer and who is
+              assigned to each. Add and edit vehicles, assign or unassign drivers, and{" "}
+              <Em>archive</Em> one that is out of service; archiving keeps all of its
+              history, and &ldquo;Show archived&rdquo; brings it back into view.
+            </ExplainerText>
+            <ExplainerText>
+              Expand a vehicle for its <Em>mileage log</Em> — the last 365 days of driving
+              sessions, with approved and unapproved miles split out — and add an entry by
+              hand when one is missing. Day-to-day approval happens in the combined
+              workday-and-mileage flow; this tab is where you come to fix things outside
+              it. Everything past the vehicle list is Super-only.
+            </ExplainerText>
+          </>
+        ) : scope.isAdmin ? (
+          <>
+            <ExplainerText>
+              The company vehicles — make and model, plate, current odometer, who is
+              assigned to each and whether it is active or archived. This is the quick
+              answer to which truck a worker is in.
+            </ExplainerText>
+            <ExplainerText>
+              <Em>Read-only</Em> for you. Adding vehicles, assigning drivers, archiving,
+              and the per-vehicle mileage log are all Super-only.
+            </ExplainerText>
+          </>
+        ) : (
+          <>
+            <ExplainerText>
+              The company vehicles and who is assigned to each, so you know which truck is
+              yours and who to ask about the others. Each card carries the make and model,
+              plate and the latest odometer reading.
+            </ExplainerText>
+            <ExplainerText>
+              <Em>Read-only</Em> — vehicles are set up and assigned by the owner. The miles
+              you drive are not recorded here: start and stop your trips on the mileage
+              strip on your Home tab, and that is what feeds these odometer readings.
+            </ExplainerText>
+          </>
+        )}
+      </TabExplainer>
       <HStack justify="space-between">
         <Text fontSize="lg" fontWeight="semibold">Vehicles</Text>
         <HStack gap={2}>

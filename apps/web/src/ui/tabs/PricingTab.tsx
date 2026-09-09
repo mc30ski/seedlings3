@@ -16,6 +16,7 @@ import {
   Wrap,
 } from "@chakra-ui/react";
 import { DollarSign, Pencil, Plus, Trash2 } from "lucide-react";
+import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { fmtDate } from "@/src/lib/dates";
 import {
@@ -188,12 +189,33 @@ export default function PricingTab({ isSuper, readOnly, scope }: Props) {
 
   return (
     <Box w="full" pb={8}>
-      <Box mb={3} p={3} bg="blue.50" borderWidth="1px" borderColor="blue.300" rounded="md">
-        <Text fontSize="sm" fontWeight="medium" color="blue.700">Pricing Guide</Text>
-        <Text fontSize="xs" color="blue.600">
-          Reference pricing for common job types. {canEdit ? "You can add, edit, and remove entries." : "Contact a super admin to make changes."}
-          {" "}This data is used by AI features to generate accurate estimates.
-        </Text>
+      {/* GET /admin/pricing is adminGuard; POST/PATCH/DELETE are superGuard.
+          So "you can edit this" is true for a super admin ONLY — an admin
+          reading that would go looking for buttons that are not rendered. */}
+      {/* Own bottom margin: this tab's root Box has no `gap`, so without it
+          the explainer butts straight into the Add Pricing Entry button. */}
+      <Box mb={3}>
+  <TabExplainer
+          storageKey={`seedlings:pricingTab:guideOpen:${canEdit ? "super" : "read"}`}
+          title="What this pricing is for"
+        >
+          <ExplainerText>
+            Reference prices for common job types — a <Em>starting point</Em> when quoting, not what
+            any client is actually charged. What a job bills is set on the job itself and can differ
+            per client.
+          </ExplainerText>
+          {canEdit ? (
+            <ExplainerText>
+              You can add, edit and remove entries. The AI estimate features read this list, so an
+              entry that drifts from what you really charge will pull estimates along with it.
+            </ExplainerText>
+          ) : (
+            <ExplainerText>
+              <Em>Read-only for you</Em> — only a super admin can change these. The AI estimate
+              features read from this list, so if a price here looks wrong it is worth flagging.
+            </ExplainerText>
+          )}
+        </TabExplainer>
       </Box>
 
       {canEdit && (

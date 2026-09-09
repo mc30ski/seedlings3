@@ -18,6 +18,7 @@ import {
 } from "@chakra-ui/react";
 import { ChevronDown, ChevronRight, DollarSign, Eye, EyeOff, Pencil, Plus, Trash2 } from "lucide-react";
 import { apiGet, apiPatch, apiPost, apiDelete } from "@/src/lib/api";
+import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 import { useBusinessStartCutoff } from "@/src/lib/businessStartCutoff";
 import { emailKey, phoneKey } from "@/src/lib/comms";
 import { type TabPropsType } from "@/src/lib/types";
@@ -2136,6 +2137,36 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
 
   return (
     <Box w="full" pb={8}>
+      <Box mb={3}>
+      <TabExplainer storageKey={`seedlings:settingsTab:guideOpen:${userIsSuper ? "super" : "admin"}`} title="What Settings control">
+        {userIsSuper ? (
+          <>
+            <ExplainerText>
+              The numbers and switches the rest of the app runs on — fee and margin rates, payment
+              methods, expense categories, thresholds, feature toggles. Changing one here changes
+              behaviour <Em>everywhere</Em>, usually immediately.
+            </ExplainerText>
+            <ExplainerText>
+              A rate change does <Em>not</Em> re-rate work already done: payouts are snapshotted
+              when a job is priced and when a payment is approved, so past jobs keep the terms they
+              were agreed under. What you change applies from here on.
+            </ExplainerText>
+          </>
+        ) : (
+          <>
+            <ExplainerText>
+              The numbers and switches the rest of the app runs on — fee and margin rates, payment
+              methods, expense categories, thresholds, feature toggles.
+            </ExplainerText>
+            <ExplainerText>
+              <Em>Read-only for you.</Em> You can see how the business is configured, but only a
+              super admin can change a value. If something here looks wrong, it is worth raising
+              rather than working around.
+            </ExplainerText>
+          </>
+        )}
+      </TabExplainer>
+      </Box>
       {/* Pricing Guide moved to its own tab under Directory. Settings now
           only carries the general key/value settings rows. */}
 

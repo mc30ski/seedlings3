@@ -17,6 +17,7 @@ import {
 import { Car, ChevronLeft, ChevronRight, AlertTriangle, Edit3, RotateCcw } from "lucide-react";
 import StatusChip from "@/src/ui/components/StatusChip";
 import { apiGet, apiPost, apiPatch } from "@/src/lib/api";
+import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import MileageReviewDialog, { type MileageReviewEntry } from "@/src/ui/dialogs/MileageReviewDialog";
@@ -438,6 +439,25 @@ export default function WorkdaysTab({
 
   return (
     <VStack align="stretch" gap={3}>
+      
+      <TabExplainer storageKey="seedlings:workdaysTab:guideOpen" title="What Workdays are">
+        <ExplainerText>
+          Each worker&rsquo;s daily clock — when they started, paused and finished. This is the{" "}
+          <Em>payroll basis</Em>: it answers &ldquo;was this person on the clock&rdquo;, which is a
+          different question from how long a job took.
+        </ExplainerText>
+        <ExplainerText>
+          Workers run their own clock; you <Em>approve</Em> the day, one at a time or in bulk, and
+          can correct a forgotten stop or create a day someone never started. Mileage for the day
+          is approved alongside it.
+        </ExplainerText>
+        <ExplainerText>
+          Deliberately <Em>decoupled from job time</Em>: on a crew, one worker can break for lunch
+          while another keeps working — the job clock runs on, the worker on break stops accruing
+          paid time. Tying them together would force one of those readings to be wrong.
+        </ExplainerText>
+      </TabExplainer>
+      
       {/* Pending-by-day chip row — only renders when there's a backlog.
           Each chip is a one-click jump to that day; the active chip
           highlights so Super can tell at a glance where they are. The

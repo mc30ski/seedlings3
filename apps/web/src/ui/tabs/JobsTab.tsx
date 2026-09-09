@@ -41,7 +41,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertCircle, AlertTriangle, Archive, BarChart3, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, ExternalLink, Eye, Filter, Hand, Heart, Inbox, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, Play, RefreshCw, Repeat, Share2, Star, Tag, Users, X,
+import { AlertCircle, AlertTriangle, Archive, BarChart3, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, ExternalLink, Eye, Filter, Hand, Heart, Inbox, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, Play, RefreshCw, Repeat, Share2, Star, Tag, Users, X,
   Map as MapIcon,
 } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
@@ -58,6 +58,7 @@ import {
 import ImpersonationWarning from "@/src/ui/components/ImpersonationWarning";
 import NextStartOverrideAffordance from "@/src/ui/components/NextStartOverrideAffordance";
 import RepeatingPauseInfoLine from "@/src/ui/components/RepeatingPauseInfoLine";
+import JobsExplainer from "@/src/ui/components/JobsExplainer";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { projectViewerPayout, projectTeamPayoutsForOcc, perWorkerShare, rateForViewer } from "@/src/lib/paymentMath";
 import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
@@ -548,11 +549,6 @@ export default function JobsTab({
     return () => clearInterval(id);
   }, []);
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
-  // Info dialog is opt-in only — opens when the user taps the (i) button.
-  // Used to auto-open on first visit (gated by a localStorage dismiss flag);
-  // that behavior was removed because surprise modals were getting in the
-  // way for returning users on every fresh device / browser session.
-  const [showInfoDialog, setShowInfoDialog] = useState(false);
   const [calFeedStep, setCalFeedStep] = useState<"closed" | "confirm" | "result">("closed");
   const [calFeedUrl, setCalFeedUrl] = useState<string | null>(null);
   const [calFeedLoading, setCalFeedLoading] = useState(false);
@@ -3083,6 +3079,17 @@ export default function JobsTab({
           <Spinner size="lg" />
         </Box>
       )}
+      {/* Standing reference for the whole tab — card types, colours,
+          flags, who can claim what. Was an (i) button opening a modal;
+          moved here so it reads like every other tab's explainer and so
+          the copy sits next to the feed it describes. */}
+      <Box mb={2}>
+        <JobsExplainer
+          isAdminView={showAdminExtras}
+          isSuperView={isSuper}
+          workerType={viewAsWorkerType !== undefined ? viewAsWorkerType : me?.workerType}
+        />
+      </Box>
       {/* ─── Admin / super overlays ───────────────────────────────
           Section frames match the Equipment tab pattern: outlined
           box (or orange Card for Insights), icon + UPPERCASE title,
@@ -3234,21 +3241,6 @@ export default function JobsTab({
           }}
         >
           <Filter size={14} />
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => setShowInfoDialog(true)}
-          px="2"
-          flexShrink={0}
-          title="How jobs work"
-          css={{
-            background: "var(--chakra-colors-gray-100)",
-            border: "1px solid var(--chakra-colors-gray-300)",
-            borderRadius: "6px",
-          }}
-        >
-          <Info size={14} />
         </Button>
         <Box position="relative" flexShrink={0} ref={createMenuRef}>
           <Button
@@ -10534,273 +10526,6 @@ export default function JobsTab({
         </Portal>
       </Dialog.Root>
 
-      <Dialog.Root open={showInfoDialog} onOpenChange={(e) => { if (!e.open) setShowInfoDialog(false); }}>
-        <Portal>
-          <Dialog.Backdrop />
-          <Dialog.Positioner>
-            <Dialog.Content mx="4" maxW="lg" w="full" rounded="2xl" p="4" shadow="lg" maxH="80vh" overflowY="auto">
-              <Dialog.CloseTrigger />
-              <Dialog.Header>
-                <Dialog.Title>How Jobs Work</Dialog.Title>
-              </Dialog.Header>
-              <Dialog.Body>
-                <VStack align="stretch" gap={4}>
-                  <Box>
-                    <Text fontWeight="bold" fontSize="md" mb={1}>Occurrence Types</Text>
-                    <Text fontSize="xs" color="fg.muted" mb={2}>Each type has a different workflow and visibility scope.</Text>
-                  </Box>
-
-                  {/* ── Job Types ── */}
-                  <Box>
-                    <Text fontWeight="semibold" fontSize="sm" color="fg.muted" mb={1}>Job Types</Text>
-                  </Box>
-
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="blue.300" bg="blue.50">
-                    <Badge colorPalette="blue" variant="subtle" mb={1}>Repeating</Badge>
-                    <Text fontSize="sm">A recurring job on a schedule (e.g., every 14 days). Workers can claim it, or an admin can assign a team. When payment is accepted, the next occurrence is automatically created using the Job Service's default team. If no default team is set, the next occurrence is left unassigned (claimable).</Text>
-                    <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Scheduled → Claim/Assign → Start → Complete → Accept Payment → Next auto-created</Text>
-                  </Box>
-
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="cyan.300" bg="cyan.50">
-                    <Badge colorPalette="cyan" variant="solid" mb={1}>One-Off</Badge>
-                    <Text fontSize="sm">A single job that does not repeat. No next occurrence is created after payment.</Text>
-                    <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Scheduled → Claim/Assign → Start → Complete → Accept Payment → Done</Text>
-                  </Box>
-
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="pink.300" bg="pink.50">
-                    <Badge colorPalette="pink" variant="solid" mb={1}>Estimate</Badge>
-                    <Text fontSize="sm">A site visit to assess work. Estimates are administered by default — they must be assigned by an admin. After starting and completing, the claimer or admin can accept or reject with comments. Estimates can be standalone (lightweight) or linked to a Job Service.</Text>
-                    <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Assign → Start → Complete → Accept or Reject</Text>
-                  </Box>
-
-                  {/* ── Personal Types ── */}
-                  <Box mt={2}>
-                    <HStack gap={2} mb={1}>
-                      <Text fontWeight="semibold" fontSize="sm" color="fg.muted">Personal</Text>
-                      <Badge fontSize="xs" px="1.5" borderRadius="full" variant="subtle" colorPalette="gray">Only you</Badge>
-                    </HStack>
-                  </Box>
-
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="blue.300" bg="blue.50">
-                    <Badge colorPalette="blue" variant="solid" mb={1}>Task</Badge>
-                    <Text fontSize="sm">A personal to-do item (e.g., "Call client about pricing"). Only visible to you. Can be completed directly — no start/complete workflow. Can optionally link to a job occurrence for context.</Text>
-                    <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Scheduled → Complete</Text>
-                  </Box>
-
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="purple.300" bg="purple.50">
-                    <Badge colorPalette="purple" variant="solid" mb={1}>Reminder</Badge>
-                    <Text fontSize="sm">A personal reminder only visible to you (e.g., "Pick up supplies"). Appears in the Jobs feed when due. Can be dismissed and reopened. Supports high-priority mode for a more prominent card.</Text>
-                  </Box>
-
-                  {/* ── Team Types ── */}
-                  <Box mt={2}>
-                    <HStack gap={2} mb={1}>
-                      <Text fontWeight="semibold" fontSize="sm" color="fg.muted">Team</Text>
-                      <Badge fontSize="xs" px="1.5" borderRadius="full" variant="subtle" colorPalette="gray">Assigned members only</Badge>
-                    </HStack>
-                    <Text fontSize="xs" color="fg.muted" mb={1}>Visible on the Worker Jobs tab only to people added via Manage Team. Admins always see them on the Admin Jobs tab.</Text>
-                  </Box>
-
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="yellow.400" bg="yellow.200">
-                    <Badge colorPalette="yellow" variant="solid" mb={1}>Event</Badge>
-                    <Text fontSize="sm">A team-scoped occurrence (e.g., "Weekly team meeting", "Equipment inspection"). Created by admins only. Can set an optional exact time. Can be one-off or repeating — repeating events auto-create the next instance when completed. Only admins can edit and complete. Becomes overdue if not completed by its date.</Text>
-                    <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Scheduled → Complete (admin) → Next auto-created (if repeating)</Text>
-                  </Box>
-
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="red.400" bg="red.200">
-                    <Badge colorPalette="red" variant="solid" mb={1}>Followup</Badge>
-                    <Text fontSize="sm">A team-scoped follow-up (e.g., "Follow up on Thompson pricing"). Created by admins only. Can optionally attach one or more clients and/or job services — clicking them navigates to the relevant tab. Can be one-off or repeating. Only admins can edit and complete. Becomes overdue if not completed by its date.</Text>
-                    <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Scheduled → Complete (admin) → Next auto-created (if repeating)</Text>
-                  </Box>
-
-                  {/* ── Everyone ── */}
-                  <Box mt={2}>
-                    <HStack gap={2} mb={1}>
-                      <Text fontWeight="semibold" fontSize="sm" color="fg.muted">Everyone</Text>
-                      <Badge fontSize="xs" px="1.5" borderRadius="full" variant="subtle" colorPalette="gray">All workers & admins</Badge>
-                    </HStack>
-                  </Box>
-
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="purple.400" bg="purple.200">
-                    <Badge colorPalette="purple" variant="solid" mb={1}>Announcement</Badge>
-                    <Text fontSize="sm">A company-wide notice visible to all workers and admins (e.g., "Office closed Friday", "New mulch supplier"). Created by admins only. Announcements are never completed — they remain in the timeline and naturally fall back over time. Only admins can edit or delete them. No Manage Team or overdue tracking.</Text>
-                  </Box>
-
-                  <Box mt={2}>
-                    <Text fontWeight="bold" fontSize="md" mb={1}>Key Concepts</Text>
-                  </Box>
-
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="teal.300">
-                    <Text fontWeight="semibold" fontSize="sm" mb={1}>Claimer</Text>
-                    <Text fontSize="sm">The first worker assigned to a job becomes the claimer. Only the claimer can start, complete, and accept payment. Other team members are workers or observers. To change the claimer, use Manage Team.</Text>
-                  </Box>
-
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="teal.300">
-                    <Text fontWeight="semibold" fontSize="sm" mb={1}>Default Team</Text>
-                    <Text fontSize="sm">A Job Service can have a default team. When a new occurrence is auto-created (after payment on a repeating job), the default team is assigned. One-time team swaps on individual occurrences don't affect the defaults.</Text>
-                  </Box>
-
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="blue.300">
-                    <Text fontWeight="semibold" fontSize="sm" mb={1}>Reschedule</Text>
-                    <Text fontSize="sm">The claimer can reschedule a job within 2 days of today. A reason is required and posted as a comment. Admins can reschedule without restrictions from the Job Services tab.</Text>
-                  </Box>
-
-                  <Box mt={2}>
-                    <Text fontWeight="bold" fontSize="md" mb={1}>Flags</Text>
-                    <Text fontSize="xs" color="fg.muted" mb={2}>These flags modify the behavior of any occurrence type.</Text>
-                  </Box>
-
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="red.300">
-                    <Badge bg="red.200" color="red.700" border="1px solid" borderColor="red.300" mb={1}>Administered</Badge>
-                    <Text fontSize="sm">Cannot be claimed by workers — an admin must assign the team. Once assigned, the claimer can start, complete, and manage it normally. Estimates are administered by default.</Text>
-                  </Box>
-
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="orange.300">
-                    <Badge colorPalette="orange" variant="solid" mb={1}>Tentative</Badge>
-                    <Text fontSize="sm">Cannot be claimed or started until an admin confirms it. Used when scheduling is uncertain or needs client approval.</Text>
-                  </Box>
-
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="orange.300">
-                    <Badge colorPalette="orange" variant="solid" mb={1}>Unconfirmed</Badge>
-                    <Text fontSize="sm">The client has not yet confirmed the appointment. Workers can still claim and start the job, but the card shows an orange "Unconfirmed" badge as a heads-up. The claimer or an admin can mark it confirmed, which removes the badge. Newly auto-created occurrences start unconfirmed by default.</Text>
-                  </Box>
-
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="yellow.400">
-                    <Badge colorPalette="yellow" variant="solid" mb={1}>Insured Only</Badge>
-                    <Text fontSize="sm">High-value jobs above a configured threshold. Contractors must have valid insurance to claim or be assigned.</Text>
-                  </Box>
-
-                  <Box mt={2}>
-                    <Text fontWeight="bold" fontSize="md" mb={1}>Card Colors</Text>
-                    <Text fontSize="xs" color="fg.muted" mb={2}>Card background colors indicate the state at a glance.</Text>
-                  </Box>
-
-                  <VStack align="stretch" gap={1}>
-                    <HStack p={2} bg="teal.50" borderWidth="1px" borderColor="teal.300" rounded="md" gap={2}>
-                      <Badge colorPalette="teal" variant="solid" fontSize="xs" flexShrink={0}>Teal</Badge>
-                      <Text fontSize="xs">Assigned to you, or someone is actively working (in progress)</Text>
-                    </HStack>
-                    <HStack p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" rounded="md" gap={2}>
-                      <Badge colorPalette="yellow" variant="solid" fontSize="xs" flexShrink={0}>Yellow</Badge>
-                      <Text fontSize="xs">Unassigned — available to claim</Text>
-                    </HStack>
-                    <HStack p={2} bg="green.100" borderWidth="1px" borderColor="green.400" rounded="md" gap={2}>
-                      <Badge colorPalette="green" variant="solid" fontSize="xs" flexShrink={0}>Green</Badge>
-                      <Text fontSize="xs">Pending payment — job complete, awaiting payment</Text>
-                    </HStack>
-                    <HStack p={2} bg="orange.50" borderWidth="1px" borderColor="orange.300" rounded="md" gap={2}>
-                      <Badge colorPalette="orange" variant="solid" fontSize="xs" flexShrink={0}>Orange</Badge>
-                      <Text fontSize="xs">Tentative — not yet confirmed</Text>
-                    </HStack>
-                    <HStack p={2} bg="pink.50" borderWidth="1px" borderColor="pink.300" rounded="md" gap={2}>
-                      <Badge colorPalette="pink" variant="solid" fontSize="xs" flexShrink={0}>Pink</Badge>
-                      <Text fontSize="xs">Estimate</Text>
-                    </HStack>
-                    <HStack p={2} bg="blue.50" borderWidth="1px" borderColor="blue.300" rounded="md" gap={2}>
-                      <Badge colorPalette="blue" variant="solid" fontSize="xs" flexShrink={0}>Blue</Badge>
-                      <Text fontSize="xs">Task</Text>
-                    </HStack>
-                    <HStack p={2} bg="purple.50" borderWidth="1px" borderColor="purple.300" rounded="md" gap={2}>
-                      <Badge colorPalette="purple" variant="solid" fontSize="xs" flexShrink={0}>Purple</Badge>
-                      <Text fontSize="xs">Reminder</Text>
-                    </HStack>
-                    <HStack p={2} bg="#C4B5FD" borderWidth="1px" borderColor="#6D28D9" rounded="md" gap={2}>
-                      <Badge colorPalette="purple" variant="solid" fontSize="xs" flexShrink={0}>Violet</Badge>
-                      <Text fontSize="xs">Announcement — universally visible</Text>
-                    </HStack>
-                    <HStack p={2} bg="#FECACA" borderWidth="1px" borderColor="#BE123C" rounded="md" gap={2}>
-                      <Badge colorPalette="red" variant="solid" fontSize="xs" flexShrink={0}>Rose</Badge>
-                      <Text fontSize="xs">Followup — team-scoped, with attached clients/jobs</Text>
-                    </HStack>
-                    <HStack p={2} bg="#FDE68A" borderWidth="1px" borderColor="#D97706" rounded="md" gap={2}>
-                      <Badge colorPalette="yellow" variant="solid" fontSize="xs" flexShrink={0}>Amber</Badge>
-                      <Text fontSize="xs">Event — team-scoped, admin-managed</Text>
-                    </HStack>
-                    <HStack p={2} bg="gray.50" borderWidth="1px" borderColor="gray.200" rounded="md" gap={2}>
-                      <Badge colorPalette="gray" variant="subtle" fontSize="xs" flexShrink={0}>Gray</Badge>
-                      <Text fontSize="xs">Assigned to someone else — waiting on their action</Text>
-                    </HStack>
-                    {/* Closed jobs were folded in with "assigned to others"
-                        until both resolved to gray.50 and became
-                        indistinguishable. They are now a plain white card;
-                        this entry has to say so or the legend contradicts
-                        the feed. */}
-                    <HStack p={2} bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" gap={2}>
-                      <Badge colorPalette="gray" variant="outline" fontSize="xs" flexShrink={0}>White</Badge>
-                      <Text fontSize="xs">Closed / completed, or an accepted or rejected estimate — done, moved on</Text>
-                    </HStack>
-                    <HStack p={2} bg="orange.100" borderWidth="1px" borderColor="orange.400" rounded="md" gap={2}>
-                      <Badge colorPalette="orange" variant="solid" fontSize="xs" flexShrink={0}>Deep orange</Badge>
-                      <Text fontSize="xs">Paused — work started then stopped; darker than Tentative</Text>
-                    </HStack>
-                    <HStack p={2} bg="purple.100" borderWidth="1px" borderColor="purple.500" rounded="md" gap={2}>
-                      <Badge colorPalette="purple" variant="solid" fontSize="xs" flexShrink={0}>High priority</Badge>
-                      <Text fontSize="xs">Flagged high priority — overrides every other card colour</Text>
-                    </HStack>
-                  </VStack>
-
-                  {/* ── Placeholder (ghost) cards ── */}
-                  <Box>
-                    <Text fontWeight="bold" fontSize="md" mb={1}>Placeholder Cards</Text>
-                    <Text fontSize="xs" color="fg.muted" mb={2}>
-                      Not real occurrences — reference cards the app synthesizes so
-                      something you need to know about doesn&apos;t leave a silent gap
-                      in the timeline. They can&apos;t be started, claimed or edited.
-                    </Text>
-                  </Box>
-
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="gray.400" bg={GHOST_CARD_BG}>
-                    <Badge variant="solid" colorPalette="gray" bg="gray.100" color="gray.900" mb={1}>Expires in 5d</Badge>
-                    <Text fontSize="sm" fontWeight="semibold" color="white">Next visit not scheduled</Text>
-                    <Text fontSize="xs" color="gray.100" mt={1}>
-                      A repeating job whose next visit hasn&apos;t posted, because the
-                      previous visit isn&apos;t closed out — most often it&apos;s
-                      <b> waiting on payment</b>. The card names the blocker and the
-                      date the visit is due, and disappears by itself once the prior
-                      visit closes and the real occurrence is generated. Tap it to
-                      open the occurrence that needs chasing.
-                    </Text>
-                    <Text fontSize="xs" color="gray.100" mt={2}>
-                      <b>Expiry.</b> The chip counts down to the day the visit was due.
-                      Inside three days the card pulses. Past that day it reads
-                      &ldquo;Expired N ago&rdquo; and stays for one more week before
-                      fading away on its own — the <b>Expired N</b> chip on the Today
-                      header counts those and filters to them. To look further back,
-                      use the status filter (<i>Expiring / Expired next visits</i>) with
-                      any date range.
-                    </Text>
-                    <Text fontSize="xs" color="gray.200" mt={2}>
-                      Only appears for repeating jobs that are Accepted, with no future
-                      visit already on the books. One-offs, canceled and paused-repeating
-                      streams never get one.
-                    </Text>
-                  </Box>
-
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="gray.300" borderStyle="dashed">
-                    <Text fontWeight="semibold" fontSize="sm" mb={1}>Reminder &amp; Pinned ghosts</Text>
-                    <Text fontSize="xs" color="fg.muted">
-                      A second, dashed copy of a card shown on a future date — where a
-                      reminder falls due, or where a pinned job sits in the regular
-                      feed. Same colour as the original card so it reads as the same
-                      job, not a new one.
-                    </Text>
-                  </Box>
-                </VStack>
-              </Dialog.Body>
-              <Dialog.Footer>
-                <HStack justify="flex-end" w="full">
-                  <Button
-                    size="sm"
-                    onClick={() => setShowInfoDialog(false)}
-                  >
-                    Close
-                  </Button>
-                </HStack>
-              </Dialog.Footer>
-            </Dialog.Content>
-          </Dialog.Positioner>
-        </Portal>
-      </Dialog.Root>
       {/* Prompt to create occurrence after accepting estimate */}
       {promptOccJobId && (
         <OccurrenceDialog
