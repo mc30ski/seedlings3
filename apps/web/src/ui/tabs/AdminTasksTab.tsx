@@ -2,6 +2,7 @@
 
 import { Box, Text, VStack } from "@chakra-ui/react";
 import { FiPlus, FiDownload, FiDatabase, FiShare2 } from "react-icons/fi";
+import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 
 type TaskDef = {
   id: string;
@@ -17,16 +18,64 @@ type TaskDef = {
 
 type Props = {
   tasks: TaskDef[];
+  /** Blended-role scope. Only drives the explainer copy — the action list
+   *  itself is built by the host and already differs per role. */
+  scope?: { isWorker: boolean; isAdmin: boolean; isSuper: boolean };
+  /** Worker type of the caller, for the trainee note. */
+  workerType?: string | null;
 };
 
-export default function AdminTasksTab({ tasks }: Props) {
+export default function AdminTasksTab({ tasks, scope, workerType }: Props) {
+  const isSuper = !!scope?.isSuper;
+  const isAdminView = !!scope?.isAdmin || isSuper;
   return (
     <Box w="full" pb={8}>
-      <Box mb={3} p={3} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" rounded="md">
-        <Text fontSize="sm" fontWeight="medium" color="yellow.700">Actions</Text>
-        <Text fontSize="xs" color="yellow.600">
-          Workflows that guide you through multi-step processes. Each action chains together the steps needed to get the job done — from setup to completion.
-        </Text>
+      {/* Was a permanently-open yellow card saying the same thing for
+          everyone. The action list differs sharply by role — two workday
+          workflows for a worker, four setup/export ones for an admin — so
+          the copy does too. */}
+      <Box mb={3}>
+        <TabExplainer
+          storageKey={`seedlings:actionsTab:guideOpen:${isSuper ? "super" : isAdminView ? "admin" : "worker"}`}
+          title="What Actions are"
+        >
+          {isAdminView ? (
+            <>
+              <ExplainerText>
+                Guided, multi-step workflows — the things that would otherwise mean visiting
+                four tabs in the right order. <Em>New Job Service</Em> walks a client,
+                property, job and first visit through in one pass.
+              </ExplainerText>
+              <ExplainerText>
+                The rest take data out rather than putting it in:{" "}
+                <Em>Share Photos</Em> pulls job photos together to post or download, and the
+                two exports give you a readable summary or the raw JSON of everything.
+                Nothing here deletes or changes existing records.
+              </ExplainerText>
+            </>
+          ) : (
+            <>
+              <ExplainerText>
+                Guided, step-by-step workflows for the two moments that need one.{" "}
+                <Em>Plan next work day</Em> walks tomorrow&rsquo;s claimed jobs, confirms them
+                and offers to message the clients; <Em>Prepare for work day</Em> runs
+                today&rsquo;s — review the schedule, confirm, and start your first stop.
+              </ExplainerText>
+              {workerType === "TRAINEE" ? (
+                <ExplainerText>
+                  As a trainee, planning is <Em>read-only</Em>: you get the summary of what is
+                  coming, but confirming, releasing and messaging clients are your team
+                  lead&rsquo;s to do.
+                </ExplainerText>
+              ) : (
+                <ExplainerText>
+                  Neither one does anything you cannot do card by card on the Jobs tab — they
+                  just put the steps in order so nothing gets skipped on a busy morning.
+                </ExplainerText>
+              )}
+            </>
+          )}
+        </TabExplainer>
       </Box>
       <VStack align="stretch" gap={3} pt={2}>
         {tasks.map((task) => (

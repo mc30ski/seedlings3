@@ -14,6 +14,7 @@ import {
   useBreakpointValue,
 } from "@chakra-ui/react";
 import { apiGet } from "@/src/lib/api";
+import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 import { fmtDateTime } from "@/src/lib/dates";
 import { equipmentStatusColor } from "@/src/lib/statusColors";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
@@ -390,6 +391,20 @@ export default function HistoryTab({ role = "worker" }: TabRolePropType) {
 
   return (
     <Box>
+      <Box mb={3}>
+      <TabExplainer storageKey="seedlings:historyTab:guideOpen" title="What History records">
+        <ExplainerText>
+          Every state-changing action in the app, newest first — who did it, to what, and when.
+          Jobs, payments, clients, equipment, supplies, policies: if it changed something, it is
+          here.
+        </ExplainerText>
+        <ExplainerText>
+          <Em>Append-only and read-only.</Em> Nothing on this tab edits or deletes a record; it
+          exists so that a question about what happened has an answer. Destructive actions
+          snapshot what they removed, so a deleted row&rsquo;s contents survive here.
+        </ExplainerText>
+      </TabExplainer>
+      </Box>
       <Heading size="md" mb={4}>
         History
       </Heading>

@@ -16,6 +16,7 @@ import {
 } from "@chakra-ui/react";
 import { Filter, LayoutList, Plus, RefreshCw, X } from "lucide-react";
 import { apiGet, apiDelete, apiPost } from "@/src/lib/api";
+import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { prettyStatus, clientLabel } from "@/src/lib/labels";
 import { determineRoles } from "@/src/lib/roles";
@@ -344,6 +345,34 @@ export default function PropertiesTab({
 
   return (
     <Box w="full">
+      <Box mb={3}>
+      <TabExplainer storageKey={`seedlings:propertiesTab:guideOpen:${showAdminExtras ? "admin" : "worker"}`} title="What Properties holds">
+        {showAdminExtras ? (
+          <>
+            <ExplainerText>
+              Every place you service, each belonging to a client. Add and edit properties, and keep{" "}
+              <Em>photos with descriptions</Em> — those photos are what a worker sees as guidance on
+              the job, so a picture of the gate code or the awkward corner earns its place.
+            </ExplainerText>
+            <ExplainerText>
+              Archiving a property <Em>previews what it will affect</Em> first — scheduled visits and
+              open jobs — so it is never a blind action.
+            </ExplainerText>
+          </>
+        ) : (
+          <>
+            <ExplainerText>
+              The places you service — where they are, who they belong to, and what is particular
+              about each one. <Em>Read-only</Em>: properties are set up by an admin.
+            </ExplainerText>
+            <ExplainerText>
+              The <Em>photos</Em> are the useful part: they are put there as guidance — access, gate
+              codes, the bit that is easy to miss. Worth a look before a first visit.
+            </ExplainerText>
+          </>
+        )}
+      </TabExplainer>
+      </Box>
       <HStack mb={2} gap={2}>
         <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)" }}>
           <RefreshCw size={14} />

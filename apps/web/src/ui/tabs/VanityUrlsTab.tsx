@@ -35,6 +35,7 @@ import {
   X,
 } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
+import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { useBranding } from "@/src/lib/useBranding";
@@ -365,6 +366,18 @@ export default function VanityUrlsTab() {
 
   return (
     <VStack align="stretch" gap={4} px={2} py={2}>
+      
+      <TabExplainer storageKey="seedlings:vanityTab:guideOpen" title="What Vanity links are">
+        <ExplainerText>
+          Short, public links you can hand out — on a flyer, a truck, a business card — that point
+          at a landing page you control here. Anyone can open one; no sign-in, no account.
+        </ExplainerText>
+        <ExplainerText>
+          Because they are <Em>public</Em>, treat the page as a shop window: it is visible to
+          anyone who guesses or is given the link, so nothing private belongs on it.
+        </ExplainerText>
+      </TabExplainer>
+      
       <HStack justify="space-between">
         <VStack align="start" gap={0}>
           <Text fontSize="lg" fontWeight="semibold">

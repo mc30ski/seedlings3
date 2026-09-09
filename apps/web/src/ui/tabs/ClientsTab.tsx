@@ -50,6 +50,7 @@ import { StatusBadge } from "@/src/ui/components/StatusBadge";
 import StatusButton from "@/src/ui/components/StatusButton";
 import TruncatedText from "@/src/ui/components/TruncatedText";
 import { apiGet, apiDelete, apiPost } from "@/src/lib/api";
+import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 import { parseAdminTags, adminTagLabel, adminTagColor, ADMIN_TAGS } from "@/src/ui/components/AdminTagPicker";
 import { MailLink, CallLink, MapLink } from "@/src/ui/helpers/Link";
 import { FiStar, FiMapPin, FiUsers } from "react-icons/fi";
@@ -460,6 +461,47 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
 
   return (
     <Box w="full">
+      <Box mb={3}>
+      <TabExplainer storageKey={`seedlings:clientsTab:guideOpen:${showSuperExtras ? "super" : showAdminExtras ? "admin" : "worker"}`} title="What Clients holds">
+        {showSuperExtras ? (
+          <>
+            <ExplainerText>
+              Everyone you work for, their contacts and their properties. Create and edit clients,
+              archive one that has left, and <Em>pause services</Em> for a client going quiet
+              without losing their history — each of those previews what it will affect first.
+            </ExplainerText>
+            <ExplainerText>
+              Yours alone: <Em>view as a client contact</Em>, which renders the client portal
+              exactly as that person sees it. It is read-only, and the fastest way to answer
+              &ldquo;what does my client actually see&rdquo;.
+            </ExplainerText>
+          </>
+        ) : showAdminExtras ? (
+          <>
+            <ExplainerText>
+              Everyone you work for, their contacts and their properties. You can create and edit
+              clients, add contacts, archive a client that has left, and <Em>pause services</Em>{" "}
+              for one going quiet without losing their history.
+            </ExplainerText>
+            <ExplainerText>
+              Archiving and pausing both <Em>show you what they will affect</Em> before you commit —
+              scheduled visits, open jobs — so neither is a blind action.
+            </ExplainerText>
+          </>
+        ) : (
+          <>
+            <ExplainerText>
+              Who you are working for, so you know whose property you are on and who to expect.{" "}
+              <Em>Read-only</Em> — clients are created and edited by an admin.
+            </ExplainerText>
+            <ExplainerText>
+              Internal admin notes and tags are not shown here. If a client detail is wrong or you
+              learn something worth recording, tell an admin.
+            </ExplainerText>
+          </>
+        )}
+      </TabExplainer>
+      </Box>
       {forAdmin && (
         <Box mb={3}>
           <Dashboard

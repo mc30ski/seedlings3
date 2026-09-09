@@ -42,6 +42,7 @@ import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/Inlin
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { determineRoles } from "@/src/lib/roles";
 import { usePersistedState } from "@/src/lib/usePersistedState";
+import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 import { fmtDateKey } from "@/src/lib/dates";
 import type { Me, Role } from "@/src/lib/types";
 import {
@@ -246,6 +247,73 @@ export default function PayrollTab({
 
   return (
     <VStack align="stretch" gap={3}>
+      {/* WRITTEN FROM THE ROUTE GUARDS AND THE FIELD PROJECTION:
+            • worker  → /me/payroll*        own rows only
+            • admin   → /payroll/periods*   ADMIN_VISIBLE_FIELDS is exactly
+                        regularHours, grossEarnings, netPay, checkAmount —
+                        no tax field, and no team-total employer cost
+            • super   → import / identities / archive / export
+          See services/payroll-build-gate.test.ts, which enforces all of it. */}
+      <TabExplainer
+        storageKey={`seedlings:payrollTab:guideOpen:${showSuperExtras ? "super" : showAdminExtras ? "admin" : `worker:${me?.workerType === "CONTRACTOR" ? "contractor" : "employee"}`}`}
+        title="What this tab shows"
+      >
+        {showSuperExtras ? (
+          <>
+            <ExplainerText>
+              What Gusto actually paid, imported period by period. Upload each period&rsquo;s CSV,
+              match any name the importer could not place to a person, and archive periods you are
+              done with. You see every field, including tax and employer cost.
+            </ExplainerText>
+            <ExplainerText>
+              <Em>This is not the app&rsquo;s estimate and must never be reconciled against it.</Em>{" "}
+              The estimate is a tunable model of what work was worth; this is money that moved.
+              They will not agree, and forcing them to would break one of them.
+            </ExplainerText>
+          </>
+        ) : showAdminExtras ? (
+          <>
+            <ExplainerText>
+              What the team was actually paid, imported from Gusto. For each person you see{" "}
+              <Em>hours, gross, net and check amount</Em> — and nothing else. Tax withholding and
+              employer cost are deliberately withheld from admins, per person and in the team
+              totals.
+            </ExplainerText>
+            <ExplainerText>
+              <Em>Read-only.</Em> Importing a period, matching a name and archiving are super-admin
+              actions. These are paid figures, not the app&rsquo;s estimate of what the work was
+              worth — the two are different numbers on purpose.
+            </ExplainerText>
+          </>
+        ) : me?.workerType === "CONTRACTOR" ? (
+          <>
+            <ExplainerText>
+              Your own pay, imported from Gusto — <Em>what actually reached you</Em>. You see your
+              own rows and nobody else&rsquo;s; an admin can see your hours, gross and net, and
+              nothing further.
+            </ExplainerText>
+            <ExplainerText>
+              You are paid as a contractor, so <Em>nothing is withheld</Em>: what you see is the
+              full amount and the tax on it is yours to handle. If a period is missing, it is
+              usually a name that has not been matched to your account yet — ask an admin.
+            </ExplainerText>
+          </>
+        ) : (
+          <>
+            <ExplainerText>
+              Your own pay, imported from Gusto — <Em>what actually hit your account</Em>: hours,
+              gross, what was withheld, and net. You see your rows and nobody else&rsquo;s.
+            </ExplainerText>
+            <ExplainerText>
+              This will not match the earnings figure elsewhere in the app. That one is what the
+              work was <Em>worth</Em>; this is what was <Em>paid</Em>, after tax and after any pay
+              period that split a week. If a period is missing, it is usually a name that has not
+              been matched to your account yet — ask an admin.
+            </ExplainerText>
+          </>
+        )}
+      </TabExplainer>
+
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <HStack justify="space-between" align="center" wrap="wrap" gap={2}>
         <VStack align="start" gap={0} minW={0}>

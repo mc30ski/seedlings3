@@ -5,6 +5,7 @@ import { Badge, Box, Button, Card, Checkbox, HStack, Select, Spinner, Table, Tex
 import { FiDownload, FiInfo, FiUpload } from "react-icons/fi";
 import { ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
 import { apiGet, apiDownload, apiGetText } from "@/src/lib/api";
+import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import DateInput from "@/src/ui/components/DateInput";
 import PayrollUploadDialog from "@/src/ui/dialogs/PayrollUploadDialog";
@@ -1167,6 +1168,24 @@ export default function ReconcileTab() {
 
   return (
     <VStack align="stretch" gap={4}>
+      
+      <TabExplainer storageKey="seedlings:reconcileTab:guideOpen" title="What Reconcile does">
+        <ExplainerText>
+          Closes a period: for a chosen window it totals <Em>hours, earnings, revenue and fees</Em>
+          from their source of truth — workday clocks for hours, the promised-payout snapshot for
+          earnings, confirmed payments for revenue — and shows whether they agree.
+        </ExplainerText>
+        <ExplainerText>
+          When the totals match, the period is filed. When they do not, drill into the worker rows
+          to find where the variance is. The P&amp;L and the QuickBooks and Gusto exports are
+          driven from the same window.
+        </ExplainerText>
+        <ExplainerText>
+          <Em>It reports; it does not adjust.</Em> Fixing a variance means correcting the thing
+          that is wrong — a payment, a workday, a ledger row — not editing a total here.
+        </ExplainerText>
+      </TabExplainer>
+      
       {/* Informational banner — collapsible, collapsed by default.
           When closed, just shows the headline + chevron so the page
           opens straight to the dates + report. */}

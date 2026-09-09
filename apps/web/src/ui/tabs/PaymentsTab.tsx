@@ -23,6 +23,7 @@ import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/li
 import DateInput from "@/src/ui/components/DateInput";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import { apiGet, apiPatch, apiDelete, apiPost } from "@/src/lib/api";
+import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 import { fmtDate, fmtDateKey, fmtDateTime, bizDateKey, bizToday, bizAddDays, bizAddYears, type EtDateKey } from "@/src/lib/dates";
 import { prettyStatus, clientLabel } from "@/src/lib/labels";
 import { determineRoles } from "@/src/lib/roles";
@@ -3401,13 +3402,127 @@ export default function PaymentsTab({ me, purpose = "WORKER", scope }: PaymentsT
   // selected, we stack one WorkerPayments per selected worker so the
   // Super can compare worker-eye views side-by-side. With none, the
   // normal admin worklist renders.
-  if (showSuperExtras) {
-    return <SuperPaymentsTabWithViewAs me={me} forAdmin={forAdmin} />;
-  }
+  // Wrapped so every role gets the explainer above whichever view it lands
+  // on. The three views are entirely different screens, so the copy is too.
+  return (
+    <VStack align="stretch" gap={3}>
+      <PaymentsExplainer
+        role={showSuperExtras ? "super" : showAdminExtras ? "admin" : "worker"}
+        workerType={me?.workerType ?? null}
+      />
+      {showSuperExtras ? (
+        <SuperPaymentsTabWithViewAs me={me} forAdmin={forAdmin} />
+      ) : showAdminExtras ? (
+        <AdminPayments forAdmin isSuper={showSuperExtras} />
+      ) : (
+        <WorkerPayments me={me} forAdmin={forAdmin} />
+      )}
+    </VStack>
+  );
+}
 
-  return showAdminExtras
-    ? <AdminPayments forAdmin isSuper={showSuperExtras} />
-    : <WorkerPayments me={me} forAdmin={forAdmin} />;
+function PaymentsExplainer({
+  role,
+  workerType,
+}: {
+  role: "worker" | "admin" | "super";
+  workerType: string | null;
+}) {
+  // WRITTEN FROM THE ROUTE GUARDS, not from an idea of what each role does.
+  //   • Every payment mutation — approve, reject, write-off, skip, revert,
+  //     adjust — is superGuard. An ADMIN has exactly two endpoints here,
+  //     both GET: /admin/payments and /admin/payments/equipment-charges.
+  //   • WorkerPayments issues no mutations at all.
+  //   • A payment is RECORDED from the job card (AcceptPaymentDialog →
+  //     POST /occurrences/:id/accept-payment), never from this tab.
+  // The first version of this copy said admins approve and workers record
+  // here. Both were wrong, and both were guesses.
+  const isContractor = workerType === "CONTRACTOR";
+  return (
+    <TabExplainer
+      storageKey={`seedlings:paymentsTab:guideOpen:${role}${role === "worker" ? `:${isContractor ? "contractor" : "employee"}` : ""}`}
+      title="What this tab shows"
+    >
+      {role === "worker" ? (
+        <>
+          <ExplainerText>
+            Every job you worked and what it was worth to you, with where each one has got to —
+            waiting on the client, recorded and awaiting review, or settled. <Em>This tab is a
+            record, not a place to do anything</Em>; you take a payment on the job itself.
+          </ExplainerText>
+          {isContractor ? (
+            <>
+            <ExplainerText>
+              As a contractor, <Em>what the client actually pays reaches you</Em>. If they pay less
+              than the job was worth, your share is reduced in proportion — the business does not
+              cover the difference. If they pay more, your share is capped at what the job
+              promised.
+            </ExplainerText>
+            <ExplainerText>
+              <Em>Unless it is called a tip.</Em> When a client overpays, a super admin can
+              designate some of that extra as a tip and set who it goes to. A tip reaches you on
+              top of your pay <Em>without any fee or margin taken off it</Em>. Anything overpaid
+              and not designated stays with the business.
+            </ExplainerText>
+            </>
+          ) : (
+            <>
+            <ExplainerText>
+              <Em>You are made whole either way.</Em> If a client underpays, or never pays at all,
+              you still receive what the job promised you — the business absorbs the difference.
+              Paying more than the job was worth does not raise your share either.
+            </ExplainerText>
+            <ExplainerText>
+              <Em>Unless it is called a tip.</Em> When a client overpays, a super admin can
+              designate some of that extra as a tip and set who it goes to. A tip reaches you on
+              top of your pay <Em>without any fee or margin taken off it</Em>. Anything overpaid
+              and not designated stays with the business.
+            </ExplainerText>
+            </>
+          )}
+        </>
+      ) : role === "admin" ? (
+        <>
+          <ExplainerText>
+            Every payment across the team, and the equipment charged against them — for{" "}
+            <Em>visibility</Em>. Nothing on this tab is an action you can take: approving,
+            adjusting, writing off and reverting are all super-admin only, and the approval queue
+            is not shown to you.
+          </ExplainerText>
+          <ExplainerText>
+            Use it to answer &ldquo;has this been paid, and what did it come to&rdquo;. If a
+            payment looks wrong, it needs a super admin.
+          </ExplainerText>
+        </>
+      ) : (
+        <>
+          <ExplainerText>
+            Everything, plus the actions: <Em>Pending approval</Em> lists what workers have
+            recorded and is waiting on you. Approving is what <Em>moves the money</Em> — it writes
+            each worker&rsquo;s split from what was actually collected, so approve against the
+            bank, not the reported figure. You can adjust the amount as you approve, reject it, or
+            write the job off.
+          </ExplainerText>
+          <ExplainerText>
+            Employees and trainees are made whole on a short payment; contractors take it pro-rata
+            and are capped at what the job promised on an overpayment. Where a client overpaid, you
+            can <Em>designate part of it a tip</Em> and set the split between the business and
+            named workers — a tip is carved out of the overpayment (never more than it) and
+            deliberately bypasses fee and margin. Whatever you do not designate stays with the
+            business.
+          </ExplainerText>
+          <ExplainerText>
+            <Em>Reverting</Em> an approved payment is yours alone and un-does those splits — the one
+            action here that changes a number a worker has already been shown.
+          </ExplainerText>
+          <ExplainerText>
+            <Em>View as</Em> a worker renders this tab exactly as they see it — the quickest answer
+            to &ldquo;why does my pay look wrong&rdquo;.
+          </ExplainerText>
+        </>
+      )}
+    </TabExplainer>
+  );
 }
 
 type ViewAsWorker = { id: string; displayName: string | null; workerType: any };

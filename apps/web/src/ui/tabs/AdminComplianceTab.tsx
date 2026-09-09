@@ -18,6 +18,7 @@ import {
 import { AlertTriangle, Archive, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, Download, Eye, FileCheck, FileText, Info, Play, Plus, RotateCcw, Trash2, X, XCircle } from "lucide-react";
 import MarkdownContent from "@/src/ui/components/MarkdownContent";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
+import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import { bizDateKey, bizToday, fmtDate } from "@/src/lib/dates";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
@@ -251,6 +252,20 @@ export default function AdminComplianceTab() {
 
   return (
     <Box w="full" pb={8}>
+      <Box mb={3}>
+      <TabExplainer storageKey="seedlings:complianceTab:guideOpen" title="What Compliance tracks">
+        <ExplainerText>
+          Policies the crew must read and sign, and who has signed what. A policy is{" "}
+          <Em>versioned</Em>: publishing a new version asks for a fresh signature, and an old
+          signature stays attached to the version it was given for.
+        </ExplainerText>
+        <ExplainerText>
+          You can publish and archive policies, grant an <Em>exception</Em> to someone the rule
+          should not apply to, and nudge anyone outstanding. Workers see what they owe on their
+          own Profile.
+        </ExplainerText>
+      </TabExplainer>
+      </Box>
       <HStack justify="space-between" mb={3} wrap="wrap" gap={2} align="center">
         <HStack gap={3} align="center" flexWrap="wrap">
           <VStack align="start" gap={0}>

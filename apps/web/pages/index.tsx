@@ -877,7 +877,7 @@ export default function HomePage() {
       value: "tasks",
       label: "Actions",
       icon: FiPlus,
-      content: <AdminTasksTab tasks={workerTasks} />,
+      content: <AdminTasksTab tasks={workerTasks} scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }} workerType={me?.workerType} />,
     },
     // ── Equipment ──
     {
@@ -1081,7 +1081,7 @@ export default function HomePage() {
       value: "tasks",
       label: "Actions",
       icon: FiPlus,
-      content: <AdminTasksTab tasks={adminTasks} />,
+      content: <AdminTasksTab tasks={adminTasks} scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }} workerType={me?.workerType} />,
     },
     {
       // ── Equipment ──
@@ -1518,7 +1518,7 @@ chip: false, bucket: t.bucket }));
           value: "tasks",
           label: "Actions",
           icon: FiPlus,
-          content: <AdminTasksTab tasks={adminTasks} />,
+          content: <AdminTasksTab tasks={adminTasks} scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }} workerType={me?.workerType} />,
           category: "Work",
           categoryIcon: FiHome,
         },

@@ -39,6 +39,7 @@ import {
   FiPlus, FiSave, FiCopy, FiTrash2, FiRefreshCw, FiArchive, FiX, FiBarChart2, FiInfo,
 } from "react-icons/fi";
 import { LineChart, ChevronDown } from "lucide-react";
+import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 import { simulate, defaultAssumptions, describePayShape, migrateAssumptions } from "@repo/money";
 import type { Assumptions, ForecastBaseline, ForecastResult, WorkerType } from "@repo/money";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
@@ -97,6 +98,11 @@ function GroupHeading({ children, mt = 0 }: { children: React.ReactNode; mt?: nu
       borderTopRightRadius="md" borderBottomRightRadius="md"
       px={3} py={2}
     >
+      {/* Super-only, and the one tab that changes nothing. Saying so up front
+          is the point — a screen full of levers over real money reads as
+          dangerous until you know it writes nothing. */}
+      
+
       <Text fontSize="13px" fontWeight="bold" textTransform="uppercase"
             letterSpacing="0.1em" color="fg" lineHeight="1.2">
         {children}
@@ -534,6 +540,7 @@ export default function ForecastTab() {
   if (!data || !assumptions || !scenario) {
     return (
       <Box py={8} textAlign="center">
+
         <Text fontSize="14px" color="fg.muted">
           Couldn't load the forecast baseline. Try reloading the window.
         </Text>
@@ -559,6 +566,25 @@ export default function ForecastTab() {
 
   return (
     <VStack align="stretch" gap={3}>
+      {/* The root VStack carries gap={3}, so no margin wrapper here — unlike
+          Pricing and the Ledger, whose roots are plain Boxes. */}
+      <TabExplainer storageKey="seedlings:forecastTab:guideOpen" title="What the Forecast does">
+        <ExplainerText>
+          A <Em>what-if</Em> over jobs you have already done. Pick a window, move the levers —
+          margin, hourly base, prices, volume, crew — and see what the books and each
+          worker&rsquo;s hourly rate would have looked like.
+        </ExplainerText>
+        <ExplainerText>
+          <Em>It changes nothing.</Em> No setting, no payment, no payroll row. Nothing here reaches
+          a worker or a client; it is a calculator over history, and closing the tab discards it
+          unless you save a scenario.
+        </ExplainerText>
+        <ExplainerText>
+          It answers &ldquo;what would a different rate have done&rdquo; well. It does not find
+          where money is leaking — for that, compare jobs by price band and by actual hours.
+        </ExplainerText>
+      </TabExplainer>
+
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <Box borderWidth="1px" borderRadius="md" p={3} bg="bg.panel">
         <HStack justify="space-between" wrap="wrap" gap={2} mb={2}>

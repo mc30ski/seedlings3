@@ -17,6 +17,7 @@ import {
   createListCollection,
 } from "@chakra-ui/react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
+import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 import { Mail, MessageSquare, Search, X } from "lucide-react";
 import { fmtDateOpts } from "@/src/lib/dates";
 import {
@@ -279,6 +280,24 @@ export default function AdminNotifyTab() {
   // ── Render ────────────────────────────────────────────────────
   return (
     <Box w="full">
+      <Box mb={3}>
+      <TabExplainer storageKey="seedlings:notifyTab:guideOpen" title="What Notify does">
+        <ExplainerText>
+          Sends an ad-hoc message to one or more approved people on the team. Each send fans out
+          over <Em>text, email and push at once</Em> — it is not a choice of channel, so write it
+          to read sensibly in all three.
+        </ExplainerText>
+        <ExplainerText>
+          <Em>Capped at 20 sends per person per day</Em>, resetting at midnight Eastern. Every send
+          is written to the audit log with who sent it and who received it, and the History view
+          here reads from that log.
+        </ExplainerText>
+        <ExplainerText>
+          This reaches <Em>workers and admins</Em> — never clients. Client-facing messages go out
+          with invoices and through Promotions.
+        </ExplainerText>
+      </TabExplainer>
+      </Box>
       <VStack align="stretch" gap={4}>
         {/* Compose / Preview Card */}
         <Card.Root variant="outline">

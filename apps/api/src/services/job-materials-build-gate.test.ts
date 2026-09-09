@@ -2130,6 +2130,498 @@ describe("[build-gate] hours approval measures a job against itself", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+describe("[build-gate] every Money tab explains itself", () => {
+  const web = (rel: string) =>
+    readFileSync(join(__dirname, "../../../web/src/ui/tabs/", rel), "utf8");
+
+  // Every tab under the Money category, and whether more than one role sees it.
+  const MONEY_TABS: Array<{ file: string; roleAware: boolean }> = [
+    { file: "PaymentsTab.tsx", roleAware: true },
+    { file: "PayrollTab.tsx", roleAware: true },
+    { file: "PricingTab.tsx", roleAware: true },
+    { file: "SuppliesTab.tsx", roleAware: true },
+    { file: "BusinessExpensesTab.tsx", roleAware: false }, // Ledger — super only
+    { file: "PromotionsTab.tsx", roleAware: false },       // super only
+    { file: "ForecastTab.tsx", roleAware: false },         // super only
+  ];
+
+  // Every tab under the Records category, and whether more than one role sees
+  // it. Worker sees only Guides; admin adds Engagement, History, Timeline and
+  // Documents; super adds Reconcile, Workdays, Compliance and Audit.
+  const RECORDS_TABS: Array<{ file: string; roleAware: boolean }> = [
+    { file: "GuidesTab.tsx", roleAware: true },          // worker / admin / super
+    { file: "TimelineTab.tsx", roleAware: true },        // admin / super
+    { file: "DocumentsTab.tsx", roleAware: true },       // admin / super
+    { file: "ActivityTab.tsx", roleAware: false },
+    { file: "HistoryTab.tsx", roleAware: false },
+    { file: "ReconcileTab.tsx", roleAware: false },      // super only
+    { file: "WorkdaysTab.tsx", roleAware: false },       // super only
+    { file: "AdminComplianceTab.tsx", roleAware: false },// super only
+    { file: "AuditTab.tsx", roleAware: false },          // super only
+  ];
+
+  // Directory: all four tabs are visible to ALL THREE roles, and two of them
+  // render a wholly separate component for workers — so an explainer on the
+  // main render alone would leave a worker with none.
+  it("each Directory tab renders one, on the worker path too", () => {
+    for (const f of ["ClientsTab.tsx", "PropertiesTab.tsx", "UsersTab.tsx", "AdminGroupsTab.tsx"]) {
+      expect(web(f), `${f} needs an explainer`).toContain("<TabExplainer");
+    }
+    // UsersTab returns <WorkerTeamRoster /> and AdminGroupsTab returns
+    // <WorkerMyCrews /> for workers — separate render trees, separate copy.
+    for (const [f, comp] of [["UsersTab.tsx", "WorkerTeamRoster"], ["AdminGroupsTab.tsx", "WorkerMyCrews"]] as const) {
+      const src = web(f);
+      const at = src.indexOf(`function ${comp}`);
+      expect(at, `${comp} must exist`).toBeGreaterThan(-1);
+      expect(src.slice(at), `${comp} must carry its own explainer`).toContain("<TabExplainer");
+    }
+  });
+
+  it("the worker directory copy does not promise data it is built to withhold", () => {
+    // /me/team returns displayName + workerType ONLY — no email, phone, wage,
+    // roles or privilege flags — and /me/groups strips cost splits. The copy
+    // says so, because "why can't I see X" is the question this view creates.
+    const U = web("UsersTab.tsx").replace(/\s+/g, " ");
+    const at = U.indexOf("function WorkerTeamRoster");
+    expect(U.slice(at)).toMatch(/not here and not withheld by accident/);
+    const G = web("AdminGroupsTab.tsx").replace(/\s+/g, " ");
+    expect(G.slice(G.indexOf("function WorkerMyCrews"))).toMatch(/Cost splits.*are not shown here/);
+  });
+
+  it("Users tells an admin that approving is not theirs", () => {
+    // POST /admin/users/:id/approve is superGuard, and the admin mount passes
+    // `readOnly` so no mutation control renders at all.
+    const U = web("UsersTab.tsx").replace(/\s+/g, " ");
+    expect(U).toMatch(/Read-only for you/);
+    expect(U).toMatch(/Approving a new sign-up is yours alone/);
+  });
+
+  // Work: Home, Jobs, Routes and Actions are mounted for all three roles;
+  // Services only for admin and super. Jobs is the odd one — its explainer
+  // lives in its own component file because it carries the whole card-type
+  // reference that used to be an (i) modal.
+  const WORK_TABS = ["HomeTab.tsx", "PreviewRoutesTab.tsx", "ServicesTab.tsx", "AdminTasksTab.tsx"];
+
+  it("each Work tab renders a role-tailored TabExplainer", () => {
+    const flat: string[] = [];
+    for (const f of WORK_TABS) {
+      const src = web(f);
+      expect(src, `${f} needs an explainer`).toContain("<TabExplainer");
+      const at = src.indexOf("<TabExplainer");
+      const block = src.slice(at, src.indexOf("</TabExplainer>", at));
+      const keyed = /storageKey=\{`[^`]*\$\{/.test(block);
+      const branched = /isSuper \?|scope\.isSuper \?|isAdminView \?/.test(block);
+      if (!keyed || !branched) flat.push(f);
+    }
+    expect(flat, "a Work tab whose explainer is one-size-fits-all").toEqual([]);
+  });
+
+  it("the Jobs card reference is an explainer, not a modal", () => {
+    // The (i) button opening a "How Jobs Work" Dialog is gone; the same
+    // material lives in JobsExplainer, mounted in the tab's main render.
+    // A modal is a dead end on a phone and nobody opens it twice.
+    const J = web("JobsTab.tsx");
+    expect(J, "the info modal must not come back").not.toMatch(/showInfoDialog/);
+    expect(J, "…and the tab must mount the explainer instead").toContain("<JobsExplainer");
+    const E = readFileSync(join(__dirname, "../../../web/src/ui/components/JobsExplainer.tsx"), "utf8");
+    expect(E).toContain("<TabExplainer");
+    expect(E, "role-keyed storage").toMatch(/storageKey=\{`seedlings:jobsTab:guideOpen:\$\{role\}`\}/);
+  });
+
+  it("the Jobs reference states the claim rules the server actually enforces", () => {
+    // These four are hard 403s in jobs.claimOccurrence, and NONE of them was
+    // in the modal this replaced. A worker who does not know them reads the
+    // greyed-out button as a bug.
+    const E = readFileSync(join(__dirname, "../../../web/src/ui/components/JobsExplainer.tsx"), "utf8")
+      .replace(/\s+/g, " ");
+    expect(E, "trainees cannot claim").toMatch(/you cannot .{0,20}claim/i);
+    expect(E, "contractors are held to a two-day window").toMatch(/within two days/);
+    expect(E, "a crew lead claims for the crew").toMatch(/Only the crew\S{0,8}s lead can do that/);
+    expect(E, "tentative and administered block a claim").toMatch(/not tentative or administered/);
+  });
+
+  it("the Jobs reference does not repeat the four claims that were wrong", () => {
+    // Each of these was in the modal and disagreed with the code. They are
+    // asserted as ABSENT so a copy-paste from the old text fails here.
+    // Comments stripped first — the header block in that file NAMES the old
+    // wrong claims in order to record what changed, so matching against the
+    // raw text would find "accepted" (and every other retired phrase) there
+    // and pass no matter what the rendered copy says.
+    const E = readFileSync(join(__dirname, "../../../web/src/ui/components/JobsExplainer.tsx"), "utf8")
+      .replace(/\/\/[^\n]*/g, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\s+/g, " ");
+    // The next visit is created at payment APPROVAL, not acceptance.
+    expect(E, "next visit is created on approval").toMatch(/payment is .{0,12}approved/i);
+    // A default CREW outranks the per-user default assignees.
+    expect(E, "the default crew wins over default assignees")
+      .toMatch(/default crew is put on it; failing that, its default assignees/);
+    // Start/complete/accept-payment is claimer OR ADMIN, and never a trainee.
+    expect(E, "admins can act as well as the claimer").toMatch(/claimer .{0,12}or an admin.{0,12} can start/);
+    // "Insured Only" is the compliance-policy gate above a price threshold,
+    // not a hardcoded insurance flag.
+    expect(E, "the high-value gate is the policy gate")
+      .toMatch(/compliance policy that gates claiming|policies that gate claiming/);
+  });
+
+  it("the colour legend swatches are the fills the cards actually use", () => {
+    // The legend is the thing people trust to decode the feed, so each
+    // swatch renders in the same token JobsTab resolves in `cardBg`. Two
+    // had already drifted (assigned-to-others was gray.50 in the legend and
+    // gray.100 on the card; closed Events and Followups were missing).
+    const E = readFileSync(join(__dirname, "../../../web/src/ui/components/JobsExplainer.tsx"), "utf8");
+    const J = web("JobsTab.tsx");
+    // Every fill the legend claims to show, asserted INSIDE the COLORS
+    // array — the same token elsewhere in the file (the ghost badge uses
+    // gray.100 too) must not stand in for a legend row.
+    const colorsAt = E.indexOf("const COLORS");
+    expect(colorsAt, "the COLORS legend array must exist").toBeGreaterThan(-1);
+    const legend = E.slice(colorsAt, E.indexOf("];", colorsAt));
+    for (const token of ["teal.50", "yellow.50", "green.100", "orange.50", "orange.100",
+                         "pink.50", "blue.50", "purple.50", "purple.200", "red.200",
+                         "yellow.200", "gray.100", "purple.100"]) {
+      expect(legend, `the legend no longer shows the ${token} card fill`).toContain(`bg: "${token}"`);
+    }
+    // The subset JobsTab writes out literally (the rest come from the
+    // `${cardColorBase}.50` template, which is why they cannot be matched
+    // as strings here).
+    for (const token of ["green.100", "orange.100", "purple.200", "red.200", "red.100",
+                         "yellow.200", "yellow.100", "gray.100", "purple.100", "yellow.50"]) {
+      expect(J, `${token} is in the legend but no longer in JobsTab's cardBg`).toContain(token);
+    }
+    // …and the template that produces the pale fills is still there.
+    expect(J, "the .50 card fills are built from cardColorBase")
+      .toMatch(/cardColorBase !== "gray" \? `\$\{cardColorBase\}\.50`/);
+    // High priority is a REMINDER-only flag — saying otherwise sends people
+    // looking for a control that is not on their card.
+    expect(E.replace(/\s+/g, " "), "high priority is reminder-only")
+      .toMatch(/Only a reminder can carry this flag/);
+  });
+
+  // Equipment: all three tabs are visible to all three roles, so every one of
+  // them is role-aware. Inventory goes further and branches the WORKER copy on
+  // worker type, because the money story differs per class — a contractor is
+  // billed for what they take out, an employee never is, and a trainee cannot
+  // reserve at all.
+  const EQUIPMENT_TABS = ["InventoryTab.tsx", "CollectionsTab.tsx", "VehiclesTab.tsx"];
+
+  it("each Equipment tab renders a TabExplainer, and all three tailor it", () => {
+    const flat: string[] = [];
+    for (const f of EQUIPMENT_TABS) {
+      const src = web(f);
+      expect(src, `${f} needs an explainer`).toContain("<TabExplainer");
+      const at = src.indexOf("<TabExplainer");
+      const block = src.slice(at, src.indexOf("</TabExplainer>", at));
+      const keyed = /storageKey=\{`[^`]*\$\{/.test(block);
+      const branched = /showSuperExtras \?/.test(block);
+      if (!keyed || !branched) flat.push(f);
+    }
+    expect(flat, "an Equipment tab whose explainer is one-size-fits-all").toEqual([]);
+  });
+
+  it("Inventory tells a worker the truth about their own worker type", () => {
+    // Three different money stories, and the tab already renders three
+    // different rate badges for them (workerRateBadge). The copy has to agree
+    // with the badge the same reader is looking at:
+    //   TRAINEE    — canWorkerReserve is false for them, and splits are $0.
+    //   EMPLOYEE   — calculateContractorSplits zeroes them out, always, even
+    //                inside a contractor-led crew.
+    //   CONTRACTOR — billable, at flat-daily or per-job-capped-at-daily, and
+    //                the amount is computed at release, not at checkout.
+    const I = web("InventoryTab.tsx").replace(/\s+/g, " ");
+    const at = I.indexOf("<TabExplainer");
+    const block = I.slice(at, I.indexOf("</TabExplainer>", at));
+    expect(block, "the worker branch must split on worker type")
+      .toMatch(/isTrainee \? .* : me\?\.workerType === "EMPLOYEE" \?/);
+    expect(block, "a trainee must be told reserving is off for them")
+      .toMatch(/reserving is off/);
+    expect(block, "an employee must be told they are not billed")
+      .toMatch(/not<\/Em> billed to you|not billed to you/);
+    expect(block, "a contractor must be told the charge lands at return, not checkout")
+      .toMatch(/when you return it/);
+    expect(block, "…and that a crew's employees and trainees still pay nothing")
+      .toMatch(/employees or trainees in it pay nothing/);
+  });
+
+  it("Inventory does not offer an admin the two controls that are Super-only", () => {
+    // POST /admin/equipment (create) and DELETE /admin/equipment/:id are
+    // superGuard; the UI gates both on showSuperExtras. An admin told they can
+    // add a piece goes looking for a button that is not rendered.
+    const I = web("InventoryTab.tsx").replace(/\s+/g, " ");
+    const at = I.indexOf("<TabExplainer");
+    const block = I.slice(at, I.indexOf("</TabExplainer>", at));
+    expect(block).toMatch(/Adding a new piece and deleting a retired one are Super-only/);
+    // …and the create button really is still super-gated.
+    expect(web("InventoryTab.tsx")).toMatch(/showSuperExtras && \(\s*<Button[\s\S]{0,400}?onClick=\{openCreate\}/);
+  });
+
+  it("no equipment rate shown to a worker is read straight off dailyRate", () => {
+    // resolveBillingMode is the single source of truth: it returns "disabled"
+    // ($0.00/day) when the EQUIPMENT_BILLING_ENABLED master toggle is off, and
+    // the per-job-capped-at-daily form when equivalentJobs is set. A pill built
+    // from e.dailyRate directly gets BOTH wrong — the compact card once said
+    // "$4.00/day" to a contractor while the full card said "$0.00/day".
+    const I = web("InventoryTab.tsx");
+    // Nothing may format a per-day rate by hand — shortBillingChip is the
+    // only thing allowed to produce one, and it is fed the resolved mode.
+    // (The three surviving "/day" hits in this file are all comments.)
+    expect(I.replace(/\/\/[^\n]*/g, ""), "a per-day rate formatted by hand bypasses the master toggle")
+      .not.toMatch(/toFixed\(2\)\}\/day/);
+    // Every call must pass the toggle through as the third argument.
+    const calls = I.match(/resolveBillingMode\([^)]*\)/g) ?? [];
+    expect(calls.length, "expected the billing mode to be resolved somewhere").toBeGreaterThan(0);
+    for (const c of calls) {
+      expect(c, `${c} must pass equipmentBillingEnabled`).toMatch(/equipmentBillingEnabled/);
+    }
+  });
+
+  it("Vehicles tells both non-super roles they are read-only, and where miles come from", () => {
+    // Every mutation on this tab is superGuard, and so is the mileage
+    // drill-down. A worker also needs pointing at the MileageStrip on Home —
+    // that is where their driving is actually recorded, and stopping a trip is
+    // what moves Vehicle.currentOdometer.
+    const V = web("VehiclesTab.tsx").replace(/\s+/g, " ");
+    const at = V.indexOf("<TabExplainer");
+    const block = V.slice(at, V.indexOf("</TabExplainer>", at));
+    expect(block, "the admin branch must say it is read-only").toMatch(/Read-only<\/Em> for you/);
+    expect(block, "the worker branch must point at the Home mileage strip")
+      .toMatch(/mileage strip on your Home tab/);
+    expect(block, "and must not imply miles are logged here")
+      .toMatch(/not recorded here/);
+  });
+
+  it("Collections tells a worker kits are admin-authored, and an admin that deleting is safe", () => {
+    // Kits are a label over equipment: DELETE /admin/equipment-collections/:id
+    // removes the JobRecommendedCollection/collection rows only. The worker
+    // path has no mutation at all — every write endpoint is adminGuard.
+    const C = web("CollectionsTab.tsx").replace(/\s+/g, " ");
+    const at = C.indexOf("<TabExplainer");
+    const block = C.slice(at, C.indexOf("</TabExplainer>", at));
+    expect(block, "the worker branch must say kits are read-only")
+      .toMatch(/Read-only<\/Em>; kits are built and changed by an admin/);
+    expect(block, "an admin must be told deleting a kit spares the equipment")
+      .toMatch(/deleting one never touches the equipment itself/);
+  });
+
+  const SYSTEM_TABS: Array<{ file: string; roleAware: boolean }> = [
+    { file: "ProfileTab.tsx", roleAware: true },      // worker / admin / super
+    { file: "SettingsTab.tsx", roleAware: true },     // admin reads, super writes
+    { file: "AdminNotifyTab.tsx", roleAware: false }, // admin / super, same view
+    { file: "VanityUrlsTab.tsx", roleAware: false },  // super only
+  ];
+
+  it("each System tab renders a TabExplainer", () => {
+    const missing = SYSTEM_TABS.filter((t) => !web(t.file).includes("<TabExplainer")).map((t) => t.file);
+    expect(missing, "a System tab with no explainer").toEqual([]);
+  });
+
+  it("Settings tells an admin it is read-only for them", () => {
+    // GET /admin/settings is adminGuard; PATCH /admin/settings/:key is
+    // superGuard, and the UI gates its edit controls on isSuper. An admin
+    // told "changing one here changes behaviour everywhere" would be reading
+    // about controls that are not rendered for them.
+    const S = web("SettingsTab.tsx").replace(/\s+/g, " ");
+    expect(S).toMatch(/Read-only for you/);
+    expect(S, "and the super branch must warn that changes are immediate")
+      .toMatch(/changes\s*behaviour/i);
+    // A rate change must NOT be described as re-rating past work — payouts
+    // are snapshotted at pricing and at approval.
+    // Asserted on a phrase that no inline <Em> splits — "does <Em>not</Em>
+    // re-rate" puts a tag between the two words a proximity regex needs.
+    expect(S).toMatch(/re-rate work already done/i);
+    expect(S, "…and must say why: payouts are snapshotted")
+      .toMatch(/snapshotted when a job is priced/);
+  });
+
+  it("Notify says what it actually sends, and to whom", () => {
+    // notifyWorker fans out SMS + email + push together — not a choice of
+    // channel — capped at 20 per actor per ET day, audited, and it reaches
+    // approved workers and admins only. Never clients.
+    const N = web("AdminNotifyTab.tsx").replace(/\s+/g, " ");
+    expect(N).toMatch(/text, email and push at once/);
+    expect(N).toMatch(/20 sends per person per day/);
+    expect(N, "must not imply it reaches clients").toMatch(/never clients/);
+  });
+
+  it("both Tools tabs render one, and say the estimate hand-off is not built", () => {
+    // Super-only, one audience each, so no role branching. Both are pure
+    // calculators — they read /api/admin/pricing and mutate nothing — and
+    // both "Use for new estimate" buttons are `disabled` stubs titled
+    // "Coming soon". Copy that promised a hand-off would be describing a
+    // control the reader can see greyed out.
+    const tool = (rel: string) =>
+      readFileSync(join(__dirname, "../../../web/src/ui/tools/", rel), "utf8");
+    for (const f of ["MowingJobTool.tsx", "MulchJobTool.tsx"]) {
+      const src = tool(f);
+      expect(src, `${f} needs an explainer`).toContain("<TabExplainer");
+      expect(src.replace(/\s+/g, " "), `${f} must say it saves nothing`)
+        .toMatch(/Nothing is saved/);
+      expect(src.replace(/\s+/g, " "), `${f} must not promise the disabled hand-off`)
+        .toMatch(/not built yet and is deliberately disabled/);
+      // …and the button really is still disabled. If it ever ships, this
+      // fails and the copy has to be updated with it.
+      expect(src, `${f}: the estimate button is expected to still be a stub`)
+        .toMatch(/disabled\s*\n\s*title="Coming soon/);
+    }
+  });
+
+  it("each Records tab renders a TabExplainer too", () => {
+    const missing = RECORDS_TABS.filter((t) => !web(t.file).includes("<TabExplainer")).map((t) => t.file);
+    expect(missing, "a Records tab with no explainer").toEqual([]);
+  });
+
+  it("a Records tab seen by more than one role tailors the copy", () => {
+    const flat: string[] = [];
+    for (const t of RECORDS_TABS.filter((x) => x.roleAware)) {
+      const src = web(t.file);
+      const at = src.indexOf("<TabExplainer");
+      const block = src.slice(at, src.indexOf("</TabExplainer>", at));
+      const keyed = /storageKey=\{`[^`]*\$\{/.test(block);
+      const branched = /showSuperExtras \?|showAdminExtras \?|isSuper \?/.test(block);
+      if (!keyed || !branched) flat.push(t.file);
+    }
+    expect(flat, "role-aware Records tab whose explainer is one-size-fits-all").toEqual([]);
+  });
+
+  it("a read-only role is told it is read-only", () => {
+    // An admin reading "you can add and edit" on Timeline or Documents goes
+    // looking for buttons that are super-gated. Both tabs' admin branch must
+    // say so; Guides' admin branch must say publishing is not theirs.
+    expect(web("TimelineTab.tsx")).toMatch(/Read-only for you/);
+    expect(web("DocumentsTab.tsx")).toMatch(/Read-only for you/);
+    expect(web("GuidesTab.tsx"), "an admin writes drafts but cannot publish")
+      .toMatch(/You cannot publish/);
+  });
+
+  it("each one renders a TabExplainer", () => {
+    const missing = MONEY_TABS.filter((t) => !web(t.file).includes("<TabExplainer")).map((t) => t.file);
+    expect(missing, "a Money tab with no explainer").toEqual([]);
+  });
+
+  it("tabs seen by more than one role tailor the copy to the reader", () => {
+    // A worker told "recording a purchase creates no tax entry" is being
+    // answered a question they cannot act on; an admin told "you can add
+    // entries" goes looking for a button that is not rendered for them. The
+    // storage key carries the role too, so collapsing it as one role does not
+    // collapse the different text another sees.
+    const flat: string[] = [];
+    for (const t of MONEY_TABS.filter((x) => x.roleAware)) {
+      const src = web(t.file);
+      const at = src.indexOf("<TabExplainer");
+      const block = src.slice(at, src.indexOf("</TabExplainer>", at));
+      const keyed = /storageKey=\{`[^`]*\$\{/.test(block);
+      const branched = /showSuperExtras \?|showAdminExtras \?|role === "|canEdit\s*\?/.test(block);
+      if (!keyed || !branched) flat.push(t.file);
+    }
+    expect(flat, "role-aware tab whose explainer is one-size-fits-all").toEqual([]);
+  });
+
+  it("no explainer credits a role with an action it cannot perform", () => {
+    // THIS COPY WAS WRITTEN FROM ASSUMPTION AND WAS WRONG. It told admins
+    // they approve payments and workers that they record one here. Every
+    // payment mutation is superGuard, and a payment is recorded from the JOB
+    // card. Explanatory text naming a capability is a claim about
+    // authorization, and authorization lives in the route guards.
+    const PAY = web("PaymentsTab.tsx");
+    const at = PAY.indexOf('role === "admin" ? (');
+    expect(at).toBeGreaterThan(-1);
+    const adminBlock = PAY.slice(at, PAY.indexOf(") : (", at));
+    for (const verb of ["approving is", "you approve", "you can adjust", "write the job off"]) {
+      expect(adminBlock.toLowerCase(), `admin copy must not claim: ${verb}`)
+        .not.toContain(verb);
+    }
+    expect(adminBlock, "admin copy must say the actions are super-only")
+      .toMatch(/super-admin only/);
+
+    const workerBlock = PAY.slice(PAY.indexOf('role === "worker" ? ('), at);
+    expect(workerBlock, "a worker records payment on the JOB, not here")
+      .toMatch(/you take a payment on the job itself/);
+
+    // Read-only surfaces must say so rather than describing buttons that are
+    // not rendered for the reader.
+    expect(web("PricingTab.tsx")).toMatch(/Read-only for you/);
+    expect(web("SuppliesTab.tsx")).toMatch(/Read-only here/);
+    expect(web("PayrollTab.tsx")).toMatch(/Read-only\./);
+  });
+
+  it("the overpayment rule names TIPS — money that does reach a worker", () => {
+    // "Anything over stays with the business" was wrong. reconcileApproval
+    // carves a designated tip OUT of the overage, clamped to it, split by
+    // explicit percentages, and deliberately bypassing fee and margin — so a
+    // tip reaches the worker in full. Only what is NOT designated stays with
+    // the business.
+    const PAY = web("PaymentsTab.tsx");
+    expect(PAY, "worker copy must not claim all overpayment goes to the business")
+      .not.toMatch(/Anything over stays with the business/);
+    expect(PAY).toMatch(/Unless it is called a tip/);
+    expect(PAY, "and a tip is not reduced by fee or margin")
+      .toMatch(/without any fee or margin taken off it/);
+    // The super designates it — that is a real capability and was missing.
+    expect(PAY).toMatch(/designate part of it a tip/);
+
+    // A contractor is CAPPED at promised on an overpayment
+    // (Math.min(a.net, p.net)) — the tip is the only route to more.
+    expect(PAY).toMatch(/capped at what the job\s+promised/);
+  });
+
+  it("the Ledger explainer accounts for equity rows, not just expenses", () => {
+    // BusinessExpense holds EXPENSE, CAPITAL_CONTRIBUTION and OWNER_DRAW.
+    // Only EXPENSE carries a Schedule C category; saying every row sits on a
+    // Schedule C line describes two thirds of the tab wrongly.
+    // WHITESPACE-TOLERANT. JSX wraps prose across lines, so a literal-space
+    // regex fails on copy that is present and correct — which is a gate
+    // reporting a bug that does not exist, and the fastest way to teach
+    // someone to ignore it.
+    const L = web("BusinessExpensesTab.tsx").replace(/\s+/g, " ");
+    expect(L).toMatch(/capital contributions/i);
+    expect(L).toMatch(/owner withdrawals \(draws\)/i);
+    expect(L, "equity rows carry no Schedule C line").toMatch(/no Schedule C line/);
+    // ONE disclosure, not two: the CollapsibleNote that carried the
+    // capitalize-vs-expense reference was merged in, so the tab no longer
+    // opens with two blue boxes saying overlapping things.
+    expect(L, "the capitalize rule must survive the merge").toMatch(/Capitalize or expense\?/);
+    expect(L).toMatch(/Commercial mower/);
+    // Comments stripped — the history of the merge is recorded in prose right
+    // where the old note stood, and naming it there must not trip this.
+    expect(stripComments(web("BusinessExpensesTab.tsx")), "the old note must be gone, not just unused")
+      .not.toMatch(/CollapsibleNote/);
+  });
+
+  it("copy whose ANSWER differs by worker type asks the worker type", () => {
+    // Role was not enough. A short payment is absorbed by the business for an
+    // employee or trainee and taken PRO-RATA by a contractor
+    // (packages/money/payoutMath.ts), and a contractor has no withholding
+    // because Gusto pays them 1099. One sentence for both told contractors
+    // the opposite of what happens to their money, on the screen where they
+    // go to check it.
+    const PAY = web("PaymentsTab.tsx");
+    expect(PAY, "the payments explainer must branch on worker type")
+      .toMatch(/workerType === "CONTRACTOR"/);
+    expect(PAY, "…and must not tell every worker they are made whole")
+      .toMatch(/your share is reduced in proportion/);
+
+    const PR = web("PayrollTab.tsx");
+    expect(PR).toMatch(/workerType === "CONTRACTOR"/);
+    expect(PR, "a contractor has no withholding to show").toMatch(/nothing is withheld/);
+
+    // Collapse state is keyed by type too, or one reading hides the other.
+    for (const f of ["PaymentsTab.tsx", "PayrollTab.tsx"]) {
+      expect(web(f), `${f} must key collapse state by worker type`)
+        .toMatch(/contractor" : "employee"/);
+    }
+  });
+
+  it("the disclosure exists once, not once per tab", () => {
+    // Three hand-rolled copies had already drifted — one used Show/Hide where
+    // the others used a chevron, one used a different border colour — and two
+    // more were about to be written.
+    const inline = MONEY_TABS.filter((t) => /aria-expanded=\{(open|policyOpen|guideOpen)\}/.test(web(t.file)));
+    expect(inline.map((t) => t.file), "a tab re-implementing the disclosure").toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 describe("[build-gate] a job title leads with the client", () => {
   // The title truncates from the right. Leading with the property left most
   // cards on a phone reading "Main House" and nothing else.

@@ -10,6 +10,7 @@ import {
   Accordion,
 } from "@chakra-ui/react";
 import { apiGet } from "@/src/lib/api";
+import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 import { prettyDate } from "@/src/lib/dates";
 import { prettyStatus } from "@/src/lib/labels";
 import { equipmentStatusColor } from "@/src/lib/statusColors";
@@ -153,6 +154,20 @@ export default function ActivityTab({ role = "worker" }: TabRolePropType) {
 
   return (
     <Box>
+      <Box mb={3}>
+      <TabExplainer storageKey="seedlings:activityTab:guideOpen" title="What Engagement shows">
+        <ExplainerText>
+          Who has been using the app, drawn from the <Em>audit log</Em> — every approved user with
+          what they have done over the last 30 days. It answers &ldquo;is this person actually
+          working in the app&rdquo;, not &ldquo;what did they earn&rdquo;.
+        </ExplainerText>
+        <ExplainerText>
+          <Em>Read-only.</Em> Nothing here changes anything; it is a report. A person&rsquo;s full
+          raw history is broader access than this shell grants and lives on the Users tab, for a
+          super admin.
+        </ExplainerText>
+      </TabExplainer>
+      </Box>
       <Heading size="md" mb="3">
         Engagement by User (for last 30 days)
       </Heading>
