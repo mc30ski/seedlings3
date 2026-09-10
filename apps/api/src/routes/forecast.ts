@@ -10,6 +10,7 @@
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import Anthropic from "@anthropic-ai/sdk";
+import { jsonSchemaOutputFormat } from "@anthropic-ai/sdk/helpers/json-schema";
 import { Role as RoleVal } from "@prisma/client";
 import { etToday, etAddDays, type EtDateKey } from "../lib/dates";
 import {
@@ -92,6 +93,52 @@ export default async function forecastRoutes(app: FastifyInstance) {
    * it was written about so it can never be read next to numbers it wasn't
    * describing.
    */
+/**
+ * The shape the assessment must come back in.
+ *
+ * Declared as a SCHEMA rather than described in prose at the end of the
+ * prompt, because prose lost. The prompt did say "Respond with ONLY a JSON
+ * object", but that instruction sat under ~2,000 tokens of financial
+ * context and the model answered conversationally instead — no braces
+ * anywhere in the response, so the brace-hunting parse found nothing and
+ * the operator got "came back in a format we couldn't read".
+ *
+ * Structured outputs make that failure impossible: the API constrains
+ * generation to this schema, so there is no prose path to fall into.
+ * `additionalProperties: false` plus a complete `required` list is what the
+ * API needs to enforce it.
+ *
+ * NOT assistant prefill (seeding the reply with "{"), which is the other
+ * classic fix — prefill returns a 400 on Sonnet 5 and every other current
+ * model, so it would have traded a bad assessment for a hard failure.
+ */
+const ASSESSMENT_SCHEMA = {
+  type: "object",
+  properties: {
+    verdict: { type: "string", enum: ["strong", "workable", "risky", "bad"] },
+    headline: { type: "string" },
+    summary: { type: "string" },
+    strengths: { type: "array", items: { type: "string" } },
+    concerns: { type: "array", items: { type: "string" } },
+    fairness: { type: "string" },
+    recommendations: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { action: { type: "string" }, why: { type: "string" } },
+        required: ["action", "why"],
+        additionalProperties: false,
+      },
+    },
+    questionsToResolve: { type: "array", items: { type: "string" } },
+  },
+  required: [
+    "verdict", "headline", "summary", "strengths",
+    "concerns", "fairness", "recommendations", "questionsToResolve",
+  ],
+  additionalProperties: false,
+} as const;
+
   app.post("/super/forecasts/:id/assess", superGuard, async (req: any) => {
     const forecast = await getForecast(req.params.id);
     const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -134,21 +181,42 @@ export default async function forecastRoutes(app: FastifyInstance) {
       // Named `anthropic`, not `client`: the audit-coverage gate matches
       // `client.<x>.create(` as a Prisma mutation, and an SDK call is not one.
       const anthropic = new Anthropic({ apiKey });
-      const response = await anthropic.messages.create({
+      // `.parse()` with a schema format — not `.create()` and then hunting
+      // for braces in free text. The API constrains generation to
+      // ASSESSMENT_SCHEMA, so the prose answer this used to return is no
+      // longer a reachable outcome.
+      //
+      // max_tokens was 4000, now 16000 (the documented default for a
+      // non-streaming request). The old ceiling sat close enough to a full
+      // assessment — recommendations and questionsToResolve are open-ended
+      // lists — that a long one could be cut off mid-object, which surfaces
+      // to the operator as the same unreadable-format error.
+      const response = await anthropic.messages.parse({
         model: "claude-sonnet-5",
-        max_tokens: 4000,
+        max_tokens: 16000,
+        output_config: { format: jsonSchemaOutputFormat(ASSESSMENT_SCHEMA) },
         messages: [{ role: "user", content: prompt }],
       });
       text = response.content
-        .filter((b): b is Anthropic.TextBlock => b.type === "text")
-        .map((b) => b.text)
+        .filter((b) => b.type === "text")
+        .map((b: any) => b.text)
         .join("");
-      const start = text.indexOf("{");
-      const end = text.lastIndexOf("}");
-      if (start >= 0 && end > start) {
-        parsed = JSON.parse(text.slice(start, end + 1));
-      } else {
-        parseError = "no JSON object in the response";
+      parsed = response.parsed_output ?? null;
+      if (!parsed) {
+        // Still reachable if generation is cut short: the format guarantees
+        // the SHAPE, not that the model finished. Name which one it was, and
+        // log it — the old code returned the raw text to the client but
+        // logged nothing, so there was nothing to look at afterwards.
+        parseError =
+          response.stop_reason === "max_tokens"
+            ? "the assessment ran past its length limit"
+            : `no parsable output (stop_reason: ${response.stop_reason})`;
+        app.log.error({
+          where: "forecast/assess",
+          stopReason: response.stop_reason,
+          outputTokens: response.usage?.output_tokens,
+          textPreview: text.slice(0, 300),
+        });
       }
     } catch (err: any) {
       app.log.error({ where: "forecast/assess", err: err?.message });
@@ -210,7 +278,7 @@ function buildAssessmentPrompt(ctx: {
     .map((w) => {
       const before = sq.workers.find((x) => x.userId === w.userId);
       const wasRate = before ? before.effectiveHourly : 0;
-      return `  - ${w.name} (${w.workerType ?? "unclassified"}${w.isOwner ? ", OWNER" : ""}${w.hypothetical ? ", HYPOTHETICAL HIRE" : ""}): ${w.clockedHours}h, $${w.totalPay.toFixed(0)} total, $${w.effectiveHourly.toFixed(2)}/hr (was $${wasRate.toFixed(2)}/hr)${w.guaranteedTopUpHours > 0 ? `, of which ${w.guaranteedTopUpHours.toFixed(1)}h ($${w.guaranteedTopUpPay.toFixed(0)}) is guaranteed time not worked` : ""}`;
+      return `  - ${w.name} (${w.workerType ?? "unclassified"}${w.isOwner ? ", OWNER" : ""}${w.hypothetical ? ", HYPOTHETICAL HIRE" : ""}): ${w.clockedHours}h, $${w.totalPay.toFixed(0)} total, $${w.effectiveHourly.toFixed(2)}/hr (was $${wasRate.toFixed(2)}/hr)${w.guaranteedTopUpHours > 0 ? `, of which ${w.guaranteedTopUpHours.toFixed(1)}h ($${w.guaranteedTopUpPay.toFixed(0)}) is guaranteed time not worked` : ""}${w.claimerPremiumHours > 0 ? `, and ${w.claimerPremiumHours.toFixed(1)}h ($${w.claimerPremiumPay.toFixed(0)}) earning the claimer premium for leading a crew` : ""}`;
     })
     .join("\n");
 
@@ -238,7 +306,7 @@ TODAY (unchanged settings)
   Labor is ${sq.laborPercentOfRevenue}% of revenue. Revenue per clocked hour ${money(sq.revenuePerClockedHour)}.
 
 THE SCENARIO
-  Pay structure: ${shape.name ?? "a blend with no standard name"} — workers are paid ${shape.detail}${a.leadHourlyBonus ? `, plus $${a.leadHourlyBonus}/hr for crew leads` : ""}
+  Pay structure: ${shape.name ?? "a blend with no standard name"} — workers are paid ${shape.detail}${a.leadHourlyBonus ? `, plus $${a.leadHourlyBonus}/hr to the claimer of any job someone else also worked (applied to the share of their hours spent on those jobs, not their whole week)` : ""}
   Business keeps ${a.employeeMarginPercent}% from employees, ${a.contractorFeePercent}% from contractors${
     a.guaranteedHoursPerPeriod > 0
       ? `\n  Pay guarantee: every ${a.guaranteeContractors ? "worker including contractors" : "W-2 worker"} is paid for at least ${a.guaranteedHoursPerPeriod}h in each of the ${b.payPeriods.keys.length} ${b.payPeriods.cadence.toLowerCase()} periods in this window, INCLUDING periods they did not work at all. That buys ${sc.workers.reduce((t, w) => t + w.guaranteedTopUpHours, 0).toFixed(0)}h of unworked time.`
@@ -266,17 +334,5 @@ Local market rate for lawn crew is roughly $15-18/hr; an experienced crew lead $
 WHAT TO WRITE
 Be specific and quantitative. Name people and numbers. Say plainly when the scenario is a bad idea, and say plainly when it is fine. Do not hedge everything into mush, and do not cheerlead. If the scenario improves margin by hurting one person disproportionately, lead with that. If the margin gain is real and the pay is still generous, say so.
 
-Respond with ONLY a JSON object in this exact shape:
-{
-  "verdict": "strong" | "workable" | "risky" | "bad",
-  "headline": "One sentence, under 20 words, that says what this scenario really does.",
-  "summary": "2-4 sentences of plain assessment.",
-  "strengths": ["specific, with numbers"],
-  "concerns": ["specific, with numbers"],
-  "fairness": "2-3 sentences specifically on whether this is fair to the named workers, referencing their actual per-hour outcomes.",
-  "recommendations": [
-    { "action": "What to change", "why": "The reasoning, with the number that supports it" }
-  ],
-  "questionsToResolve": ["Things the data cannot answer that the operator should check"]
-}`;
+Fill in every field of the required structure. "verdict" is one of strong, workable, risky or bad. "headline" is one sentence under 20 words saying what this scenario really does. "summary" is 2-4 sentences of plain assessment. "fairness" is 2-3 sentences on whether this is fair to the named workers, referencing their actual per-hour outcomes. "strengths" and "concerns" are specific and carry numbers. Each recommendation pairs what to change with the number that supports it. "questionsToResolve" are things the data cannot answer that the operator should check.`;
 }

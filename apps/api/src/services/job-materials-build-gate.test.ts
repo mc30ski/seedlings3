@@ -2130,6 +2130,168 @@ describe("[build-gate] hours approval measures a job against itself", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+describe("[build-gate] the forecast window presets", () => {
+  const web = (rel: string) => readFileSync(join(__dirname, "../../../web/src/", rel), "utf8");
+
+  it("the default window is named, not whichever preset happens to be first", () => {
+    // It was PRESETS[0]. Adding a shorter preset at the top of the list would
+    // then have moved every operator without a stored preference from a
+    // 90-day window to a 30-day one — a changed default arrived at by
+    // editing an unrelated line, and one that trips the thin-sample
+    // guardrail on this business.
+    const F = web("ui/tabs/ForecastTab.tsx");
+    expect(F, "the default must be looked up by key")
+      .toMatch(/const DEFAULT_PRESET = PRESETS\.find\(\(p\) => p\.key === "90d"\)!/);
+    // Comments stripped: the docstring on DEFAULT_PRESET names the pattern it
+    // replaced, so a raw scan finds "PRESETS[0]" in prose and fails on the
+    // explanation rather than on the code.
+    const code = F.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+    expect(code, "nothing may take the default positionally").not.toMatch(/PRESETS\[0\]/);
+  });
+
+  it("preset keys are stable, because they are persisted", () => {
+    // `forecast_preset` stores the KEY. Renaming "Last 90 days" to
+    // "Last 3 months" must not change "90d", or every saved choice silently
+    // falls back.
+    const F = web("ui/tabs/ForecastTab.tsx").replace(/\s+/g, " ");
+    for (const key of ["30d", "60d", "90d", "180d", "ytd", "12m"]) {
+      expect(F, `preset ${key} must exist`).toMatch(new RegExp(`key: "${key}"`));
+    }
+  });
+});
+
+describe("[build-gate] a forecast lever that cannot bite says so", () => {
+  const web = (rel: string) => readFileSync(join(__dirname, "../../../web/src/", rel), "utf8");
+
+  it("the contractor levers tell you when there is no contractor to act on", () => {
+    // Both are live code that moves NO money when the roster is all W-2 —
+    // production is 5 employees, 1 trainee, 0 contractors. Dragging the fee
+    // across its whole range changes nothing, and without a hint there is no
+    // way to tell a dead control from an empty roster. That ambiguity is
+    // exactly what let a genuinely dead lever (the old crew-lead premium)
+    // sit unnoticed.
+    const F = web("ui/tabs/ForecastTab.tsx").replace(/\s+/g, " ");
+    expect(F, "the emptiness must be computed, not assumed")
+      .toMatch(/const noContractors = contractorCount === 0;/);
+    expect(F, "…from the SCENARIO's roster, so a hypothetical hire counts")
+      .toMatch(/scenario\?\.workers\.filter\(\(w\) => w\.workerType === "CONTRACTOR"\)/);
+    expect(F, "the fee lever must say it changes nothing")
+      .toMatch(/Nobody in this window is a contractor, so this changes nothing/);
+    expect(F, "the guarantee checkbox must say it changes no pay")
+      .toMatch(/No contractors in this window — ticking this changes no pay today/);
+  });
+});
+
+describe("[build-gate] the two money reports say which basis they are on", () => {
+  const web = (rel: string) => readFileSync(join(__dirname, "../../../web/src/", rel), "utf8");
+
+  it("the P&L toggle names what it selects, not a basis it does not change", () => {
+    // It was labelled "Accrual" / "Cash basis", which claims a whole-report
+    // basis change. Only the WAGE lines move: income is always cash
+    // collected and expenses are always booked when paid, in both modes.
+    // Someone reading "Accrual" and trusting it would be wrong twice.
+    const R = web("ui/tabs/ReconcileTab.tsx").replace(/\s+/g, " ");
+    expect(R, "the buttons must say which anchor they pick")
+      .toMatch(/Wages: matched to payment/);
+    expect(R).toMatch(/Wages: matched to work done/);
+    expect(R, "the old whole-basis label must not come back")
+      .not.toMatch(/\? "Accrual" : "Cash basis"/);
+  });
+
+  it("the P&L says what its toggle does NOT change", () => {
+    // Without this the Forecast tab looks like it disagrees with the P&L for
+    // no stated reason.
+    const R = web("ui/tabs/ReconcileTab.tsx").replace(/\s+/g, " ");
+    expect(R).toMatch(/nothing is spread over the period it covers/);
+    expect(R, "and must point at the tab that does spread them")
+      .toMatch(/Forecast tab does spread those costs/);
+  });
+
+  it("the Forecast says costs are spread and income is not", () => {
+    // The change is accrual on the EXPENSE side only — revenue is still cash
+    // collected. Claiming "accrual accounting" outright would overstate it.
+    const F = web("ui/tabs/ForecastTab.tsx").replace(/\s+/g, " ");
+    expect(F, "must say costs are spread over their coverage")
+      .toMatch(/Costs are spread over the period they cover; income is not/);
+    expect(F, "must say a non-recurring cost stays where it was paid")
+      .toMatch(/Anything without a recurrence set on it stays where it was paid/);
+    expect(F, "must not claim to be accrual accounting generally")
+      .toMatch(/this is not full accrual accounting/);
+  });
+
+  it("the comp field asks for the window's share, not the invoice", () => {
+    // It takes a hand-typed dollar figure. Once Insurance reports a coverage
+    // slice, an operator typing the invoice amount subtracts more comp than
+    // the window contains.
+    const F = web("ui/tabs/ForecastTab.tsx").replace(/\s+/g, " ");
+    expect(F).toMatch(/Enter the amount THIS WINDOW IS CHARGED, not the invoice/);
+  });
+});
+
+describe("[build-gate] the AI assessment cannot come back unreadable", () => {
+  const routeSrc = () => readFileSync(join(__dirname, "../routes/forecast.ts"), "utf8");
+
+  it("the response shape is enforced by the API, not asked for in prose", () => {
+    // The prompt DID say "Respond with ONLY a JSON object" — and lost. That
+    // instruction sat under ~2,000 tokens of financial context and the model
+    // answered conversationally, so the brace-hunting parse found nothing
+    // and the operator got "came back in a format we couldn't read".
+    const R = routeSrc();
+    expect(R, "must use the parsing helper").toMatch(/anthropic\.messages\.parse\(/);
+    expect(R, "…with a schema-constrained output format")
+      .toMatch(/output_config: \{ format: jsonSchemaOutputFormat\(/);
+    // Asserted at the SCHEMA'S TOP LEVEL, not just anywhere in the file:
+    // the nested `recommendations` item schema has its own
+    // `additionalProperties: false`, so a bare substring check still passes
+    // after the outer one — the one that actually makes the response
+    // strict — has been deleted.
+    const at = R.indexOf("const ASSESSMENT_SCHEMA = {");
+    expect(at, "the schema must exist").toBeGreaterThan(-1);
+    const schema = R.slice(at, R.indexOf("} as const;", at));
+    expect(schema, "the schema must be strict at its top level or the API will not enforce it")
+      .toMatch(/\n {2}additionalProperties: false,/);
+    expect(schema, "…and list every field as required")
+      .toMatch(/\n {2}required: \[/);
+  });
+
+  it("nothing hunts for braces in free text any more", () => {
+    // Scanning for the first "{" and last "}" is what turned a prose answer
+    // into a user-facing error instead of a correct result.
+    const R = routeSrc();
+    expect(R, "brace-hunting must not come back").not.toMatch(/indexOf\("\{"\)/);
+    expect(R, "brace-hunting must not come back").not.toMatch(/lastIndexOf\("\}"\)/);
+  });
+
+  it("it does not reach for assistant prefill, which 400s on current models", () => {
+    // Seeding the reply with "{" is the other classic fix for this failure
+    // and it is a hard error on Sonnet 5 and every other current model —
+    // it would trade a bad assessment for a broken endpoint.
+    const R = routeSrc().replace(/\s+/g, " ");
+    expect(R).not.toMatch(/role: "assistant"[^}]{0,80}content: "\{"/);
+  });
+
+  it("the output ceiling is not set where a full assessment can hit it", () => {
+    // recommendations and questionsToResolve are open-ended lists. A ceiling
+    // low enough to truncate one mid-object surfaces as the same unreadable
+    // error, because the shape guarantee says nothing about finishing.
+    const R = routeSrc();
+    const m = R.match(/max_tokens: (\d+)/);
+    expect(m, "the assess call must set max_tokens").not.toBeNull();
+    expect(Number(m![1]), "max_tokens is too low for a full assessment")
+      .toBeGreaterThanOrEqual(8000);
+  });
+
+  it("a failure to parse is logged, not just handed to the client", () => {
+    // The old code returned the raw text to the browser and logged nothing,
+    // so after the fact there was nothing to look at.
+    const R = routeSrc();
+    const at = R.indexOf("anthropic.messages.parse(");
+    const after = R.slice(at, at + 2000);
+    expect(after, "log the stop reason when nothing parses")
+      .toMatch(/app\.log\.error\([\s\S]{0,200}?stopReason/);
+  });
+});
+
 describe("[build-gate] Home's vehicle summary is per-driver and self-hiding", () => {
   const web = (rel: string) => readFileSync(join(__dirname, "../../../web/src/", rel), "utf8");
 

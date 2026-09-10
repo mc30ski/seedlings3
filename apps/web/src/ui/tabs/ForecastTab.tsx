@@ -61,16 +61,40 @@ import {
 
 // ── Window presets ──────────────────────────────────────────────────────────
 //
-// Seasonality in this business is large, so the presets are seasons rather
-// than rolling windows. Comparing spring against summer is usually the more
-// useful question, and a rolling "last 30 days" invites annualising a peak.
+// Seasonality in this business is large, so the long presets matter most:
+// comparing spring against summer is usually the more useful question, and a
+// short rolling window invites annualising a peak. The thin-sample guardrail
+// (fewer than 30 jobs) fires on the short ones and says so.
+//
+// The short windows are safe to offer NOW in a way they were not before,
+// because recurring costs are charged by the coverage they buy rather than
+// by the month the invoice landed in. A one-month window used to carry a
+// whole annual premium or none of it; it now carries a twelfth either way.
+// See amortizedShare in services/forecast.ts.
+//
+// Keys are stable across label changes — they are persisted in
+// `forecast_preset`, so renaming a label must not orphan a saved choice.
 type Preset = { key: string; label: string; range: () => [string, string] };
 const PRESETS: Preset[] = [
-  { key: "90d", label: "Last 90 days", range: () => [bizAddDays(bizToday(), -90), bizToday()] },
+  { key: "30d", label: "Last month", range: () => [bizAddDays(bizToday(), -30), bizToday()] },
+  { key: "60d", label: "Last 2 months", range: () => [bizAddDays(bizToday(), -60), bizToday()] },
+  // Key stays "90d" — this is the long-standing default and renaming the key
+  // would silently reset every operator's stored preset.
+  { key: "90d", label: "Last 3 months", range: () => [bizAddDays(bizToday(), -90), bizToday()] },
   { key: "180d", label: "Last 6 months", range: () => [bizAddDays(bizToday(), -180), bizToday()] },
   { key: "ytd", label: "Year to date", range: () => [`${bizToday().slice(0, 4)}-01-01`, bizToday()] },
   { key: "12m", label: "Last 12 months", range: () => [bizAddDays(bizToday(), -365), bizToday()] },
 ];
+
+/** The window a first-time reader lands on.
+ *
+ *  Named, not positional. It used to be `PRESETS[0]`, so adding a shorter
+ *  preset at the top of the list would have silently moved every operator
+ *  without a stored preference from a 90-day window to a 30-day one — a
+ *  different default, arrived at by editing an unrelated line. Three months
+ *  is the shortest window that usually clears the 30-job thin-sample
+ *  guardrail on this business. */
+const DEFAULT_PRESET = PRESETS.find((p) => p.key === "90d")!;
 
 const WORKER_TYPES = [
   { value: "EMPLOYEE", label: "Employee (W-2)" },
@@ -281,12 +305,12 @@ function hydrate(stored: Assumptions, baseline: ForecastBaseline): Assumptions {
 }
 
 export default function ForecastTab() {
-  const [from, setFrom] = usePersistedState("forecast_from", PRESETS[0].range()[0]);
-  const [to, setTo] = usePersistedState("forecast_to", PRESETS[0].range()[1]);
+  const [from, setFrom] = usePersistedState("forecast_from", DEFAULT_PRESET.range()[0]);
+  const [to, setTo] = usePersistedState("forecast_to", DEFAULT_PRESET.range()[1]);
   // Which preset produced the current window, so the badge can name it. Cleared
   // the moment either date is edited by hand — a badge still reading "Last 90
   // days" over a hand-picked range is worse than no label at all.
-  const [presetKey, setPresetKey] = usePersistedState("forecast_preset", PRESETS[0].key);
+  const [presetKey, setPresetKey] = usePersistedState("forecast_preset", DEFAULT_PRESET.key);
   const [presetMenuOpen, setPresetMenuOpen] = useState(false);
 
   // Close on any click that isn't the badge itself. The badge stops propagation,
@@ -551,6 +575,18 @@ export default function ForecastTab() {
 
   const a = assumptions;
   const sq = data.statusQuo;
+  // Is there anyone for the contractor levers to act on?
+  //
+  // Both the contractor fee and the extend-the-guarantee checkbox are live
+  // code that moves no money when nobody in the window is a 1099 worker —
+  // you can drag the fee across its whole range and watch nothing happen,
+  // with no way to tell a broken control from an empty roster. Counts the
+  // scenario's OWN roster, so a hypothetical contractor hire or a worker
+  // re-typed to CONTRACTOR in the roster editor makes the levers live
+  // immediately.
+  const contractorCount =
+    scenario?.workers.filter((w) => w.workerType === "CONTRACTOR").length ?? 0;
+  const noContractors = contractorCount === 0;
   // What every lever sits at before you touch it. Same function the model
   // uses for the "Today" column, so the two can never disagree about what
   // the current settings are.
@@ -578,6 +614,22 @@ export default function ForecastTab() {
           <Em>It changes nothing.</Em> No setting, no payment, no payroll row. Nothing here reaches
           a worker or a client; it is a calculator over history, and closing the tab discards it
           unless you save a scenario.
+        </ExplainerText>
+        <ExplainerText>
+          <Em>Costs are spread over the period they cover; income is not.</Em> A premium or
+          licence you pay once a year is charged to this window only for the months of it this
+          window contains — so a three-month window carries a quarter of an annual policy
+          whether you paid it inside that window or six weeks before it. Anything without a
+          recurrence set on it stays where it was paid, which is right for fuel, a repair or a
+          bag of mulch.
+        </ExplainerText>
+        <ExplainerText>
+          Income is still counted when the money <Em>arrived</Em>, not when you invoiced it, so
+          this is not full accrual accounting — the gap between what you billed and what you
+          collected is a real fact worth seeing rather than smoothing away. Your P&amp;L is cash
+          basis on both sides, so a window containing an annual premium will show the whole
+          premium there and a slice of it here. Neither is wrong; they answer different
+          questions.
         </ExplainerText>
         <ExplainerText>
           It answers &ldquo;what would a different rate have done&rdquo; well. It does not find
@@ -780,9 +832,11 @@ export default function ForecastTab() {
                 info={"The same thing for 1099 contractors \u2014 the platform fee the business keeps from their share. Contractors carry no employer payroll tax and no workers comp, so a dollar paid to a contractor costs the business a dollar, where a dollar to an employee costs roughly $1.26."} value={a.contractorFeePercent} baseline={base.contractorFeePercent}
                 min={0} max={100} suffix="%"
                 onChange={(n) => set("contractorFeePercent", n)}
-                hint={a.contractorFeePercent >= 100
-                  ? "Worker share 0% — the job pays nothing on its own."
-                  : `Worker share ${100 - a.contractorFeePercent}%`}
+                hint={noContractors
+                  ? "Nobody in this window is a contractor, so this changes nothing. It applies the moment you add one — including a hypothetical hire below."
+                  : a.contractorFeePercent >= 100
+                    ? "Worker share 0% — the job pays nothing on its own."
+                    : `Worker share ${100 - a.contractorFeePercent}%`}
               />
               <Lever
                 label="Guaranteed hourly base"
@@ -792,11 +846,11 @@ export default function ForecastTab() {
                 hint="Covers drive time, rain days and training — the hours a pure share model pays nothing for."
               />
               <Lever
-                label="Crew-lead premium"
-                info={"Extra dollars per hour on top of the base, paid only to workers marked as crew lead. Makes a seniority premium something you set deliberately rather than something that emerges from who happened to be assigned the expensive jobs."} value={a.leadHourlyBonus} baseline={base.leadHourlyBonus}
+                label="Job-claimer premium"
+                info={"Extra dollars per hour on top of the base for the person who claimed a job that someone else also worked. Nobody is \"marked\" as anything — it is read off each job's own claimer, so it follows who actually led a crew. A claimer working a job alone earns nothing extra. It applies to the share of a person's hours spent on those jobs, not to their whole week."} value={a.leadHourlyBonus} baseline={base.leadHourlyBonus}
                 min={0} max={10} suffix="/hr"
                 onChange={(n) => set("leadHourlyBonus", n)}
-                hint="Makes a productivity premium explicit rather than an artifact of job assignment."
+                hint="Pays for leading a crew, not for seniority — solo jobs don't count."
               />
               <Lever
                 label="Guaranteed hours per pay period"
@@ -827,6 +881,13 @@ export default function ForecastTab() {
                     <Text fontSize="10.5px" color="orange.fg">
                       A guaranteed minimum makes a 1099 worker look like an employee.
                     </Text>
+                    {noContractors && (
+                      <Text fontSize="10.5px" color="fg.muted">
+                        No contractors in this window — ticking this changes no pay today. It
+                        still raises the classification warning, which is the point of reading
+                        it before you hire one.
+                      </Text>
+                    )}
                   </Checkbox.Label>
                 </Checkbox.Root>
               )}
@@ -878,7 +939,8 @@ export default function ForecastTab() {
               <Lever
                 label="Workers comp already in Insurance"
                 info={
-                  "How many dollars of this window's booked Insurance are workers comp premium. " +
+                  "How many dollars of this window's Insurance are workers comp premium. " +
+                  "Enter the amount THIS WINDOW IS CHARGED, not the invoice: an annual premium is spread over the twelve months it covers, so a three-month window carries about a quarter of it. The Costs table shows the figure to match. " +
                   "The app cannot work this out on its own \u2014 comp, general liability and commercial auto all sit in one Insurance category on Schedule C line 15, with nothing to tell them apart. " +
                   "Enter it and the forecast takes that amount OUT of costs and re-derives comp from wages at the rate below, so it scales when you model hiring or more volume. " +
                   "Leave both at zero and the scenario simply uses the premiums you actually booked, which is what the P&L does."
@@ -889,7 +951,8 @@ export default function ForecastTab() {
                 hint="Only needed if you want comp to scale with payroll. Otherwise leave at $0."
               />
               <Lever label="Fixed costs"
-                info={"Replaces the total of everything tagged Fixed \u2014 insurance, software, banking. Use it to model an insurance change or a software cull without editing individual categories. This is the number that decides how much growing actually helps, since it is the part that does not rise with the work."} value={Math.round(a.fixedCostOverride ?? scenario.fixedCosts)}
+                info={"Replaces the total of everything tagged Fixed \u2014 insurance, software, banking. Use it to model an insurance change or a software cull without editing individual categories. This is the number that decides how much growing actually helps, since it is the part that does not rise with the work. " +
+                  "Note this total is what the window is CHARGED, not what you paid inside it: a cost marked as recurring in the ledger is spread across the months it covers, so an annual policy contributes a slice rather than the whole invoice."} value={Math.round(a.fixedCostOverride ?? scenario.fixedCosts)}
                      baseline={Math.round(sq.fixedCosts)}
                      min={0} max={Math.max(1000, Math.round(scenario.fixedCosts * 2))} step={50} suffix=""
                      onChange={(n) => set("fixedCostOverride", n)}

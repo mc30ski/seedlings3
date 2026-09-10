@@ -19,6 +19,7 @@
 
 import { describe, it, expect } from "vitest";
 import { readFileSync, existsSync } from "fs";
+import { amortizedShare } from "./forecast";
 import { join } from "path";
 import {
   simulate,
@@ -52,16 +53,20 @@ function baseline(over: Partial<ForecastBaseline> = {}): ForecastBaseline {
     jobs: [
       // solo employee job
       { id: "j1", paid: 60, invoicePrice: 60, materials: 0, minutes: 30, dateKey: "2026-06-01",
-        crew: [{ userId: "emp", splitPercent: 100 }], recurring: true },
+        crew: [{ userId: "emp", splitPercent: 100 }], claimerUserId: null, crewSize: 1, recurring: true },
       // two-person crew
       { id: "j2", paid: 100, invoicePrice: 100, materials: 10, minutes: 40, dateKey: "2026-06-02",
-        crew: [{ userId: "emp", splitPercent: 50 }, { userId: "con", splitPercent: 50 }], recurring: true },
+        crew: [{ userId: "emp", splitPercent: 50 }, { userId: "con", splitPercent: 50 }],
+        // The sample's ONE crewed job, claimed by Emp — so Emp is the only
+        // person in this baseline who can earn the claimer premium, and only
+        // for the share of on-site time this job represents.
+        claimerUserId: "emp", crewSize: 2, recurring: true },
       // completed but never collected
       { id: "j3", paid: 0, invoicePrice: 55, materials: 0, minutes: 50, dateKey: "2026-06-03",
-        crew: [{ userId: "emp", splitPercent: 100 }], recurring: true },
+        crew: [{ userId: "emp", splitPercent: 100 }], claimerUserId: null, crewSize: 1, recurring: true },
       // cheap job, the repricing target — and the sample's one-off
       { id: "j4", paid: 20, invoicePrice: 20, materials: 0, minutes: 45, dateKey: "2026-06-04",
-        crew: [{ userId: "con", splitPercent: 100 }], recurring: false },
+        crew: [{ userId: "con", splitPercent: 100 }], claimerUserId: null, crewSize: 1, recurring: false },
     ],
     workers: [
       // Emp works three of the four weeks, Con only the first — the shape a
@@ -435,7 +440,7 @@ describe("[build-gate] LLC Owner share is neither a cost nor silent profit", () 
     b.jobs = [
       ...b.jobs,
       { id: "j5", paid: 120, invoicePrice: 120, materials: 0, minutes: 60, dateKey: "2026-06-05",
-        crew: [{ userId: "own", splitPercent: 100 }], recurring: true },
+        crew: [{ userId: "own", splitPercent: 100 }], claimerUserId: null, crewSize: 1, recurring: true },
     ];
     return b;
   };
@@ -601,10 +606,200 @@ describe("forecast — the guarantee is priced, not free", () => {
     expect(emp.hourlyPay).toBe(round2(10 * 20 + emp.guaranteedTopUpPay));
   });
 
-  it("pays the plain base, not the crew-lead premium", () => {
+  it("pays the plain base, not the claimer premium", () => {
     // Nobody leads a crew in a week nobody worked.
-    const emp = r_(simulate(baseline(), GUAR({ leadHourlyBonus: 10, leadUserIds: ["emp"] })), "emp");
+    const emp = r_(simulate(baseline(), GUAR({ leadHourlyBonus: 10 })), "emp");
     expect(emp.guaranteedTopUpPay).toBe(200);
+  });
+});
+
+describe("forecast — the job-claimer premium", () => {
+  // The sample has exactly one crewed job: j2 (40 min, Emp claiming, Con
+  // alongside). Emp's other on-site time is j1 (30) + j3 (50) = 80 min solo.
+  // So Emp led 40 of 120 on-site minutes — one third of their hours.
+  const HOURLY = (over: Partial<Assumptions> = {}) =>
+    ({ ...defaultAssumptions(baseline()), hourlyBase: 20, ...over }) as Assumptions;
+
+  it("pays the claimer of a job someone else also worked", () => {
+    const emp = r_(simulate(baseline(), HOURLY({ leadHourlyBonus: 9 })), "emp");
+    // 10 clocked hours x (40/120) = 3.33h at the premium.
+    expect(emp.claimerPremiumHours).toBeCloseTo(3.33, 1);
+    expect(emp.claimerPremiumPay).toBeCloseTo(30, 0);
+  });
+
+  it("pays nothing to someone who never claimed a crewed job", () => {
+    // Con worked j2 but did not claim it, and j4 alone.
+    const con = r_(simulate(baseline(), HOURLY({ leadHourlyBonus: 9 })), "con");
+    expect(con.claimerPremiumHours).toBe(0);
+    expect(con.claimerPremiumPay).toBe(0);
+  });
+
+  it("a claimer working ALONE earns nothing extra", () => {
+    // The operator's rule: leading nobody is not what this pays for. j1 and
+    // j3 are Emp's solo jobs and carry claimerUserId: null, so they add
+    // nothing to the numerator while still counting in the denominator —
+    // which is exactly why Emp gets a third and not all of it.
+    const b = baseline();
+    b.jobs = b.jobs.map((j) => ({ ...j, claimerUserId: null }));
+    const emp = r_(simulate(b, HOURLY({ leadHourlyBonus: 9 })), "emp");
+    expect(emp.claimerPremiumHours).toBe(0);
+  });
+
+  it("the premium never exceeds the hours actually worked", () => {
+    // A claimer can appear on a job they are not listed in `crew` for (a
+    // split predating completionSplits), which would push the ratio over 1
+    // and pay a premium on hours nobody worked.
+    const b = baseline();
+    b.jobs = b.jobs.map((j) => ({ ...j, claimerUserId: "emp", crewSize: 2 }));
+    const emp = r_(simulate(b, HOURLY({ leadHourlyBonus: 9 })), "emp");
+    expect(emp.claimerPremiumHours).toBeLessThanOrEqual(emp.clockedHours);
+  });
+
+  it("a job with no clock contributes to neither side", () => {
+    // minutes === null cannot say what share of the day it was. Guessing
+    // would move real money, so it is excluded from numerator AND
+    // denominator rather than treated as zero.
+    const b = baseline();
+    b.jobs = b.jobs.map((j) => (j.id === "j3" ? { ...j, minutes: null } : j));
+    const emp = r_(simulate(b, HOURLY({ leadHourlyBonus: 9 })), "emp");
+    // Emp's on-site time is now j1(30) + j2(40) = 70, of which 40 was led.
+    expect(emp.claimerPremiumHours).toBeCloseTo(10 * (40 / 70), 1);
+  });
+
+  it("the premium rides on clocked hours, not on job minutes", () => {
+    // WorkerWorkday is the payroll basis and the occurrence clock is not;
+    // the repo keeps those sources decoupled on purpose. Job minutes supply
+    // only the RATIO. Emp clocks 10h but is on site 120 min — if the premium
+    // were paid against job minutes it would be 0.67h, not 3.33h.
+    const emp = r_(simulate(baseline(), HOURLY({ leadHourlyBonus: 9 })), "emp");
+    expect(emp.claimerPremiumHours).toBeGreaterThan(2);
+  });
+
+  it("a hypothetical hire earns no premium — they have led nothing", () => {
+    const b = baseline();
+    const a = HOURLY({
+      leadHourlyBonus: 9,
+      hypotheticalWorkers: [
+        { id: "h1", name: "New Hire", workerType: "EMPLOYEE", weeklyHours: 20, mode: "ADDITIONAL" } as any,
+      ],
+    });
+    const out = simulate(b, a);
+    const hire = out.workers.find((w) => w.hypothetical);
+    expect(hire?.claimerPremiumHours ?? 0).toBe(0);
+  });
+});
+
+describe("forecast — recurring costs are spread over what they cover", () => {
+  const row = (cost: number, date: string, recurrence: string | null) => ({
+    cost, date: new Date(`${date}T12:00:00Z`), recurrence,
+  });
+
+  it("an annual premium is charged to a window by the months it covers", () => {
+    // The real case: $928 comp bought 2026-08-10. A Jun–Aug window used to
+    // carry all $928 against three months of revenue; a Sep–Nov window
+    // carried nothing at all. Two windows over the same steady business
+    // disagreed by the whole premium.
+    const r = row(928, "2026-08-10", "ANNUALLY");
+    const junAug = amortizedShare(r, "2026-06-01" as any, "2026-08-31" as any);
+    const sepNov = amortizedShare(r, "2026-09-01" as any, "2026-11-30" as any);
+    // Aug 10–31 is 22 of 365 covered days.
+    expect(junAug).toBeCloseTo(928 * (22 / 365), 1);
+    expect(sepNov).toBeCloseTo(928 * (91 / 365), 1);
+    expect(sepNov, "the window AFTER the invoice must not be empty").toBeGreaterThan(0);
+  });
+
+  it("a full coverage period charges the whole amount, and no more", () => {
+    const r = row(928, "2026-08-10", "ANNUALLY");
+    expect(amortizedShare(r, "2026-08-10" as any, "2027-08-09" as any)).toBeCloseTo(928, 2);
+    // Two adjacent years must not double-charge.
+    const next = amortizedShare(r, "2027-08-10" as any, "2028-08-09" as any);
+    expect(next).toBe(0);
+  });
+
+  it("a one-off is untouched — it stays where it was paid", () => {
+    // Fuel, a repair, a bag of mulch. Amortizing these would be wrong, and
+    // 71 of the ledger's rows carry no recurrence.
+    const r = row(500, "2026-07-15", null);
+    expect(amortizedShare(r, "2026-06-01" as any, "2026-08-31" as any)).toBe(500);
+    expect(amortizedShare(r, "2026-09-01" as any, "2026-11-30" as any)).toBe(0);
+  });
+
+  it("an unrecognised recurrence falls back to the point-cost rule, not to zero", () => {
+    // A value this build does not know must never make money disappear.
+    const r = row(300, "2026-07-15", "FORTNIGHTLY");
+    expect(amortizedShare(r, "2026-06-01" as any, "2026-08-31" as any)).toBe(300);
+  });
+
+  it("coverage that ends before the window starts contributes nothing", () => {
+    const r = row(120, "2026-01-05", "MONTHLY");
+    expect(amortizedShare(r, "2026-06-01" as any, "2026-08-31" as any)).toBe(0);
+  });
+
+  it("the expense query reads back far enough to see a still-covering premium", () => {
+    // amortizedShare can only spread a row the QUERY returned. Reading just
+    // the window means a premium bought in August is invisible to a November
+    // window, and the pro-rating then has nothing to work with — the
+    // "window after the invoice is empty" half of the bug survives, silently
+    // and with every unit test still green.
+    const S = readFileSync(join(__dirname, "./forecast.ts"), "utf8").replace(/\s+/g, " ");
+    expect(S, "the expense query must look back by the longest coverage")
+      .toMatch(/date: \{ gte: etMidnight\(etAddDays\(from, -COVERAGE_LOOKBACK_DAYS\)\), lte: end \}/);
+    // …and that constant must actually cover a year.
+    const raw = readFileSync(join(__dirname, "./forecast.ts"), "utf8");
+    const m = raw.match(/COVERAGE_LOOKBACK_DAYS = (\d+)/);
+    expect(m, "the look-back constant must exist").not.toBeNull();
+    expect(Number(m![1])).toBeGreaterThanOrEqual(365);
+  });
+
+  it("only rows that landed IN the window count as purchases or job materials", () => {
+    // The look-back brings in rows from outside the window. Those contribute
+    // coverage and nothing else — a premium bought in August is not a
+    // capital purchase made in November, and not a job material this window
+    // bought.
+    const S = readFileSync(join(__dirname, "./forecast.ts"), "utf8").replace(/\s+/g, " ");
+    expect(S).toMatch(/if \(!inWindow\) continue;/);
+  });
+
+  it("a refund is spread on the same terms as a charge", () => {
+    // Not obviously right — a mid-term cancellation refunds unconsumed
+    // coverage rather than spreading evenly — but the ledger has no link
+    // from a refund to what it refunds. The behaviour is pinned so the
+    // limitation is visible rather than discovered.
+    const r = row(-850, "2026-09-03", "ANNUALLY");
+    expect(amortizedShare(r, "2026-09-01" as any, "2026-11-30" as any)).toBeLessThan(0);
+  });
+});
+
+describe("forecast — who counts as a claimer is decided at the source", () => {
+  // The model can only honour the operator's rule if the BASELINE marks the
+  // right jobs. These assertions sit on the builder because that is where
+  // "claimer with a crew" is decided — a model-level fixture test passes
+  // happily while the builder hands it the wrong jobs.
+  const src = () => readFileSync(join(__dirname, "./forecast.ts"), "utf8");
+
+  it("a claimer working alone is not a claimer for premium purposes", () => {
+    // The operator's rule, verbatim: "A claimer by themselves doesn't count."
+    const S = src().replace(/\s+/g, " ");
+    expect(S, "the builder must require a second worker")
+      .toMatch(/claimerUserId = claimer && working\.length > 1 \? claimer\.userId : null/);
+  });
+
+  it("the claimer is the self-assigned, non-observer assignee", () => {
+    // Same rule as every claimer guard in the app: assignedById === userId.
+    // An observer is watching, not being led, so they neither lead nor count
+    // toward crew size.
+    const S = src().replace(/\s+/g, " ");
+    expect(S, "observers must be excluded before counting the crew")
+      .toMatch(/filter\(\(x: any\) => x\.role !== "observer"\)/);
+    expect(S, "the claimer is the self-assigned entry")
+      .toMatch(/find\(\(x: any\) => x\.assignedById === x\.userId\)/);
+  });
+
+  it("the query actually fetches the assignees it reasons about", () => {
+    // Reading a relation the query never selected is undefined, not an
+    // error — every job would silently come back with no claimer and the
+    // premium would apply to nobody, which is the exact bug this replaced.
+    expect(src()).toMatch(/assignees: \{ select: \{ userId: true, assignedById: true, role: true \} \}/);
   });
 });
 
