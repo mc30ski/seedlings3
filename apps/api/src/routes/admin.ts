@@ -29,7 +29,7 @@ import {
 } from "@prisma/client";
 import { normalizePhone } from "../lib/phone";
 import { generateLedgerId } from "../lib/ledgerId";
-import { loadCategoryLabels } from "../services/expenseCategories";
+import { loadCategoryLabels, loadExpenseCategories } from "../services/expenseCategories";
 import { loadFixedAssetMinCost, isFixedAsset } from "../services/exports";
 import {
   resolveCutoff,
@@ -5739,6 +5739,122 @@ Respond ONLY with valid JSON in this exact format:
         });
       }
       results.push({ check: "unclaimed_no_guidance", label: "Unclaimed Jobs Without Guidance", issues });
+    }
+
+    // 8. Ledger expenses with no tax-category mapping.
+    //
+    // "Mapped" means the row's category resolves to a SCHEDULE C LINE through
+    // the EXPENSE_CATEGORIES taxonomy. That is the definition that matches the
+    // consequence: the QuickBooks expense export writes one row per expense
+    // with a "Schedule C Line" column, and an unmapped row goes out with that
+    // column blank. A blank Schedule C line is a deduction nobody can file.
+    //
+    // Three shapes produce it, and they need different answers:
+    //
+    //   a. NO CATEGORY AT ALL. Listed per row, because each one is an
+    //      individual judgement — only the operator knows that "Gas" is Fuel.
+    //   b. A CATEGORY THE TAXONOMY DOES NOT HAVE. Grouped by label, because
+    //      this is ONE problem however many rows carry it: a category was
+    //      renamed or removed in Settings and left its rows behind. The fix is
+    //      a single decision (re-add the label, or retag the rows), so N
+    //      findings would be N copies of one question.
+    //   c. A CATEGORY WITH A BLANK scheduleCLine. Grouped the same way — the
+    //      label exists but carries no line, so the export column is still
+    //      empty. Fixed in Settings, once, for every row at once.
+    //
+    // DELIBERATELY NOT FLAGGED: a category with no `qbAccount`. That is a
+    // supported state with its own documented behaviour — the row lands under
+    // "Unmapped" in the QB CSV and the operator re-categorizes inside QB after
+    // import. It is not a tax-mapping gap, and including it would bury the
+    // real findings under rows that are working as designed.
+    if (checks.includes("unmapped_expense_tax_category")) {
+      const cutoff = await resolveCutoff(req);
+      const cats = await loadExpenseCategories(prisma);
+      const issues: AuditIssue[] = [];
+
+      // GUARD THE EMPTY-TAXONOMY CASE FIRST.
+      //
+      // `loadExpenseCategories` swallows a parse error and returns [], so a
+      // malformed EXPENSE_CATEGORIES setting would make every single expense
+      // look unmapped. That is a flood of hundreds of findings whose real
+      // cause is one broken setting — and the flood would hide it. Report the
+      // cause instead and stop.
+      if (cats.length === 0) {
+        issues.push({
+          description:
+            "The expense-category taxonomy is empty or unreadable, so NO expense can be mapped to a Schedule C line. " +
+            "Check Settings \u2192 Catalogs & Taxonomies \u2192 Expense Categories; if the JSON is malformed the app falls back to an empty list. " +
+            "Per-expense findings are suppressed until this is fixed, because every row would be reported.",
+        });
+        results.push({
+          check: "unmapped_expense_tax_category",
+          label: "Expenses Without a Tax Category",
+          issues,
+        });
+      } else {
+        const mapped = new Set(
+          cats.filter((c) => c.scheduleCLine.trim() !== "").map((c) => c.label),
+        );
+        // Labels that exist but carry no Schedule C line — shape (c). Tracked
+        // separately so the finding can say "has no line" rather than the
+        // misleading "is not in the taxonomy".
+        const lineless = new Set(
+          cats.filter((c) => c.scheduleCLine.trim() === "").map((c) => c.label),
+        );
+
+        const rows = await prisma.businessExpense.findMany({
+          // EXPENSE only. CAPITAL_CONTRIBUTION and OWNER_DRAW are equity
+          // movements, not deductions — they have no Schedule C line by
+          // definition and flagging them would be noise.
+          where: { type: "EXPENSE", ...cutoffWhere("BusinessExpense", cutoff) },
+          select: {
+            id: true, date: true, cost: true, category: true,
+            description: true, vendor: true,
+          },
+          orderBy: { date: "desc" },
+        });
+
+        // Grouped shapes (b) and (c): label -> row count + dollars.
+        const unknownLabels = new Map<string, { n: number; total: number; lineless: boolean }>();
+
+        for (const r of rows) {
+          const label = (r.category ?? "").trim();
+          if (label !== "" && mapped.has(label)) continue;
+
+          if (label === "") {
+            // Shape (a) — per row. Carries date, amount and whatever the
+            // operator wrote, because those are what make it findable in the
+            // Ledger; there is no deep-link target for a ledger row.
+            const what = (r.description ?? "").trim() || (r.vendor ?? "").trim() || "no description";
+            issues.push({
+              id: r.id,
+              description: `${etFormatDate(r.date)} \u00b7 $${r.cost.toFixed(2)} \u00b7 ${what} \u2014 no category set, so it has no Schedule C line.`,
+            });
+            continue;
+          }
+          const cur = unknownLabels.get(label) ?? { n: 0, total: 0, lineless: lineless.has(label) };
+          cur.n += 1;
+          cur.total += r.cost;
+          unknownLabels.set(label, cur);
+        }
+
+        // Grouped findings after the per-row ones, largest dollar first — the
+        // money is the better ordering than the row count when deciding what
+        // to fix.
+        for (const [label, g] of [...unknownLabels].sort((a, b) => b[1].total - a[1].total)) {
+          issues.push({
+            description: g.lineless
+              ? `${g.n} ${g.n === 1 ? "expense" : "expenses"} ($${g.total.toFixed(2)}) use category "${label}", which has no Schedule C line set. Set its line in Settings \u2192 Expense Categories and all ${g.n} are fixed at once.`
+              : `${g.n} ${g.n === 1 ? "expense" : "expenses"} ($${g.total.toFixed(2)}) use category "${label}", which is not in the expense-category taxonomy \u2014 so none of them map to a Schedule C line. Either add that category in Settings or retag the rows.`,
+          });
+        }
+
+        results.push({
+          check: "unmapped_expense_tax_category",
+          label: "Expenses Without a Tax Category",
+          issues,
+        });
+      }
     }
 
     return { results };

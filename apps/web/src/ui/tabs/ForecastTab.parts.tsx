@@ -153,7 +153,7 @@ const FLOW_INFO: Record<string, string> = {
   "Employer tax + workers comp":
     "The employer's half — Social Security, Medicare, FUTA and state unemployment — as a percentage of W-2 wages, PLUS workers comp when you have set a comp rate. Charged on employees and trainees only: contractors pay their own, and the owner takes a draw rather than a paycheck. It comes from the app's estimator, never from imported Gusto rows. Comp is zero here by default, because your real premiums are already in Operating costs.",
   "Operating costs":
-    "Every business expense in the window — fuel, insurance, supplies, advertising — grouped by category in the Costs section, where you can tag which ones actually scale with volume. Equipment purchases above the fixed-asset threshold are held out; job materials are too, since they are already counted above.",
+    "Every business expense in the window — fuel, insurance, supplies, advertising — grouped by category in the Costs section, where you tag how each one responds when the business does more: with jobs (the default, right for fuel and supplies), with revenue (right for spend budgeted as a share of what you collect, like advertising), or fixed (insurance, software, bank fees). Equipment purchases above the fixed-asset threshold are held out; job materials are too, since they are already counted above.",
   "Operating profit":
     "Revenue less every cost of producing it, BEFORE your own share. This is the closest line to the P&L's Net Operating Income, and the one to use when comparing the two pages.",
   "LLC Owner share":
@@ -649,23 +649,27 @@ export function WarningList({ warnings }: { warnings: ForecastResult["warnings"]
 // ── Costs, grouped by how they respond to volume ────────────────────────────
 
 const BEHAVIOR_LABEL: Record<string, string> = {
-  AS_IS: "As is — holds what you actually spent",
-  FIXED: "Fixed — doesn't grow with volume",
-  VARIABLE: "Variable — scales with revenue",
-  PER_JOB: "Per job — scales with job count",
-  ONE_TIME: "One-time — excluded from a forward view",
-  DISCRETIONARY: "Discretionary — you choose each period",
+  SCALES_WITH_JOBS: "Scales with jobs — more work, more cost",
+  SCALES_WITH_REVENUE: "Scales with revenue — tracks money collected, not work",
+  FIXED: "Fixed — doesn't grow when the business grows",
 };
 
-/** The five behaviors, for the per-row picker. Labels are short because they
- *  sit in a table cell; the group headings carry the full explanation. */
+/** The three behaviors, for the per-row picker. Labels are short because they
+ *  sit in a table cell; the group headings carry the full explanation.
+ *
+ *  There were six. Four of them did the same thing — "as is", "fixed",
+ *  "one-time" and "discretionary" all held the amount flat in a default
+ *  scenario, the last two because they were gated behind checkboxes that
+ *  defaulted to off — and "variable" and "per job" were the same line of code.
+ *  Six options, two behaviours.
+ *
+ *  The old "Variable — scales with revenue" label was wrong on top of that:
+ *  it scaled with WORK. The two are only the same until you move the price
+ *  lever, which is exactly when someone reads the label to find out. */
 const BEHAVIOR_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: "AS_IS", label: "As is" },
+  { value: "SCALES_WITH_JOBS", label: "With jobs" },
+  { value: "SCALES_WITH_REVENUE", label: "With revenue" },
   { value: "FIXED", label: "Fixed" },
-  { value: "VARIABLE", label: "Variable" },
-  { value: "PER_JOB", label: "Per job" },
-  { value: "ONE_TIME", label: "One-time" },
-  { value: "DISCRETIONARY", label: "Discretionary" },
 ];
 
 export function CostBreakdown({
@@ -675,8 +679,8 @@ export function CostBreakdown({
 }: {
   scenario: ForecastResult;
   statusQuo: ForecastResult;
-  /** Retag a category for this scenario. Advisory — it does NOT write the
-   *  EXPENSE_COST_BEHAVIOR setting; it rides along with the saved forecast. */
+  /** Retag a category for this scenario. Advisory — it writes no Setting; it
+   *  rides along with the saved forecast. */
   onRetag?: (category: string, behavior: string) => void;
 }) {
   const todayByCategory = new Map(statusQuo.costs.map((c) => [c.category, c.amount]));
@@ -689,11 +693,12 @@ export function CostBreakdown({
     if (!groups.has(c.behavior)) groups.set(c.behavior, []);
     groups.get(c.behavior)!.push(c);
   }
-  // AS_IS FIRST, and it must be here at all: this list is what gets rendered,
-  // so when AS_IS became the default for every untagged category the whole
-  // table silently emptied — every row grouped under a behavior the renderer
-  // didn't know to draw.
-  const order = ["AS_IS", "FIXED", "VARIABLE", "PER_JOB", "DISCRETIONARY", "ONE_TIME"];
+  // THIS LIST IS WHAT GETS RENDERED, so it must contain EVERY behavior value.
+  // When AS_IS became the default for untagged categories and wasn't added
+  // here, the whole table silently emptied — every row grouped under a
+  // behavior the renderer didn't know to draw. The default goes first because
+  // most rows land there. A build gate asserts this covers CostBehavior.
+  const order = ["SCALES_WITH_JOBS", "SCALES_WITH_REVENUE", "FIXED"];
   const total = scenario.costsTotal || 1;
 
   return (

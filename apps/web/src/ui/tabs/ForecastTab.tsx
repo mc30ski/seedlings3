@@ -40,7 +40,7 @@ import {
 } from "react-icons/fi";
 import { LineChart, ChevronDown } from "lucide-react";
 import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
-import { simulate, defaultAssumptions, describePayShape, migrateAssumptions } from "@repo/money";
+import { simulate, defaultAssumptions, describePayShape, migrateAssumptions, DEFAULT_COST_BEHAVIOR } from "@repo/money";
 import type { Assumptions, ForecastBaseline, ForecastResult, WorkerType } from "@repo/money";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
@@ -610,17 +610,6 @@ export default function ForecastTab() {
     scenario?.workers.filter((w) => w.workerType === "CONTRACTOR").length ?? 0;
   const noContractors = contractorCount === 0;
 
-  // Which categories the operator has retagged, and how.
-  //
-  // The two checkboxes below act ONLY on categories carrying a matching tag,
-  // and every category enters the forecast as AS_IS — "the tool asserts
-  // nothing about how a cost behaves until you tell it". So both are inert
-  // until something is tagged in the Costs section, and neither said so:
-  // "Include one-time costs (tools, startup)" reads as though the app had
-  // identified tools and startup spend, when it has no concept of either.
-  const taggedBehaviors = Object.values(a.behaviorOverrides ?? {});
-  const oneTimeCount = taggedBehaviors.filter((b) => b === "ONE_TIME").length;
-  const discretionaryCount = taggedBehaviors.filter((b) => b === "DISCRETIONARY").length;
   // What every lever sits at before you touch it. Same function the model
   // uses for the "Today" column, so the two can never disagree about what
   // the current settings are.
@@ -949,7 +938,7 @@ export default function ForecastTab() {
                      onChange={(n) => set("minimumInvoice", n)}
                      hint="Lifts underpriced jobs to a floor. Never applied to jobs that collected $0 — that's a collection problem, not a pricing one." />
               <Lever label="Volume"
-                info={"Scales the whole book of work \u2014 twice the volume means twice the jobs, twice the crew hours and twice the revenue. Costs only follow if you have tagged them to in the Costs section; anything left at 'as is' holds steady. Fixed costs never follow, which is what makes scale improve margin."} value={a.volumeMultiplier} baseline={base.volumeMultiplier} min={0.5} max={4} step={0.25} suffix="×"
+                info={"Scales the whole book of work \u2014 twice the volume means twice the jobs, twice the crew hours and twice the revenue. Costs follow by default: a category you have not tagged grows with the work, because fuel and supplies do. Tag a category Fixed in the Costs section to say it does not \u2014 insurance, software, bank fees \u2014 and it is that fixed part, the part that does not rise with the work, that makes growing improve margin."} value={a.volumeMultiplier} baseline={base.volumeMultiplier} min={0.5} max={4} step={0.25} suffix="×"
                      onChange={(n) => set("volumeMultiplier", n)}
                      hint="Fixed costs deliberately don't follow — that gap is how much of the problem is scale rather than structure." />
               <Lever label="Cost inflation"
@@ -999,40 +988,6 @@ export default function ForecastTab() {
                       {data.baseline.actual.fixedAssetPurchases > 0
                         ? `${money(data.baseline.actual.fixedAssetPurchases)} of purchases in this window. A mower cuts grass for years — charging it all to one quarter is right for tax and wrong for "am I making money running jobs". This is the same rule the P&L uses.`
                         : "No purchases in this window meet the threshold."}
-                    </Text>
-                  </Checkbox.Label>
-                </Checkbox.Root>
-                <Checkbox.Root size="sm" checked={a.includeOneTime}
-                               onCheckedChange={(e) => set("includeOneTime", !!e.checked)}>
-                  <Checkbox.HiddenInput /><Checkbox.Control />
-                  <Checkbox.Label fontSize="12px">
-                    Include categories you have tagged one-time
-                    {a.includeOneTime !== base.includeOneTime && (
-                      <Text as="span" fontSize="10px" color="blue.fg" fontWeight="bold" ml={1}>
-                        {" "}· changed
-                      </Text>
-                    )}
-                    <Text fontSize="10.5px" color="fg.muted">
-                      {oneTimeCount === 0
-                        ? "Nothing is tagged one-time, so this changes nothing. Tag a category in the Costs section below — the app has no way to tell a one-off purchase from a recurring one on its own."
-                        : `${oneTimeCount} ${oneTimeCount === 1 ? "category is" : "categories are"} tagged one-time. Untick to model a year without them.`}
-                    </Text>
-                  </Checkbox.Label>
-                </Checkbox.Root>
-                <Checkbox.Root size="sm" checked={a.scaleDiscretionary}
-                               onCheckedChange={(e) => set("scaleDiscretionary", !!e.checked)}>
-                  <Checkbox.HiddenInput /><Checkbox.Control />
-                  <Checkbox.Label fontSize="12px">
-                    Grow categories you have tagged discretionary
-                    {a.scaleDiscretionary !== base.scaleDiscretionary && (
-                      <Text as="span" fontSize="10px" color="blue.fg" fontWeight="bold" ml={1}>
-                        {" "}· changed
-                      </Text>
-                    )}
-                    <Text fontSize="10.5px" color="fg.muted">
-                      {discretionaryCount === 0
-                        ? "Nothing is tagged discretionary, so this changes nothing. Tag a category in the Costs section below — advertising is the usual one, but the app has no special knowledge of which of your categories is discretionary."
-                        : `${discretionaryCount} ${discretionaryCount === 1 ? "category grows" : "categories grow"} with revenue when ticked, and holds flat when not.`}
                     </Text>
                   </Checkbox.Label>
                 </Checkbox.Root>
@@ -1166,10 +1121,11 @@ export default function ForecastTab() {
             scenario={scenario}
             statusQuo={sq}
             onRetag={(category, behavior) => {
-              // Clearing back to "As is" removes the entry rather than
-              // storing it, so a saved scenario only carries real decisions.
+              // Picking the DEFAULT removes the entry rather than storing it,
+              // so a saved scenario carries only the operator's real
+              // decisions and replays identically if the default ever moves.
               const next = { ...a.behaviorOverrides };
-              if (behavior === "AS_IS") delete next[category];
+              if (behavior === DEFAULT_COST_BEHAVIOR) delete next[category];
               else next[category] = behavior as any;
               set("behaviorOverrides", next);
             }}

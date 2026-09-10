@@ -1,0 +1,43 @@
+-- Remove the orphaned EXPENSE_COST_BEHAVIOR setting row.
+--
+-- WHAT IT WAS. When the Forecast tool shipped (2026-09-02) cost behaviour was
+-- a global Setting: a JSON map of expense-category label -> how that cost
+-- responds to volume. It was deliberately kept OUT of EXPENSE_CATEGORIES,
+-- because adding an unknown key to that setting had taken the production
+-- ledger down for 31 minutes the same day — the deployed parser rejects
+-- fields it does not know.
+--
+-- WHY IT IS DEAD. The tool moved to SCENARIO-LOCAL tagging: behaviours now
+-- ride along inside a saved Forecast's `assumptions` jsonb, so one scenario can
+-- ask "what if insurance held flat?" without changing how every other surface
+-- in the app reads the ledger. Nothing has read this Setting since. Two build
+-- gates already enforce that and would fail if anything started to:
+--
+--   settings-section-build-gate  "no EXPENSE_COST_BEHAVIOR setting is seeded
+--                                 any more"
+--   forecast-build-gate          the Forecast tab must not reference
+--                                 EXPENSE_COST_BEHAVIOR
+--
+-- WHY DELETE IT RATHER THAN LEAVE IT. It is invisible to the app — no screen
+-- renders it and no loader reads it — so the only way anyone meets it is by
+-- querying the table, at which point it reads as live configuration that has
+-- been left empty. That is not hypothetical: it misled a debugging session on
+-- 2026-09-10 into reporting "cost behaviour is unconfigured in production" when
+-- the truth was "cost behaviour is not a setting any more". A row that can only
+-- ever mislead is worse than no row.
+--
+-- There is also no UI path to remove it. Settings rows are normally edited
+-- through Super -> System -> Settings, which can change a value but cannot
+-- delete a key, so a migration is the only tracked way to do this.
+--
+-- SAFETY. Keyed on the exact string, so it touches at most one row (there is a
+-- UNIQUE index on "Setting"."key"). A no-op where the row was never created —
+-- which includes the dev database, so this migration is expected to report
+-- DELETE 0 locally and DELETE 1 against production.
+--
+-- NOT REVERSIBLE, and deliberately not worth reversing: restoring the row
+-- would restore an empty map that nothing reads. If cost behaviour ever wants
+-- to persist globally again, it should be designed against the three current
+-- behaviours (SCALES_WITH_JOBS / SCALES_WITH_REVENUE / FIXED) rather than
+-- revived with the six retired ones.
+DELETE FROM "Setting" WHERE "key" = 'EXPENSE_COST_BEHAVIOR';

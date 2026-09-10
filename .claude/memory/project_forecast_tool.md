@@ -38,7 +38,7 @@ Pay-structure simulator at **Super → Money → Forecast**. Pick a window of re
 
 ## Deploy checklist
 
-1. **`prisma migrate deploy`** — `20260902172341_add_forecast_and_cost_behavior` is applied to DEV ONLY. The tab 500s in prod without the `Forecast` table.
+1. ~~`prisma migrate deploy`~~ — **DONE.** `20260902172341_add_forecast_and_cost_behavior` is applied to prod; verified 2026-09-10 (the `Forecast` table exists and holds the "Summer 2026" scenario). The `statutoryKind` work needs NO migration — it lives inside the `EXPENSE_CATEGORIES` Setting's JSON value, not in a column.
 2. Production settings are already in place: `WORKERS_COMP_PERCENT_OF_WAGES` (=12) and `EXPENSE_COST_BEHAVIOR` (18 categories) — the user ran the SQL themselves on 2026-09-02.
 3. The deploy also carries the `vanity` Settings section fix, which moves two startup-animation settings out of "Other".
 
