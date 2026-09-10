@@ -2130,6 +2130,46 @@ describe("[build-gate] hours approval measures a job against itself", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+describe("[build-gate] one money table, not two that drift", () => {
+  const web = (rel: string) => readFileSync(join(__dirname, "../../../web/src/", rel), "utf8");
+
+  it("there is a single ledger table, carrying the comparison", () => {
+    // There were two readings of the same nine lines — a one-column summary
+    // at the top and a "What it does to the books" section further down —
+    // and their labels had already drifted apart. Merged into one.
+    const P = web("ui/tabs/ForecastTab.parts.tsx");
+    expect(P, "the second component must be gone").not.toMatch(/export function Waterfall/);
+    const T = web("ui/tabs/ForecastTab.tsx");
+    expect(T, "and its section with it").not.toMatch(/forecast_sec_pnl/);
+    expect(T, "the surviving table needs both sides to compare")
+      .toMatch(/<MoneyFlow scenario=\{scenario\} statusQuo=\{sq\}/);
+  });
+
+  it("the burden line does not deny that workers comp is in it", () => {
+    // `employerBurden` is payroll tax PLUS workers comp. One of the two
+    // tables called it "Employer payroll tax", which is right only while the
+    // comp rate is zero and wrong the moment it is set.
+    const P = web("ui/tabs/ForecastTab.parts.tsx");
+    expect(P).toMatch(/label: "Employer tax \+ workers comp"/);
+    expect(P, "the old understating label must not return")
+      .not.toMatch(/label: "Employer payroll tax"/);
+  });
+
+  it("every line of the table has an explanation keyed to its own label", () => {
+    // FLOW_INFO is looked up BY LABEL, so renaming a row silently drops its
+    // info panel — no error, just a dot that opens nothing.
+    const P = web("ui/tabs/ForecastTab.parts.tsx");
+    const labels = [...P.matchAll(/\{ label: "([^"]+)", now:/g)].map((m) => m[1]);
+    expect(labels.length, "expected the ledger rows to be found").toBeGreaterThan(5);
+    const infoAt = P.indexOf("const FLOW_INFO");
+    const info = P.slice(infoAt, P.indexOf("};", infoAt));
+    for (const l of labels) {
+      expect(info, `no FLOW_INFO entry for "${l}" — its info dot opens nothing`)
+        .toContain(`"${l}":`);
+    }
+  });
+});
+
 describe("[build-gate] the forecast window presets", () => {
   const web = (rel: string) => readFileSync(join(__dirname, "../../../web/src/", rel), "utf8");
 
@@ -2149,14 +2189,28 @@ describe("[build-gate] the forecast window presets", () => {
     expect(code, "nothing may take the default positionally").not.toMatch(/PRESETS\[0\]/);
   });
 
-  it("preset keys are stable, because they are persisted", () => {
-    // `forecast_preset` stores the KEY. Renaming "Last 90 days" to
-    // "Last 3 months" must not change "90d", or every saved choice silently
-    // falls back.
+  it("offers the short windows as well as the seasonal ones", () => {
     const F = web("ui/tabs/ForecastTab.tsx").replace(/\s+/g, " ");
     for (const key of ["30d", "60d", "90d", "180d", "ytd", "12m"]) {
       expect(F, `preset ${key} must exist`).toMatch(new RegExp(`key: "${key}"`));
     }
+  });
+
+  it("the badge is DERIVED from the window, so it cannot disagree with it", () => {
+    // It used to be its own persisted state updated at each site that moved
+    // the dates — and `loadScenario` was not one of those sites. Opening a
+    // saved forecast restored its window and left the badge reading the
+    // previous preset: dates said 11 Jun–9 Sep, badge said "Last 3 months",
+    // and the window looked like it had never been restored.
+    //
+    // Derived, there is no second copy of the truth to forget.
+    const F = web("ui/tabs/ForecastTab.tsx");
+    expect(F, "the active preset must be computed from from/to")
+      .toMatch(/const presetKey = useMemo\(\(\) => \{[\s\S]{0,300}?return f === from && t === to;/);
+    const code = F.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+    expect(code, "no setter may reintroduce a second copy").not.toMatch(/setPresetKey/);
+    expect(code, "and it must not be persisted separately from the window")
+      .not.toMatch(/usePersistedState\("forecast_preset"/);
   });
 });
 

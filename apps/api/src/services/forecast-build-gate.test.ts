@@ -1315,11 +1315,16 @@ describe("[build-gate] the money flow is visible without expanding anything", ()
     const parts = readFileSync(
       join(REPO_ROOT, "apps/web/src/ui/tabs/ForecastTab.parts.tsx"), "utf8",
     );
-    const fn = parts.slice(parts.indexOf("export function MoneyFlow"), parts.indexOf("// ── Waterfall"));
+    // The slice used to stop at "// ── Waterfall" — the second table that has
+    // since been merged into this one. Ends at the next section instead.
+    const fn = parts.slice(
+      parts.indexOf("export function MoneyFlow"),
+      parts.indexOf("// ── Per-person outcomes"),
+    );
     for (const line of [
       "Revenue collected", "Job materials", "Processor fees", "Crew pay",
-      "Employer payroll tax", "Operating costs", "Operating profit",
-      "Your own share", "Retained in the business", "Equipment bought",
+      "Employer tax + workers comp", "Operating costs", "Operating profit",
+      "LLC Owner share", "Retained in the business", "Equipment bought this window",
     ]) expect(fn, `missing "${line}"`).toContain(line);
   });
 });
@@ -1365,18 +1370,23 @@ describe("[build-gate] every headline number can explain itself", () => {
   });
 
   it("every money-flow line has an explanation", () => {
+    // Capital purchases no longer have their own (i) — that row carries its
+    // explanation as always-visible prose instead, so there is no dot to open
+    // and no key to look up.
     const lines = [
       "Revenue collected", "Job materials", "Processor fees", "Crew pay",
-      "Employer payroll tax", "Operating costs", "Operating profit",
-      "Your own share", "Retained in the business", "Equipment bought",
-      "Cash after equipment",
+      "Employer tax + workers comp", "Operating costs", "Operating profit",
+      "LLC Owner share", "Retained in the business",
     ];
     for (const l of lines) expect(keysOf("FLOW_INFO"), `${l} needs info copy`).toContain(l);
   });
 
   it("the labels the components render match the copy keys exactly", () => {
     // A renamed label silently loses its (i) — the lookup just misses.
-    const flow = PARTS.slice(PARTS.indexOf("export function MoneyFlow"), PARTS.indexOf("// ── Waterfall"));
+    const flow = PARTS.slice(
+      PARTS.indexOf("export function MoneyFlow"),
+      PARTS.indexOf("// ── Per-person outcomes"),
+    );
     for (const label of (flow.match(/label: "([^"]+)"/g) ?? []).map((x) => x.slice(8, -1))) {
       expect(keysOf("FLOW_INFO"), `rendered line "${label}" has no info copy`).toContain(label);
     }
@@ -1439,7 +1449,10 @@ describe("[build-gate] the repeating/one-off split is reported, never modelled",
     );
     expect(parts).toMatch(/% repeating/);
     expect(parts).toMatch(/% one-off/);
-    expect(parts).toMatch(/l\.kind === "in" && bookTotal > 0/);
+    // Gated on the CONDITION, not on the loop variable's name — the merge of
+    // the two ledger tables renamed it, which failed this assertion without
+    // anything about the behaviour changing.
+    expect(parts).toMatch(/\w+\.kind === "in" && bookTotal > 0/);
   });
 });
 
