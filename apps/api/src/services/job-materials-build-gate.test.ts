@@ -2217,31 +2217,35 @@ describe("[build-gate] the forecast window presets", () => {
 describe("[build-gate] a forecast lever that cannot bite says so", () => {
   const web = (rel: string) => readFileSync(join(__dirname, "../../../web/src/", rel), "utf8");
 
-  it("the tag-dependent checkboxes say when nothing is tagged", () => {
-    // Both act ONLY on categories the operator has retagged, and every
-    // category enters as AS_IS — so both are inert until something is
-    // tagged, and neither said so. Worse, their labels named things the app
-    // has no concept of: "Include one-time costs (tools, startup)" reads as
-    // though it had identified tools and startup spend.
-    const F = web("ui/tabs/ForecastTab.tsx").replace(/\s+/g, " ");
-    expect(F, "the counts must be derived from the scenario's own tags")
-      .toMatch(/const taggedBehaviors = Object\.values\(a\.behaviorOverrides \?\? \{\}\)/);
-    expect(F, "the one-time box must say when nothing is tagged")
-      .toMatch(/Nothing is tagged one-time, so this changes nothing/);
-    expect(F, "the discretionary box must say when nothing is tagged")
-      .toMatch(/Nothing is tagged discretionary, so this changes nothing/);
-    // The labels must describe the mechanism, not imply knowledge the app
-    // does not have. Comments stripped first: the code comment explaining
-    // this change quotes the old labels, so a raw scan finds them in the
-    // explanation rather than in a rendered label.
+  it("the two tag-dependent checkboxes are GONE, not merely labelled honestly", () => {
+    // They used to need a hint saying "nothing is tagged, so this changes
+    // nothing" — which is the tell for a control that should not exist. Each
+    // gated a behaviour tag behind a second switch: ONE_TIME behind
+    // includeOneTime (default on) and DISCRETIONARY behind scaleDiscretionary
+    // (default off), so out of the box both tags just held the amount flat
+    // and were indistinguishable from FIXED.
+    //
+    // The fix is removal, not better copy. The question each one asked is now
+    // answered by the tag itself: "hold advertising flat while I grow" is
+    // FIXED, and "grow it with revenue" is SCALES_WITH_REVENUE. One control,
+    // no hidden second state.
     const code = web("ui/tabs/ForecastTab.tsx")
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/\/\/[^\n]*/g, "")
       .replace(/\s+/g, " ");
-    expect(code, "the label must not claim to know your tools and startup costs")
-      .not.toMatch(/Include one-time costs \(tools, startup\)/);
-    expect(code, "…nor to know which category is advertising")
-      .not.toMatch(/Grow advertising with revenue/);
+    expect(code, "includeOneTime must be gone").not.toMatch(/includeOneTime/);
+    expect(code, "scaleDiscretionary must be gone").not.toMatch(/scaleDiscretionary/);
+    // Nor may the old labels come back under any spelling.
+    expect(code).not.toMatch(/Include one-time costs \(tools, startup\)/);
+    expect(code).not.toMatch(/Grow advertising with revenue/);
+    expect(code).not.toMatch(/Include categories you have tagged one-time/);
+    expect(code).not.toMatch(/Grow categories you have tagged discretionary/);
+    // And what replaced them: a picker whose every option is named for what
+    // the model DOES, offered on the category row itself.
+    const parts = web("ui/tabs/ForecastTab.parts.tsx");
+    for (const beh of ["SCALES_WITH_JOBS", "SCALES_WITH_REVENUE", "FIXED"]) {
+      expect(parts, `${beh} must be offered`).toMatch(new RegExp(`value: "${beh}"`));
+    }
   });
 
   it("the contractor levers tell you when there is no contractor to act on", () => {

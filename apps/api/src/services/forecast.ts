@@ -42,6 +42,7 @@ import {
   type PayPeriodCadence,
   type ForecastExpenseLine,
   type Assumptions,
+  DEFAULT_COST_BEHAVIOR,
 } from "@repo/money";
 
 /** Workers-comp rate as a percent of W-2 wages. A quote, not something the
@@ -465,16 +466,23 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
       /** The slice of this category that is a capital purchase, not a running
        *  cost. Zero for almost every category. */
       fixedAssetAmount: round2(fixedByCategory.get(category) ?? 0),
-      // Every category starts AS_IS — holding what this window is charged.
-      // The scenario's own behaviorOverrides are the only thing that changes
-      // it, the same way every other lever baselines on reality.
+      // Every category starts on the DEFAULT behaviour, which scales with
+      // jobs. The scenario's own behaviorOverrides are the only thing that
+      // changes it. This is reported, not applied — `simulate` reads the
+      // override map and falls back to the same default — so the two cannot
+      // disagree about an untagged category.
+      //
+      // At the status quo the behaviour is invisible: volume is 1x and the
+      // revenue ratio is 1, so all three behaviours produce the identical
+      // number. That is what lets the default change without moving the
+      // backtest or anything the operator has already looked at.
       //
       // "What this window is charged" is not always "what was paid in this
       // window": a recurring row contributes its overlapping coverage. See
       // amortizedShare. Both this array AND the `actual` figures below are
       // built from it, so the model and the books it is checked against move
       // together and the fidelity line keeps its meaning.
-      behavior: "AS_IS" as const,
+      behavior: DEFAULT_COST_BEHAVIOR,
       amount: round2(amount),
     }))
     .sort((a, b) => b.amount - a.amount);

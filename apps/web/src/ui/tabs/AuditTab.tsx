@@ -68,6 +68,13 @@ const AUDIT_CHECKS: ReadonlyArray<{ id: string; label: string; description: stri
     severity: "info",
   },
   {
+    id: "unmapped_expense_tax_category",
+    label: "Expenses Without a Tax Category",
+    description:
+      "Ledger expenses whose category doesn't resolve to a Schedule C line — either no category at all, or a category that isn't in the configured taxonomy (or has no line set). These go out with a blank Schedule C Line in the tax export, which is a deduction nobody can file. Rows with no category are listed individually; a whole category that's missing its mapping is reported once, since one Settings fix clears every row using it.",
+    severity: "warning",
+  },
+  {
     id: "unclaimed_no_guidance",
     label: "Unclaimed Jobs Without Guidance",
     description: "Finds unclaimed SCHEDULED jobs that don't have any property photos with descriptions. Adding guidance helps workers know what to do when they pick up a job.",
@@ -154,8 +161,9 @@ export default function AuditTab() {
         <ExplainerText>
           Runs a set of <Em>data-integrity checks</Em> across the app and reports what looks wrong:
           duplicate clients, properties, jobs or visits; a recurring job with no next visit
-          scheduled; an unclaimed job with no guidance; and jobs whose real time has drifted from
-          their estimate.
+          scheduled; an unclaimed job with no guidance; jobs whose real time has drifted from
+          their estimate; and ledger expenses that carry no tax category, which would otherwise
+          reach the Schedule C export with a blank line.
         </ExplainerText>
         <ExplainerText>
           <Em>It only reads.</Em> Nothing here fixes anything — each finding links to the record so

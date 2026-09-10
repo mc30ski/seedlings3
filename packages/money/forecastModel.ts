@@ -18,18 +18,80 @@ import { computeBreakdown, type Rates, type WorkerInput, type WorkerType } from 
 
 export const FORECAST_MODEL_VERSION = 1;
 
-/** Mirrors CostBehavior in apps/api/src/services/expenseCategories.ts. Declared
- *  here too so this package stays dependency-free; the API passes its own
- *  union straight in. */
-/** How a cost category responds to volume.
+/**
+ * How a cost responds when the business does more or less.
  *
- *  AS_IS is the default and means exactly what it says: the category holds
- *  the amount actually spent, whatever you do to the other levers. Every
- *  other adjustment in this tool baselines on reality — margin starts at the
- *  real setting, volume at 1x, price at 0% — and this now does too. The tool
- *  asserts nothing about how a cost behaves until you tell it. */
-export type CostBehavior =
-  | "AS_IS" | "VARIABLE" | "FIXED" | "PER_JOB" | "ONE_TIME" | "DISCRETIONARY";
+ * THREE OPTIONS, THREE DISTINCT ARITHMETICS. Each is named for what the model
+ * does with it, not for what kind of expense it usually is:
+ *
+ *   SCALES_WITH_JOBS    × the volume multiplier. Follows WORK DONE. Fuel,
+ *                         supplies, vehicle wear. THE DEFAULT.
+ *   SCALES_WITH_REVENUE × the revenue ratio. Follows MONEY COLLECTED, which
+ *                         is a different thing the moment prices move:
+ *                         +20% on identical routes is +20% revenue and +0%
+ *                         work. Right for spend budgeted as a share of
+ *                         revenue — advertising, branded kit.
+ *   FIXED                 holds. Insurance, software, bank fees.
+ *
+ * SCALES_WITH_JOBS IS THE DEFAULT, AND THAT IS A DELIBERATE REVERSAL.
+ * This was six options with a hold-flat default, and the six collapsed to two
+ * behaviours: AS_IS / FIXED / ONE_TIME / DISCRETIONARY all held flat (the
+ * latter two were double-gated behind checkboxes that defaulted to off), and
+ * VARIABLE / PER_JOB were the same line of code. In the default scenario all
+ * six produced an identical number.
+ *
+ * Worse, the hold-flat default was not neutral — it ASSERTED that every
+ * untagged cost is fixed, so modelling twice the work added no fuel and no
+ * mulch and made growth look free. On real production data that overstated
+ * the profit of doubling by $2,193 and the margin by 7 points.
+ *
+ * "This cost does not grow when my business grows" is the remarkable claim,
+ * so it is the one you have to make. And if the default must be wrong
+ * sometimes, wrong in the direction that overstates the cost of growing is
+ * the safe error for a hire-or-not decision.
+ */
+export type CostBehavior = "SCALES_WITH_JOBS" | "SCALES_WITH_REVENUE" | "FIXED";
+
+/** The default for any category nobody has tagged. */
+export const DEFAULT_COST_BEHAVIOR: CostBehavior = "SCALES_WITH_JOBS";
+
+/**
+ * Retired behaviour names → their replacement.
+ *
+ * Read-time normalisation, NOT a data migration. These values live inside
+ * JSON — a saved scenario's `behaviorOverrides` — so there is no column to
+ * migrate and nothing to rewrite. Mapping on every read is idempotent,
+ * survives an old backup being restored, and needs no write to production.
+ *
+ * Each mapping preserves what the old tag actually DID in the default
+ * scenario, which is why ONE_TIME becomes FIXED rather than disappearing:
+ * `includeOneTime` defaulted to true, so ONE_TIME held its amount flat.
+ */
+export const LEGACY_COST_BEHAVIOR: Record<string, CostBehavior> = {
+  AS_IS: "SCALES_WITH_JOBS",
+  VARIABLE: "SCALES_WITH_JOBS",
+  PER_JOB: "SCALES_WITH_JOBS",
+  DISCRETIONARY: "SCALES_WITH_REVENUE",
+  ONE_TIME: "FIXED",
+};
+
+/** Coerce any stored value — current, retired, or junk — to a live behaviour.
+ *  Unrecognised input falls back to the default rather than throwing: a bad
+ *  tag must never take the whole tab down over an advisory figure. */
+export function normalizeCostBehavior(raw: unknown): CostBehavior {
+  if (raw === "SCALES_WITH_JOBS" || raw === "SCALES_WITH_REVENUE" || raw === "FIXED") return raw;
+  if (typeof raw === "string" && LEGACY_COST_BEHAVIOR[raw]) return LEGACY_COST_BEHAVIOR[raw];
+  return DEFAULT_COST_BEHAVIOR;
+}
+
+/** Normalise a whole `behaviorOverrides` map. */
+export function normalizeBehaviorOverrides(
+  raw: Record<string, unknown> | null | undefined,
+): Record<string, CostBehavior> {
+  const out: Record<string, CostBehavior> = {};
+  for (const [k, v] of Object.entries(raw ?? {})) out[k] = normalizeCostBehavior(v);
+  return out;
+}
 
 // ── Baseline: what actually happened, as data ────────────────────────────────
 
@@ -323,7 +385,6 @@ export type Assumptions = {
   /** Replace the fixed-cost base, for modelling an insurance change or a
    *  software cull. Null = use the window's actual fixed costs. */
   fixedCostOverride: number | null;
-  includeOneTime: boolean;
   /**
    * Hold capital purchases out of the operating picture. ON by default.
    *
@@ -337,14 +398,12 @@ export type Assumptions = {
    * bank and there are questions where that is the thing you want to see.
    */
   excludeFixedAssets: boolean;
-  /** Discretionary spend (advertising, meals) held flat by default: scaling it
-   *  with revenue asserts a causal link the data can't support. */
-  scaleDiscretionary: boolean;
 
-  /** Retag a cost category for this scenario only — "what if insurance
-   *  behaved like a variable cost?". Scenario-local on purpose: the Forecast
-   *  tab is advisory and writes no Settings, so the real EXPENSE_COST_BEHAVIOR
-   *  stays the baseline and this rides along with the saved forecast. */
+  /** Retag a cost category for this scenario only — "what if insurance held
+   *  flat while everything else grew?". Scenario-local on purpose: the
+   *  Forecast tab is advisory and writes no Settings, so this rides along with
+   *  the saved forecast rather than changing how any other surface reads the
+   *  ledger. A category absent from this map takes DEFAULT_COST_BEHAVIOR. */
   behaviorOverrides: Record<string, CostBehavior>;
 
   /** Per-worker changes: reclassify, re-hour, or remove. */
@@ -376,9 +435,7 @@ export function defaultAssumptions(b: ForecastBaseline): Assumptions {
     // configured rate so the UI can offer it as the suggested value.
     workersCompPercent: 0,
     fixedCostOverride: null,
-    includeOneTime: true,
     excludeFixedAssets: true,
-    scaleDiscretionary: false,
     behaviorOverrides: {},
     workerOverrides: {},
     hypotheticalWorkers: [],
@@ -437,16 +494,39 @@ export function describePayShape(a: Assumptions): { name: string | null; detail:
  * comp; the model now derives that from the categories tagged WORKERS_COMP in
  * Settings, and a stale number riding along in the blob would show up as a
  * spurious difference on every replay without changing a single result.
+ *
+ * `includeOneTime` and `scaleDiscretionary` go the same way. Both were
+ * checkboxes gating a behaviour tag, and both tags are retired — ONE_TIME
+ * because it was category-level while the thing it described (a one-off
+ * purchase) is row-level, and DISCRETIONARY because it is now
+ * SCALES_WITH_REVENUE, which needs no second switch to mean something.
+ *
+ * `behaviorOverrides` is remapped rather than dropped: a saved scenario's
+ * tags are the operator's own judgement and must survive the rename. See
+ * LEGACY_COST_BEHAVIOR for why this is read-time normalisation and not a
+ * database migration.
  */
 export function migrateAssumptions(stored: Record<string, unknown>): Record<string, unknown> {
   const {
     payModel,
     workersCompInExpenses: _retiredCompInExpenses,
+    includeOneTime: _retiredIncludeOneTime,
+    scaleDiscretionary: _retiredScaleDiscretionary,
+    behaviorOverrides,
     ...rest
   } = stored as {
     payModel?: string;
     workersCompInExpenses?: number;
+    includeOneTime?: boolean;
+    scaleDiscretionary?: boolean;
+    behaviorOverrides?: Record<string, unknown>;
   } & Record<string, unknown>;
+  // Only re-add the key when the stored blob had one, so a scenario that never
+  // tagged anything doesn't start reporting a difference against the default.
+  if (behaviorOverrides !== undefined) {
+    (rest as Record<string, unknown>).behaviorOverrides =
+      normalizeBehaviorOverrides(behaviorOverrides);
+  }
   if (!payModel) return rest;
   if (payModel === "RATE_CARD") {
     return { ...rest, employeeMarginPercent: 100, contractorFeePercent: 100 };
@@ -820,8 +900,11 @@ export function simulate(baseline: ForecastBaseline, a: Assumptions): ForecastRe
   const inflation = 1 + (a.costInflationPercent || 0) / 100;
   const costs: CostLine[] = [];
   for (const line of baseline.expenses) {
-    // The scenario's own tag wins over the configured one.
-    const behavior = a.behaviorOverrides?.[line.category] ?? "AS_IS";
+    // Untagged takes the default, which SCALES WITH JOBS. Normalised rather
+    // than read raw so a scenario saved under a retired name still replays.
+    const behavior: CostBehavior = line.category in (a.behaviorOverrides ?? {})
+      ? normalizeCostBehavior(a.behaviorOverrides[line.category])
+      : DEFAULT_COST_BEHAVIOR;
     // Take the capital slice off the top, BEFORE any behavior scaling — a
     // mower doesn't become 1.5 mowers because you modelled 50% more work.
     // Every case below scales THIS, not line.amount, or the exclusion would
@@ -829,31 +912,21 @@ export function simulate(baseline: ForecastBaseline, a: Assumptions): ForecastRe
     const base = a.excludeFixedAssets ? line.amount - line.fixedAssetAmount : line.amount;
     let amount = base;
     switch (behavior) {
-      case "AS_IS":
       case "FIXED":
-        // Both hold the actual amount. They differ in intent, not arithmetic:
-        // AS_IS is "I haven't said", FIXED is "I've said this doesn't scale".
-        // Keeping them apart is what lets the UI warn about the untagged ones.
+        // Holds. The one claim worth having to make explicitly.
         break;
-      case "VARIABLE":
-        // Follows WORK DONE, not money billed. This used to scale by the
-        // revenue ratio, which meant raising prices on identical routes
-        // added 15% to the fuel bill — you didn't drive any further.
-        //
-        // That makes VARIABLE and PER_JOB behave identically while volume is
-        // a single flat multiplier. Both tags are kept because they mean
-        // different things and would diverge the moment job COUNT and job
-        // SIZE become separate levers; today the distinction is descriptive.
+      case "SCALES_WITH_JOBS":
+        // Follows WORK DONE, not money billed. It used to scale by the revenue
+        // ratio, which meant raising prices on identical routes added 15% to
+        // the fuel bill — you didn't drive any further.
         amount = base * vm;
         break;
-      case "PER_JOB":
-        amount = base * vm;
-        break;
-      case "ONE_TIME":
-        amount = a.includeOneTime ? base : 0;
-        break;
-      case "DISCRETIONARY":
-        amount = a.scaleDiscretionary ? base * revenueRatio : base;
+      case "SCALES_WITH_REVENUE":
+        // Follows MONEY COLLECTED. Identical to SCALES_WITH_JOBS until revenue
+        // and work diverge, which happens the moment the price or
+        // minimum-invoice lever moves: +20% on the same routes is +20% here
+        // and +0% above. Right for spend budgeted as a share of revenue.
+        amount = base * revenueRatio;
         break;
     }
     // Inflation lands on every cost line, after volume scaling.
@@ -1077,21 +1150,13 @@ export function buildWarnings(
       message: `Includes a hire modelled as added capacity, so its revenue is assumed rather than observed.`,
     });
   }
-  // Volume was moved but most costs are still untagged, so they didn't move
-  // with it. Silence here would overstate the benefit of scale — the mirror
-  // of the bug this default replaced.
-  if (a.volumeMultiplier !== 1) {
-    const untagged = baseline.expenses.filter(
-      (e) => (a.behaviorOverrides?.[e.category] ?? "AS_IS") === "AS_IS",
-    );
-    if (untagged.length) {
-      const held = untagged.reduce((t, e) => t + e.amount, 0);
-      out.push({
-        level: "caution",
-        message: `${untagged.length} of ${baseline.expenses.length} cost categories are still "as is" ($${held.toFixed(0)}), so changing volume doesn't move them. Tag the ones that actually scale — ${untagged.slice(0, 3).map((e) => e.category).join(", ")}${untagged.length > 3 ? "…" : ""}.`,
-      });
-    }
-  }
+  // The "most costs are still untagged" warning lived here. It existed only
+  // because the default held costs flat, so moving volume silently changed
+  // nothing and the operator had to be told. The default now scales with jobs,
+  // so there is nothing to warn about — and the warning was miscounting
+  // anyway: it summed `e.amount`, which includes the capital slice that
+  // `excludeFixedAssets` has already held out, and reported $12,665 of held
+  // cost on production where only $4,722 was in play.
 
   if (baseline.jobs.length < 30) {
     out.push({

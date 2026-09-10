@@ -22,6 +22,8 @@ import { readFileSync, existsSync } from "fs";
 import { amortizedShare } from "./forecast";
 import { join } from "path";
 import {
+  type CostBehavior,
+  DEFAULT_COST_BEHAVIOR,
   simulate,
   backtest,
   defaultAssumptions,
@@ -78,13 +80,16 @@ function baseline(over: Partial<ForecastBaseline> = {}): ForecastBaseline {
       { userId: "own", name: "Own", workerType: "EMPLOYEE", isOwner: true, clockedHours: 4, periodHours: [1, 1, 1, 1], actualPay: 80 },
     ],
     expenses: [
-      { category: "Insurance", behavior: "FIXED", amount: 100, fixedAssetAmount: 0 },
-      { category: "Fuel", behavior: "VARIABLE", amount: 50, fixedAssetAmount: 0 },
-      { category: "Supplies", behavior: "PER_JOB", amount: 40, fixedAssetAmount: 0 },
+      // `behavior` on a baseline line is REPORTED, not applied — simulate reads
+      // the override map and falls back to the default. Every line therefore
+      // carries the default here, which is what buildBaseline produces.
+      { category: "Insurance", behavior: "SCALES_WITH_JOBS", amount: 100, fixedAssetAmount: 0 },
+      { category: "Fuel", behavior: "SCALES_WITH_JOBS", amount: 50, fixedAssetAmount: 0 },
+      { category: "Supplies", behavior: "SCALES_WITH_JOBS", amount: 40, fixedAssetAmount: 0 },
       // A $30 category of which $25 is a capital purchase — the shape the
       // fixed-asset toggle exists for.
-      { category: "Tools", behavior: "ONE_TIME", amount: 30, fixedAssetAmount: 25 },
-      { category: "Advertising", behavior: "DISCRETIONARY", amount: 20, fixedAssetAmount: 0 },
+      { category: "Tools", behavior: "SCALES_WITH_JOBS", amount: 30, fixedAssetAmount: 25 },
+      { category: "Advertising", behavior: "SCALES_WITH_JOBS", amount: 20, fixedAssetAmount: 0 },
     ],
     processorFees: 5,
     rates: { employeeMarginPercent: 35, contractorFeePercent: 25 },
@@ -162,40 +167,167 @@ describe("[build-gate] a forecast is advisory and firewalled", () => {
 });
 
 // ── D. Cost behavior behaves ────────────────────────────────────────────────
-describe("[build-gate] cost behavior drives the scale argument", () => {
-  it("fixed costs do not grow with volume; per-job costs do", () => {
-    const b = baseline();
-    const one = simulate(b, A({ volumeMultiplier: 1, behaviorOverrides: { Insurance: "FIXED", Fuel: "VARIABLE", Supplies: "PER_JOB", Tools: "ONE_TIME", Advertising: "DISCRETIONARY" } }));
-    const two = simulate(b, A({ volumeMultiplier: 2, behaviorOverrides: { Insurance: "FIXED", Fuel: "VARIABLE", Supplies: "PER_JOB", Tools: "ONE_TIME", Advertising: "DISCRETIONARY" } }));
-    const fixedOf = (r: typeof one) =>
-      r.costs.filter((c) => c.behavior === "FIXED").reduce((s, c) => s + c.amount, 0);
-    const perJobOf = (r: typeof one) =>
-      r.costs.filter((c) => c.behavior === "PER_JOB").reduce((s, c) => s + c.amount, 0);
+//
+// THREE behaviours, each with its own arithmetic. There were six, and they
+// collapsed to two: AS_IS / FIXED / ONE_TIME / DISCRETIONARY all held flat in
+// a default scenario, and VARIABLE / PER_JOB were literally the same line of
+// code. These tests assert the three are genuinely distinct, which is the
+// property that made the collapse invisible for so long.
+const TAGS: Record<string, CostBehavior> = {
+  Insurance: "FIXED",
+  Fuel: "SCALES_WITH_JOBS",
+  Supplies: "SCALES_WITH_JOBS",
+  Advertising: "SCALES_WITH_REVENUE",
+};
 
-    expect(fixedOf(two)).toBeCloseTo(fixedOf(one), 2);
-    expect(perJobOf(two)).toBeCloseTo(perJobOf(one) * 2, 2);
+describe("[build-gate] cost behavior drives the scale argument", () => {
+  it("fixed costs do not grow with volume; job-scaling costs do", () => {
+    const b = baseline();
+    const one = simulate(b, A({ volumeMultiplier: 1, behaviorOverrides: TAGS }));
+    const two = simulate(b, A({ volumeMultiplier: 2, behaviorOverrides: TAGS }));
+    const sumOf = (r: typeof one, beh: string) =>
+      r.costs.filter((c) => c.behavior === beh).reduce((s, c) => s + c.amount, 0);
+
+    expect(sumOf(two, "FIXED")).toBeCloseTo(sumOf(one, "FIXED"), 2);
+    expect(sumOf(two, "SCALES_WITH_JOBS")).toBeCloseTo(sumOf(one, "SCALES_WITH_JOBS") * 2, 2);
   });
 
   it("doubling volume therefore improves margin — the whole point of the lever", () => {
     const b = baseline();
-    const one = simulate(b, A({ volumeMultiplier: 1, behaviorOverrides: { Insurance: "FIXED", Fuel: "VARIABLE", Supplies: "PER_JOB", Tools: "ONE_TIME", Advertising: "DISCRETIONARY" } }));
-    const two = simulate(b, A({ volumeMultiplier: 2, behaviorOverrides: { Insurance: "FIXED", Fuel: "VARIABLE", Supplies: "PER_JOB", Tools: "ONE_TIME", Advertising: "DISCRETIONARY" } }));
+    const one = simulate(b, A({ volumeMultiplier: 1, behaviorOverrides: TAGS }));
+    const two = simulate(b, A({ volumeMultiplier: 2, behaviorOverrides: TAGS }));
     expect(two.marginPercent).toBeGreaterThan(one.marginPercent);
   });
 
-  it("discretionary spend is held flat unless the operator opts in", () => {
+  it("SCALES_WITH_REVENUE tracks money, SCALES_WITH_JOBS tracks work", () => {
+    // The test that justifies keeping both. Raise prices and do the IDENTICAL
+    // work: revenue moves, the work does not. A cost budgeted as a share of
+    // revenue should follow; fuel should not, because you didn't drive further.
     const b = baseline();
-    const held = simulate(b, A({ volumeMultiplier: 3, scaleDiscretionary: false, behaviorOverrides: { Insurance: "FIXED", Fuel: "VARIABLE", Supplies: "PER_JOB", Tools: "ONE_TIME", Advertising: "DISCRETIONARY" } }));
-    const scaled = simulate(b, A({ volumeMultiplier: 3, scaleDiscretionary: true, behaviorOverrides: { Insurance: "FIXED", Fuel: "VARIABLE", Supplies: "PER_JOB", Tools: "ONE_TIME", Advertising: "DISCRETIONARY" } }));
-    const adv = (r: typeof held) => r.costs.find((c) => c.category === "Advertising")!.amount;
-    expect(adv(held)).toBeCloseTo(20, 2);
-    expect(adv(scaled)).toBeGreaterThan(20);
+    const r = simulate(b, A({ priceIncreasePercent: 20, volumeMultiplier: 1, behaviorOverrides: TAGS }));
+    const at = (cat: string) => r.costs.find((c) => c.category === cat)!.amount;
+    expect(at("Fuel")).toBeCloseTo(50, 2);          // unchanged: same routes
+    expect(at("Advertising")).toBeGreaterThan(20);  // follows revenue
+    expect(r.revenue).toBeGreaterThan(b.actual.revenue);
   });
 
-  it("one-time costs can be dropped from a forward projection", () => {
+  it("the two are IDENTICAL when only volume moves, and that is correct", () => {
+    // Revenue and work move together when price is untouched, so there is
+    // nothing to distinguish. The tags differ only where they should.
     const b = baseline();
-    expect(simulate(b, A({ includeOneTime: false, behaviorOverrides: { Insurance: "FIXED", Fuel: "VARIABLE", Supplies: "PER_JOB", Tools: "ONE_TIME", Advertising: "DISCRETIONARY" } })).costs.some((c) => c.category === "Tools")).toBe(false);
-    expect(simulate(b, A({ includeOneTime: true, behaviorOverrides: { Insurance: "FIXED", Fuel: "VARIABLE", Supplies: "PER_JOB", Tools: "ONE_TIME", Advertising: "DISCRETIONARY" } })).costs.some((c) => c.category === "Tools")).toBe(true);
+    const asJobs = simulate(b, A({ volumeMultiplier: 2, behaviorOverrides: { Advertising: "SCALES_WITH_JOBS" } }));
+    const asRev  = simulate(b, A({ volumeMultiplier: 2, behaviorOverrides: { Advertising: "SCALES_WITH_REVENUE" } }));
+    const adv = (r: typeof asJobs) => r.costs.find((c) => c.category === "Advertising")!.amount;
+    expect(adv(asJobs)).toBeCloseTo(adv(asRev), 2);
+  });
+
+  it("all three behaviours are indistinguishable AT THE STATUS QUO", () => {
+    // This is what let the default change from hold-flat to scales-with-jobs
+    // without moving the backtest or anything already on screen: at volume 1x
+    // and no price change, x1 and hold are the same operation.
+    const b = baseline();
+    const totals = (["FIXED", "SCALES_WITH_JOBS", "SCALES_WITH_REVENUE"] as CostBehavior[]).map((t) => {
+      const all: Record<string, CostBehavior> = {};
+      for (const e of b.expenses) all[e.category] = t;
+      return round2(simulate(b, A({ behaviorOverrides: all })).costsTotal);
+    });
+    expect(new Set(totals).size).toBe(1);
+  });
+
+  it("an UNTAGGED category scales with jobs — silence is not a claim of fixedness", () => {
+    // The old default held every untagged cost flat, which asserted that 100%
+    // of costs are fixed and made growth look free. On production data that
+    // overstated the profit of doubling by $2,193 and the margin by 7 points.
+    const b = baseline();
+    const one = simulate(b, A({ volumeMultiplier: 1, behaviorOverrides: {} }));
+    const two = simulate(b, A({ volumeMultiplier: 2, behaviorOverrides: {} }));
+    expect(two.costsTotal).toBeCloseTo(one.costsTotal * 2, 2);
+    expect(defaultAssumptions(b).behaviorOverrides).toEqual({});
+    for (const c of two.costs) expect(c.behavior).toBe("SCALES_WITH_JOBS");
+  });
+
+  it("the retired tags are gone from the type and the model", () => {
+    const src = MODEL_SRC.replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, "");
+    expect(src).not.toMatch(/case "AS_IS"|case "PER_JOB"|case "ONE_TIME"|case "DISCRETIONARY"/);
+    expect(src).not.toMatch(/a\.includeOneTime|a\.scaleDiscretionary/);
+    // And the two checkboxes that gated them.
+    const tab = readFileSync(join(REPO_ROOT, "apps/web/src/ui/tabs/ForecastTab.tsx"), "utf8");
+    expect(tab).not.toMatch(/includeOneTime|scaleDiscretionary/);
+  });
+
+  it("a scenario saved under a RETIRED tag still replays", () => {
+    // Read-time normalisation, not a data migration: the values live inside a
+    // jsonb blob, so there is no column to migrate and no write to production.
+    const m = migrateAssumptions({
+      behaviorOverrides: {
+        A: "AS_IS", B: "SCALES_WITH_JOBS", C: "PER_JOB",
+        D: "DISCRETIONARY", E: "ONE_TIME", F: "FIXED", G: "nonsense",
+      },
+      includeOneTime: false,
+      scaleDiscretionary: true,
+    }) as any;
+    expect(m.behaviorOverrides).toEqual({
+      A: "SCALES_WITH_JOBS",      // the old hold-flat default
+      B: "SCALES_WITH_JOBS",
+      C: "SCALES_WITH_JOBS",
+      D: "SCALES_WITH_REVENUE",
+      E: "FIXED",                 // includeOneTime defaulted true => held flat
+      F: "FIXED",
+      G: "SCALES_WITH_JOBS",      // junk degrades, never throws
+    });
+    // The checkbox state goes with the checkboxes.
+    expect(m).not.toHaveProperty("includeOneTime");
+    expect(m).not.toHaveProperty("scaleDiscretionary");
+  });
+
+  it("TAGS SURVIVE A SAVE — hydrate must not drop them on the way back in", () => {
+    // The failure mode this guards has already shipped once on this tab, for a
+    // different field: the saved WINDOW restored fine but the preset badge was
+    // a separate piece of state that `loadScenario` never updated, so it read
+    // the wrong label. A value that is stored but not restored at one of the
+    // sites that rebuilds state is the shape of bug to watch for here.
+    //
+    // `hydrate` is defaults-then-stored, so a stored key must win over the
+    // default. Spread order is the whole contract.
+    const b = baseline();
+    const stored: any = { ...defaultAssumptions(b), behaviorOverrides: { Fuel: "FIXED" } };
+    const hydrated: any = { ...defaultAssumptions(b), ...migrateAssumptions(stored) };
+    expect(hydrated.behaviorOverrides).toEqual({ Fuel: "FIXED" });
+    // And it has to actually reach the arithmetic, not just the object.
+    const r = simulate(b, { ...hydrated, volumeMultiplier: 2 });
+    const fuel = r.costs.find((c) => c.category === "Fuel")!;
+    expect(fuel.behavior).toBe("FIXED");
+    expect(fuel.amount).toBeCloseTo(50, 2); // pinned, not 100
+
+    // The tab must hydrate defaults FIRST and stored SECOND. Reversed, every
+    // saved tag would be overwritten by the default on open.
+    const tab = readFileSync(join(REPO_ROOT, "apps/web/src/ui/tabs/ForecastTab.tsx"), "utf8")
+      .replace(/\s+/g, " ");
+    expect(tab).toMatch(
+      /\.\.\.defaultAssumptions\(baseline\), \.\.\.\(migrateAssumptions\(/,
+    );
+  });
+
+  it("a scenario that tagged NOTHING does not gain an empty override map", () => {
+    // Adding the key would report a spurious difference on every replay.
+    expect(migrateAssumptions({ volumeMultiplier: 2 })).not.toHaveProperty("behaviorOverrides");
+  });
+
+  it("the cost table renders EVERY behaviour — a missing one empties the table", () => {
+    // This has already shipped once: AS_IS became the default and wasn't in
+    // the render order, so every row grouped under a heading the renderer
+    // didn't draw and the whole table silently went blank.
+    const parts = readFileSync(join(REPO_ROOT, "apps/web/src/ui/tabs/ForecastTab.parts.tsx"), "utf8");
+    const order = parts.match(/const order = \[([^\]]*)\]/)?.[1] ?? "";
+    for (const beh of ["SCALES_WITH_JOBS", "SCALES_WITH_REVENUE", "FIXED"]) {
+      expect(order, `render order must include ${beh}`).toMatch(new RegExp(`"${beh}"`));
+      expect(parts, `picker must offer ${beh}`).toMatch(new RegExp(`value: "${beh}"`));
+      expect(parts, `${beh} needs a label`).toMatch(new RegExp(`${beh}:`));
+    }
+    // And nothing retired is still offered.
+    for (const dead of ["AS_IS", "PER_JOB", "ONE_TIME", "DISCRETIONARY"]) {
+      expect(order, `${dead} must be gone from the render order`).not.toMatch(new RegExp(`"${dead}"`));
+    }
   });
 });
 
@@ -388,7 +520,7 @@ describe("[build-gate] cost inflation and variable-cost driver", () => {
   });
 
   it("variable costs DO follow job volume", () => {
-    const tag = { behaviorOverrides: { Fuel: "VARIABLE" as const } };
+    const tag = { behaviorOverrides: { Fuel: "SCALES_WITH_JOBS" as const } };
     const one = simulate(baseline(), A({ volumeMultiplier: 1, ...tag }));
     const two = simulate(baseline(), A({ volumeMultiplier: 2, ...tag }));
     const fuelOf = (r: typeof one) => r.costs.find((c) => c.category === "Fuel")!.amount;
@@ -492,7 +624,7 @@ describe("[build-gate] cost-behavior overrides stay advisory", () => {
   it("an override changes the multiplier for this scenario only", () => {
     const b = baseline();
     const at2x = A({ volumeMultiplier: 2 });
-    const asVariable = simulate(b, { ...at2x, behaviorOverrides: { Fuel: "VARIABLE" } });
+    const asVariable = simulate(b, { ...at2x, behaviorOverrides: { Fuel: "SCALES_WITH_JOBS" } });
     const asFixed = simulate(b, { ...at2x, behaviorOverrides: { Fuel: "FIXED" } });
     const fuel = (r: typeof asVariable) => r.costs.find((c) => c.category === "Fuel")!;
     expect(fuel(asVariable).amount).toBeCloseTo(100, 2);  // 50 x 2
@@ -500,21 +632,27 @@ describe("[build-gate] cost-behavior overrides stay advisory", () => {
     expect(fuel(asFixed).behavior).toBe("FIXED");
   });
 
-  it("every category starts AS_IS — the tool asserts nothing until you tag it", () => {
-    // Baseline is reality, the same as every other lever: margin starts at
-    // the real setting, volume at 1x, price at 0%. A cost starts at what was
-    // actually spent and does not move until told to.
-    const r = simulate(baseline(), A({ volumeMultiplier: 3 }));
-    for (const c of r.costs) expect(c.behavior).toBe("AS_IS");
-    const flat = simulate(baseline(), A({ volumeMultiplier: 1 }));
-    expect(r.costsTotal).toBeCloseTo(flat.costsTotal, 2);
+  it("the baseline REPORTS the default behaviour, it does not apply its own", () => {
+    // buildBaseline stamps DEFAULT_COST_BEHAVIOR on every line and simulate
+    // falls back to the same constant, so the two can never disagree about an
+    // untagged category. Previously both said AS_IS and both held flat; the
+    // contract is the shared constant, not the particular value.
+    const b = baseline();
+    const r = simulate(b, A({ volumeMultiplier: 3, behaviorOverrides: {} }));
+    for (const c of r.costs) expect(c.behavior).toBe(DEFAULT_COST_BEHAVIOR);
+    const src = readFileSync(join(__dirname, "./forecast.ts"), "utf8");
+    expect(src, "baseline must use the shared constant, not a literal")
+      .toMatch(/behavior: DEFAULT_COST_BEHAVIOR/);
   });
 
-  it("warns when volume moved but categories are still untagged", () => {
-    // Silence here would overstate scale — the mirror of the bug the AS_IS
-    // default replaced.
+  it("the untagged-volume warning is gone, along with the default that needed it", () => {
+    // It existed only because the default held costs flat, so moving volume
+    // silently changed nothing. It was also miscounting: it summed e.amount,
+    // which includes the capital slice excludeFixedAssets already held out,
+    // and reported $12,665 of held cost on production where $4,722 was in play.
     const r = simulate(baseline(), A({ volumeMultiplier: 2 }));
-    expect(r.warnings.some((w) => /still "as is"/.test(w.message))).toBe(true);
+    expect(r.warnings.some((w) => /still "as is"/.test(w.message))).toBe(false);
+    expect(MODEL_SRC).not.toMatch(/cost categories are still/);
   });
 
   it("the tab writes no Setting when retagging", () => {
@@ -1233,7 +1371,7 @@ describe("[build-gate] workers comp is not counted twice", () => {
     // comp charge — telling them to go and tag something they already tagged
     // is the kind of dead advice that teaches operators to ignore warnings.
     const b = baseline({
-      expenses: [{ category: "Fuel", behavior: "VARIABLE", amount: 50, fixedAssetAmount: 0 }],
+      expenses: [{ category: "Fuel", behavior: "SCALES_WITH_JOBS", amount: 50, fixedAssetAmount: 0 }],
       workersCompBooked: 0,
       workersCompCategories: ["Insurance"],
     });
@@ -1402,7 +1540,7 @@ describe("[build-gate] capital purchases are not running costs", () => {
     // The subtle miss: scale line.amount instead of the adjusted base and the
     // exclusion silently comes back the moment a category is tagged.
     const r = simulate(baseline(), A({
-      behaviorOverrides: { Tools: "VARIABLE" }, volumeMultiplier: 2,
+      behaviorOverrides: { Tools: "SCALES_WITH_JOBS" }, volumeMultiplier: 2,
     }));
     expect(r.costs.find((c) => c.category === "Tools")?.amount).toBe(10); // 5 × 2, not 60
   });
@@ -1445,26 +1583,6 @@ describe("[build-gate] every ledger row is a real expense", () => {
 
   it("the job-traceable total is REPORTED, and subtracted from nothing", () => {
     expect(baseline().actual).toHaveProperty("jobMaterialsInLedger");
-  });
-});
-
-describe("[build-gate] the Costs table can actually render every behavior", () => {
-  it("the render order covers all six, AS_IS included", () => {
-    // AS_IS is the default for every untagged category. Leaving it out of the
-    // order list emptied the entire table — the rows existed, grouped under a
-    // key the renderer never looked for.
-    const parts = readFileSync(
-      join(REPO_ROOT, "apps/web/src/ui/tabs/ForecastTab.parts.tsx"), "utf8",
-    );
-    const m = parts.match(/const order = \[([^\]]+)\]/);
-    const rendered = (m?.[1] ?? "").match(/"([A-Z_]+)"/g)?.map((x) => x.replace(/"/g, "")) ?? [];
-    const behaviors = ["AS_IS", "FIXED", "VARIABLE", "PER_JOB", "ONE_TIME", "DISCRETIONARY"];
-    for (const b of behaviors) expect(rendered, `${b} must be renderable`).toContain(b);
-  });
-
-  it("a default scenario produces rows the table will draw", () => {
-    const r = simulate(baseline(), A());
-    expect(r.costs.length).toBeGreaterThan(0);
   });
 });
 
