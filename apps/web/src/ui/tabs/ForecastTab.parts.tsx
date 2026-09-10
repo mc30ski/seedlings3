@@ -150,13 +150,13 @@ const FLOW_INFO: Record<string, string> = {
     "What Stripe and the card networks skimmed off the payments. The business absorbs these in full; they are never charged back to a worker's share.",
   "Crew pay":
     "Everyone but you. Each worker's share of the jobs they worked, after the business keeps its margin. Under an hourly or rate-card structure this also carries those amounts.",
-  "Employer payroll tax":
-    "The employer's half — Social Security, Medicare, FUTA and state unemployment — as a percentage of W-2 wages. Charged on employees and trainees only: contractors pay their own, and the owner takes a draw rather than a paycheck. It comes from the app's estimator, never from imported Gusto rows.",
+  "Employer tax + workers comp":
+    "The employer's half — Social Security, Medicare, FUTA and state unemployment — as a percentage of W-2 wages, PLUS workers comp when you have set a comp rate. Charged on employees and trainees only: contractors pay their own, and the owner takes a draw rather than a paycheck. It comes from the app's estimator, never from imported Gusto rows. Comp is zero here by default, because your real premiums are already in Operating costs.",
   "Operating costs":
     "Every business expense in the window — fuel, insurance, supplies, advertising — grouped by category in the Costs section, where you can tag which ones actually scale with volume. Equipment purchases above the fixed-asset threshold are held out; job materials are too, since they are already counted above.",
   "Operating profit":
     "Revenue less every cost of producing it, BEFORE your own share. This is the closest line to the P&L's Net Operating Income, and the one to use when comparing the two pages.",
-  "Your own share":
+  "LLC Owner share":
     "Your cut of the jobs you personally worked, on its own line. Deducted here so that hiring someone to do your hours is a visible trade rather than a hidden one — replacing you converts this into crew pay.",
   "Retained in the business":
     "Operating profit after your own share. What the company kept, treating you as someone who has to be paid for the work you did.",
@@ -271,120 +271,6 @@ export function StatStrip({
  */
 export function MoneyFlow({
   scenario,
-  capitalPurchases = 0,
-}: {
-  scenario: ForecastResult;
-  capitalPurchases?: number;
-}) {
-  const lines: Array<{ label: string; amount: number; kind?: "in" | "rule" | "total" | "owner" }> = [
-    { label: "Revenue collected", amount: scenario.revenue, kind: "in" },
-    { label: "Job materials", amount: -scenario.materials },
-    { label: "Processor fees", amount: -scenario.processorFees },
-    { label: "Crew pay", amount: -scenario.crewPay },
-    { label: "Employer payroll tax", amount: -scenario.employerBurden },
-    { label: "Operating costs", amount: -scenario.costsTotal },
-    { label: "Operating profit", amount: scenario.profitBeforeOwnerLabor, kind: "total" },
-    { label: "Your own share", amount: -scenario.ownerPay, kind: "owner" },
-    { label: "Retained in the business", amount: scenario.profitAfterOwnerLabor, kind: "total" },
-  ];
-  if (capitalPurchases > 0) {
-    lines.push({ label: "Equipment bought", amount: -capitalPurchases });
-    lines.push({
-      label: "Cash after equipment",
-      amount: scenario.profitAfterOwnerLabor - capitalPurchases,
-      kind: "total",
-    });
-  }
-
-  const [openInfo, setOpenInfo] = useState<string | null>(null);
-
-  // Share of the SAMPLED BOOK, not of total revenue — a hypothetical hire's
-  // invented revenue belongs to neither bucket, and dividing by it would make
-  // the two percentages quietly stop summing to 100.
-  const bookTotal = scenario.recurringRevenue + scenario.oneOffRevenue;
-  const recurringShare = bookTotal > 0 ? (scenario.recurringRevenue / bookTotal) * 100 : 0;
-
-  return (
-    <Box borderWidth="1px" borderRadius="md" overflow="hidden">
-      <HStack px={3} py={2} bg="bg.emphasized" gap={2}>
-        <Box w="3px" h="14px" borderRadius="full" bg="blue.solid" flexShrink={0} />
-        <Text fontSize="12px" fontWeight="bold" textTransform="uppercase" letterSpacing="0.1em">
-          Where the money went
-        </Text>
-      </HStack>
-      <VStack align="stretch" gap={0} px={3} py={1}>
-        {lines.map((l) => {
-          const isTotal = l.kind === "total";
-          const open = openInfo === l.label;
-          return (
-            <Box key={l.label} borderTopWidth={isTotal ? "1px" : 0}>
-              <HStack justify="space-between" gap={3} py={1.5}>
-                <HStack gap={1.5} minW={0} align="center">
-                  <Text fontSize="13px"
-                        fontWeight={isTotal ? "semibold" : "normal"}
-                        color={l.kind === "owner" ? "purple.fg" : undefined}>
-                    {l.label}
-                  </Text>
-                  <InfoDot label={l.label} open={open}
-                           onToggle={() => setOpenInfo((v) => (v === l.label ? null : l.label))} />
-                </HStack>
-                <Text fontSize={isTotal ? "14px" : "13px"}
-                      fontWeight={isTotal ? "bold" : "normal"}
-                      fontVariantNumeric="tabular-nums"
-                      color={
-                        isTotal ? (l.amount < 0 ? "red.solid" : "green.solid")
-                          : l.kind === "in" ? "blue.fg"
-                          : l.kind === "owner" ? "purple.fg"
-                          : "fg"
-                      }>
-                  {money(l.amount)}
-                </Text>
-              </HStack>
-              {/* How much of the revenue repeats. Reported, never modelled:
-                  every lever treats a one-off exactly like a route visit, on
-                  the call that one-offs grow along with everything else. It
-                  sits under Revenue because that is the number it qualifies —
-                  "$17,091" reads very differently at 76% recurring than at
-                  25%. */}
-              {l.kind === "in" && bookTotal > 0 && (
-                <Box pb={2}>
-                  <HStack h="6px" gap="2px" borderRadius="full" overflow="hidden" mb={1}>
-                    <Box h="full" bg="blue.solid" flex={`${recurringShare} 0 0%`} />
-                    <Box h="full" bg="blue.muted" flex={`${100 - recurringShare} 0 0%`} />
-                  </HStack>
-                  <HStack justify="space-between" gap={3} wrap="wrap">
-                    <Text fontSize="11.5px" color="fg.muted">
-                      <Text as="span" fontWeight="bold" color="blue.fg">
-                        {recurringShare.toFixed(0)}% repeating
-                      </Text>
-                      {" "}· {money(scenario.recurringRevenue)} over{" "}
-                      {scenario.recurringJobCount} visits
-                    </Text>
-                    <Text fontSize="11.5px" color="fg.muted">
-                      <Text as="span" fontWeight="semibold">
-                        {(100 - recurringShare).toFixed(0)}% one-off
-                      </Text>
-                      {" "}· {money(scenario.oneOffRevenue)} over{" "}
-                      {scenario.oneOffJobCount} jobs
-                    </Text>
-                  </HStack>
-                </Box>
-              )}
-              {open && FLOW_INFO[l.label] && (
-                <Box pb={1.5}><InfoPanel>{FLOW_INFO[l.label]}</InfoPanel></Box>
-              )}
-            </Box>
-          );
-        })}
-      </VStack>
-    </Box>
-  );
-}
-
-// ── Waterfall ───────────────────────────────────────────────────────────────
-
-export function Waterfall({
-  scenario,
   statusQuo,
   capitalPurchases = 0,
 }: {
@@ -396,47 +282,50 @@ export function Waterfall({
    *  never look like it was quietly ignored. */
   capitalPurchases?: number;
 }) {
-  const rows: Array<{ label: string; now: number; next: number; kind: "in" | "out" | "total" | "owner"; note?: string }> = [
+  // ONE table, not two.
+  //
+  // This used to be a single column of the scenario's figures, with a second
+  // "What it does to the books" section further down the page repeating the
+  // same nine lines as today-vs-forecast-vs-change. Two readings of one
+  // ledger, and their labels had already drifted: the same `employerBurden`
+  // was "Employer payroll tax" here and "Employer tax + workers comp" there —
+  // one of which denies that comp is in it the moment you set a comp rate.
+  //
+  // Merged, the first thing on the page answers both questions at once: what
+  // the window actually looked like, and what the levers do to it. Nothing
+  // was dropped — the per-line explanations and the repeating/one-off split
+  // came from the old summary, the comparison columns and paired bars from
+  // the old section.
+  const rows: Array<{ label: string; now: number; next: number; kind: "in" | "out" | "total" | "owner" }> = [
     { label: "Revenue collected", now: statusQuo.revenue, next: scenario.revenue, kind: "in" },
     { label: "Job materials", now: -statusQuo.materials, next: -scenario.materials, kind: "out" },
     { label: "Processor fees", now: -statusQuo.processorFees, next: -scenario.processorFees, kind: "out" },
     { label: "Crew pay", now: -statusQuo.crewPay, next: -scenario.crewPay, kind: "out" },
     { label: "Employer tax + workers comp", now: -statusQuo.employerBurden, next: -scenario.employerBurden, kind: "out" },
     { label: "Operating costs", now: -statusQuo.costsTotal, next: -scenario.costsTotal, kind: "out" },
-    {
-      label: "Operating profit",
-      note: "before the owner's share",
-      now: statusQuo.profitBeforeOwnerLabor,
-      next: scenario.profitBeforeOwnerLabor,
-      kind: "total",
-    },
-    {
-      // Always present. Neither a business cost nor silent profit — the
-      // owner's own share of the work, on its own line so hiring someone to
-      // do those hours is a visible trade rather than a hidden one.
-      label: "LLC Owner share",
-      note: "accrued to the owner for hours they worked",
-      now: -statusQuo.ownerPay,
-      next: -scenario.ownerPay,
-      kind: "owner",
-    },
-    {
-      label: "Retained in the business",
-      note: "after the owner's share",
-      now: statusQuo.profitAfterOwnerLabor,
-      next: scenario.profitAfterOwnerLabor,
-      kind: "total",
-    },
+    { label: "Operating profit", now: statusQuo.profitBeforeOwnerLabor, next: scenario.profitBeforeOwnerLabor, kind: "total" },
+    { label: "LLC Owner share", now: -statusQuo.ownerPay, next: -scenario.ownerPay, kind: "owner" },
+    { label: "Retained in the business", now: statusQuo.profitAfterOwnerLabor, next: scenario.profitAfterOwnerLabor, kind: "total" },
   ];
 
+  const [openInfo, setOpenInfo] = useState<string | null>(null);
   const scale = Math.max(scenario.revenue, statusQuo.revenue, 1);
   const cashAfterCapEx = scenario.profitAfterOwnerLabor - capitalPurchases;
 
+  // Share of the SAMPLED BOOK, not of total revenue — a hypothetical hire's
+  // invented revenue belongs to neither bucket, and dividing by it would make
+  // the two percentages quietly stop summing to 100.
+  const bookTotal = scenario.recurringRevenue + scenario.oneOffRevenue;
+  const recurringShare = bookTotal > 0 ? (scenario.recurringRevenue / bookTotal) * 100 : 0;
+
   return (
     <VStack align="stretch" gap={0} borderWidth="1px" borderRadius="md" overflow="hidden">
-      {/* Headers at a readable weight. These were 10px muted micro-caps and
-          were effectively invisible — the comparison was on screen the whole
-          time and styled to be ignored. */}
+      <HStack px={3} py={2} bg="bg.emphasized" gap={2}>
+        <Box w="3px" h="14px" borderRadius="full" bg="blue.solid" flexShrink={0} />
+        <Text fontSize="12px" fontWeight="bold" textTransform="uppercase" letterSpacing="0.1em">
+          Where the money went
+        </Text>
+      </HStack>
       <HStack px={3} py={2} bg="bg.subtle" fontSize="12px" fontWeight="semibold"
               display={{ base: "none", md: "flex" }}>
         <Text flex="1" color="fg.muted">Line</Text>
@@ -446,7 +335,8 @@ export function Waterfall({
       </HStack>
       {rows.map((r, i) => {
         const diff = r.next - r.now;
-        const good = r.kind === "out" ? diff > 0 : diff > 0;
+        const good = diff > 0;
+        const open = openInfo === r.label;
         return (
           <Box key={r.label} px={3} py={2}
                bg={r.kind === "total" ? "bg.subtle" : r.kind === "owner" ? "purple.subtle" : undefined}
@@ -454,12 +344,15 @@ export function Waterfall({
             <Stack direction={{ base: "column", md: "row" }}
                    gap={{ base: 1, md: 2 }} align={{ md: "center" }}>
               <Box flex={{ md: "1" }} minW={0}>
-                <Text fontSize="13px"
-                      fontWeight={r.kind === "total" || r.kind === "owner" ? "semibold" : "normal"}
-                      color={r.kind === "owner" ? "purple.fg" : undefined}>
-                  {r.label}
-                </Text>
-                {r.note && <Text fontSize="11px" color="fg.muted">{r.note}</Text>}
+                <HStack gap={1.5} minW={0} align="center">
+                  <Text fontSize="13px"
+                        fontWeight={r.kind === "total" || r.kind === "owner" ? "semibold" : "normal"}
+                        color={r.kind === "owner" ? "purple.fg" : undefined}>
+                    {r.label}
+                  </Text>
+                  <InfoDot label={r.label} open={open}
+                           onToggle={() => setOpenInfo((v) => (v === r.label ? null : r.label))} />
+                </HStack>
               </Box>
               <HStack gap={2} justify={{ base: "space-between", md: "flex-end" }}
                       w={{ base: "100%", md: "auto" }}>
@@ -489,6 +382,39 @@ export function Waterfall({
                 w={`${Math.min(100, (Math.abs(r.next) / scale) * 100)}%`}
               />
             </Box>
+            {/* How much of the revenue repeats. Reported, never modelled:
+                every lever treats a one-off exactly like a route visit, on
+                the call that one-offs grow along with everything else. It
+                sits under Revenue because that is the number it qualifies —
+                "$17,091" reads very differently at 76% recurring than at
+                25%. */}
+            {r.kind === "in" && bookTotal > 0 && (
+              <Box pt={1} pb={1}>
+                <HStack h="6px" gap="2px" borderRadius="full" overflow="hidden" mb={1}>
+                  <Box h="full" bg="blue.solid" flex={`${recurringShare} 0 0%`} />
+                  <Box h="full" bg="blue.muted" flex={`${100 - recurringShare} 0 0%`} />
+                </HStack>
+                <HStack justify="space-between" gap={3} wrap="wrap">
+                  <Text fontSize="11.5px" color="fg.muted">
+                    <Text as="span" fontWeight="bold" color="blue.fg">
+                      {recurringShare.toFixed(0)}% repeating
+                    </Text>
+                    {" "}· {money(scenario.recurringRevenue)} over{" "}
+                    {scenario.recurringJobCount} visits
+                  </Text>
+                  <Text fontSize="11.5px" color="fg.muted">
+                    <Text as="span" fontWeight="semibold">
+                      {(100 - recurringShare).toFixed(0)}% one-off
+                    </Text>
+                    {" "}· {money(scenario.oneOffRevenue)} over{" "}
+                    {scenario.oneOffJobCount} jobs
+                  </Text>
+                </HStack>
+              </Box>
+            )}
+            {open && FLOW_INFO[r.label] && (
+              <Box pt={1}><InfoPanel>{FLOW_INFO[r.label]}</InfoPanel></Box>
+            )}
           </Box>
         );
       })}
@@ -533,6 +459,7 @@ export function Waterfall({
     </VStack>
   );
 }
+
 
 // ── Per-person outcomes ─────────────────────────────────────────────────────
 

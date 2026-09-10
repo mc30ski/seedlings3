@@ -54,7 +54,7 @@ import {
   type BaselineResponse, type SavedForecast, type ForecastAssessment,
 } from "@/src/lib/forecast";
 import {
-  StatStrip, MoneyFlow, Waterfall, WorkerFairnessTable, WarningList, CostBreakdown,
+  StatStrip, MoneyFlow, WorkerFairnessTable, WarningList, CostBreakdown,
   SensitivityList, AssessmentPanel, ComparisonPanel, MarketRateProvenance,
   type SensitivityRow, type ComparisonEntry,
 } from "@/src/ui/tabs/ForecastTab.parts";
@@ -72,8 +72,10 @@ import {
 // whole annual premium or none of it; it now carries a twelfth either way.
 // See amortizedShare in services/forecast.ts.
 //
-// Keys are stable across label changes — they are persisted in
-// `forecast_preset`, so renaming a label must not orphan a saved choice.
+// Keys identify a preset in the menu's highlight; the label is what the
+// operator reads. Neither is persisted — the WINDOW is (forecast_from /
+// forecast_to) and the active preset is derived from it, so the badge can
+// never disagree with the dates it sits above.
 type Preset = { key: string; label: string; range: () => [string, string] };
 const PRESETS: Preset[] = [
   { key: "30d", label: "Last month", range: () => [bizAddDays(bizToday(), -30), bizToday()] },
@@ -310,7 +312,27 @@ export default function ForecastTab() {
   // Which preset produced the current window, so the badge can name it. Cleared
   // the moment either date is edited by hand — a badge still reading "Last 90
   // days" over a hand-picked range is worse than no label at all.
-  const [presetKey, setPresetKey] = usePersistedState("forecast_preset", DEFAULT_PRESET.key);
+  // Which preset the CURRENT window corresponds to — derived from the window
+  // itself, never stored.
+  //
+  // It used to be its own persisted state, updated at each site that changed
+  // the dates. `loadScenario` was not one of those sites, so opening a saved
+  // forecast restored its window and left the badge reading whichever preset
+  // had been chosen before — the dates said 11 Jun to 9 Sep while the badge
+  // said "Last 3 months", and the window looked like it had not been
+  // restored at all.
+  //
+  // Deriving it removes the whole class of bug: there is no second copy of
+  // the truth to forget to update, so the badge cannot disagree with the
+  // dates. `forecast_from` / `forecast_to` are still persisted, so a reload
+  // restores the window and the label follows from it.
+  const presetKey = useMemo(() => {
+    const hit = PRESETS.find((p) => {
+      const [f, t] = p.range();
+      return f === from && t === to;
+    });
+    return hit?.key ?? "";
+  }, [from, to]);
   const [presetMenuOpen, setPresetMenuOpen] = useState(false);
 
   // Close on any click that isn't the badge itself. The badge stops propagation,
@@ -659,12 +681,12 @@ export default function ForecastTab() {
           <Box>
             <Text fontSize="11px" color="fg.muted" mb={0.5}>From</Text>
             <Input size="sm" type="date" value={from} w="145px"
-                   onChange={(e) => { setFrom(e.target.value); setPresetKey(""); }} />
+                   onChange={(e) => setFrom(e.target.value)} />
           </Box>
           <Box>
             <Text fontSize="11px" color="fg.muted" mb={0.5}>To</Text>
             <Input size="sm" type="date" value={to} w="145px"
-                   onChange={(e) => { setTo(e.target.value); setPresetKey(""); }} />
+                   onChange={(e) => setTo(e.target.value)} />
           </Box>
           {/* Green preset badge — same affordance as the timeframe pickers on
               Payments and the other money tabs, so a date range is picked the
@@ -698,7 +720,7 @@ export default function ForecastTab() {
                           colorPalette={presetKey === p.key ? "green" : undefined}
                           onClick={() => {
                             const [f, t] = p.range();
-                            setFrom(f); setTo(t); setPresetKey(p.key);
+                            setFrom(f); setTo(t);
                             setPresetMenuOpen(false);
                           }}>
                     {p.label}
@@ -773,10 +795,13 @@ export default function ForecastTab() {
       {/* ── Headline ───────────────────────────────────────────────────── */}
       <StatStrip scenario={scenario} statusQuo={sq} />
 
-      {/* Deliberately NOT in a SectionExpander. "Where did the revenue go" is
-          the first question anyone asks, and it was only answerable inside a
-          collapsible that remembers being closed. */}
-      <MoneyFlow scenario={scenario}
+      {/* Deliberately NOT in a SectionExpander. "Where did the revenue go, and
+          what do my changes do to it" is the first question anyone asks, and
+          it was only answerable inside a collapsible that remembers being
+          closed. It now carries the comparison columns too — this used to be
+          a second section further down ("What it does to the books") showing
+          the same nine lines against the same ledger. */}
+      <MoneyFlow scenario={scenario} statusQuo={sq}
                  capitalPurchases={data.baseline.actual.fixedAssetPurchases} />
 
       {/* ── Levers ─────────────────────────────────────────────────────── */}
@@ -1110,13 +1135,6 @@ export default function ForecastTab() {
       </SectionExpander>
 
       {/* ── Outcomes ───────────────────────────────────────────────────── */}
-      <SectionExpander emphasis title="What it does to the books" storageKey="forecast_sec_pnl" defaultOpen>
-        <Box pt={2}>
-          <Waterfall scenario={scenario} statusQuo={sq}
-                     capitalPurchases={data.baseline.actual.fixedAssetPurchases} />
-        </Box>
-      </SectionExpander>
-
       <SectionExpander emphasis title="What it does to people" storageKey="forecast_sec_people" defaultOpen>
         <VStack align="stretch" gap={3} pt={2}>
           {/* Where the market band comes from, stated before the table that
