@@ -137,6 +137,29 @@ export type ForecastBaseline = {
   /** Workers comp as a percent of W-2 wages. An estimate the operator tunes;
    *  the real premium is a quote, not a rate we can derive. */
   workersCompPercent: number;
+  /**
+   * Dollars of THIS WINDOW's booked cost that are workers comp premium,
+   * derived from the expense categories tagged `statutoryKind: WORKERS_COMP`
+   * in Settings, amortized the same way every other cost line is.
+   *
+   * ZERO MEANS "NOTHING IS TAGGED", not "there is no comp". The two are
+   * indistinguishable from here, so the model never treats zero as a fact —
+   * it warns instead (see buildWarnings). Tagging one category makes this
+   * real, and every window computes its own share from then on.
+   *
+   * REPORTING ONLY. The removal itself is computed inside `simulate` from the
+   * resolved cost lines (see `workersCompCategories`), so that what comes out
+   * is exactly what the scenario put in — after the fixed-asset toggle, after
+   * any behavior override, after inflation. A precomputed scalar could not
+   * track those and would over-remove.
+   */
+  workersCompBooked: number;
+  /** The category labels tagged WORKERS_COMP, so `simulate` can find their
+   *  resolved cost lines. EMPTY means the taxonomy has not been classified —
+   *  which is what `buildWarnings` keys on, rather than on the dollar figure
+   *  above: a correctly-tagged business can legitimately have a window with
+   *  no comp charge in it, and that is not the same problem at all. */
+  workersCompCategories: string[];
   /** What the app's own books say for this window, so the UI can show whether
    *  the model reproduces reality before anyone trusts a projection. */
   actual: {
@@ -287,20 +310,16 @@ export type Assumptions = {
    *
    * It is offered at all because comp is the one labor cost that genuinely
    * scales with payroll: model doubling the crew with a flat Insurance line
-   * and the premium doesn't move, which understates the cost of growing. To
-   * use it honestly you must also say how much of the ledger is already comp,
-   * so it can be taken out before this is added — hence the field below.
+   * and the premium doesn't move, which understates the cost of growing.
+   *
+   * Setting it above zero AUTOMATICALLY removes `baseline.workersCompBooked`
+   * from costs first, so the premium is never counted twice. That used to be
+   * a second number the operator typed in by hand — how much of this
+   * window's Insurance is comp — which meant remembering an annual premium's
+   * monthly slice and re-deriving it for every window. It is now read off the
+   * categories tagged WORKERS_COMP in Settings.
    */
   workersCompPercent: number;
-  /**
-   * How many dollars of the window's booked expenses are workers comp premium.
-   *
-   * There is NO WAY TO DERIVE THIS. The ledger has one Insurance category
-   * carrying comp alongside general liability, commercial auto and everything
-   * else on line 15, with nothing distinguishing them. So it is an input, and
-   * `buildWarnings` says so when a comp rate is set without one.
-   */
-  workersCompInExpenses: number;
   /** Replace the fixed-cost base, for modelling an insurance change or a
    *  software cull. Null = use the window's actual fixed costs. */
   fixedCostOverride: number | null;
@@ -356,7 +375,6 @@ export function defaultAssumptions(b: ForecastBaseline): Assumptions {
     // actually booked. `b.workersCompPercent` still carries the operator's
     // configured rate so the UI can offer it as the suggested value.
     workersCompPercent: 0,
-    workersCompInExpenses: 0,
     fixedCostOverride: null,
     includeOneTime: true,
     excludeFixedAssets: true,
@@ -413,9 +431,22 @@ export function describePayShape(a: Assumptions): { name: string | null; detail:
  * under the additive rules without this would pay BOTH, overstating crew cost
  * on a scenario the operator never changed. Setting business-keeps to 100 is
  * the additive spelling of the same structure.
+ *
+ * `workersCompInExpenses` is dropped on the same principle. It was a
+ * hand-entered dollar figure saying how much of the window's Insurance was
+ * comp; the model now derives that from the categories tagged WORKERS_COMP in
+ * Settings, and a stale number riding along in the blob would show up as a
+ * spurious difference on every replay without changing a single result.
  */
 export function migrateAssumptions(stored: Record<string, unknown>): Record<string, unknown> {
-  const { payModel, ...rest } = stored as { payModel?: string } & Record<string, unknown>;
+  const {
+    payModel,
+    workersCompInExpenses: _retiredCompInExpenses,
+    ...rest
+  } = stored as {
+    payModel?: string;
+    workersCompInExpenses?: number;
+  } & Record<string, unknown>;
   if (!payModel) return rest;
   if (payModel === "RATE_CARD") {
     return { ...rest, employeeMarginPercent: 100, contractorFeePercent: 100 };
@@ -833,11 +864,28 @@ export function simulate(baseline: ForecastBaseline, a: Assumptions): ForecastRe
   // in, or the same cost is counted twice. Rendered as its own visible line
   // rather than netted silently into Insurance: an operator comparing this
   // against their ledger has to be able to see where the money went.
-  if (a.workersCompInExpenses > 0) {
+  //
+  // Only when a rate is actually set. At the default rate of zero nothing is
+  // re-modelled, so nothing is removed and the scenario reports the premiums
+  // the books report — which is what makes the default scenario reconcile
+  // with the P&L.
+  //
+  // Summed off the RESOLVED lines above, not off a baseline figure, so the
+  // removal is exactly what this scenario is carrying. A premium that the
+  // fixed-asset toggle already held out contributes nothing here, instead of
+  // being subtracted a second time.
+  const compCategories = new Set(baseline.workersCompCategories ?? []);
+  const compOffset =
+    a.workersCompPercent > 0
+      ? costs.filter((c) => compCategories.has(c.category)).reduce((s, c) => s + c.amount, 0)
+      : 0;
+  if (compOffset > 0) {
     costs.push({
       category: "Workers comp premium (re-modelled on wages)",
       behavior: "FIXED",
-      amount: round2(-a.workersCompInExpenses * inflation),
+      // NOT re-inflated: `costs` is post-inflation already, so multiplying
+      // again would remove more than the scenario contains.
+      amount: round2(-compOffset),
     });
   }
 
@@ -1003,16 +1051,17 @@ export function buildWarnings(
   }
 
   // ── Workers comp counted twice ──────────────────────────────────────────
-  if (a.workersCompPercent > 0 && a.workersCompInExpenses <= 0) {
+  //
+  // The offset is derived now, so the ordinary case can no longer double-count
+  // and no longer warns. What CAN still go wrong is the taxonomy: a rate set
+  // against a ledger where no category is tagged as comp has nothing to
+  // remove, and the premium sits in Insurance while a second copy is
+  // synthesized from wages. That is a Settings problem, and the message says
+  // so rather than asking for a number.
+  if (a.workersCompPercent > 0 && (baseline.workersCompCategories ?? []).length === 0) {
     out.push({
       level: "critical",
-      message: `Workers comp is being counted twice: ${a.workersCompPercent}% of wages is added on top of the premiums already booked as Insurance. Enter how much of this window's Insurance is comp so it can be taken out first, or set the rate to 0 and let the ledger stand.`,
-    });
-  }
-  if (a.workersCompInExpenses > 0 && a.workersCompPercent <= 0) {
-    out.push({
-      level: "caution",
-      message: `$${a.workersCompInExpenses.toFixed(0)} of comp premium has been removed from costs but no rate replaces it, so this scenario carries no workers comp at all.`,
+      message: `Workers comp is being counted twice: ${a.workersCompPercent}% of wages is added on top of the premiums already booked, and no expense category is tagged as workers comp so there is nothing to take out first. Tag the comp category in Settings → Expense categories → Statutory, or set the rate to 0 and let the ledger stand.`,
     });
   }
 

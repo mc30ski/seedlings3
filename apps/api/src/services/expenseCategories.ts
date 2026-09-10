@@ -21,6 +21,29 @@ export type PlSection = "COGS" | "OPERATING_EXPENSE" | "EXCLUDE_FROM_PNL";
 
 const PL_SECTION_VALUES: PlSection[] = ["COGS", "OPERATING_EXPENSE", "EXCLUDE_FROM_PNL"];
 
+/** Marks a category as carrying a STATUTORY insurance premium — one the law
+ *  requires and whose cost scales with payroll rather than with the calendar.
+ *
+ *  This exists because Schedule C line 15 is one bucket. Workers comp,
+ *  general liability and commercial auto all post to "Insurance", and nothing
+ *  in the ledger tells them apart. The forecast needs to know how much of a
+ *  window's insurance is COMP specifically: comp is the one insurance that
+ *  responds to hiring, so modelling a bigger crew has to take the booked
+ *  premium out and re-derive it from wages. Before this tag that number had
+ *  to be typed in by hand, from memory, every time.
+ *
+ *    WORKERS_COMP       — premium scales with W-2 payroll. Derives the
+ *                         forecast's comp offset.
+ *    GENERAL_LIABILITY  — required, but priced on revenue/operations rather
+ *                         than payroll. Tagged for the same reason: so the
+ *                         two are never confused with each other again.
+ *
+ *  null (the default, and correct for every non-insurance category) means
+ *  "no statutory role" — the category behaves exactly as it always has. */
+export type StatutoryKind = "WORKERS_COMP" | "GENERAL_LIABILITY";
+
+const STATUTORY_KIND_VALUES: StatutoryKind[] = ["WORKERS_COMP", "GENERAL_LIABILITY"];
+
 export type ExpenseCategoryConfig = {
   /** Display label, stored verbatim on BusinessExpense.category / Supply.category. */
   label: string;
@@ -53,6 +76,10 @@ export type ExpenseCategoryConfig = {
    *  itself still deducts the full cost (cash basis) — this field only
    *  affects the tax-effective view. */
   taxDeductiblePercent: number;
+  /** Statutory-insurance role, or null for everything else. See StatutoryKind.
+   *  Optional in storage so a taxonomy that predates the field still parses;
+   *  the loader defaults missing values to null. */
+  statutoryKind: StatutoryKind | null;
 };
 
 const ALLOWED_KEYS = new Set([
@@ -62,6 +89,7 @@ const ALLOWED_KEYS = new Set([
   "selectable",
   "plSection",
   "taxDeductiblePercent",
+  "statutoryKind",
 ]);
 
 /**
@@ -140,6 +168,21 @@ export function parseExpenseCategoriesSetting(raw: string | null | undefined): E
       }
       taxDeductiblePercent = n;
     }
+    // Statutory role — null unless explicitly set. An empty string is treated
+    // as null so a picker that round-trips "" (the "None" option) doesn't
+    // have to special-case it before saving.
+    let statutoryKind: StatutoryKind | null = null;
+    if (row.statutoryKind != null && row.statutoryKind !== "") {
+      if (
+        typeof row.statutoryKind !== "string" ||
+        !STATUTORY_KIND_VALUES.includes(row.statutoryKind as StatutoryKind)
+      ) {
+        throw new Error(
+          `EXPENSE_CATEGORIES[${idx}].statutoryKind must be null or one of: ${STATUTORY_KIND_VALUES.join(", ")}.`,
+        );
+      }
+      statutoryKind = row.statutoryKind as StatutoryKind;
+    }
     return {
       label: row.label,
       scheduleCLine: row.scheduleCLine,
@@ -147,6 +190,7 @@ export function parseExpenseCategoriesSetting(raw: string | null | undefined): E
       selectable: row.selectable !== false, // default true if omitted
       plSection,
       taxDeductiblePercent,
+      statutoryKind,
     };
   });
 }
@@ -234,6 +278,22 @@ export async function loadTaxDeductibleMap(
   const map: Record<string, number> = {};
   for (const c of cats) map[c.label] = c.taxDeductiblePercent;
   return map;
+}
+
+/** The category labels carrying a given statutory insurance. Usually one, but
+ *  a taxonomy is free to split a premium across several rows (a mid-year
+ *  policy change, say) and every one of them counts.
+ *
+ *  Returns an EMPTY set when nothing is tagged, which is the honest answer for
+ *  a taxonomy that has not been classified yet. Callers must treat empty as
+ *  "unknown", not as "zero" — the forecast raises a warning rather than
+ *  quietly modelling a business with no comp premium at all. */
+export async function loadStatutoryCategoryLabels(
+  kind: StatutoryKind,
+  client: typeof prisma | any = prisma,
+): Promise<Set<string>> {
+  const cats = await loadExpenseCategories(client);
+  return new Set(cats.filter((c) => c.statutoryKind === kind).map((c) => c.label));
 }
 
 /**

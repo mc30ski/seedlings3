@@ -2203,10 +2203,14 @@ async function seedDatabase() {
     { ago: 38, cost: 1250.00, desc: "New backpack blower (Echo PB-8010T)", category: "Supplies" },
     { ago: 65, cost: 18.99, desc: "QuickBooks Online — monthly", category: "Office expense", recurrence: "MONTHLY" },
     { ago: 72, cost: 215.85, desc: "Mower deck repair (welding + new blades)", category: "Repairs and maintenance" },
-    { ago: 95, cost: 285.00, desc: "General liability insurance", category: "Insurance", recurrence: "QUARTERLY" },
+    { ago: 95, cost: 285.00, desc: "General liability insurance", category: "Insurance — general liability", recurrence: "QUARTERLY" },
+    // An ANNUAL comp premium, so dev exercises the derivation the Forecast
+    // depends on: a window three months wide should be charged roughly a
+    // quarter of this, not the whole ticket.
+    { ago: 110, cost: 1_460.00, desc: "Workers comp policy — annual premium", category: "Insurance — workers comp", recurrence: "ANNUALLY" },
     { ago: 124, cost: 75.00, desc: "Logo redesign (vector files)", category: "Advertising" },
     // Last year (for "all time" totals)
-    { ago: 188, cost: 285.00, desc: "General liability insurance", category: "Insurance", recurrence: "QUARTERLY" },
+    { ago: 188, cost: 285.00, desc: "General liability insurance", category: "Insurance — general liability", recurrence: "QUARTERLY" },
     { ago: 240, cost: 12.50, desc: "Bank wire fee", category: "Other" },
     { ago: 320, cost: 595.00, desc: "Tax prep (small business return)", category: "Legal and professional services" },
     { ago: 358, cost: 320.00, desc: "Annual business license renewal", category: "Taxes and licenses", recurrence: "ANNUALLY" },
@@ -2720,6 +2724,18 @@ async function seedDatabase() {
         // QB itself). Default to EXCLUDE so the row doesn't show as "Unmapped"
         // on the P&L if accidentally used; operator can flip it later.
         { label: "Depreciation", scheduleCLine: "13", qbAccount: null, selectable: true, plSection: "EXCLUDE_FROM_PNL" },
+        // Schedule C line 15 is ONE bucket — comp, general liability and
+        // commercial auto all post to "Insurance" and nothing in the ledger
+        // tells them apart. The Forecast needs comp specifically: it is the
+        // one insurance whose cost follows payroll, so modelling a bigger
+        // crew has to take the booked premium out and re-derive it from
+        // wages. `statutoryKind` is that signal.
+        //
+        // The plain "Insurance" row STAYS, unchanged, as the catch-all. Every
+        // existing ledger row carries that label; retiring it would strand
+        // them in a category the taxonomy no longer knows.
+        { label: "Insurance — workers comp", scheduleCLine: "15", qbAccount: "Insurance", selectable: true, plSection: "OPERATING_EXPENSE", statutoryKind: "WORKERS_COMP" },
+        { label: "Insurance — general liability", scheduleCLine: "15", qbAccount: "Insurance", selectable: true, plSection: "OPERATING_EXPENSE", statutoryKind: "GENERAL_LIABILITY" },
         { label: "Insurance", scheduleCLine: "15", qbAccount: "Insurance", selectable: true, plSection: "OPERATING_EXPENSE" },
         { label: "Legal and professional services", scheduleCLine: "17", qbAccount: "Legal & Professional Fees", selectable: true, plSection: "OPERATING_EXPENSE" },
         { label: "Office expense", scheduleCLine: "18", qbAccount: "Software & Subscriptions", selectable: true, plSection: "OPERATING_EXPENSE" },

@@ -2217,6 +2217,33 @@ describe("[build-gate] the forecast window presets", () => {
 describe("[build-gate] a forecast lever that cannot bite says so", () => {
   const web = (rel: string) => readFileSync(join(__dirname, "../../../web/src/", rel), "utf8");
 
+  it("the tag-dependent checkboxes say when nothing is tagged", () => {
+    // Both act ONLY on categories the operator has retagged, and every
+    // category enters as AS_IS — so both are inert until something is
+    // tagged, and neither said so. Worse, their labels named things the app
+    // has no concept of: "Include one-time costs (tools, startup)" reads as
+    // though it had identified tools and startup spend.
+    const F = web("ui/tabs/ForecastTab.tsx").replace(/\s+/g, " ");
+    expect(F, "the counts must be derived from the scenario's own tags")
+      .toMatch(/const taggedBehaviors = Object\.values\(a\.behaviorOverrides \?\? \{\}\)/);
+    expect(F, "the one-time box must say when nothing is tagged")
+      .toMatch(/Nothing is tagged one-time, so this changes nothing/);
+    expect(F, "the discretionary box must say when nothing is tagged")
+      .toMatch(/Nothing is tagged discretionary, so this changes nothing/);
+    // The labels must describe the mechanism, not imply knowledge the app
+    // does not have. Comments stripped first: the code comment explaining
+    // this change quotes the old labels, so a raw scan finds them in the
+    // explanation rather than in a rendered label.
+    const code = web("ui/tabs/ForecastTab.tsx")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/[^\n]*/g, "")
+      .replace(/\s+/g, " ");
+    expect(code, "the label must not claim to know your tools and startup costs")
+      .not.toMatch(/Include one-time costs \(tools, startup\)/);
+    expect(code, "…nor to know which category is advertising")
+      .not.toMatch(/Grow advertising with revenue/);
+  });
+
   it("the contractor levers tell you when there is no contractor to act on", () => {
     // Both are live code that moves NO money when the roster is all W-2 —
     // production is 5 employees, 1 trainee, 0 contractors. Dragging the fee
@@ -2273,12 +2300,17 @@ describe("[build-gate] the two money reports say which basis they are on", () =>
       .toMatch(/this is not full accrual accounting/);
   });
 
-  it("the comp field asks for the window's share, not the invoice", () => {
-    // It takes a hand-typed dollar figure. Once Insurance reports a coverage
-    // slice, an operator typing the invoice amount subtracts more comp than
-    // the window contains.
+  it("the comp control says it removes the window's share, not the invoice", () => {
+    // The hand-typed dollar figure is gone — the premium is derived from the
+    // categories tagged WORKERS_COMP and amortized like every other line. The
+    // copy still has to say WHICH figure that is, because an operator reading
+    // "your comp premium" against an annual invoice will expect the whole
+    // ticket and see roughly a quarter of it.
     const F = web("ui/tabs/ForecastTab.tsx").replace(/\s+/g, " ");
-    expect(F).toMatch(/Enter the amount THIS WINDOW IS CHARGED, not the invoice/);
+    expect(F).toMatch(/uses the share THIS WINDOW IS CHARGED/);
+    expect(F).toMatch(/an annual policy is spread over the twelve months it covers/);
+    expect(F, "must point at the Settings tag, not at a second input")
+      .toMatch(/tagged as workers comp/);
   });
 });
 

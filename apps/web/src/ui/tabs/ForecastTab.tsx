@@ -609,6 +609,18 @@ export default function ForecastTab() {
   const contractorCount =
     scenario?.workers.filter((w) => w.workerType === "CONTRACTOR").length ?? 0;
   const noContractors = contractorCount === 0;
+
+  // Which categories the operator has retagged, and how.
+  //
+  // The two checkboxes below act ONLY on categories carrying a matching tag,
+  // and every category enters the forecast as AS_IS — "the tool asserts
+  // nothing about how a cost behaves until you tell it". So both are inert
+  // until something is tagged in the Costs section, and neither said so:
+  // "Include one-time costs (tools, startup)" reads as though the app had
+  // identified tools and startup spend, when it has no concept of either.
+  const taggedBehaviors = Object.values(a.behaviorOverrides ?? {});
+  const oneTimeCount = taggedBehaviors.filter((b) => b === "ONE_TIME").length;
+  const discretionaryCount = taggedBehaviors.filter((b) => b === "DISCRETIONARY").length;
   // What every lever sits at before you touch it. Same function the model
   // uses for the "Today" column, so the two can never disagree about what
   // the current settings are.
@@ -953,28 +965,17 @@ export default function ForecastTab() {
               <Lever label="Workers comp (re-modelled on wages)"
                 info={
                   "Workers compensation as a percentage of W-2 wages. OFF BY DEFAULT, because your real premiums are already booked as Insurance \u2014 adding a percentage on top counts comp twice, and at a landscaping rate that is the biggest single piece of the burden. " +
-                  "Turn it on only alongside the control above, which takes the booked premium back out. What you gain is that comp then RESPONDS to the scenario: model hiring two people and a flat Insurance line doesn't move, which understates what growing costs. " +
+                  "Raise it above zero and the forecast AUTOMATICALLY takes the booked premium back out first, then re-derives comp from wages. What you gain is that comp then RESPONDS to the scenario: model hiring two people and a flat Insurance line doesn't move, which understates what growing costs. " +
+                  "It knows which premium to remove from the expense categories you tagged as workers comp in Settings, and it uses the share THIS WINDOW IS CHARGED \u2014 an annual policy is spread over the twelve months it covers, so a three-month window carries about a quarter of it. If nothing is tagged there is nothing to remove, and you get a warning rather than a silent double-count. " +
                   "The rate itself is a quote, not something the app can derive. Landscaping class codes run high and first-year minimum premiums distort the effective rate, so check a renewal before leaning on it."
                 }
                 value={a.workersCompPercent} baseline={base.workersCompPercent} min={0} max={30} step={0.5} suffix="%"
                      onChange={(n) => set("workersCompPercent", n)}
-                     hint={a.workersCompPercent > 0 && a.workersCompInExpenses <= 0
-                       ? "Counting comp twice — the booked premium is still in Insurance. Set the control above."
-                       : `Off by default; your configured rate is ${data.baseline.workersCompPercent}%. The ledger already carries the real premium.`} />
-              <Lever
-                label="Workers comp already in Insurance"
-                info={
-                  "How many dollars of this window's Insurance are workers comp premium. " +
-                  "Enter the amount THIS WINDOW IS CHARGED, not the invoice: an annual premium is spread over the twelve months it covers, so a three-month window carries about a quarter of it. The Costs table shows the figure to match. " +
-                  "The app cannot work this out on its own \u2014 comp, general liability and commercial auto all sit in one Insurance category on Schedule C line 15, with nothing to tell them apart. " +
-                  "Enter it and the forecast takes that amount OUT of costs and re-derives comp from wages at the rate below, so it scales when you model hiring or more volume. " +
-                  "Leave both at zero and the scenario simply uses the premiums you actually booked, which is what the P&L does."
-                }
-                value={a.workersCompInExpenses} baseline={base.workersCompInExpenses}
-                min={0} max={Math.max(500, Math.round(sq.costsTotal))} step={25} suffix=""
-                onChange={(n) => set("workersCompInExpenses", n)}
-                hint="Only needed if you want comp to scale with payroll. Otherwise leave at $0."
-              />
+                     hint={a.workersCompPercent > 0 && data.baseline.workersCompBooked <= 0
+                       ? "Counting comp twice — no expense category is tagged as workers comp, so there is nothing to take out. Tag it in Settings."
+                       : a.workersCompPercent > 0
+                         ? `Takes the $${Math.round(data.baseline.workersCompBooked).toLocaleString()} of comp premium this window is charged back out first, then re-derives it from wages.`
+                         : `Off by default; your configured rate is ${data.baseline.workersCompPercent}%. The ledger already carries the real premium.`} />
               <Lever label="Fixed costs"
                 info={"Replaces the total of everything tagged Fixed \u2014 insurance, software, banking. Use it to model an insurance change or a software cull without editing individual categories. This is the number that decides how much growing actually helps, since it is the part that does not rise with the work. " +
                   "Note this total is what the window is CHARGED, not what you paid inside it: a cost marked as recurring in the ledger is spread across the months it covers, so an annual policy contributes a slice rather than the whole invoice."} value={Math.round(a.fixedCostOverride ?? scenario.fixedCosts)}
@@ -1005,24 +1006,34 @@ export default function ForecastTab() {
                                onCheckedChange={(e) => set("includeOneTime", !!e.checked)}>
                   <Checkbox.HiddenInput /><Checkbox.Control />
                   <Checkbox.Label fontSize="12px">
-                    Include one-time costs (tools, startup)
+                    Include categories you have tagged one-time
                     {a.includeOneTime !== base.includeOneTime && (
                       <Text as="span" fontSize="10px" color="blue.fg" fontWeight="bold" ml={1}>
                         {" "}· changed
                       </Text>
                     )}
+                    <Text fontSize="10.5px" color="fg.muted">
+                      {oneTimeCount === 0
+                        ? "Nothing is tagged one-time, so this changes nothing. Tag a category in the Costs section below — the app has no way to tell a one-off purchase from a recurring one on its own."
+                        : `${oneTimeCount} ${oneTimeCount === 1 ? "category is" : "categories are"} tagged one-time. Untick to model a year without them.`}
+                    </Text>
                   </Checkbox.Label>
                 </Checkbox.Root>
                 <Checkbox.Root size="sm" checked={a.scaleDiscretionary}
                                onCheckedChange={(e) => set("scaleDiscretionary", !!e.checked)}>
                   <Checkbox.HiddenInput /><Checkbox.Control />
                   <Checkbox.Label fontSize="12px">
-                    Grow advertising with revenue
+                    Grow categories you have tagged discretionary
                     {a.scaleDiscretionary !== base.scaleDiscretionary && (
                       <Text as="span" fontSize="10px" color="blue.fg" fontWeight="bold" ml={1}>
                         {" "}· changed
                       </Text>
                     )}
+                    <Text fontSize="10.5px" color="fg.muted">
+                      {discretionaryCount === 0
+                        ? "Nothing is tagged discretionary, so this changes nothing. Tag a category in the Costs section below — advertising is the usual one, but the app has no special knowledge of which of your categories is discretionary."
+                        : `${discretionaryCount} ${discretionaryCount === 1 ? "category grows" : "categories grow"} with revenue when ticked, and holds flat when not.`}
+                    </Text>
                   </Checkbox.Label>
                 </Checkbox.Root>
               </VStack>
