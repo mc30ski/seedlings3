@@ -255,7 +255,10 @@ function money(n: number): string {
   return `$${n.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 }
 
-function buildAssessmentPrompt(ctx: {
+/** Exported for the build gate, which renders it and reads the result. A
+ *  source scan can prove a sentence exists in the file; only rendering proves
+ *  the operator's scenario actually reaches the model carrying it. */
+export function buildAssessmentPrompt(ctx: {
   name: string;
   notes: string | null;
   window: string;
@@ -290,6 +293,27 @@ function buildAssessmentPrompt(ctx: {
     ? sc.warnings.map((w) => `  - [${w.level.toUpperCase()}] ${w.message}`).join("\n")
     : "  (none)";
 
+  // How workers comp is being handled, spelled out.
+  //
+  // Without this the model sees "workers comp 2% of W-2 wages" next to a
+  // NEGATIVE cost line called "Workers comp premium (re-modelled on wages)"
+  // and has to guess what the relationship is. It guessed wrong in the
+  // direction that matters: an earlier read told the operator to "resolve the
+  // double-count before using the profit figure", which was correct advice
+  // about the old hand-entered field and is now a dead end — the removal is
+  // automatic. A reader cannot infer a mechanism from its output.
+  const compRemoved = sc.costs
+    .filter((c) => c.category.startsWith("Workers comp premium"))
+    .reduce((t, c) => t + c.amount, 0);
+  const compNote =
+    a.workersCompPercent <= 0
+      ? `  Workers comp: NOT synthesized. The comp rate is zero, so this scenario carries the real premiums exactly as the ledger booked them. This matches the P&L and is the default. Do not treat the absence of a comp line as missing cost — it is in Operating costs, inside insurance.`
+      : compRemoved < 0
+        ? `  Workers comp: re-modelled, and NOT double-counted. Comp is charged at ${a.workersCompPercent}% of W-2 wages inside the employer burden above, and the ${money(
+            Math.abs(compRemoved),
+          )} of premium this window had actually booked was REMOVED first — that is the negative "Workers comp premium (re-modelled on wages)" line in the cost list below. The removal is derived from the expense categories the operator tagged as workers comp, not typed in by hand. The net effect is that comp responds to payroll instead of sitting flat, which is the point of modelling it this way. There is no double-count here and no action for the operator to take.`
+        : `  Workers comp: DOUBLE-COUNTED, and this is a real problem. Comp is charged at ${a.workersCompPercent}% of W-2 wages on top of premiums that are still sitting in Operating costs, because no expense category is tagged as workers comp so there was nothing to remove. Cost is overstated and the profit figure below is too low by roughly the booked premium. Say so, and say the fix is to tag the comp category in Settings → Expense categories → Statutory (or set the rate back to 0).`;
+
   return `You are advising the owner of a small lawn-care business in North Carolina on a pay-structure scenario he has modelled. Give him a direct, numerate assessment — the kind a good CFO friend would give over coffee, not a consulting deck.
 
 WHAT YOU ARE LOOKING AT
@@ -314,6 +338,7 @@ THE SCENARIO
   }
   Price change ${a.priceIncreasePercent}% · minimum invoice ${money(a.minimumInvoice)} · volume ×${a.volumeMultiplier}
   Employer tax ${a.employerTaxPercent}% · workers comp ${a.workersCompPercent}% of W-2 wages
+${compNote}
   LLC Owner share is its OWN line — neither a business cost nor profit. Operating profit is before it; "retained in the business" is after it. Replacing the owner's hours with a hire converts that share into crew pay, which is the comparison to reason about.
 
   RESULT: revenue ${money(sc.revenue)} · crew pay ${money(sc.crewPay)} · LLC Owner share ${money(sc.ownerPay)} · operating profit ${money(sc.profitBeforeOwnerLabor)} · retained after owner share ${money(sc.profitAfterOwnerLabor)} (${sc.marginPercent}% margin)
@@ -323,6 +348,16 @@ PER PERSON, UNDER THIS SCENARIO
 ${workerLines}
 
 COSTS UNDER THIS SCENARIO
+Costs here are charged to the window they COVER, not the month they were paid. A
+premium or licence bought once a year contributes only the months of it this
+window contains, whether it was paid inside the window or before it. Income is
+still counted when the money arrived. So this is accrual on the cost side and
+cash on the revenue side, deliberately — it means these cost figures will NOT
+tie to the operator's P&L, which is cash basis on both sides, and that is not an
+error to report. A cost with no recurrence set on it stays where it was paid.
+A NEGATIVE cost line is a real thing here, not a data fault: it is either a
+refund that landed in this window without the charge it offsets, or a premium
+deliberately removed so it can be re-modelled (see the comp note above).
 ${costLines}
 
 GUARDRAILS THE MODEL RAISED

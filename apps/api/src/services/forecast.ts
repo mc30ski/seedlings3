@@ -30,6 +30,7 @@ import { loadRates } from "./payments";
 import { getMarketRate } from "./marketRate";
 import { loadPayrollTaxEstimates, totalEmployerTaxPct } from "./payrollTaxEstimates";
 import { loadFixedAssetMinCost, isFixedAsset } from "./exports";
+import { loadStatutoryCategoryLabels } from "./expenseCategories";
 import {
   simulate,
   backtest,
@@ -204,7 +205,7 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
   const start = etMidnight(from);
   const end = etEndOfDay(to);
 
-  const [payments, workdays, users, expenses, rates, taxCfg, wcPercent, marketRate, cadence, fixedAssetMinCost] =
+  const [payments, workdays, users, expenses, rates, taxCfg, wcPercent, marketRate, cadence, fixedAssetMinCost, compCategoryLabels] =
     await Promise.all([
       prisma.payment.findMany({
         where: { confirmed: true, createdAt: { gte: start, lte: end } },
@@ -278,6 +279,11 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
       getMarketRate(),
       loadCadence(),
       loadFixedAssetMinCost(),
+      // Which expense categories carry workers comp premium. Tagged in
+      // Settings (EXPENSE_CATEGORIES → Statutory), because Schedule C line 15
+      // lumps comp in with general liability and commercial auto and the
+      // ledger has nothing else to tell them apart.
+      loadStatutoryCategoryLabels("WORKERS_COMP"),
     ]);
 
   const userById = new Map(users.map((u) => [u.id, u]));
@@ -430,7 +436,26 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
     // row is not a job material this window bought.
     if (!inWindow) continue;
     if (e.invoiceCharges.length) jobMaterialsInLedger += e.cost;
-    if (isFixedAsset({ cost: e.cost, date: e.date }, fixedAssetMinCost)) {
+    // A ROW WITH A RECURRENCE IS NEVER A CAPITAL PURCHASE.
+    //
+    // `isFixedAsset` is cost-only by design — anything at or above the
+    // threshold, dated on or after the capitalization start date. That is the
+    // right rule for the QB export, and it is the wrong rule here the moment
+    // costs are amortized: a $928 ANNUAL workers comp premium clears the $500
+    // threshold, so the whole $928 was recorded as this category's capital
+    // slice while `amount` held only the months of coverage the window
+    // contains. Subtracting the full ticket from a partial share (which is
+    // what `excludeFixedAssets` does, and it is ON by default) reported
+    // Insurance as a large NEGATIVE cost. Production carries exactly that
+    // row.
+    //
+    // Scoped to the forecast on purpose. The P&L and the QB fixed-asset
+    // export are tax artifacts and keep the policy they have; this is the one
+    // surface that amortizes, so it is the one surface where the units stop
+    // lining up. A cost you re-buy every period is a running cost by
+    // definition — nothing you renew annually is a depreciable asset.
+    const recurring = e.recurrence != null;
+    if (!recurring && isFixedAsset({ cost: e.cost, date: e.date }, fixedAssetMinCost)) {
       fixedByCategory.set(label, (fixedByCategory.get(label) ?? 0) + e.cost);
     }
   }
@@ -453,6 +478,25 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
       amount: round2(amount),
     }))
     .sort((a, b) => b.amount - a.amount);
+
+  // How much of this window's booked cost is workers comp premium — the
+  // figure a scenario has to remove before it can re-derive comp from wages,
+  // or the same cost is counted twice.
+  //
+  // Read off the AMORTIZED line totals, not off the raw rows, so an annual
+  // policy contributes the slice this window is charged rather than the whole
+  // invoice. That is the number the operator used to have to work out by hand
+  // and type in, and the arithmetic ("a three-month window carries about a
+  // quarter of it") was exactly the mental math they said they shouldn't have
+  // to do.
+  //
+  // Zero means NOTHING IS TAGGED, which is not the same as "there is no
+  // comp". The model treats it as unknown and warns; it never silently
+  // models a business with no premium.
+  const workersCompCategories = [...compCategoryLabels].sort();
+  const workersCompBooked = expenseLines
+    .filter((l) => compCategoryLabels.has(l.category))
+    .reduce((s, l) => s + l.amount, 0);
 
   // ── What the books say, for the backtest line ───────────────────────────
   const revenue = jobs.reduce((s, j) => s + j.paid, 0);
@@ -480,7 +524,8 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
   // percentage of wages on top of it is the double-count that
   // payrollTaxEstimates.ts documents and pnlReport.ts avoids. A scenario can
   // opt into modelling comp as a wage-scaling cost, which is the only way it
-  // responds to hiring — see `workersCompInExpenses`.
+  // responds to hiring — see `workersCompPercent`, which takes
+  // `workersCompBooked` back out first so nothing is counted twice.
   const burden = crewWages * (employerTaxPercent / 100);
   const opex = expenseLines.reduce((s, l) => s + l.amount, 0);
   // Capital purchases, held out of the operating figure the way the P&L holds
@@ -499,6 +544,8 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
     rates,
     employerTaxPercent,
     workersCompPercent: wcPercent,
+    workersCompBooked: round2(workersCompBooked),
+    workersCompCategories,
     actual: {
       revenue: round2(revenue),
       // Everything paid to the crew, W-2 and 1099 alike. Kept whole because

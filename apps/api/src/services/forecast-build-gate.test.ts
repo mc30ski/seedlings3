@@ -33,6 +33,8 @@ import {
   type Assumptions,
 } from "@repo/money";
 import { payPeriodKeys } from "./forecast";
+import { parseExpenseCategoriesSetting } from "./expenseCategories";
+import { buildAssessmentPrompt } from "../routes/forecast";
 import type { EtDateKey } from "../lib/dates";
 
 const REPO_ROOT = join(__dirname, "../../../..");
@@ -88,6 +90,11 @@ function baseline(over: Partial<ForecastBaseline> = {}): ForecastBaseline {
     rates: { employeeMarginPercent: 35, contractorFeePercent: 25 },
     employerTaxPercent: 8.25,
     workersCompPercent: 17.6,
+    // The comp slice of the $100 Insurance line above, as it would be derived
+    // from the categories tagged WORKERS_COMP in Settings. Here the whole
+    // line is comp, which keeps the removal arithmetic legible.
+    workersCompBooked: 100,
+    workersCompCategories: ["Insurance"],
     actual: {
       revenue: 180, crewWages: 150, w2Wages: 90, contractLabor: 60,
       fixedAssetPurchases: 25, jobMaterialsInLedger: 0,
@@ -1154,7 +1161,17 @@ describe("[build-gate] workers comp is not counted twice", () => {
   it("the synthetic rate is OFF in the default scenario", () => {
     // The default has to reconcile with the P&L, which synthesizes no comp.
     expect(defaultAssumptions(baseline()).workersCompPercent).toBe(0);
-    expect(defaultAssumptions(baseline()).workersCompInExpenses).toBe(0);
+  });
+
+  it("the hand-entered premium field is gone from the assumptions", () => {
+    // It was a dollar figure the operator had to re-derive for every window
+    // — the monthly slice of an annual premium, from memory. Deriving it is
+    // the whole point of the statutoryKind tag; leaving the field in place
+    // would let a stale number override the derivation.
+    expect(defaultAssumptions(baseline())).not.toHaveProperty("workersCompInExpenses");
+    expect(MODEL_SRC.replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, "")).not.toMatch(
+      /a\.workersCompInExpenses/,
+    );
   });
 
   it("the configured rate still reaches the baseline for the UI to suggest", () => {
@@ -1162,44 +1179,195 @@ describe("[build-gate] workers comp is not counted twice", () => {
     expect(baseline().workersCompPercent).toBe(17.6);
   });
 
-  it("a rate with nothing removed is flagged CRITICAL", () => {
-    const r = simulate(baseline(), A({ workersCompPercent: 12 }));
+  it("a rate with NOTHING TAGGED as comp is flagged CRITICAL", () => {
+    // Zero booked comp is "the taxonomy hasn't been classified", not "there
+    // is no premium" — so there is nothing to remove and the rate really
+    // does double-count.
+    const r = simulate(
+      baseline({ workersCompBooked: 0, workersCompCategories: [] }),
+      A({ workersCompPercent: 12 }),
+    );
     const w = r.warnings.find((x) => /counted twice/.test(x.message));
     expect(w?.level).toBe("critical");
+    expect(w?.message).toMatch(/Settings/);
   });
 
-  it("removing the premium shows up as its own visible cost line", () => {
-    // Netted silently into Insurance, an operator reconciling against their
-    // ledger can't see where the money went.
-    const r = simulate(baseline(), A({ workersCompPercent: 12, workersCompInExpenses: 100 }));
+  it("the derived premium is removed with no second input from the operator", () => {
+    // The ONLY thing set here is the rate. The removal comes from the
+    // baseline, which read it off the tagged categories.
+    const r = simulate(baseline(), A({ workersCompPercent: 12 }));
     const line = r.costs.find((c) => /Workers comp premium/.test(c.category));
     expect(line?.amount).toBe(-100);
     expect(r.warnings.some((x) => /counted twice/.test(x.message))).toBe(false);
   });
 
+  it("nothing is removed while the rate is off, so the default still reconciles", () => {
+    // A tagged category must not quietly subtract itself from a scenario
+    // that never asked for comp to be re-modelled.
+    const r = simulate(baseline(), A());
+    expect(r.costs.some((c) => /Workers comp premium/.test(c.category))).toBe(false);
+  });
+
   it("the removal nets out of the cost total", () => {
     const off = simulate(baseline(), A());
-    const on = simulate(baseline(), A({ workersCompPercent: 12, workersCompInExpenses: 100 }));
+    const on = simulate(baseline(), A({ workersCompPercent: 12 }));
     expect(on.costsTotal).toBeCloseTo(off.costsTotal - 100, 2);
   });
 
   it("re-modelled comp scales with payroll, which is the whole point", () => {
-    const opts = { workersCompPercent: 12, workersCompInExpenses: 100 };
-    const flat = simulate(baseline(), A(opts));
-    const grown = simulate(baseline(), A({ ...opts, volumeMultiplier: 2 }));
+    const flat = simulate(baseline(), A({ workersCompPercent: 12 }));
+    const grown = simulate(baseline(), A({ workersCompPercent: 12, volumeMultiplier: 2 }));
     // A flat Insurance line wouldn't move at all; that understates growing.
     expect(grown.employerBurden).toBeGreaterThan(flat.employerBurden * 1.5);
   });
 
-  it("removing a premium with no rate to replace it is flagged", () => {
-    const r = simulate(baseline(), A({ workersCompInExpenses: 100 }));
-    expect(r.warnings.some((x) => /no rate replaces it/.test(x.message))).toBe(true);
-  });
-
   it("comp never lands on a contractor or the owner", () => {
-    const r = simulate(baseline(), A({ workersCompPercent: 12, workersCompInExpenses: 100 }));
+    const r = simulate(baseline(), A({ workersCompPercent: 12 }));
     expect(r.workers.find((w) => w.userId === "con")!.employerBurden).toBe(0);
     expect(r.workers.find((w) => w.userId === "own")!.employerBurden).toBe(0);
+  });
+
+  it("a tagged taxonomy with no premium in THIS window is not a warning", () => {
+    // Zero dollars and zero tags are different problems. A business that has
+    // classified its categories can legitimately run a window containing no
+    // comp charge — telling them to go and tag something they already tagged
+    // is the kind of dead advice that teaches operators to ignore warnings.
+    const b = baseline({
+      expenses: [{ category: "Fuel", behavior: "VARIABLE", amount: 50, fixedAssetAmount: 0 }],
+      workersCompBooked: 0,
+      workersCompCategories: ["Insurance"],
+    });
+    const r = simulate(b, A({ workersCompPercent: 12 }));
+    expect(r.warnings.some((x) => /counted twice/.test(x.message))).toBe(false);
+  });
+
+  it("the removal never exceeds what the scenario is actually carrying", () => {
+    // The offset is summed off the RESOLVED lines, so a premium the
+    // fixed-asset toggle already held out cannot be subtracted a second time.
+    // Insurance here is $100 of which $80 is (implausibly) capital.
+    const b = baseline({
+      expenses: [
+        { category: "Insurance", behavior: "FIXED", amount: 100, fixedAssetAmount: 80 },
+      ],
+      workersCompBooked: 100,
+      workersCompCategories: ["Insurance"],
+    });
+    const r = simulate(b, A({ workersCompPercent: 12 }));
+    const line = r.costs.find((c) => /Workers comp premium/.test(c.category));
+    expect(line?.amount).toBe(-20);
+    // And the category nets to zero rather than going negative.
+    expect(r.costsTotal).toBeCloseTo(0, 2);
+  });
+
+  it("the parser ACCEPTS statutoryKind, and the seeded taxonomy carries it", () => {
+    // The order this must ship in, and the reason this gate exists: the
+    // DEPLOYED parser rejects unknown fields outright, so a config carrying
+    // `statutoryKind` against a build that doesn't know the key throws on
+    // load and every expense category disappears. That exact mistake took the
+    // production ledger down for 31 minutes on 2026-09-02. Code first,
+    // config second — and this asserts the code half is really there.
+    const rows = parseExpenseCategoriesSetting(
+      JSON.stringify([
+        { label: "Insurance — workers comp", scheduleCLine: "15", statutoryKind: "WORKERS_COMP" },
+        { label: "Insurance — general liability", scheduleCLine: "15", statutoryKind: "GENERAL_LIABILITY" },
+        { label: "Fuel", scheduleCLine: "9" },
+      ]),
+    );
+    expect(rows[0].statutoryKind).toBe("WORKERS_COMP");
+    expect(rows[1].statutoryKind).toBe("GENERAL_LIABILITY");
+    // Absent means null, so a taxonomy that predates the field still parses.
+    expect(rows[2].statutoryKind).toBeNull();
+    // A typo is rejected rather than silently kept — a kind that matches
+    // nothing would leave the forecast deriving zero comp with no signal.
+    expect(() =>
+      parseExpenseCategoriesSetting(
+        JSON.stringify([{ label: "X", scheduleCLine: "15", statutoryKind: "WORKERS_COMPENSATION" }]),
+      ),
+    ).toThrow(/statutoryKind/);
+
+    // And the seed actually tags one, so dev exercises the derivation.
+    const seed = readFileSync(join(__dirname, "../../prisma/seed.ts"), "utf8");
+    expect(seed).toMatch(/statutoryKind: "WORKERS_COMP"/);
+  });
+
+  it("a recurring cost is never treated as a capital purchase", () => {
+    // `isFixedAsset` is cost-only, so a $928 ANNUAL premium cleared the
+    // capitalization threshold: the full ticket landed in the category's
+    // capital slice while the amount held only the window's coverage share,
+    // and subtracting one from the other reported Insurance as negative.
+    // Production carries exactly that row.
+    const S = readFileSync(join(__dirname, "./forecast.ts"), "utf8");
+    expect(S).toMatch(/const recurring = e\.recurrence != null;/);
+    expect(S).toMatch(/if \(!recurring && isFixedAsset\(/);
+  });
+
+  // These RENDER the prompt rather than scanning the source. A regex against
+  // the file proves a sentence was written; only rendering proves the
+  // operator's actual scenario reaches the model carrying it.
+  const renderPrompt = (b: ForecastBaseline, a: Assumptions) =>
+    buildAssessmentPrompt({
+      name: "t",
+      notes: null,
+      window: "Jun 1 – Jun 30",
+      backtestPercent: 1.2,
+      statusQuo: simulate(b, defaultAssumptions(b)),
+      scenario: simulate(b, a),
+      assumptions: a,
+      baseline: b as any,
+    });
+
+  it("the prompt says plainly that comp is NOT double-counted once it is tagged", () => {
+    // The read the operator got before this change told him to "resolve the
+    // workers comp double-count before using the profit figure" — correct
+    // about the old hand-entered field, and dead advice once the removal is
+    // automatic. The model had been shown a comp RATE next to an unexplained
+    // NEGATIVE cost line and left to infer the relationship between them.
+    const p = renderPrompt(baseline(), A({ workersCompPercent: 12 }));
+    expect(p).toMatch(/NOT double-counted/);
+    expect(p, "must name the amount removed so the negative line is identifiable")
+      .toMatch(/\$100 of premium this window had actually booked was REMOVED first/);
+    expect(p, "must close off the dead recommendation explicitly")
+      .toMatch(/no action for the operator to take/);
+    expect(p).not.toMatch(/DOUBLE-COUNTED, and this is a real problem/);
+  });
+
+  it("the prompt still calls the genuinely broken case broken", () => {
+    // Same rate, nothing tagged: opposite situation, and the operator's
+    // production config is in exactly this state until he tags a category.
+    const p = renderPrompt(
+      baseline({ workersCompBooked: 0, workersCompCategories: [] }),
+      A({ workersCompPercent: 12 }),
+    );
+    expect(p).toMatch(/DOUBLE-COUNTED, and this is a real problem/);
+    expect(p, "must name the fix, not ask for a number")
+      .toMatch(/tag the comp category in Settings/);
+    expect(p).not.toMatch(/NOT double-counted/);
+  });
+
+  it("the prompt explains the zero-rate default rather than let it read as missing cost", () => {
+    const p = renderPrompt(baseline(), A());
+    expect(p).toMatch(/NOT synthesized/);
+    expect(p).toMatch(/Do not treat the absence of a comp line as missing cost/);
+    expect(p).not.toMatch(/double-counted/i);
+  });
+
+  it("the prompt explains why costs will not tie to the P&L", () => {
+    // Amortized costs against cash revenue is deliberate. Unexplained, it
+    // reads as a reconciliation error and the model reports it as one.
+    const p = renderPrompt(baseline(), A());
+    expect(p).toMatch(/charged to the window they COVER, not the month they were paid/);
+    expect(p).toMatch(/will NOT\s+tie to the operator's P&L/);
+    expect(p, "a negative cost line must be explained, not left to look like a fault")
+      .toMatch(/NEGATIVE cost line is a real thing here, not a data fault/);
+  });
+
+  it("the baseline derives the booked premium from the tagged categories", () => {
+    // Off the AMORTIZED line totals, so an annual policy contributes the
+    // slice this window is charged rather than the whole invoice — the exact
+    // arithmetic the operator used to do in their head.
+    const S = readFileSync(join(__dirname, "./forecast.ts"), "utf8");
+    expect(S).toMatch(/loadStatutoryCategoryLabels\("WORKERS_COMP"\)/);
+    expect(S).toMatch(/compCategoryLabels\.has\(l\.category\)/);
   });
 });
 

@@ -1197,6 +1197,10 @@ function PaymentFromOptionsEditor({ value, onChange, onSave, onCancel, saving }:
  *  on the QB side after import. The editor treats an empty input as null
  *  so the user never has to type the word "null". */
 type PlSection = "COGS" | "OPERATING_EXPENSE" | "EXCLUDE_FROM_PNL";
+/** Statutory-insurance role. Mirrors StatutoryKind in the API's
+ *  expenseCategories.ts; "" is the UI's spelling of null ("None"), which the
+ *  server parser normalizes back to null on save. */
+type StatutoryKind = "" | "WORKERS_COMP" | "GENERAL_LIABILITY";
 
 type ExpenseCategoryRow = {
   label: string;
@@ -1218,6 +1222,16 @@ type ExpenseCategoryRow = {
    *  "Estimated taxable operating income" from the non-deductible
    *  portion. Cash NOI itself still deducts 100% (cash truth). */
   taxDeductiblePercent: number;
+  /** Marks a category as carrying a statutory insurance premium.
+   *    Workers comp      — the Forecast reads this to work out how much of a
+   *                        window's insurance is comp, so it can take that
+   *                        out before re-deriving comp from wages. Without
+   *                        the tag the operator had to type the amount in by
+   *                        hand for every window.
+   *    General liability — required too, but priced on operations rather than
+   *                        payroll. Tagged so the two are never confused.
+   *  Everything else stays None. */
+  statutoryKind: StatutoryKind;
 };
 
 // Empty input → null. Whitespace also collapses to null so a stray space
@@ -1235,6 +1249,18 @@ const PL_SECTION_COLLECTION = createListCollection({
     { label: "Exclude", value: "EXCLUDE_FROM_PNL" },
     { label: "Operating Expense", value: "OPERATING_EXPENSE" },
     { label: "Cost of Goods Sold", value: "COGS" },
+  ],
+});
+
+// Same module-scope rule as PL_SECTION_COLLECTION above — a collection
+// rebuilt on every render resets Chakra's Select internal state mid-edit.
+// "" is None, and is what a category that carries no statutory premium
+// stores (the server parser reads "" and null alike as null).
+const STATUTORY_KIND_COLLECTION = createListCollection({
+  items: [
+    { label: "—", value: "" },
+    { label: "Workers comp", value: "WORKERS_COMP" },
+    { label: "General liability", value: "GENERAL_LIABILITY" },
   ],
 });
 
@@ -1275,6 +1301,16 @@ function ExpenseCategoriesEditor({ value, onChange, onSave, onCancel, saving }: 
         rawDeductible == null || rawDeductible === ""
           ? 100
           : Math.max(0, Math.min(100, Number(rawDeductible) || 0));
+      // Statutory role defaults to None — matches the backend loader, which
+      // reads a missing field as null. Anything unrecognized also falls back
+      // to None rather than being preserved, so a typo can't survive a
+      // round-trip through the editor and reach the parser as an error.
+      const statutoryKind: StatutoryKind =
+        r.statutoryKind === "WORKERS_COMP"
+          ? "WORKERS_COMP"
+          : r.statutoryKind === "GENERAL_LIABILITY"
+            ? "GENERAL_LIABILITY"
+            : "";
       return {
         label: String(r.label ?? ""),
         scheduleCLine: String(r.scheduleCLine ?? ""),
@@ -1282,6 +1318,7 @@ function ExpenseCategoriesEditor({ value, onChange, onSave, onCancel, saving }: 
         selectable: r.selectable !== false,
         plSection,
         taxDeductiblePercent,
+        statutoryKind,
       };
     });
   } catch (e: any) {
@@ -1301,7 +1338,7 @@ function ExpenseCategoriesEditor({ value, onChange, onSave, onCancel, saving }: 
     // to COGS or Operating Expense for the category to show up on the
     // P&L Report tab. Safer than silently lumping a new category into a
     // P&L section the operator hasn't reviewed.
-    onChange(JSON.stringify([...items, { label: "", scheduleCLine: "", qbAccount: null, selectable: true, plSection: "EXCLUDE_FROM_PNL", taxDeductiblePercent: 100 }]));
+    onChange(JSON.stringify([...items, { label: "", scheduleCLine: "", qbAccount: null, selectable: true, plSection: "EXCLUDE_FROM_PNL", taxDeductiblePercent: 100, statutoryKind: "" }]));
   }
 
   if (parseError) {
@@ -1329,7 +1366,13 @@ function ExpenseCategoriesEditor({ value, onChange, onSave, onCancel, saving }: 
         defaults to 100; set lower for partial-deduction categories (Meals 50%,
         Entertainment 0%). Cash NOI still deducts the full cost; the P&L
         shows the split inline and derives "Estimated taxable operating
-        income" from the non-deductible portion. Uncheck "Selectable" for
+        income" from the non-deductible portion. <Text as="span" fontWeight="semibold"> Statutory</Text>{" "}
+        marks the two insurances the law requires: tag whichever category
+        carries your <Text as="span" fontWeight="semibold">workers comp</Text> premium and the Forecast
+        can work out how much of any window is comp on its own — Schedule C
+        line 15 lumps comp, general liability and commercial auto together,
+        so without the tag that figure has to be typed in by hand every time.
+        Leave it at — for everything else. Uncheck "Selectable" for
         export-only synthetic categories (e.g. Payment Processing Fees) —
         they stay in the export but are hidden from the expense-logging
         pickers.
@@ -1340,6 +1383,7 @@ function ExpenseCategoriesEditor({ value, onChange, onSave, onCancel, saving }: 
         <Text flex="1">QB Account</Text>
         <Text w="170px">P&L Category</Text>
         <Text w="70px" textAlign="center">Deductible %</Text>
+        <Text w="130px">Statutory</Text>
         <Text w="70px" textAlign="center">Selectable</Text>
         <Box w="32px" />
       </HStack>
@@ -1405,6 +1449,35 @@ function ExpenseCategoriesEditor({ value, onChange, onSave, onCancel, saving }: 
               });
             }}
           />
+          <Box w="130px">
+            <Select.Root
+              collection={STATUTORY_KIND_COLLECTION}
+              value={[row.statutoryKind]}
+              onValueChange={(e) => {
+                const v = e.value[0];
+                if (v === "" || v === "WORKERS_COMP" || v === "GENERAL_LIABILITY") {
+                  update(idx, { statutoryKind: v });
+                }
+              }}
+              size="sm"
+              positioning={{ strategy: "fixed", hideWhenDetached: true }}
+            >
+              <Select.Control>
+                <Select.Trigger>
+                  <Select.ValueText />
+                </Select.Trigger>
+              </Select.Control>
+              <Select.Positioner>
+                <Select.Content>
+                  {STATUTORY_KIND_COLLECTION.items.map((it) => (
+                    <Select.Item key={it.value} item={it.value}>
+                      <Select.ItemText>{it.label}</Select.ItemText>
+                    </Select.Item>
+                  ))}
+                </Select.Content>
+              </Select.Positioner>
+            </Select.Root>
+          </Box>
           <Box w="70px" textAlign="center">
             <input type="checkbox" checked={row.selectable} onChange={(e) => update(idx, { selectable: e.target.checked })} />
           </Box>
@@ -2592,6 +2665,11 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                                         ? ` · ${c.taxDeductiblePercent}% ded.`
                                         : ""}
                                       {c.selectable === false ? " · export-only" : ""}
+                                      {c.statutoryKind === "WORKERS_COMP"
+                                        ? " · comp"
+                                        : c.statutoryKind === "GENERAL_LIABILITY"
+                                          ? " · GL"
+                                          : ""}
                                     </Badge>
                                   ))}
                                 </Box>
