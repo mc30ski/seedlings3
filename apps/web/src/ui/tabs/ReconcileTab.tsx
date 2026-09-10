@@ -2076,7 +2076,13 @@ function PnlModeToggle({
             fontWeight={active ? "semibold" : "normal"}
             px={4}
           >
-            {m === "accrual" ? "Accrual" : "Cash basis"}
+            {/* NOT "Accrual" / "Cash basis". Neither mode is either of those:
+                income is always cash collected and expenses are always booked
+                when paid, in both. The toggle moves the WAGE lines and
+                nothing else, so it now says which anchor it selects. An
+                operator who read "Accrual" and assumed the report had changed
+                basis would be wrong on both the income and expense halves. */}
+            {m === "accrual" ? "Wages: matched to payment" : "Wages: matched to work done"}
           </Button>
         );
       })}
@@ -2106,12 +2112,25 @@ function PnlModeInfo({ mode }: { mode: PnLMode }) {
         </Box>
         <VStack align="start" gap={1}>
           <Text fontSize="xs" fontWeight="semibold" color="blue.900">
-            {mode === "accrual" ? "Accrual mode (default)" : "Cash-basis mode"}
+            {mode === "accrual"
+              ? "Wages matched to the payment (default)"
+              : "Wages matched to the work"}
           </Text>
           <Text fontSize="xs" color="blue.900">
             {mode === "accrual"
               ? "Wages and employer payroll taxes are counted in the week the client's payment lands — matched to the money that came in. Net Operating Income tells you whether the work you got paid for this week actually made money. When a client pays late, the wages for that job show up here, not in the week you actually paid your workers."
               : "Wages and employer payroll taxes are counted in the week the work was done — the same week you paid your workers on the regular payroll cycle. Use this view to cross-check the wages column against what you keyed into payroll for this period."}
+          </Text>
+          {/* What does NOT change. Without this the toggle reads as a
+              whole-report basis switch, which it is not — and the Forecast
+              tab, which DOES spread recurring costs, then looks like it
+              disagrees with this report for no stated reason. */}
+          <Text fontSize="xs" color="blue.900">
+            Everything else is identical between the two. Income is counted when the money
+            arrived, expenses when they were paid, and nothing is spread over the period it
+            covers — so an annual premium lands here in full in the month you paid it. The
+            Forecast tab does spread those costs, which is why its figure for a category can be
+            smaller than this one over the same range.
           </Text>
           <Text fontSize="2xs" color="blue.700" opacity={0.85}>
             Only the wages and employer-tax lines change between the two views. Income, other expenses, and equipment purchases stay the same.

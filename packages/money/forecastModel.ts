@@ -47,6 +47,15 @@ export type ForecastJob = {
   /** ET date key of completion, for windowing and weekly rollups. */
   dateKey: string | null;
   crew: Array<{ userId: string; splitPercent: number }>;
+  /** The worker who claimed this job AND had at least one other working
+   *  assignee alongside them — i.e. someone who actually led a crew on it.
+   *  Null when the job was solo, unclaimed, or predates assignee records.
+   *  A claimer working alone is deliberately not a lead: leading nobody is
+   *  not the thing the claimer premium pays for. */
+  claimerUserId: string | null;
+  /** Working assignees on the job (observers excluded). Reported so the
+   *  premium's basis can be inspected rather than inferred. */
+  crewSize: number;
   /** Part of a repeating route, as opposed to a one-off callout. Reported
    *  only — every lever treats the two identically, on the operator's call
    *  that one-offs grow along with everything else. */
@@ -216,10 +225,19 @@ export type Assumptions = {
 
   /** HOURLY_PLUS_SHARE: guaranteed base for every clocked hour. */
   hourlyBase: number;
-  /** Extra per hour for the crew lead, so a productivity premium is explicit
-   *  rather than an artifact of who got assigned the expensive jobs. */
+  /** Extra per hour for the JOB CLAIMER, so a leadership premium is explicit
+   *  rather than an artifact of who got assigned the expensive jobs.
+   *
+   *  WHO EARNS IT IS DERIVED, NOT PICKED. It applies to the person who
+   *  claimed a job on which at least one other person also worked — read off
+   *  the occurrence's own assignees, the same claimer rule the job card uses.
+   *  There is no "mark someone as a lead" anywhere in the app, and the
+   *  previous `leadUserIds` list this replaced was never populated by
+   *  anything but a unit test: the slider moved and no number changed.
+   *
+   *  A claimer working alone earns nothing extra — leading nobody is not
+   *  what this pays for. */
   leadHourlyBonus: number;
-  leadUserIds: string[];
 
   /** Hours every eligible worker is paid for in EVERY pay period, whether they
    *  worked them or not. 0 turns the guarantee off.
@@ -325,7 +343,6 @@ export function defaultAssumptions(b: ForecastBaseline): Assumptions {
     contractorFeePercent: b.rates.contractorFeePercent,
     hourlyBase: 0,
     leadHourlyBonus: 0,
-    leadUserIds: [],
     guaranteedHoursPerPeriod: 0,
     guaranteeContractors: false,
     rateCardPerJob: 0,
@@ -426,6 +443,14 @@ export type WorkerOutcome = {
   hourlyPay: number;
   /** Hours paid but not worked, from the per-period guarantee. Broken out so
    *  the cost of the guarantee is visible rather than buried in hourly pay. */
+  /** Hours this person was paid the claimer premium on — their clocked hours
+   *  scaled by the share of on-site time they spent claiming a crewed job.
+   *  Zero for everyone when the premium is zero. Reported so a reader can
+   *  see the premium land instead of trusting that it did: the slider this
+   *  replaced silently applied to nobody. */
+  claimerPremiumHours: number;
+  /** Dollars of that premium. */
+  claimerPremiumPay: number;
   guaranteedTopUpHours: number;
   guaranteedTopUpPay: number;
   totalPay: number;
@@ -665,11 +690,52 @@ export function simulate(baseline: ForecastBaseline, a: Assumptions): ForecastRe
   // achieved by disabling the control — minus the combinations it forbade.
   const guarantee = Math.max(0, a.guaranteedHoursPerPeriod || 0);
 
+  // ── Which of a worker's hours were spent leading a crew ──────────────────
+  //
+  // The premium is per JOB, but pay is per HOUR — and the two run off
+  // different clocks on purpose. `clockedHours` is portal-to-portal from
+  // WorkerWorkday (the payroll basis); `job.minutes` is the on-site
+  // occurrence clock. The repo keeps those sources decoupled deliberately,
+  // so this does NOT pay the premium against job minutes.
+  //
+  // Instead job minutes supply only a RATIO — what share of a person's
+  // on-site time was spent as the claimer of a crewed job — and that ratio
+  // is applied to their clocked hours. The payroll basis stays
+  // authoritative, drive time and rain delays keep earning the plain base,
+  // and the premium can never exceed the hours actually worked.
+  //
+  // A job with no clock (minutes === null) contributes to neither side: it
+  // cannot say what share of the day it was, and guessing would move real
+  // money.
+  const leadFraction = new Map<string, number>();
+  {
+    const ledMin = new Map<string, number>();
+    const totalMin = new Map<string, number>();
+    for (const j of baseline.jobs) {
+      if (j.minutes == null || j.minutes <= 0) continue;
+      for (const c of j.crew) {
+        totalMin.set(c.userId, (totalMin.get(c.userId) ?? 0) + j.minutes);
+      }
+      if (j.claimerUserId) {
+        ledMin.set(j.claimerUserId, (ledMin.get(j.claimerUserId) ?? 0) + j.minutes);
+      }
+    }
+    for (const [userId, total] of totalMin) {
+      if (total <= 0) continue;
+      // Clamped: a claimer can appear on a job they are not in `crew` for
+      // (a split that predates completionSplits), which would otherwise
+      // push the ratio above 1 and pay a premium on hours never worked.
+      leadFraction.set(userId, Math.min(1, (ledMin.get(userId) ?? 0) / total));
+    }
+  }
+
   const outcomes: WorkerOutcome[] = allWorkers.map((w) => {
     const hours = w.clockedHours * vm;
     const share = ((sharePay.get(w.userId) ?? 0) + (cardPay.get(w.userId) ?? 0)) * vm;
-    const base =
-      hours * (a.hourlyBase + (a.leadUserIds.includes(w.userId) ? a.leadHourlyBonus : 0));
+    // Hypothetical hires have no job history, so no claimer hours — a person
+    // who does not exist yet has not led anything.
+    const leadHours = hours * (leadFraction.get(w.userId) ?? 0);
+    const base = hours * a.hourlyBase + leadHours * a.leadHourlyBonus;
 
     // ── Per-period guarantee ────────────────────────────────────────────────
     // Iterates EVERY period in the window, not just the ones with hours in
@@ -702,6 +768,8 @@ export function simulate(baseline: ForecastBaseline, a: Assumptions): ForecastRe
       isOwner: w.isOwner,
       hypothetical: w.userId.startsWith("hyp-"),
       clockedHours: round2(hours),
+      claimerPremiumHours: round2(leadHours),
+      claimerPremiumPay: round2(leadHours * a.leadHourlyBonus),
       sharePay: round2(share),
       hourlyPay: round2(base + topUpPay),
       guaranteedTopUpHours: round2(topUpHours),
@@ -820,7 +888,7 @@ export function simulate(baseline: ForecastBaseline, a: Assumptions): ForecastRe
     oneOffJobCount: Math.round(oneOffJobCount * vm),
     totalClockedHours: round2(totalClockedHours),
     revenuePerClockedHour: totalClockedHours > 0 ? round2(revenue / totalClockedHours) : 0,
-    warnings: buildWarnings(baseline, a, outcomes),
+    warnings: buildWarnings(baseline, a, outcomes, costs),
   };
 }
 
@@ -833,6 +901,10 @@ export function buildWarnings(
   baseline: ForecastBaseline,
   a: Assumptions,
   outcomes: WorkerOutcome[],
+  /** The scenario's resolved cost lines. Optional so the existing
+   *  three-argument callers in the gate suite keep working; when supplied,
+   *  a category that came out negative is called out. */
+  costLines: Array<{ category: string; amount: number }> = [],
   // Defaults only apply when no rate has been looked up. The real floor comes
   // from the baseline's BLS band, so the retention warning fires against the
   // actual local market rather than a number someone once guessed.
@@ -906,6 +978,26 @@ export function buildWarnings(
       out.push({
         level: "critical",
         message: `Guaranteeing a minimum payment to a contractor is one of the factors that makes a 1099 worker look like an employee. If you want a floor under their pay, the safer answer is usually to reclassify them.`,
+      });
+    }
+  }
+
+  // ── A cost category that came out negative ──────────────────────────────
+  //
+  // Recurring costs are charged to the window they COVER, but a refund is a
+  // point event with no link to the premium it refunds — the ledger has no
+  // such field. So a window can catch the credit without the charge and read
+  // below zero, which looks like a bug and is not.
+  //
+  // Real case: an annual comp policy bought in August, cancelled, and
+  // refunded in September. A Sep-Nov window carries three months of the
+  // replacement premium and the whole refund, and reports negative
+  // insurance.
+  for (const c of costLines) {
+    if (c.amount < 0 && !c.category.startsWith("Workers comp premium")) {
+      out.push({
+        level: "caution",
+        message: `${c.category} is negative (${c.amount < 0 ? "-" : ""}$${Math.abs(c.amount).toFixed(0)}) in this window — usually a refund landing here without the charge it offsets. Widen the window to cover both, or read this category against a longer range.`,
       });
     }
   }

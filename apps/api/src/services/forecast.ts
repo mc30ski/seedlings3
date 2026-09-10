@@ -25,7 +25,7 @@ import { Prisma } from "@prisma/client";
 import { ServiceError } from "../lib/errors";
 import { writeAudit } from "../lib/auditLogger";
 import { AUDIT } from "../lib/auditActions";
-import { etMidnight, etEndOfDay, etFormatDate, etAddDays, etWeekStart, type EtDateKey } from "../lib/dates";
+import { etMidnight, etEndOfDay, etFormatDate, etAddDays, etDaysBetween, etWeekStart, type EtDateKey } from "../lib/dates";
 import { loadRates } from "./payments";
 import { getMarketRate } from "./marketRate";
 import { loadPayrollTaxEstimates, totalEmployerTaxPct } from "./payrollTaxEstimates";
@@ -128,6 +128,78 @@ function periodIndexOf(dateKey: string, keys: string[]): number {
 
 // ── Baseline ────────────────────────────────────────────────────────────────
 
+// ─── Amortizing recurring costs ──────────────────────────────────────────────
+//
+// A cost that recurs on a cycle BUYS a period of coverage. An annual workers
+// comp premium paid in August covers the twelve months after August, so a
+// three-month window should carry a quarter of it — not all of it because the
+// invoice happens to fall inside, and not none of it because the invoice
+// happens to fall outside.
+//
+// Both of those were happening. A Jun-Aug window carried the whole $928
+// premium against three months of revenue; a Sep-Nov window carried zero. Two
+// windows over the same steady-state business disagreed by the full premium,
+// so comparing seasons measured when the bill arrived rather than how the
+// season went.
+//
+// This applies to the EXPENSE side only. Forecast revenue is still cash
+// collected — deliberately, because the collection rate is a real fact the
+// operator wants to see rather than smooth away. The copy says so; it must
+// not claim to be accrual accounting generally.
+// Coverage length in WHOLE ET CALENDAR DAYS. Whole days, and date-key
+// arithmetic throughout, so the share never depends on a DST boundary or on
+// which month the invoice happened to land in.
+const COVERAGE_DAYS: Record<string, number> = {
+  WEEKLY: 7,
+  MONTHLY: 30,
+  QUARTERLY: 91,
+  ANNUALLY: 365,
+};
+
+/** The longest coverage any recurrence can have. The expense query reads back
+ *  this far so a still-covering premium bought before the window is visible. */
+const COVERAGE_LOOKBACK_DAYS = 366;
+
+/**
+ * How much of one ledger row belongs to [startKey, endKey].
+ *
+ * No recurrence → a point cost: the whole amount if its date is in the
+ * window, nothing otherwise. That is the pre-existing behaviour and it is
+ * right for fuel, a repair, a bag of mulch.
+ *
+ * With a recurrence → the row covers `COVERAGE_DAYS` from its date, and the
+ * window gets the overlapping fraction. Coverage running past the window's
+ * end is not counted, nor is coverage that ended before it began.
+ *
+ * A refund (negative cost) is amortized on the same terms. That is not
+ * obviously right — a mid-term cancellation refunds coverage that was never
+ * consumed rather than spreading it evenly — but the ledger has no link from
+ * a refund to what it refunds, so there is nothing better available. The
+ * honest consequence is that a cancel-and-rewrite reads oddly until both rows
+ * fall inside the same window.
+ */
+export function amortizedShare(
+  row: { cost: number; date: Date; recurrence: string | null },
+  startKey: EtDateKey,
+  endKey: EtDateKey,
+): number {
+  const rowKey = etFormatDate(row.date) as EtDateKey;
+  const days = row.recurrence ? COVERAGE_DAYS[row.recurrence] : undefined;
+  // No recurrence, or one this build does not recognise. An unknown value
+  // must not silently vanish from the books, so it falls back to the
+  // point-cost rule rather than to zero.
+  if (!days) {
+    return rowKey >= startKey && rowKey <= endKey ? row.cost : 0;
+  }
+  // Coverage is [rowKey, rowKey + days - 1] inclusive.
+  const coverEndKey = etAddDays(rowKey, days - 1);
+  const overlapFrom = rowKey > startKey ? rowKey : startKey;
+  const overlapTo = coverEndKey < endKey ? coverEndKey : endKey;
+  if (overlapFrom > overlapTo) return 0;
+  const overlapDays = etDaysBetween(overlapFrom, overlapTo) + 1;
+  return row.cost * Math.min(1, overlapDays / days);
+}
+
 export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<ForecastBaseline> {
   const start = etMidnight(from);
   const end = etEndOfDay(to);
@@ -153,6 +225,12 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
               frequencyDays: true,
               job: { select: { frequencyDays: true } },
               invoiceCharges: { select: { cost: true } },
+              // Assignees, to identify the CLAIMER and the crew size. The
+              // claimer is the self-assigned, non-observer entry — same rule
+              // the job card and every claimer guard use
+              // (assignedById === userId). Crew size counts working
+              // assignees; an observer is watching, not being led.
+              assignees: { select: { userId: true, assignedById: true, role: true } },
             },
           },
           splits: { select: { userId: true, amount: true, grossAmount: true } },
@@ -170,11 +248,29 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
         select: { id: true, displayName: true, email: true, workerType: true, isOwner: true },
       }),
       prisma.businessExpense.findMany({
-        where: { type: "EXPENSE", date: { gte: start, lte: end } },
+        // LOOK BACK, don't just read the window.
+        //
+        // A premium paid once a year covers the twelve months after it, so a
+        // window in November has to see the policy bought in August or it
+        // reports no insurance at all. `COVERAGE_LOOKBACK_DAYS` is the longest
+        // coverage any recurrence can have, so this is the smallest read that
+        // can still find every row with coverage reaching into the window.
+        //
+        // Rows outside the window contribute ONLY their overlapping share —
+        // see amortizedShare below. A row with no recurrence is a point cost
+        // and is dropped unless its own date is inside the window, which is
+        // exactly the behaviour this replaced.
+        where: {
+          type: "EXPENSE",
+          date: { gte: etMidnight(etAddDays(from, -COVERAGE_LOOKBACK_DAYS)), lte: end },
+        },
         // `expense` is the 1:1 back-link to a per-job Expense row. Its presence
         // means this ledger entry IS a job material, which the forecast already
         // subtracts separately — see the dedupe below.
-        select: { category: true, cost: true, date: true, invoiceCharges: { select: { id: true } } },
+        select: {
+          category: true, cost: true, date: true, recurrence: true,
+          invoiceCharges: { select: { id: true } },
+        },
       }),
       loadRates(prisma),
       loadPayrollTaxEstimates(prisma),
@@ -239,9 +335,20 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
         ? (occ.completedAt.getTime() - occ.startedAt.getTime()) / 60_000
         : null;
 
+    // Who led this job, and did they actually lead anyone.
+    //
+    // A claimer working alone is not leading a crew — that is the operator's
+    // rule and it is the whole point of the premium, so a solo job resolves
+    // to no claimer here rather than being filtered downstream.
+    const working = (occ?.assignees ?? []).filter((x: any) => x.role !== "observer");
+    const claimer = working.find((x: any) => x.assignedById === x.userId) ?? null;
+    const claimerUserId = claimer && working.length > 1 ? claimer.userId : null;
+
     return {
       id: p.id,
       paid: p.amountPaid,
+      claimerUserId,
+      crewSize: working.length,
       invoicePrice: occ?.price ?? null,
       materials,
       // Guard against a clock left running overnight — an implausible duration
@@ -309,9 +416,20 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
   // anything.
   let jobMaterialsInLedger = 0;
   for (const e of expenses) {
-    if (e.invoiceCharges.length) jobMaterialsInLedger += e.cost;
     const label = e.category ?? "Uncategorized";
-    byCategory.set(label, (byCategory.get(label) ?? 0) + e.cost);
+    const inWindow = e.date >= start && e.date <= end;
+    // The amortized slice is what the window is charged. For a row with no
+    // recurrence this is the full cost when it falls inside and zero when it
+    // does not, so nothing about a one-off changes.
+    const share = amortizedShare(e, from, to);
+    if (share !== 0) byCategory.set(label, (byCategory.get(label) ?? 0) + share);
+
+    // The two figures below describe events, not coverage, so they stay
+    // anchored to rows that actually landed IN the window. A premium bought
+    // in August is not a capital purchase made in November, and a look-back
+    // row is not a job material this window bought.
+    if (!inWindow) continue;
+    if (e.invoiceCharges.length) jobMaterialsInLedger += e.cost;
     if (isFixedAsset({ cost: e.cost, date: e.date }, fixedAssetMinCost)) {
       fixedByCategory.set(label, (fixedByCategory.get(label) ?? 0) + e.cost);
     }
@@ -322,9 +440,15 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
       /** The slice of this category that is a capital purchase, not a running
        *  cost. Zero for almost every category. */
       fixedAssetAmount: round2(fixedByCategory.get(category) ?? 0),
-      // Every category starts AS_IS — holding what was actually spent. The
-      // scenario's own behaviorOverrides are the only thing that changes it,
-      // the same way every other lever baselines on reality.
+      // Every category starts AS_IS — holding what this window is charged.
+      // The scenario's own behaviorOverrides are the only thing that changes
+      // it, the same way every other lever baselines on reality.
+      //
+      // "What this window is charged" is not always "what was paid in this
+      // window": a recurring row contributes its overlapping coverage. See
+      // amortizedShare. Both this array AND the `actual` figures below are
+      // built from it, so the model and the books it is checked against move
+      // together and the fidelity line keeps its meaning.
       behavior: "AS_IS" as const,
       amount: round2(amount),
     }))
