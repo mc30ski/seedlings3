@@ -185,7 +185,11 @@ export default async function guideRoutes(app: FastifyInstance) {
 
   app.post("/guides/versions/:versionId/submit", adminGuard, async (req: any) => {
     const viewer = guideViewer(req);
-    return submitForApproval(viewer, String(req.params.versionId));
+    return submitForApproval(
+      viewer,
+      String(req.params.versionId),
+      typeof req.body?.changeNote === "string" ? req.body.changeNote : undefined,
+    );
   });
 
   // ── Review queue (super) ───────────────────────────────────────────────

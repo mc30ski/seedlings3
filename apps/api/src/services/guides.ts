@@ -557,7 +557,20 @@ export async function discardDraft(viewer: GuideViewer, versionId: string) {
   });
 }
 
-export async function submitForApproval(viewer: GuideViewer, versionId: string) {
+/** What a first version's note says when the author gives none. There is no
+ *  prior version to describe a change against, so this is a statement of fact
+ *  rather than a placeholder the author failed to fill in. */
+export const FIRST_VERSION_NOTE = "Initial version.";
+
+export async function submitForApproval(
+  viewer: GuideViewer,
+  versionId: string,
+  /** Supplied at submit time, because that is where the decision is made.
+   *  The editor also has a note field, but Submit lives on the guide CARD —
+   *  an author who has closed the editor had no way to provide one and no way
+   *  to find out where it lived. Blank/absent leaves the stored note alone. */
+  changeNote?: string,
+) {
   assertAuthor(viewer);
   const version = await prisma.guideVersion.findUnique({
     where: { id: versionId },
@@ -570,7 +583,25 @@ export async function submitForApproval(viewer: GuideViewer, versionId: string) 
   if (!version.contentMarkdown.trim()) {
     throw new ServiceError("BAD_REQUEST", "Nothing to submit — the page is empty.", 400);
   }
-  if (!version.changeNote.trim()) {
+
+  const supplied = (changeNote ?? "").trim();
+  const stored = version.changeNote.trim();
+  const isFirstVersion = version.versionNumber === 1;
+
+  // A CHANGE NOTE IS A DIFF DESCRIPTION, SO VERSION 1 CANNOT HAVE ONE.
+  //
+  // There is nothing to compare against — the approver reads the whole page,
+  // which is the only thing they can do on a first version anyway. Demanding
+  // one asked the author to write a sentence that could only be noise, and
+  // "nothing changed, it's the initial draft" is the correct objection.
+  //
+  // It bit harder than it should have because the seeded note was destroyed on
+  // the way past: creation stamps "Initial draft", the editor treats that as a
+  // placeholder and shows an empty box, and saving writes the empty box back.
+  // So the version reached Submit with a note it had been given and then had
+  // taken away, and the error named a field that was not on screen.
+  const note = supplied || stored || (isFirstVersion ? FIRST_VERSION_NOTE : "");
+  if (!note) {
     throw new ServiceError(
       "BAD_REQUEST",
       "Describe what changed — the approver sees this instead of diffing by eye.",
@@ -581,13 +612,20 @@ export async function submitForApproval(viewer: GuideViewer, versionId: string) 
   return prisma.$transaction(async (tx) => {
     const updated = await tx.guideVersion.update({
       where: { id: versionId },
-      data: { status: "PENDING_APPROVAL", submittedAt: new Date(), submittedById: viewer.userId },
+      data: {
+        status: "PENDING_APPROVAL",
+        submittedAt: new Date(),
+        submittedById: viewer.userId,
+        // Persist whatever the note resolved to, so the approval queue and the
+        // version history show the same text the submitter agreed to.
+        changeNote: note,
+      },
     });
     await writeAudit(tx, AUDIT.GUIDE.SUBMITTED, viewer.userId, {
       guideId: version.guideId,
       versionId,
       versionNumber: version.versionNumber,
-      changeNote: version.changeNote,
+      changeNote: note,
     });
     return updated;
   });

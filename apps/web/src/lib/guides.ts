@@ -141,8 +141,12 @@ export const updateGuideMeta = (
 export const saveDraft = (id: string, input: { contentMarkdown: string; changeNote?: string }) =>
   apiPost<GuideVersion>(`/api/guides/${id}/draft`, input);
 
-export const submitForApproval = (versionId: string) =>
-  apiPost<GuideVersion>(`/api/guides/versions/${versionId}/submit`, {});
+/** `changeNote` is optional: version 1 has nothing to diff against, and for
+ *  later versions a blank here falls back to whatever the editor saved. */
+export const submitForApproval = (versionId: string, changeNote?: string) =>
+  apiPost<GuideVersion>(`/api/guides/versions/${versionId}/submit`, {
+    ...(changeNote?.trim() ? { changeNote: changeNote.trim() } : {}),
+  });
 
 // ── Review (super) ──────────────────────────────────────────────────────────
 
