@@ -272,7 +272,11 @@ describe("guides build gate — confirm dialogs", () => {
     // confirm path: a `run:` thunk on the shared confirm state, or a
     // dialog's own `onConfirm`. Merely mentioning it inside the object
     // passed to `setConfirmAction` is fine — that is the confirm path.
-    const CONFIRM_CONTEXT = /(run:\s*\(\)\s*=>|onConfirm)/;
+    // `run:` may take the dialog's typed value — Submit collects its change
+    // note there, because the button lives on the card and the editor's note
+    // field is not on screen. Still anchored to `run:` / `onConfirm`, so a
+    // bare call outside a confirm path fails exactly as before.
+    const CONFIRM_CONTEXT = /(run:\s*\([^)]*\)\s*=>|onConfirm)/;
     for (const [rel, fns] of [
       [
         "apps/web/src/ui/tabs/GuidesTab.tsx",
@@ -574,6 +578,70 @@ describe("guides build gate — pre-ship audit findings", () => {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("[build-gate] submitting a FIRST version", () => {
+  const SVC = readFileSync(join(__dirname, "./guides.ts"), "utf8");
+  const web = (rel: string) =>
+    readFileSync(join(__dirname, "../../../web/src", rel), "utf8");
+
+  it("version 1 needs no change note", () => {
+    // A change note describes a DIFF. Version 1 has no predecessor, so there is
+    // nothing to describe and the approver reads the whole page regardless.
+    // Requiring one asked the author for a sentence that could only be noise.
+    expect(SVC).toMatch(/const isFirstVersion = version\.versionNumber === 1;/);
+    expect(SVC).toMatch(/isFirstVersion \? FIRST_VERSION_NOTE : ""/);
+  });
+
+  it("later versions STILL require one", () => {
+    // The requirement is the point for v2+; only the first version is exempt.
+    expect(SVC).toMatch(/if \(!note\) \{[\s\S]*?Describe what changed/);
+  });
+
+  it("the resolved note is PERSISTED, so the approver reads what was agreed", () => {
+    // The queue and the version history both render changeNote. Leaving the
+    // row empty while submitting under a default would show the approver "no
+    // note given" for a note the submitter did provide.
+    // Anchored to the UPDATE's data block. A bare /changeNote: note,/ is
+    // satisfied by the audit meta a few lines below, so deleting the persist
+    // itself would have slipped through — it did, when this was first written.
+    expect(SVC).toMatch(
+      /status: "PENDING_APPROVAL",\s*\n\s*submittedAt: new Date\(\),[\s\S]{0,400}?changeNote: note,\s*\n\s*\},/,
+    );
+    // …and the audit records the same text, not the pre-submit value.
+    // Scoped to THIS function: `changeNote: version.changeNote` is correct
+    // elsewhere — discardDraft snapshots the pre-delete value into its audit
+    // row, which is the whole point of that snapshot.
+    const submitBody = SVC.slice(
+      SVC.indexOf("export async function submitForApproval("),
+      SVC.indexOf("export async function approveAndPublish("),
+    );
+    expect(submitBody.length).toBeGreaterThan(200);
+    expect(submitBody).not.toMatch(/changeNote: version\.changeNote,/);
+  });
+
+  it("the note can be supplied AT SUBMIT TIME, where the button is", () => {
+    // The editor has a note field, but "Submit for approval" sits on the guide
+    // CARD. An author who had closed the editor was told to describe their
+    // change with no field anywhere on screen — a dead end with no way out.
+    expect(SVC).toMatch(/export async function submitForApproval\([\s\S]*?changeNote\?: string,/);
+    const ROUTE = readFileSync(join(__dirname, "../routes/guides.ts"), "utf8");
+    expect(ROUTE).toMatch(/req\.body\?\.changeNote === "string" \? req\.body\.changeNote : undefined/);
+
+    const TAB = web("ui/tabs/GuidesTab.tsx");
+    expect(TAB, "the submit dialog must collect a note").toMatch(/inputLabel: "What changed"/);
+    expect(TAB, "and hand it to the call").toMatch(/run: \(note\?: string\) => submitForApproval\(draft\.id, note\)/);
+    expect(TAB, "optional only on a first version")
+      .toMatch(/inputOptional: draft\.versionNumber === 1/);
+    // The dialog has to actually forward what was typed.
+    expect(TAB).toMatch(/void act\(\(\) => a\.run\(value\), a\.done\)/);
+  });
+
+  it("a supplied note wins over the stored one, and blank falls back", () => {
+    expect(SVC).toMatch(/const note = supplied \|\| stored \|\| \(isFirstVersion \? FIRST_VERSION_NOTE : ""\);/);
+  });
+});
 
 describe("[build-gate] a guide references media BY NAME", () => {
   // `guide-asset:<cuid>` is meaningful only in the database that minted it. A

@@ -537,8 +537,17 @@ function GuideDetailView({
     warning?: string;
     confirmLabel: string;
     confirmColorPalette?: string;
-    run: () => Promise<unknown>;
+    /** Receives the dialog's typed value when the action asks for one. */
+    run: (inputValue?: string) => Promise<unknown>;
     done: string;
+    /** Set to collect a note in the dialog itself — used by Submit, whose
+     *  button lives on the guide CARD while the editor's note field does
+     *  not. Without this an author who had closed the editor was told to
+     *  describe their change with nowhere on screen to describe it. */
+    inputLabel?: string;
+    inputPlaceholder?: string;
+    inputDefaultValue?: string;
+    inputOptional?: boolean;
   } | null>(null);
 
   const load = useCallback(async () => {
@@ -868,7 +877,20 @@ function GuideDetailView({
             "A Super reviews it before anyone can read it. You can keep editing until they do.",
             confirmLabel: "Submit",
             confirmColorPalette: "orange",
-            run: () => submitForApproval(draft.id),
+            // The note is collected HERE, not only in the editor. This button
+            // sits on the card, so an author who has closed the editor could
+            // otherwise be told to describe their change with no field on
+            // screen to do it in — which is how a first guide got stuck.
+            inputLabel: "What changed",
+            inputPlaceholder:
+            draft.versionNumber === 1
+            ? "Optional on a first version — there is nothing to compare it to"
+            : "Bermuda section rewritten for our region…",
+            inputDefaultValue: draft.changeNote ?? "",
+            // Version 1 has no predecessor to diff against, so a note is a
+            // courtesy rather than a requirement.
+            inputOptional: draft.versionNumber === 1,
+            run: (note?: string) => submitForApproval(draft.id, note),
             done: "Submitted for approval.",
             })
             }
@@ -1055,10 +1077,14 @@ function GuideDetailView({
         warning={confirmAction?.warning}
         confirmLabel={confirmAction?.confirmLabel ?? "Confirm"}
         confirmColorPalette={confirmAction?.confirmColorPalette}
-        onConfirm={() => {
+        inputLabel={confirmAction?.inputLabel}
+        inputPlaceholder={confirmAction?.inputPlaceholder}
+        inputDefaultValue={confirmAction?.inputDefaultValue}
+        inputOptional={confirmAction?.inputOptional}
+        onConfirm={(value?: string) => {
           const a = confirmAction;
           setConfirmAction(null);
-          if (a) void act(a.run, a.done);
+          if (a) void act(() => a.run(value), a.done);
         }}
         onCancel={() => setConfirmAction(null)}
       />
