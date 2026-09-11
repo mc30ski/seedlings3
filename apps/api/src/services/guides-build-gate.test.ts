@@ -611,14 +611,81 @@ describe("[build-gate] a guide references media BY NAME", () => {
   it("a dead id reference is explained as an id, not as a missing upload", () => {
     // "Upload it under that name" is impossible advice for a cuid.
     const MD = web("ui/components/GuideMarkdown.tsx");
-    expect(MD).toMatch(/const isIdForm = \/\^guide-asset:\/i\.test\(target\.trim\(\)\)/);
+    expect(MD).toMatch(/const isIdForm = \/\^guide-asset:\/i\.test\(trimmed\)/);
     expect(MD).toMatch(/doesn&rsquo;t\s*\n?\s*exist here/);
     expect(MD).toMatch(/Replace it with the file&rsquo;s name/);
   });
 
   it("the id form still RESOLVES — existing bodies must keep working", () => {
     const SVC = readFileSync(join(__dirname, "./guides.ts"), "utf8");
-    expect(SVC).toMatch(/const byId = \/\^guide-asset:\(\[a-z0-9\]\+\)\$\/i\.exec\(ref\.trim\(\)\)/);
+    expect(SVC).toMatch(/const byId = \/\^guide-asset:\(\[a-z0-9\]\+\)\$\/i\.exec\(trimmed\)/);
     expect(SVC).toMatch(/originalFilename: name, supersededAt: null/);
+  });
+
+  // ── A FILENAME WEARING THE TOKEN PREFIX ───────────────────────────────────
+  //
+  // `![alt](guide-asset:grass-id-chart.png)` — both documented forms at once,
+  // which is what an author writes after reading about `guide-asset:` tokens
+  // AND about referencing files by name. It reached production, and failed in
+  // a way that pointed at the wrong problem entirely.
+
+  /** The live ASSET_RE, evaluated from source — so this tests the regex that
+   *  actually ships rather than a copy of it that can drift. */
+  function liveAssetRe(): RegExp {
+    const MD = web("ui/components/GuideMarkdown.tsx");
+    const m = /const ASSET_RE = (\/.*\/[gimsuy]*);/.exec(MD);
+    expect(m, "ASSET_RE must be a single-line regex literal").toBeTruthy();
+    // eslint-disable-next-line no-eval
+    return eval(m![1]) as RegExp;
+  }
+
+  it("the token regex does not TRUNCATE a prefixed filename", () => {
+    // This is the actual defect. `[a-z0-9]+` stops at the first hyphen, so
+    // `guide-asset:grass-id-chart.png` was read as `guide-asset:grass` — and
+    // that fragment is what got looked up, reported missing, and printed in
+    // the error as an "internal id" the author had never written.
+    const re = liveAssetRe();
+    const hit = "![alt](guide-asset:grass-id-chart.png)".match(re);
+    expect(hit).toEqual(["guide-asset:grass-id-chart.png"]);
+    expect(hit![0], "truncating at the hyphen is the bug").not.toBe("guide-asset:grass");
+  });
+
+  it("the token regex still matches a bare id, and does not eat sentence punctuation", () => {
+    const re = liveAssetRe();
+    expect("![a](guide-asset:cmtjfqy7m00ykgn5f)".match(re)).toEqual([
+      "guide-asset:cmtjfqy7m00ykgn5f",
+    ]);
+    // A full stop ending a sentence is not an extension: an extension needs at
+    // least one character after the dot.
+    expect("see guide-asset:abc.".match(re)).toEqual(["guide-asset:abc"]);
+  });
+
+  it("the server resolves a prefixed filename by NAME", () => {
+    // The reference is unambiguous, so accept it rather than making the author
+    // work out which of two forms they half-wrote.
+    const SVC = readFileSync(join(__dirname, "./guides.ts"), "utf8");
+    expect(SVC).toMatch(
+      /const name = normalizeAssetName\(trimmed\.replace\(\/\^guide-asset:\/i, ""\)\)/,
+    );
+  });
+
+  it("a prefixed filename gets its OWN message, naming the file", () => {
+    // The id-form message tells the author to "replace it with the file's
+    // name" — which, here, is already sitting in the reference. Repeating it
+    // is what sent a real debugging session after a phantom copied-from-another
+    // -environment id.
+    const MD = web("ui/components/GuideMarkdown.tsx");
+    expect(MD).toMatch(/const isPrefixedName = MEDIA_EXT\.test\(prefixedName\)/);
+    expect(MD, "the message must lead with the FILE name, not the token")
+      .toMatch(/called <strong>\{prefixedName\}<\/strong>/);
+    expect(MD, "and it must say to drop the prefix").toMatch(/drop\s*\n?\s*the/);
+    // Ordering matters: isPrefixedName has to be tested BEFORE isIdForm, or
+    // the id branch swallows it and prints the wrong advice again.
+    expect(MD.indexOf("{isPrefixedName ?")).toBeLessThan(MD.indexOf(") : isIdForm ? ("));
+  });
+
+  it("a prefixed filename is recognised as an asset by the video block too", () => {
+    const MD = web("ui/components/GuideMarkdown.tsx");
+    expect(MD).toMatch(/\/\^guide-asset:\/i\.test\(target\.trim\(\)\) \|\| isAssetName\(target\)/);
   });
 });

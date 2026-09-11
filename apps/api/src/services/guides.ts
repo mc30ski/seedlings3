@@ -1213,10 +1213,26 @@ export async function assetUrlByRef(
   viewer: GuideViewer,
   ref: string,
 ): Promise<{ id: string; url: string }> {
-  const byId = /^guide-asset:([a-z0-9]+)$/i.exec(ref.trim());
+  const trimmed = ref.trim();
+  const byId = /^guide-asset:([a-z0-9]+)$/i.exec(trimmed);
   if (byId) return { id: byId[1], url: await assetUrl(viewer, byId[1]) };
 
-  const name = normalizeAssetName(ref);
+  // A FILENAME WEARING THE TOKEN PREFIX — `guide-asset:grass-id-chart.png`.
+  //
+  // Neither documented form, and the single most likely thing an author
+  // writes: the editor talks about `guide-asset:` tokens AND about
+  // referencing files by name, and doing both at once reads like following
+  // instructions. It shipped to production that way.
+  //
+  // Before this, it failed twice over and said neither thing: the id regex
+  // rejects it (a filename has hyphens and a dot, `[a-z0-9]+` does not), then
+  // the name lookup searched for a file literally called
+  // "guide-asset:grass-id-chart.png" and found nothing.
+  //
+  // The reference is unambiguous, so accept it. Stripping the prefix here
+  // rather than rejecting it means the author does not have to know which of
+  // two forms they half-wrote.
+  const name = normalizeAssetName(trimmed.replace(/^guide-asset:/i, ""));
   const asset = await prisma.guideAsset.findFirst({
     where: { originalFilename: name, supersededAt: null },
     select: { id: true, r2Key: true, originalFilename: true },

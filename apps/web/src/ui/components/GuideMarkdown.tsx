@@ -43,7 +43,23 @@ import MarkdownContent from "@/src/ui/components/MarkdownContent";
 import { apiGet } from "@/src/lib/api";
 import { resolveGuideLinks, type GuideLinkTarget } from "@/src/lib/guides";
 
-const ASSET_RE = /guide-asset:([a-z0-9]+)/gi;
+/**
+ * A `guide-asset:` reference — an id, OR a filename someone prefixed with the
+ * token.
+ *
+ * IT USED TO BE `([a-z0-9]+)`, WHICH TRUNCATED. A filename has hyphens and a
+ * dot, so `guide-asset:grass-id-chart.png` matched only as far as
+ * `guide-asset:grass` — and that fragment became the reference the app looked
+ * up, reported as missing, and printed in the error. The author was shown an
+ * "internal id" (`guide-asset:grass`) that appears nowhere in their text and
+ * told it must have been copied from another environment. It had not been;
+ * they had written the filename, and the regex ate most of it.
+ *
+ * The optional extension group is what keeps prose safe: "see guide-asset:abc."
+ * at the end of a sentence still matches `guide-asset:abc`, leaving the full
+ * stop behind, because an extension needs at least one character after the dot.
+ */
+const ASSET_RE = /guide-asset:[a-z0-9][a-z0-9_-]*(?:\.[a-z0-9]+)?/gi;
 // Slugs are generated lower-kebab, so this stays deliberately narrow — a
 // stray "guide:" in prose does not become a link.
 const GUIDE_LINK_RE = /guide:([a-z0-9][a-z0-9-]*)/gi;
@@ -207,7 +223,11 @@ function VideoBlock({
   assetUrls: Record<string, string | null>;
   allowedDomains: string[];
 }) {
-  const isAsset = /^guide-asset:[a-z0-9]+$/i.test(target) || isAssetName(target);
+  // Any of the three forms: bare id, prefixed id, or a filename with or
+  // without the prefix. The prefixed-filename case is accepted rather than
+  // rejected — see ASSET_RE and the server's assetUrlByRef.
+  const isAsset =
+    /^guide-asset:/i.test(target.trim()) || isAssetName(target);
 
   if (isAsset) {
     const url = assetUrls[target];
@@ -322,13 +342,30 @@ function missingIn(text: string, urls: Record<string, string | null>): string[] 
  * as the file's NAME, which is the whole reason names became referenceable.
  */
 function MissingAsset({ target, kind }: { target: string; kind: "image" | "video" }) {
-  const isIdForm = /^guide-asset:/i.test(target.trim());
+  const trimmed = target.trim();
+  const isIdForm = /^guide-asset:/i.test(trimmed);
+  // A FILENAME WITH THE TOKEN PREFIX IN FRONT OF IT. Its own case, because the
+  // advice for the other two is actively wrong here: telling an author to
+  // "replace it with the file's name" when the file's name is already sitting
+  // in the reference is how this cost an afternoon in production. The prefixed
+  // form now RESOLVES, so reaching this message means the file genuinely is
+  // not in the library — name the file, not the token.
+  const prefixedName = isIdForm ? trimmed.replace(/^guide-asset:/i, "") : "";
+  const isPrefixedName = MEDIA_EXT.test(prefixedName);
   const example = kind === "video" ? "striping-demo.webm" : "grass-id-chart.png";
   return (
     <Box my={3} px={2.5} py={2} borderRadius="md" bg="orange.subtle"
          borderWidth="1px" borderLeftWidth="3px" borderColor="orange.solid">
       <Text fontSize="12px" fontWeight="semibold">Missing {kind}</Text>
-      {isIdForm ? (
+      {isPrefixedName ? (
+        <Text fontSize="11.5px" color="fg.muted" wordBreak="break-all">
+          Nothing in the media library is called <strong>{prefixedName}</strong> — upload
+          it under that name, or point this at a file that exists. Separately, drop
+          the <Text as="span" fontFamily="mono">guide-asset:</Text> prefix: a filename
+          is referenced on its own, as{" "}
+          <Text as="span" fontFamily="mono">{`![${kind === "video" ? "" : "alt text"}](${prefixedName})`}</Text>.
+        </Text>
+      ) : isIdForm ? (
         <Text fontSize="11.5px" color="fg.muted" wordBreak="break-all">
           This points at an internal id (<strong>{target}</strong>) that doesn&rsquo;t
           exist here — usually because the text was copied from another

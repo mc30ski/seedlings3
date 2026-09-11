@@ -1617,7 +1617,99 @@ export default function BusinessExpensesTab() {
         )
       ) : (
         <VStack align="stretch" gap={1}>
-          {expenses.map((e) => (
+          {expenses.map((e) => {
+            // The action icons, extracted so they can be placed in a
+            // DIFFERENT PLACE per breakpoint without duplicating the JSX.
+            //
+            // On a phone the card was unreadable: the row is
+            // justify="space-between" with the amount and this six-icon
+            // strip in a right-hand column, and that strip has a hard
+            // intrinsic width of ~190px. The content column is flex=1
+            // minW=0, so it surrendered every pixel the icons wanted and
+            // a title like "ECOTRIC Hitch Mount Wheelchair Carrier with
+            // Mobility Ramp" wrapped down SIX lines beside them, with
+            // every meta line ragged behind it.
+            //
+            // Desktop keeps the icons under the amount, which reads fine
+            // at that width. Narrow viewports move them to their own
+            // full-width row under the card, so the title gets the whole
+            // card to wrap in and the icons get comfortable tap targets.
+            const actions = (
+                <HStack gap={1}>
+                  {/* Paperclip icon when a receipt is attached — clicks
+                      open the receipt in a new tab via a presigned GET URL. */}
+                  {e.receiptR2Key && (
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      colorPalette="green"
+                      title={`View receipt${e.receiptFileName ? `: ${e.receiptFileName}` : ""}`}
+                      onClick={async () => {
+                        try {
+                          const { url } = await apiGet<{ url: string }>(
+                            `/api/admin/business-expenses/${e.id}/receipt-url`,
+                          );
+                          window.open(url, "_blank", "noopener,noreferrer");
+                        } catch (err) {
+                          publishInlineMessage({
+                            type: "ERROR",
+                            text: getErrorMessage("Couldn't open receipt.", err),
+                          });
+                        }
+                      }}
+                    >
+                      <Paperclip size={12} />
+                    </Button>
+                  )}
+                  <Button size="xs" variant="ghost" onClick={() => openView(e)} title="View details">
+                    <Eye size={12} />
+                  </Button>
+                  <Button size="xs" variant="ghost" onClick={() => openEdit(e)} title="Edit">
+                    <Pencil size={12} />
+                  </Button>
+                  {/* Reconcile toggle — filled green check when
+                      reconciled, outlined gray check when not.
+                      Direct click flips state (no confirm — this
+                      is a personal-flag toggle, and the operator
+                      will be clicking many while sweeping the
+                      list against QB). */}
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    colorPalette={e.reconciledAt ? "green" : "gray"}
+                    onClick={() => { void toggleReconciled(e); }}
+                    loading={reconcileSaving === e.id}
+                    title={
+                      e.reconciledAt
+                        ? `Reconciled${e.reconciledBy?.displayName ? ` by ${e.reconciledBy.displayName}` : ""} on ${fmtDate(e.reconciledAt)} — click to unreconcile`
+                        : "Mark as reconciled against QuickBooks"
+                    }
+                  >
+                    <CheckCircle2 size={12} fill={e.reconciledAt ? "currentColor" : "none"} />
+                  </Button>
+                  {/* Followup flag — amber when this row has an open
+                      followup, gray-outline when not. Click opens the
+                      flag/edit/resolve dialog. */}
+                  {(() => {
+                    const f = followupMap[`businessExpense:${e.id}`];
+                    return (
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        colorPalette={f ? "yellow" : "gray"}
+                        onClick={() => openFollowupDialog(e)}
+                        title={f ? "Open followup — edit or resolve" : "Flag for followup"}
+                      >
+                        <Flag size={12} fill={f ? "currentColor" : "none"} />
+                      </Button>
+                    );
+                  })()}
+                  <Button size="xs" variant="ghost" colorPalette="red" onClick={() => setConfirmDelete(e)} title="Delete">
+                    <Trash2 size={12} />
+                  </Button>
+                </HStack>
+            );
+            return (
             <Card.Root
               key={e.id}
               variant="outline"
@@ -1885,84 +1977,19 @@ export default function BusinessExpensesTab() {
                         {fmtUSD(e.cost)}
                       </Text>
                     </HStack>
-                    <HStack gap={1}>
-                      {/* Paperclip icon when a receipt is attached — clicks
-                          open the receipt in a new tab via a presigned GET URL. */}
-                      {e.receiptR2Key && (
-                        <Button
-                          size="xs"
-                          variant="ghost"
-                          colorPalette="green"
-                          title={`View receipt${e.receiptFileName ? `: ${e.receiptFileName}` : ""}`}
-                          onClick={async () => {
-                            try {
-                              const { url } = await apiGet<{ url: string }>(
-                                `/api/admin/business-expenses/${e.id}/receipt-url`,
-                              );
-                              window.open(url, "_blank", "noopener,noreferrer");
-                            } catch (err) {
-                              publishInlineMessage({
-                                type: "ERROR",
-                                text: getErrorMessage("Couldn't open receipt.", err),
-                              });
-                            }
-                          }}
-                        >
-                          <Paperclip size={12} />
-                        </Button>
-                      )}
-                      <Button size="xs" variant="ghost" onClick={() => openView(e)} title="View details">
-                        <Eye size={12} />
-                      </Button>
-                      <Button size="xs" variant="ghost" onClick={() => openEdit(e)} title="Edit">
-                        <Pencil size={12} />
-                      </Button>
-                      {/* Reconcile toggle — filled green check when
-                          reconciled, outlined gray check when not.
-                          Direct click flips state (no confirm — this
-                          is a personal-flag toggle, and the operator
-                          will be clicking many while sweeping the
-                          list against QB). */}
-                      <Button
-                        size="xs"
-                        variant="ghost"
-                        colorPalette={e.reconciledAt ? "green" : "gray"}
-                        onClick={() => { void toggleReconciled(e); }}
-                        loading={reconcileSaving === e.id}
-                        title={
-                          e.reconciledAt
-                            ? `Reconciled${e.reconciledBy?.displayName ? ` by ${e.reconciledBy.displayName}` : ""} on ${fmtDate(e.reconciledAt)} — click to unreconcile`
-                            : "Mark as reconciled against QuickBooks"
-                        }
-                      >
-                        <CheckCircle2 size={12} fill={e.reconciledAt ? "currentColor" : "none"} />
-                      </Button>
-                      {/* Followup flag — amber when this row has an open
-                          followup, gray-outline when not. Click opens the
-                          flag/edit/resolve dialog. */}
-                      {(() => {
-                        const f = followupMap[`businessExpense:${e.id}`];
-                        return (
-                          <Button
-                            size="xs"
-                            variant="ghost"
-                            colorPalette={f ? "yellow" : "gray"}
-                            onClick={() => openFollowupDialog(e)}
-                            title={f ? "Open followup — edit or resolve" : "Flag for followup"}
-                          >
-                            <Flag size={12} fill={f ? "currentColor" : "none"} />
-                          </Button>
-                        );
-                      })()}
-                      <Button size="xs" variant="ghost" colorPalette="red" onClick={() => setConfirmDelete(e)} title="Delete">
-                        <Trash2 size={12} />
-                      </Button>
-                    </HStack>
+                    {/* Desktop: under the amount, as before. */}
+                    <Box display={{ base: "none", md: "block" }}>{actions}</Box>
                   </VStack>
+                </HStack>
+                {/* Mobile: its own row, so the title above is never squeezed
+                    into a narrow column by the icons beside it. */}
+                <HStack display={{ base: "flex", md: "none" }} justify="flex-end" mt={2}>
+                  {actions}
                 </HStack>
               </Card.Body>
             </Card.Root>
-          ))}
+            );
+          })}
         </VStack>
       )}
 
