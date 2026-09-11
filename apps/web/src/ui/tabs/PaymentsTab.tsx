@@ -1604,10 +1604,14 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
             count={approvalsApi?.count ?? 0}
             /* Same reasoning as AWAITING PAYMENT below: the count says how
                many decisions are waiting, not how much money is behind them.
-               `summarySlot` keeps it visible when the section is collapsed. */
+               `summarySlot` keeps it visible when the section is collapsed.
+               AMOUNT ONLY, no trailing word. The refresh control is absolutely
+               positioned outside this flex row, so nothing reserves space for
+               it and a long summary runs underneath it on a narrow screen.
+               The section title already says what the money is. */
             summarySlot={(approvalsApi?.count ?? 0) > 0 ? (
               <Text fontSize="xs" fontWeight="semibold" color="orange.700" whiteSpace="nowrap">
-                ${(approvalsApi?.totalAmount ?? 0).toFixed(2)} to approve
+                ${(approvalsApi?.totalAmount ?? 0).toFixed(2)}
               </Text>
             ) : undefined}
             forceGlow={(approvalsApi?.count ?? 0) > 0 ? "orange" : undefined}
@@ -1642,10 +1646,13 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
             /* What the outstanding invoices are actually worth. The count
                badge alone says "6" without saying whether that is $240 or
                $2,400. Uses `summarySlot` so it survives collapsing — the
-               figure is most useful precisely when the section is shut. */
+               figure is most useful precisely when the section is shut.
+               AMOUNT ONLY — see the note on Pending approval above: the
+               trailing word pushed the line under the refresh control on a
+               phone. "AWAITING PAYMENT $813.37" needs no "expected". */
             summarySlot={(outstandingApi?.count ?? 0) > 0 ? (
               <Text fontSize="xs" fontWeight="semibold" color="purple.700" whiteSpace="nowrap">
-                ${(outstandingApi?.totalAmount ?? 0).toFixed(2)} expected
+                ${(outstandingApi?.totalAmount ?? 0).toFixed(2)}
               </Text>
             ) : undefined}
             onRefresh={outstandingApi?.refresh}
