@@ -1532,7 +1532,7 @@ export default async function workerRoutes(app: FastifyInstance) {
         assigneeUserId: ghostAssigneeUserId,
         // Set by the Jobs tab when the status filter is narrowed to
         // expiring/expired ghosts — makes from/to search the expiry
-        // date and lifts the "older than a week fades away" drop.
+        // date and lifts the "older than the grace window fades away" drop.
         matchRangeOnExpiry: String((req.query as any)?.ghostExpiry ?? "") === "1",
       });
       return [...filtered, ...ghosts];
@@ -3685,6 +3685,85 @@ export default async function workerRoutes(app: FastifyInstance) {
         beforePrice: null,
         afterPrice: addon.price,
         occurrenceStatus: occ.status,
+      });
+      return addon;
+    });
+  });
+
+  /**
+   * Edit a service already on a visit — worker side.
+   *
+   * Mirrors the admin PATCH. Exists because the dialog is shared: without it,
+   * the edit control would 404 for every non-admin. Same authorization and
+   * same freeze rule as the create above — a claimer may correct their own
+   * visit's line until payment is requested, and not after.
+   */
+  app.patch("/occurrences/:id/addons/:addonId", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    const addonId = String(req.params.addonId);
+    const body = (req.body || {}) as {
+      tag?: string | null; customLabel?: string | null; price?: number; detail?: string | null;
+    };
+
+    const me = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
+    const isAdminOrSuper = !!me?.roles?.some((r) => r.role === "ADMIN" || r.role === "SUPER");
+    if (!isAdminOrSuper) {
+      const claimer = await prisma.jobOccurrenceAssignee.findFirst({
+        where: { occurrenceId, userId: uid, assignedById: uid },
+      });
+      if (!claimer) throw app.httpErrors.forbidden("Only the claimer or an admin can edit services.");
+    }
+
+    const occ = await prisma.jobOccurrence.findUnique({
+      where: { id: occurrenceId },
+      select: {
+        status: true, workflow: true, jobId: true,
+        paymentRequestSentAt: true, payment: { select: { id: true } },
+      },
+    });
+    if (!occ) throw app.httpErrors.notFound("Occurrence not found");
+    if (!occInEditableState(occ)) {
+      throw app.httpErrors.conflict("Services can't be changed once payment has been requested or accepted.");
+    }
+
+    const before = await prisma.occurrenceAddon.findUnique({
+      where: { id: addonId },
+      select: { occurrenceId: true, tag: true, customLabel: true, price: true, detail: true },
+    });
+    if (!before) throw app.httpErrors.notFound("Add-on not found");
+    if (before.occurrenceId !== occurrenceId) {
+      throw app.httpErrors.notFound("Add-on not found on this occurrence");
+    }
+
+    const data: Record<string, any> = {};
+    if (body.price !== undefined) {
+      const n = Number(body.price);
+      if (!Number.isFinite(n) || n <= 0) throw app.httpErrors.badRequest("price must be a positive number");
+      data.price = n;
+    }
+    if (body.tag !== undefined) data.tag = body.tag || null;
+    if (body.customLabel !== undefined) data.customLabel = body.customLabel?.trim() || null;
+    const nextTag = "tag" in data ? data.tag : before.tag;
+    const nextLabel = "customLabel" in data ? data.customLabel : before.customLabel;
+    if (!nextTag && !nextLabel) throw app.httpErrors.badRequest("Either tag or customLabel is required");
+    if (body.detail !== undefined) data.detail = body.detail?.trim() || null;
+    if (Object.keys(data).length === 0) throw app.httpErrors.badRequest("Nothing to update");
+
+    return prisma.$transaction(async (tx) => {
+      const addon = await tx.occurrenceAddon.update({ where: { id: addonId }, data });
+      await writeAudit(tx, AUDIT.JOB.ADDON_UPDATED, uid, {
+        occurrenceId,
+        jobId: occ.jobId ?? null,
+        addonId,
+        tag: addon.tag,
+        customLabel: addon.customLabel,
+        detail: addon.detail,
+        detailBefore: before.detail,
+        tagBefore: before.tag,
+        customLabelBefore: before.customLabel,
+        priceBefore: before.price,
+        priceAfter: addon.price,
       });
       return addon;
     });

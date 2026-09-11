@@ -21,10 +21,17 @@ import {
 import type { ServicesJobs } from "../types/services";
 /**
  * How long an EXPIRED next-visit ghost stays listed before dropping out
- * silently. A week is long enough to notice and chase; beyond that the
- * visit is water under the bridge and the card is just clutter.
+ * silently. A month, so a visit blocked on a slow-paying client is still
+ * on screen when the payment finally lands rather than having quietly
+ * aged out. Beyond that the visit is water under the bridge and the card
+ * is just clutter.
+ *
+ * Was 7. A week turned out to be shorter than the tail on chasing a
+ * payment, which is the single most common reason a next visit never
+ * posts — so the reminder disappeared while the thing it was reminding
+ * about was still live.
  */
-export const GHOST_EXPIRED_GRACE_DAYS = 7;
+export const GHOST_EXPIRED_GRACE_DAYS = 30;
 
 /**
  * How close to its due date a next-visit ghost has to be before it counts
@@ -730,7 +737,7 @@ export const jobs: ServicesJobs = {
               orderBy: { createdAt: "asc" as const },
             }),
             addons: {
-              select: { id: true, tag: true, customLabel: true, price: true },
+              select: { id: true, tag: true, customLabel: true, price: true, detail: true },
               orderBy: { createdAt: "asc" as const },
             },
             instructions: {
@@ -2282,7 +2289,7 @@ export const jobs: ServicesJobs = {
           include: { propertyPhoto: { select: { id: true, r2Key: true, fileName: true, description: true, sortOrder: true } } },
         },
         addons: {
-          select: { id: true, tag: true, customLabel: true, price: true },
+          select: { id: true, tag: true, customLabel: true, price: true, detail: true },
           orderBy: { createdAt: "asc" as const },
         },
         instructions: {
@@ -2450,8 +2457,9 @@ export const jobs: ServicesJobs = {
      * filtering the Jobs tab to expiring/expired next-visit ghosts.
      *
      * Lifts the GHOST_EXPIRED_GRACE_DAYS drop, so a range reaching back
-     * further than a week actually finds the older ones. Without it they
-     * fade out of the normal feed on their own after a week.
+     * further than that window actually finds the older ones. Without it
+     * they fade out of the normal feed on their own once the window
+     * passes.
      */
     matchRangeOnExpiry?: boolean;
   }) {
@@ -2563,9 +2571,10 @@ export const jobs: ServicesJobs = {
       const daysUntilExpiry = etDaysBetween(etToday(), expiresOn);
       const isExpired = daysUntilExpiry < 0;
 
-      // An expired ghost is worth chasing for a week; after that the visit
-      // is water under the bridge and the card would just be permanent
-      // clutter. It drops out silently — no notification, no count.
+      // An expired ghost is worth chasing for GHOST_EXPIRED_GRACE_DAYS;
+      // after that the visit is water under the bridge and the card would
+      // just be permanent clutter. It drops out silently — no
+      // notification, no count.
       if (!byExpiry && isExpired && daysUntilExpiry < -GHOST_EXPIRED_GRACE_DAYS) continue;
 
       // Date-range filter (matches the caller's from/to on the real
@@ -2732,7 +2741,7 @@ export const jobs: ServicesJobs = {
           include: { propertyPhoto: { select: { id: true, r2Key: true, fileName: true, description: true, sortOrder: true } } },
         },
         addons: {
-          select: { id: true, tag: true, customLabel: true, price: true },
+          select: { id: true, tag: true, customLabel: true, price: true, detail: true },
           orderBy: { createdAt: "asc" as const },
         },
         instructions: {

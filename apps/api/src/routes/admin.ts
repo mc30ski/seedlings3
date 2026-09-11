@@ -1500,6 +1500,85 @@ export default async function adminRoutes(app: FastifyInstance) {
     });
   });
 
+  /**
+   * Edit a service already on a visit.
+   *
+   * Charges have had a PATCH since they shipped; services only had create and
+   * delete, so correcting a price or a typo meant removing the line and adding
+   * it back. That is not equivalent: the delete writes ADDON_REMOVED and the
+   * re-add writes ADDON_ADDED with a new id, so the audit trail reads as "the
+   * client was billed, un-billed, and billed again" rather than "the price was
+   * corrected", and any note attached to the original is silently lost.
+   *
+   * Every field is optional — send only what changed. `detail` accepts an
+   * explicit empty string to CLEAR the note, which is why it is distinguished
+   * from absent rather than folded together.
+   */
+  app.patch("/admin/occurrences/:id/addons/:addonId", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    const addonId = String(req.params.addonId);
+    const body = (req.body || {}) as {
+      tag?: string | null; customLabel?: string | null; price?: number; detail?: string | null;
+    };
+
+    const before = await prisma.occurrenceAddon.findUnique({
+      where: { id: addonId },
+      select: { occurrenceId: true, tag: true, customLabel: true, price: true, detail: true },
+    });
+    if (!before) throw app.httpErrors.notFound("Add-on not found");
+    // The id in the path must belong to the occurrence in the path — otherwise
+    // a caller could edit any visit's line item through any occurrence they
+    // can reach.
+    if (before.occurrenceId !== occurrenceId) {
+      throw app.httpErrors.notFound("Add-on not found on this occurrence");
+    }
+
+    const data: Record<string, any> = {};
+    if (body.price !== undefined) {
+      const n = Number(body.price);
+      if (!Number.isFinite(n) || n <= 0) {
+        throw app.httpErrors.badRequest("price must be a positive number");
+      }
+      data.price = n;
+    }
+    // tag and customLabel are alternatives, never both — same rule as create.
+    if (body.tag !== undefined) data.tag = body.tag || null;
+    if (body.customLabel !== undefined) data.customLabel = body.customLabel?.trim() || null;
+    const nextTag = "tag" in data ? data.tag : before.tag;
+    const nextLabel = "customLabel" in data ? data.customLabel : before.customLabel;
+    if (!nextTag && !nextLabel) {
+      throw app.httpErrors.badRequest("Either tag or customLabel is required");
+    }
+    if (body.detail !== undefined) data.detail = body.detail?.trim() || null;
+    if (Object.keys(data).length === 0) throw app.httpErrors.badRequest("Nothing to update");
+
+    return prisma.$transaction(async (tx) => {
+      const addon = await tx.occurrenceAddon.update({ where: { id: addonId }, data });
+      const occ = await tx.jobOccurrence.findUnique({
+        where: { id: occurrenceId },
+        select: { jobId: true },
+      });
+      // Money: changes what the client is billed for this visit, and therefore
+      // what the crew is paid out of it. Both sides recorded so the trail shows
+      // a CORRECTION rather than a remove-and-re-add.
+      await writeAudit(tx, AUDIT.JOB.ADDON_UPDATED, uid, {
+        occurrenceId,
+        jobId: occ?.jobId ?? null,
+        addonId,
+        tag: addon.tag,
+        customLabel: addon.customLabel,
+        detail: addon.detail,
+        detailBefore: before.detail,
+        tagBefore: before.tag,
+        customLabelBefore: before.customLabel,
+        priceBefore: before.price,
+        priceAfter: addon.price,
+      });
+      return addon;
+    });
+  });
+
   app.delete("/admin/occurrences/:id/addons/:addonId", adminGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const occurrenceId = String(req.params.id);

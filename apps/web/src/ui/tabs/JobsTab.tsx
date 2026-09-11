@@ -4046,10 +4046,10 @@ export default function JobsTab({
                       separate range-independent fetch (see
                       `expiredGhostCount`), NOT from this group's rows.
 
-                      The server only keeps expired ghosts for a week
-                      (GHOST_EXPIRED_GRACE_DAYS), so this count is
-                      inherently "expired in the last week" — older ones
-                      have already faded out. Clicking narrows to the
+                      The server only keeps expired ghosts for
+                      GHOST_EXPIRED_GRACE_DAYS, so this count is inherently
+                      "expired within that window" — older ones have
+                      already faded out. Clicking narrows to the
                       matching filter over that same window; from there
                       the date range can be widened to find older ones. */}
                   {group.label === "Today" && (() => {
@@ -6587,7 +6587,7 @@ export default function JobsTab({
                             </Badge>
                           ))}
                           {(occ.addons ?? []).map((addon: any) => (
-                            <Badge key={addon.id} fontSize="xs" px="2" borderRadius="full" bg="gray.200" color="gray.700">
+                            <Badge key={addon.id} title={addon.detail ?? undefined} fontSize="xs" px="2" borderRadius="full" bg="gray.200" color="gray.700">
                               +{addon.tag ? jobTagLabel(addon.tag) : addon.customLabel}
                             </Badge>
                           ))}
@@ -6932,7 +6932,7 @@ export default function JobsTab({
                           </Badge>
                         ))}
                         {(occ.addons ?? []).map((addon: any) => (
-                          <Badge key={addon.id} fontSize="xs" px="2" borderRadius="full" bg="gray.200" color="gray.700">
+                          <Badge key={addon.id} title={addon.detail ?? undefined} fontSize="xs" px="2" borderRadius="full" bg="gray.200" color="gray.700">
                             +{addon.tag ? jobTagLabel(addon.tag) : addon.customLabel}
                           </Badge>
                         ))}
@@ -7749,9 +7749,23 @@ export default function JobsTab({
                         </Text>
                         <VStack align="start" gap={0} mt={0.5}>
                           {(occ.addons ?? []).map((addon: any) => (
-                            <Text key={addon.id} fontSize="xs" color="green.600">
-                              +${addon.price.toFixed(2)} — {addon.tag ? jobTagLabel(addon.tag) : addon.customLabel}
-                            </Text>
+                            <Box key={addon.id}>
+                              <Text fontSize="xs" color="green.600">
+                                +${addon.price.toFixed(2)} — {addon.tag ? jobTagLabel(addon.tag) : addon.customLabel}
+                              </Text>
+                              {/* The note captured when the service was added.
+                                  It is CLIENT-VISIBLE detail ("5 bushes at $25
+                                  each") and the dialog asks for it, so an author
+                                  who types one expects to see it. It was stored
+                                  from day one and left out of every server
+                                  select, so it reached no surface at all —
+                                  which reads as "the field does nothing". */}
+                              {addon.detail && (
+                                <Text fontSize="2xs" color="green.700" pl={2} whiteSpace="pre-wrap">
+                                  {addon.detail}
+                                </Text>
+                              )}
+                            </Box>
                           ))}
                         </VStack>
                       </Box>

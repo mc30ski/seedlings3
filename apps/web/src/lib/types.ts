@@ -817,7 +817,10 @@ export type WorkerOccurrence = {
   _blockingOccurrenceStatus?: JobOccurrenceStatus;
   _ghostDate?: string;
   propertyPhotos?: { propertyPhoto: { id: string; r2Key: string; url?: string; fileName?: string | null; description?: string | null; sortOrder: number } }[];
-  addons?: { id: string; tag?: string | null; customLabel?: string | null; price: number }[];
+  /** `detail` is the optional client-visible note captured when the service
+   *  was added ("5 bushes at $25.00 each"). It was persisted from day one
+   *  but omitted from every server select, so it reached no surface at all. */
+  addons?: { id: string; tag?: string | null; customLabel?: string | null; price: number; detail?: string | null }[];
   instructions?: { id: string; text: string; isPreset: boolean; repeats: boolean; sortOrder: number }[];
   linkedOccurrenceId?: string | null;
   linkedOccurrence?: {

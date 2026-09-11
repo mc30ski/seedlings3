@@ -22,6 +22,7 @@ import {
   createListCollection,
 } from "@chakra-ui/react";
 import { apiGet, apiPost, apiDelete, apiPatch } from "@/src/lib/api";
+import InvoiceLinePreview from "@/src/ui/dialogs/InvoiceLinePreview";
 import { fmtDate } from "@/src/lib/dates";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import ImpersonationWarning from "@/src/ui/components/ImpersonationWarning";
@@ -179,6 +180,7 @@ function ChargeFields({
               ? `The name and amount follow the ${derived.quantity} ${derived.unit} pulled from inventory — change the quantity on the line to change them. The detail writes itself and updates with the quantity; type your own to take it over, or clear the field to hand it back.`
               : "The client sees the line name, the detail, and the amount."}
           </Text>
+          <InvoiceLinePreview name={desc} amount={cost} detail={detail} emptyLabel="this charge" />
         </VStack>
       </Box>
 
@@ -604,20 +606,36 @@ export default function ManageInvoiceChargesDialog({
 
   async function handleUpdate() {
     if (!editingId) return;
-    const row = charges.find((c) => c.id === editingId);
-    const fromInventory = !!row?.supplyHold;
     const cost = parseFloat(editCost);
-    // A derived row has no editable amount or name to validate.
-    if (!fromInventory && (isNaN(cost) || cost <= 0 || !editDesc.trim())) return;
+    // Validated for EVERY row, inventory-backed or not. Both fields are
+    // rendered and editable on a derived line, so they have to be checked
+    // there too — skipping the check was the other half of silently
+    // discarding them.
+    if (isNaN(cost) || cost <= 0 || !editDesc.trim()) return;
     dlgErr.clear();
     try {
       const endpoint = isAdmin
         ? `/api/admin/invoice-charges/${editingId}`
         : `/api/invoice-charges/${editingId}`;
       const updated = await apiPatch<InvoiceCharge>(endpoint, {
-        // Amount and name are DERIVED on an inventory line — omit them so the
-        // server doesn't reject the whole patch. The stepper owns them.
-        ...(fromInventory ? {} : { cost, description: editDesc.trim() }),
+        // ALWAYS SENT, inventory-backed or not.
+        //
+        // These were omitted for a derived line, to dodge a 409 the server
+        // used to raise ("this line comes from inventory, so its amount
+        // follows the quantity"). That rule was deliberately removed — see
+        // updateInvoiceCharge: "an inventory-backed line is an ordinary
+        // charge… the words stay yours, and so does any amount you type."
+        // The client was never updated to match.
+        //
+        // The effect was silent and total: the name and amount inputs are
+        // rendered and editable on a derived line, so an operator typed a new
+        // amount, pressed Save, got a success, and the value went nowhere —
+        // the server only writes the fields it is sent. Production audit rows
+        // show exactly that, three saves in a row with
+        // changedFields=["actualCost","detail","detailIsCustom"] and the cost
+        // unchanged at 25 each time.
+        cost,
+        description: editDesc.trim(),
         // Sent as null when blank, which CLEARS the field. That is how an
         // operator removes a detail or a cost entered by mistake.
         detail: editDetail.trim() || null,
