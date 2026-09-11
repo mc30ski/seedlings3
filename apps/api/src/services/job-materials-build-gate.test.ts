@@ -874,6 +874,184 @@ describe("[build-gate] the wording matches what the thing does", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+describe("[build-gate] asking a client to confirm is recorded as an ASK", () => {
+  // Tapping "Request Confirmation" used to write nothing: it opened an `sms:`
+  // link and returned, so the card afterwards was identical and there was no
+  // way to tell "chased yesterday, still quiet" from "never contacted".
+  //
+  // The hard constraint is what the record MEANS. The composer is the OS
+  // messaging app — we never learn whether send was pressed. A surface saying
+  // "messaged" when the draft was abandoned would stop someone chasing a
+  // client who was never contacted, which is worse than showing nothing.
+  const WORKER = readFileSync(join(__dirname, "../routes/worker.ts"), "utf8");
+  const TAB = web("ui/tabs/JobsTab.tsx");
+  const SCHEMA = readFileSync(join(__dirname, "../../prisma/schema.prisma"), "utf8");
+
+  it("the ask is recorded before the composer takes over", () => {
+    // window.open hands control to the OS; this is the last moment we have.
+    const at = TAB.indexOf("confirmation-requested");
+    const open = TAB.indexOf("buildSmsHref", at);
+    expect(at, "the client must POST the ask").toBeGreaterThan(-1);
+    expect(open, "…and it must come BEFORE the handoff").toBeGreaterThan(at);
+  });
+
+  it("a failed write never blocks the operator from messaging", () => {
+    // The cost of losing the stamp is a missing marker; the cost of blocking
+    // is a client who never gets contacted.
+    const block = TAB.slice(TAB.indexOf("confirmation-requested"), TAB.indexOf("buildSmsHref", TAB.indexOf("confirmation-requested")));
+    expect(block).toMatch(/\.catch\(\(\) => \{\}\)/);
+  });
+
+  it("the route records an attempt and touches no status", () => {
+    const at = WORKER.indexOf('app.post("/occurrences/:id/confirmation-requested"');
+    expect(at).toBeGreaterThan(-1);
+    const body = WORKER.slice(at, WORKER.indexOf("\n  app.", at + 10));
+    expect(body, "must audit the attempt").toMatch(/action: "client_confirmation_requested"/);
+    expect(body, "must NOT flip the confirmed flag").not.toMatch(/isClientConfirmed/);
+    expect(body, "same authorization as /confirm").toMatch(/Only the claimer or an admin/);
+  });
+
+  it("the last ask moves forward; the first one never does", () => {
+    // Otherwise "asked 9 days ago" lingers after you chased them this morning,
+    // or "how long has this been unconfirmed" is lost on the first follow-up.
+    const at = WORKER.indexOf('app.post("/occurrences/:id/confirmation-requested"');
+    const body = WORKER.slice(at, WORKER.indexOf("\n  app.", at + 10));
+    expect(body).toMatch(/confirmationRequestedAt: now/);
+    expect(body).toMatch(/occ\.confirmationFirstRequestedAt \? \{\} : \{ confirmationFirstRequestedAt: now \}/);
+  });
+
+  it("nothing anywhere claims the client was SENT or MESSAGED", () => {
+    // The word matters more than the feature. Comments stripped so the
+    // explanations of this very rule do not trip it.
+    const strip = (x: string) => x.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+    const tabCode = strip(TAB);
+    const at = tabCode.indexOf("Confirmation asked");
+    expect(at, "the tooltip must use the word 'asked'").toBeGreaterThan(-1);
+    const tooltip = tabCode.slice(at, at + 160);
+    expect(tooltip).not.toMatch(/\bsent\b|\bmessaged\b|\bnotified\b/i);
+  });
+
+  it("the schema says why these columns cannot mean 'sent'", () => {
+    expect(SCHEMA).toMatch(/confirmationRequestedAt\s+DateTime\?/);
+    expect(SCHEMA).toMatch(/confirmationFirstRequestedAt\s+DateTime\?/);
+    expect(SCHEMA, "the reasoning has to travel with the column")
+      .toMatch(/never learns whether the operator actually pressed send/);
+  });
+});
+
+describe("[build-gate] client texts greet people by first name", () => {
+  // "Hi Laurie Aithaus, this is Seedlings Lawn Care" reads like a collections
+  // notice. These go to regulars, from a small crew — the full name is the
+  // wrong register.
+  //
+  // Gated because the greeting is built independently on TWO surfaces (the
+  // Jobs-tab quick messages and the start-of-day workflow), and the same
+  // client can be texted from either. One of them reverting would address the
+  // same person two different ways depending on which screen the operator
+  // happened to be on.
+  const UTILS = web("ui/tabs/JobsTab.utils.ts");
+  const WORKFLOW = web("ui/workflows/BeginWorkDayWorkflow.tsx");
+
+  it("both message surfaces go through the shared helper", () => {
+    expect(UTILS).toMatch(/export function greetingName\(/);
+    expect(UTILS, "quick messages must use it").toMatch(/const name = greetingName\(contactName\)/);
+    expect(WORKFLOW, "the workday workflow must use it too")
+      .toMatch(/const name = greetingName\(contactName\)/);
+    expect(WORKFLOW).toMatch(/import \{[^}]*greetingName[^}]*\} from "@\/src\/ui\/tabs\/JobsTab\.utils"/);
+  });
+
+  it("neither surface falls back to the raw full name", () => {
+    // The shape this replaced, on both files.
+    for (const [name, src] of [["utils", UTILS], ["workflow", WORKFLOW]] as const) {
+      const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+      expect(code, `${name} must not greet with the unsplit name`)
+        .not.toMatch(/const name = contactName (\?\?|\|\|) "there"/);
+    }
+  });
+
+  it("the helper takes the first token and degrades to \"there\"", () => {
+    // Asserted on the implementation because it is three lines and pure —
+    // a rewrite that kept the name but changed the rule would otherwise pass.
+    const body = UTILS.slice(
+      UTILS.indexOf("export function greetingName("),
+      UTILS.indexOf("export function getQuickMessage("),
+    );
+    expect(body).toMatch(/\.trim\(\)\.split\(\/\\s\+\/\)\[0\]/);
+    expect(body).toMatch(/return first \|\| "there"/);
+  });
+});
+
+describe("[build-gate] the expired-ghost window is one number, not three", () => {
+  // An expired next-visit ghost is COUNTED by the server (which keeps it for
+  // GHOST_EXPIRED_GRACE_DAYS) and REVEALED by a client date preset. The two
+  // are written in different files, in different units — a day count on one
+  // side, a named preset on the other — and nothing joined them.
+  //
+  // They came apart exactly as you would expect: the server's grace window
+  // moved from 7 days to 30 and both client presets stayed on "lastWeek", so
+  // the chip counted three expired visits and the filter it opened showed one.
+  // The count was right and the filter was right; they were answering
+  // different questions.
+  const JOBS_SVC = readFileSync(join(__dirname, "./jobs.ts"), "utf8");
+  const TAB = web("ui/tabs/JobsTab.tsx");
+
+  /** Roughly how many days back each preset reaches. Only the presets a
+   *  reveal-the-expired control could plausibly use. */
+  const PRESET_DAYS: Record<string, number> = {
+    lastWeek: 7,
+    lastMonth: 30,
+    lastYear: 365,
+    all: Number.POSITIVE_INFINITY,
+  };
+
+  function graceDays(): number {
+    const m = /export const GHOST_EXPIRED_GRACE_DAYS = (\d+);/.exec(JOBS_SVC);
+    expect(m, "GHOST_EXPIRED_GRACE_DAYS must be a plain numeric literal").toBeTruthy();
+    return Number(m![1]);
+  }
+
+  /** Every preset the client uses to reveal EXPIRED ghosts, ONE ENTRY PER
+   *  SITE — not deduplicated. Both sites agreeing is the healthy case, and a
+   *  Set would collapse them to one and make "did I find both?" unanswerable. */
+  function expiredPresets(): string[] {
+    const out: string[] = [];
+    // applyGhostFilter's ternary.
+    const t = /bucket === "expired" \? "([a-zA-Z]+)"/.exec(TAB);
+    if (t) out.push(t[1]);
+    // The chip's own onClick, which sets the filter and the dates together.
+    const chip = /setStatusFilter\(\["GHOST_EXPIRED"\]\);[\s\S]{0,400}?setDatePreset\("([a-zA-Z]+)"\)/g;
+    for (let m = chip.exec(TAB); m; m = chip.exec(TAB)) out.push(m[1]);
+    return out;
+  }
+
+  it("parses both sides — a regex that matched nothing would pass vacuously", () => {
+    expect(graceDays()).toBeGreaterThan(0);
+    expect(expiredPresets().length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("every expired-ghost preset reaches back at least as far as the server keeps them", () => {
+    const grace = graceDays();
+    for (const preset of expiredPresets()) {
+      const days = PRESET_DAYS[preset];
+      expect(days, `unknown preset "${preset}" — add it to PRESET_DAYS`).toBeDefined();
+      expect(
+        days,
+        `the server keeps expired ghosts ${grace} days but the filter opens "${preset}" (~${days} days), so the chip would count rows the filter hides`,
+      ).toBeGreaterThanOrEqual(grace);
+    }
+  });
+
+  it("the copy does not promise a different window than the filter applies", () => {
+    // The chip's tooltip said "expired in the last week" long after the filter
+    // stopped meaning that.
+    const grace = graceDays();
+    if (grace > 7) {
+      expect(TAB, "tooltip must not still say 'last week'")
+        .not.toMatch(/expired in the last week/);
+    }
+  });
+});
+
 describe("[build-gate] services carry the same optional detail as charges", () => {
   const ADDON_DLG = web("ui/dialogs/ManageAddonsDialog.tsx");
   const CHARGE_DLG = web("ui/dialogs/ManageInvoiceChargesDialog.tsx");

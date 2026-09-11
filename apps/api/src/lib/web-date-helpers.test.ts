@@ -11,6 +11,8 @@ import {
   bizAddYears,
   bizYearOf,
   bizDaysBetween,
+  bizToday,
+  fmtRelativeDay,
   bizMondayOnOrBefore,
   bizStartOfMonth,
   bizStartOfYear,
@@ -104,6 +106,39 @@ describe("bizAddYears (CLAMPING)", () => {
 
   it("normal case", () => {
     expect(bizAddYears("2026-06-15" as EtDateKey, 1)).toBe("2027-06-15");
+  });
+});
+
+describe("fmtRelativeDay", () => {
+  // Counts CALENDAR DAYS in the business timezone, which is what a person
+  // means. A naive (now - then) / 86_400_000 would call an 11pm ask viewed at
+  // 1am "today"; it is yesterday, and it is also the forbidden pattern.
+  it("names today, yesterday, and further back", () => {
+    const today = bizToday();
+    expect(fmtRelativeDay(today)).toBe("today");
+    expect(fmtRelativeDay(bizAddDays(today, -1))).toBe("yesterday");
+    expect(fmtRelativeDay(bizAddDays(today, -3))).toBe("3 days ago");
+    expect(fmtRelativeDay(bizAddDays(today, -30))).toBe("30 days ago");
+  });
+
+  it("treats a future stamp as today rather than inventing negative days", () => {
+    // Clock skew between a phone and the server is real; "-1 days ago" is
+    // worse than a harmless "today".
+    expect(fmtRelativeDay(bizAddDays(bizToday(), 1))).toBe("today");
+  });
+
+  it("returns empty for anything unparseable, so callers need no guard", () => {
+    expect(fmtRelativeDay(null)).toBe("");
+    expect(fmtRelativeDay(undefined)).toBe("");
+    expect(fmtRelativeDay("")).toBe("");
+    expect(fmtRelativeDay("not-a-date")).toBe("");
+  });
+
+  it("accepts a full ISO instant, which is what the API returns", () => {
+    // confirmationRequestedAt is a DateTime, serialized as an ISO string —
+    // not a date key. Both shapes have to work.
+    const iso = `${bizAddDays(bizToday(), -2)}T15:04:05.000Z`;
+    expect(fmtRelativeDay(iso)).toBe("2 days ago");
   });
 });
 

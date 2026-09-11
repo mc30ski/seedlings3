@@ -5159,6 +5159,69 @@ export default async function workerRoutes(app: FastifyInstance) {
     return { deleted: true };
   });
 
+  /**
+   * Record that we ASKED the client to confirm — not that they did.
+   *
+   * Fired when the operator opens the message composer from the Confirm
+   * Client dialog. Before this, that path wrote nothing at all: it opened an
+   * `sms:` link and returned, so the card afterwards was identical to the card
+   * before and there was no way to tell "chased yesterday, still quiet" from
+   * "never contacted".
+   *
+   * IT CANNOT MEAN "SENT". The composer is the OS messaging app; we never
+   * learn whether send was pressed. Every surface reading these stamps must
+   * say "asked" — see the schema comment.
+   *
+   * Not a status change: `isClientConfirmed` is untouched, nothing gates on
+   * these columns, and /start behaves exactly as before. This only records
+   * that an attempt was made.
+   */
+  app.post("/occurrences/:id/confirmation-requested", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    const occ = await prisma.jobOccurrence.findUnique({
+      where: { id: occurrenceId },
+      include: { assignees: true },
+    });
+    if (!occ) throw app.httpErrors.notFound("Occurrence not found");
+    // Same authorization as /confirm — whoever may confirm may also chase.
+    const isClaimer = occ.assignees.some((a: any) => a.userId === uid && a.assignedById === uid);
+    const user = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
+    const isAdmin = user?.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+    if (!isClaimer && !isAdmin) {
+      throw app.httpErrors.forbidden("Only the claimer or an admin can request confirmation");
+    }
+
+    const now = new Date();
+    const updated = await prisma.$transaction(async (tx) => {
+      const row = await tx.jobOccurrence.update({
+        where: { id: occurrenceId },
+        data: {
+          confirmationRequestedAt: now,
+          // Set once and never moved, so "how long has this been unconfirmed"
+          // survives every follow-up.
+          ...(occ.confirmationFirstRequestedAt ? {} : { confirmationFirstRequestedAt: now }),
+        },
+        select: { confirmationRequestedAt: true, confirmationFirstRequestedAt: true },
+      });
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+        occurrenceId,
+        jobId: occ.jobId ?? null,
+        action: "client_confirmation_requested",
+        // Deliberately recorded as an ATTEMPT. The audit trail must not imply
+        // the client received anything.
+        previousRequestedAt: occ.confirmationRequestedAt ?? null,
+        requestedAt: now.toISOString(),
+        isRepeatAsk: !!occ.confirmationRequestedAt,
+        byClaimer: !!isClaimer,
+        byAdmin: !!isAdmin,
+        occurrenceStatus: occ.status,
+      });
+      return row;
+    });
+    return updated;
+  });
+
   app.post("/occurrences/:id/confirm", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const occurrenceId = String(req.params.id);
