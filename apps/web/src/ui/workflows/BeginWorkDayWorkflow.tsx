@@ -1,5 +1,6 @@
 "use client";
 
+import { greetingName } from "@/src/ui/tabs/JobsTab.utils";
 import { useEffect, useState } from "react";
 import {
   Badge,
@@ -601,7 +602,10 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                         const dateStr = current.startAt
                           ? fmtDateOpts(current.startAt, { weekday: "long", month: "long", day: "numeric" })
                           : "your upcoming appointment";
-                        const name = contactName || "there";
+                        // Same greeting rule as the Jobs-tab quick messages —
+                        // first name only. Shared so the two surfaces cannot
+                        // address the same client differently.
+                        const name = greetingName(contactName);
                         // `address` is already computed above for the card
                         // header — reuse so the message body matches the
                         // location the worker sees and matches the wording

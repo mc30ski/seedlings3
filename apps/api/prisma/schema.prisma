@@ -1121,6 +1121,25 @@ model JobOccurrence {
   isEstimate        Boolean @default(false) // @deprecated — use workflow
   isAdminOnly       Boolean @default(false)
   isClientConfirmed Boolean @default(false)
+
+  /// When we last OPENED A MESSAGE asking the client to confirm this visit.
+  ///
+  /// "ASKED", NOT "SENT", AND THAT DISTINCTION IS THE WHOLE POINT. The request
+  /// hands off to the OS messaging app via an `sms:` / `mailto:` link, so the
+  /// app never learns whether the operator actually pressed send — they may
+  /// have edited the draft, closed it, or had no signal. Anything on screen
+  /// derived from this must say "asked", because a card claiming "messaged"
+  /// when the draft was abandoned would stop someone chasing a client who was
+  /// never contacted. That is strictly worse than showing nothing.
+  ///
+  /// Moves FORWARD on every re-ask, mirroring paymentRequestSentAt — otherwise
+  /// "asked 9 days ago" lingers after you chased them again this morning.
+  confirmationRequestedAt      DateTime?
+  /// The FIRST ask, never overwritten — the honest answer to "how long has
+  /// this client been sitting unconfirmed?", which the last-ask stamp above
+  /// loses every time you follow up. Same pairing as
+  /// paymentRequestSentAt / paymentRequestFirstSentAt.
+  confirmationFirstRequestedAt DateTime?
   isHighPriority    Boolean @default(false)
   pinnedNote        String?
   pinnedNoteRepeats Boolean @default(true)

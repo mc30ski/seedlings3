@@ -470,6 +470,40 @@ export function bizYearOf(key: EtDateKey): number {
  *
  *  Both inputs MUST be YYYY-MM-DD strings (no time component). For mixed
  *  Date / ISO inputs, convert via `bizDateKey(d)` first. */
+/**
+ * How long ago something happened, in plain words — "today", "yesterday",
+ * "3 days ago".
+ *
+ * Built on bizDaysBetween / bizDateKey so it counts CALENDAR DAYS in the
+ * business timezone, not 24-hour blocks. An ask at 11pm and a glance at 1am
+ * are "yesterday", which is what a person means; a naive
+ * (now - then) / 86_400_000 would call it "today" and is the forbidden
+ * pattern anyway (see docs/DATE_HANDLING.md).
+ *
+ * Returns "" for anything unparseable, so a caller can render it inline
+ * without guarding.
+ */
+export function fmtRelativeDay(d: string | Date | null | undefined): string {
+  if (!d) return "";
+  // A BARE DATE KEY IS ALREADY THE ANSWER — do not re-parse it.
+  //
+  // bizDateKey("2026-09-11") does `new Date(...)`, which reads a date-only
+  // string as UTC midnight; that is 8pm the PREVIOUS day in ET, so the key
+  // comes back one day early and "today" renders as "yesterday". This is the
+  // off-by-one docs/DATE_HANDLING.md exists for, and the formatters already
+  // dodge it by anchoring keys at UTC noon. Passing the key straight through
+  // is the same dodge, without a second conversion to get wrong.
+  const key = typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)
+    ? (d as EtDateKey)
+    : (isValidDateInput(d as string | Date) ? bizDateKey(d as string | Date) : ("" as EtDateKey));
+  if (!key) return "";
+  const n = bizDaysBetween(key, bizToday());
+  if (!Number.isFinite(n)) return "";
+  if (n <= 0) return "today";
+  if (n === 1) return "yesterday";
+  return `${n} days ago`;
+}
+
 export function bizDaysBetween(fromKey: EtDateKey, toKey: EtDateKey): number {
   if (!fromKey || !toKey || !/^\d{4}-\d{2}-\d{2}$/.test(fromKey) || !/^\d{4}-\d{2}-\d{2}$/.test(toKey)) return NaN;
   const [fy, fm, fd] = fromKey.split("-").map(Number);

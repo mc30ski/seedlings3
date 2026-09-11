@@ -119,8 +119,26 @@ export function parseJobTags(occ: any): string[] {
 /** Preset quick-contact message keyed off occurrence state. Currently
  *  covers two flows — request confirmation (SCHEDULED + unconfirmed)
  *  and request payment (PENDING_PAYMENT). Returns null otherwise. */
+/**
+ * The name to greet a client by in a text message.
+ *
+ * FIRST NAME ONLY. Full name reads like a form letter — "Hi Laurie Aithaus,
+ * this is Seedlings Lawn Care" is how a collections notice opens, not how a
+ * lawn crew says hello to a regular.
+ *
+ * Splits on whitespace and takes the first token, which is the right answer
+ * for the overwhelming majority and never worse than the full string: a
+ * mononym is returned unchanged, and a name stored "Aithaus, Laurie" yields
+ * "Aithaus," which is no more wrong than the whole thing was. Falls back to
+ * "there" when there is no name at all.
+ */
+export function greetingName(contactName: string | null | undefined): string {
+  const first = (contactName ?? "").trim().split(/\s+/)[0];
+  return first || "there";
+}
+
 export function getQuickMessage(occ: any, contactName: string | null): { label: string; body: string } | null {
-  const name = contactName ?? "there";
+  const name = greetingName(contactName);
   const dateStr = occ.startAt
     ? fmtDateOpts(occ.startAt, { weekday: "long", month: "long", day: "numeric" })
     : "your upcoming appointment";

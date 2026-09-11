@@ -65,7 +65,7 @@ import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
 import { getLocation } from "@/src/lib/geo";
 import { useOnSiteHint } from "@/src/lib/onSiteHint";
 import OnSiteHintBanner from "@/src/ui/components/OnSiteHintBanner";
-import { fmtDate, fmtDateTime, fmtDateWeekday, fmtDateOpts, fmtTimeOpts, bizDateKey, bizToday, bizYesterday, bizAddDays, bizAddYears, bizYearOf, bizDaysBetween, bizHourMinute, bizInstantFromEtParts, bizToLocalInputValue, bizParseLocalInputValue, type EtDateKey, bizTomorrow } from "@/src/lib/dates";
+import { fmtDate, fmtRelativeDay, fmtDateTime, fmtDateWeekday, fmtDateOpts, fmtTimeOpts, bizDateKey, bizToday, bizYesterday, bizAddDays, bizAddYears, bizYearOf, bizDaysBetween, bizHourMinute, bizInstantFromEtParts, bizToLocalInputValue, bizParseLocalInputValue, type EtDateKey, bizTomorrow } from "@/src/lib/dates";
 import {
   prettyStatus,
   clientLabel,
@@ -441,7 +441,8 @@ export default function JobsTab({
   // so it's a `load()` dependency.
   const ghostExpiryMode =
     statusFilter[0] === "GHOST_EXPIRING" || statusFilter[0] === "GHOST_EXPIRED";
-  // Count of next-visit ghosts that expired in the last week. Fetched
+  // Count of next-visit ghosts that expired within the server's grace
+  // window (GHOST_EXPIRED_GRACE_DAYS, currently 30 days). Fetched
   // separately from the feed on purpose: ghosts are dated on the day the
   // visit was due, so a forward-looking date range contains none of the
   // expired ones. This number is the heads-up that some slipped into the
@@ -1007,7 +1008,13 @@ export default function JobsTab({
     setOverdueActive(false);
     setUnapprovedHoursActive(false);
     setPausedRepeatingOnly(false);
-    const preset: DatePreset = bucket === "expired" ? "lastWeek" : "now";
+    // MUST COVER THE SERVER'S GRACE WINDOW. An expired ghost stays listed for
+    // GHOST_EXPIRED_GRACE_DAYS (30) and is dated on the day it was due, so a
+    // narrower range hides rows the badge has already counted — the chip said
+    // "Expired 3", the filter opened, and one row was there. This was
+    // "lastWeek" while the server kept 7 days; when the server moved to 30 the
+    // two silently came apart. A build gate now ties them together.
+    const preset: DatePreset = bucket === "expired" ? "lastMonth" : "now";
     const d = computeDatesFromPreset(preset);
     setStatusFilter([bucket === "expired" ? "GHOST_EXPIRED" : "GHOST_EXPIRING"]);
     setDatePreset(preset);
@@ -2331,6 +2338,28 @@ export default function JobsTab({
             cancelLabel: "Request Confirmation",
             onCancelAction: async () => {
               const cc = await fetchCommsCc();
+              // Record the ATTEMPT before handing off. The composer is the OS
+              // messaging app, so this is the last moment we control — once
+              // window.open fires we never hear from this flow again and
+              // cannot know whether send was pressed.
+              //
+              // Fire-and-forget on purpose: a failed write must not block the
+              // operator from messaging their client. The cost of losing the
+              // stamp is a missing "Asked" marker; the cost of blocking is a
+              // client who never gets contacted.
+              void apiPost(`/api/occurrences/${occ.id}/confirmation-requested`)
+                .then((r: any) => {
+                  setItems((prev) => prev.map((o) => o.id === occ.id
+                    ? { ...o,
+                        confirmationRequestedAt: r?.confirmationRequestedAt ?? new Date().toISOString(),
+                        confirmationFirstRequestedAt:
+                          r?.confirmationFirstRequestedAt
+                          ?? (o as any).confirmationFirstRequestedAt
+                          ?? new Date().toISOString(),
+                      } as any
+                    : o));
+                })
+                .catch(() => {});
               if (pocPhone) {
                 window.open(buildSmsHref({ to: pocPhone, body: quick!.body, ccPhones: cc.phones }), "_self");
               } else if (pocEmail) {
@@ -4047,8 +4076,8 @@ export default function JobsTab({
                       `expiredGhostCount`), NOT from this group's rows.
 
                       The server only keeps expired ghosts for
-                      GHOST_EXPIRED_GRACE_DAYS, so this count is inherently
-                      "expired within that window" — older ones have
+                      GHOST_EXPIRED_GRACE_DAYS (30), so this count is inherently
+                      "expired in the last month" — older ones have
                       already faded out. Clicking narrows to the
                       matching filter over that same window; from there
                       the date range can be widened to find older ones. */}
@@ -4071,12 +4100,14 @@ export default function JobsTab({
                         whiteSpace="nowrap"
                         _hover={{ bg: "gray.700" }}
                         css={{ animation: "seedlings-pulse-ghost-chip 2s ease-in-out infinite" }}
-                        title="Filter to next visits that expired in the last week"
+                        title="Filter to next visits that expired in the last month"
                         onClick={(e: any) => {
                           e.stopPropagation();
                           setStatusFilter(["GHOST_EXPIRED"]);
-                          setDatePreset("lastWeek");
-                          const d = computeDatesFromPreset("lastWeek");
+                          // Same window as applyGhostFilter, and for the same
+                          // reason — see the note there.
+                          setDatePreset("lastMonth");
+                          const d = computeDatesFromPreset("lastMonth");
                           setDateFrom(d.from);
                           setDateTo(d.to);
                         }}
@@ -5186,11 +5217,40 @@ export default function JobsTab({
 
   const quickActionButton = pauseIndicator ?? (isTrainee || isPeek ? null : (() => {
               if (needsConfirmation && (isClaimer || forAdmin)) {
+                // ALREADY ASKED changes how the same button reads, without
+                // adding a second control to a dense card: solid orange means
+                // "nobody has chased this", outlined means "chased, still
+                // waiting". Same slot, same tap target, same action.
+                //
+                // The wording is "Asked", never "Sent" or "Messaged" — the
+                // composer is the OS app and we never learn whether send was
+                // pressed. A card claiming the client was messaged when the
+                // draft was abandoned would stop someone chasing a client who
+                // was never contacted.
+                const askedAt = (occ as any).confirmationRequestedAt as string | null | undefined;
+                const asked = !!askedAt;
                 return (
-                  <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="orange.400" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "orange.500" }} title="Confirm Client" onClick={(e: any) => {
-                    e.stopPropagation();
-                    openConfirmClientDialog(occ);
-                  }}><CheckCircle2 size={12} /></Box>
+                  <Box
+                    as="button"
+                    flexShrink={0}
+                    w="22px" h="22px" minW="22px"
+                    borderRadius="full"
+                    bg={asked ? "transparent" : "orange.400"}
+                    color={asked ? "orange.600" : "white"}
+                    borderWidth={asked ? "1.5px" : undefined}
+                    borderColor={asked ? "orange.400" : undefined}
+                    display="flex" alignItems="center" justifyContent="center"
+                    _hover={{ bg: asked ? "orange.100" : "orange.500" }}
+                    title={
+                      asked
+                        ? `Confirmation asked ${fmtRelativeDay(askedAt!)} — tap to confirm or ask again`
+                        : "Confirm Client"
+                    }
+                    onClick={(e: any) => {
+                      e.stopPropagation();
+                      openConfirmClientDialog(occ);
+                    }}
+                  ><CheckCircle2 size={12} /></Box>
                 );
               }
               if (isTentative) return null;
