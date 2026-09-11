@@ -2300,9 +2300,21 @@ export default function ServicesTab({
                                 </Text>
                                 <VStack align="start" gap={0} mt={0.5}>
                                   {((occ as any).addons ?? []).map((addon: any) => (
-                                    <Text key={addon.id} fontSize="xs" color="green.600">
-                                      +${addon.price.toFixed(2)} — {addon.tag ? jobTagLabel(addon.tag) : addon.customLabel}
-                                    </Text>
+                                    <Box key={addon.id}>
+                                      <Text fontSize="xs" color="green.600">
+                                        +${addon.price.toFixed(2)} — {addon.tag ? jobTagLabel(addon.tag) : addon.customLabel}
+                                      </Text>
+                                      {/* The note captured when the service was
+                                          added — see the matching block in
+                                          JobsTab. Client-visible detail, stored
+                                          since day one, shipped nowhere until
+                                          the server select was widened. */}
+                                      {addon.detail && (
+                                        <Text fontSize="2xs" color="green.700" pl={2} whiteSpace="pre-wrap">
+                                          {addon.detail}
+                                        </Text>
+                                      )}
+                                    </Box>
                                   ))}
                                 </VStack>
                               </Box>
@@ -2723,6 +2735,35 @@ export default function ServicesTab({
                                     }}
                                     variant="outline"
                                     colorPalette="teal"
+                                    busyId={statusButtonBusyId}
+                                    setBusyId={setStatusButtonBusyId}
+                                  />
+                                )}
+                                {/* Edit Charges — the per-visit invoice charges
+                                    (materials, inventory pulls, one-offs).
+                                    Same capability the Jobs tab offers from its
+                                    action menu; this tab had the DIALOG fully
+                                    wired — state, reload-on-close,
+                                    sentInvoiceAmount, disableInventory — and no
+                                    button anywhere that set `chargeDialogOccId`,
+                                    so it could never open. The feature was
+                                    unreachable rather than missing.
+
+                                    `occInEditableState` is the same gate the
+                                    Jobs tab uses: charges are frozen once a
+                                    payment has been requested or accepted, or
+                                    the invoice the client already saw would
+                                    stop matching what they are billed. */}
+                                {occInEditableState(occ) && (
+                                  <StatusButton
+                                    id="occ-edit-charges"
+                                    itemId={occ.id}
+                                    label="Edit Charges"
+                                    onClick={async () => {
+                                      setChargeDialogJobId(job.id);
+                                      setChargeDialogOccId(occ.id);
+                                    }}
+                                    variant="outline"
                                     busyId={statusButtonBusyId}
                                     setBusyId={setStatusButtonBusyId}
                                   />

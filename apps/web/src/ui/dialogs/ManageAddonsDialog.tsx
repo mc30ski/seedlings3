@@ -19,12 +19,14 @@ import {
   Button,
   Dialog,
   HStack,
+  Input,
   Portal,
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { X } from "lucide-react";
-import { apiDelete, apiGet, apiPost } from "@/src/lib/api";
+import { Pencil, X } from "lucide-react";
+import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
+import InvoiceLinePreview from "@/src/ui/dialogs/InvoiceLinePreview";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import {
   publishInlineMessage,
@@ -88,6 +90,144 @@ type PricingHintEntry = {
   } | null;
 };
 
+/**
+ * The service fields, used by BOTH the add form and the per-row edit form.
+ *
+ * Extracted for the same reason ChargeFields exists in the charges dialog:
+ * one component means the two forms can never drift into offering different
+ * fields. Before this, a service could only be added — correcting one meant
+ * deleting the line and re-adding it, which is not the same operation (it
+ * re-bills the client in the audit trail and throws away the note).
+ */
+function AddonFields({
+  tag, setTag,
+  customLabel, setCustomLabel,
+  price, setPrice,
+  detail, setDetail,
+  serviceTypes, jobTagLabel, hintEntry, onOpenGuide,
+}: {
+  tag: string; setTag: (v: string) => void;
+  customLabel: string; setCustomLabel: (v: string) => void;
+  price: string; setPrice: (v: string) => void;
+  detail: string; setDetail: (v: string) => void;
+  serviceTypes: { key: string; label: string }[];
+  jobTagLabel: (t: string) => string;
+  hintEntry: PricingHintEntry | null;
+  onOpenGuide: () => void;
+}) {
+  const chosenName = tag ? jobTagLabel(tag) : customLabel;
+
+  return (
+    <VStack align="stretch" gap={3}>
+      {/* ONE BORDERED SECTION, HEADED — the same treatment the charges dialog
+          gives its invoice fields. Services had a flat list of inputs with a
+          single note under the last one, so nothing said which of them the
+          client actually reads.
+
+          There is no matching "internal" section here because a service has no
+          internal field: unlike a charge, it carries no what-we-paid figure.
+          The footnote says so outright rather than leaving the absence to be
+          inferred from a missing box. */}
+      <Box borderWidth="1px" borderColor="border.muted" borderRadius="md" overflow="hidden">
+        <Box px={2.5} py={1} bg="blue.subtle" borderBottomWidth="1px" borderColor="border.muted">
+          <Text fontSize="2xs" fontWeight="bold" letterSpacing="0.04em" textTransform="uppercase" color="blue.fg">
+            On the client&rsquo;s invoice
+          </Text>
+        </Box>
+        <VStack align="stretch" gap={2.5} p={2.5}>
+          <Box>
+            <Text fontSize="xs" fontWeight="medium" mb={1}>
+              Service type <Text as="span" color="red.solid">*</Text>
+            </Text>
+            <Box display="flex" gap="4px" flexWrap="wrap">
+              {serviceTypes.map((t) => (
+                <Badge
+                  key={t.key}
+                  size="sm"
+                  colorPalette={tag === t.key ? "teal" : "gray"}
+                  variant={tag === t.key ? "solid" : "outline"}
+                  cursor="pointer"
+                  px="2"
+                  borderRadius="full"
+                  onClick={() => { setTag(tag === t.key ? "" : t.key); setCustomLabel(""); }}
+                >
+                  {t.label}
+                </Badge>
+              ))}
+            </Box>
+          </Box>
+          {!tag && (
+            <Box>
+              <Text fontSize="xs" fontWeight="medium" mb={1}>Or custom service</Text>
+              {/* Chakra Input, not a raw styled <input>. The charges dialog is
+                  Chakra throughout; matching it is the point of this pass. */}
+              <Input
+                size="sm"
+                value={customLabel}
+                onChange={(e) => setCustomLabel(e.target.value)}
+                placeholder="e.g., Remove fallen branch"
+              />
+            </Box>
+          )}
+          <Box>
+            <Text fontSize="xs" fontWeight="medium" mb={1}>
+              Amount <Text as="span" color="red.solid">*</Text>
+            </Text>
+            <CurrencyInput value={price} onChange={setPrice} size="sm" />
+            <HStack gap={2} mt={1.5} wrap="wrap">
+              {hintEntry?.parsedValue && (
+                <Badge
+                  size="sm" colorPalette="gray" variant="subtle" borderRadius="full" px="2"
+                  cursor="pointer" title="Tap to use as the price"
+                  onClick={() => setPrice(String(hintEntry.parsedValue!.amount))}
+                >
+                  Ref: ${hintEntry.parsedValue.amount.toFixed(2)} / {hintEntry.parsedValue.unit} · {hintEntry.parsedValue.label}
+                </Badge>
+              )}
+              <Badge
+                size="sm" colorPalette="blue" variant="outline" borderRadius="full" px="2"
+                cursor="pointer" onClick={onOpenGuide}
+              >
+                View pricing guide ↗
+              </Badge>
+            </HStack>
+            {/* The reference chip is a PRICING AID, not a second amount. It is
+                inside the invoice box only because it sits under the field it
+                fills in; say plainly that it goes nowhere near the client. */}
+            <Text fontSize="2xs" color="fg.muted" mt={1}>
+              The pricing reference is a lookup for you &mdash; only the amount above
+              reaches the invoice.
+            </Text>
+          </Box>
+          <Box>
+            <Text fontSize="xs" fontWeight="medium" mb={1}>
+              Detail{" "}
+              <Text as="span" color="fg.muted" fontWeight="normal">(optional)</Text>
+            </Text>
+            <Input
+              size="sm"
+              value={detail}
+              onChange={(e) => setDetail(e.target.value)}
+              placeholder="e.g. 5 bushes at $25.00 each"
+            />
+          </Box>
+          <Text fontSize="2xs" color="fg.muted">
+            The client sees the service name, the detail, and the amount &mdash; and
+            nothing else on this form. A service has no internal-only figure the way
+            a charge does.
+          </Text>
+          <InvoiceLinePreview
+            name={chosenName}
+            amount={price}
+            detail={detail}
+            emptyLabel="this service"
+          />
+        </VStack>
+      </Box>
+    </VStack>
+  );
+}
+
 export default function AddAddonDialog({
   occurrenceId, onClose, serviceTypes, forAdmin, onAdded, onRemoved,
   addons = null, canRemove = false,
@@ -105,6 +245,15 @@ export default function AddAddonDialog({
   // and a charge are entered identically; the only difference is that a
   // service is WORK, so it lands in the crew's POOL.
   const [detail, setDetail] = useState("");
+  /** The id of the line being corrected, expanded INLINE in the list — the
+   *  same shape the charges dialog uses. An earlier pass reused the add form
+   *  for editing; that put the edit fields far from the row being edited and
+   *  left the two dialogs behaving differently for the same job. */
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTag, setEditTag] = useState("");
+  const [editCustomLabel, setEditCustomLabel] = useState("");
+  const [editPrice, setEditPrice] = useState("");
+  const [editDetail, setEditDetail] = useState("");
   const [busy, setBusy] = useState(false);
   const dlgErr = useDialogError();
 
@@ -138,6 +287,13 @@ export default function AddAddonDialog({
     return hints.find((p) => pricingJobTags(p.parsedValue).includes(tag)) ?? null;
   }, [hints, tag]);
 
+  /** The same reference chip for the row being edited, keyed on ITS tag —
+   *  the add form's tag is unrelated while an edit is open. */
+  const editHintEntry = useMemo(() => {
+    if (!editTag) return null;
+    return hints.find((p) => pricingJobTags(p.parsedValue).includes(editTag)) ?? null;
+  }, [hints, editTag]);
+
   const labelFor = (a: ManagedAddon) =>
     a.tag ? jobTagLabel(a.tag) : (a.customLabel || "Service");
 
@@ -158,6 +314,44 @@ export default function AddAddonDialog({
       setRemoving(null);
     } finally {
       setRemoveBusy(false);
+    }
+  }
+
+  function beginEdit(a: ManagedAddon) {
+    dlgErr.clear();
+    setEditingId(a.id);
+    setEditTag(a.tag ?? "");
+    setEditCustomLabel(a.customLabel ?? "");
+    setEditPrice(String(a.price ?? ""));
+    setEditDetail(a.detail ?? "");
+  }
+
+  async function handleSaveEdit() {
+    if (!occurrenceId || !editingId) return;
+    if (!editPrice || Number(editPrice) <= 0) return;
+    if (!editTag && !editCustomLabel.trim()) return;
+    dlgErr.clear();
+    setBusy(true);
+    try {
+      const saved = await apiPatch<ManagedAddon>(
+        `/api/${forAdmin ? "admin/" : ""}occurrences/${occurrenceId}/addons/${editingId}`,
+        {
+          tag: editTag || null,
+          customLabel: editCustomLabel.trim() || null,
+          price: Number(editPrice),
+          // Sent even when empty — an empty string CLEARS the note, which is
+          // the only way to take one back off a line.
+          detail: editDetail.trim(),
+        },
+      );
+      publishInlineMessage({ type: "SUCCESS", text: "Service updated." });
+      setList((prev) => prev.map((x) => (x.id === saved.id ? { ...x, ...saved } : x)));
+      onAdded?.(saved as any);
+      setEditingId(null);
+    } catch (err) {
+      dlgErr.setError(getErrorMessage("Failed to update service.", err));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -237,6 +431,48 @@ export default function AddAddonDialog({
                     </HStack>
                     <VStack align="stretch" gap={1}>
                       {list.map((a) => (
+                        editingId === a.id ? (
+                          // INLINE, in the row being corrected — the same shape
+                          // the charges dialog uses, so the two behave alike.
+                          <VStack
+                            key={a.id}
+                            align="stretch"
+                            gap={2}
+                            borderWidth="1px"
+                            borderColor="border"
+                            borderRadius="md"
+                            bg="bg"
+                            p={2}
+                          >
+                            <AddonFields
+                              tag={editTag} setTag={setEditTag}
+                              customLabel={editCustomLabel} setCustomLabel={setEditCustomLabel}
+                              price={editPrice} setPrice={setEditPrice}
+                              detail={editDetail} setDetail={setEditDetail}
+                              serviceTypes={serviceTypes}
+                              jobTagLabel={jobTagLabel}
+                              hintEntry={editHintEntry}
+                              onOpenGuide={() => setGuideOpen(true)}
+                            />
+                            <HStack gap={2} justify="flex-end">
+                              <Button size="sm" variant="ghost" onClick={() => setEditingId(null)}>
+                                Cancel
+                              </Button>
+                              <Button
+                                size="sm"
+                                colorPalette="teal"
+                                loading={busy}
+                                disabled={
+                                  !editPrice || Number(editPrice) <= 0
+                                  || (!editTag && !editCustomLabel.trim())
+                                }
+                                onClick={handleSaveEdit}
+                              >
+                                Save
+                              </Button>
+                            </HStack>
+                          </VStack>
+                        ) : (
                         <HStack key={a.id} justify="space-between" align="start" gap={2}>
                           <Box minW={0}>
                             <Text fontSize="sm">{labelFor(a)}</Text>
@@ -256,6 +492,19 @@ export default function AddAddonDialog({
                               <Button
                                 size="xs"
                                 variant="ghost"
+                                px="1"
+                                minW="auto"
+                                title="Edit this service"
+                                disabled={removeBusy || busy}
+                                onClick={() => beginEdit(a)}
+                              >
+                                <Pencil size={13} />
+                              </Button>
+                            )}
+                            {canRemove && (
+                              <Button
+                                size="xs"
+                                variant="ghost"
                                 colorPalette="red"
                                 px="1"
                                 minW="auto"
@@ -268,6 +517,7 @@ export default function AddAddonDialog({
                             )}
                           </HStack>
                         </HStack>
+                        )
                       ))}
                     </VStack>
                     {canRemove && (
@@ -319,103 +569,51 @@ export default function AddAddonDialog({
                     </Text>
                   </Box>
                 </Box>
-                <Box>
-                  <Text fontSize="xs" fontWeight="medium" mb={1}>Service type</Text>
-                  <Box display="flex" gap="4px" flexWrap="wrap">
-                    {serviceTypes.map((t) => (
-                      <Badge
-                        key={t.key}
-                        size="sm"
-                        colorPalette={tag === t.key ? "teal" : "gray"}
-                        variant={tag === t.key ? "solid" : "outline"}
-                        cursor="pointer"
-                        px="2"
-                        borderRadius="full"
-                        onClick={() => { setTag(tag === t.key ? "" : t.key); setCustomLabel(""); }}
-                      >
-                        {t.label}
-                      </Badge>
-                    ))}
-                  </Box>
-                </Box>
-                {!tag && (
-                  <Box>
-                    <Text fontSize="xs" fontWeight="medium" mb={1}>Or custom service</Text>
-                    <input
-                      type="text"
-                      value={customLabel}
-                      onChange={(e) => setCustomLabel(e.target.value)}
-                      placeholder="e.g., Remove fallen branch"
-                      style={{ width: "100%", padding: "6px 8px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "14px" }}
-                    />
-                  </Box>
-                )}
-                <Box>
-                  <Text fontSize="xs" fontWeight="medium" mb={1}>Price *</Text>
-                  <CurrencyInput value={price} onChange={setPrice} size="sm" />
-                  <HStack gap={2} mt={1.5} wrap="wrap">
-                    {hintEntry?.parsedValue && (
-                      <Badge
-                        size="sm"
-                        colorPalette="gray"
-                        variant="subtle"
-                        borderRadius="full"
-                        px="2"
-                        cursor="pointer"
-                        title="Tap to use as the price"
-                        onClick={() => setPrice(String(hintEntry.parsedValue!.amount))}
-                      >
-                        Ref: ${hintEntry.parsedValue.amount.toFixed(2)} / {hintEntry.parsedValue.unit} · {hintEntry.parsedValue.label}
-                      </Badge>
-                    )}
-                    <Badge
-                      size="sm"
-                      colorPalette="blue"
-                      variant="outline"
-                      borderRadius="full"
-                      px="2"
-                      cursor="pointer"
-                      onClick={() => setGuideOpen(true)}
-                    >
-                      View pricing guide ↗
-                    </Badge>
-                  </HStack>
-                </Box>
-                {/* Same shape as an invoice charge: a line name plus an
-                    optional client-visible detail. A service and a material
-                    line sit side by side on the invoice, so they are entered
-                    the same way. See docs/features/job-materials.md. */}
-                <Box>
-                  <Text fontSize="xs" fontWeight="medium" mb={1}>
-                    Detail for the client{" "}
-                    <Text as="span" color="fg.muted" fontWeight="normal">(optional)</Text>
+                {/* Same component the per-row edit form renders, so the two
+                    can never offer different fields — the charges dialog's
+                    rule, applied here. */}
+                <AddonFields
+                  tag={tag} setTag={setTag}
+                  customLabel={customLabel} setCustomLabel={setCustomLabel}
+                  price={price} setPrice={setPrice}
+                  detail={detail} setDetail={setDetail}
+                  serviceTypes={serviceTypes}
+                  jobTagLabel={jobTagLabel}
+                  hintEntry={hintEntry}
+                  onOpenGuide={() => setGuideOpen(true)}
+                />
+                <HStack gap={2} align="center">
+                  {/* Say WHY the button is dead rather than leaving a greyed
+                      control with no explanation — the charges dialog does
+                      this and it is the better half of the pair. */}
+                  <Text fontSize="2xs" color="fg.muted" flex="1">
+                    {!tag && !customLabel.trim() && !price
+                      ? "Pick a service type and enter a price."
+                      : !tag && !customLabel.trim()
+                        ? "Pick a service type, or name a custom one."
+                        : !price || Number(price) <= 0
+                          ? "Enter a price."
+                          : ""}
                   </Text>
-                  <input
-                    type="text"
-                    value={detail}
-                    onChange={(e) => setDetail(e.target.value)}
-                    placeholder="e.g. 5 bushes at $25.00 each"
-                    style={{ width: "100%", padding: "6px 8px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "14px" }}
-                  />
-                  <Text fontSize="2xs" color="fg.muted" mt={1}>
-                    Shown under this line on their invoice. Leave blank to show just
-                    the service and the amount.
-                  </Text>
-                </Box>
+                  <Button
+                    size="sm"
+                    colorPalette="teal"
+                    loading={busy}
+                    disabled={!price || Number(price) <= 0 || (!tag && !customLabel.trim())}
+                    onClick={handleAdd}
+                  >
+                    Add to invoice
+                  </Button>
+                </HStack>
               </VStack>
             </Dialog.Body>
             <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />
+            {/* Done only. The Add button now sits WITH the form it submits,
+                as it does in the charges dialog — an Add in the footer reads
+                as "finish the dialog", which is what Done means. */}
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
-                <Button variant="ghost" onClick={onClose}>Done</Button>
-                <Button
-                  colorPalette="teal"
-                  loading={busy}
-                  disabled={!price || Number(price) <= 0 || (!tag && !customLabel.trim())}
-                  onClick={handleAdd}
-                >
-                  Add
-                </Button>
+                <Button variant="outline" onClick={onClose}>Done</Button>
               </HStack>
             </Dialog.Footer>
           </Dialog.Content>

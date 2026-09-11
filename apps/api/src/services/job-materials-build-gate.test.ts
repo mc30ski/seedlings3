@@ -876,10 +876,56 @@ describe("[build-gate] the wording matches what the thing does", () => {
 
 describe("[build-gate] services carry the same optional detail as charges", () => {
   const ADDON_DLG = web("ui/dialogs/ManageAddonsDialog.tsx");
+  const CHARGE_DLG = web("ui/dialogs/ManageInvoiceChargesDialog.tsx");
 
   it("the Add Service dialog collects a client-visible detail", () => {
-    expect(ADDON_DLG).toMatch(/Detail for the client/);
+    // The field used to be labelled "Detail for the client" — the only thing
+    // on the form that said who reads it. It now sits inside a headed
+    // "On the client's invoice" section, so the label is plain "Detail" and
+    // the GROUPING carries the meaning. Assert the grouping, not the old
+    // wording: pinning the label would fail this the moment anyone improved
+    // it, while a dialog that quietly lost the section would still pass.
+    expect(ADDON_DLG, "the invoice fields must be in a headed section")
+      .toMatch(/On the client&rsquo;s invoice/);
+    expect(ADDON_DLG, "a detail field must exist").toMatch(/Detail\{" "\}/);
     expect(ADDON_DLG).toMatch(/detail: detail\.trim\(\) \|\| undefined/);
+  });
+
+  it("both money dialogs say plainly what the client sees", () => {
+    // The two dialogs edit the two halves of one invoice, so an operator has
+    // to be able to tell at a glance which fields the client reads — without
+    // learning a different layout for each.
+    for (const [name, src] of [["charges", CHARGE_DLG], ["services", ADDON_DLG]] as const) {
+      expect(src, `${name}: invoice fields must be in a headed section`)
+        .toMatch(/On the client&rsquo;s invoice/);
+      expect(src, `${name}: must state in words what the client sees`)
+        .toMatch(/The client sees the (line|service) name, the detail, and the amount/);
+      expect(src, `${name}: must render the line as the client will see it`)
+        .toMatch(/<InvoiceLinePreview/);
+    }
+    // Only the charges dialog has an internal figure, and it must be fenced
+    // off under its own heading — a "what we paid" that reads as client-facing
+    // is the one mistake on these forms that reaches the client.
+    expect(CHARGE_DLG).toMatch(/Internal &middot; never shown to the client/);
+    expect(ADDON_DLG, "a service has no internal figure, and should say so")
+      .toMatch(/no internal-only figure/);
+  });
+
+  it("the invoice preview cannot leak the internal cost", () => {
+    // Structural, not a rule to remember: the shared preview takes no
+    // actualCost prop, so no later edit can put the internal figure on a
+    // component whose whole job is to show what the client sees.
+    const PREVIEW = readFileSync(
+      join(__dirname, "../../../web/src/ui/dialogs/InvoiceLinePreview.tsx"),
+      "utf8",
+    );
+    // Comments stripped first: the component's own docstring explains that it
+    // takes no actualCost, and a raw scan finds the word in that explanation
+    // rather than in any code. (This gate caught exactly that on its first
+    // run — the negative assertion matched the sentence describing it.)
+    const code = PREVIEW.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+    expect(code).not.toMatch(/actualCost/);
+    expect(PREVIEW, "detail is absent, not blank, when empty").toMatch(/\{shownDetail && \(/);
   });
 
   it("both addon routes persist it — neither drops it on the floor", () => {

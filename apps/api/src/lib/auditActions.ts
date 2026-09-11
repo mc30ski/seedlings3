@@ -92,6 +92,7 @@ export const AUDIT = {
     // Addons change what the client is billed.
     ADDON_ADDED: [AuditScope.JOB, AuditVerb.ADDON_ADDED] as const,
     ADDON_REMOVED: [AuditScope.JOB, AuditVerb.ADDON_REMOVED] as const,
+    ADDON_UPDATED: [AuditScope.JOB, AuditVerb.ADDON_UPDATED] as const,
     PHOTO_DELETED: [AuditScope.JOB, AuditVerb.PHOTO_DELETED] as const,
     COMMENT_DELETED: [AuditScope.JOB, AuditVerb.COMMENT_DELETED] as const,
   },
