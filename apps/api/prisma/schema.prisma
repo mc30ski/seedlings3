@@ -1074,7 +1074,6 @@ model JobClient {
   @@index([clientId])
 }
 
-
 model JobOccurrence {
   id String @id @default(cuid())
 
@@ -1097,7 +1096,6 @@ model JobOccurrence {
   notes   String?
   price   Float?
 
-
   /// Optional CLIENT-VISIBLE detail under the labor line on the invoice —
   /// e.g. "3 hours at $50/hr". Presentational only. Typing an hourly
   /// breakdown discloses your rate, so this is the operator's choice, never
@@ -1114,7 +1112,22 @@ model JobOccurrence {
   contactName                String?
   contactPhone               String?
   contactEmail               String?
+  /// The one-line form, kept as the DISPLAY value and as the back-compat
+  /// record for the estimates created before the structured columns existed.
+  /// Derived from the parts below whenever any of them is written, so the two
+  /// can never drift; still the only thing populated on older rows.
   estimateAddress            String?
+  /// Structured address, mirroring Property. An estimate is a property we do
+  /// not have a client for yet, and it used to be captured as one free-text
+  /// string that conversion had to pull apart again. That round-trip is what
+  /// wrote state "North" onto 19 live properties: the parser split on
+  /// whitespace and "North Carolina 27517" lost its second word silently.
+  /// Capturing the parts at entry removes the round-trip entirely.
+  estimateStreet1            String?
+  estimateStreet2            String?
+  estimateCity               String?
+  estimateState              String?
+  estimatePostalCode         String?
 
   isOneOff          Boolean @default(false) // @deprecated — use workflow
   isTentative       Boolean @default(false)
@@ -1134,6 +1147,25 @@ model JobOccurrence {
   ///
   /// Moves FORWARD on every re-ask, mirroring paymentRequestSentAt — otherwise
   /// "asked 9 days ago" lingers after you chased them again this morning.
+  /// What the weather ACTUALLY WAS when the job started and when it finished,
+  /// captured at the moment and frozen.
+  ///
+  /// A forecast can be re-fetched; this cannot. The hourly forecast endpoint
+  /// has no history at all, so the only way to ever answer "what was it like
+  /// when we did this job" — for a client asking why a visit ran long, or why
+  /// it was cut short — is to record it as it happens. Data only accrues from
+  /// the day this ships; nothing can backfill it.
+  ///
+  /// A SNAPSHOT, NOT A REFERENCE. Stored as JSON rather than columns because
+  /// it is read back verbatim and never queried on, and because the shape of
+  /// what a provider returns is not something to migrate every time it moves.
+  ///
+  /// Null means it was not captured — an offline start, a provider outage, or
+  /// a job that predates the feature. Never blocks starting or completing a
+  /// job: a weather lookup failing must not stop a crew working.
+  startWeather    Json?
+  completeWeather Json?
+
   confirmationRequestedAt      DateTime?
   /// The FIRST ask, never overwritten — the honest answer to "how long has
   /// this client been sitting unconfirmed?", which the last-ask stamp above

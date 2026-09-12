@@ -361,6 +361,84 @@ export function redactParcelForWorker<T extends { data: ParcelAttributes | null 
  * Returns the cached row untouched when it is inside the configured window,
  * so this is safe to call on every dialog open.
  */
+/**
+ * Where a property IS, resolved and remembered.
+ *
+ * Lifted out of resolveParcel unchanged so a second caller can have the same
+ * answer without a second implementation. The weather section needs a
+ * coordinate for exactly the same property and would otherwise have grown its
+ * own geocode — and a different one, because the weather proxy's geocoder is
+ * OpenWeather's, which takes a ZIP or a city and not a street. Two geocoders
+ * writing one column is how a field ends up meaning two different things.
+ *
+ * THE ORDER MATTERS AND IS NOT ARBITRARY:
+ *   1. Coordinates already on the row. The ground does not move.
+ *   2. The Census geocoder, on the full street address. Free, national, no
+ *      key — street-level, though it interpolates along centrelines so the
+ *      point lands in the road.
+ *   3. The median of workers' recorded GPS fixes at this property. Census is
+ *      built from TIGER address ranges and simply does not know newer
+ *      subdivisions; somebody who physically stood on the lot is the better
+ *      source when it doesn't.
+ *
+ * PERSISTS on success, which is the point: a property that has never had its
+ * parcel dialog opened has no coordinate at all, and 52 of 80 live properties
+ * are in that state — not because anything failed, but because nobody ever
+ * looked. Any caller that needs a point now fixes the row for every later one.
+ *
+ * Writes ONLY lat/lng. It does not touch parcelFetchedAt or
+ * parcelLookupError: those describe a county-records lookup, and a caller that
+ * merely wanted a coordinate must not be able to mark the parcel cache fresh
+ * or poison it with an error it never encountered.
+ *
+ * Never throws. Returns null when the property cannot be placed.
+ */
+export async function resolvePropertyPoint(
+  propertyId: string,
+  opts: { persist?: boolean } = {},
+): Promise<{ lat: number; lng: number; located: "stored" | "geocoded" | "worker-gps" } | null> {
+  const property = await prisma.property.findUnique({
+    where: { id: propertyId },
+    select: { id: true, street1: true, city: true, state: true, postalCode: true, lat: true, lng: true },
+  });
+  if (!property) return null;
+  if (property.lat != null && property.lng != null) {
+    return { lat: property.lat, lng: property.lng, located: "stored" };
+  }
+
+  const cfg = await parcelConfig();
+  const address = [property.street1, property.city, `${property.state} ${property.postalCode}`]
+    .filter(Boolean).join(", ");
+
+  let point: { lat: number; lng: number } | null = null;
+  let located: "geocoded" | "worker-gps" = "geocoded";
+  try {
+    point = await geocode(address, cfg);
+  } catch {
+    point = null; // fall through to the GPS fallback before giving up
+  }
+  if (!point && cfg.useWorkerGps) {
+    point = await workerGps(propertyId);
+    if (point) located = "worker-gps";
+  }
+  if (!point) return null;
+
+  if (opts.persist !== false) {
+    try {
+      // audit-allow: caches WHERE a property is, from public address data.
+      // No business state changes and nothing user-entered is overwritten —
+      // this only ever fills a column that was null.
+      await prisma.property.update({
+        where: { id: propertyId },
+        data: { lat: point.lat, lng: point.lng },
+      });
+    } catch {
+      // A failed cache write must not cost the caller its answer.
+    }
+  }
+  return { ...point, located };
+}
+
 export async function resolveParcel(propertyId: string, opts: { force?: boolean } = {}) {
   const cfg = await parcelConfig();
   const property = await prisma.property.findUnique({
@@ -422,19 +500,16 @@ export async function resolveParcel(propertyId: string, opts: { force?: boolean 
     );
   }
 
-  const address = [property.street1, property.city, `${property.state} ${property.postalCode}`]
-    .filter(Boolean).join(", ");
-  let point: { lat: number; lng: number } | null = null;
-  let located = "geocoded address";
-  try {
-    point = await geocode(address, cfg);
-  } catch {
-    point = null; // fall through to the GPS fallback before giving up
-  }
-  if (!point && cfg.useWorkerGps) {
-    point = await workerGps(propertyId);
-    if (point) located = "a worker's recorded location at this property";
-  }
+  // ONE implementation, shared with every other caller that needs to know
+  // where a property is — see resolvePropertyPoint. `persist: false` because
+  // this function writes lat/lng itself further down, in the same update that
+  // stores the parcel data; letting the helper write first would be a second
+  // round-trip for the same columns.
+  const located_ = await resolvePropertyPoint(propertyId, { persist: false });
+  const point = located_ ? { lat: located_.lat, lng: located_.lng } : null;
+  const located = located_?.located === "worker-gps"
+    ? "a worker's recorded location at this property"
+    : "geocoded address";
   if (!point) {
     return fail(
       "We couldn't work out where this property is on the map. The national address " +

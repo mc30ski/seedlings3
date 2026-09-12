@@ -1,5 +1,6 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { crewPool } from "../lib/jobPricing";
+import { ESTIMATE_ADDRESS_PART_FIELDS, pickEstimateAddressParts } from "../lib/estimateAddress";
 import { randomUUID } from "crypto";
 import { services } from "../services";
 import { prisma } from "../db/prisma";
@@ -2496,6 +2497,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       if ("contactPhone" in body) patch.contactPhone = body.contactPhone || null;
       if ("contactEmail" in body) patch.contactEmail = body.contactEmail || null;
       if ("estimateAddress" in body) patch.estimateAddress = body.estimateAddress || null;
+      Object.assign(patch, pickEstimateAddressParts(body));
       if ("proposalAmount" in body) patch.proposalAmount = body.proposalAmount != null ? Number(body.proposalAmount) : null;
       if ("frequencyDays" in body) {
         if (body.frequencyDays != null) {
@@ -4955,6 +4957,9 @@ Respond ONLY with valid JSON in this exact format:
       contactPhone: body.contactPhone ? String(body.contactPhone).trim() : undefined,
       contactEmail: body.contactEmail ? String(body.contactEmail).trim() : undefined,
       estimateAddress: body.estimateAddress ? String(body.estimateAddress).trim() : undefined,
+      // Structured parts. The service derives the one-line form from these and
+      // ignores the string above when they are present.
+      ...pickEstimateAddressParts(body),
       proposalAmount: body.proposalAmount != null ? Number(body.proposalAmount) : undefined,
       proposalNotes: body.proposalNotes ? String(body.proposalNotes) : undefined,
       jobTags: Array.isArray(body.jobTags) ? JSON.stringify(body.jobTags) : undefined,
@@ -4989,6 +4994,11 @@ Respond ONLY with valid JSON in this exact format:
         contactPhone: (occ as any).contactPhone ?? null,
         contactEmail: (occ as any).contactEmail ?? null,
         estimateAddress: (occ as any).estimateAddress ?? null,
+        // The parts, not just the line built from them — this row is the only
+        // thing that survives the delete.
+        ...Object.fromEntries(
+          ESTIMATE_ADDRESS_PART_FIELDS.map((f) => [f, (occ as any)[f] ?? null]),
+        ),
       });
       return { deleted: true };
     });
@@ -5321,10 +5331,16 @@ Respond ONLY with valid JSON in this exact format:
         data: {
           clientId: client.id,
           displayName: body.propertyName ?? "Property",
-          street1: body.street1 ?? null,
-          city: body.city ?? null,
-          state: body.state ?? null,
-          postalCode: body.postalCode ?? null,
+          // The dialog normally sends these, prefilled from the estimate's
+          // own columns. Falling back to those columns directly means a
+          // conversion driven by anything else still lands the address the
+          // operator typed, rather than a blank property nobody notices until
+          // a worker tries to navigate to it.
+          street1: body.street1 ?? (occ as any).estimateStreet1 ?? null,
+          street2: body.street2 ?? (occ as any).estimateStreet2 ?? null,
+          city: body.city ?? (occ as any).estimateCity ?? null,
+          state: body.state ?? (occ as any).estimateState ?? null,
+          postalCode: body.postalCode ?? (occ as any).estimatePostalCode ?? null,
           country: body.country ?? "US",
           kind: body.propertyKind ?? "SINGLE",
           pointOfContactId: contact.id,

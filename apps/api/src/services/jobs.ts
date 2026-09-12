@@ -56,6 +56,8 @@ import {
   reactivateHoldsForOccurrence,
 } from "./supplies";
 import { computeNextOccurrenceStart, loadRates } from "./payments";
+import { captureOccurrenceWeather } from "./occurrenceWeather";
+import { applyEstimateAddressParts, type EstimateAddressParts } from "../lib/estimateAddress";
 import { computeBreakdown } from "@repo/money";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -635,6 +637,11 @@ export const jobs: ServicesJobs = {
             city: true,
             state: true,
             status: true,
+            // HOW TO GET ONTO THE PROPERTY — gate codes, dogs, where to park.
+            // Held on the property and shown on every visit to it: a worker
+            // standing at a locked gate cannot go and look it up, and the one
+            // who knew is not always the one sent.
+            accessNotes: true,
             client: { select: { id: true, displayName: true, isVip: true, vipReason: true, adminTags: true } },
           },
         },
@@ -1359,6 +1366,9 @@ export const jobs: ServicesJobs = {
     contactName?: string;
     contactPhone?: string;
     contactEmail?: string;
+    /** Legacy one-line form. Callers that send PARTS must not send this — it
+     *  is derived from them. Still accepted alone for any caller that only has
+     *  a string. */
     estimateAddress?: string;
     proposalAmount?: number;
     proposalNotes?: string;
@@ -1366,7 +1376,12 @@ export const jobs: ServicesJobs = {
     jobType?: string;
     assigneeUserIds?: string[];
     jobId?: string;
-  }) {
+  } & EstimateAddressParts) {
+    // Parts win over the string when both arrive: the string is derived from
+    // them, so taking the caller's copy could store a line that disagrees with
+    // its own fields.
+    const addressData: Record<string, any> = {};
+    applyEstimateAddressParts(addressData, input);
     return prisma.$transaction(async (tx) => {
       const occ = await tx.jobOccurrence.create({
         data: {
@@ -1384,6 +1399,7 @@ export const jobs: ServicesJobs = {
           contactPhone: input.contactPhone ?? null,
           contactEmail: input.contactEmail ?? null,
           estimateAddress: input.estimateAddress ?? null,
+          ...addressData,
           proposalAmount: input.proposalAmount ?? null,
           jobTags: input.jobTags ?? null,
           jobType: input.jobType ?? null,
@@ -1424,6 +1440,7 @@ export const jobs: ServicesJobs = {
       contactName?: string | null;
       contactPhone?: string | null;
       contactEmail?: string | null;
+      /** Derived from the parts when any part is present — see lib/estimateAddress. */
       estimateAddress?: string | null;
       proposalAmount?: number | null;
       proposalNotes?: string | null;
@@ -1431,7 +1448,7 @@ export const jobs: ServicesJobs = {
       jobType?: string | null;
       assigneeUserIds?: string[];
       jobId?: string | null;
-    },
+    } & EstimateAddressParts,
     options?: { isAdmin?: boolean },
   ) {
     return prisma.$transaction(async (tx) => {
@@ -1462,6 +1479,10 @@ export const jobs: ServicesJobs = {
       if (input.contactPhone !== undefined) data.contactPhone = input.contactPhone;
       if (input.contactEmail !== undefined) data.contactEmail = input.contactEmail;
       if (input.estimateAddress !== undefined) data.estimateAddress = input.estimateAddress;
+      // AFTER the line above, deliberately: when parts are present they own
+      // the derived string and overwrite whatever the caller sent. Merged
+      // against the stored row so editing one field does not blank the others.
+      applyEstimateAddressParts(data, input, occ as any);
       if (input.proposalAmount !== undefined) data.proposalAmount = input.proposalAmount;
       if (input.proposalNotes !== undefined) data.proposalNotes = input.proposalNotes;
       if (input.jobTags !== undefined) {
@@ -1849,6 +1870,7 @@ export const jobs: ServicesJobs = {
       if ("contactPhone" in patch) data.contactPhone = patch.contactPhone ?? null;
       if ("contactEmail" in patch) data.contactEmail = patch.contactEmail ?? null;
       if ("estimateAddress" in patch) data.estimateAddress = patch.estimateAddress ?? null;
+      applyEstimateAddressParts(data, patch, original as any);
       if ("proposalAmount" in patch) data.proposalAmount = patch.proposalAmount != null ? Number(patch.proposalAmount) : null;
       if ("frequencyDays" in patch) data.frequencyDays = patch.frequencyDays != null ? Math.round(Number(patch.frequencyDays)) : null;
 
@@ -2237,7 +2259,7 @@ export const jobs: ServicesJobs = {
           include: {
             property: {
               select: {
-                id: true, displayName: true, street1: true, city: true, state: true,
+                id: true, displayName: true, street1: true, city: true, state: true, accessNotes: true,
                 client: {
                   select: {
                     id: true, displayName: true, isVip: true, vipReason: true, adminTags: true,
@@ -2486,7 +2508,7 @@ export const jobs: ServicesJobs = {
       include: {
         property: {
           select: {
-            id: true, displayName: true, street1: true, city: true, state: true,
+            id: true, displayName: true, street1: true, city: true, state: true, accessNotes: true,
             client: {
               select: {
                 id: true, displayName: true, isVip: true, vipReason: true,
@@ -2689,7 +2711,7 @@ export const jobs: ServicesJobs = {
           include: {
             property: {
               select: {
-                id: true, displayName: true, street1: true, city: true, state: true,
+                id: true, displayName: true, street1: true, city: true, state: true, accessNotes: true,
                 client: {
                   select: {
                     id: true, displayName: true, isVip: true, vipReason: true, adminTags: true,
@@ -2798,7 +2820,7 @@ export const jobs: ServicesJobs = {
           include: {
             property: {
               select: {
-                id: true, displayName: true, street1: true, city: true, state: true,
+                id: true, displayName: true, street1: true, city: true, state: true, accessNotes: true,
                 client: {
                   select: {
                     id: true, displayName: true, isVip: true, vipReason: true, adminTags: true,
@@ -2869,7 +2891,7 @@ export const jobs: ServicesJobs = {
           include: {
             property: {
               select: {
-                id: true, displayName: true, street1: true, city: true, state: true,
+                id: true, displayName: true, street1: true, city: true, state: true, accessNotes: true,
                 client: {
                   select: {
                     id: true, displayName: true, isVip: true, vipReason: true, adminTags: true,
@@ -3605,6 +3627,13 @@ export const jobs: ServicesJobs = {
         data.startLng = null;
         data.completeLat = null;
         data.completeLng = null;
+        // The weather snapshots go with the GPS fixes, for the same reason:
+        // they describe a start and a completion that, after this revert, did
+        // not happen. Leaving them would attach "it was 86F and raining when
+        // this was worked" to a job with no worked time on it — and the next
+        // real start would look like it inherited someone else's weather.
+        data.startWeather = null;
+        data.completeWeather = null;
         // Reverting wipes payment lifecycle metadata too.
         data.lastPaymentRejectionReason = null;
         data.lastPaymentRejectedAt = null;
@@ -3700,6 +3729,23 @@ export const jobs: ServicesJobs = {
         ...(hoursApprovalBasis ? { hoursApproval: hoursApprovalBasis } : {}),
       });
 
+      return updated;
+    }).then(async (updated) => {
+      // FREEZE THE WEATHER — after the transaction, never inside it.
+      //
+      // Outside because this makes a network call to a third party: holding a
+      // Postgres transaction open across it would park a Neon connection on
+      // OpenWeather's latency, which is the exact shape of the incident that
+      // made /api/me hang. Fire-and-forget because a crew pressing Start in a
+      // field must not wait on a weather service, or fail when it is down.
+      //
+      // The forecast endpoints carry no history, so this is the only moment
+      // the reading exists. Miss it and it is gone.
+      if (updated.status === JobOccurrenceStatus.IN_PROGRESS) {
+        void captureOccurrenceWeather(occurrenceId, "start");
+      } else if (updated.status === JobOccurrenceStatus.COMPLETED) {
+        void captureOccurrenceWeather(occurrenceId, "complete");
+      }
       return updated;
     });
   },

@@ -666,6 +666,68 @@ export default function ServicesTab({
   }, []);
 
   // Navigate from Admin Jobs tab → specific occurrence
+  // ───────────────────────────────────────────────────────────────────────
+  // SCROLL TO A HIGHLIGHTED OCCURRENCE — exactly once per navigation.
+  //
+  // Arriving here from a job card's "Manage in Services" sets highlightOccId,
+  // and the page then has to jump to that row. What did the jumping was an
+  // inline ref callback on the row:
+  //
+  //     ref={highlightOccId === occ.id ? (el) => { ... scrollIntoView ... } : undefined}
+  //
+  // An inline arrow is a NEW function identity on every render, so React
+  // detaches and reattaches the ref every time the component renders — and
+  // each reattach fired another smooth scrollIntoView. Nothing ever cleared
+  // highlightOccId either (it is also what keeps the row visible past the
+  // status filters), so the row stayed "highlighted" indefinitely and every
+  // subsequent render — a hover, a refetch, a filter change, the flash timer's
+  // own setState — yanked the viewport back to it. The page could not be
+  // scrolled away from. The 3s flash timer was restarted on every reattach for
+  // the same reason.
+  //
+  // So: scroll from an effect, remember which id we already scrolled to, and
+  // never scroll for that id again. highlightOccId is deliberately left set —
+  // clearing it would drop the row back behind the status filters while the
+  // operator is looking at it.
+  // ───────────────────────────────────────────────────────────────────────
+  const scrolledToOccRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!highlightOccId) {
+      // A fresh navigation to the same row should scroll again.
+      scrolledToOccRef.current = null;
+      return;
+    }
+    if (scrolledToOccRef.current === highlightOccId) return;
+
+    // The row does not exist yet at this point: the card has to expand and its
+    // detail has to finish loading first. Poll briefly rather than give up on
+    // the first frame and leave the operator staring at the top of the list.
+    let cancelled = false;
+    let attempts = 0;
+    const tick = () => {
+      if (cancelled) return;
+      const el = document.getElementById(`svc-occ-${highlightOccId}`);
+      if (el) {
+        scrolledToOccRef.current = highlightOccId;
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
+      if (++attempts < 30) timer = setTimeout(tick, 100);
+    };
+    let timer: ReturnType<typeof setTimeout> | undefined = setTimeout(tick, 0);
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [highlightOccId, jobDetails, expandedMap]);
+
+  // The flash fades on its own. Its own effect, so it cannot restart itself:
+  // when this lived in the ref callback, clearing the flash re-rendered, which
+  // reattached the ref, which started a new timer.
+  useEffect(() => {
+    if (!flashOccId) return;
+    const t = setTimeout(() => setFlashOccId(null), 3000);
+    return () => clearTimeout(t);
+  }, [flashOccId]);
+
   useEffect(() => {
     return onEventSearchRun("jobsTabToServicesTabSearch", setQ, inputRef, (id) => {
       if (!id) { setHighlightId(null); setHighlightOccId(null); setFlashOccId(null); return; }
@@ -1906,12 +1968,11 @@ export default function ServicesTab({
                         bg={flashOccId === occ.id ? "blue.50" : "gray.100"}
                         rounded="md"
                         mb={2}
-                        ref={highlightOccId === occ.id ? (el: HTMLDivElement | null) => {
-                          if (el) {
-                            requestAnimationFrame(() => el.scrollIntoView({ behavior: "smooth", block: "center" }));
-                            setTimeout(() => setFlashOccId(null), 3000);
-                          }
-                        } : undefined}
+                        // A STABLE DOM ID, scrolled to by an effect — see
+                        // scrolledToOccRef below. This used to be an inline ref
+                        // callback that scrolled and started the flash timer,
+                        // which is what made the page feel stuck.
+                        id={`svc-occ-${occ.id}`}
                       >
                         <VStack align="start" gap={0} w="full" overflow="hidden">
                           {/* Warning: next occurrence not created */}

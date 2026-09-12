@@ -43,6 +43,7 @@ import {
 } from "@chakra-ui/react";
 import { AlertCircle, AlertTriangle, Archive, BarChart3, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, ExternalLink, Eye, Filter, Hand, Heart, Inbox, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, Play, RefreshCw, Repeat, Share2, Star, Tag, Users, X,
   Map as MapIcon,
+  KeyRound,
 } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { WeatherIcon } from "@/src/ui/components/WeatherBar";
@@ -93,6 +94,7 @@ import ClientRequestsSection from "@/src/ui/components/ClientRequestsSection";
 import StatusButton from "@/src/ui/components/StatusButton";
 import AddAssigneeDialog from "@/src/ui/dialogs/AddAssigneeDialog";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
+import JobWeather from "@/src/ui/components/JobWeather";
 import PropertyParcelDialog from "@/src/ui/dialogs/PropertyParcelDialog";
 import SendReceiptDialog from "@/src/ui/dialogs/SendReceiptDialog";
 import { Dashboard } from "@/src/ui/components/Dashboard";
@@ -5356,6 +5358,15 @@ export default function JobsTab({
                                     contactPhone: occ.contactPhone,
                                     contactEmail: occ.contactEmail,
                                     estimateAddress: occ.estimateAddress,
+                                    // The structured parts, which are what the
+                                    // property is actually built from. Without
+                                    // these the workflow falls back to pulling
+                                    // the one-line string apart again.
+                                    estimateStreet1: (occ as any).estimateStreet1,
+                                    estimateStreet2: (occ as any).estimateStreet2,
+                                    estimateCity: (occ as any).estimateCity,
+                                    estimateState: (occ as any).estimateState,
+                                    estimatePostalCode: (occ as any).estimatePostalCode,
                                     proposalAmount: occ.proposalAmount,
                                     proposalNotes: occ.proposalNotes,
                                     title: occ.title,
@@ -6312,6 +6323,26 @@ export default function JobsTab({
                             the address, the View Property / View Client links
                             and the badge rows. */}
                         {instructionsBanner}
+                        {/* WEATHER AT THE VERY TOP, under the instructions
+                            band and nothing else. Whether the crew drives out
+                            at all is settled before anything further down the
+                            card matters — the money, the assignees, the
+                            history. Instructions still outrank it: those change
+                            what a worker does once they arrive, and a rain
+                            chance does not.
+
+                            A SIBLING of the money box it used to sit above,
+                            never a child of it — nested inside the green
+                            container it inherited that padding and read as a
+                            heading of the invoice. */}
+                        {!isTaskOrReminder && (
+                          <JobWeather
+                            occurrenceId={occ.id}
+                            startWeather={(occ as any).startWeather}
+                            completeWeather={(occ as any).completeWeather}
+                            showForecast={occ.status !== "COMPLETED" && occ.status !== "CLOSED" && occ.status !== "ARCHIVED"}
+                          />
+                        )}
                         {/* Client confirmation banner — under the title row,
                             above sub-title and status badges. */}
                         {needsConfirmation && (
@@ -6359,6 +6390,42 @@ export default function JobsTab({
                                   {occ.linkedOccurrence.startAt && ` · ${fmtDate(occ.linkedOccurrence.startAt)}`}
                                 </a>
                               </Box>
+                            )}
+                            {/* ACCESS NOTES — how to actually get onto the
+                                property. Gate codes, dogs, where to park.
+                                ABOVE the address, not under it: by the time
+                                someone is reading the address they are already
+                                driving, and the note is what they need before
+                                they arrive rather than after. It is called out
+                                rather than set as quiet grey text: a worker at
+                                a locked gate cannot go and look it up, and the
+                                person who knew the code is not always the one
+                                sent. Amber rather than red — it is a heads-up,
+                                not a problem with the job. */}
+                            {!isTaskOrReminder && (occ.job?.property as any)?.accessNotes && (
+                              <HStack
+                                gap={1.5}
+                                align="start"
+                                mb={1}
+                                px={2}
+                                py={1.5}
+                                bg="orange.50"
+                                borderWidth="1px"
+                                borderColor="orange.200"
+                                borderRadius="md"
+                              >
+                                <Box color="orange.600" flexShrink={0} mt="1px">
+                                  <KeyRound size={13} />
+                                </Box>
+                                <Box minW={0}>
+                                  <Text fontSize="2xs" fontWeight="semibold" color="orange.700" textTransform="uppercase" letterSpacing="0.03em">
+                                    Access
+                                  </Text>
+                                  <Text fontSize="xs" color="orange.900" whiteSpace="pre-wrap">
+                                    {(occ.job?.property as any).accessNotes}
+                                  </Text>
+                                </Box>
+                              </HStack>
                             )}
                             {!isTaskOrReminder && (
                             <Box fontSize="sm">
@@ -8370,6 +8437,15 @@ export default function JobsTab({
                                     contactPhone: occ.contactPhone,
                                     contactEmail: occ.contactEmail,
                                     estimateAddress: occ.estimateAddress,
+                                    // The structured parts, which are what the
+                                    // property is actually built from. Without
+                                    // these the workflow falls back to pulling
+                                    // the one-line string apart again.
+                                    estimateStreet1: (occ as any).estimateStreet1,
+                                    estimateStreet2: (occ as any).estimateStreet2,
+                                    estimateCity: (occ as any).estimateCity,
+                                    estimateState: (occ as any).estimateState,
+                                    estimatePostalCode: (occ as any).estimatePostalCode,
                                     proposalAmount: occ.proposalAmount,
                                     proposalNotes: occ.proposalNotes,
                                     title: occ.title,
