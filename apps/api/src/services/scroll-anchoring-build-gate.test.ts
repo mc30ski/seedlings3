@@ -137,3 +137,53 @@ describe("scroll anchoring", () => {
       .toMatch(/scrolledToOccRef\.current\s*=\s*highlightOccId/);
   });
 });
+
+describe("cross-tab navigation listeners", () => {
+  // WHAT WENT WRONG: `onEventSearchRun` subscribes to a window event and
+  // RETURNS its unsubscribe. Eight of the nine call sites threw that return
+  // away:
+  //
+  //     useEffect(() => {
+  //       onEventSearchRun("jobsTabToClientsTabSearch", setQ, inputRef, setHighlightId);
+  //       ...
+  //     }, []);
+  //
+  // Every mount added listeners the next unmount never removed. Each one holds
+  // that render's setQ / setHighlightId in closure, so after a few tab
+  // switches a single cross-tab jump runs the handler once per historical
+  // mount — the dead ones writing into unmounted state, and all of them
+  // fighting over the same search box.
+  //
+  // Nothing about it is visible in the UI until it is, which is what makes it
+  // gate-shaped rather than review-shaped.
+  const SUBSCRIBERS = /\bonEventSearchRun\s*\(/g;
+
+  it("finds the call sites it is meant to guard", () => {
+    const total = files.reduce(
+      (n, f) => n + (stripComments(f.text).match(SUBSCRIBERS)?.length ?? 0),
+      0,
+    );
+    // Guards the gate: a rename would make the check below pass against zero.
+    expect(total).toBeGreaterThan(5);
+  });
+
+  it("every subscription's disposer is kept", () => {
+    const offenders: string[] = [];
+    for (const f of files) {
+      for (const line of stripComments(f.text).split("\n")) {
+        if (!/\bonEventSearchRun\s*\(/.test(line)) continue;
+        // A DROPPED disposer is a bare expression statement: the call opens the
+        // line and the line ends the statement. Anything else — `return
+        // onEventSearchRun(...)`, or an element of an array of disposers
+        // ending in `),` — keeps it.
+        const dropped = /^\s*onEventSearchRun\s*\(/.test(line) && /\);\s*$/.test(line);
+        if (dropped) offenders.push(`${f.rel}: ${line.trim().slice(0, 70)}`);
+      }
+    }
+    expect(offenders, [
+      "onEventSearchRun returns an unsubscribe. Dropping it leaks a listener",
+      "per mount, each holding a stale setState in closure. Collect the",
+      "disposers and run them from the effect's cleanup.",
+    ].join(" ")).toEqual([]);
+  });
+});

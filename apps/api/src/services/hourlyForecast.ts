@@ -1,50 +1,67 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Hour-by-hour forecast for the day a job is scheduled.
+// Hour-by-hour weather for the day a job is scheduled — the WHOLE day.
 //
-// WHY NWS AND NOT OPENWEATHER: the free OpenWeather tier returns 3-hour steps,
-// so a 9am–12pm job collapses into a single 09:00 reading. True hourly needs
-// One Call 3.0, a paid subscription. NWS gives 156 genuinely hourly periods
-// for free with no key, and the app is already an NWS consumer for alerts.
+// WHY OPEN-METEO. The operator's requirement, in their words: "I still would
+// like to see the previous hours because it might be that there was rain early
+// that day, and that could effect if i decide to go out there if it's too wet."
 //
-// AND NOT NWS OBSERVATIONS: this is the gridded FORECAST product, interpolated
-// to a ~2.5km cell containing the property — three properties a few miles
-// apart resolve to three different cells with different rain probabilities.
-// That is the opposite of NWS's *observation* endpoint, which reports from
-// whichever physical station is nearest (Raleigh-Durham airport for most of
-// these properties, ~20 miles east). Forecast: use NWS. Right now: don't.
+// That rules out every forecast-only product. NWS's hourly forecast begins at
+// the CURRENT HOUR — ask it at 5pm and the earliest period it returns is 4pm,
+// so the morning is simply not in the response. OpenWeather's free tier is
+// 3-hour steps and its history needs a paid One Call subscription.
 //
-// LAZY BY CONSTRUCTION. Nothing here runs until someone opens the section on
-// a card. The operator was explicit that a weather call per job on every feed
+// Open-Meteo answers both halves from one model: `past_days` backfills the
+// elapsed hours of the day and the forecast runs forward from now. It is free,
+// needs no key, and — the part that matters for a lawn — is GRIDDED, so it
+// resolves to the property rather than to a physical station. That distinction
+// already decided a previous round of this feature: NWS *observations* would
+// have reported Raleigh-Durham airport, ~20 miles east, for every one of these
+// properties.
+//
+// TWO QUANTITIES, NOT ONE. Before now, the honest number is how much rain
+// ACTUALLY FELL. After now, it is the CHANCE of rain. "A 40% chance it rained
+// at 9am" is not a thing — we know whether it did. The two are carried in
+// separate fields and the chart draws them differently.
+//
+// LAZY BY CONSTRUCTION. Nothing here runs until someone opens the section on a
+// card. The operator was explicit that a weather call per job on every feed
 // render is not worth paying for in latency, however free the API is.
+//
+// TIME IS HANDLED IN INSTANTS. The API is asked for `timeformat=unixtime`, so
+// every timestamp arrives as an unambiguous epoch second and never as a local
+// string that has to be re-interpreted. ET only enters at the point a label is
+// rendered, through the canonical helper.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { prisma } from "../db/prisma";
 import { cached, invalidate } from "../lib/cache";
 import { resolvePropertyPoint } from "./parcels";
-import { etFormatDate, etHourMinute, type EtDateKey } from "../lib/dates";
+import { etClockTime, etDaysBetween, etFormatDate, etHourAxisLabel, type EtDateKey } from "../lib/dates";
 
 export type ForecastHour = {
-  /** Full ISO instant with offset, as NWS returns it. */
+  /** Full ISO instant. */
   startTime: string;
-  /** "14:00" in ET, ready to label an axis. */
+  /** "4:00 PM" in ET — the tooltip form, matching how every other timestamp in
+   *  the app is rendered. */
   label: string;
+  /** "4p" in ET — the axis form. A whole day is ~24 labels in a row on a
+   *  phone, so it has to be two or three characters. Derived from the same
+   *  formatter as `label`, never by slicing it. */
+  axisLabel: string;
   tempF: number | null;
-  /** Percent chance of precipitation. Null when NWS omits it — which is not
-   *  the same as zero, and a chart must not draw it as a zero bar. */
+  /** Chance of rain, percent. Meaningful for hours still AHEAD. Null when the
+   *  provider omits it — which is not the same as zero, and a chart must not
+   *  draw it as a zero bar. */
   precipPct: number | null;
+  /** Rain that actually fell, in inches. Meaningful for hours already ELAPSED.
+   *  This is the field that answers "is the ground going to be soaked". */
+  precipIn: number | null;
   windMph: number | null;
   shortForecast: string | null;
-  /** True for the hour happening right now, so the chart has an anchor the
-   *  reader can orient from. False on every hour of a future day, where there
-   *  is no "now" to point at.
-   *
-   *  This replaced an `inWorkWindow` flag that shaded the hours a visit was
-   *  supposedly booked for. Jobs here are scheduled BY DAY — the time on
-   *  `startAt` is a storage artifact, and in production 500 of 527 occurrences
-   *  carry one of exactly two of them (13:00 and 16:00 ET, from 17:00 and
-   *  20:00 UTC). So the chart was shading 1pm or 4pm depending on which code
-   *  path created the row, under a caption claiming those were the booked
-   *  hours. Confidently wrong is worse than absent. */
+  /** The hour has finished. Its rainfall is a measurement, not a probability. */
+  isPast: boolean;
+  /** The hour happening right now — the chart's anchor. False on every hour of
+   *  a day that is not today, which is correct: there is no "now" on Thursday. */
   isCurrentHour: boolean;
 };
 
@@ -54,33 +71,68 @@ export type HourlyForecast =
    *  looks identical to the marker being broken unless the copy says
    *  otherwise. That ambiguity is exactly what got reported once already. */
   | { available: true; hours: ForecastHour[]; dateKey: string; isToday: boolean; locatedBy: string; fetchedAt: string; stale: boolean }
-  | { available: false; reason: "past" | "no-location" | "beyond-horizon" | "unavailable"; message: string };
+  | { available: false; reason: "past" | "no-location" | "beyond-horizon" | "unavailable" | "disabled"; message: string };
 
-const NWS_SETTINGS_UA = "NWS_ALERTS_USER_AGENT";
+/**
+ * Operator-tunable settings, same shape as ALERT_SETTINGS in weatherAlerts.ts:
+ * key → [default, description]. The seed generates a row per entry from this
+ * map, so a tunable cannot exist in code without a row to change it, and the
+ * service falls back to the default when the row is missing — which is what
+ * keeps a fresh environment (and production before its rows are created)
+ * working rather than dark.
+ *
+ * The BASE url is configurable, not the whole query string. That is a
+ * deliberate difference from NWS_ALERTS_URL: the parameters here are a
+ * contract, not a preference. `past_days` is what makes the elapsed hours of
+ * the day appear at all, and `timeformat=unixtime` is what keeps every
+ * timestamp an unambiguous instant. An operator editing a full template could
+ * silently drop either — the chart would still render, just without the
+ * morning, or with hours in the wrong zone. Pointing the base at a
+ * self-hosted Open-Meteo instance is the real use case, and this covers it.
+ */
+export const HOURLY_WEATHER_SETTINGS: Record<string, [string, string]> = {
+  HOURLY_WEATHER_ENABLED: [
+    "true",
+    "Master switch for the hour-by-hour weather chart on job cards. Turn off to hide the section everywhere without a deploy. The weather recorded at job start and finish is stored separately and is unaffected.",
+  ],
+  HOURLY_WEATHER_BASE_URL: [
+    "https://api.open-meteo.com/v1/forecast",
+    "Endpoint for the hourly chart. Open-Meteo is free and needs no API key, and unlike a forecast-only service it can return the hours of the day that have already passed — which is what answers 'did it rain here this morning'. Point this at a self-hosted Open-Meteo instance if you run one; another provider would need a matching response shape.",
+  ],
+};
 
-async function nwsFetch(url: string): Promise<any> {
-  // Reuses the alerts service's User-Agent setting rather than adding a
-  // second one: NWS throttles anonymous callers and asks for contact details,
-  // and there is no reason for the two NWS consumers to identify differently.
-  const ua = await prisma.setting.findUnique({ where: { key: NWS_SETTINGS_UA } });
-  const res = await fetch(url, {
-    headers: { "User-Agent": ua?.value || "SeedlingsLawnCare/1.0", Accept: "application/geo+json" },
+/** Read the settings, falling back to the defaults above for any missing row. */
+async function loadSettings() {
+  const rows = await prisma.setting.findMany({
+    where: { key: { in: Object.keys(HOURLY_WEATHER_SETTINGS) } },
+    select: { key: true, value: true },
   });
-  if (!res.ok) throw new Error(`NWS returned ${res.status}`);
-  return res.json();
+  const map = new Map(rows.map((r) => [r.key, r.value]));
+  const get = (k: string) => map.get(k)?.trim() || HOURLY_WEATHER_SETTINGS[k][0];
+  return {
+    enabled: get("HOURLY_WEATHER_ENABLED") !== "false",
+    baseUrl: get("HOURLY_WEATHER_BASE_URL").replace(/\?+$/, ""),
+  };
 }
 
-/** The hourly-forecast URL for a coordinate. Two calls, but the first is
- *  cached for a month — a property's grid cell does not move. */
-async function hourlyUrlFor(lat: number, lng: number): Promise<string> {
-  const key = `${lat.toFixed(3)},${lng.toFixed(3)}`;
-  const { value } = await cached("nwsGrid", key, async () => {
-    const body = await nwsFetch(`https://api.weather.gov/points/${lat},${lng}`);
-    const url = body?.properties?.forecastHourly;
-    if (!url) throw new Error("No gridpoint for this coordinate");
-    return url as string;
-  });
-  return value;
+/** Open-Meteo's forecast horizon, in days. */
+const MAX_FORECAST_DAYS = 16;
+
+/** WMO weather codes, bucketed. The provider returns a number where NWS
+ *  returned prose; these are the buckets that change whether a crew goes out,
+ *  not a full translation of the code table. */
+function describeWmo(code: number | null): string | null {
+  if (code == null || !Number.isFinite(code)) return null;
+  if (code === 0) return "Clear";
+  if (code <= 2) return "Partly cloudy";
+  if (code === 3) return "Overcast";
+  if (code <= 48) return "Fog";
+  if (code <= 57) return "Drizzle";
+  if (code <= 67) return "Rain";
+  if (code <= 77) return "Snow";
+  if (code <= 82) return "Rain showers";
+  if (code <= 86) return "Snow showers";
+  return "Thunderstorm";
 }
 
 /**
@@ -94,10 +146,20 @@ export async function hourlyForecastForOccurrence(
   occurrenceId: string,
   opts: { refresh?: boolean } = {},
 ): Promise<HourlyForecast> {
+  const settings = await loadSettings();
+  if (!settings.enabled) {
+    return {
+      available: false,
+      reason: "disabled",
+      message: "The hourly weather chart is turned off in Settings.",
+    };
+  }
+
   const occ = await prisma.jobOccurrence.findUnique({
     where: { id: occurrenceId },
     select: {
       // startAt for the DAY only — its time component is not meaningful here.
+      // Jobs are scheduled by day; the time is a storage artifact.
       id: true, startAt: true,
       job: { select: { propertyId: true } },
     },
@@ -109,12 +171,10 @@ export async function hourlyForecastForOccurrence(
   const dateKey = etFormatDate(occ.startAt) as EtDateKey;
   const todayKey = etFormatDate(new Date()) as EtDateKey;
   if (dateKey < todayKey) {
-    // Forecast endpoints carry no history. Say so plainly instead of
-    // rendering an empty chart that reads as "clear".
     return {
       available: false,
       reason: "past",
-      message: "This visit is in the past. A forecast can't be looked up after the fact — the weather recorded when the job was started and completed is shown above.",
+      message: "This visit is in the past. The weather recorded when the job was started and completed is shown above.",
     };
   }
 
@@ -130,75 +190,102 @@ export async function hourlyForecastForOccurrence(
     };
   }
 
-  let periods: any[] = [];
+  // How far ahead the target day sits, so we ask for exactly enough days.
+  // Day 0 is today, and `forecast_days` counts today as one of them.
+  //
+  // Via the canonical helper, not a millisecond division: subtracting two
+  // timestamps and dividing by a day is DST-fragile, and the build gate is
+  // right to refuse it. Calendar-day distance is a calendar question.
+  const daysAhead = etDaysBetween(todayKey, dateKey);
+  if (daysAhead + 2 > MAX_FORECAST_DAYS) {
+    return {
+      available: false,
+      reason: "beyond-horizon",
+      message: "The forecast doesn't reach this far ahead yet — it runs about two weeks out. Check back closer to the day.",
+    };
+  }
+
+  // past_days=1 backfills the elapsed hours of TODAY, which is the whole point
+  // of this provider. It costs nothing extra on a future-dated visit, and the
+  // day filter below discards what is not wanted.
+  const url =
+    `${settings.baseUrl}?latitude=${point.lat.toFixed(4)}&longitude=${point.lng.toFixed(4)}` +
+    `&hourly=temperature_2m,precipitation,precipitation_probability,wind_speed_10m,weather_code` +
+    `&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch` +
+    // +2, not +1: the buckets are UTC days and ET runs 4-5 hours behind, so an
+    // ET day's last hours fall into the NEXT UTC day. Asking for exactly the
+    // days ahead returned a day that stopped at 19:00 ET. The ET day filter
+    // below discards the surplus, so over-fetching costs nothing.
+    `&past_days=1&forecast_days=${Math.min(MAX_FORECAST_DAYS, daysAhead + 2)}&timeformat=unixtime&timezone=UTC`;
+
+  let body: any;
   let fetchedAt = new Date().toISOString();
   let stale = false;
   try {
-    const url = await hourlyUrlFor(point.lat, point.lng);
-    // An explicit refresh drops OUR copy so the next read goes upstream. The
-    // GRID lookup is deliberately left alone: a property's cell does not move,
-    // and re-resolving it would spend a call to learn the same answer.
-    //
-    // Worth knowing at the callsite: NWS reissues roughly hourly, so a refresh
-    // a minute after the last one can honestly return identical numbers. The
-    // "as of" stamp is what tells the operator which it was.
-    if (opts.refresh) await invalidate("nwsHourly", url);
-    const got = await cached("nwsHourly", url, async () => {
-      const body = await nwsFetch(url);
-      return (body?.properties?.periods ?? []) as any[];
+    // An explicit refresh drops OUR copy so the next read goes upstream. Worth
+    // knowing at the callsite: the model reissues hourly, so a refresh a minute
+    // after the last one can honestly return identical numbers. The "as of"
+    // stamp is what tells the operator which it was.
+    if (opts.refresh) await invalidate("openMeteoHourly", url);
+    const got = await cached("openMeteoHourly", url, async () => {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Open-Meteo returned ${res.status}`);
+      return res.json();
     });
-    periods = got.value;
+    body = got.value;
     fetchedAt = got.fetchedAt;
     stale = got.stale;
   } catch {
     return {
       available: false,
       reason: "unavailable",
-      message: "The National Weather Service didn't answer just now. This is a free public service and it has quiet outages — try again in a few minutes.",
+      message: "The weather service didn't answer just now. Try again in a few minutes.",
     };
   }
 
-  // Only the hours belonging to the job's own ET day. NWS timestamps carry an
-  // offset, so etFormatDate does the timezone work rather than a string slice.
-  const dayHours = periods.filter((p) => {
-    try { return etFormatDate(new Date(p.startTime)) === dateKey; } catch { return false; }
-  });
+  // Parallel arrays, one entry per hour. A missing series is null throughout
+  // rather than an exception — a partial reading is worth drawing.
+  const h = body?.hourly ?? {};
+  const times: number[] = Array.isArray(h.time) ? h.time : [];
+  const at = (series: any, i: number): number | null => {
+    const v = Array.isArray(series) ? series[i] : null;
+    return Number.isFinite(Number(v)) ? Number(v) : null;
+  };
 
-  if (dayHours.length === 0) {
-    // The horizon is ~156 hours. A job further out than that is not an error
-    // and not "no rain" — there is simply no forecast yet.
+  const nowMs = Date.now();
+  const hours: ForecastHour[] = [];
+  for (let i = 0; i < times.length; i++) {
+    // Epoch SECONDS, because the request asked for unixtime — no local-time
+    // string to re-interpret, and no timezone guess anywhere in this path.
+    const t = Number(times[i]) * 1000;
+    if (!Number.isFinite(t)) continue;
+    const d = new Date(t);
+    if (etFormatDate(d) !== dateKey) continue;
+
+    hours.push({
+      startTime: d.toISOString(),
+      label: etClockTime(d),
+      axisLabel: etHourAxisLabel(d),
+      tempF: at(h.temperature_2m, i),
+      precipPct: at(h.precipitation_probability, i),
+      precipIn: at(h.precipitation, i),
+      windMph: at(h.wind_speed_10m, i),
+      shortForecast: describeWmo(at(h.weather_code, i)),
+      // An hour is PAST only once it has finished — mid-hour, its rainfall
+      // is a partial number that would understate the hour, so the current
+      // column is read as a forecast.
+      isPast: t + 3_600_000 <= nowMs,
+      isCurrentHour: t <= nowMs && nowMs < t + 3_600_000,
+    });
+  }
+
+  if (hours.length === 0) {
     return {
       available: false,
       reason: "beyond-horizon",
-      message: "The forecast doesn't reach this far ahead yet — it runs about a week out. Check back closer to the day.",
+      message: "The forecast doesn't reach this far ahead yet — it runs about two weeks out. Check back closer to the day.",
     };
   }
-
-  // The hour we are in right now. NWS's first returned period IS the current
-  // hour — it carries no past — but deriving this from the clock rather than
-  // from position means it stays correct for a forecast served from cache, and
-  // correctly marks nothing at all on a future day.
-  const nowMs = Date.now();
-
-  const hours: ForecastHour[] = dayHours.map((p) => {
-    const t = new Date(p.startTime).getTime();
-    const pop = p?.probabilityOfPrecipitation?.value;
-    const windMph = Number(String(p?.windSpeed ?? "").match(/\d+/)?.[0]);
-    return {
-      startTime: p.startTime,
-      // ET via the canonical helper, NOT a slice of the ISO string. NWS emits
-      // its own offset (-04:00 in summer, -05:00 in winter), so slicing
-      // happens to read right for a North Carolina grid and would be silently
-      // wrong for any other — and it re-derives a timezone the repo already
-      // has one answer for.
-      label: etHourMinute(new Date(p.startTime)),
-      tempF: Number.isFinite(Number(p.temperature)) ? Number(p.temperature) : null,
-      precipPct: Number.isFinite(Number(pop)) ? Number(pop) : null,
-      windMph: Number.isFinite(windMph) ? windMph : null,
-      shortForecast: p.shortForecast ?? null,
-      isCurrentHour: t <= nowMs && nowMs < t + 3_600_000,
-    };
-  });
 
   return { available: true, hours, dateKey, isToday: dateKey === todayKey, locatedBy: point.located, fetchedAt, stale };
 }

@@ -167,9 +167,17 @@ export default function PropertiesTab({
   }, [isTrainee, me?.id]);
 
   useEffect(() => {
-    onEventSearchRun("clientTabToPropertiesTabSearch", setQ, inputRef, setHighlightId);
-    onEventSearchRun("jobsTabToPropertiesTabSearch", setQ, inputRef, setHighlightId);
-    onEventSearchRun("paymentsTabToPropertiesTabSearch", setQ, inputRef, setHighlightId);
+    // EVERY disposer is kept and run on unmount. These were fire-and-forget:
+    // the return values were dropped, so each mount added listeners that the
+    // next unmount never removed. They hold this render's setQ / setHighlightId
+    // in closure, so after a remount a single cross-tab jump runs the handler
+    // once per historical mount, the dead ones writing into unmounted state.
+    const offs = [
+      onEventSearchRun("clientTabToPropertiesTabSearch", setQ, inputRef, setHighlightId),
+      onEventSearchRun("jobsTabToPropertiesTabSearch", setQ, inputRef, setHighlightId),
+      onEventSearchRun("paymentsTabToPropertiesTabSearch", setQ, inputRef, setHighlightId),
+    ];
+    return () => { for (const off of offs) off(); };
   }, []);
 
   // Filtered items based on search, kind or status.

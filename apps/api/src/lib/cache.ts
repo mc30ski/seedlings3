@@ -53,15 +53,12 @@ export const CACHE_NAMESPACES = {
    *  a year, and the keyless API allows only ~25 requests/day. */
   marketRate: { ttlSeconds: 60 * DAY },
 
-  /** NWS gridpoint lookup for a coordinate — /points/{lat},{lng}. The grid a
-   *  property sits in does not move, so this is cached hard: the only reason
-   *  it expires at all is that NWS occasionally re-cuts its grids. */
-  nwsGrid: { ttlSeconds: 30 * DAY },
-
-  /** NWS hourly forecast for a gridpoint. Reissued roughly hourly, and every
-   *  property in the same ~2.5km cell shares one entry — which, for a crew
-   *  working one neighbourhood, is nearly all of them. */
-  nwsHourly: { ttlSeconds: 30 * 60 },
+  /** Open-Meteo hourly, covering the elapsed AND upcoming hours of a day. The
+   *  model reissues roughly hourly; coordinates are rounded to 4dp in the URL,
+   *  so neighbouring properties on one street share an entry. Replaced the two
+   *  NWS namespaces (grid + hourly): that product begins at the current hour,
+   *  so it could not answer "did it rain this morning". */
+  openMeteoHourly: { ttlSeconds: 30 * 60 },
 
   /** Address → coordinates, from whichever routing provider is configured.
    *  Billed per call, and a job's address essentially never moves — this was

@@ -23,10 +23,15 @@ import type { WeatherSnapshot } from "@/src/lib/types";
 type ForecastHour = {
   startTime: string;
   label: string;
+  axisLabel: string;
   tempF: number | null;
+  /** Chance of rain — the question for hours still ahead. */
   precipPct: number | null;
+  /** Rain that actually fell, inches — the question for hours already gone. */
+  precipIn: number | null;
   windMph: number | null;
   shortForecast: string | null;
+  isPast: boolean;
   isCurrentHour: boolean;
 };
 type HourlyForecast =
@@ -67,45 +72,90 @@ function RecordedReading({ label, wx }: { label: string; wx: WeatherSnapshot }) 
 }
 
 /**
- * The hourly bar chart.
+ * The hourly bar chart — the whole day, both directions from now.
  *
- * PRECIPITATION IS THE BAR, temperature is a label. "Can we mow at 2pm" is a
- * rain question first; a chart that made temperature the tall thing would put
- * the least useful number in the most prominent place.
+ * TWO QUANTITIES, DRAWN DIFFERENTLY, because they answer different questions:
  *
- * A null precipitation is NOT drawn as a zero bar — NWS omits the field
- * sometimes, and "we don't know" rendered as a flat bar reads as "it's dry",
- * which is the one misreading that would actually send a crew out.
+ *   BEFORE NOW   how much rain actually FELL. The operator's reason for
+ *                wanting it: "it might be that there was rain early that day,
+ *                and that could effect if i decide to go out there if it's too
+ *                wet." Whether the ground is soaked is a measurement, not a
+ *                probability — "a 40% chance it rained at 9am" is not a thing.
  *
- * THE MARKED COLUMN IS NOW, and nothing else. It used to be the hours the
- * visit was "booked" for — but jobs here are scheduled by DAY, so that came
- * from the time component of `startAt`, which is a storage artifact: in
- * production 500 of 527 occurrences carry one of exactly two of them. The
- * chart was pointing at 1pm or 4pm depending on which code path wrote the row
- * and captioning it as the booked hours. On a future day nothing is marked,
- * which is correct — there is no "now" on Thursday.
+ *   AFTER NOW    the CHANCE of rain, which is all a forecast can offer.
+ *
+ * They get separate scales and separate fills, because a 0.1in bar and a 30%
+ * bar share no axis. The boundary between them is the "now" column, which is
+ * the darkest thing on the chart.
+ *
+ * A null value is NOT drawn as a zero bar — "we don't know" rendered flat
+ * reads as "it's dry", which is the one misreading that would actually send a
+ * crew out. Zero is different: a past hour that measured 0.00in is a known dry
+ * hour and draws as a baseline.
  */
 function HourlyChart({ hours }: { hours: ForecastHour[] }) {
-  const max = Math.max(40, ...hours.map((h) => h.precipPct ?? 0));
+  // Independent maxima. Floors keep a quiet day from rendering one stray
+  // reading as a full-height bar.
+  const maxRain = Math.max(0.1, ...hours.map((h) => (h.isPast ? h.precipIn ?? 0 : 0)));
+  const maxPct = Math.max(40, ...hours.map((h) => (h.isPast ? 0 : h.precipPct ?? 0)));
+
   return (
     <Box overflowX="auto" pb={1}>
       <HStack gap={0.5} align="flex-end" minW="max-content">
         {hours.map((h) => {
-          const pct = h.precipPct;
-          const heightPct = pct == null ? 0 : Math.max(2, (pct / max) * 100);
+          // The current hour is not finished, so it is read as a forecast: its
+          // rainfall so far is a partial number and would understate the hour.
+          const measured = h.isPast;
+          const value = measured ? h.precipIn : h.precipPct;
+          const known = value != null;
+          const heightPct = !known
+            ? 0
+            : measured
+              ? Math.max(2, ((value as number) / maxRain) * 100)
+              : Math.max(2, ((value as number) / maxPct) * 100);
+
+          const barBg = !known
+            ? "transparent"
+            : h.isCurrentHour
+              ? "blue.600"
+              : measured
+                ? "cyan.600"
+                : "blue.300";
+
           return (
             <VStack
               key={h.startTime}
               gap={0.5}
-              minW="26px"
-              title={`${h.label}${h.isCurrentHour ? " (now)" : ""} · ${h.tempF ?? "—"}°F · ${
-                pct == null ? "no precipitation data" : `${pct}% chance of rain`
-              }${h.windMph != null ? ` · wind ${h.windMph} mph` : ""}${
+              minW="30px"
+              title={`${h.label}${h.isCurrentHour ? " (now)" : ""} · ${h.tempF != null ? Math.round(h.tempF) + "°F" : "—"} · ${
+                measured
+                  ? h.precipIn == null
+                    ? "no rainfall data"
+                    : h.precipIn > 0
+                      ? `${h.precipIn}in of rain fell`
+                      : "no rain fell"
+                  : h.precipPct == null
+                    ? "no precipitation data"
+                    : `${h.precipPct}% chance of rain`
+              }${h.windMph != null ? ` · wind ${Math.round(h.windMph)} mph` : ""}${
                 h.shortForecast ? ` · ${h.shortForecast}` : ""
               }`}
             >
-              <Text fontSize="2xs" color="fg.muted" fontVariantNumeric="tabular-nums">
-                {pct == null ? "–" : `${pct}`}
+              {/* The number over the bar carries its own unit, so the two
+                  halves of the chart can never be read as one series. */}
+              <Text
+                fontSize="2xs"
+                color={measured ? "cyan.700" : "fg.muted"}
+                fontVariantNumeric="tabular-nums"
+                whiteSpace="nowrap"
+              >
+                {!known
+                  ? "–"
+                  : measured
+                    ? (value as number) > 0
+                      ? `${(value as number).toFixed(2).replace(/^0/, "")}"`
+                      : "0"
+                    : `${value}`}
               </Text>
               <Box
                 w="full"
@@ -118,11 +168,12 @@ function HourlyChart({ hours }: { hours: ForecastHour[] }) {
                 <Box
                   w="full"
                   h={`${heightPct}%`}
-                  bg={pct == null ? "transparent" : h.isCurrentHour ? "blue.solid" : "blue.300"}
+                  minH={known && measured && (value as number) === 0 ? "2px" : undefined}
+                  bg={barBg}
                   borderTopRadius="sm"
-                  borderWidth={pct == null ? "1px" : undefined}
-                  borderStyle={pct == null ? "dashed" : undefined}
-                  borderColor={pct == null ? "border" : undefined}
+                  borderWidth={!known ? "1px" : undefined}
+                  borderStyle={!known ? "dashed" : undefined}
+                  borderColor={!known ? "border" : undefined}
                 />
               </Box>
               <Text
@@ -133,11 +184,15 @@ function HourlyChart({ hours }: { hours: ForecastHour[] }) {
               >
                 {/* "now" rather than the hour on the current column — the
                     reader is looking for where they are, not what o'clock it
-                    is, and they already know that. */}
-                {h.isCurrentHour ? "now" : h.label.slice(0, 2)}
+                    is, and they already know that.
+
+                    axisLabel, not a slice of the label: slicing a 12-hour
+                    string gives "4:" and a 24-hour one gives an hour the rest
+                    of this card does not use. */}
+                {h.isCurrentHour ? "now" : h.axisLabel}
               </Text>
               <Text fontSize="2xs" color="fg.muted" fontVariantNumeric="tabular-nums">
-                {h.tempF != null ? `${h.tempF}°` : ""}
+                {h.tempF != null ? `${Math.round(h.tempF)}°` : ""}
               </Text>
             </VStack>
           );
@@ -242,6 +297,13 @@ export default function JobWeather({
                 tap to check the forecast
               </Text>
             )}
+            {/* Once the server says the chart is switched off, stop inviting
+                the tap. The reason text explains why when it is open. */}
+            {!open && data?.available === false && data.reason === "disabled" && (
+              <Text fontSize="2xs" color="fg.muted" ml="auto">
+                turned off in Settings
+              </Text>
+            )}
           </Box>
 
           {open && (
@@ -257,21 +319,46 @@ export default function JobWeather({
                   {/* Says which day is on screen and, on a future one, why no
                       column is marked — an unmarked chart otherwise reads as a
                       broken marker. */}
-                  <Text fontSize="2xs" color="fg.muted">
-                    {data.isToday
-                      ? "Chance of rain by hour for the rest of today — the marked column is now. Times are ET."
-                      : "Chance of rain by hour for the day of this visit. Times are ET."}
-                  </Text>
+                  {/* A LEGEND, because the chart carries two different
+                      quantities and nothing else on screen says so. Teal bars
+                      are inches that fell, blue bars are a percentage chance,
+                      and they share no axis. */}
+                  {data.isToday ? (
+                    <HStack gap={2.5} wrap="wrap" fontSize="2xs" color="fg.muted">
+                      <HStack gap={1}>
+                        <Box w="8px" h="8px" borderRadius="2px" bg="cyan.600" />
+                        <Text>rain that fell (in)</Text>
+                      </HStack>
+                      <HStack gap={1}>
+                        <Box w="8px" h="8px" borderRadius="2px" bg="blue.600" />
+                        <Text>now</Text>
+                      </HStack>
+                      <HStack gap={1}>
+                        <Box w="8px" h="8px" borderRadius="2px" bg="blue.300" />
+                        <Text>chance of rain (%)</Text>
+                      </HStack>
+                      <Text>· times are ET</Text>
+                    </HStack>
+                  ) : (
+                    <HStack gap={2.5} wrap="wrap" fontSize="2xs" color="fg.muted">
+                      <HStack gap={1}>
+                        <Box w="8px" h="8px" borderRadius="2px" bg="blue.300" />
+                        <Text>chance of rain (%) — the whole day, all still ahead</Text>
+                      </HStack>
+                      <Text>· times are ET</Text>
+                    </HStack>
+                  )}
                   <HourlyChart hours={data.hours} />
                   {/* A forecast is a probability for a ~2.5km square, not a
                       promise about one lawn. Say so rather than letting a
                       crisp chart imply certainty. */}
                   <HStack gap={2} align="flex-start">
                     <Text fontSize="2xs" color="fg.muted" flex="1">
-                      National Weather Service forecast for this property, as of{" "}
+                      Open-Meteo for this property, as of{" "}
                       {fmtDateTime(data.fetchedAt)}
                       {data.stale ? " (last good reading — the service didn't answer just now)" : ""}. A
-                      forecast is a chance, not a guarantee.
+                      forecast is a chance, not a guarantee; past hours are the
+                      model's record of what fell.
                     </Text>
                     {/* NEXT TO THE "AS OF" STAMP, not in the header — the
                         moment someone reads how old the reading is, is the
