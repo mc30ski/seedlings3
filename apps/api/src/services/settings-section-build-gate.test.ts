@@ -20,7 +20,8 @@
 //
 // WHAT THIS GATE REQUIRES
 //   1. Every setting key seeded by seed.ts appears in SETTING_SECTIONS.
-//   2. Every key in a service-level settings map (PARCEL_SETTINGS) does too.
+//   2. Every key in EVERY service-level settings map seed.ts imports does
+//      too — discovered from those imports, not named one at a time.
 //   3. Every section NAME used in SETTING_SECTIONS is a real section defined
 //      in the web's settingSections.ts — a typo'd section ("payment" for
 //      "payments") also lands the row in "Other", just less obviously.
@@ -38,7 +39,6 @@ import { join, resolve } from "path";
 
 const REPO_ROOT = resolve(__dirname, "../../../..");
 const SEED_SRC = readFileSync(join(REPO_ROOT, "apps/api/prisma/seed.ts"), "utf8");
-const PARCELS_SRC = readFileSync(join(REPO_ROOT, "apps/api/src/services/parcels.ts"), "utf8");
 const WEB_SECTIONS_SRC = readFileSync(
   join(REPO_ROOT, "apps/web/src/lib/settingSections.ts"),
   "utf8",
@@ -77,10 +77,45 @@ function seededSettingKeys(): string[] {
   return [...new Set([...block.matchAll(re)].map((m) => m[1]))];
 }
 
-/** Keys of the PARCEL_SETTINGS map the parcel service reads its defaults from. */
-function parcelSettingKeys(): string[] {
-  const block = PARCELS_SRC.slice(PARCELS_SRC.indexOf("PARCEL_SETTINGS"));
-  return [...new Set([...block.matchAll(/^ {2}(PARCEL_[A-Z0-9_]+):/gm)].map((m) => m[1]))];
+/**
+ * Keys of EVERY service-level settings map seed.ts generates rows from.
+ *
+ * seed.ts writes most settings as literal `key: "X", value:` pairs, which
+ * `seededSettingKeys` finds. But a service can also export a
+ * `NAME_SETTINGS` map of key → [default, description] and seed.ts loops over
+ * it — four do: PARCEL_SETTINGS, ALERT_SETTINGS, MARKET_RATE_SETTINGS,
+ * HOURLY_WEATHER_SETTINGS. Those keys never appear as literals in seed.ts, so
+ * they were invisible here.
+ *
+ * This gate special-cased PARCEL_SETTINGS by name, and the other three drifted
+ * in unchecked behind it — the precise failure this gate's own header warns
+ * about. Deleting `NWS_ALERTS_ENABLED` from SETTING_SECTIONS passed clean.
+ *
+ * So: discover the maps from seed.ts's own imports rather than naming them.
+ * A fifth one cannot be added without this finding it.
+ */
+function serviceSettingsMapKeys(): string[] {
+  const out = new Set<string>();
+  const imports = SEED_SRC.matchAll(
+    /import\s*\{\s*([A-Z][A-Z0-9_]*_SETTINGS)\s*\}\s*from\s*"([^"]+)"/g,
+  );
+  for (const imp of imports) {
+    const [, mapName, rel] = imp;
+    // seed.ts sits in apps/api/prisma, so its "../src/..." resolves from there.
+    const file = join(REPO_ROOT, "apps/api/prisma", `${rel}.ts`);
+    let src: string;
+    try { src = readFileSync(file, "utf8"); } catch { continue; }
+    const start = src.indexOf(`export const ${mapName}`);
+    if (start === -1) continue;
+    const end = src.indexOf("\n};", start);
+    const block = src.slice(start, end === -1 ? undefined : end);
+    // Require the `KEY: [default, description]` tuple shape. Matching a bare
+    // `KEY:` swept in a neighbouring const of state abbreviations
+    // (`AL: "ALABAMA"`) when a map's closing brace was not where the scan
+    // guessed — eleven phantom "settings", every one a false failure.
+    for (const m of block.matchAll(/^ {2}([A-Z][A-Z0-9_]*):\s*\[/gm)) out.add(m[1]);
+  }
+  return [...out];
 }
 
 /** Section keys the web app knows how to render a heading for. */
@@ -114,15 +149,16 @@ describe("settings section build gate", () => {
     ).toEqual([]);
   });
 
-  it("every PARCEL_SETTINGS key has a section", () => {
+  it("every service-level settings-map key has a section", () => {
     // This map is the source of truth for the parcel feature's tunables, and
     // seed.ts generates a Setting row for each — so a new tunable added here
     // needs a section entry too.
     const map = settingSectionMap();
-    const missing = parcelSettingKeys().filter((k) => !map.has(k));
+    const missing = serviceSettingsMapKeys().filter((k) => !map.has(k));
     expect(
       missing,
-      `PARCEL_SETTINGS keys missing from SETTING_SECTIONS: ${missing.join(", ")}`,
+      `Service settings-map keys missing from SETTING_SECTIONS in prisma/seed.ts: ` +
+      `${missing.join(", ")}. Without a section they land in the "Other" junk drawer.`,
     ).toEqual([]);
   });
 
@@ -144,7 +180,7 @@ describe("settings section build gate", () => {
     // every assertion above vacuously pass.
     expect(settingSectionMap().size).toBeGreaterThan(50);
     expect(seededSettingKeys().length).toBeGreaterThan(30);
-    expect(parcelSettingKeys().length).toBeGreaterThan(10);
+    expect(serviceSettingsMapKeys().length).toBeGreaterThan(10);
     expect(webSectionKeys().size).toBeGreaterThan(5);
   });
 });

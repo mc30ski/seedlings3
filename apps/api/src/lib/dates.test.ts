@@ -24,6 +24,8 @@ import {
   parseUsDateRangeToEtDateKeys,
   type EtDateKey,
   isStaleAfterDays,
+  etClockTime,
+  etHourAxisLabel,
 } from "./dates";
 
 describe("etFormatDate", () => {
@@ -416,5 +418,53 @@ describe("etWeekStart", () => {
 
   it("crosses month and year boundaries", () => {
     expect(etWeekStart("2026-01-01" as EtDateKey)).toBe("2025-12-29");
+  });
+});
+
+describe("etClockTime / etHourAxisLabel — the ET display formatters", () => {
+  // These exist because the weather card rendered a 24-hour axis ("16")
+  // directly above a 12-hour "as of" stamp ("4:57 PM"). Both were ET and both
+  // were correct; together they were unreadable.
+  const at = (iso: string) => new Date(iso);
+
+  it("renders 12-hour ET, matching fmtDateTime on the web", () => {
+    expect(etClockTime(at("2026-09-12T16:00:00-04:00"))).toBe("4:00 PM");
+    expect(etClockTime(at("2026-09-12T09:30:00-04:00"))).toBe("9:30 AM");
+  });
+
+  it("names both noon and midnight the way a person would", () => {
+    // The classic off-by-twelve: a 24-hour formatter with hour12:false reports
+    // midnight as "24" on some cycles, and naive %12 arithmetic yields "0".
+    expect(etClockTime(at("2026-09-12T00:00:00-04:00"))).toBe("12:00 AM");
+    expect(etClockTime(at("2026-09-12T12:00:00-04:00"))).toBe("12:00 PM");
+    expect(etHourAxisLabel(at("2026-09-12T00:00:00-04:00"))).toBe("12a");
+    expect(etHourAxisLabel(at("2026-09-12T12:00:00-04:00"))).toBe("12p");
+  });
+
+  it("compresses to an axis label without disagreeing with the clock", () => {
+    for (const iso of [
+      "2026-09-12T00:00:00-04:00", "2026-09-12T09:00:00-04:00",
+      "2026-09-12T12:00:00-04:00", "2026-09-12T16:00:00-04:00",
+      "2026-09-12T23:00:00-04:00",
+    ]) {
+      const d = at(iso);
+      const [hour] = etClockTime(d).split(":");
+      const period = etClockTime(d).endsWith("PM") ? "p" : "a";
+      expect(etHourAxisLabel(d)).toBe(`${hour}${period}`);
+    }
+  });
+
+  it("is ET regardless of the server's timezone", () => {
+    // Vercel runs UTC. An instant at 16:00 ET is 20:00 UTC; a formatter that
+    // leaned on the process zone would say "8:00 PM".
+    const d = at("2026-09-12T16:00:00-04:00");
+    expect(etClockTime(d)).toBe("4:00 PM");
+    expect(etHourAxisLabel(d)).toBe("4p");
+  });
+
+  it("follows ET across the DST boundary, not a fixed offset", () => {
+    // Same wall-clock hour, six months apart: EDT (-04:00) and EST (-05:00).
+    expect(etClockTime(at("2026-07-15T14:00:00-04:00"))).toBe("2:00 PM");
+    expect(etClockTime(at("2026-01-15T14:00:00-05:00"))).toBe("2:00 PM");
   });
 });

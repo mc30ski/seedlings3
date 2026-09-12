@@ -409,6 +409,45 @@ export function etIcalLocalDateTime(d: Date): string {
 }
 
 /**
+ * An instant as a 12-hour ET clock time: "4:00 PM", "12:00 AM".
+ *
+ * For DISPLAY. `etHourMinute` is 24-hour and exists to preserve a time-of-day
+ * across a date shift — using it in the UI put a 24-hour axis ("16") directly
+ * above a 12-hour "as of" stamp ("4:57:15 PM") on the same card, which the
+ * operator has to translate between to read one chart.
+ *
+ * en-US 12-hour matches `fmtDateTime` on the web, which every other
+ * user-facing timestamp in the app goes through.
+ */
+export function etClockTime(d: Date): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(d);
+}
+
+/**
+ * The same instant compressed to a chart axis: "4p", "9a", "12a".
+ *
+ * A bar chart of a whole day needs ~24 labels in a row on a phone, so the
+ * label has to be two or three characters. Derived from the same formatter as
+ * `etClockTime` rather than by slicing it, so the two can never disagree about
+ * which hour it is.
+ */
+export function etHourAxisLabel(d: Date): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hour: "numeric",
+    hour12: true,
+  }).formatToParts(d);
+  const hour = parts.find((p) => p.type === "hour")?.value ?? "";
+  const period = parts.find((p) => p.type === "dayPeriod")?.value ?? "";
+  return `${hour}${period.toLowerCase().startsWith("p") ? "p" : "a"}`;
+}
+
+/**
  * Get the ET hour:minute (24h) of any Date as "HH:MM". Used by the iCal
  * feed to distinguish "scheduled at default 9 AM (untimed)" from
  * "scheduled at a specific time" without exposing the inline Intl

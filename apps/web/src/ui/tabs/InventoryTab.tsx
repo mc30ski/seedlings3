@@ -818,7 +818,9 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
   }
 
   useEffect(() => {
-    onEventSearchRun("activityTavToEquipmentTabQRCodeSearch", setQ, inputRef);
+    // Return the disposer — dropping it leaks a listener per mount, each
+    // holding this render's setQ in closure.
+    return onEventSearchRun("activityTavToEquipmentTabQRCodeSearch", setQ, inputRef);
   }, []);
 
   // QR slug redirect (from /e/[slug] page) — kept separate from the

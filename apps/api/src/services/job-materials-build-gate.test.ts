@@ -903,7 +903,12 @@ describe("[build-gate] a pasted address keeps its whole state name", () => {
   // depended on which screen created it. The gate exists because the failure
   // is invisible at the point it happens.
   const LIB = web("lib/address.ts");
-  const DIALOGS = ["ui/dialogs/PropertyDialog.tsx", "ui/dialogs/ConvertEstimateDialog.tsx"];
+  // The LIVE address-entry surfaces. ConvertEstimateDialog was listed here and
+  // was never rendered anywhere — which is why "fixing" it changed nothing
+  // while NewJobSetupWorkflow, the path an accepted estimate actually travels,
+  // kept writing "North". It has since been deleted; the workflow itself is
+  // pinned by address-parsing-build-gate.
+  const DIALOGS = ["ui/dialogs/PropertyDialog.tsx", "ui/dialogs/EstimateDialog.tsx"];
 
   it("both address forms use the ONE parser", () => {
     for (const d of DIALOGS) {
@@ -4102,21 +4107,82 @@ describe("[build-gate] the hourly chart marks NOW, and nothing it cannot know", 
   });
 
   it("the current hour comes from the clock, not from array position", () => {
-    // NWS's first returned period happens to be the current hour, so
-    // `index === 0` would look right — until a cached response is served a
-    // little later, or the day on screen is not today.
+    // A provider whose first row happens to be the current hour makes
+    // `index === 0` look right — until a cached response is served a little
+    // later, or the day on screen is not today.
     expect(strip(SVC), "isCurrentHour must be derived from the clock")
       .toMatch(/isCurrentHour:\s*t\s*<=\s*nowMs\s*&&\s*nowMs\s*<\s*t\s*\+\s*3_600_000/);
     expect(strip(SVC), "nowMs must come from Date.now()").toMatch(/const nowMs = Date\.now\(\)/);
   });
 
-  it("hour labels go through the canonical ET helper", () => {
-    // NWS emits its own UTC offset (-04:00 / -05:00). Slicing the ISO string
-    // reads correctly for a North Carolina grid and would be silently wrong
-    // for any other — and re-derives a timezone this repo has one answer for.
+  it("the elapsed hours of the day are fetched, not dropped", () => {
+    // THE REQUIREMENT, in the operator's words: "I still would like to see the
+    // previous hours because it might be that there was rain early that day,
+    // and that could effect if i decide to go out there if it's too wet."
+    //
+    // This is why the provider is Open-Meteo and not a forecast-only product.
+    // NWS hourly BEGINS at the current hour — ask it at 5pm and the morning is
+    // simply absent from the response, with no error and no gap to notice.
+    expect(strip(SVC), "past_days must be requested or the morning is lost")
+      .toMatch(/past_days=1/);
+  });
+
+  it("timestamps arrive as instants, never as local strings", () => {
+    // unixtime removes every opportunity to re-interpret a naive local string
+    // in the wrong zone. ET enters only where a label is rendered.
+    expect(strip(SVC), "timeformat=unixtime keeps the path zone-free")
+      .toMatch(/timeformat=unixtime/);
+  });
+
+  it("rain that fell and rain that might fall stay separate", () => {
+    // They answer different questions and share no axis. "A 40% chance it
+    // rained at 9am" is not a thing — we know whether it did.
     const svc = strip(SVC);
-    expect(svc, "label must use etHourMinute").toMatch(/label:\s*etHourMinute\(/);
-    expect(svc, "no ISO string slicing for the label").not.toMatch(/startTime\)\.slice\(/);
+    expect(svc, "precipIn carries measured rainfall").toMatch(/precipIn:/);
+    expect(svc, "precipPct carries the forecast chance").toMatch(/precipPct:/);
+    expect(svc, "isPast marks which one applies").toMatch(/isPast:/);
+
+    const cmp = strip(CMP);
+    // Two maxima, each DECLARED. An earlier version of this rule only checked
+    // that the identifiers appeared somewhere, so renaming the declaration and
+    // leaving the uses dangling passed clean.
+    expect(cmp, "measured rain needs its own declared scale")
+      .toMatch(/const maxRain\s*=/);
+    expect(cmp, "the forecast chance needs its own declared scale")
+      .toMatch(/const maxPct\s*=/);
+    // And they must not be the same expression — one scale for both quantities
+    // is the thing this is preventing.
+    expect(cmp, "measured rain scales on precipIn").toMatch(/const maxRain[^;]*precipIn/);
+    expect(cmp, "the chance scales on precipPct").toMatch(/const maxPct[^;]*precipPct/);
+  });
+
+  it("calendar-day distance uses the canonical helper", () => {
+    // The horizon check is a CALENDAR question. Subtracting timestamps and
+    // dividing by 86_400_000 is DST-fragile; the date-handling gate refuses it
+    // and was the thing that caught this.
+    expect(strip(SVC), "use etDaysBetween for day distance").toMatch(/etDaysBetween\(/);
+  });
+
+  it("hour labels go through the canonical ET display helpers", () => {
+    // Two failures this pins, both shipped:
+    //
+    //   1. `String(p.startTime).slice(11, 16)` — reading the hour out of the
+    //      provider's ISO string. Correct only by luck of the grid's offset.
+    //   2. `etHourMinute` — genuinely ET, but 24-HOUR, while every other
+    //      timestamp in the app renders 12-hour through fmtDateTime. The card
+    //      showed an axis of "16" above an "as of" of "4:57 PM".
+    const svc = strip(SVC);
+    expect(svc, "the tooltip label must use etClockTime").toMatch(/label:\s*etClockTime\(/);
+    expect(svc, "the axis label must use etHourAxisLabel").toMatch(/axisLabel:\s*etHourAxisLabel\(/);
+    expect(svc, "no ISO string slicing for a label").not.toMatch(/startTime\)\.slice\(/);
+    expect(svc, "etHourMinute is 24-hour — not for display")
+      .not.toMatch(/etHourMinute\(/);
+  });
+
+  it("the chart renders the axis label rather than slicing the clock one", () => {
+    // `h.label.slice(0, 2)` worked on "16:00" and yields "4:" on "4:00 PM".
+    expect(strip(CMP), "use axisLabel, not a slice").not.toMatch(/label\.slice\(/);
+    expect(strip(CMP), "the axis must render axisLabel").toMatch(/h\.axisLabel/);
   });
 
   it("the caption says which day it is showing", () => {

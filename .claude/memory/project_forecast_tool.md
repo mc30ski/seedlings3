@@ -65,7 +65,7 @@ Pay-structure simulator at **Super → Money → Forecast**. Pick a window of re
 ## Still open after the 2026-09-10 session
 
 - **Production `EXPENSE_CATEGORIES` config change is the user's to run via Neon**, and only AFTER this code deploys. Split Insurance into `Insurance — workers comp` (tag WORKERS_COMP) + `Insurance — general liability` (tag GENERAL_LIABILITY), KEEPING the plain `Insurance` label as the catch-all so the 7 existing insurance ledger rows aren't orphaned. Then retag those rows.
-- `apps/api/diag-real.ts` is a scratch file of mine that got picked up in commit `6d8c40f` — still tracked, still wants deleting.
+- `apps/api/diag-real.ts` was a scratch file picked up in commit `6d8c40f`; deleted 2026-09-12.
 
 ## Where it left off
 

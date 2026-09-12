@@ -1,6 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import { PARCEL_SETTINGS } from "../src/services/parcels";
 import { ALERT_SETTINGS } from "../src/services/weatherAlerts";
+import { HOURLY_WEATHER_SETTINGS } from "../src/services/hourlyForecast";
 import { MARKET_RATE_SETTINGS } from "../src/services/marketRate";
 import { PrismaNeon } from "@prisma/adapter-neon";
 import { neonConfig } from "@neondatabase/serverless";
@@ -272,6 +273,8 @@ const SETTING_SECTIONS: Record<string, string> = {
   NWS_ALERTS_USER_AGENT: "integrations",
   NWS_ALERTS_MIN_SEVERITY: "integrations",
   NWS_ALERTS_EVENT_KEYWORDS: "integrations",
+  HOURLY_WEATHER_ENABLED: "integrations",
+  HOURLY_WEATHER_BASE_URL: "integrations",
   DOCUMENT_SYNC_ENABLED: "integrations",
   CLIENT_BACKUP_ENABLED: "integrations",
 };
@@ -2791,6 +2794,16 @@ async function seedDatabase() {
   // services/marketRate.ts — the same map the service reads its defaults
   // from, so a new tunable cannot exist in code without a row to change it.
   for (const [key, [value, description]] of Object.entries(MARKET_RATE_SETTINGS)) {
+    await prisma.setting.upsert({
+      where: { key },
+      create: { key, value, description, updatedById: MICHAEL_ID },
+      update: { description, updatedById: MICHAEL_ID },
+    });
+  }
+
+  // Hour-by-hour weather chart, generated from HOURLY_WEATHER_SETTINGS in
+  // services/hourlyForecast.ts — same map the service reads its defaults from.
+  for (const [key, [value, description]] of Object.entries(HOURLY_WEATHER_SETTINGS)) {
     await prisma.setting.upsert({
       where: { key },
       create: { key, value, description, updatedById: MICHAEL_ID },
