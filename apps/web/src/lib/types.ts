@@ -407,6 +407,27 @@ export const JOB_TYPE_OPTIONS = [
 
 
 
+/** A frozen weather reading. Mirrors WeatherSnapshot in
+ *  apps/api/src/services/occurrenceWeather.ts. Every field is nullable
+ *  because every field is optional upstream — a partial reading is worth
+ *  keeping, a fabricated one is not. */
+export type WeatherSnapshot = {
+  tempF: number | null;
+  feelsLikeF: number | null;
+  description: string | null;
+  icon: string | null;
+  humidityPct: number | null;
+  windMph: number | null;
+  rainMmLastHour: number | null;
+  capturedAt: string;
+  source: string;
+  /** "gps" = the worker's own phone when they pressed the button;
+   *  "property" = the property's stored or geocoded point. */
+  locatedBy: "gps" | "property";
+  lat: number;
+  lng: number;
+};
+
 export type JobOccurrenceAssigneeWithUser = {
   id: string;
   occurrenceId: string;
@@ -449,6 +470,13 @@ export type JobOccurrenceFull = {
   startLng?: number | null;
   completeLat?: number | null;
   completeLng?: number | null;
+  /** What the weather ACTUALLY WAS, frozen at start and at completion. A
+   *  forecast can be re-fetched; this cannot — the forecast endpoints carry
+   *  no history, so these are the only record. Null means it was not
+   *  captured (offline start, provider outage, or a job predating the
+   *  feature), never "the weather was nothing". */
+  startWeather?: WeatherSnapshot | null;
+  completeWeather?: WeatherSnapshot | null;
   linkGroupId?: string | null;
   assignees: JobOccurrenceAssigneeWithUser[];
   payment?: PaymentInfo | null;
@@ -467,6 +495,11 @@ export type JobListItem = {
     city?: string | null;
     state?: string | null;
     status: string;
+    /** How to get onto the property — gate codes, dogs, where to park. Held
+     *  on the property, shown on every visit to it: the worker who knew is
+     *  not always the one sent, and someone at a locked gate cannot go and
+     *  look it up. */
+    accessNotes?: string | null;
     client?: { id: string; displayName: string } | null;
   };
   kind: JobKind;
@@ -733,7 +766,14 @@ export type WorkerOccurrence = {
   contactName?: string | null;
   contactPhone?: string | null;
   contactEmail?: string | null;
+  /** The one-line form — derived from the parts below, and the only thing
+   *  estimates created before those columns have. Rendered on cards and maps. */
   estimateAddress?: string | null;
+  estimateStreet1?: string | null;
+  estimateStreet2?: string | null;
+  estimateCity?: string | null;
+  estimateState?: string | null;
+  estimatePostalCode?: string | null;
   linkGroupId?: string | null;
   startedAt?: string | null;
   completedAt?: string | null;
@@ -744,6 +784,13 @@ export type WorkerOccurrence = {
   startLng?: number | null;
   completeLat?: number | null;
   completeLng?: number | null;
+  /** What the weather ACTUALLY WAS, frozen at start and at completion. A
+   *  forecast can be re-fetched; this cannot — the forecast endpoints carry
+   *  no history, so these are the only record. Null means it was not
+   *  captured (offline start, provider outage, or a job predating the
+   *  feature), never "the weather was nothing". */
+  startWeather?: WeatherSnapshot | null;
+  completeWeather?: WeatherSnapshot | null;
   /** Payroll-hours approval. Independent of payment status — a job can be
    *  CLOSED with hoursApprovedAt still null. The Gusto W-2 export excludes
    *  null rows. When the worker hits Complete, this is auto-set if actual

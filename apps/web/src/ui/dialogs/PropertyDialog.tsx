@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useRef } from "react";
+import { parseAddressLine } from "@/src/lib/address";
 import {
   Badge,
   Button,
@@ -15,7 +16,7 @@ import {
 } from "@chakra-ui/react";
 import { createListCollection } from "@chakra-ui/react/collection";
 import { apiGet, apiPost, apiPatch } from "@/src/lib/api";
-import AddressAutocomplete from "@/src/ui/components/AddressAutocomplete";
+import AddressSearchField from "@/src/ui/components/AddressSearchField";
 import {
   Role,
   DialogMode,
@@ -97,27 +98,15 @@ export default function PropertyDialog({
   const [street1, setStreet1] = useState("");
 
   function parseAddressIntoFields(placeName: string) {
-    // Mapbox format: "123 Main St, Austin, Texas 78701, United States"
-    const parts = placeName.split(",").map((s) => s.trim());
-    if (parts.length >= 3) {
-      setStreet1(parts[0] ?? "");
-      setCity(parts[1] ?? "");
-      // The state-and-zip segment looks like "Texas 78701", "North Carolina
-      // 27514", or "NC". Pull off a trailing ZIP (5 digits or 5+4) and treat
-      // everything before it as the state — naive whitespace-split treats
-      // multi-word state names like "North Carolina" as "North" only.
-      const stateZip = (parts[2] ?? "").trim();
-      const zipMatch = stateZip.match(/\s*(\d{5}(?:-\d{4})?)\s*$/);
-      const stateStr = zipMatch ? stateZip.slice(0, zipMatch.index).trim() : stateZip;
-      setStateValue(stateStr);
-      if (zipMatch) setPostalCode(zipMatch[1]);
-      if (parts[3]) setCountry(parts[3]);
-    } else if (parts.length === 2) {
-      setStreet1(parts[0] ?? "");
-      setCity(parts[1] ?? "");
-    } else {
-      setStreet1(placeName);
-    }
+    // Shared with the estimate-conversion form — see lib/address.ts. This
+    // logic was correct here and WRONG there for months, because the two
+    // screens each had their own copy and only one got fixed.
+    const a = parseAddressLine(placeName);
+    setStreet1(a.street1);
+    if (a.city) setCity(a.city);
+    if (a.state) setStateValue(a.state);
+    if (a.postalCode) setPostalCode(a.postalCode);
+    if (a.country) setCountry(a.country);
   }
   const [street2, setStreet2] = useState("");
   const [city, setCity] = useState("");
@@ -609,14 +598,11 @@ export default function PropertyDialog({
                 </HStack>
                 <div>
                   <Text mb="1">Address *</Text>
-                  <AddressAutocomplete
+                  <AddressSearchField
                     value={addressSearch}
                     onChange={setAddressSearch}
                     onSelect={parseAddressIntoFields}
-                    placeholder="Search…"
-                    size="sm"
                   />
-                  <Text fontSize="xs" color="fg.muted" mb="2" mt="1">Select a suggestion to auto-fill, or enter details manually below.</Text>
                   <Input
                     value={street1}
                     onChange={(e) => setStreet1(e.target.value)}

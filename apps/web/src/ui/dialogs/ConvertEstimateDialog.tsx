@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { parseAddressLine } from "@/src/lib/address";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import {
   Box,
@@ -23,7 +24,7 @@ import {
   DialogErrorAlert,
   useDialogError,
 } from "@/src/ui/components/DialogErrorAlert";
-import AddressAutocomplete from "@/src/ui/components/AddressAutocomplete";
+import AddressSearchField from "@/src/ui/components/AddressSearchField";
 
 type Props = {
   open: boolean;
@@ -34,6 +35,11 @@ type Props = {
     contactPhone?: string | null;
     contactEmail?: string | null;
     estimateAddress?: string | null;
+    estimateStreet1?: string | null;
+    estimateStreet2?: string | null;
+    estimateCity?: string | null;
+    estimateState?: string | null;
+    estimatePostalCode?: string | null;
     proposalAmount?: number | null;
     proposalNotes?: string | null;
     title?: string | null;
@@ -65,22 +71,6 @@ const propertyTypeCollection = createListCollection({
 });
 
 
-function parseAddress(raw: string): {
-  street1: string;
-  city: string;
-  state: string;
-  postalCode: string;
-} {
-  const parts = raw.split(",").map((p) => p.trim());
-  const street1 = parts[0] ?? "";
-  const city = parts[1] ?? "";
-  const stateZip = parts[2] ?? "";
-  const tokens = stateZip.split(/\s+/).filter(Boolean);
-  const state = tokens.length > 0 ? tokens[0] : "";
-  const postalCode = tokens.length > 1 ? tokens[tokens.length - 1] : "";
-  return { street1, city, state, postalCode };
-}
-
 function splitName(fullName: string): { first: string; last: string } {
   const parts = fullName.trim().split(/\s+/);
   if (parts.length <= 1) return { first: parts[0] ?? "", last: "" };
@@ -108,8 +98,12 @@ export default function ConvertEstimateDialog({
 
   // Property
   const [propertyName, setPropertyName] = useState("Home");
-  const [address, setAddress] = useState("");
+  // The SEARCH BOX's text — a query, not the address. Previously this was the
+  // address, and every keystroke in it re-parsed and overwrote the fields
+  // below, so correcting a city by hand was undone by touching the search.
+  const [addressSearch, setAddressSearch] = useState("");
   const [street1, setStreet1] = useState("");
+  const [street2, setStreet2] = useState("");
   const [city, setCity] = useState("");
   const [state, setState] = useState("");
   const [postalCode, setPostalCode] = useState("");
@@ -136,19 +130,33 @@ export default function ConvertEstimateDialog({
     setPhone(defaults.contactPhone ?? "");
     setEmail(defaults.contactEmail ?? "");
     setPropertyName("Home");
-    const addr = defaults.estimateAddress ?? "";
-    setAddress(addr);
-    if (addr) {
-      const parsed = parseAddress(addr);
+    // THE PARTS FIRST. An estimate now stores its address as fields, so the
+    // usual path here is a straight copy with no parsing at all — which is
+    // the point: structured → string → structured is what silently truncated
+    // "North Carolina" to "North" on 19 live properties.
+    //
+    // The parse survives only as the fallback for estimates created before
+    // those columns existed (28 of them in production). Those rows have
+    // nothing but the one-line string, and it is ZIP-anchored now, so a
+    // multi-word state comes back whole.
+    setAddressSearch("");
+    const hasParts = !!(
+      defaults.estimateStreet1 ?? defaults.estimateCity ??
+      defaults.estimateState ?? defaults.estimatePostalCode
+    );
+    if (hasParts) {
+      setStreet1(defaults.estimateStreet1 ?? "");
+      setStreet2(defaults.estimateStreet2 ?? "");
+      setCity(defaults.estimateCity ?? "");
+      setState(defaults.estimateState ?? "");
+      setPostalCode(defaults.estimatePostalCode ?? "");
+    } else {
+      const parsed = parseAddressLine(defaults.estimateAddress ?? "");
       setStreet1(parsed.street1);
+      setStreet2("");
       setCity(parsed.city);
       setState(parsed.state);
       setPostalCode(parsed.postalCode);
-    } else {
-      setStreet1("");
-      setCity("");
-      setState("");
-      setPostalCode("");
     }
     setDefaultPrice(
       defaults.proposalAmount != null ? String(defaults.proposalAmount) : ""
@@ -165,15 +173,14 @@ export default function ConvertEstimateDialog({
     setFrequencyDays("7");
   }, [open, defaults]);
 
-  function handleAddressChange(val: string) {
-    setAddress(val);
-    if (val) {
-      const parsed = parseAddress(val);
-      setStreet1(parsed.street1);
-      setCity(parsed.city);
-      setState(parsed.state);
-      setPostalCode(parsed.postalCode);
-    }
+  /** Only on picking a suggestion — never on freeform typing. Fields the
+   *  suggestion does not carry are left as the operator left them. */
+  function fillAddressFromSearch(placeName: string) {
+    const parsed = parseAddressLine(placeName);
+    setStreet1(parsed.street1);
+    if (parsed.city) setCity(parsed.city);
+    if (parsed.state) setState(parsed.state);
+    if (parsed.postalCode) setPostalCode(parsed.postalCode);
   }
 
   async function handleSave() {
@@ -190,6 +197,7 @@ export default function ConvertEstimateDialog({
         contactEmail: email.trim() || undefined,
         propertyName: propertyName.trim() || "Home",
         street1: street1.trim(),
+        street2: street2.trim() || null,
         city: city.trim(),
         state: state.trim(),
         postalCode: postalCode.trim(),
@@ -380,10 +388,11 @@ export default function ConvertEstimateDialog({
                   <Text fontSize="sm" fontWeight="medium" mb={1}>
                     Address
                   </Text>
-                  <AddressAutocomplete
-                    value={address}
-                    onChange={handleAddressChange}
-                    placeholder="Start typing an address..."
+                  <AddressSearchField
+                    value={addressSearch}
+                    onChange={setAddressSearch}
+                    onSelect={fillAddressFromSearch}
+                    label="Search to correct or fill in the address"
                   />
                 </Box>
                 <HStack gap={2}>
@@ -401,17 +410,29 @@ export default function ConvertEstimateDialog({
                   </Box>
                   <Box flex="1">
                     <Text fontSize="sm" fontWeight="medium" mb={1}>
-                      City
+                      Apt / Unit
                     </Text>
                     <input
                       type="text"
-                      placeholder="City"
-                      value={city}
-                      onChange={(e) => setCity(e.target.value)}
+                      placeholder="Optional"
+                      value={street2}
+                      onChange={(e) => setStreet2(e.target.value)}
                       style={inputStyle}
                     />
                   </Box>
                 </HStack>
+                <Box>
+                  <Text fontSize="sm" fontWeight="medium" mb={1}>
+                    City
+                  </Text>
+                  <input
+                    type="text"
+                    placeholder="City"
+                    value={city}
+                    onChange={(e) => setCity(e.target.value)}
+                    style={inputStyle}
+                  />
+                </Box>
                 <HStack gap={2}>
                   <Box flex="1">
                     <Text fontSize="sm" fontWeight="medium" mb={1}>

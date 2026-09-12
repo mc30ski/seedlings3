@@ -3,6 +3,7 @@ import { services } from "../services";
 import { fetchWeatherAlerts } from "../services/weatherAlerts";
 import { cached } from "../lib/cache";
 import { prisma } from "../db/prisma";
+import { hourlyForecastForOccurrence } from "../services/hourlyForecast";
 import { getUploadUrl, getDownloadUrl, deleteObject } from "../lib/r2";
 import { etMidnight, etEndOfDay, etToday, etTomorrow, etAddDays, etFormatDate, etDaysBetween , type EtDateKey } from "../lib/dates";
 import { Prisma, Role as RoleVal, JobOccurrenceStatus } from "@prisma/client";
@@ -1556,6 +1557,23 @@ export default async function workerRoutes(app: FastifyInstance) {
    */
   // view-as-allow: not a /me/* route; scoping comes from workerView/viewAsUserId
   //   exactly as the sibling /occurrences ghost query does.
+  /**
+   * Hour-by-hour forecast for a visit's own day.
+   *
+   * ONLY EVER CALLED WHEN SOMEONE OPENS THE SECTION. The job feed renders
+   * dozens of cards; fetching weather for each on every render would be a
+   * request storm against a free public service for data almost nobody looks
+   * at. The client must not prefetch this.
+   *
+   * Never 500s on a weather problem — the service returns
+   * `{ available: false, reason }` and the card explains itself.
+   */
+  app.get("/occurrences/:id/hourly-weather", workerGuard, async (req: any) => {
+    return hourlyForecastForOccurrence(String(req.params.id), {
+      refresh: String((req.query as any)?.refresh ?? "") === "1",
+    });
+  });
+
   app.get("/occurrences/ghost-expiry-counts", workerGuard, async (req: any) => {
     const callerUid = await currentUserId(req);
     const q = (req.query || {}) as Record<string, string>;

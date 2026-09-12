@@ -43,6 +43,24 @@ const WORKER = read("../routes/worker.ts");
 const WEB = join(__dirname, "../../../../apps/web/src");
 const web = (p: string) => readFileSync(join(WEB, p), "utf8");
 
+/** Every .ts/.tsx under apps/web/src mentioning `needle`, as WEB-relative
+ *  paths. Used to assert that a costly call has exactly ONE callsite — a
+ *  scan is the only way to catch a second one being added elsewhere. */
+function webFilesContaining(needle: string): string[] {
+  const out: string[] = [];
+  const walk = (rel: string) => {
+    for (const e of readdirSync(join(WEB, rel), { withFileTypes: true })) {
+      const child = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) walk(child);
+      else if (/\.tsx?$/.test(e.name) && readFileSync(join(WEB, child), "utf8").includes(needle)) {
+        out.push(child);
+      }
+    }
+  };
+  walk("");
+  return out.sort();
+}
+
 /** The spec's worked example: labor $150, 25 bags billed $150 (cost $125),
  *  $50 of edging at cost. Invoice $350, pool $150. */
 const CANONICAL = {
@@ -873,6 +891,248 @@ describe("[build-gate] the wording matches what the thing does", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+
+describe("[build-gate] a pasted address keeps its whole state name", () => {
+  // SILENT DATA LOSS, shipped. Splitting "North Carolina 27517" on whitespace
+  // and taking the first token gives state "North" — which looks plausible in
+  // a free-text field, so nobody notices until a client's confirmation text
+  // reads "…Chapel Hill, North." 19 live properties carry it.
+  //
+  // The property form was fixed; the estimate-conversion form kept its own
+  // copy and was not. Both ran for months, so which spelling a property got
+  // depended on which screen created it. The gate exists because the failure
+  // is invisible at the point it happens.
+  const LIB = web("lib/address.ts");
+  const DIALOGS = ["ui/dialogs/PropertyDialog.tsx", "ui/dialogs/ConvertEstimateDialog.tsx"];
+
+  it("both address forms use the ONE parser", () => {
+    for (const d of DIALOGS) {
+      expect(web(d), `${d} must import the shared parser`)
+        .toMatch(/import \{ parseAddressLine \} from "@\/src\/lib\/address"/);
+      expect(web(d), `${d} must call it`).toMatch(/parseAddressLine\(/);
+    }
+  });
+
+  it("neither form keeps a private copy that can drift", () => {
+    // Two copies is how this happened: one was corrected, the other was not,
+    // and nothing connected them.
+    for (const d of DIALOGS) {
+      const src = web(d);
+      expect(src, `${d} must not declare its own address parser`)
+        .not.toMatch(/function parseAddress(IntoParts|\b\s*\()/);
+      expect(src, `${d} must not split a state/zip segment itself`)
+        .not.toMatch(/stateZip/);
+    }
+  });
+
+  it("the parser anchors on the ZIP, never the first whitespace token", () => {
+    // The whole fix in one assertion: a trailing ZIP is unambiguous, so
+    // everything before it is the state however many words it runs to.
+    expect(LIB).toMatch(/\/\\s\*\(\\d\{5\}\(\?:-\\d\{4\}\)\?\)\\s\*\$\//);
+    const code = LIB.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+    expect(code, "no whitespace-split on the state segment")
+      .not.toMatch(/split\(\/\\s\+\//);
+  });
+
+  it("multi-word states survive — the actual regression", () => {
+    // Behavioural, not a source scan: evaluate the shipped regex against the
+    // addresses that were corrupted in production.
+    const m = /const TRAILING_ZIP = (\/.*\/);/.exec(LIB);
+    expect(m, "TRAILING_ZIP must be a single-line regex literal").toBeTruthy();
+    // eslint-disable-next-line no-eval
+    const re = eval(m![1]) as RegExp;
+    const stateOf = (line: string) => {
+      const seg = line.split(",").map((x) => x.trim())[2] ?? "";
+      const z = seg.match(re);
+      return (z ? seg.slice(0, z.index) : seg).trim();
+    };
+    expect(stateOf("1059 Perdue Dr, Chapel Hill, North Carolina 27517")).toBe("North Carolina");
+    expect(stateOf("5 Foo Ave, Albany, New York 10001")).toBe("New York");
+    expect(stateOf("9 Bar Rd, Providence, Rhode Island 02903-1234")).toBe("Rhode Island");
+    // And the cases that were already fine stay fine.
+    expect(stateOf("314 Reade Road, Chapel Hill, NC 27516")).toBe("NC");
+    expect(stateOf("77 Baz Ln, Durham, NC")).toBe("NC");
+  });
+});
+
+describe("[build-gate] the hourly forecast is fetched ONLY when asked for", () => {
+  // The operator's requirement, in their words: "It should not load by
+  // default. It should only load though if you open the section, because I
+  // don't want to incur the cost of having to load each job weather all the
+  // time unless it is actively asked for."
+  //
+  // The job feed renders dozens of cards. A fetch hoisted into a useEffect —
+  // the single most natural refactor anyone would make here — turns one
+  // deliberate request into one per card per render, silently, against a free
+  // public service. Nothing about the UI would look different, which is
+  // exactly why this needs a gate rather than a code review.
+  const CMP = web("ui/components/JobWeather.tsx");
+  const ENDPOINT = "hourly-weather";
+
+  /** The bodies of every useEffect in the component. */
+  function effectBodies(): string[] {
+    const out: string[] = [];
+    let i = CMP.indexOf("useEffect(");
+    while (i !== -1) {
+      // Crude but sufficient: everything to the end of that statement.
+      out.push(CMP.slice(i, CMP.indexOf("\n  }", i) + 4));
+      i = CMP.indexOf("useEffect(", i + 1);
+    }
+    return out;
+  }
+
+  it("parses a component that really does call the endpoint", () => {
+    // Guards the gate: if the component were renamed or the URL changed, every
+    // assertion below would pass against nothing.
+    expect(CMP).toContain(ENDPOINT);
+    expect(CMP).toMatch(/async function load\(/);
+  });
+
+  it("no useEffect fetches the forecast", () => {
+    for (const body of effectBodies()) {
+      expect(body, "a useEffect must not call the forecast endpoint").not.toContain(ENDPOINT);
+      expect(body, "a useEffect must not call load()").not.toMatch(/\bload\(/);
+    }
+  });
+
+  it("the fetch is reachable only from the toggle and the refresh control", () => {
+    // Every call site of load(), and where it sits.
+    // Skip the DEFINITION: `\bload\(` matches inside `async function load(`
+    // too, and comparing against indexOf("async function load(") misses by the
+    // length of that prefix. Check what immediately precedes instead.
+    const callSites = [...CMP.matchAll(/\bload\(/g)]
+      .map((m) => m.index!)
+      .filter((i) => !CMP.slice(Math.max(0, i - 16), i).endsWith("async function "));
+    expect(callSites.length, "load() must be called at least once").toBeGreaterThan(0);
+    for (const i of callSites) {
+      // Wide enough to clear the explanatory comment inside toggle(); a
+      // 260-char window stopped short of it and failed a correct callsite.
+      const before = CMP.slice(Math.max(0, i - 900), i);
+      const enclosing = /async function toggle\(/.test(before)
+        ? "toggle"
+        : /onClick=/.test(before)
+          ? "onClick"
+          : "SOMETHING ELSE";
+      expect(
+        enclosing,
+        `load() at ${i} is reached from ${enclosing} — it may only be called from toggle() or an onClick, never on mount or render`,
+      ).not.toBe("SOMETHING ELSE");
+    }
+  });
+
+  it("reopening a section already looked at does not refetch", () => {
+    // The server caches for 30 minutes, but a client that refetches on every
+    // open still pays the round-trip and still hits the API when the cache has
+    // rolled. The `!data` guard is what makes the first open the only one.
+    expect(CMP).toMatch(/if \(next && !data && !loading\) await load\(\)/);
+  });
+
+  it("only the refresh control bypasses the caches", () => {
+    // An unconditional refresh=1 would defeat the server cache entirely and
+    // turn every open into an upstream call.
+    expect(CMP).toMatch(/refresh \? "\?refresh=1" : ""/);
+    expect(CMP, "the toggle must NOT force a refresh").toMatch(/await load\(\);/);
+    expect(CMP, "the refresh button must").toMatch(/void load\(true\)/);
+  });
+
+  it("nothing else in the app calls the endpoint", () => {
+    // A prefetch added in JobsTab — "so it feels instant" — would reintroduce
+    // exactly the per-card cost this exists to avoid.
+    const hits = webFilesContaining(ENDPOINT);
+    expect(hits, `only JobWeather may call it; found: ${hits.join(", ")}`)
+      .toEqual(["ui/components/JobWeather.tsx"]);
+  });
+});
+
+describe("[build-gate] the weather a job was worked in is captured, not re-fetched", () => {
+  // Forecast endpoints carry NO history — NWS hourly starts at the current
+  // hour and runs forward. So the reading at start and at completion exists
+  // only if it is written down at that moment. Miss it and it is gone; there
+  // is no backfill for any of this.
+  const SVC = readFileSync(join(__dirname, "./occurrenceWeather.ts"), "utf8");
+  const JOBS = readFileSync(join(__dirname, "./jobs.ts"), "utf8");
+  const SCHEMA = readFileSync(join(__dirname, "../../prisma/schema.prisma"), "utf8");
+
+  it("capture can never block a crew from starting or finishing a job", () => {
+    // Someone standing in a field pressing Start does not care about the
+    // weather service being down.
+    expect(SVC, "must swallow everything").toMatch(/\} catch \{/);
+    expect(SVC).toMatch(/export async function captureOccurrenceWeather[\s\S]{0,200}Promise<void>/);
+    expect(JOBS, "must be fired, never awaited").toMatch(/void captureOccurrenceWeather\(occurrenceId, "start"\)/);
+    expect(JOBS).toMatch(/void captureOccurrenceWeather\(occurrenceId, "complete"\)/);
+  });
+
+  it("capture runs OUTSIDE the database transaction", () => {
+    // It makes a third-party call. Holding a Neon connection open across
+    // OpenWeather's latency is the shape of the incident that hung /api/me.
+    const at = JOBS.indexOf('void captureOccurrenceWeather(occurrenceId, "start")');
+    const txEnd = JOBS.lastIndexOf("}).then(async (updated) => {", at);
+    expect(txEnd, "the capture must sit in a .then() after the transaction resolves")
+      .toBeGreaterThan(-1);
+    expect(txEnd).toBeLessThan(at);
+  });
+
+  it("reverting a job to SCHEDULED clears the snapshots with the GPS fixes", () => {
+    // They describe a start and a completion that, after the revert, did not
+    // happen — and the next real start would otherwise look like it inherited
+    // someone else's weather.
+    const at = JOBS.indexOf("data.startLat = null;\n        data.startLng = null;\n        data.completeLat = null;");
+    expect(at, "the revert block must exist").toBeGreaterThan(-1);
+    const block = JOBS.slice(at, at + 900);
+    expect(block).toMatch(/data\.startWeather = null;/);
+    expect(block).toMatch(/data\.completeWeather = null;/);
+  });
+
+  it("a worker's own GPS beats the property's coordinates", () => {
+    // Someone who physically stood on the lawn is a better answer than an
+    // address geocode, and it is data already collected.
+    const at = SVC.indexOf("const gpsLat =");
+    const body = SVC.slice(at, SVC.indexOf("if (!where) return", at));
+    // Match the ASSIGNMENT, not `locatedBy: "gps"` on its own — that string
+    // also appears in the `let where: {... locatedBy: "gps" | "property" }`
+    // type annotation, which always precedes both branches. Asserting on it
+    // made this test pass no matter which source actually won; a mutation
+    // that put the property point first went undetected until the annotation
+    // was noticed.
+    const gpsAssign = body.indexOf('where = { lat: gpsLat');
+    const propCall = body.indexOf("resolvePropertyPoint(");
+    expect(gpsAssign, "the GPS branch must exist").toBeGreaterThan(-1);
+    expect(propCall, "the property fallback must exist").toBeGreaterThan(-1);
+    expect(gpsAssign, "the worker's GPS must be tried FIRST").toBeLessThan(propCall);
+  });
+
+  it("it resolves coordinates through the SAME path as the parcel lookup", () => {
+    // Not the weather proxy's geocoder: OpenWeather's takes a ZIP or a city,
+    // never a street, and would write a coarser point into a street-level
+    // column that parcels.ts also reads.
+    expect(SVC).toMatch(/import \{ resolvePropertyPoint \} from "\.\/parcels"/);
+    expect(SVC).not.toMatch(/geo\/1\.0\/(zip|direct)/);
+  });
+
+  it("conditions come from the SAME provider as the weather bar", () => {
+    // The card and the title bar describing the same place at the same moment
+    // must not disagree because they came from different providers. NWS
+    // current conditions are a physical station — the nearest to most of these
+    // properties is Raleigh-Durham airport, ~20 miles east.
+    expect(SVC).toMatch(/source: "openweather"/);
+    expect(SVC, "must reuse the shared fetch, not its own")
+      .toMatch(/export async function fetchOpenWeather/);
+    expect(SVC).toMatch(/cached\("openWeather"/);
+  });
+
+  it("the snapshot records its own provenance", () => {
+    // A reading with no time, source or location is not evidence.
+    for (const f of ["capturedAt", "source", "locatedBy", "lat", "lng"]) {
+      expect(SVC, `snapshot must carry ${f}`).toMatch(new RegExp(`${f}[?]?:`));
+    }
+  });
+
+  it("the columns explain why they cannot be re-derived", () => {
+    expect(SCHEMA).toMatch(/startWeather\s+Json\?/);
+    expect(SCHEMA).toMatch(/completeWeather\s+Json\?/);
+    expect(SCHEMA).toMatch(/no history/);
+  });
+});
 
 describe("[build-gate] asking a client to confirm is recorded as an ASK", () => {
   // Tapping "Request Confirmation" used to write nothing: it opened an `sms:`
@@ -3659,12 +3919,23 @@ describe("[build-gate] admin-only buttons sit on the Admin row", () => {
     // Scans for BUTTON TAGS, not labels — a one-line
     // `{(isAdmin) && (<Button>…</Button>)}` has no label on its own line and
     // slipped straight through a label-based check.
+    // ANCHORED ON THE FOOTER, not on a line number. This used to scan from a
+    // hardcoded 7700, tuned so it began just below the AI-estimate display
+    // panels — which are `{forAdmin && …}` Boxes that happen to contain a
+    // button. Inserting thirty-odd lines anywhere above slid those panels into
+    // the window and the gate failed on untouched code. A gate that breaks
+    // when you edit a different part of the file gets deleted, so it is
+    // anchored to the thing it actually means: the everyday action row lives
+    // in the card footers.
+    const firstFooter = lines.findIndex((l) => l.includes("<Card.Footer"));
+    expect(firstFooter, "the card must have a footer to scan").toBeGreaterThan(-1);
+    const scanFrom = firstFooter;
     const offenders: string[] = [];
-    for (let i = 7700; i < extrasLine - 1; i++) {
+    for (let i = scanFrom; i < extrasLine - 1; i++) {
       const l = lines[i] ?? "";
       if (!/<(Button|StatusButton)\b/.test(l)) continue;
       // Nearest enclosing JSX conditional above (or on) this line.
-      for (let j = i; j > Math.max(7600, i - 45); j--) {
+      for (let j = i; j > Math.max(scanFrom - 100, i - 45); j--) {
         const t = (lines[j] ?? "").trim();
         if (t.startsWith("{") && t.includes("&&") && !t.includes("/*")) {
           const admin = /isAdmin|isSuper|forAdmin/.test(t);

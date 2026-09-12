@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { parseAddressLine } from "@/src/lib/address";
 import { apiDelete, apiPost } from "@/src/lib/api";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import ClientDialog from "@/src/ui/dialogs/ClientDialog";
@@ -17,6 +18,11 @@ type EstimateDefaults = {
   contactPhone?: string | null;
   contactEmail?: string | null;
   estimateAddress?: string | null;
+  estimateStreet1?: string | null;
+  estimateStreet2?: string | null;
+  estimateCity?: string | null;
+  estimateState?: string | null;
+  estimatePostalCode?: string | null;
   proposalAmount?: number | null;
   proposalNotes?: string | null;
   title?: string | null;
@@ -82,13 +88,33 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete, estima
   const edNameParts = (ed?.contactName ?? "").trim().split(/\s+/);
   const edFirstName = edNameParts[0] ?? "";
   const edLastName = edNameParts.slice(1).join(" ") ?? "";
-  // Parse address: "123 Main St, Austin, TX 78701"
-  const edAddrParts = (ed?.estimateAddress ?? "").split(",").map((s: string) => s.trim());
-  const edStreet = edAddrParts[0] ?? "";
-  const edCity = edAddrParts[1] ?? "";
-  const edStateZip = (edAddrParts[2] ?? "").split(/\s+/);
-  const edState = edStateZip[0] ?? "";
-  const edZip = edStateZip[edStateZip.length - 1] ?? "";
+  // THE ADDRESS, straight from the estimate's own fields.
+  //
+  // This is the live estimate → property conversion, and what stood here was
+  // a third private copy of the address splitter:
+  //
+  //     const edStateZip = (edAddrParts[2] ?? "").split(/\s+/);
+  //     const edState = edStateZip[0] ?? "";
+  //
+  // "North Carolina 27514" went in and state "North" came out, with no error
+  // and a plausible-looking form. That is the code that put "North" on 19 live
+  // properties — the identical splitter in ConvertEstimateDialog took the
+  // blame, but that dialog is not rendered anywhere; this is the path an
+  // accepted estimate actually travels.
+  //
+  // Estimates now carry their address as fields, so the normal case is a copy
+  // with no parsing at all. parseAddressLine (ZIP-anchored, one shared
+  // implementation) handles the estimates created before those columns
+  // existed, which have only the one-line string.
+  const edParsed = parseAddressLine(ed?.estimateAddress ?? "");
+  const edHasParts = !!(
+    ed?.estimateStreet1 ?? ed?.estimateCity ?? ed?.estimateState ?? ed?.estimatePostalCode
+  );
+  const edStreet = edHasParts ? (ed?.estimateStreet1 ?? "") : edParsed.street1;
+  const edStreet2 = edHasParts ? (ed?.estimateStreet2 ?? "") : "";
+  const edCity = edHasParts ? (ed?.estimateCity ?? "") : edParsed.city;
+  const edState = edHasParts ? (ed?.estimateState ?? "") : edParsed.state;
+  const edZip = edHasParts ? (ed?.estimatePostalCode ?? "") : edParsed.postalCode;
 
   // Batch save everything at the end. Heavily instrumented so failures in
   // production (or anywhere) leave a clear trail in the console + an error
@@ -263,7 +289,7 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete, estima
           deferredClient={clientData ? { id: "__deferred__", displayName: clientData.displayName } : undefined}
           deferredContact={contactData ? { firstName: contactData.firstName, lastName: contactData.lastName, email: contactData.email, phone: contactData.phone } : undefined}
           defaultClientId="__deferred__"
-          initial={propertyData ?? (ed ? { displayName: "Main House", street1: edStreet, city: edCity, state: edState, postalCode: edZip, estimateAddress: ed.estimateAddress } as any : undefined)}
+          initial={propertyData ?? (ed ? { displayName: "Main House", street1: edStreet, street2: edStreet2, city: edCity, state: edState, postalCode: edZip, estimateAddress: ed.estimateAddress } as any : undefined)}
           onBack={() => go("client")}
           onSaved={(data) => {
             setPropertyData(data);

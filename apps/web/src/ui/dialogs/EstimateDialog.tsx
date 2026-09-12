@@ -24,7 +24,8 @@ import {
   DialogErrorAlert,
   useDialogError,
 } from "@/src/ui/components/DialogErrorAlert";
-import AddressAutocomplete from "@/src/ui/components/AddressAutocomplete";
+import AddressSearchField from "@/src/ui/components/AddressSearchField";
+import { parseAddressLine } from "@/src/lib/address";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import JobTagPicker, { type JobTagConfig } from "@/src/ui/components/JobTagPicker";
 
@@ -49,6 +50,11 @@ type EditEstimate = {
   contactPhone?: string | null;
   contactEmail?: string | null;
   estimateAddress?: string | null;
+  estimateStreet1?: string | null;
+  estimateStreet2?: string | null;
+  estimateCity?: string | null;
+  estimateState?: string | null;
+  estimatePostalCode?: string | null;
   notes?: string | null;
   proposalAmount?: number | null;
   jobId?: string | null;
@@ -79,7 +85,18 @@ export default function EstimateDialog({ open, onOpenChange, onCreated, myId, ed
   const [phoneError, setPhoneError] = useState("");
   const [contactEmail, setContactEmail] = useState("");
   const [emailError, setEmailError] = useState("");
-  const [estimateAddress, setEstimateAddress] = useState("");
+  // The SEARCH BOX's text, which is not the address — it is the query. Kept
+  // apart from the fields so picking a suggestion and then correcting Street
+  // by hand do not fight each other.
+  const [addressSearch, setAddressSearch] = useState("");
+  // The address itself, in parts, exactly as a property holds it. It used to
+  // be one free-text string here and conversion had to pull it back apart;
+  // that round-trip is what wrote state "North" onto live properties.
+  const [street1, setStreet1] = useState("");
+  const [street2, setStreet2] = useState("");
+  const [city, setCity] = useState("");
+  const [stateValue, setStateValue] = useState("");
+  const [postalCode, setPostalCode] = useState("");
   const [notes, setNotes] = useState("");
   const [proposalAmount, setProposalAmount] = useState("");
   const [saving, setSaving] = useState(false);
@@ -109,7 +126,27 @@ export default function EstimateDialog({ open, onOpenChange, onCreated, myId, ed
       setContactLastName(parts.slice(1).join(" ") ?? "");
       setContactPhone(editEstimate.contactPhone ?? "");
       setContactEmail(editEstimate.contactEmail ?? "");
-      setEstimateAddress(editEstimate.estimateAddress ?? "");
+      // Prefer the stored parts. Fall back to splitting the one-line form,
+      // which is all an estimate created before those columns existed has —
+      // 28 of them in production. Editing one here gives it real parts.
+      if (
+        editEstimate.estimateStreet1 ?? editEstimate.estimateCity ??
+        editEstimate.estimateState ?? editEstimate.estimatePostalCode
+      ) {
+        setStreet1(editEstimate.estimateStreet1 ?? "");
+        setStreet2(editEstimate.estimateStreet2 ?? "");
+        setCity(editEstimate.estimateCity ?? "");
+        setStateValue(editEstimate.estimateState ?? "");
+        setPostalCode(editEstimate.estimatePostalCode ?? "");
+      } else {
+        const a = parseAddressLine(editEstimate.estimateAddress ?? "");
+        setStreet1(a.street1);
+        setStreet2("");
+        setCity(a.city);
+        setStateValue(a.state);
+        setPostalCode(a.postalCode);
+      }
+      setAddressSearch("");
       setNotes(editEstimate.notes ?? "");
       setProposalAmount(editEstimate.proposalAmount != null ? String(editEstimate.proposalAmount) : "");
       setPhoneError("");
@@ -182,7 +219,12 @@ export default function EstimateDialog({ open, onOpenChange, onCreated, myId, ed
     setPhoneError("");
     setContactEmail("");
     setEmailError("");
-    setEstimateAddress("");
+    setAddressSearch("");
+    setStreet1("");
+    setStreet2("");
+    setCity("");
+    setStateValue("");
+    setPostalCode("");
     setNotes("");
     setProposalAmount("");
     setAssigneeIds(myId ? [myId] : []);
@@ -191,6 +233,26 @@ export default function EstimateDialog({ open, onOpenChange, onCreated, myId, ed
     setJobTags([]);
     setJobTagNote("");
   }
+
+  /** Selecting a suggestion fills every field. Only overwrites what the
+   *  suggestion actually carried — Mapbox sometimes returns no ZIP, and
+   *  blanking a ZIP the operator typed would be a silent loss. Street always
+   *  wins, since that is the part a search is for. */
+  function fillAddressFromSearch(placeName: string) {
+    const a = parseAddressLine(placeName);
+    setStreet1(a.street1);
+    if (a.city) setCity(a.city);
+    if (a.state) setStateValue(a.state);
+    if (a.postalCode) setPostalCode(a.postalCode);
+  }
+
+  const addrInputStyle: React.CSSProperties = {
+    width: "100%",
+    padding: "6px 10px",
+    fontSize: "14px",
+    border: "1px solid #ccc",
+    borderRadius: "6px",
+  };
 
   function validatePhone(val: string) {
     if (!val.trim()) { setPhoneError(""); return; }
@@ -220,7 +282,16 @@ export default function EstimateDialog({ open, onOpenChange, onCreated, myId, ed
       if (fullName) body.contactName = fullName;
       if (contactPhone.trim()) body.contactPhone = contactPhone.trim();
       if (contactEmail.trim()) body.contactEmail = contactEmail.trim();
-      if (estimateAddress.trim()) body.estimateAddress = estimateAddress.trim();
+      // ALL FIVE, ALWAYS — including the empty ones. These are the address;
+      // sending only the filled ones would make clearing a field impossible,
+      // since an absent key means "leave it alone" on the server. The one-line
+      // `estimateAddress` is derived there from these and is deliberately not
+      // sent: two copies that a caller can set independently is how they drift.
+      body.estimateStreet1 = street1.trim();
+      body.estimateStreet2 = street2.trim();
+      body.estimateCity = city.trim();
+      body.estimateState = stateValue.trim();
+      body.estimatePostalCode = postalCode.trim();
       if (notes.trim()) body.notes = notes.trim();
       if (proposalAmount.trim()) {
         const parsed = parseFloat(proposalAmount);
@@ -400,12 +471,53 @@ export default function EstimateDialog({ open, onOpenChange, onCreated, myId, ed
                       {emailError && <Text fontSize="xs" color="red.500" mt={0.5}>{emailError}</Text>}
                     </Box>
 
+                    {/* ADDRESS — the same shape a property uses, because an
+                        estimate is a property we do not have a client for yet.
+                        Search first and prominently, typed fields underneath
+                        for everything the search cannot find. */}
                     <Box>
                       <Text fontSize="sm" fontWeight="medium" mb={1}>Address</Text>
-                      <AddressAutocomplete
-                        value={estimateAddress}
-                        onChange={setEstimateAddress}
-                        placeholder="Start typing an address..."
+                      <AddressSearchField
+                        value={addressSearch}
+                        onChange={setAddressSearch}
+                        onSelect={fillAddressFromSearch}
+                      />
+                      <input
+                        type="text"
+                        placeholder="Street"
+                        value={street1}
+                        onChange={(e) => setStreet1(e.target.value)}
+                        style={{ ...addrInputStyle, marginBottom: "8px" }}
+                      />
+                      <input
+                        type="text"
+                        placeholder="Apt, suite, unit (optional)"
+                        value={street2}
+                        onChange={(e) => setStreet2(e.target.value)}
+                        style={{ ...addrInputStyle, marginBottom: "8px" }}
+                      />
+                      <HStack gap={2} mb={2}>
+                        <input
+                          type="text"
+                          placeholder="City"
+                          value={city}
+                          onChange={(e) => setCity(e.target.value)}
+                          style={addrInputStyle}
+                        />
+                        <input
+                          type="text"
+                          placeholder="State"
+                          value={stateValue}
+                          onChange={(e) => setStateValue(e.target.value)}
+                          style={addrInputStyle}
+                        />
+                      </HStack>
+                      <input
+                        type="text"
+                        placeholder="Zip"
+                        value={postalCode}
+                        onChange={(e) => setPostalCode(e.target.value)}
+                        style={addrInputStyle}
                       />
                     </Box>
                   </>
