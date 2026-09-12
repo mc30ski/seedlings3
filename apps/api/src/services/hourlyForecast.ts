@@ -21,12 +21,12 @@
 import { prisma } from "../db/prisma";
 import { cached, invalidate } from "../lib/cache";
 import { resolvePropertyPoint } from "./parcels";
-import { etFormatDate, type EtDateKey } from "../lib/dates";
+import { etFormatDate, etHourMinute, type EtDateKey } from "../lib/dates";
 
 export type ForecastHour = {
   /** Full ISO instant with offset, as NWS returns it. */
   startTime: string;
-  /** "14:00" in the property's local time, ready to label an axis. */
+  /** "14:00" in ET, ready to label an axis. */
   label: string;
   tempF: number | null;
   /** Percent chance of precipitation. Null when NWS omits it — which is not
@@ -34,13 +34,26 @@ export type ForecastHour = {
   precipPct: number | null;
   windMph: number | null;
   shortForecast: string | null;
-  /** True for the hours the job is expected to be worked, so the chart can
-   *  pick them out of the day. */
-  inWorkWindow: boolean;
+  /** True for the hour happening right now, so the chart has an anchor the
+   *  reader can orient from. False on every hour of a future day, where there
+   *  is no "now" to point at.
+   *
+   *  This replaced an `inWorkWindow` flag that shaded the hours a visit was
+   *  supposedly booked for. Jobs here are scheduled BY DAY — the time on
+   *  `startAt` is a storage artifact, and in production 500 of 527 occurrences
+   *  carry one of exactly two of them (13:00 and 16:00 ET, from 17:00 and
+   *  20:00 UTC). So the chart was shading 1pm or 4pm depending on which code
+   *  path created the row, under a caption claiming those were the booked
+   *  hours. Confidently wrong is worse than absent. */
+  isCurrentHour: boolean;
 };
 
 export type HourlyForecast =
-  | { available: true; hours: ForecastHour[]; dateKey: string; locatedBy: string; fetchedAt: string; stale: boolean }
+  /** `isToday` exists so the caller can say WHY no column is marked. On a
+   *  future day there is no current hour, so nothing is highlighted — which
+   *  looks identical to the marker being broken unless the copy says
+   *  otherwise. That ambiguity is exactly what got reported once already. */
+  | { available: true; hours: ForecastHour[]; dateKey: string; isToday: boolean; locatedBy: string; fetchedAt: string; stale: boolean }
   | { available: false; reason: "past" | "no-location" | "beyond-horizon" | "unavailable"; message: string };
 
 const NWS_SETTINGS_UA = "NWS_ALERTS_USER_AGENT";
@@ -84,7 +97,8 @@ export async function hourlyForecastForOccurrence(
   const occ = await prisma.jobOccurrence.findUnique({
     where: { id: occurrenceId },
     select: {
-      id: true, startAt: true, endAt: true, estimatedMinutes: true,
+      // startAt for the DAY only — its time component is not meaningful here.
+      id: true, startAt: true,
       job: { select: { propertyId: true } },
     },
   });
@@ -160,12 +174,11 @@ export async function hourlyForecastForOccurrence(
     };
   }
 
-  // The window the crew is expected to be on site, used to highlight the bars
-  // that actually matter. endAt when set, otherwise the estimate, otherwise a
-  // nominal hour so something is marked rather than nothing.
-  const startMs = occ.startAt.getTime();
-  const endMs = occ.endAt?.getTime()
-    ?? startMs + (occ.estimatedMinutes ?? 60) * 60_000;
+  // The hour we are in right now. NWS's first returned period IS the current
+  // hour — it carries no past — but deriving this from the clock rather than
+  // from position means it stays correct for a forecast served from cache, and
+  // correctly marks nothing at all on a future day.
+  const nowMs = Date.now();
 
   const hours: ForecastHour[] = dayHours.map((p) => {
     const t = new Date(p.startTime).getTime();
@@ -173,16 +186,19 @@ export async function hourlyForecastForOccurrence(
     const windMph = Number(String(p?.windSpeed ?? "").match(/\d+/)?.[0]);
     return {
       startTime: p.startTime,
-      label: String(p.startTime).slice(11, 16),
+      // ET via the canonical helper, NOT a slice of the ISO string. NWS emits
+      // its own offset (-04:00 in summer, -05:00 in winter), so slicing
+      // happens to read right for a North Carolina grid and would be silently
+      // wrong for any other — and it re-derives a timezone the repo already
+      // has one answer for.
+      label: etHourMinute(new Date(p.startTime)),
       tempF: Number.isFinite(Number(p.temperature)) ? Number(p.temperature) : null,
       precipPct: Number.isFinite(Number(pop)) ? Number(pop) : null,
       windMph: Number.isFinite(windMph) ? windMph : null,
       shortForecast: p.shortForecast ?? null,
-      // An hour counts as in-window if the hour it covers overlaps the job at
-      // all — a 09:30 start puts the 09:00 bar in the window.
-      inWorkWindow: t + 3_600_000 > startMs && t < endMs,
+      isCurrentHour: t <= nowMs && nowMs < t + 3_600_000,
     };
   });
 
-  return { available: true, hours, dateKey, locatedBy: point.located, fetchedAt, stale };
+  return { available: true, hours, dateKey, isToday: dateKey === todayKey, locatedBy: point.located, fetchedAt, stale };
 }
