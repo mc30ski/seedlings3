@@ -27,10 +27,10 @@ type ForecastHour = {
   precipPct: number | null;
   windMph: number | null;
   shortForecast: string | null;
-  inWorkWindow: boolean;
+  isCurrentHour: boolean;
 };
 type HourlyForecast =
-  | { available: true; hours: ForecastHour[]; dateKey: string; locatedBy: string; fetchedAt: string; stale: boolean }
+  | { available: true; hours: ForecastHour[]; dateKey: string; isToday: boolean; locatedBy: string; fetchedAt: string; stale: boolean }
   | { available: false; reason: string; message: string };
 
 const iconUrl = (code: string | null) =>
@@ -76,6 +76,14 @@ function RecordedReading({ label, wx }: { label: string; wx: WeatherSnapshot }) 
  * A null precipitation is NOT drawn as a zero bar — NWS omits the field
  * sometimes, and "we don't know" rendered as a flat bar reads as "it's dry",
  * which is the one misreading that would actually send a crew out.
+ *
+ * THE MARKED COLUMN IS NOW, and nothing else. It used to be the hours the
+ * visit was "booked" for — but jobs here are scheduled by DAY, so that came
+ * from the time component of `startAt`, which is a storage artifact: in
+ * production 500 of 527 occurrences carry one of exactly two of them. The
+ * chart was pointing at 1pm or 4pm depending on which code path wrote the row
+ * and captioning it as the booked hours. On a future day nothing is marked,
+ * which is correct — there is no "now" on Thursday.
  */
 function HourlyChart({ hours }: { hours: ForecastHour[] }) {
   const max = Math.max(40, ...hours.map((h) => h.precipPct ?? 0));
@@ -90,7 +98,7 @@ function HourlyChart({ hours }: { hours: ForecastHour[] }) {
               key={h.startTime}
               gap={0.5}
               minW="26px"
-              title={`${h.label} · ${h.tempF ?? "—"}°F · ${
+              title={`${h.label}${h.isCurrentHour ? " (now)" : ""} · ${h.tempF ?? "—"}°F · ${
                 pct == null ? "no precipitation data" : `${pct}% chance of rain`
               }${h.windMph != null ? ` · wind ${h.windMph} mph` : ""}${
                 h.shortForecast ? ` · ${h.shortForecast}` : ""
@@ -104,13 +112,13 @@ function HourlyChart({ hours }: { hours: ForecastHour[] }) {
                 h="46px"
                 display="flex"
                 alignItems="flex-end"
-                bg={h.inWorkWindow ? "blue.50" : "transparent"}
+                bg={h.isCurrentHour ? "blue.100" : "transparent"}
                 borderRadius="sm"
               >
                 <Box
                   w="full"
                   h={`${heightPct}%`}
-                  bg={pct == null ? "transparent" : h.inWorkWindow ? "blue.solid" : "blue.200"}
+                  bg={pct == null ? "transparent" : h.isCurrentHour ? "blue.solid" : "blue.300"}
                   borderTopRadius="sm"
                   borderWidth={pct == null ? "1px" : undefined}
                   borderStyle={pct == null ? "dashed" : undefined}
@@ -119,11 +127,14 @@ function HourlyChart({ hours }: { hours: ForecastHour[] }) {
               </Box>
               <Text
                 fontSize="2xs"
-                color={h.inWorkWindow ? "blue.fg" : "fg.muted"}
-                fontWeight={h.inWorkWindow ? "semibold" : undefined}
+                color={h.isCurrentHour ? "blue.fg" : "fg.muted"}
+                fontWeight={h.isCurrentHour ? "bold" : undefined}
                 fontVariantNumeric="tabular-nums"
               >
-                {h.label.slice(0, 2)}
+                {/* "now" rather than the hour on the current column — the
+                    reader is looking for where they are, not what o'clock it
+                    is, and they already know that. */}
+                {h.isCurrentHour ? "now" : h.label.slice(0, 2)}
               </Text>
               <Text fontSize="2xs" color="fg.muted" fontVariantNumeric="tabular-nums">
                 {h.tempF != null ? `${h.tempF}°` : ""}
@@ -243,8 +254,13 @@ export default function JobWeather({
               )}
               {!loading && data?.available === true && (
                 <VStack align="stretch" gap={1}>
+                  {/* Says which day is on screen and, on a future one, why no
+                      column is marked — an unmarked chart otherwise reads as a
+                      broken marker. */}
                   <Text fontSize="2xs" color="fg.muted">
-                    Chance of rain by hour — the shaded hours are when this visit is booked.
+                    {data.isToday
+                      ? "Chance of rain by hour for the rest of today — the marked column is now. Times are ET."
+                      : "Chance of rain by hour for the day of this visit. Times are ET."}
                   </Text>
                   <HourlyChart hours={data.hours} />
                   {/* A forecast is a probability for a ~2.5km square, not a

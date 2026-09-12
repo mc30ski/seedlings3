@@ -4050,3 +4050,80 @@ describe("[build-gate] invoice detail fields have an input, not just a column", 
     }
   });
 });
+
+describe("[build-gate] the hourly chart marks NOW, and nothing it cannot know", () => {
+  // WHAT WENT WRONG, in full, because it shipped and the operator caught it:
+  //
+  // The chart shaded "the hours this visit is booked", derived from the
+  // occurrence's startAt/endAt:
+  //
+  //     const startMs = occ.startAt.getTime();
+  //     const endMs = occ.endAt?.getTime() ?? startMs + (estimatedMinutes ?? 60) * 60_000;
+  //     inWorkWindow: t + 3_600_000 > startMs && t < endMs,
+  //
+  // Jobs in this business are scheduled BY DAY. Nobody picks an hour. So the
+  // time component of startAt is a storage artifact, and in production 500 of
+  // 527 occurrences carry one of exactly two of them — 13:00 and 16:00 ET,
+  // from 17:00 and 20:00 UTC. The chart was confidently shading 1pm or 4pm
+  // depending on which code path created the row, under a caption asserting
+  // those were the booked hours.
+  //
+  // The operator's read of it: "There is no inWorkWindow. Jobs are assigned a
+  // day, not by time within the day."
+  //
+  // What the chart CAN know is what hour it is now, so that is what it marks.
+  const SVC = readFileSync(join(__dirname, "./hourlyForecast.ts"), "utf8");
+  const CMP = web("ui/components/JobWeather.tsx");
+
+  /** Comments quote the removed code on purpose — see the write-up above. A
+   *  gate that punishes explaining the bug teaches people to delete the
+   *  explanation. */
+  const strip = (s: string) =>
+    s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "").replace(/^[ \t]*\*.*$/gm, "");
+
+  it("parses the real files", () => {
+    // Guards the gate: a rename would make every assertion below vacuous.
+    expect(SVC).toContain("hourlyForecastForOccurrence");
+    expect(CMP).toContain("HourlyChart");
+  });
+
+  it("no work-window notion survives anywhere", () => {
+    expect(strip(SVC), "inWorkWindow is back in the service").not.toContain("inWorkWindow");
+    expect(strip(CMP), "inWorkWindow is back in the component").not.toContain("inWorkWindow");
+  });
+
+  it("the forecast never reads a time-of-day off the occurrence", () => {
+    // startAt is selected for its DAY. endAt and estimatedMinutes carry no
+    // meaning for a day-scheduled job and must not come back to drive shading.
+    const svc = strip(SVC);
+    expect(svc, "endAt must not be read by the forecast").not.toMatch(/\bendAt\b/);
+    expect(svc, "estimatedMinutes must not be read by the forecast")
+      .not.toMatch(/\bestimatedMinutes\b/);
+  });
+
+  it("the current hour comes from the clock, not from array position", () => {
+    // NWS's first returned period happens to be the current hour, so
+    // `index === 0` would look right — until a cached response is served a
+    // little later, or the day on screen is not today.
+    expect(strip(SVC), "isCurrentHour must be derived from the clock")
+      .toMatch(/isCurrentHour:\s*t\s*<=\s*nowMs\s*&&\s*nowMs\s*<\s*t\s*\+\s*3_600_000/);
+    expect(strip(SVC), "nowMs must come from Date.now()").toMatch(/const nowMs = Date\.now\(\)/);
+  });
+
+  it("hour labels go through the canonical ET helper", () => {
+    // NWS emits its own UTC offset (-04:00 / -05:00). Slicing the ISO string
+    // reads correctly for a North Carolina grid and would be silently wrong
+    // for any other — and re-derives a timezone this repo has one answer for.
+    const svc = strip(SVC);
+    expect(svc, "label must use etHourMinute").toMatch(/label:\s*etHourMinute\(/);
+    expect(svc, "no ISO string slicing for the label").not.toMatch(/startTime\)\.slice\(/);
+  });
+
+  it("the caption says which day it is showing", () => {
+    // On a future day nothing is marked, because there is no "now" on
+    // Thursday. Without copy that says so, an unmarked chart reads as a broken
+    // marker — which is how this whole thing got reported.
+    expect(SVC, "the payload must carry isToday").toMatch(/isToday:\s*dateKey === todayKey/);
+    expect(CMP, "the component must branch on isToday").toMatch(/data\.isToday/);
+  });
+});
