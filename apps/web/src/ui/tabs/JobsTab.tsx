@@ -9358,8 +9358,63 @@ export default function JobsTab({
                             Delete
                           </Button>
                         </>)}
-  {/* Generating a client-facing estimate document is admin work.
-                            The row already gates the scope. */}
+                        {/* ─────────────────────────────────────────────────
+                            "GENERATE ESTIMATE" — REMOVED FROM THE UI ONLY.
+                            Removed 2026-09-13 at the operator's request.
+
+                            WHAT IT DID
+                            Pressed on an ESTIMATE occurrence, it called
+                            POST /api/admin/occurrences/:id/generate-estimate,
+                            which asks the Claude API to draft two documents in
+                            one response: a client-facing estimate message, and
+                            an internal cost breakdown for the business. Both
+                            were written to the occurrence
+                            (generatedEstimate / generatedEstimateBreakdown)
+                            and rendered further up this same card, where the
+                            client-facing one has a copy-to-clipboard button.
+
+                            WHY IT WAS REMOVED
+                            Cost, not correctness. Every press was a paid
+                            Claude API call, and the operator's read was that
+                            barely anyone used it — so it was spending money
+                            per estimate for something usually written by hand.
+                            The same review of the app removed the LLM from
+                            route suggestions for a different reason (Mapbox
+                            was already doing the real work there); this one
+                            worked fine and simply was not worth paying for.
+
+                            WHAT IS DELIBERATELY STILL HERE
+                            • The API route. Untouched and still live — this is
+                              a UI removal, not a teardown, precisely so it can
+                              come back by restoring the block below.
+                            • The two columns and their READ-ONLY display
+                              higher up this card. As of the removal, ELEVEN
+                              PRODUCTION OCCURRENCES carry text this feature
+                              produced. Dropping the columns would have
+                              destroyed work the operator can still refer to,
+                              so nothing was migrated away. Nothing writes to
+                              them any more.
+                            • The truncation build gate's entry for admin.ts.
+                              The route still calls a model, so the
+                              stop_reason === "max_tokens" check still has to
+                              hold. Do not remove that gate entry while the
+                              route exists.
+
+                            IF YOU ARE PUTTING IT BACK
+                            Uncomment the block below as-is. One thing worth
+                            fixing first: this route uses max_tokens 4000 while
+                            the forecast assessor uses 16000. It produces TWO
+                            documents in one response, so it is the likelier of
+                            the two to hit the ceiling — it fails loudly rather
+                            than returning half an estimate, but the cap is
+                            probably too low for what it is asked to write.
+
+                            Related: the forecast assessor
+                            (POST /super/forecasts/:id/assess) was reviewed at
+                            the same time and KEPT as-is — prose for a human,
+                            behind a Super-only button, no deterministic
+                            alternative.
+
                         {(occ.workflow === "ESTIMATE" || occ.isEstimate) && (
                           <StatusButton
                             id="occ-generate-estimate"
@@ -9384,6 +9439,7 @@ export default function JobsTab({
                             setBusyId={setStatusButtonBusyId}
                           />
                         )}
+                            ───────────────────────────────────────────────── */}
                         {occInEditableState(occ) && !isFollowup && (
                           <Button
                             size="sm"
