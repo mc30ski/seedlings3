@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { crewPool } from "../lib/jobPricing";
 import { ESTIMATE_ADDRESS_PART_FIELDS, pickEstimateAddressParts } from "../lib/estimateAddress";
+import { carryInstructionsToNewOccurrence } from "../lib/instructionCarry";
 import { randomUUID } from "crypto";
 import { services } from "../services";
 import { prisma } from "../db/prisma";
@@ -6117,6 +6118,13 @@ Respond ONLY with valid JSON in this exact format:
                 notes: occ.notes ?? occ.job.notes ?? null,
                 frequencyDays: (occ as any).frequencyDays ?? null,
               } as any,
+            });
+            // Same carry every other next-visit path runs. See
+            // lib/instructionCarry.ts.
+            await carryInstructionsToNewOccurrence(tx as any, {
+              jobId: occ.jobId!,
+              sourceOccurrenceId: occ.id,
+              newOccurrenceId: nextOcc.id,
             });
             createdNextOccurrenceId = nextOcc.id;
             // Copy default assignees from the job (group first, then

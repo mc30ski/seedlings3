@@ -6,7 +6,7 @@ import { prisma } from "../db/prisma";
 import { hourlyForecastForOccurrence } from "../services/hourlyForecast";
 import { getUploadUrl, getDownloadUrl, deleteObject } from "../lib/r2";
 import { etMidnight, etEndOfDay, etToday, etTomorrow, etAddDays, etFormatDate, etDaysBetween , type EtDateKey } from "../lib/dates";
-import { Prisma, Role as RoleVal, JobOccurrenceStatus } from "@prisma/client";
+import { InstructionScope, Prisma, Role as RoleVal, JobOccurrenceStatus } from "@prisma/client";
 import { ServiceError } from "../lib/errors";
 import { normalizePhone } from "../lib/phone";
 import { persistCompletionSplits } from "../services/payments";
@@ -5087,7 +5087,16 @@ export default async function workerRoutes(app: FastifyInstance) {
   app.post("/occurrences/:id/instructions", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const occurrenceId = String(req.params.id);
-    const { text, isPreset, repeats } = (req.body || {}) as { text: string; isPreset?: boolean; repeats?: boolean };
+    const body0 = (req.body || {}) as { text: string; isPreset?: boolean; scope?: string; repeats?: boolean };
+    const { text, isPreset } = body0;
+    // `repeats` is still accepted so an older client keeps working: true was
+    // EVERY_VISIT, false was THIS_VISIT. `scope` wins when both arrive.
+    const scope: InstructionScope =
+      body0.scope && (Object.values(InstructionScope) as string[]).includes(body0.scope)
+        ? (body0.scope as InstructionScope)
+        : body0.repeats === false
+          ? InstructionScope.THIS_VISIT
+          : InstructionScope.EVERY_VISIT;
     if (!text?.trim()) throw app.httpErrors.badRequest("text is required");
     // Permission: claimer or admin
     const occ = await prisma.jobOccurrence.findUnique({ where: { id: occurrenceId }, include: { assignees: true } });
@@ -5099,7 +5108,7 @@ export default async function workerRoutes(app: FastifyInstance) {
     const count = await prisma.occurrenceInstruction.count({ where: { occurrenceId } });
     return prisma.$transaction(async (tx) => {
       const instruction = await tx.occurrenceInstruction.create({
-        data: { occurrenceId, text: text.trim(), isPreset: !!isPreset, repeats: repeats ?? true, sortOrder: count },
+        data: { occurrenceId, text: text.trim(), isPreset: !!isPreset, scope, sortOrder: count },
       });
       // Records a new work instruction added to this occurrence.
       await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
@@ -5109,7 +5118,7 @@ export default async function workerRoutes(app: FastifyInstance) {
         action: "instruction_added",
         text: instruction.text,
         isPreset: instruction.isPreset,
-        repeats: instruction.repeats,
+        scope: instruction.scope,
       });
       return instruction;
     });
@@ -5129,7 +5138,17 @@ export default async function workerRoutes(app: FastifyInstance) {
     if (!isClaimer && !isAdmin) throw app.httpErrors.forbidden("Only the claimer or an admin can manage instructions");
     const data: any = {};
     if ("text" in body) data.text = String(body.text).trim();
-    if ("repeats" in body) data.repeats = !!body.repeats;
+    if ("scope" in body && (Object.values(InstructionScope) as string[]).includes(body.scope)) {
+      data.scope = body.scope as InstructionScope;
+      // Re-pointing an already-delivered request at a new scope makes it
+      // pending again; leaving the stamp would silently strand it.
+      if (data.scope === InstructionScope.NEXT_VISIT_ONLY) {
+        data.deliveredAt = null;
+        data.deliveredToOccurrenceId = null;
+      }
+    } else if ("repeats" in body) {
+      data.scope = body.repeats ? InstructionScope.EVERY_VISIT : InstructionScope.THIS_VISIT;
+    }
     const priorInstruction = await prisma.occurrenceInstruction.findUnique({ where: { id: instructionId } });
     return prisma.$transaction(async (tx) => {
       const updated = await tx.occurrenceInstruction.update({ where: { id: instructionId }, data });
@@ -5141,8 +5160,8 @@ export default async function workerRoutes(app: FastifyInstance) {
         action: "instruction_edited",
         beforeText: priorInstruction?.text ?? null,
         afterText: updated.text,
-        beforeRepeats: priorInstruction?.repeats ?? null,
-        afterRepeats: updated.repeats,
+        beforeScope: priorInstruction?.scope ?? null,
+        afterScope: updated.scope,
       });
       return updated;
     });
@@ -5170,7 +5189,8 @@ export default async function workerRoutes(app: FastifyInstance) {
         action: "instruction_deleted",
         text: doomedInstruction?.text ?? null,
         isPreset: doomedInstruction?.isPreset ?? null,
-        repeats: doomedInstruction?.repeats ?? null,
+        scope: doomedInstruction?.scope ?? null,
+        deliveredAt: doomedInstruction?.deliveredAt?.toISOString() ?? null,
       });
       await tx.occurrenceInstruction.delete({ where: { id: instructionId } });
     });

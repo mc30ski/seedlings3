@@ -868,7 +868,15 @@ export type WorkerOccurrence = {
    *  was added ("5 bushes at $25.00 each"). It was persisted from day one
    *  but omitted from every server select, so it reached no surface at all. */
   addons?: { id: string; tag?: string | null; customLabel?: string | null; price: number; detail?: string | null }[];
-  instructions?: { id: string; text: string; isPreset: boolean; repeats: boolean; sortOrder: number }[];
+  instructions?: {
+    id: string; text: string; isPreset: boolean;
+    scope: "THIS_VISIT" | "EVERY_VISIT" | "NEXT_VISIT_ONLY";
+    sortOrder: number;
+    /** Set once a NEXT_VISIT_ONLY instruction has been handed to a later
+     *  visit. The row stays put as the record that it was asked for here. */
+    deliveredAt?: string | null;
+    deliveredToOccurrenceId?: string | null;
+  }[];
   linkedOccurrenceId?: string | null;
   linkedOccurrence?: {
     id: string;

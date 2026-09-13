@@ -2564,17 +2564,48 @@ model OccurrenceAddon {
 
 // ── Occurrence Instructions ─────────────────────────────────────────────────
 
+/// How far an instruction travels.
+///
+/// This replaced a `repeats` boolean, which could only say "every visit" or
+/// "this visit". Neither fits the case it was added for: a client asks, at the
+/// end of a visit, for something to be done NEXT time. The visit being worked
+/// is finished, and the next one does not exist yet — a job is not scheduled
+/// again until its payment clears — so there was nowhere to put the request
+/// except an operator's memory.
+enum InstructionScope {
+  /// Applies to this visit only. What `repeats: false` meant.
+  THIS_VISIT
+  /// Carried onto every following visit. What `repeats: true` meant, and
+  /// still the default.
+  EVERY_VISIT
+  /// Applies to the NEXT visit, whenever one is created, and then stops.
+  /// Shown on its own occurrence as a shadow — a request recorded here, to be
+  /// carried out elsewhere.
+  NEXT_VISIT_ONLY
+}
+
 model OccurrenceInstruction {
-  id           String        @id @default(cuid())
+  id           String           @id @default(cuid())
   occurrenceId String
-  occurrence   JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
+  occurrence   JobOccurrence    @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
   text         String
-  isPreset     Boolean       @default(false)
-  repeats      Boolean       @default(true)
-  sortOrder    Int           @default(0)
-  createdAt    DateTime      @default(now())
+  isPreset     Boolean          @default(false)
+  scope        InstructionScope @default(EVERY_VISIT)
+  sortOrder    Int              @default(0)
+  createdAt    DateTime         @default(now())
+
+  /// Set when a NEXT_VISIT_ONLY instruction has been copied onto a following
+  /// visit. Its presence is what stops it being copied again — without it the
+  /// instruction would reattach to every occurrence the job ever generates.
+  /// Also the audit trail: the original row stays put, so the completed visit
+  /// still shows that the client asked for this here.
+  deliveredAt             DateTime?
+  deliveredToOccurrenceId String?
 
   @@index([occurrenceId])
+  /// The lookup the carry-forward runs on every new visit: undelivered
+  /// next-visit instructions across a job's occurrences.
+  @@index([scope, deliveredAt])
 }
 
 // ── Client-initiated change requests on a scheduled occurrence ──────────────

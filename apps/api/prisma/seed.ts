@@ -274,6 +274,7 @@ const SETTING_SECTIONS: Record<string, string> = {
   NWS_ALERTS_MIN_SEVERITY: "integrations",
   NWS_ALERTS_EVENT_KEYWORDS: "integrations",
   HOURLY_WEATHER_ENABLED: "integrations",
+  HOURLY_WEATHER_ARCHIVE_URL: "integrations",
   HOURLY_WEATHER_BASE_URL: "integrations",
   DOCUMENT_SYNC_ENABLED: "integrations",
   CLIENT_BACKUP_ENABLED: "integrations",

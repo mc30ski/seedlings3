@@ -80,7 +80,7 @@ const BASELINE: Record<string, number> = {
   // removed 1 mutation site and 2 writeAudit calls — the ratio gets worse
   // even though every remaining mutation is exactly as audited as before.
   "apps/api/src/routes/admin.ts": 29,
-  "apps/api/src/services/payments.ts": 17,
+  "apps/api/src/services/payments.ts": 16,
   "apps/api/src/routes/worker.ts": 18,
   "apps/api/src/services/supplies.ts": 14,
   // Background sync worker — queue/state bookkeeping, not user actions.

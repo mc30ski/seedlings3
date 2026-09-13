@@ -41,7 +41,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertCircle, AlertTriangle, Archive, BarChart3, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, ExternalLink, Eye, Filter, Hand, Heart, Inbox, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, Play, RefreshCw, Repeat, Share2, Star, Tag, Users, X,
+import { AlertCircle, AlertTriangle, Archive, CalendarArrowUp, BarChart3, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, ExternalLink, Eye, Filter, Hand, Heart, Inbox, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, Play, RefreshCw, Repeat, Share2, Star, Tag, Users, X,
   Map as MapIcon,
   KeyRound,
 } from "lucide-react";
@@ -5182,21 +5182,60 @@ export default function JobsTab({
    * Distinct from `OccurrenceInstructions` at the bottom of the card —
    * that is a details drawer for photos and guidance notes, not a warning.
    */
+  // SHADOWS ARE NOT TODAY'S WORK. A "next visit only" instruction lives on
+  // this occurrence because that is where the client asked for it — standing
+  // in the yellow alarm band it would read as something the crew must do now,
+  // which is exactly backwards. Split out and rendered quietly below.
+  const allInstructions = ((occ as any).instructions ?? []) as {
+    id: string; text: string; scope: string; sortOrder?: number; deliveredAt?: string | null;
+  }[];
+  // URGENT FIRST. A one-off is the line nobody has seen before; a standing
+  // order was already true last visit. Reading order should match attention
+  // order, so the pulsing rows lead and the familiar ones follow — otherwise
+  // the thing that needs reading can sit third in the stack.
+  //
+  // Stable within each group: `sortOrder` still decides among equals, so the
+  // sequence the operator typed them in survives.
+  const SCOPE_RANK: Record<string, number> = { THIS_VISIT: 0, EVERY_VISIT: 1, NEXT_VISIT_ONLY: 2 };
+  const byUrgency = (a: { scope: string; sortOrder?: number }, b: { scope: string; sortOrder?: number }) =>
+    (SCOPE_RANK[a.scope] ?? 9) - (SCOPE_RANK[b.scope] ?? 9) || (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+
+  const activeInstructions = allInstructions
+    .filter((i) => i.scope !== "NEXT_VISIT_ONLY")
+    .slice()
+    .sort(byUrgency);
+  const shadowInstructions = allInstructions
+    .filter((i) => i.scope === "NEXT_VISIT_ONLY")
+    .slice()
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+
   const instructionsBanner =
-    ((occ as any).instructions ?? []).length > 0 ? (
-      <Box
-        mt="1"
-        mb="1"
-        px="3"
-        py="1.5"
-        bg="yellow.100"
-        borderWidth="1px"
-        borderColor="yellow.400"
-        borderRadius="md"
-      >
-        <VStack align="stretch" gap="0.5">
-          {((occ as any).instructions as { id: string; text: string; repeats: boolean }[]).map((inst) => (
-            <HStack key={inst.id} gap="1.5" align="center">
+    allInstructions.length > 0 ? (
+      // EACH INSTRUCTION GETS ITS OWN ROW, not a shared band with lines in it.
+      // Four of them stacked inside one rectangle read as a paragraph; the
+      // crew skims and misses the third. Separate rounded rows read as
+      // separate things to do.
+      <VStack align="stretch" gap="1" mt="1" mb="1">
+        {activeInstructions.map((inst) => {
+          // A ONE-OFF IS THE ONE THAT SURPRISES YOU. A standing order is
+          // already known — it was true last visit and will be true next
+          // visit. Something that applies only to THIS visit is the thing a
+          // worker has never seen before, so it is what pulses.
+          const oneOff = inst.scope === "THIS_VISIT";
+          return (
+            <HStack
+              key={inst.id}
+              gap="1.5"
+              align="center"
+              px="3"
+              py="1.5"
+              bg="yellow.100"
+              borderWidth="1px"
+              borderColor={oneOff ? "yellow.500" : "yellow.400"}
+              borderRadius="md"
+              data-instruction-pulse={oneOff ? "1" : undefined}
+              css={oneOff ? { animation: "seedlings-pulse-instruction 1.6s ease-in-out infinite" } : undefined}
+            >
               <AlertCircle
                 size={18}
                 color="var(--chakra-colors-yellow-900)"
@@ -5206,15 +5245,53 @@ export default function JobsTab({
               <Text fontSize="xs" fontWeight="semibold" color="yellow.700" flex="1">
                 {inst.text}
               </Text>
-              {inst.repeats && (
-                <Box display="inline-flex" alignItems="center" title="Carries forward">
+              {inst.scope === "EVERY_VISIT" && (
+                <Box display="inline-flex" alignItems="center" title="Every visit">
                   <Repeat size={12} color="var(--chakra-colors-yellow-700)" />
                 </Box>
               )}
+              {oneOff && (
+                <Text fontSize="2xs" color="yellow.800" fontWeight="bold" whiteSpace="nowrap">
+                  just this visit
+                </Text>
+              )}
             </HStack>
-          ))}
-        </VStack>
-      </Box>
+          );
+        })}
+
+        {/* GHOSTED: recorded here, to be carried out on a later visit. Faded
+            and dashed so it is legible but visibly not today's work — the same
+            visual language the app already uses for ghost occurrences. */}
+        {shadowInstructions.map((inst) => (
+          <HStack
+            key={inst.id}
+            gap="1.5"
+            align="center"
+            px="3"
+            py="1.5"
+            bg="bg.subtle"
+            borderWidth="1px"
+            borderStyle="dashed"
+            borderColor="border.emphasized"
+            borderRadius="md"
+          >
+            {/* ONE fading signal, not three. This had `opacity: 0.65` stacked
+                on top of already-muted colours, so the text was faded twice
+                over and came out barely readable. The dashed border, the
+                calendar-forward icon and the "next visit" tag already say it
+                is not today's work — the words themselves can stay legible. */}
+            <Box display="inline-flex" color="fg.muted" flexShrink={0}>
+              <CalendarArrowUp size={14} />
+            </Box>
+            <Text fontSize="xs" color="fg" flex="1">
+              {inst.text}
+            </Text>
+            <Text fontSize="2xs" color="fg.muted" flexShrink={0} whiteSpace="nowrap">
+              {inst.deliveredAt ? "sent to next visit" : "next visit"}
+            </Text>
+          </HStack>
+        ))}
+      </VStack>
     ) : null;
 
   const quickActionButton = pauseIndicator ?? (isTrainee || isPeek ? null : (() => {
@@ -5754,12 +5831,36 @@ export default function JobsTab({
                             shown when this occurrence has one or more
                             special instructions, so workers see at a glance
                             that there's something to read before they start. */}
-                        {(((occ as any).instructions ?? []).length > 0) && (
+                        {(() => {
+                          // A collapsed card shows one icon for the whole set,
+                          // so it has to say which KIND of set.
+                          //
+                          // Next-visit requests are excluded outright: they are
+                          // not this visit's work, and an alert icon for them
+                          // would be a false alarm on a card someone is
+                          // scanning past.
+                          //
+                          // It PULSES when there is a one-off, because that is
+                          // the instruction nobody has seen before. Standing
+                          // orders were true last visit too — worth an icon,
+                          // not worth a heartbeat.
+                          const all = ((occ as any).instructions ?? []) as { scope?: string }[];
+                          const active = all.filter((i) => i.scope !== "NEXT_VISIT_ONLY");
+                          if (active.length === 0) return null;
+                          const oneOffs = active.filter((i) => i.scope === "THIS_VISIT").length;
+                          return (
                           <Box
                             flexShrink={0}
                             display="inline-flex"
                             alignItems="center"
-                            title={`${((occ as any).instructions as any[]).length} special instruction${((occ as any).instructions as any[]).length === 1 ? "" : "s"}`}
+                            borderRadius="full"
+                            data-instruction-pulse-icon={oneOffs > 0 ? "1" : undefined}
+                            css={oneOffs > 0 ? { animation: "seedlings-pulse-instruction-icon 1.6s ease-in-out infinite" } : undefined}
+                            title={
+                              oneOffs > 0
+                                ? `${oneOffs} instruction${oneOffs === 1 ? "" : "s"} just for this visit${active.length > oneOffs ? ` (${active.length} in total)` : ""}`
+                                : `${active.length} standing instruction${active.length === 1 ? "" : "s"}`
+                            }
                           >
                             <AlertCircle
                               size={16}
@@ -5768,7 +5869,8 @@ export default function JobsTab({
                               strokeWidth={2.5}
                             />
                           </Box>
-                        )}
+                          );
+                        })()}
                         {isObserver && (
                           <Box flexShrink={0} display="inline-flex" alignItems="center" title="You're an observer">
                             <Eye size={14} color="var(--chakra-colors-blue-500)" />

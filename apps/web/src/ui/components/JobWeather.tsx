@@ -35,7 +35,7 @@ type ForecastHour = {
   isCurrentHour: boolean;
 };
 type HourlyForecast =
-  | { available: true; hours: ForecastHour[]; dateKey: string; isToday: boolean; locatedBy: string; fetchedAt: string; stale: boolean }
+  | { available: true; hours: ForecastHour[]; dateKey: string; isToday: boolean; measuredAvailable: boolean; locatedBy: string; fetchedAt: string; stale: boolean }
   | { available: false; reason: string; message: string };
 
 const iconUrl = (code: string | null) =>
@@ -76,11 +76,18 @@ function RecordedReading({ label, wx }: { label: string; wx: WeatherSnapshot }) 
  *
  * TWO QUANTITIES, DRAWN DIFFERENTLY, because they answer different questions:
  *
- *   BEFORE NOW   how much rain actually FELL. The operator's reason for
- *                wanting it: "it might be that there was rain early that day,
- *                and that could effect if i decide to go out there if it's too
- *                wet." Whether the ground is soaked is a measurement, not a
- *                probability — "a 40% chance it rained at 9am" is not a thing.
+ *   BEFORE NOW   how much rain FELL, from reanalysis. The operator's reason
+ *                for wanting it: "it might be that there was rain early that
+ *                day, and that could effect if i decide to go out there if
+ *                it's too wet." Whether the ground is soaked is a
+ *                measurement, not a probability — "a 40% chance it rained at
+ *                9am" is not a thing.
+ *
+ *                This shipped reading the FORECAST endpoint's past hours,
+ *                which are the current model run's guess at them and get
+ *                rewritten every reissue. It was wrong by enough to flip the
+ *                decision: it showed a dry morning and a wet 4pm on a day that
+ *                was the other way round.
  *
  *   AFTER NOW    the CHANCE of rain, which is all a forecast can offer.
  *
@@ -327,7 +334,7 @@ export default function JobWeather({
                     <HStack gap={2.5} wrap="wrap" fontSize="2xs" color="fg.muted">
                       <HStack gap={1}>
                         <Box w="8px" h="8px" borderRadius="2px" bg="cyan.600" />
-                        <Text>rain that fell (in)</Text>
+                        <Text>rain recorded (in)</Text>
                       </HStack>
                       <HStack gap={1}>
                         <Box w="8px" h="8px" borderRadius="2px" bg="blue.600" />
@@ -349,6 +356,12 @@ export default function JobWeather({
                     </HStack>
                   )}
                   <HourlyChart hours={data.hours} />
+                  {data.isToday && !data.measuredAvailable && (
+                    <Text fontSize="2xs" color="orange.700">
+                      Couldn't reach the record of what already fell, so this
+                      morning's hours show as unknown rather than guessed.
+                    </Text>
+                  )}
                   {/* A forecast is a probability for a ~2.5km square, not a
                       promise about one lawn. Say so rather than letting a
                       crisp chart imply certainty. */}
@@ -357,8 +370,9 @@ export default function JobWeather({
                       Open-Meteo for this property, as of{" "}
                       {fmtDateTime(data.fetchedAt)}
                       {data.stale ? " (last good reading — the service didn't answer just now)" : ""}. A
-                      forecast is a chance, not a guarantee; past hours are the
-                      model's record of what fell.
+                      forecast is a chance, not a guarantee. Hours already
+                      past are the recorded reanalysis for this grid square,
+                      not the forecast's own account of them.
                     </Text>
                     {/* NEXT TO THE "AS OF" STAMP, not in the header — the
                         moment someone reads how old the reading is, is the

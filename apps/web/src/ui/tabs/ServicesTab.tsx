@@ -17,7 +17,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertCircle, AlertTriangle, Archive, Ban, CalendarRange, ChevronDown, ChevronUp, CircleAlert, Filter, Inbox, Layers, LayoutList, Link2, Maximize2, MessageCircle, Plus, RefreshCw, Repeat, Star, Tag, X } from "lucide-react";
+import { CalendarArrowUp, AlertCircle, AlertTriangle, Archive, Ban, CalendarRange, ChevronDown, ChevronUp, CircleAlert, Filter, Inbox, Layers, LayoutList, Link2, Maximize2, MessageCircle, Plus, RefreshCw, Repeat, Star, Tag, X } from "lucide-react";
 import ChangeRequestsPanel from "@/src/ui/components/ChangeRequestsPanel";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
@@ -2397,21 +2397,72 @@ export default function ServicesTab({
                               </Box>
                             )}
                             {((occ as any).instructions ?? []).length > 0 && (
-                              <Box mt={1} p={1} bg="yellow.100" borderWidth="1px" borderColor="yellow.400" rounded="sm">
-                                <VStack align="stretch" gap="0.5">
-                                  {((occ as any).instructions as { id: string; text: string; repeats: boolean }[]).map((inst) => (
-                                    <HStack key={inst.id} gap="1.5" align="center">
-                                      <AlertCircle
-                                        size={18}
-                                        color="var(--chakra-colors-yellow-900)"
-                                        fill="var(--chakra-colors-yellow-400)"
-                                        strokeWidth={2.5}
-                                      />
-                                      <Text fontSize="xs" fontWeight="semibold" color="yellow.700" flex="1">
+                              // One row per instruction, matching the Jobs
+                              // card: a one-off pulses, a next-visit request
+                              // is ghosted. See the note there.
+                              <Box mt={1}>
+                                <VStack align="stretch" gap="1">
+                                  {/* Same order as the Jobs card: one-offs
+                                      lead, standing orders follow, next-visit
+                                      requests last. Reading order matches
+                                      attention order. */}
+                                  {([...((occ as any).instructions ?? [])] as { id: string; text: string; scope: string; sortOrder?: number; deliveredAt?: string | null }[])
+                                    .sort((a, b) => {
+                                      const rank: Record<string, number> = { THIS_VISIT: 0, EVERY_VISIT: 1, NEXT_VISIT_ONLY: 2 };
+                                      return (rank[a.scope] ?? 9) - (rank[b.scope] ?? 9) || (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+                                    })
+                                    .map((inst) => (
+                                    <HStack
+                                      key={inst.id}
+                                      gap="1.5"
+                                      align="center"
+                                      px="2"
+                                      py="1"
+                                      borderWidth="1px"
+                                      borderRadius="md"
+                                      bg={inst.scope === "NEXT_VISIT_ONLY" ? "bg.subtle" : "yellow.100"}
+                                      borderStyle={inst.scope === "NEXT_VISIT_ONLY" ? "dashed" : "solid"}
+                                      borderColor={
+                                        inst.scope === "NEXT_VISIT_ONLY" ? "border.emphasized"
+                                          : inst.scope === "THIS_VISIT" ? "yellow.500" : "yellow.400"
+                                      }
+                                      data-instruction-pulse={inst.scope === "THIS_VISIT" ? "1" : undefined}
+                                      css={inst.scope === "THIS_VISIT"
+                                        ? { animation: "seedlings-pulse-instruction 1.6s ease-in-out infinite" }
+                                        : undefined}
+                                    >
+                                      {inst.scope === "NEXT_VISIT_ONLY" ? (
+                                        <Box display="inline-flex" color="fg.muted" flexShrink={0}>
+                                          <CalendarArrowUp size={14} />
+                                        </Box>
+                                      ) : (
+                                        <AlertCircle
+                                          size={18}
+                                          color="var(--chakra-colors-yellow-900)"
+                                          fill="var(--chakra-colors-yellow-400)"
+                                          strokeWidth={2.5}
+                                        />
+                                      )}
+                                      <Text
+                                        fontSize="xs"
+                                        fontWeight={inst.scope === "NEXT_VISIT_ONLY" ? "normal" : "semibold"}
+                                        color={inst.scope === "NEXT_VISIT_ONLY" ? "fg" : "yellow.700"}
+                                        flex="1"
+                                      >
                                         {inst.text}
                                       </Text>
-                                      {inst.repeats && (
-                                        <Box display="inline-flex" alignItems="center" title="Carries forward">
+                                      {inst.scope === "NEXT_VISIT_ONLY" && (
+                                        <Text fontSize="2xs" color="fg.muted" whiteSpace="nowrap">
+                                          {inst.deliveredAt ? "sent to next visit" : "next visit"}
+                                        </Text>
+                                      )}
+                                      {inst.scope === "THIS_VISIT" && (
+                                        <Text fontSize="2xs" color="yellow.800" fontWeight="bold" whiteSpace="nowrap">
+                                          just this visit
+                                        </Text>
+                                      )}
+                                      {inst.scope === "EVERY_VISIT" && (
+                                        <Box display="inline-flex" alignItems="center" title="Every visit">
                                           <Repeat size={12} color="var(--chakra-colors-yellow-700)" />
                                         </Box>
                                       )}
