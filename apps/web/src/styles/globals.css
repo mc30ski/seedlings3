@@ -178,3 +178,67 @@ html, body {
   from { transform: rotate(0deg); }
   to   { transform: rotate(360deg); }
 }
+
+/* ── One-off instruction pulse ───────────────────────────────────────────
+   A yellow ripple on a yellow row is invisible, which is what the first
+   attempt at this was: `seedlings-pulse-yellow` spreads rgba(234,179,8) over
+   a yellow.100 background with a yellow.400 border, so the only thing moving
+   was yellow on yellow. The operator's verdict: "barely noticeable".
+
+   So this moves the BACKGROUND as well as the ring. Colour change is what the
+   eye catches in peripheral vision; a soft outer glow on a same-hue surface
+   is not.
+
+   THREE-STOP FORM, per the rule at the top of this file — the ring expands to
+   70% and returns to zero radius while fully transparent, so it never visibly
+   contracts. The background is carried on the same three stops and its 0% and
+   100% values match, so the loop is seamless. A two-stop 50%-peak version of
+   this was written first and is exactly the mistake documented above.
+
+   Separate from seedlings-pulse-yellow on purpose — Dashboard's section frames
+   use that one, and they sit on white where a plain ring works fine. */
+@keyframes seedlings-pulse-instruction {
+  0% {
+    background-color: #fde047;
+    box-shadow: 0 0 0 0 rgba(202, 138, 4, 0.7);
+  }
+  70% {
+    background-color: #fef9c3;
+    box-shadow: 0 0 0 7px rgba(202, 138, 4, 0);
+  }
+  100% {
+    background-color: #fde047;
+    box-shadow: 0 0 0 0 rgba(202, 138, 4, 0);
+  }
+}
+
+/* The same signal on the collapsed card, where the only thing on screen is a
+   16px icon. A ring around something that small is lost among the other
+   chips, so this scales it too — movement reads at a glance where a glow does
+   not. Same three-stop shape; 0% and 100% match so the loop is seamless. */
+@keyframes seedlings-pulse-instruction-icon {
+  0% {
+    transform: scale(1.25);
+    box-shadow: 0 0 0 0 rgba(202, 138, 4, 0.8);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 8px rgba(202, 138, 4, 0);
+  }
+  100% {
+    transform: scale(1.25);
+    box-shadow: 0 0 0 0 rgba(202, 138, 4, 0);
+  }
+}
+
+/* Anyone who has asked the OS for less motion gets the colour, not the
+   movement — the row still reads as the urgent one. */
+@media (prefers-reduced-motion: reduce) {
+  [data-instruction-pulse] {
+    animation: none !important;
+    background-color: #fde047 !important;
+  }
+  [data-instruction-pulse-icon] {
+    animation: none !important;
+  }
+}

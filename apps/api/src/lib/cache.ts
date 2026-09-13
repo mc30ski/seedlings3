@@ -60,6 +60,12 @@ export const CACHE_NAMESPACES = {
    *  so it could not answer "did it rain this morning". */
   openMeteoHourly: { ttlSeconds: 30 * 60 },
 
+  /** Open-Meteo ARCHIVE (reanalysis) for the hours of a day that have already
+   *  passed. Separate from the forecast namespace on purpose: this is the
+   *  record of what fell and the other is a rolling guess, and a refresh of
+   *  one must not be able to serve the other. */
+  openMeteoArchive: { ttlSeconds: 30 * 60 },
+
   /** Address → coordinates, from whichever routing provider is configured.
    *  Billed per call, and a job's address essentially never moves — this was
    *  re-geocoding the same properties on every route run. */

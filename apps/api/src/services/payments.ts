@@ -1,4 +1,5 @@
 import { randomBytes } from "crypto";
+import { carryInstructionsToNewOccurrence } from "../lib/instructionCarry";
 import { prisma } from "../db/prisma";
 import { invoiceTotal, materialChargeTotal, PRICED_OCCURRENCE_SELECT } from "../lib/jobPricing";
 import { JobOccurrenceStatus, type WorkerType } from "@prisma/client";
@@ -321,26 +322,21 @@ async function createNextOccurrenceFrom(
       skipDuplicates: true,
     });
   }
-  const carryForwardInstructions = await tx.occurrenceInstruction.findMany({
-    where: { occurrenceId: source.id, repeats: true },
+  // Standing orders from this visit, plus any "next time" request left
+  // anywhere on the job — including on THIS visit, which is the case the
+  // feature exists for: the client asks as the job finishes, and the next
+  // visit is not created until the payment clears. See lib/instructionCarry.
+  const carried = await carryInstructionsToNewOccurrence(tx as any, {
+    jobId: source.jobId ?? null,
+    sourceOccurrenceId: source.id,
+    newOccurrenceId: created.id,
   });
-  if (carryForwardInstructions.length > 0) {
-    await tx.occurrenceInstruction.createMany({
-      data: carryForwardInstructions.map((i: any) => ({
-        occurrenceId: created.id,
-        text: i.text,
-        isPreset: i.isPreset,
-        repeats: i.repeats,
-        sortOrder: i.sortOrder,
-      })),
-    });
-  }
 
   return {
     occurrence: created,
     assigneeUserIds: assigneeSource.map((a) => a.userId),
     attachedGroupId,
-    carriedInstructionCount: carryForwardInstructions.length,
+    carriedInstructionCount: carried.carriedEveryVisit + carried.carriedNextVisit,
     carriedPhotoCount: existingPropertyPhotos.length,
   };
 }

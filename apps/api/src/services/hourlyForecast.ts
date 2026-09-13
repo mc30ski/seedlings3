@@ -18,10 +18,25 @@
 // have reported Raleigh-Durham airport, ~20 miles east, for every one of these
 // properties.
 //
-// TWO QUANTITIES, NOT ONE. Before now, the honest number is how much rain
-// ACTUALLY FELL. After now, it is the CHANCE of rain. "A 40% chance it rained
-// at 9am" is not a thing — we know whether it did. The two are carried in
-// separate fields and the chart draws them differently.
+// TWO QUANTITIES FROM TWO ENDPOINTS. Before now, the honest number is how much
+// rain ACTUALLY FELL. After now, it is the CHANCE of rain. "A 40% chance it
+// rained at 9am" is not a thing — we know whether it did.
+//
+// AND THEY DO NOT COME FROM THE SAME PLACE. The forecast endpoint's
+// `past_days` looks like history and is not: it returns the CURRENT MODEL
+// RUN's values for those hours, re-forecast on every reissue. Measured against
+// the archive for one property on one day, six of twenty-two elapsed hours
+// disagreed — the forecast run showed 0.126in falling at 4pm and nothing all
+// morning, when the truth was 0.008in at 4pm and light rain from 9am to noon.
+// Same total-ish, opposite decision about whether the ground is workable.
+//
+// So elapsed hours come from the ARCHIVE endpoint (reanalysis, which
+// assimilates observations and does not rewrite itself) and upcoming hours
+// from the forecast. The seam is "now".
+//
+// WHEN THE ARCHIVE IS UNREACHABLE the elapsed hours go NULL — drawn as unknown
+// — rather than falling back to the forecast's version of the past. Falling
+// back would restore the exact bug this split exists to fix, silently.
 //
 // LAZY BY CONSTRUCTION. Nothing here runs until someone opens the section on a
 // card. The operator was explicit that a weather call per job on every feed
@@ -53,8 +68,11 @@ export type ForecastHour = {
    *  provider omits it — which is not the same as zero, and a chart must not
    *  draw it as a zero bar. */
   precipPct: number | null;
-  /** Rain that actually fell, in inches. Meaningful for hours already ELAPSED.
-   *  This is the field that answers "is the ground going to be soaked". */
+  /** Rain that fell, in inches, from REANALYSIS — set only on elapsed hours.
+   *  This is the field that answers "is the ground going to be soaked", which
+   *  is why it deliberately does not come from the forecast endpoint's version
+   *  of the past. Null means we could not reach the archive; it never means
+   *  zero. */
   precipIn: number | null;
   windMph: number | null;
   shortForecast: string | null;
@@ -70,7 +88,7 @@ export type HourlyForecast =
    *  future day there is no current hour, so nothing is highlighted — which
    *  looks identical to the marker being broken unless the copy says
    *  otherwise. That ambiguity is exactly what got reported once already. */
-  | { available: true; hours: ForecastHour[]; dateKey: string; isToday: boolean; locatedBy: string; fetchedAt: string; stale: boolean }
+  | { available: true; hours: ForecastHour[]; dateKey: string; isToday: boolean; measuredAvailable: boolean; locatedBy: string; fetchedAt: string; stale: boolean }
   | { available: false; reason: "past" | "no-location" | "beyond-horizon" | "unavailable" | "disabled"; message: string };
 
 /**
@@ -95,6 +113,10 @@ export const HOURLY_WEATHER_SETTINGS: Record<string, [string, string]> = {
     "true",
     "Master switch for the hour-by-hour weather chart on job cards. Turn off to hide the section everywhere without a deploy. The weather recorded at job start and finish is stored separately and is unaffected.",
   ],
+  HOURLY_WEATHER_ARCHIVE_URL: [
+    "https://archive-api.open-meteo.com/v1/archive",
+    "Endpoint for the hours of the day that have already passed. This is reanalysis — it assimilates real observations and does not change once published, unlike the forecast endpoint, whose 'past' hours are just the current model run's guess at them and are rewritten every reissue. Blank this to show elapsed hours as unknown rather than guessed.",
+  ],
   HOURLY_WEATHER_BASE_URL: [
     "https://api.open-meteo.com/v1/forecast",
     "Endpoint for the hourly chart. Open-Meteo is free and needs no API key, and unlike a forecast-only service it can return the hours of the day that have already passed — which is what answers 'did it rain here this morning'. Point this at a self-hosted Open-Meteo instance if you run one; another provider would need a matching response shape.",
@@ -112,6 +134,9 @@ async function loadSettings() {
   return {
     enabled: get("HOURLY_WEATHER_ENABLED") !== "false",
     baseUrl: get("HOURLY_WEATHER_BASE_URL").replace(/\?+$/, ""),
+    // Blank is meaningful: no archive means elapsed hours read "unknown",
+    // which is honest. It must never mean "use the forecast's past".
+    archiveUrl: (map.get("HOURLY_WEATHER_ARCHIVE_URL") ?? HOURLY_WEATHER_SETTINGS.HOURLY_WEATHER_ARCHIVE_URL[0]).trim().replace(/\?+$/, ""),
   };
 }
 
@@ -210,7 +235,11 @@ export async function hourlyForecastForOccurrence(
   // day filter below discards what is not wanted.
   const url =
     `${settings.baseUrl}?latitude=${point.lat.toFixed(4)}&longitude=${point.lng.toFixed(4)}` +
-    `&hourly=temperature_2m,precipitation,precipitation_probability,wind_speed_10m,weather_code` +
+    // NOT `precipitation`. The forecast endpoint will happily return values for
+    // hours that have already passed, and they are the current model run's
+    // guess at them rather than what fell — the bug this split exists to fix.
+    // Not requesting it means no later edit can quietly wire it into precipIn.
+    `&hourly=temperature_2m,precipitation_probability,wind_speed_10m,weather_code` +
     `&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch` +
     // +2, not +1: the buckets are UTC days and ET runs 4-5 hours behind, so an
     // ET day's last hours fall into the NEXT UTC day. Asking for exactly the
@@ -243,6 +272,59 @@ export async function hourlyForecastForOccurrence(
     };
   }
 
+  // ── The elapsed half of the day, from reanalysis ─────────────────────────
+  //
+  // Only for TODAY: a future day has no elapsed hours, and a past day never
+  // reaches here.
+  //
+  // Asked for in ET (timezone=America/New_York) so start_date/end_date bucket
+  // the calendar day the operator means, and exactly the day's 24 hours come
+  // back. The first attempt asked in UTC for a day either side and got a flat
+  // 400 — the archive refuses an end_date in the future, which tomorrow is.
+  // Timestamps are still epoch seconds; `timezone` only decides how the day
+  // is cut, never how times are expressed.
+  //
+  // Failure is NOT fatal and NOT filled in from the forecast — the map stays
+  // empty and the affected hours report null, which the chart draws as
+  // unknown. A silent fallback here would reinstate the bug.
+  const archive = new Map<number, { tempF: number | null; precipIn: number | null; windMph: number | null; code: number | null }>();
+  let archiveOk = false;
+  if (dateKey === todayKey && settings.archiveUrl) {
+    const archiveUrl =
+      `${settings.archiveUrl}?latitude=${point.lat.toFixed(4)}&longitude=${point.lng.toFixed(4)}` +
+      `&hourly=temperature_2m,precipitation,weather_code,wind_speed_10m` +
+      `&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch` +
+      `&start_date=${dateKey}&end_date=${dateKey}` +
+      `&timeformat=unixtime&timezone=America%2FNew_York`;
+    try {
+      if (opts.refresh) await invalidate("openMeteoArchive", archiveUrl);
+      const got = await cached("openMeteoArchive", archiveUrl, async () => {
+        const res = await fetch(archiveUrl);
+        if (!res.ok) throw new Error(`Archive returned ${res.status}`);
+        return res.json();
+      });
+      const ah = (got.value as any)?.hourly ?? {};
+      const times: number[] = Array.isArray(ah.time) ? ah.time : [];
+      const num = (series: any, i: number): number | null => {
+        const v = Array.isArray(series) ? series[i] : null;
+        return Number.isFinite(Number(v)) ? Number(v) : null;
+      };
+      for (let i = 0; i < times.length; i++) {
+        const t = Number(times[i]);
+        if (!Number.isFinite(t)) continue;
+        archive.set(t, {
+          tempF: num(ah.temperature_2m, i),
+          precipIn: num(ah.precipitation, i),
+          windMph: num(ah.wind_speed_10m, i),
+          code: num(ah.weather_code, i),
+        });
+      }
+      archiveOk = archive.size > 0;
+    } catch {
+      // Elapsed hours will read unknown. See above.
+    }
+  }
+
   // Parallel arrays, one entry per hour. A missing series is null throughout
   // rather than an exception — a partial reading is worth drawing.
   const h = body?.hourly ?? {};
@@ -262,19 +344,27 @@ export async function hourlyForecastForOccurrence(
     const d = new Date(t);
     if (etFormatDate(d) !== dateKey) continue;
 
+    // An hour is PAST only once it has finished — mid-hour, its rainfall is a
+    // partial number that would understate the hour, so the current column is
+    // read as a forecast.
+    const isPast = t + 3_600_000 <= nowMs;
+    // For a finished hour the archive is the source of record. `undefined`
+    // means we could not reach it, and every field falls to null rather than
+    // to the forecast run's rewritten version of that hour.
+    const past = isPast ? archive.get(Number(times[i])) : undefined;
+
     hours.push({
       startTime: d.toISOString(),
       label: etClockTime(d),
       axisLabel: etHourAxisLabel(d),
-      tempF: at(h.temperature_2m, i),
-      precipPct: at(h.precipitation_probability, i),
-      precipIn: at(h.precipitation, i),
-      windMph: at(h.wind_speed_10m, i),
-      shortForecast: describeWmo(at(h.weather_code, i)),
-      // An hour is PAST only once it has finished — mid-hour, its rainfall
-      // is a partial number that would understate the hour, so the current
-      // column is read as a forecast.
-      isPast: t + 3_600_000 <= nowMs,
+      tempF: isPast ? (past?.tempF ?? null) : at(h.temperature_2m, i),
+      // A finished hour has no "chance" left in it, and an unfinished one has
+      // no measurement yet. Exactly one of these is non-null per column.
+      precipPct: isPast ? null : at(h.precipitation_probability, i),
+      precipIn: isPast ? (past?.precipIn ?? null) : null,
+      windMph: isPast ? (past?.windMph ?? null) : at(h.wind_speed_10m, i),
+      shortForecast: describeWmo(isPast ? (past?.code ?? null) : at(h.weather_code, i)),
+      isPast,
       isCurrentHour: t <= nowMs && nowMs < t + 3_600_000,
     });
   }
@@ -287,5 +377,11 @@ export async function hourlyForecastForOccurrence(
     };
   }
 
-  return { available: true, hours, dateKey, isToday: dateKey === todayKey, locatedBy: point.located, fetchedAt, stale };
+  return {
+    available: true, hours, dateKey, isToday: dateKey === todayKey,
+    // Lets the card say "we couldn't reach the record of what fell" instead of
+    // rendering a row of unexplained blanks.
+    measuredAvailable: dateKey !== todayKey ? true : archiveOk,
+    locatedBy: point.located, fetchedAt, stale,
+  };
 }

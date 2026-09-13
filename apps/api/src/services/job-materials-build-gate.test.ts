@@ -2978,8 +2978,11 @@ describe("[build-gate] a forced next visit is the same visit approval would make
     expect(body, "guidance note must carry").toMatch(/guidanceNote: source\.guidanceNote/);
     expect(body, "reference photos must carry").toContain("occurrencePropertyPhoto.findMany");
     expect(body, "likes must carry").toContain("likedOccurrence.findMany");
-    expect(body, "repeating instructions must carry")
-      .toMatch(/occurrenceInstruction\.findMany\([\s\S]{0,120}?repeats: true/);
+    // Instructions moved to ONE shared helper once a third kind of them
+    // existed — see instructionCarry.ts and the next-visit gate below. What
+    // matters here is unchanged: this path must not silently skip them.
+    expect(body, "instructions must carry")
+      .toContain("carryInstructionsToNewOccurrence");
     // The crew outranks the per-user defaults — the specific thing the
     // forced path got wrong.
     // Asserted on the READ of the job's crew id, not just the variable
@@ -4134,6 +4137,42 @@ describe("[build-gate] the hourly chart marks NOW, and nothing it cannot know", 
       .toMatch(/timeformat=unixtime/);
   });
 
+  it("elapsed hours come from the ARCHIVE, never the forecast's version of the past", () => {
+    // THE BUG, shipped and caught by the operator: the forecast endpoint's
+    // `past_days` hours are the CURRENT MODEL RUN's values for them, rewritten
+    // on every reissue. Measured against the archive for one property on one
+    // day, 6 of 22 elapsed hours disagreed — the forecast run showed a dry
+    // morning and 0.126in at 4pm; the truth was light rain 9am-noon and
+    // 0.008in at 4pm. Opposite answers to "is the ground workable".
+    const svc = strip(SVC);
+    expect(svc, "the archive endpoint must be configured").toMatch(/HOURLY_WEATHER_ARCHIVE_URL/);
+    expect(svc, "elapsed hours must read the archive map").toMatch(/precipIn:\s*isPast\s*\?/);
+    // The forecast's precipitation must be UNREACHABLE, not merely unused.
+    // A narrower version of this rule checked only for the exact expression
+    // `precipIn: at(h.precipitation` and passed clean while a mutation
+    // restored the bug as a `??` fallback. So: the forecast must not request
+    // the series, and the service must not read it from the forecast body.
+    // Scoped to the FORECAST url only — the archive request legitimately asks
+    // for precipitation, which is the entire point of it.
+    const fcStart = svc.indexOf("${settings.baseUrl}?");
+    expect(fcStart, "forecast url not found").toBeGreaterThan(-1);
+    const fcUrl = svc.slice(fcStart, svc.indexOf(";", fcStart));
+    expect(fcUrl, "the forecast request must not ask for precipitation")
+      .not.toMatch(/[,=]precipitation[,&`]/);
+    expect(svc, "the forecast body's precipitation must never be read")
+      .not.toMatch(/\bat\(h\.precipitation\b/);
+  });
+
+  it("a failed archive reads unknown, never the forecast's guess", () => {
+    // A fallback here would silently reinstate the bug, and the chart would
+    // look identical while being wrong.
+    const svc = strip(SVC);
+    expect(svc, "measuredAvailable must be reported to the caller")
+      .toMatch(/measuredAvailable/);
+    expect(strip(CMP), "the card must say when the record is missing")
+      .toMatch(/measuredAvailable/);
+  });
+
   it("rain that fell and rain that might fall stay separate", () => {
     // They answer different questions and share no axis. "A 40% chance it
     // rained at 9am" is not a thing — we know whether it did.
@@ -4191,5 +4230,100 @@ describe("[build-gate] the hourly chart marks NOW, and nothing it cannot know", 
     // marker — which is how this whole thing got reported.
     expect(SVC, "the payload must carry isToday").toMatch(/isToday:\s*dateKey === todayKey/);
     expect(CMP, "the component must branch on isToday").toMatch(/data\.isToday/);
+  });
+});
+
+
+describe("[build-gate] a next-visit instruction reaches the next visit", () => {
+  // THE FEATURE: a client asks, as a visit ends, for something to be done next
+  // time. The visit being worked is finished and the next one does not exist
+  // yet — a job is deliberately not rescheduled until its payment clears — so
+  // the request is recorded on the completed visit and carried forward when a
+  // next visit appears, by WHATEVER route creates it.
+  //
+  // THE FAILURE THIS PREVENTS: four separate places create a visit for a job —
+  // the recurrence generator, a manual add, the payment-clears path, and the
+  // admin duplicate. A fifth added later that skipped the carry would drop
+  // real client requests silently: no error, just a hedge that never gets
+  // trimmed and an operator who looks careless.
+  const CARRY = readFileSync(join(__dirname, "../lib/instructionCarry.ts"), "utf8");
+  const SOURCES: [string, string][] = [
+    ["services/jobs.ts", readFileSync(join(__dirname, "./jobs.ts"), "utf8")],
+    ["services/payments.ts", readFileSync(join(__dirname, "./payments.ts"), "utf8")],
+    ["routes/admin.ts", readFileSync(join(__dirname, "../routes/admin.ts"), "utf8")],
+  ];
+
+  it("there is exactly one carry implementation", () => {
+    expect(CARRY).toContain("carryInstructionsToNewOccurrence");
+    // Nobody re-implements the copy inline. The payment path used to own it,
+    // and that is precisely why it was the only path that did it.
+    for (const [name, src] of SOURCES) {
+      expect(
+        /occurrenceInstruction\.createMany/.test(src),
+        `${name} must not copy instructions itself — call the shared helper`,
+      ).toBe(false);
+    }
+  });
+
+  it("every path that creates a visit FOR A JOB carries instructions", () => {
+    // Counted rather than named: `jobId` in a create payload is what makes it
+    // a visit in a series. Tasks, events, followups and stand-alone estimates
+    // have no series and are excluded by that same test.
+    for (const [name, src] of SOURCES) {
+      const creates = [...src.matchAll(/jobOccurrence\.create\(\{/g)];
+      let checked = 0;
+      for (let k = 0; k < creates.length; k++) {
+        const m = creates[k];
+        const body = src.slice(m.index!, m.index! + 900);
+        // A SERVICE VISIT, which means: attached to a job, and not one of the
+        // other things that borrow this table. An estimate can carry a jobId
+        // too — it is a quote, not a visit in the series, and handing it a
+        // client's "next time" request would be wrong.
+        //
+        // `jobId,` shorthand counts. An earlier version of this required
+        // `jobId:` with a colon and therefore skipped BOTH jobs.ts sites
+        // without saying so — the gate reported green over unchecked code.
+        const hasJob = /^\s*jobId,\s*$/m.test(body) || /^\s*jobId: (?!null)/m.test(body);
+        const otherWorkflow = /workflow: (?:OccurrenceWorkflow\.)?"?(?:ESTIMATE|EVENT|FOLLOWUP|ANNOUNCEMENT|TASK|REMINDER)"?/.test(body);
+        if (!hasJob || otherWorkflow) continue;
+        checked++;
+        // Look as far as the NEXT creation in the file — that bounds the
+        // search to this creation's own region without guessing a character
+        // count. The payment path's carry legitimately sits ~3.9k away, after
+        // the assignee and crew wiring.
+        const end = k + 1 < creates.length ? creates[k + 1].index! : src.length;
+        const region = src.slice(m.index!, end);
+        expect(
+          region.includes("carryInstructionsToNewOccurrence"),
+          `${name}: a job visit is created at line ${src.slice(0, m.index!).split("\n").length} without carrying instructions`,
+        ).toBe(true);
+      }
+      // Guards the gate: a filter that matches nothing passes silently, which
+      // is how the shorthand miss above went unnoticed.
+      if (name !== "routes/admin.ts") expect(checked, `${name}: no job visits matched`).toBeGreaterThan(0);
+    }
+  });
+
+  it("a delivered request is never carried twice", () => {
+    // Without the deliveredAt stamp the instruction reattaches to every
+    // occurrence the job ever generates, forever.
+    expect(CARRY, "the pending query must exclude delivered rows")
+      .toMatch(/deliveredAt: null/);
+    expect(CARRY, "delivery must be stamped after carrying")
+      .toMatch(/deliveredAt: new Date\(\)/);
+  });
+
+  it("a carried request lands as a one-off, not as another shadow", () => {
+    // Copying it as NEXT_VISIT_ONLY would make it hop forward forever.
+    const block = CARRY.slice(CARRY.indexOf("const pending"));
+    expect(block, "must land as THIS_VISIT").toMatch(/scope: InstructionScope\.THIS_VISIT/);
+  });
+
+  it("pending requests are searched across the JOB, not one predecessor", () => {
+    // The visit that recorded the request may not be the one the next visit
+    // follows — it sits in pending payment for weeks. Scoping to a single
+    // predecessor is how the request gets stranded.
+    expect(CARRY, "the pending lookup must be job-wide")
+      .toMatch(/occurrence: \{ jobId \}/);
   });
 });

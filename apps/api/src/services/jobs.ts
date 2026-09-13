@@ -58,6 +58,7 @@ import {
 import { computeNextOccurrenceStart, loadRates } from "./payments";
 import { captureOccurrenceWeather } from "./occurrenceWeather";
 import { applyEstimateAddressParts, type EstimateAddressParts } from "../lib/estimateAddress";
+import { carryInstructionsToNewOccurrence } from "../lib/instructionCarry";
 import { computeBreakdown } from "@repo/money";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -227,6 +228,14 @@ export async function applyJobResumeSideEffectsInTx(
       frequencyDays: (lastOcc as any).frequencyDays ?? null,
     } as any,
   });
+  // Standing orders from the visit this follows, plus anything a client asked
+  // for "next time" anywhere on this job. See lib/instructionCarry.ts.
+  await carryInstructionsToNewOccurrence(tx as any, {
+    jobId,
+    sourceOccurrenceId: lastOcc.id,
+    newOccurrenceId: nextOcc.id,
+  });
+
   const assigneeSource: { userId: string; role: string | null }[] = [];
   const defaultGroupId = lastOcc.job.defaultGroupId as string | null;
   if (defaultGroupId) {
@@ -748,7 +757,7 @@ export const jobs: ServicesJobs = {
               orderBy: { createdAt: "asc" as const },
             },
             instructions: {
-              select: { id: true, text: true, isPreset: true, repeats: true, sortOrder: true },
+              select: { id: true, text: true, isPreset: true, scope: true, sortOrder: true, deliveredAt: true, deliveredToOccurrenceId: true },
               orderBy: { sortOrder: "asc" as const },
             },
             propertyPhotos: {
@@ -882,6 +891,15 @@ export const jobs: ServicesJobs = {
           frequencyDays: input.frequencyDays ?? null,
           title: input.title ?? null,
         } as any,
+      });
+
+      // A visit added by hand is still "the next visit" for anyone who left a
+      // request on an earlier one — the whole point of searching the job
+      // rather than one predecessor.
+      await carryInstructionsToNewOccurrence(tx as any, {
+        jobId,
+        sourceOccurrenceId: null,
+        newOccurrenceId: occ.id,
       });
 
       // Assignee resolution order:
@@ -2315,7 +2333,7 @@ export const jobs: ServicesJobs = {
           orderBy: { createdAt: "asc" as const },
         },
         instructions: {
-          select: { id: true, text: true, isPreset: true, repeats: true, sortOrder: true },
+          select: { id: true, text: true, isPreset: true, scope: true, sortOrder: true, deliveredAt: true, deliveredToOccurrenceId: true },
           orderBy: { sortOrder: "asc" as const },
         },
         linkedOccurrence: {
@@ -2767,7 +2785,7 @@ export const jobs: ServicesJobs = {
           orderBy: { createdAt: "asc" as const },
         },
         instructions: {
-          select: { id: true, text: true, isPreset: true, repeats: true, sortOrder: true },
+          select: { id: true, text: true, isPreset: true, scope: true, sortOrder: true, deliveredAt: true, deliveredToOccurrenceId: true },
           orderBy: { sortOrder: "asc" as const },
         },
         linkedOccurrence: {

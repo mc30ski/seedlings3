@@ -308,9 +308,16 @@ test.describe("Tips — conservation", () => {
     // The build gate fuzzes this against the pure reconciler; this asserts
     // it against rows that actually landed in the database, which is where
     // a persistence bug (a write that drops tipAmount) would show up.
+    // Splits only. This used to pull `occurrence.expenses` as well — a
+    // relation that no longer exists (it is `invoiceCharges` now), so the
+    // query threw a Prisma validation error before a single assertion ran.
+    // Nothing below ever read it: the conservation check is entirely about
+    // the payment's own tip fields and its splits. Dropped rather than
+    // renamed, because fetching rows no assertion reads is how it came to be
+    // wrong without anyone noticing.
     const payments = await prisma.payment.findMany({
       where: { tipAmount: { gt: 0 } },
-      include: { splits: true, occurrence: { select: { expenses: { select: { cost: true } } } } },
+      include: { splits: true },
     });
     expect(payments.length, "no tipped payment in the seed — reseed dev").toBeGreaterThan(0);
 

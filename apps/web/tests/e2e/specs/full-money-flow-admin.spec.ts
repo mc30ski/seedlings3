@@ -57,8 +57,10 @@ test("a job carries labor, a service, a one-off charge and inventory — and eve
     console.log(`ledger row $240.50 → ${ledgerId}`);
 
     // ── 2. A SUPPLY, and stock bought against that receipt. ──
+    // No `businessCost` — the catalog does not hold one. A supply is defined
+    // by what it IS; what it cost arrives with each purchase.
     const sup = await apiAs(page, "POST", "/api/admin/supplies", {
-      name: `${TAG} Mulch`, unit: "bag", businessCost: 3.5, clientUnitPrice: 5, category: "Supplies",
+      name: `${TAG} Mulch`, unit: "bag", clientUnitPrice: 5, category: "Supplies",
     });
     expect(sup.status, `supply create: ${JSON.stringify(sup.json)}`).toBeLessThan(300);
     const supplyId = sup.json?.id;
@@ -79,7 +81,22 @@ test("a job carries labor, a service, a one-off charge and inventory — and eve
     expect(ledgerCount, "a supply purchase created a second ledger row").toBe(1);
     const stocked = await prisma.supply.findUniqueOrThrow({ where: { id: supplyId } });
     expect(stocked.onHand, "stock did not arrive").toBe(40);
-    expect(stocked.businessCost, "unit cost derived from the receipt total").toBe(3.5);
+
+    // COST LIVES ON THE PURCHASE, NOT ON THE CATALOG ENTRY.
+    //
+    // This asserted `stocked.businessCost === 3.5` against a column that no
+    // longer exists, so it read `undefined` and failed — and had done since
+    // the column was dropped. That removal was deliberate and the schema says
+    // so in as many words: a stored cost was overwritten by every buy, so one
+    // new receipt silently restated what all existing stock had cost. It is
+    // now derived as a weighted average over FIFO layers (lib/supplyCost.ts).
+    //
+    // So the check moves to where the number actually is: the receipt said
+    // $140 for 40 bags, and the purchase row must carry $3.50 a bag.
+    const purchase = await prisma.supplyPurchase.findFirstOrThrow({ where: { supplyId } });
+    expect(purchase.quantity, "the whole receipt must land as stock").toBe(40);
+    expect(purchase.totalCost, "the receipt total is recorded as paid").toBe(140);
+    expect(purchase.unitCost, "unit cost derived from the receipt total").toBe(3.5);
     console.log(`supply: 40 on hand @ $3.50, linked to the receipt, no second deduction`);
 
     // ── 3. A JOB. Reuse a real unpaid occurrence and price it. ──
