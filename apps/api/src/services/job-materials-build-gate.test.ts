@@ -4327,3 +4327,4 @@ describe("[build-gate] a next-visit instruction reaches the next visit", () => {
       .toMatch(/occurrence: \{ jobId \}/);
   });
 });
+

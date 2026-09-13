@@ -44,13 +44,12 @@ const REPO_ROOT = resolve(__dirname, "../../../..");
  * no truncation semantics.
  */
 const JSON_PARSING_AI_CALLSITES = [
-  {
-    file: "apps/api/src/routes/preview.ts",
-    what: "route planner",
-    // A week of routes, each stop carrying prose. This is the one that
-    // actually blew up; it needs real headroom.
-    minTokens: 8000,
-  },
+  // The ROUTE PLANNER used to be here, with the largest headroom of the lot —
+  // it is the one that actually truncated in production. It no longer calls a
+  // model at all: the routing provider had always done the routing, and what
+  // remained was arithmetic, a sort key and caption text. See
+  // lib/routePlanner.ts, and the "route planning is deterministic" gate below
+  // which keeps the call from coming back.
   {
     file: "apps/api/src/routes/admin.ts",
     what: "estimate generator",
@@ -102,27 +101,79 @@ describe("AI truncation build gate", () => {
     });
   }
 
-  it("the route planner never returns raw model output without an error", () => {
-    // The operator saw a wall of JSON and no explanation. Raw output is
-    // fine for diagnosis, but it must be paired with something that says
-    // the request failed.
-    const src = read("apps/api/src/routes/preview.ts");
-    expect(src).toMatch(/raw:\s*parsed\s*\?\s*undefined\s*:\s*text/);
-    expect(
-      src,
-      "unparseable output must be returned alongside an `error` field",
-    ).toMatch(/error:\s*parsed\s*\n?\s*\?\s*undefined/);
+  // TWO TESTS REMOVED HERE, both about the route planner's handling of model
+  // output: that raw text was never returned without an `error` beside it, and
+  // that the JSON.parse was never left with a bare `catch {}`. Both described
+  // a code path that no longer exists — there is no model output to mishandle.
+  // The estimate generator above still carries the equivalent checks.
+});
+
+
+describe("[build-gate] route planning is deterministic", () => {
+  // The route planner was an LLM call and is now plain code. The provider had
+  // always solved the routing with real driving times — the prompt said so
+  // itself — leaving the model arithmetic, a sort key, and caption text.
+  //
+  // Two of those were worse for having a model. The budget is addition, and a
+  // model asked to "do the math before selecting jobs" got it wrong: a worker
+  // with 22 claimed jobs for a Saturday had most of the day binned against a
+  // 4-hour default he never set. And a generated reason narrates an ordering
+  // it did not compute, so it can say "closest to your previous stop" about a
+  // stop that is not — rendered as muted italic nobody re-checks.
+  //
+  // Deleting the call also deleted its failure modes: a truncation branch, a
+  // JSON-parse branch, a filter dropping hallucinated stops matching no real
+  // job, and a claimed-mode re-flattening step that existed because the
+  // response schema invited the model to spread one day across a week.
+  const ROUTE = readFileSync(join(__dirname, "../routes/preview.ts"), "utf8");
+  const PLANNER = readFileSync(join(__dirname, "../lib/routePlanner.ts"), "utf8");
+
+  it("parses the files it is guarding", () => {
+    expect(ROUTE).toContain("/preview/route-suggestions");
+    expect(PLANNER).toContain("export function planRoute");
   });
 
-  it("a JSON.parse of model output is never left with a bare empty catch", () => {
-    // `catch {}` is what swallowed the original failure. Capturing the
-    // reason is the difference between "it broke" and "it truncated".
-    const src = read("apps/api/src/routes/preview.ts");
-    const parseBlock = src.slice(
-      src.indexOf("let parsed"),
-      src.indexOf("let parsed") + 600,
-    );
-    expect(parseBlock).toMatch(/catch\s*\(/);
-    expect(parseBlock, "the parse failure reason must be captured").toMatch(/parseError/);
+  it("the route suggestions endpoint calls no model", () => {
+    expect(ROUTE, "the Anthropic SDK is back in the route planner")
+      .not.toMatch(/@anthropic-ai\/sdk|new Anthropic\(|anthropic\.messages/);
+    expect(ROUTE, "no API key belongs in this path any more")
+      .not.toMatch(/ANTHROPIC_API_KEY/);
+    expect(ROUTE, "the plan must come from the deterministic planner")
+      .toContain("planRoute(");
+  });
+
+  it("claimed mode plans only claimed work", () => {
+    // The same query serves both modes, so without an explicit filter the
+    // "just order what I've already taken" view grows suggestions — and
+    // counts them as date changes. Caught in testing, not in review.
+    expect(PLANNER).toMatch(/mode === "claimed" \? jobs\.filter\(\(j\) => j\.type === "claimed"\)/);
+  });
+
+  it("no job is ever dropped for exceeding the stated hours", () => {
+    // The budget is reported, never enforced. A worker who has committed to
+    // the work decides what to shed; the planner marks where the hours run
+    // out and keeps going.
+    expect(PLANNER, "the budget must only mark, not filter")
+      .toMatch(/pastBudget/);
+    // Anchored on the assignment and read to its semicolon, rather than a
+    // fixed character window — widening the expression (to account for the
+    // drive home) broke the first version of this rule against correct code.
+    const at = PLANNER.indexOf("const pastBudget =");
+    expect(at, "the budget check moved").toBeGreaterThan(-1);
+    const expr = PLANNER.slice(at, PLANNER.indexOf(";", at));
+    expect(expr, "claimed work can never be marked optional")
+      .toMatch(/job\.type !== "claimed"/);
+    expect(expr, "the budget must be compared against the day's hours")
+      .toMatch(/budgetMins/);
+    expect(expr, "the whole day's driving counts, including the leg home")
+      .toMatch(/reservedDriveMins/);
+  });
+
+  it("every reason is built from a measured value", () => {
+    // Each clause is a provider-reported leg, a stored date, a history lookup
+    // or a running total — nothing narrated.
+    expect(PLANNER).toMatch(/function buildReason/);
+    expect(PLANNER, "drive legs must come from the provider")
+      .toMatch(/leg\.durationFromPrev/);
   });
 });

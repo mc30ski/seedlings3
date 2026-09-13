@@ -1,9 +1,9 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { prisma } from "../db/prisma";
-import Anthropic from "@anthropic-ai/sdk";
 import { getRoutingProvider, AVAILABLE_PROVIDERS, type OptimizedRoute } from "../lib/routing";
 
 import { etMidnight, etToday, etAddDays, etFormatDate , type EtDateKey } from "../lib/dates";
+import { planRoute } from "../lib/routePlanner";
 
 const workerGuard = {
   preHandler: (req: FastifyRequest, reply: FastifyReply) =>
@@ -334,260 +334,49 @@ export default async function previewRoutes(app: FastifyInstance) {
         totalWorkMins + totalSetupMins + totalDriveMins > availableHours * 60 * 1.05,
     };
 
-    // Build route context for Claude
-    let routeContext = "";
-    if (optimizedRoute && optimizedRoute.stops.length > 0) {
-      const totalMins = Math.round(optimizedRoute.totalDuration / 60);
-      const totalMiles = Math.round(optimizedRoute.totalDistance / 1609.34 * 10) / 10;
-      routeContext = `\n\nROUTE OPTIMIZATION DATA (from ${routingProviderName}, real driving distances):
-Total driving time: ${totalMins} minutes (${totalMiles} miles)
-Optimized stop order (by driving efficiency):
-${optimizedRoute.stops.map((s, i) => {
-  const job = allJobs[s.inputIndex];
-  const driveMins = Math.round(s.durationFromPrev / 60);
-  const driveMiles = Math.round(s.distanceFromPrev / 1609.34 * 10) / 10;
-  return `  ${i + 1}. ${job?.property ?? "?"} (${job?.address ?? "?"}) — ${driveMins} min / ${driveMiles} mi from previous stop`;
-}).join("\n")}
-
-IMPORTANT: Use this optimized order as the basis for your route. The driving times above are REAL — use them instead of guessing. You may adjust the order slightly based on time constraints, job priority, or scheduling needs, but explain why.`;
-    }
-
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
-      return {
-        suggestions: null,
-        error: "Route suggestions are not configured on the server (ANTHROPIC_API_KEY is missing). Contact support.",
-        jobs: allJobs,
-      };
-    }
-
-    // Named `anthropic`, not `client`: the audit-coverage gate matches
-    // `client.<x>.create(` as a Prisma mutation, and an SDK call is not one.
-    const anthropic = new Anthropic({ apiKey });
-
-    const jobsJson = JSON.stringify(allJobs, null, 2);
-
-    const startRule = fromCurrentLocation
-      ? `Route should start from the worker's current location (${currentLocationAddress ?? `lat ${currentLat.toFixed(4)}, lng ${currentLng.toFixed(4)}`}) — one-way, no return leg back to that point. DO NOT include the current location as an entry in the "route" array — the route array contains only the actual jobs.`
-      : user.homeBaseAddress
-        ? `Route should start and end near the worker's home base (${user.homeBaseAddress})`
-        : "Route should minimize total driving";
-
-    const modeInstructions = mode === "claimed"
-      ? `MODE: Claimed Only — optimize the route order for ONLY the jobs this worker has already claimed. Do not suggest additional jobs. Focus purely on the most efficient ordering and travel path.
-
-SINGLE DAY. Return EXACTLY ONE entry in "days", dated ${targetStr}, containing EVERY claimed job. Do NOT spread the work across multiple days, do not defer jobs to a later date, and do not leave any job out because the day looks long. The worker decided what they are doing that day; your job is the ORDER, not the workload.
-
-Rules:
-1. ${startRule}
-2. All claimed jobs must be included, all on ${targetStr} — just find the optimal order
-3. Setup buffer: ${bufferPercent}% — add this on top of each job's estimated work time for setup/teardown (unloading equipment, etc.). Travel time is calculated separately by the mapping provider.
-4. Prioritize properties the worker has previously serviced — they know the property and can work more efficiently there`
-      : `MODE: Suggest Additional Jobs — optimize the route AND suggest additional available jobs to fill the day.
-
-STRICT TIME BUDGET: ${availableHours} hours TOTAL. This means work time + driving time combined must not exceed ${availableHours}h (with up to 5% flexibility = max ${Math.round(availableHours * 1.05 * 60)} minutes total). If driving alone takes 1.5h and the budget is ${availableHours}h, you only have ${Math.round((availableHours - 1.5) * 60)} minutes of actual work time. Do the math before selecting jobs.
-Setup buffer: ${bufferPercent}% — add this percentage on top of each job's estimated work time for setup/teardown only (unloading, walking the property, etc.). Travel time between stops is calculated separately by the mapping provider and shown in the route data above. For example, a 60-min job with ${bufferPercent}% buffer = ${Math.round(60 * (1 + bufferPercent / 100))} min work time.
-${lookAhead > 0 ? `Also considering jobs from ${lookAhead} days before and after ${targetStr} (but not before today) that could be moved to ${targetStr} for a better route.` : "Only considering jobs scheduled for this day."}
-
-Rules:
-1. ${startRule}
-2. Start with jobs already scheduled for ${targetStr} — these are the core of the route
-3. Look at jobs from other days nearby — if moving them to ${targetStr} would create a tighter geographic cluster and a more efficient day, suggest it
-4. Already claimed jobs for ${targetStr} must be included
-5. For jobs from other days, clearly flag that a reschedule is needed (the worker must contact the client first)
-6. Don't suggest moving ALL jobs to one day — only suggest moves that genuinely improve the route
-7. Prioritize properties the worker has previously serviced — they know the property and can work more efficiently there`;
-
-    const prompt = `You are a route optimizer for a lawn care service. A worker needs to plan the most efficient route for a specific day.
-
-Worker: ${user.displayName ?? user.email ?? "Unknown"}
-${user.homeBaseAddress ? `Home base: ${user.homeBaseAddress}` : "Home base: not set"}
-${fromCurrentLocation ? `Starting from current location: ${currentLocationAddress ?? `lat ${currentLat.toFixed(4)}, lng ${currentLng.toFixed(4)}`} (one-way route — no return leg)` : ""}
-Target day: ${targetStr}
-${availableDays.length > 0 ? `Worker is typically available on: ${availableDays.map((d: number) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]).join(", ")}` : ""}
-
-Here are the jobs:
-
-${jobsJson}
-${workerHistory.length > 0 ? `
-This worker has previously serviced these properties (prioritize familiar properties):
-${JSON.stringify(workerHistory, null, 2)}
-` : ""}
-${modeInstructions}
-${routeContext}
-${mode === "suggest"
-  ? (availableHours > 0
-      ? `8. NEVER remove a claimed job. The worker has stated ${availableHours} hours available (~${Math.round(availableHours * 1.05 * 60)} minutes including buffer); order your ADDITIONAL suggestions best-first so the ones past that mark fall at the end, and say so in the reason. Do not withhold or delete anything — how much of it they take on is their call, not yours.`
-      : `8. NEVER remove a job. The worker has not stated how many hours they have, so do not invent a limit — include everything claimed and order additional suggestions by how well they fit the route.`)
-  : "8. Include ALL claimed jobs in the route — do not remove any, for any reason."}
-9. For jobs without an estimated duration, assume 60 minutes (err on the larger side)
-10. Consider earnings and estimated duration for workload balance
-
-Respond in this JSON format:
-{
-  "days": [
-    {
-      "date": "YYYY-MM-DD",
-      "dayLabel": "Monday, Apr 1",
-      "route": [
-        {
-          "occurrenceId": "...",
-          "order": 1,
-          "property": "...",
-          "address": "...",
-          "reason": "Brief reason for this position in route",
-          "dateChanged": false,
-          "originalDate": null,
-          "suggestedDate": null
-        }
-      ],
-      "estimatedEarnings": 0,
-      "estimatedHours": 0,
-      "daySummary": "Brief summary of this day's route"
-    }
-  ],
-  "summary": "Overall week strategy in 1-2 sentences",
-  "totalEstimatedEarnings": 0,
-  "dateChangeCount": 0,
-  "additionalJobsToConsider": ["id1"]
-}
-
-For jobs that need a date change, set dateChanged=true with originalDate and suggestedDate. The "additionalJobsToConsider" field lists IDs of claimable jobs worth adding.`;
+    // ── Plan the day, in code ────────────────────────────────────────────
+    //
+    // This was an LLM call. The provider had already solved the routing with
+    // real driving times, and the prompt told the model so — "the driving
+    // times above are REAL — use them instead of guessing". What remained was
+    // arithmetic, a sort key, and caption text, none of which needs a model
+    // and two of which were worse for having one. See lib/routePlanner.ts for
+    // the full reasoning.
+    //
+    // Gone with it: ~120 lines of prompt, a max_tokens truncation branch, a
+    // JSON-parse branch, a filter dropping hallucinated stops that matched no
+    // real job, and a claimed-mode re-flattening step that existed because the
+    // response schema invited the model to spread one day's work across a
+    // week. None of those failure modes can occur now.
+    const familiarProperties = new Set(workerHistory.map((h) => h.name));
+    const plan = planRoute({
+      jobs: allJobs.map((j) => ({
+        id: j.id,
+        jobId: j.jobId,
+        type: j.type as "claimed" | "claimable",
+        property: j.property,
+        address: j.address,
+        price: j.price,
+        estimatedMinutes: j.estimatedMinutes,
+        currentDate: j.currentDate,
+      })),
+      legs: (optimizedRoute?.stops ?? []).map((st) => ({
+        inputIndex: st.inputIndex,
+        durationFromPrev: st.durationFromPrev,
+        distanceFromPrev: st.distanceFromPrev,
+      })),
+      targetDate: targetStr as EtDateKey,
+      mode,
+      availableHours,
+      bufferPercent,
+      familiarProperties,
+      fromCurrentLocation,
+      totalDriveSeconds: optimizedRoute?.totalDuration ?? null,
+    });
 
     try {
-      const response = await anthropic.messages.create({
-        model: "claude-sonnet-5",
-        // A WEEK of routes, each stop carrying property, address and a
-        // prose `reason`. At 3000 this silently truncated in production
-        // (2026-08-25): the model stopped mid-word, JSON.parse threw into
-        // an empty catch, and the half-written JSON was rendered to the
-        // operator as-is. One day of five stops already costs ~450 tokens
-        // of `reason` text alone, so seven days never fit.
-        //
-        // Raise generously — output is billed by what's produced, not by
-        // the ceiling, so a high cap costs nothing on a request that ends
-        // early and prevents the failure that actually happened.
-        max_tokens: 16000,
-        messages: [{ role: "user", content: prompt }],
-      });
-
-      const text = response.content
-        .filter((b): b is Anthropic.TextBlock => b.type === "text")
-        .map((b) => b.text)
-        .join("");
-
-      // Truncation is NOT a parse problem and must not be reported as one.
-      // `stop_reason === "max_tokens"` is the model telling us plainly that
-      // it ran out of room; without this check the only symptom is
-      // unparseable JSON, which looks identical to the model returning
-      // nonsense and sends the next person debugging the wrong thing.
-      if (response.stop_reason === "max_tokens") {
-        app.log.error({
-          where: "preview/route-suggestions",
-          reason: "max_tokens",
-          chars: text.length,
-        });
-        return {
-          suggestions: null,
-          error:
-            "The route planner ran out of room before it finished the week. " +
-            "Try planning fewer days at a time, or run it again — if it keeps " +
-            "happening the output limit needs raising.",
-          jobs: allJobs,
-        };
-      }
-
-      let parsed: any = null;
-      let parseError: string | null = null;
-      try {
-        const jsonMatch = text.match(/\{[\s\S]*\}/);
-        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
-        else parseError = "no JSON object found in the response";
-      } catch (e: any) {
-        parseError = e?.message ?? "invalid JSON";
-      }
-
-      // Defense-in-depth: drop any AI-hallucinated stops whose occurrenceId
-      // doesn't match a real job (e.g. a phantom "start point" stop with
-      // property "Unknown" / address "No address"). Even with the prompt
-      // instruction the model occasionally fabricates these.
-      if (parsed?.days && Array.isArray(parsed.days)) {
-        const validIds = new Set(allJobs.map((j) => j.id));
-        for (const day of parsed.days) {
-          if (Array.isArray(day.route)) {
-            day.route = day.route.filter((s: any) => s && validIds.has(s.occurrenceId));
-            day.route.forEach((s: any, i: number) => { s.order = i + 1; });
-          }
-        }
-      }
-
-      // ── Claimed mode is ONE day, enforced here, not merely requested ─────
-      //
-      // The response schema is an array of days and the summary prompt asks
-      // for a "week strategy", so the model is structurally invited to spread
-      // work out — and with 22 claimed jobs for one Saturday it did exactly
-      // that, leaving the worker no usable route for the day he could
-      // actually work. Asking nicely in the prompt is not enough when the
-      // shape of the answer pulls the other way.
-      //
-      // Flatten to a single day at the target date, in the order the model
-      // gave, de-duplicated. Anything it deferred comes back.
-      if (mode === "claimed" && parsed?.days && Array.isArray(parsed.days)) {
-        const seen = new Set<string>();
-        const merged: any[] = [];
-        for (const day of parsed.days) {
-          for (const stop of day?.route ?? []) {
-            if (stop?.occurrenceId && !seen.has(stop.occurrenceId)) {
-              seen.add(stop.occurrenceId);
-              // A claimed job is not being rescheduled — it is being ordered.
-              merged.push({ ...stop, dateChanged: false, originalDate: null, suggestedDate: null });
-            }
-          }
-        }
-        // Any claimed job the model dropped entirely still belongs to the
-        // day. Appended rather than discarded: a missing job is worse than
-        // an imperfectly placed one.
-        for (const j of allJobs) {
-          if (!seen.has(j.id)) {
-            seen.add(j.id);
-            merged.push({
-              occurrenceId: j.id,
-              property: j.property,
-              address: j.address,
-              reason: "Added back — the planner left this out, but it is claimed for this day.",
-              dateChanged: false, originalDate: null, suggestedDate: null,
-            });
-          }
-        }
-        merged.forEach((stop, i) => { stop.order = i + 1; });
-        const collapsedFrom = parsed.days.length;
-        parsed.days = [{
-          date: targetStr,
-          dayLabel: parsed.days[0]?.dayLabel ?? targetStr,
-          route: merged,
-          estimatedEarnings: parsed.days.reduce((t: number, d: any) => t + (Number(d?.estimatedEarnings) || 0), 0),
-          estimatedHours: parsed.days.reduce((t: number, d: any) => t + (Number(d?.estimatedHours) || 0), 0),
-          daySummary: parsed.days[0]?.daySummary ?? "",
-        }];
-        parsed.dateChangeCount = 0;
-        if (collapsedFrom > 1) {
-          app.log.warn({ where: "preview/route-suggestions", reason: "claimed_mode_multi_day", collapsedFrom, stops: merged.length });
-          parsed.summary =
-            `All ${merged.length} claimed jobs are on ${targetStr}. ` +
-            (parsed.summary ?? "");
-        }
-      }
-
       return {
-        suggestions: parsed,
-        // Always pair unparseable output with an `error`, so the client
-        // shows a banner explaining what happened instead of silently
-        // rendering raw model output and leaving the operator to work out
-        // that it failed at all.
-        error: parsed
-          ? undefined
-          : `The route planner returned output we couldn't read (${parseError}). Try again.`,
-        raw: parsed ? undefined : text,
+        suggestions: plan,
         jobs: allJobs,
         targetUser: { id: user.id, displayName: user.displayName },
         routing: optimizedRoute ? {
@@ -606,14 +395,18 @@ For jobs that need a date change, set dateChanged=true with originalDate and sug
       app.log.error({ where: "preview/route-suggestions", err: err.message });
       // Explicit `error` field so the client renders this as a WARNING
       // banner instead of silently falling back to the unorganized job
-      // list (which looks like "just numbers" to the operator and gives
-      // no clue that anything went wrong). Common failure modes: the
-      // configured Claude model has been retired (message will contain
-      // "model_not_found" or similar), Anthropic API is temporarily
-      // down, or the request timed out.
+      // list, which looks like "just numbers" to the operator and gives no
+      // clue anything went wrong.
+      //
+      // The planner itself is pure code over data already in hand, so this
+      // is now a genuine last resort rather than the routine outcome it was
+      // when an external model could be retired, rate-limited or time out.
+      // The failure that DOES still happen — the routing provider being
+      // unreachable — is caught above and reported as `routeError`, with the
+      // day still planned in the order the jobs came.
       return {
         suggestions: null,
-        error: `The route planner failed to run. Deploy a fix or try again in a moment. Details: ${err.message}`,
+        error: `The route planner failed to run. Try again in a moment. Details: ${err.message}`,
         jobs: allJobs,
       };
     }
