@@ -8243,6 +8243,37 @@ export default function JobsTab({
                       />
                     )}
 
+                    {/* GUIDANCE — directly under the photos it belongs with,
+                        and above the action rows: buttons are the last thing
+                        in a card. It used to sit below them, which put a
+                        reference you read BEFORE doing the work underneath
+                        the controls you use when you are done.
+
+                        Pulses while the job actually carries a guidance note,
+                        because the drawer is collapsed by default and a
+                        silent collapsed drawer is indistinguishable from no
+                        drawer at all. Photos alone do not pulse — they are
+                        visible in the card already. */}
+                    {((occ.propertyPhotos ?? []).length > 0 || (occ as any).guidanceNote) && (
+                      <Box
+                        w="full"
+                        mt="1"
+                        borderRadius="md"
+                        css={(occ as any).guidanceNote
+                          // Ring only. `seedlings-pulse-instruction` also
+                          // paints a background, which would fight the
+                          // drawer's own — that one is for the bare banner.
+                          ? { animation: "seedlings-pulse-yellow 2.2s ease-in-out infinite" }
+                          : undefined}
+                      >
+                        <OccurrenceInstructions
+                          occurrenceId={occ.id}
+                          count={(occ.propertyPhotos ?? []).length}
+                          guidanceNote={(occ as any).guidanceNote ?? null}
+                        />
+                      </Box>
+                    )}
+
                     {occ.linkGroupId && (() => {
                       // Find other occurrences in the same link group from the loaded items
                       const linked = items.filter((o) => o.linkGroupId === occ.linkGroupId && o.id !== occ.id);
@@ -9230,32 +9261,18 @@ export default function JobsTab({
                     component (defaultExpanded={false}) so the Guidance pill is
                     clickable and reveals the photos + description inline —
                     same flow as the fully-expanded card, just starts collapsed. */}
-                {/* Guidance drawer (photos + guidance note) stays at
-                    the bottom of the card. The yellow instructions
-                    banner sits directly under the title bar (just below
-                    Card.Header above) so critical notes surface with the
-                    job name rather than ahead of it. */}
-                {isCardCompact ? (
-                  (occ.propertyPhotos ?? []).length > 0 && (
-                    <Box mx="3" mb="2" mt="0">
-                      <OccurrenceInstructions
-                        occurrenceId={occ.id}
-                        count={(occ.propertyPhotos ?? []).length}
-                        guidanceNote={(occ as any).guidanceNote ?? null}
-                        defaultExpanded={false}
-                      />
-                    </Box>
-                  )
-                ) : (
-                  ((occ.propertyPhotos ?? []).length > 0 || (occ as any).guidanceNote) && (
-                    <Box mx="3" mb="2" mt="0">
-                      <OccurrenceInstructions
-                        occurrenceId={occ.id}
-                        count={(occ.propertyPhotos ?? []).length}
-                        guidanceNote={(occ as any).guidanceNote ?? null}
-                      />
-                    </Box>
-                  )
+                {/* COMPACT densities only. The expanded card renders its
+                    guidance under the photos inside Card.Body above, so the
+                    action rows stay last. */}
+                {isCardCompact && (occ.propertyPhotos ?? []).length > 0 && (
+                  <Box mx="3" mb="2" mt="0">
+                    <OccurrenceInstructions
+                      occurrenceId={occ.id}
+                      count={(occ.propertyPhotos ?? []).length}
+                      guidanceNote={(occ as any).guidanceNote ?? null}
+                      defaultExpanded={false}
+                    />
+                  </Box>
                 )}
                 </>
                 )}
@@ -9266,9 +9283,10 @@ export default function JobsTab({
                     row only appears once you've expanded the card. */}
                 {/* Elevated rows. A button lives on the LOWEST role row
                     that applies to it: Edit Services stays in the everyday row
-                    because a claimer can use it, but Edit Charges, Adjust Price
-                    and Invoice preview are admin-only and belong on the Admin
-                    row beside Cancel.
+                    because a claimer can use it, but Edit Charges and Adjust
+                    Price are admin-only and belong on the Admin row beside
+                    Cancel. (Invoice preview moved to the everyday row — the
+                    crew can preview now; only the crew-pay split is admin.)
 
                     Guarded by `!isCardCompact` so their visibility is
                     unchanged — they were expanded-only before this moved. */}

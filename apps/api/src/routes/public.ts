@@ -830,6 +830,17 @@ export default async function publicRoutes(app: FastifyInstance) {
       propertyLabel: resolved.propertyLabel,
       propertyAddress: resolved.propertyAddress,
       serviceDate: resolved.serviceDate,
+      // MY BUG, 2026-09-16: added to the service and to the pay page, but not
+      // here — and this route hand-builds its response field by field rather
+      // than spreading `resolved`, so anything not listed is silently
+      // dropped. The note reached the preview and never reached the invoice.
+      customerVisibleNotes: resolved.customerVisibleNotes,
+      // The itemization `resolveToken` already computed. It was dropped here
+      // for the same reason the note was — this route lists fields rather
+      // than spreading — so the customer's invoice showed a bare total while
+      // the operator's preview showed the lines. The preview's whole purpose
+      // is to be what the customer receives, so it had been lying.
+      lines: resolved.lines,
       jobTags: resolved.jobTags,
       photos,
       payment: resolved.payment,

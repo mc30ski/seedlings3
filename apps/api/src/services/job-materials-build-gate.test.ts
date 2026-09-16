@@ -1522,6 +1522,39 @@ describe("[build-gate] the invoice preview cannot drift from the invoice", () =>
     }
   });
 
+  it("EVERY field the invoice builder produces reaches the customer", () => {
+    // THE WHOLE POINT OF A PREVIEW is that it is what the customer receives.
+    // It was not. `GET /public/pay/:token` hand-builds its response field by
+    // field instead of spreading `resolved`, so anything added to
+    // buildInvoice that nobody remembered to list here was computed, sent as
+    // far as the route, and dropped on the floor.
+    //
+    // That is how the customer's invoice ended up showing a bare total while
+    // the operator's preview showed a full itemization — for long enough that
+    // nobody noticed the two had never agreed.
+    //
+    // Derived from buildInvoice's own return type, so a field added there is
+    // covered the moment it exists.
+    const at = REQUESTS.indexOf("export async function buildInvoice");
+    expect(at, "buildInvoice moved").toBeGreaterThan(-1);
+    const sig = REQUESTS.slice(REQUESTS.indexOf("Promise<{", at), REQUESTS.indexOf("}> {", at));
+    const fields = [...sig.matchAll(/^\s{2}([a-zA-Z]+)[?]?:/gm)].map((m) => m[1]);
+    expect(fields.length, "parsed no fields off buildInvoice's return type")
+      .toBeGreaterThanOrEqual(5);
+
+    const PUBLIC = read("../routes/public.ts");
+    const route = PUBLIC.slice(PUBLIC.indexOf('app.get("/public/pay/:token"'));
+    const body = route.slice(0, route.indexOf("\n  });"));
+    for (const f of fields) {
+      expect(
+        new RegExp(`\\b${f}[,:]`).test(body),
+        `buildInvoice produces "${f}" but GET /public/pay/:token never sends it. ` +
+          "The customer's invoice would silently omit it while the preview " +
+          "shows it. Add it to the response object.",
+      ).toBe(true);
+    }
+  });
+
   it("the client never renders a number the preview invented", () => {
     expect(PREVIEW).toMatch(/dollar\(data\.amountDue\)/);
     expect(PREVIEW).not.toMatch(/reduce\(/);
