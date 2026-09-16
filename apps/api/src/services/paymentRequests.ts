@@ -164,7 +164,7 @@ export const INVOICE_OCCURRENCE_SELECT = {
  * `humanizeTag`, which is worse than the catalog but never worse than the key.
  * A broken catalog must not fail an invoice.
  */
-async function serviceLabelMap(): Promise<Record<string, string>> {
+export async function serviceLabelMap(): Promise<Record<string, string>> {
   try {
     const raw = await getSetting("SERVICE_TYPES");
     if (!raw) return {};
@@ -203,7 +203,14 @@ function jobLabelFor(
  * Loads the catalog ONCE so no invoice can render half its lines with labels
  * and half with raw keys.
  */
-export async function buildInvoice(occ: any): Promise<{
+export async function buildInvoice(
+  occ: any,
+  /** Preloaded service-label catalog. Pass it when building invoices for a
+   *  LIST — `serviceLabelMap` reads a Setting row and nothing caches it, so
+   *  letting each call load its own turns a client's job history into one
+   *  extra query per job. Omit it for a single invoice. */
+  preloadedLabels?: Record<string, string>,
+): Promise<{
   amountDue: number;
   lines: InvoiceLine[];
   propertyLabel: string;
@@ -214,7 +221,7 @@ export async function buildInvoice(occ: any): Promise<{
   customerVisibleNotes: string | null;
 }> {
   const prop = occ.job?.property ?? null;
-  const labels = await serviceLabelMap();
+  const labels = preloadedLabels ?? await serviceLabelMap();
   return {
     amountDue: invoiceTotal(occ),
     // Sums to amountDue by construction — the build gate asserts it rather

@@ -3,7 +3,7 @@ import { prisma } from "../db/prisma";
 import { getDownloadUrl } from "../lib/r2";
 import { etMidnight, etEndOfDay, etToday, etStartOfMonth, etAddDays, etFormatDate, etFormatDateOpts, type EtDateKey } from "../lib/dates";
 import { effectiveClerkUserId } from "../plugins/clientImpersonation";
-import { buildPaymentUrl } from "../services/paymentRequests";
+import { buildPaymentUrl, buildInvoice, serviceLabelMap } from "../services/paymentRequests";
 import { writeAudit } from "../lib/auditLogger";
 import { AUDIT } from "../lib/auditActions";
 
@@ -398,6 +398,17 @@ export default async function clientRoutes(app: FastifyInstance) {
         jobType: true,
         price: true,
         notes: true,
+        // What the INVOICE is built from. The history used to carry `price`
+        // alone — the labor figure — so a job with add-ons or materials
+        // showed the customer LESS than they actually paid, with no label to
+        // say what the number meant. Same fields the invoice and the preview
+        // use, so all three agree.
+        title: true,
+        jobTags: true,
+        laborDetail: true,
+        customerVisibleNotes: true,
+        addons: { select: { price: true, tag: true, customLabel: true, detail: true } },
+        invoiceCharges: { select: { cost: true, description: true, detail: true } },
         job: {
           select: {
             kind: true,
@@ -439,8 +450,12 @@ export default async function clientRoutes(app: FastifyInstance) {
       labelByKey.get(key) ?? key.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 
     // Generate photo URLs and sanitize
+    // Loaded ONCE for the whole list: buildInvoice would otherwise read the
+    // SERVICE_TYPES setting per job, and nothing caches it.
+    const serviceLabels = await serviceLabelMap();
     const items = await Promise.all(
       occurrences.map(async (occ) => {
+        const invoice = await buildInvoice(occ, serviceLabels);
         const photos = await Promise.all(
           occ.photos.map(async (p) => {
             try {
@@ -459,6 +474,11 @@ export default async function clientRoutes(app: FastifyInstance) {
           completedAt: occ.completedAt,
           jobType: occ.jobType,
           price: occ.price,
+          // The real total and its breakdown, from the SAME builder the
+          // invoice and the preview use.
+          amountDue: invoice.amountDue,
+          lines: invoice.lines,
+          customerVisibleNotes: invoice.customerVisibleNotes,
           property: occ.job?.property ?? null,
           // Return full displayName ("First Last") — receipts need the
           // full name. Casual UI uses workerLabel() to extract the first

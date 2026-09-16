@@ -93,6 +93,9 @@ type ResolveResponse = {
   serviceDate: string | null;
   /** Free text the crew wrote for this visit. */
   customerVisibleNotes: string | null;
+  /** The itemization, in the order the client reads it. Sums to amountDue by
+   *  construction on the server — this page must never re-add them. */
+  lines: { label: string; detail: string | null; amount: number }[];
   jobTags: string | null;
   photos: { url: string; contentType: string | null }[];
   payment: {
@@ -447,7 +450,30 @@ function PaymentPageInner() {
               {data.serviceDate && (
                 <Text fontSize="sm" color="fg.muted">{fmtInvoiceDate(data.serviceDate)}</Text>
               )}
-              <HStack mt={2} align="baseline" justify="space-between">
+              {/* The itemization. Rendered straight from the server's lines —
+                  no arithmetic here, because they already sum to amountDue by
+                  construction and a second implementation is how a total
+                  starts disagreeing with its parts. */}
+              {data.lines?.length > 0 && (
+                <VStack align="stretch" gap={1} mt={2} pt={2} borderTopWidth="1px" borderColor="gray.200">
+                  {data.lines.map((ln, i) => (
+                    <HStack key={i} align="baseline" justify="space-between" gap={3}>
+                      <Box minW={0}>
+                        <Text fontSize="sm">{ln.label}</Text>
+                        {ln.detail && (
+                          <Text fontSize="xs" color="fg.muted">{ln.detail}</Text>
+                        )}
+                      </Box>
+                      {/* tabular-nums so the amounts line up in a column,
+                          matching the preview. */}
+                      <Text fontSize="sm" fontVariantNumeric="tabular-nums" whiteSpace="nowrap">
+                        {dollar(ln.amount)}
+                      </Text>
+                    </HStack>
+                  ))}
+                </VStack>
+              )}
+              <HStack mt={2} pt={2} borderTopWidth={data.lines?.length > 0 ? "1px" : undefined} borderColor="gray.300" align="baseline" justify="space-between">
                 <Text fontSize="sm" color="fg.muted">Total due</Text>
                 <Text fontSize="2xl" fontWeight="bold" color="teal.700">{dollar(data.amountDue)}</Text>
               </HStack>

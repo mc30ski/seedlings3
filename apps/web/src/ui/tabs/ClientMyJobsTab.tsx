@@ -36,6 +36,11 @@ type CompletedJob = {
   completedAt?: string | null;
   jobType?: string | null;
   price?: number | null;
+  /** The REAL total — price + add-ons + charges. `price` alone is the labor
+   *  figure and understates any job with materials. */
+  amountDue?: number | null;
+  lines?: { label: string; detail: string | null; amount: number }[];
+  customerVisibleNotes?: string | null;
   property: { id: string; displayName: string; street1?: string | null; city?: string | null; state?: string | null };
   workers: string[];
   photos: Photo[];
@@ -770,7 +775,7 @@ export default function ClientMyJobsTab() {
                         {job.workers.length > 0 && (
                           <Text fontSize="xs" color="fg.muted">Crew: {workerLabel(job.workers)}</Text>
                         )}
-                        {job.price != null && (
+{job.price != null && (
                           <Text fontSize="xs" color="green.fg" fontWeight="medium">
                             ${job.price.toFixed(2)}
                           </Text>
@@ -909,6 +914,54 @@ export default function ClientMyJobsTab() {
                         {job.workers.length > 0 && (
                           <Text fontSize="xs" color="fg.muted">Crew: {workerLabel(job.workers)}</Text>
                         )}
+
+                        {/* WHAT THE MONEY WAS FOR. The payment line below says
+                            how much and by what method; without this the
+                            customer's only itemization was the invoice link,
+                            which expires. This is the durable copy.
+
+                            Straight from the server's lines — the same
+                            buildInvoice output the invoice and the preview
+                            render — so no arithmetic happens here. */}
+                        {(job.lines?.length ?? 0) > 0 && (
+                          <VStack align="stretch" gap={0.5} w="full">
+                            {job.lines!.map((ln, i) => (
+                              <HStack key={i} justify="space-between" align="baseline" gap={3}>
+                                <Box minW={0}>
+                                  <Text fontSize="xs" color="fg.muted">{ln.label}</Text>
+                                  {ln.detail && (
+                                    <Text fontSize="2xs" color="fg.subtle">{ln.detail}</Text>
+                                  )}
+                                </Box>
+                                <Text fontSize="xs" color="fg.muted" fontVariantNumeric="tabular-nums" whiteSpace="nowrap">
+                                  ${ln.amount.toFixed(2)}
+                                </Text>
+                              </HStack>
+                            ))}
+                            {/* Only when it adds something the payment line
+                                does not already say — on a fully paid job the
+                                two numbers match and repeating it is noise. */}
+                            {job.amountDue != null && (!job.paid || job.payment?.amountPaid !== job.amountDue) && (
+                              <HStack justify="space-between" align="baseline" gap={3} pt={1}
+                                      borderTopWidth="1px" borderColor="border.default">
+                                <Text fontSize="xs" color="fg.muted">Total</Text>
+                                <Text fontSize="xs" fontWeight="medium" fontVariantNumeric="tabular-nums">
+                                  ${job.amountDue.toFixed(2)}
+                                </Text>
+                              </HStack>
+                            )}
+                          </VStack>
+                        )}
+
+                        {job.customerVisibleNotes && (
+                          <Box p={2} bg="bg.subtle" borderWidth="1px" borderColor="border.default" borderRadius="md" w="full">
+                            <Text fontSize="2xs" textTransform="uppercase" letterSpacing="wide" color="fg.muted" mb={0.5}>
+                              Notes from your crew
+                            </Text>
+                            <Text fontSize="xs" whiteSpace="pre-wrap">{job.customerVisibleNotes}</Text>
+                          </Box>
+                        )}
+
                         {job.payment && job.paid && (
                           <HStack gap={2} align="center" wrap="wrap">
                             <Text fontSize="xs" color="green.fg" fontWeight="medium">
