@@ -215,7 +215,10 @@ export default function MileageStrip({
               right="-2px"
               w="10px"
               h="10px"
-              bg="white"
+              bg="bg.panel"
+              // A panel that paints its own background states its own ink, so it
+              // never inherits a colour meant for the surface it floats over.
+              color="fg"
               borderRadius="full"
               border="2px solid var(--chakra-colors-orange-700)"
             />
@@ -239,7 +242,7 @@ export default function MileageStrip({
   return (
     <Box
       borderWidth={embedded ? undefined : "1px"}
-      borderColor={embedded ? "blackAlpha.200" : "gray.200"}
+      borderColor={embedded ? "blackAlpha.200" : "gray.emphasized"}
       borderRadius={embedded ? undefined : "lg"}
       borderTopWidth={embedded ? "1px" : undefined}
       borderTopStyle={embedded ? "dashed" : undefined}
@@ -247,7 +250,7 @@ export default function MileageStrip({
       pt={embedded ? 3 : 3}
       mb={embedded ? 0 : 3}
       mt={embedded ? 3 : 0}
-      bg={embedded ? undefined : "white"}
+      bg={embedded ? undefined : "bg.panel"}
     >
       <HStack gap={2} mb={2} align="center">
         <Car size={16} />
@@ -282,12 +285,12 @@ export default function MileageStrip({
                 p={2}
                 mb={1}
                 borderWidth="1px"
-                borderColor="orange.300"
-                bg="orange.50"
+                borderColor="orange.emphasized"
+                bg="orange.faint"
                 borderRadius="md"
               >
                 <Car size={14} style={{ flexShrink: 0, marginTop: 2 }} />
-                <Text fontSize="xs" color="orange.900">
+                <Text fontSize="xs" color="orange.fg">
                   You&rsquo;re on the clock{vehiclesWithoutOpenSession.length === 1
                     ? ` and ${vehiclesWithoutOpenSession[0].displayName} is assigned to you`
                     : " with vehicles assigned to you"}
@@ -396,8 +399,8 @@ function OpenSessionCard({
       align="center"
       p={2}
       borderWidth="1px"
-      borderColor="orange.200"
-      bg="orange.50"
+      borderColor="orange.emphasized"
+      bg="orange.faint"
       borderRadius="md"
       gap={2}
       wrap="wrap"
@@ -602,7 +605,7 @@ function StopDialog({
                     placeholder={`≥ ${entry.startOdometer.toLocaleString()}`}
                   />
                   {odometer && !valid && (
-                    <Text fontSize="2xs" color="red.600" mt={1}>
+                    <Text fontSize="2xs" color="red.fg" mt={1}>
                       Must be a whole number, not less than the starting odometer ({entry.startOdometer.toLocaleString()}).
                     </Text>
                   )}
@@ -618,7 +621,7 @@ function StopDialog({
                   />
                 </Box>
                 {miles != null && (
-                  <HStack justify="space-between" bg="gray.50" p={2} borderRadius="md">
+                  <HStack justify="space-between" bg="gray.faint" p={2} borderRadius="md">
                     <Text fontSize="xs" color="fg.muted">Session miles</Text>
                     <Text fontSize="sm" fontWeight="semibold">{miles.toLocaleString()} mi</Text>
                   </HStack>
@@ -848,9 +851,9 @@ export function CompactMileageDialog({
                           <HStack
                             key={e.id}
                             justify="space-between"
-                            bg="orange.50"
+                            bg="orange.faint"
                             borderWidth="1px"
-                            borderColor="orange.200"
+                            borderColor="orange.emphasized"
                             borderRadius="md"
                             px={2}
                             py={1.5}
@@ -954,7 +957,7 @@ export function CompactMileageDialog({
                       placeholder={`≥ ${step.entry.startOdometer.toLocaleString()}`}
                     />
                     {stopOdo && !stopValid && (
-                      <Text fontSize="2xs" color="red.600" mt={1}>
+                      <Text fontSize="2xs" color="red.fg" mt={1}>
                         Must be a whole number, not less than the starting odometer ({step.entry.startOdometer.toLocaleString()}).
                       </Text>
                     )}
@@ -970,7 +973,7 @@ export function CompactMileageDialog({
                     />
                   </Box>
                   {stopMiles != null && (
-                    <HStack justify="space-between" bg="gray.50" p={2} borderRadius="md">
+                    <HStack justify="space-between" bg="gray.faint" p={2} borderRadius="md">
                       <Text fontSize="xs" color="fg.muted">Session miles</Text>
                       <Text fontSize="sm" fontWeight="semibold">{stopMiles.toLocaleString()} mi</Text>
                     </HStack>

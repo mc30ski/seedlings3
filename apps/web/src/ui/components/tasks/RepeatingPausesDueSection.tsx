@@ -91,8 +91,8 @@ export default function RepeatingPausesDueSection({
             key={row.id}
             p={3}
             borderWidth="1px"
-            borderColor="purple.200"
-            bg="purple.50"
+            borderColor="purple.emphasized"
+            bg="purple.faint"
             borderRadius="md"
           >
             <HStack justify="space-between" align="start" gap={2}>
@@ -106,14 +106,14 @@ export default function RepeatingPausesDueSection({
                     {streamLabel}
                   </Badge>
                 </HStack>
-                <Text fontSize="xs" color="purple.800">
+                <Text fontSize="xs" color="purple.fg">
                   {row.streamPausedAt && (<>Paused {fmtDate(row.streamPausedAt)}</>)}
                   {row.streamResumeReminderAt && (
                     <> · reminder {fmtDate(row.streamResumeReminderAt)}</>
                   )}
                 </Text>
                 {row.streamPauseReason && (
-                  <Text fontSize="xs" color="purple.900" fontStyle="italic">
+                  <Text fontSize="xs" color="purple.fg" fontStyle="italic">
                     "{row.streamPauseReason}"
                   </Text>
                 )}

@@ -154,8 +154,16 @@ describe("app splash — the typing caret actually renders", () => {
   it("is a filled block, not a border on an empty box", () => {
     // A border needs a box with height; a background needs width and height.
     // Both are stated now, but the filled form makes the dependency obvious.
-    expect(caret).toMatch(/background:\s*"#4a5568"/);
+    //
+    // Asserted as "has a background and a width, and is NOT a border" rather
+    // than as one literal hex: the caret follows the theme now
+    // (`var(--seedlings-boot-fg, …)`), because a splash that paints dark in
+    // dark mode cannot carry a hardcoded slate caret. The invariant this
+    // guards is the SHAPE, not the colour.
+    expect(caret, "the caret must be a filled block").toMatch(/background:\s*"[^"]+"/);
     expect(caret).toMatch(/width:\s*"2px"/);
+    expect(caret, "a border-drawn caret depends on box metrics that are not set here")
+      .not.toMatch(/border(?:Left|Right)?:\s*"/);
   });
 
   it("the blink period tracks the typing speed", () => {

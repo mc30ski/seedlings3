@@ -516,7 +516,7 @@ export default function WorkdaysTab({
               style={{
                 padding: "4px 8px",
                 fontSize: "13px",
-                border: "1px solid var(--chakra-colors-gray-200)",
+                border: "1px solid var(--chakra-colors-gray-emphasized)",
                 borderRadius: "6px",
               }}
             />
@@ -539,10 +539,10 @@ export default function WorkdaysTab({
             </HStack>
           </HStack>
           {!data?.adminWindowOpen && (
-            <Box mt={2} p={2} bg="orange.50" borderWidth="1px" borderColor="orange.300" borderRadius="md">
+            <Box mt={2} p={2} bg="orange.faint" borderWidth="1px" borderColor="orange.emphasized" borderRadius="md">
               <HStack gap={2} align="start">
                 <AlertTriangle size={14} color="var(--chakra-colors-orange-700)" style={{ marginTop: 2 }} />
-                <Text fontSize="xs" color="orange.900">
+                <Text fontSize="xs" color="orange.fg">
                   <strong>Same-day approval is risky.</strong> The approval window
                   normally opens at the configured cutoff (default 4 AM ET the next
                   morning) so workers have time to fix things they noticed after
@@ -740,7 +740,7 @@ export default function WorkdaysTab({
                                   {" · "}
                                   {totalMiles.toLocaleString()} mi
                                   {pendingSessions.length > 0 && (
-                                    <Text as="span" color="orange.700" fontWeight="medium">
+                                    <Text as="span" color="orange.fg" fontWeight="medium">
                                       {" · "}{pendingSessions.length} pending
                                     </Text>
                                   )}
@@ -925,7 +925,7 @@ function WorkdayRow({
       align="stretch"
       p={2}
       borderWidth="1px"
-      borderColor="gray.200"
+      borderColor="gray.emphasized"
       borderRadius="md"
       gap={2}
     >
@@ -956,7 +956,7 @@ function WorkdayRow({
           {row.hourlyRateOnDate != null && (
             <Text
               fontSize="xs"
-              color="green.700"
+              color="green.fg"
               fontWeight="semibold"
               title={`Projected earnings for this workday date. Same math the Operations dashboard uses. Shown pre-approval too so the operator can sanity-check the claimed hours against expected earn rate.`}
             >
@@ -995,7 +995,7 @@ function WorkdayRow({
           wrap="wrap"
           pt={2}
           borderTopWidth="1px"
-          borderColor="gray.100"
+          borderColor="gray.muted"
         >
           <HStack gap={2} align="start" flex={1} minW={0}>
             {/* Mileage sub-row bulk checkbox — only when the workday
@@ -1021,7 +1021,7 @@ function WorkdayRow({
                   {" · "}
                   {totalMiles.toLocaleString()} mi
                   {pendingMileage.length > 0 && (
-                    <Text as="span" color="orange.700" fontWeight="medium">
+                    <Text as="span" color="orange.fg" fontWeight="medium">
                       {" · "}{pendingMileage.length} pending
                     </Text>
                   )}
@@ -1181,10 +1181,10 @@ function ReviewDialog({
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
                 {sameDay && (
-                  <Box p={2} bg="orange.50" borderWidth="1px" borderColor="orange.400" borderRadius="md">
+                  <Box p={2} bg="orange.faint" borderWidth="1px" borderColor="orange.strong" borderRadius="md">
                     <HStack gap={2} align="start">
                       <AlertTriangle size={14} color="var(--chakra-colors-orange-700)" style={{ marginTop: 2 }} />
-                      <Text fontSize="xs" color="orange.900">
+                      <Text fontSize="xs" color="orange.fg">
                         <strong>Same-day approval.</strong> The cutoff hasn't passed
                         yet, so this worker can still edit their own row until then.
                         Approving now locks them out of any correction they discover
@@ -1194,10 +1194,10 @@ function ReviewDialog({
                   </Box>
                 )}
                 {row.isOpen && (
-                  <Box p={2} bg="orange.50" borderWidth="1px" borderColor="orange.300" borderRadius="md">
+                  <Box p={2} bg="orange.faint" borderWidth="1px" borderColor="orange.strong" borderRadius="md">
                     <HStack gap={2}>
                       <AlertTriangle size={14} color="var(--chakra-colors-orange-700)" />
-                      <Text fontSize="xs" color="orange.900">
+                      <Text fontSize="xs" color="orange.fg">
                         This workday was never ended. Set the end time below to close it before approving.
                       </Text>
                     </HStack>
@@ -1213,7 +1213,7 @@ function ReviewDialog({
                       width: "100%",
                       padding: "6px 8px",
                       fontSize: "14px",
-                      border: "1px solid var(--chakra-colors-gray-200)",
+                      border: "1px solid var(--chakra-colors-gray-emphasized)",
                       borderRadius: "6px",
                     }}
                   />
@@ -1248,7 +1248,7 @@ function ReviewDialog({
                       width: "100%",
                       padding: "6px 8px",
                       fontSize: "14px",
-                      border: "1px solid var(--chakra-colors-gray-200)",
+                      border: "1px solid var(--chakra-colors-gray-emphasized)",
                       borderRadius: "6px",
                     }}
                   />
@@ -1264,12 +1264,12 @@ function ReviewDialog({
                       width: "100%",
                       padding: "6px 8px",
                       fontSize: "14px",
-                      border: "1px solid var(--chakra-colors-gray-200)",
+                      border: "1px solid var(--chakra-colors-gray-emphasized)",
                       borderRadius: "6px",
                     }}
                   />
                 </Box>
-                <HStack justify="space-between" pt={1} borderTopWidth="1px" borderColor="gray.200">
+                <HStack justify="space-between" pt={1} borderTopWidth="1px" borderColor="gray.emphasized">
                   <Text fontSize="sm" fontWeight="semibold">Active total</Text>
                   <Text fontSize="sm" fontWeight="semibold">{fmtDuration(liveActive)}</Text>
                 </HStack>
@@ -1394,10 +1394,10 @@ function BulkApproveConfirm({
                   {mileageCount > 0 && `${mileageCount} mileage bundle${mileageCount === 1 ? "" : "s"}`}
                 </Text>
                 {sameDay && (
-                  <Box p={2} bg="orange.50" borderWidth="1px" borderColor="orange.400" borderRadius="md">
+                  <Box p={2} bg="orange.faint" borderWidth="1px" borderColor="orange.emphasized" borderRadius="md">
                     <HStack gap={2} align="start">
                       <AlertTriangle size={14} color="var(--chakra-colors-orange-700)" style={{ marginTop: 2 }} />
-                      <Text fontSize="xs" color="orange.900">
+                      <Text fontSize="xs" color="orange.fg">
                         <strong>Same-day approval.</strong> The cutoff hasn't passed.
                         Workers can still edit their own rows until then; approving
                         now locks them out of corrections they may discover later.
@@ -1407,10 +1407,10 @@ function BulkApproveConfirm({
                   </Box>
                 )}
                 {outliers > 0 ? (
-                  <Box p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" borderRadius="md">
+                  <Box p={2} bg="yellow.faint" borderWidth="1px" borderColor="yellow.emphasized" borderRadius="md">
                     <HStack gap={2}>
                       <AlertTriangle size={14} color="var(--chakra-colors-yellow-700)" />
-                      <Text fontSize="xs" color="yellow.900">
+                      <Text fontSize="xs" color="yellow.fg">
                         {outliers} workday{outliers === 1 ? "" : "s"} outside the typical 4–10 hour range — consider reviewing individually.
                       </Text>
                     </HStack>
@@ -1431,7 +1431,7 @@ function BulkApproveConfirm({
                       width: "100%",
                       padding: "6px 10px",
                       fontSize: "14px",
-                      border: "1px solid var(--chakra-colors-orange-300)",
+                      border: "1px solid var(--chakra-colors-orange-emphasized)",
                       borderRadius: "6px",
                       letterSpacing: "0.05em",
                     }}
@@ -1545,8 +1545,8 @@ function CreateWorkdayDialog({
             </Dialog.Header>
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
-                <Box p={2} bg="blue.50" borderWidth="1px" borderColor="blue.300" borderRadius="md">
-                  <Text fontSize="xs" color="blue.900">
+                <Box p={2} bg="blue.faint" borderWidth="1px" borderColor="blue.emphasized" borderRadius="md">
+                  <Text fontSize="xs" color="blue.fg">
                     Backfilling a workday for <b>{workerLabel(worker)}</b> on <b>{friendlyDate}</b>.
                     The row will land in PENDING APPROVAL — you can approve it after creating.
                     Audit logs the action as a Super-side create.
@@ -1562,7 +1562,7 @@ function CreateWorkdayDialog({
                       width: "100%",
                       padding: "6px 8px",
                       fontSize: "14px",
-                      border: "1px solid var(--chakra-colors-gray-200)",
+                      border: "1px solid var(--chakra-colors-gray-emphasized)",
                       borderRadius: "6px",
                     }}
                   />
@@ -1577,7 +1577,7 @@ function CreateWorkdayDialog({
                       width: "100%",
                       padding: "6px 8px",
                       fontSize: "14px",
-                      border: "1px solid var(--chakra-colors-gray-200)",
+                      border: "1px solid var(--chakra-colors-gray-emphasized)",
                       borderRadius: "6px",
                     }}
                   />
@@ -1593,12 +1593,12 @@ function CreateWorkdayDialog({
                       width: "100%",
                       padding: "6px 8px",
                       fontSize: "14px",
-                      border: "1px solid var(--chakra-colors-gray-200)",
+                      border: "1px solid var(--chakra-colors-gray-emphasized)",
                       borderRadius: "6px",
                     }}
                   />
                 </Box>
-                <HStack justify="space-between" pt={1} borderTopWidth="1px" borderColor="gray.200">
+                <HStack justify="space-between" pt={1} borderTopWidth="1px" borderColor="gray.emphasized">
                   <Text fontSize="sm" fontWeight="semibold">Active total</Text>
                   <Text fontSize="sm" fontWeight="semibold">
                     {(liveActive / 3600000).toFixed(2)} h

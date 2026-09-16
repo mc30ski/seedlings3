@@ -110,8 +110,8 @@ export default function AnnouncementDialog({ open, onOpenChange, onCreated, edit
             </Dialog.Header>
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
-                <Box px={3} py={2} bg="#DDD6FE" borderWidth="1px" borderColor="#6D28D9" borderRadius="md">
-                  <Text fontSize="xs" color="#4C1D95" fontWeight="medium">
+                <Box px={3} py={2} bg="purple.muted" borderWidth="1px" borderColor="purple.strong" borderRadius="md">
+                  <Text fontSize="xs" color="purple.fg" fontWeight="medium">
                     Everyone — visible to all workers and admins
                   </Text>
                 </Box>

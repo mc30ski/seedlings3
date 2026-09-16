@@ -35,7 +35,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "fs";
+import { readFileSync, readdirSync } from "fs";
 import { join, resolve } from "path";
 
 const REPO_ROOT = resolve(__dirname, "../../../..");
@@ -218,10 +218,63 @@ describe("pulse animations only travel outward", () => {
       expect(final, `${name} has no 100% stop`).not.toBe("");
       // The closing frame must be fully transparent, or the snap back to a
       // zero-radius ring is visible as a flicker.
+      // The tint moved into a CSS variable so the dark theme can lighten it
+      // (a mid-tone ring at 0.45 alpha is invisible on a #12151a page), so
+      // the colour is now `rgba(var(--pulse-blue), 0)`. `[^)]*` cannot cross
+      // the `)` that closes var(), which failed this rule against correct
+      // CSS — one level of nesting is allowed now. The invariant is
+      // unchanged: the closing frame must still be fully transparent.
       expect(
-        /rgba\([^)]*,\s*0\s*\)/.test(final),
+        /rgba\((?:[^()]|\([^()]*\))*,\s*0\s*\)/.test(final),
         `${name} ends at a visible alpha — the reset to 0 radius will flicker`,
       ).toBe(true);
     }
+  });
+});
+
+describe("custom theme tokens are never referenced through var()", () => {
+  // Chakra emits a `--chakra-colors-*` VARIABLE only for tokens it knows and
+  // for colour palettes. Our own namespaces (surface / chrome / accent) and
+  // any FLAT dotted semantic key (fg.muted, border.default) are inlined per
+  // condition instead, so `var(--chakra-colors-fg-muted)` resolves to
+  // NOTHING — silently. There is no error, no fallback, no visible warning:
+  // the declaration is simply dropped.
+  //
+  // Six call sites had drifted into this spelling, including a chart label's
+  // `fill`, which fell back to black and vanished on a dark card. The title
+  // bar's gradient died the same way and rendered fully transparent.
+  //
+  // Use the PROP form (`color="fg.muted"`, `bg="chrome.header"`), or for a
+  // gradient use Chakra's gradientFrom / gradientTo props. Where raw CSS is
+  // unavoidable, only the bare aliases (`--chakra-colors-fg`,
+  // `--chakra-colors-border`) and the colour palettes
+  // (`--chakra-colors-gray-subtle`) actually emit variables.
+  const WEB = resolve(__dirname, "../../../web");
+  const DEAD = /var\(--chakra-colors-(surface|chrome|accent)-[a-z-]+\)|var\(--chakra-colors-(fg|border|bg)-[a-z-]+\)/;
+
+  function walk(dir: string, hits: string[] = []): string[] {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === "node_modules" || entry.name === ".next" || entry.name === "tests") continue;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) { walk(full, hits); continue; }
+      if (!/\.(tsx?|css)$/.test(entry.name)) continue;
+      const src = readFileSync(full, "utf8")
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .split("\n").filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*")).join("\n");
+      for (const line of src.split("\n")) {
+        const m = line.match(DEAD);
+        if (m) hits.push(`${full.replace(WEB, "apps/web")}: ${m[0]}`);
+      }
+    }
+    return hits;
+  }
+
+  it("no source file reads a token that emits no CSS variable", () => {
+    const hits = [...walk(join(WEB, "src")), ...walk(join(WEB, "pages"))];
+    expect(
+      hits,
+      "these var() references resolve to nothing at runtime — use the prop form " +
+        "(color=\"fg.muted\"), or gradientFrom/gradientTo for a gradient:\n" + hits.join("\n"),
+    ).toEqual([]);
   });
 });

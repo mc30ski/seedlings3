@@ -284,7 +284,7 @@ export default function QRScannerDialog({
           my={{ base: "1rem", sm: "10vh" }}
           maxH="80vh"
           overflowY="auto"
-          bg="white"
+          bg="bg.panel"
           _dark={{ bg: "gray.800" }}
           borderRadius="lg"
           boxShadow="lg"
@@ -305,7 +305,7 @@ export default function QRScannerDialog({
                 <Text>No camera detected. Use “Upload” or “Manual”.</Text>
               )}
 
-              {error && <Text color="red.500">{error}</Text>}
+              {error && <Text color="red.fg">{error}</Text>}
 
               {/* Fallbacks are always available */}
               <Stack gap="2">

@@ -106,14 +106,14 @@ export default function OccurrenceInstructions({ occurrenceId, count, propertyId
   }
 
   return (
-    <Box borderWidth="1px" borderColor="blue.200" borderRadius="md" bg="blue.50" overflow="hidden">
+    <Box borderWidth="1px" borderColor="blue.emphasized" borderRadius="md" bg="blue.faint" overflow="hidden">
       <HStack
         px={3} py={2}
         cursor="pointer"
         onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); }}
         justify="space-between"
       >
-        <HStack gap={1.5} fontSize="xs" fontWeight="semibold" color="blue.700">
+        <HStack gap={1.5} fontSize="xs" fontWeight="semibold" color="blue.fg">
           <Camera size={14} />
           <Text>Guidance ({displayCount})</Text>
         </HStack>
@@ -140,7 +140,7 @@ export default function OccurrenceInstructions({ occurrenceId, count, propertyId
           )}
           {loading && <Text fontSize="xs" color="fg.muted">Loading...</Text>}
           {photos.map((photo, idx) => (
-            <HStack key={photo.id} gap={3} py={2} borderTopWidth="1px" borderColor="blue.100" align="start" onClick={(e) => e.stopPropagation()}>
+            <HStack key={photo.id} gap={3} py={2} borderTopWidth="1px" borderColor="blue.muted" align="start" onClick={(e) => e.stopPropagation()}>
               <Box
                 flexShrink={0}
                 w="80px"
@@ -167,17 +167,17 @@ export default function OccurrenceInstructions({ occurrenceId, count, propertyId
       {expanded && editing && (
         <VStack align="stretch" gap={1} px={3} pb={3}>
           <Box>
-            <Text fontSize="xs" fontWeight="semibold" color="blue.700" mb={1}>Overall description</Text>
+            <Text fontSize="xs" fontWeight="semibold" color="blue.fg" mb={1}>Overall description</Text>
             <Textarea
               size="sm"
-              bg="white"
+              bg="bg.panel"
               rows={3}
               placeholder="Optional — describe the work overall (separate from the photos)."
               value={noteText}
               onChange={(e) => setNoteText(e.target.value)}
             />
           </Box>
-          <Text fontSize="xs" fontWeight="semibold" color="blue.700" mt={1}>Photos</Text>
+          <Text fontSize="xs" fontWeight="semibold" color="blue.fg" mt={1}>Photos</Text>
           {editLoading && <HStack gap={2}><Spinner size="sm" /><Text fontSize="xs" color="fg.muted">Loading...</Text></HStack>}
           {!editLoading && allPhotos.length === 0 && (
             <Text fontSize="xs" color="fg.muted" fontStyle="italic">
@@ -190,8 +190,8 @@ export default function OccurrenceInstructions({ occurrenceId, count, propertyId
               gap={3}
               p={2}
               borderWidth="1px"
-              borderColor={photo.selected ? "blue.300" : "gray.200"}
-              bg={photo.selected ? "blue.100" : "white"}
+              borderColor={photo.selected ? "blue.emphasized" : "gray.emphasized"}
+              bg={photo.selected ? "blue.subtle" : "bg.panel"}
               borderRadius="md"
               cursor="pointer"
               onClick={() => togglePhoto(photo.id)}
@@ -288,9 +288,9 @@ export default function OccurrenceInstructions({ occurrenceId, count, propertyId
 export function InstructionsBadge({ count }: { count: number }) {
   if (count === 0) return null;
   return (
-    <HStack gap={1.5} px="2" py="1" bg="blue.50" borderWidth="1px" borderColor="blue.200" borderRadius="md">
+    <HStack gap={1.5} px="2" py="1" bg="blue.faint" borderWidth="1px" borderColor="blue.emphasized" borderRadius="md">
       <Camera size={12} color="var(--chakra-colors-blue-600)" />
-      <Text fontSize="xs" fontWeight="semibold" color="blue.700">Guidance ({count})</Text>
+      <Text fontSize="xs" fontWeight="semibold" color="blue.fg">Guidance ({count})</Text>
     </HStack>
   );
 }

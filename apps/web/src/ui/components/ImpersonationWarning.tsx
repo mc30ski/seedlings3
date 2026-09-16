@@ -50,7 +50,7 @@ export default function ImpersonationWarning({ viewAsName }: Props) {
     <Box
       p={2}
       mb={2}
-      bg="red.50"
+      bg="red.faint"
       borderLeftWidth="3px"
       borderColor="red.500"
       borderRadius="md"
@@ -61,13 +61,13 @@ export default function ImpersonationWarning({ viewAsName }: Props) {
         </Box>
         <VStack align="start" gap={0.5}>
           {viewAsName && (
-            <Text fontSize="xs" color="red.900">
+            <Text fontSize="xs" color="red.fg">
               <b>Acting as worker: {viewAsName}.</b> This will save to{" "}
               <b>{viewAsName}</b>'s record, not yours. Audit log captures you as the actor.
             </Text>
           )}
           {roleLabel && (
-            <Text fontSize="xs" color="red.900">
+            <Text fontSize="xs" color="red.fg">
               <b>Role impersonation: {roleLabel}.</b> The audit log flags this action as
               impersonated.
             </Text>

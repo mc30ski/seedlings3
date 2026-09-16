@@ -192,7 +192,7 @@ export default function GuideMediaLibrary({
         onRefresh={load}
         refreshing={busy}
         collapsedSummarySlot={
-          <Text fontSize="xs" color="gray.700" lineClamp={1}>
+          <Text fontSize="xs" color="gray.fg" lineClamp={1}>
             {count} file{count === 1 ? "" : "s"}
           </Text>
         }
@@ -263,7 +263,7 @@ export default function GuideMediaLibrary({
                   gap={2}
                   p={2}
                   borderWidth="1px"
-                  borderColor="gray.200"
+                  borderColor="gray.emphasized"
                   rounded="md"
                   wrap="wrap"
                 >

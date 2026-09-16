@@ -85,7 +85,7 @@ export default function BrandLabel({
               <Text
                 as="a"
                 fontSize="sm"
-                color="blue.600"
+                color="blue.fg"
                 cursor="pointer"
                 _hover={{ textDecoration: "underline" }}
               >

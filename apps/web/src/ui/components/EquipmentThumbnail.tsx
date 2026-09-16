@@ -107,11 +107,11 @@ export default function EquipmentThumbnail({ equipmentId, isAdmin, hasPhotos, si
         borderRadius="md"
         overflow="hidden"
         borderWidth="1px"
-        borderColor="gray.200"
+        borderColor="gray.emphasized"
         flexShrink={0}
         cursor={hasImage ? "pointer" : undefined}
         onClick={handleClick}
-        bg="gray.100"
+        bg="gray.subtle"
         display="flex"
         alignItems="center"
         justifyContent="center"

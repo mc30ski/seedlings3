@@ -94,7 +94,7 @@ export default function PaymentCommsButtons({
 
   if (data.missingPrimaryContact) {
     return (
-      <Text fontSize="xs" color="red.700">
+      <Text fontSize="xs" color="red.fg">
         No primary contact set for this client — open the client's contacts and mark one as Primary before sending the payment link.
       </Text>
     );
@@ -118,14 +118,14 @@ export default function PaymentCommsButtons({
 
   if (!primaryContact) {
     return (
-      <Text fontSize="xs" color="red.700">
+      <Text fontSize="xs" color="red.fg">
         No primary contact set for this client — open the client's contacts and mark one as Primary before sending the payment link.
       </Text>
     );
   }
   if (!phoneContact && !emailContact) {
     return (
-      <Text fontSize="xs" color="orange.700">
+      <Text fontSize="xs" color="orange.fg">
         Primary contact has no phone or email — update their contact info to send the payment link.
       </Text>
     );
@@ -219,7 +219,7 @@ export default function PaymentCommsButtons({
             size="sm"
             variant="ghost"
             colorPalette={colorPalette ?? "gray"}
-            {...(colorPalette ? { color: `${colorPalette}.800` } : {})}
+            {...(colorPalette ? { color: `${colorPalette}.fg` } : {})}
             {...(hoverBg ? { _hover: { bg: hoverBg } } : {})}
             loading={busy}
             onClick={() => void handleCancel()}

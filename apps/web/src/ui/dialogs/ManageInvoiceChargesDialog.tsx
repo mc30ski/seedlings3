@@ -132,7 +132,7 @@ function ChargeFields({
         <VStack align="stretch" gap={2.5} p={2.5}>
           <Box>
             <Text fontSize="xs" fontWeight="medium" mb={1}>
-              Line name <Text as="span" color="red.solid">*</Text>
+              Line name <Text as="span" color="red.fg">*</Text>
             </Text>
             <Input
               value={desc}
@@ -150,7 +150,7 @@ function ChargeFields({
           <Stack direction={{ base: "column", sm: "row" }} gap={2.5} align="stretch">
             <Box w={{ base: "full", sm: "110px" }} flexShrink={0}>
               <Text fontSize="xs" fontWeight="medium" mb={1}>
-                Amount <Text as="span" color="red.solid">*</Text>
+                Amount <Text as="span" color="red.fg">*</Text>
               </Text>
               <CurrencyInput value={cost} onChange={setCost} size="sm" />
             </Box>
@@ -673,16 +673,16 @@ export default function ManageInvoiceChargesDialog({
                     was spent. What is true is narrower: this row is not the
                     TAX RECORD. A worker, who can't add one at all, doesn't
                     need the Ledger half of that. */}
-                <Box p={2} bg="blue.50" borderWidth="1px" borderLeftWidth="3px" borderColor="blue.200" borderRadius="md">
+                <Box p={2} bg="blue.faint" borderWidth="1px" borderLeftWidth="3px" borderColor="blue.emphasized" borderRadius="md">
                   {canCharge ? (
                     <VStack align="stretch" gap={1.5}>
-                      <Text fontSize="xs" color="blue.800">
+                      <Text fontSize="xs" color="blue.fg">
                         These go on the client&rsquo;s invoice, on top of the labor price.
                         The crew&rsquo;s pool stays <Text as="span" fontWeight="semibold">labor
                         and services only</Text> &mdash; a charge here never comes out of
                         anyone&rsquo;s pay.
                       </Text>
-                      <Text fontSize="xs" color="blue.800">
+                      <Text fontSize="xs" color="blue.fg">
                         <Text as="span" fontWeight="semibold">This is not where the
                         deduction is recorded.</Text> It&rsquo;s a real business cost, but the
                         tax record is the actual purchase, entered in the Ledger from your
@@ -698,12 +698,12 @@ export default function ManageInvoiceChargesDialog({
                           "Pool", never "the crew splits it" — see the longer
                           note in ManageAddonsDialog. Margin and fees come off the
                           pool before anyone is paid. */}
-                      <Box borderTopWidth="1px" borderColor="blue.200" pt={1.5}>
-                        <Text fontSize="xs" color="blue.800">
+                      <Box borderTopWidth="1px" borderColor="blue.emphasized" pt={1.5}>
+                        <Text fontSize="xs" color="blue.fg">
                           <Text as="span" fontWeight="semibold">Did you buy a thing?</Text>{" "}
                           Add Charge. Billed on top, pool unchanged.
                         </Text>
-                        <Text fontSize="xs" color="blue.800">
+                        <Text fontSize="xs" color="blue.fg">
                           <Text as="span" fontWeight="semibold">Did someone do work?</Text>{" "}
                           Add Service. Billed on top, <Text as="span" fontWeight="semibold">and
                           it raises the crew&rsquo;s pool</Text>.
@@ -711,7 +711,7 @@ export default function ManageInvoiceChargesDialog({
                       </Box>
                     </VStack>
                   ) : (
-                    <Text fontSize="xs" color="blue.800">
+                    <Text fontSize="xs" color="blue.fg">
                       Extra costs billed to the client on this job, on top of the labor
                       price. They don&rsquo;t come out of your pay &mdash; your share
                       comes from the labor and services on the job.
@@ -764,10 +764,10 @@ export default function ManageInvoiceChargesDialog({
                         <VStack key={exp.id} align="stretch" gap={1}>
                           <HStack gap={2} fontSize="xs" align="start">
                             <Box flex="1" minW={0}>
-                              <Text color="orange.600">
+                              <Text color="orange.fg">
                                 ${exp.cost.toFixed(2)} — {exp.description}
                                 {exp.supplyHold ? (
-                                  <Text as="span" color="blue.600" ml={1}>· Inventory</Text>
+                                  <Text as="span" color="blue.fg" ml={1}>· Inventory</Text>
                                 ) : (
                                   <Text as="span" color="fg.muted" ml={1}>· One-off</Text>
                                 )}
@@ -946,8 +946,8 @@ export default function ManageInvoiceChargesDialog({
                         </VStack>
                       ),
                     )}
-                    <HStack justify="flex-end" fontSize="sm" pt={1} borderTopWidth="1px" borderColor="gray.200">
-                      <Text fontWeight="medium" color="orange.600">Total: ${total.toFixed(2)}</Text>
+                    <HStack justify="flex-end" fontSize="sm" pt={1} borderTopWidth="1px" borderColor="gray.emphasized">
+                      <Text fontWeight="medium" color="orange.fg">Total: ${total.toFixed(2)}</Text>
                     </HStack>
                   </VStack>
                 )}
@@ -978,15 +978,15 @@ export default function ManageInvoiceChargesDialog({
                   </HStack>
 
                   {addMode === null ? null : addMode === "custom" && !canCharge ? (
-                    <Box p={2} bg="yellow.50" borderWidth="1px" borderLeftWidth="3px" borderColor="yellow.300" borderRadius="md">
-                      <Text fontSize="xs" color="yellow.800">
+                    <Box p={2} bg="yellow.faint" borderWidth="1px" borderLeftWidth="3px" borderColor="yellow.emphasized" borderRadius="md">
+                      <Text fontSize="xs" color="yellow.fg">
                         Only an admin can add a charge to an invoice — it changes what the
                         client is billed. Ask one to add it for you.
                       </Text>
                     </Box>
                   ) : addMode === "inventory" && !canInventory ? (
-                    <Box p={2} bg="yellow.50" borderWidth="1px" borderLeftWidth="3px" borderColor="yellow.300" borderRadius="md">
-                      <Text fontSize="xs" color="yellow.800">
+                    <Box p={2} bg="yellow.faint" borderWidth="1px" borderLeftWidth="3px" borderColor="yellow.emphasized" borderRadius="md">
+                      <Text fontSize="xs" color="yellow.fg">
                         Only an admin can put supplies on an invoice
                         {disableInventory ? ", and this kind of job doesn't carry them" : ""} —
                         it changes what the client is billed.
@@ -1069,7 +1069,7 @@ export default function ManageInvoiceChargesDialog({
                             Your wording — it will not be rewritten when the quantity changes.{" "}
                             <Text
                               as="span"
-                              color="blue.600"
+                              color="blue.fg"
                               cursor="pointer"
                               textDecoration="underline"
                               onClick={() => setPickedDetail("")}
@@ -1176,7 +1176,7 @@ export default function ManageInvoiceChargesDialog({
                             // "$0.00" would read as free rather than unknown.
                             if (unit == null || !Number.isFinite(unit)) {
                               return (
-                                <Text fontSize="xs" color="orange.600">
+                                <Text fontSize="xs" color="orange.fg">
                                   Enter what to charge — this supply is priced as a markup and has
                                   no purchase history yet.
                                 </Text>
@@ -1192,7 +1192,7 @@ export default function ManageInvoiceChargesDialog({
                                 <Text
                                   as="span"
                                   whiteSpace="nowrap"
-                                  color={Number(pickedQty) > pickedSupply.available ? "red.600" : "fg.muted"}
+                                  color={Number(pickedQty) > pickedSupply.available ? "red.fg" : "fg.muted"}
                                 >
                                   {/* NO UNIT HERE. "16 blade available" is
                                       ungrammatical, and units like

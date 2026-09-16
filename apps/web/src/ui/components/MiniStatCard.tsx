@@ -40,15 +40,19 @@ type Props = {
   children?: ReactNode;
 };
 
+// `num` and `fg` resolve to the same semantic ink; the 2xl-bold value and
+// the xs-uppercase label are already separated by size and weight. They
+// used to be `<hue>.900` and `<hue>.fg`, which in dark mode put the value
+// at the same colour as the card behind it — every number vanished.
 const PALETTE: Record<MiniStatColor, { bg: string; border: string; fg: string; num: string }> = {
-  gray:   { bg: "gray.50",   border: "gray.200",   fg: "gray.700",   num: "gray.800" },
-  blue:   { bg: "blue.50",   border: "blue.200",   fg: "blue.800",   num: "blue.900" },
-  green:  { bg: "green.50",  border: "green.300",  fg: "green.800",  num: "green.900" },
-  orange: { bg: "orange.50", border: "orange.300", fg: "orange.800", num: "orange.900" },
-  red:    { bg: "red.50",    border: "red.300",    fg: "red.800",    num: "red.900" },
-  purple: { bg: "purple.50", border: "purple.300", fg: "purple.800", num: "purple.900" },
-  cyan:   { bg: "cyan.50",   border: "cyan.300",   fg: "cyan.800",   num: "cyan.900" },
-  teal:   { bg: "teal.50",   border: "teal.200",   fg: "teal.800",   num: "teal.900" },
+  gray:   { bg: "gray.faint",   border: "gray.emphasized",   fg: "gray.fg",   num: "gray.fg" },
+  blue:   { bg: "blue.faint",   border: "blue.emphasized",   fg: "blue.fg",   num: "blue.fg" },
+  green:  { bg: "green.faint",  border: "green.emphasized",  fg: "green.fg",  num: "green.fg" },
+  orange: { bg: "orange.faint", border: "orange.emphasized", fg: "orange.fg", num: "orange.fg" },
+  red:    { bg: "red.faint",    border: "red.emphasized",    fg: "red.fg",    num: "red.fg" },
+  purple: { bg: "purple.faint", border: "purple.emphasized", fg: "purple.fg", num: "purple.fg" },
+  cyan:   { bg: "cyan.faint",   border: "cyan.emphasized",   fg: "cyan.fg",   num: "cyan.fg" },
+  teal:   { bg: "teal.faint",   border: "teal.emphasized",   fg: "teal.fg",   num: "teal.fg" },
 };
 
 export default function MiniStatCard({

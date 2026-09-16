@@ -376,7 +376,7 @@ export default function EquipmentDialog({
                           p={2}
                           borderWidth="1px"
                           borderRadius="md"
-                          bg="gray.50"
+                          bg="gray.faint"
                         >
                           <Text fontSize="xs" color="fg.muted">
                             No policies are eligible to attach. To make one eligible,
@@ -396,8 +396,8 @@ export default function EquipmentDialog({
                                 p={2}
                                 borderRadius="md"
                                 cursor="pointer"
-                                bg={checked ? "red.50" : undefined}
-                                _hover={{ bg: checked ? "red.100" : "gray.50" }}
+                                bg={checked ? "red.faint" : undefined}
+                                _hover={{ bg: checked ? "red.subtle" : "gray.faint" }}
                                 onClick={() => toggleRequiredPolicy(p.id)}
                               >
                                 <input
@@ -550,7 +550,7 @@ export default function EquipmentDialog({
                       {!equipId ? (
                         <Text fontSize="xs" color="fg.muted">Save the equipment first to add instructions.</Text>
                       ) : instructions.length > 0 ? (
-                        <Box px="3" py="1.5" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
+                        <Box px="3" py="1.5" bg="yellow.subtle" borderWidth="1px" borderColor="yellow.strong" borderRadius="md">
                           <VStack align="stretch" gap="0.5">
                             {instructions.map((inst) => (
                               <HStack key={inst.id} gap="1.5" align="center">
@@ -560,7 +560,7 @@ export default function EquipmentDialog({
                                   fill="var(--chakra-colors-yellow-400)"
                                   strokeWidth={2.5}
                                 />
-                                <Text fontSize="xs" fontWeight="semibold" color="yellow.700">
+                                <Text fontSize="xs" fontWeight="semibold" color="yellow.fg">
                                   {inst.text}
                                 </Text>
                               </HStack>

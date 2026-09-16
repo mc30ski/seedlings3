@@ -253,7 +253,7 @@ export default function AllWorkersHourlyPayCards({ periodOverride, workerIds }: 
          very different over today than over last year — and collapsing the
          section hides the picker that would otherwise tell you. */
       collapsedSummarySlot={
-        <Text fontSize="xs" color="purple.800" lineClamp={1}>
+        <Text fontSize="xs" color="purple.fg" lineClamp={1}>
           {period.label}
           {topEarner ? (
             <>
@@ -300,7 +300,7 @@ function MiniPayCard({ row }: { row: WorkerCardRow }) {
     // Skeleton — matches the full card height so the grid doesn't
     // jump on load.
     return (
-      <Card.Root variant="outline" bg="gray.50" borderColor="gray.200">
+      <Card.Root variant="outline" bg="gray.faint" borderColor="gray.emphasized">
         <Card.Body p={3}>
           <VStack align="start" gap={1}>
             <Text fontSize="xs" fontWeight="semibold" color="fg.muted" truncate w="full">

@@ -181,7 +181,7 @@ export default function NextStartOverrideAffordance({
           size="sm"
           variant="outline"
           colorPalette="purple"
-          bg="purple.50"
+          bg="purple.faint"
           onClick={openEditor}
           title={`Usually the next visit would be ${fmtDateKey(usualKey)}. This one is shifted.`}
         >
@@ -232,7 +232,7 @@ export default function NextStartOverrideAffordance({
                       {frequencyDays} days after this visit.
                     </Text>
                     {draft && draft <= sourceKey && (
-                      <Text fontSize="2xs" color="red.600" mt={1}>
+                      <Text fontSize="2xs" color="red.fg" mt={1}>
                         Must be after this visit's date ({fmtDate(sourceStartAt)}).
                       </Text>
                     )}
@@ -291,7 +291,7 @@ export default function NextStartOverrideAffordance({
               </Text>
               <VStack align="stretch" gap={1} pl={3}>
                 {approveReq.reasons.map((r, i) => (
-                  <Text key={i} fontSize="xs" color="orange.700">• {r}</Text>
+                  <Text key={i} fontSize="xs" color="orange.fg">• {r}</Text>
                 ))}
               </VStack>
             </VStack>

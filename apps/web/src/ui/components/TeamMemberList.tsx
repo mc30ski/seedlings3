@@ -126,18 +126,18 @@ export default function TeamMemberList({
         py={1.5}
         rounded="md"
         borderWidth="1px"
-        borderColor={isObs ? "blue.200" : isClaimer ? "teal.200" : "gray.200"}
-        bg={isObs ? "blue.50" : isClaimer ? "teal.50" : undefined}
+        borderColor={isObs ? "blue.emphasized" : isClaimer ? "teal.emphasized" : "gray.emphasized"}
+        bg={isObs ? "blue.faint" : isClaimer ? "teal.faint" : undefined}
       >
         <HStack justify="space-between" align="center">
           <VStack align="start" gap={0.5}>
             <Text
               fontSize="sm"
               fontWeight={isClaimer ? "medium" : "normal"}
-              color={isObs ? "blue.700" : isClaimer ? "teal.700" : undefined}
+              color={isObs ? "blue.fg" : isClaimer ? "teal.fg" : undefined}
             >
               {m.user?.displayName ?? m.user?.email ?? m.userId}
-              {isMe && <Box as="span" fontWeight="normal" color="teal.500"> (you)</Box>}
+              {isMe && <Box as="span" fontWeight="normal" color="teal.fg"> (you)</Box>}
             </Text>
             <HStack gap={1}>
               {isClaimer && <Badge size="sm" colorPalette="teal" variant="solid" fontSize="2xs" px="1.5" borderRadius="full">Claimer</Badge>}
@@ -292,7 +292,7 @@ export default function TeamMemberList({
           onClick={() => setConfirmRemoveClaimer(null)}
         >
           <Box
-            bg="white"
+            bg="bg.panel"
             rounded="xl"
             p={5}
             mx={4}

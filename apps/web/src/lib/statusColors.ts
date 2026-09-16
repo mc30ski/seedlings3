@@ -58,22 +58,30 @@ export function badgeColors(
 ) {
   if (variant === "subtle") {
     return {
-      bg: `${palette}.100`,
-      color: `${palette}.700`,
+      bg: `${palette}.subtle`,
+      color: `${palette}.fg`,
       border: "1px solid",
-      borderColor: `${palette}.200`,
+      borderColor: `${palette}.emphasized`,
     };
   }
   if (variant === "outline") {
     return {
-      bg: `${palette}.200`,
-      color: `${palette}.700`,
+      bg: `${palette}.muted`,
+      color: `${palette}.fg`,
       border: "1px solid",
-      borderColor: `${palette}.300`,
+      borderColor: `${palette}.emphasized`,
     };
   }
-  if (palette === "gray") return { bg: "gray.500", color: "white" };
-  return { bg: `${palette}.600`, color: "white" };
+  // `solid` is the one variant that was never converted: a raw ramp fill
+  // with the ink hardcoded to white. That is unreadable on the bright hues —
+  // white on `yellow` measured 2.94:1 — and it themes nowhere, because the
+  // raw ramp is the same value in all five themes.
+  //
+  // `colorPalette.solid` + `colorPalette.contrast` is the pair Chakra tunes
+  // together per hue and per theme: yellow's ink comes back BLACK, the rest
+  // white, and each theme gets its own fill. One change here covers all 71
+  // <StatusBadge> call sites.
+  return { bg: `${palette}.solid`, color: `${palette}.contrast` };
 }
 
 export function jobStatusColor(value: string): string {

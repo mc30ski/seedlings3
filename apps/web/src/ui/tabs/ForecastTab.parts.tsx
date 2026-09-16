@@ -108,7 +108,7 @@ function InfoDot({ label, open, onToggle }: { label: string; open: boolean; onTo
       aria-label={`What does "${label}" mean?`}
       aria-expanded={open}
       onClick={(e: any) => { e.stopPropagation(); onToggle(); }}
-      color={open ? "blue.solid" : "fg.muted"}
+      color={open ? "blue.fg" : "fg.muted"}
       display="inline-flex"
       flexShrink={0}
       _hover={{ color: "blue.solid" }}
@@ -363,7 +363,7 @@ export function MoneyFlow({
                   {money(r.next)}
                 </CompareCell>
                 <CompareCell caption="Change" w="80px" fontSize="12px"
-                             color={Math.abs(diff) < 0.5 ? "fg.muted" : good ? "green.solid" : "red.solid"}>
+                             color={Math.abs(diff) < 0.5 ? "fg.muted" : good ? "green.fg" : "red.fg"}>
                   {Math.abs(diff) < 0.5 ? "—" : money(diff)}
                 </CompareCell>
               </HStack>
@@ -447,7 +447,7 @@ export function MoneyFlow({
                 <Text fontSize="10px" color="fg.muted" textTransform="uppercase"
                       letterSpacing="wide" lineHeight="1.2">Cash after</Text>
                 <Text fontSize="13px" fontWeight="bold" fontVariantNumeric="tabular-nums"
-                      color={cashAfterCapEx < 0 ? "red.solid" : "green.solid"}>
+                      color={cashAfterCapEx < 0 ? "red.fg" : "green.fg"}>
                   {money(cashAfterCapEx)}
                 </Text>
               </Box>
@@ -548,7 +548,7 @@ export function WorkerFairnessTable({
                 </Text>
                 {was > 0 && Math.abs(change) > 0.01 && (
                   <Text fontSize="11px" fontVariantNumeric="tabular-nums"
-                        color={change > 0 ? "green.solid" : "red.solid"}>
+                        color={change > 0 ? "green.fg" : "red.fg"}>
                     {change > 0 ? "+" : "−"}{Math.abs(change * 100).toFixed(0)}%
                   </Text>
                 )}
@@ -617,7 +617,7 @@ export function WarningList({ warnings }: { warnings: ForecastResult["warnings"]
   if (!warnings.length) {
     return (
       <HStack gap={2} px={3} py={2} borderWidth="1px" borderRadius="md" bg="bg.panel">
-        <Box as={FiInfo} color="green.solid" />
+        <Box as={FiInfo} color="green.fg" />
         <Text fontSize="13px">No guardrails tripped. Nobody falls below market and the sample holds up.</Text>
       </HStack>
     );
@@ -638,7 +638,7 @@ export function WarningList({ warnings }: { warnings: ForecastResult["warnings"]
           bg="bg.panel"
         >
           <Box as={FiAlertTriangle} mt="2px" flexShrink={0}
-               color={w.level === "critical" ? "red.solid" : "orange.solid"} />
+               color={w.level === "critical" ? "red.fg" : "orange.fg"} />
           <Text fontSize="13px">{w.message}</Text>
         </HStack>
       ))}
@@ -731,7 +731,7 @@ export function CostBreakdown({
               <Text w="80px" textAlign="right" fontSize="12px" fontWeight="semibold"
                     fontVariantNumeric="tabular-nums">{money(sub)}</Text>
               <Text w="70px" textAlign="right" fontSize="12px" fontVariantNumeric="tabular-nums"
-                    color={Math.abs(sub - subToday) < 0.5 ? "fg.muted" : sub > subToday ? "red.solid" : "green.solid"}>
+                    color={Math.abs(sub - subToday) < 0.5 ? "fg.muted" : sub > subToday ? "red.fg" : "green.fg"}>
                 {Math.abs(sub - subToday) < 0.5 ? "—" : money(sub - subToday)}
               </Text>
             </HStack>
@@ -764,7 +764,7 @@ export function CostBreakdown({
                   <Text fontSize="12px" w="80px" textAlign="right"
                         fontVariantNumeric="tabular-nums">{money(r.amount)}</Text>
                   <Text fontSize="12px" w="70px" textAlign="right" fontVariantNumeric="tabular-nums"
-                        color={Math.abs(diff) < 0.5 ? "fg.muted" : diff > 0 ? "red.solid" : "green.solid"}>
+                        color={Math.abs(diff) < 0.5 ? "fg.muted" : diff > 0 ? "red.fg" : "green.fg"}>
                     {Math.abs(diff) < 0.5 ? "—" : money(diff)}
                   </Text>
                 </HStack>
@@ -837,7 +837,7 @@ export function SensitivityList({ rows }: { rows: SensitivityRow[] }) {
             />
           </Box>
           <Text fontSize="12px" w="70px" textAlign="right" fontVariantNumeric="tabular-nums"
-                color={r.impact >= 0 ? "green.solid" : "red.solid"}>
+                color={r.impact >= 0 ? "green.fg" : "red.fg"}>
             {money(r.impact)}
           </Text>
         </HStack>
@@ -868,7 +868,7 @@ export function AssessmentPanel({
     return (
       <HStack gap={2} align="start" px={3} py={2.5} borderWidth="1px" borderRadius="md"
               borderLeftWidth="3px" borderLeftColor="orange.solid" bg="bg.panel">
-        <Box as={FiAlertTriangle} mt="2px" color="orange.solid" flexShrink={0} />
+        <Box as={FiAlertTriangle} mt="2px" color="orange.fg" flexShrink={0} />
         <VStack align="start" gap={1.5}>
           <Text fontSize="13px">{error}</Text>
           <Button size="xs" variant="outline" onClick={onRun} loading={loading}>Try again</Button>
@@ -899,7 +899,7 @@ export function AssessmentPanel({
     <VStack align="stretch" gap={3} px={3} py={3} borderWidth="1px" borderRadius="md" bg="bg.panel">
       {stale && (
         <HStack gap={2} px={2} py={1.5} borderRadius="sm" bg="orange.subtle">
-          <Box as={FiAlertTriangle} color="orange.solid" flexShrink={0} />
+          <Box as={FiAlertTriangle} color="orange.fg" flexShrink={0} />
           <Text fontSize="12px">
             You've changed the assumptions since this was written, so it describes different
             numbers. Re-run it before relying on it.
@@ -928,7 +928,7 @@ export function AssessmentPanel({
       <HStack align="start" gap={4} wrap="wrap">
         {!!assessment.strengths?.length && (
           <VStack align="start" gap={1} flex="1 1 220px">
-            <Text fontSize="10px" textTransform="uppercase" letterSpacing="wide" color="green.solid">
+            <Text fontSize="10px" textTransform="uppercase" letterSpacing="wide" color="green.fg">
               Works
             </Text>
             {assessment.strengths.map((s, i) => (
@@ -938,7 +938,7 @@ export function AssessmentPanel({
         )}
         {!!assessment.concerns?.length && (
           <VStack align="start" gap={1} flex="1 1 220px">
-            <Text fontSize="10px" textTransform="uppercase" letterSpacing="wide" color="orange.solid">
+            <Text fontSize="10px" textTransform="uppercase" letterSpacing="wide" color="orange.fg">
               Costs
             </Text>
             {assessment.concerns.map((s, i) => (
@@ -1044,7 +1044,7 @@ export function ComparisonPanel({ entries }: { entries: ComparisonEntry[] }) {
                 />
               </Box>
               <Text w="80px" textAlign="right" fontSize="12px" fontWeight="medium"
-                    fontVariantNumeric="tabular-nums" color={p >= 0 ? "green.solid" : "red.solid"}>
+                    fontVariantNumeric="tabular-nums" color={p >= 0 ? "green.fg" : "red.fg"}>
                 {money(p)}
               </Text>
             </HStack>

@@ -98,8 +98,8 @@ export default function JobPropertyPhotosPicker({ jobId, propertyId, occurrenceI
             gap={3}
             p={2}
             borderWidth="1px"
-            borderColor={selectedIds.has(photo.id) ? "blue.300" : "gray.200"}
-            bg={selectedIds.has(photo.id) ? "blue.50" : undefined}
+            borderColor={selectedIds.has(photo.id) ? "blue.emphasized" : "gray.emphasized"}
+            bg={selectedIds.has(photo.id) ? "blue.faint" : undefined}
             borderRadius="md"
             cursor="pointer"
             onClick={() => toggle(photo.id)}

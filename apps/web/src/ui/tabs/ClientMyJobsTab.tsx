@@ -474,12 +474,12 @@ export default function ClientMyJobsTab() {
           // confirm before linking. When the household has 2+ stamped
           // contacts we ask "which of you are you?" so we link to the right
           // person, not blindly to the primary.
-          <Box p={5} bg="teal.50" borderWidth="1px" borderColor="teal.300" rounded="lg" mb={3}>
+          <Box p={5} bg="teal.faint" borderWidth="1px" borderColor="teal.emphasized" rounded="lg" mb={3}>
             <VStack gap={3} align="start">
-              <Text fontSize="xl" fontWeight="bold" color="teal.800">Welcome back!</Text>
+              <Text fontSize="xl" fontWeight="bold" color="teal.fg">Welcome back!</Text>
               {linkCandidate.contacts.length > 1 ? (
                 <>
-                  <Text fontSize="sm" color="teal.700">
+                  <Text fontSize="sm" color="teal.fg">
                     We think you're with <Text as="span" fontWeight="semibold">{linkCandidate.displayName}</Text>. Which of you are you?
                   </Text>
                   <HStack gap={2} wrap="wrap">
@@ -508,13 +508,13 @@ export default function ClientMyJobsTab() {
                 </>
               ) : (
                 <>
-                  <Text fontSize="sm" color="teal.700">
+                  <Text fontSize="sm" color="teal.fg">
                     We think you're connected to <Text as="span" fontWeight="semibold">{linkCandidate.displayName}</Text>
                     {linkCandidate.contacts[0]?.contactName
                       ? <> (as <Text as="span" fontWeight="semibold">{linkCandidate.contacts[0].contactName}</Text>)</>
                       : null}.
                   </Text>
-                  <Text fontSize="sm" color="teal.700">
+                  <Text fontSize="sm" color="teal.fg">
                     If that's right, confirm and we'll connect your account to your service history.
                   </Text>
                   <HStack gap={2}>
@@ -540,13 +540,13 @@ export default function ClientMyJobsTab() {
             </VStack>
           </Box>
         ) : null}
-        <Box p={5} bg="blue.50" borderWidth="1px" borderColor="blue.200" rounded="lg">
+        <Box p={5} bg="blue.faint" borderWidth="1px" borderColor="blue.emphasized" rounded="lg">
           <VStack gap={3} align="start">
-            <Text fontSize="xl" fontWeight="bold" color="blue.800">Welcome to Seedlings Lawn Care</Text>
-            <Text fontSize="sm" color="blue.700">
+            <Text fontSize="xl" fontWeight="bold" color="blue.fg">Welcome to Seedlings Lawn Care</Text>
+            <Text fontSize="sm" color="blue.fg">
               Your account isn't linked to a client profile yet. An administrator will connect your account once your profile has been approved.
             </Text>
-            <Text fontSize="sm" color="blue.600">
+            <Text fontSize="sm" color="blue.fg">
               Once linked, you'll be able to see your properties, upcoming services, completed work with photos, and payment history right here.
             </Text>
             <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="3" py="1" borderRadius="full">Pending setup</Badge>
@@ -559,11 +559,11 @@ export default function ClientMyJobsTab() {
   return (
     <Box w="full" pb={8}>
       {/* Welcome header */}
-      <Box mb={4} p={4} bg="green.50" borderWidth="1px" borderColor="green.200" rounded="lg">
-        <Text fontSize="xl" fontWeight="bold" color="green.800">
+      <Box mb={4} p={4} bg="green.faint" borderWidth="1px" borderColor="green.emphasized" rounded="lg">
+        <Text fontSize="xl" fontWeight="bold" color="green.fg">
           Welcome back, {profile.contact?.firstName}!
         </Text>
-        <Text fontSize="sm" color="green.700" mt={1}>{profile.client?.displayName}</Text>
+        <Text fontSize="sm" color="green.fg" mt={1}>{profile.client?.displayName}</Text>
       </Box>
 
       {/* Statements CTA — clickable card that jumps to the Statements
@@ -576,31 +576,31 @@ export default function ClientMyJobsTab() {
         textAlign="left"
         mb={4}
         p={4}
-        bg="blue.50"
+        bg="blue.faint"
         borderWidth="1px"
-        borderColor="blue.300"
+        borderColor="blue.emphasized"
         rounded="lg"
-        _hover={{ bg: "blue.100", borderColor: "blue.400" }}
+        _hover={{ bg: "blue.subtle", borderColor: "blue.strong" }}
         cursor="pointer"
       >
         <HStack gap={3} align="center">
-          <Box color="blue.600"><FileText size={20} /></Box>
+          <Box color="blue.fg"><FileText size={20} /></Box>
           <Box flex="1">
-            <Text fontSize="sm" fontWeight="semibold" color="blue.800">
+            <Text fontSize="sm" fontWeight="semibold" color="blue.fg">
               Need a statement for taxes or your records?
             </Text>
-            <Text fontSize="xs" color="blue.700" mt={0.5}>
+            <Text fontSize="xs" color="blue.fg" mt={0.5}>
               Click here to generate a PDF or CSV of services and payments for any date range.
             </Text>
           </Box>
-          <Text fontSize="lg" color="blue.500">›</Text>
+          <Text fontSize="lg" color="blue.fg">›</Text>
         </HStack>
       </Box>
 
       {/* Properties */}
       {profile.client && profile.client.properties.length > 0 && (
         <Box mb={5}>
-          <Text fontSize="xs" fontWeight="semibold" color="green.600" mb={2} px={1} textTransform="uppercase" letterSpacing="wide">
+          <Text fontSize="xs" fontWeight="semibold" color="green.fg" mb={2} px={1} textTransform="uppercase" letterSpacing="wide">
             Your Properties ({profile.client.properties.length})
           </Text>
           <VStack align="stretch" gap={2}>
@@ -630,7 +630,7 @@ export default function ClientMyJobsTab() {
           EITHER list has entries. */}
       {(upcoming.length > 0 || awaitingPayment.length > 0) && (
         <Box mb={5}>
-          <Text fontSize="xs" fontWeight="semibold" color="blue.500" mb={2} px={1} textTransform="uppercase" letterSpacing="wide">
+          <Text fontSize="xs" fontWeight="semibold" color="blue.fg" mb={2} px={1} textTransform="uppercase" letterSpacing="wide">
             {upcoming.some((j) => j.status === "IN_PROGRESS") ? "Happening Now & Upcoming" : "Upcoming"}
           </Text>
           <VStack align="stretch" gap={2}>
@@ -641,7 +641,7 @@ export default function ClientMyJobsTab() {
             {awaitingPayment.map((ap) => {
               const addr = [ap.property.street1, ap.property.city, ap.property.state].filter(Boolean).join(", ");
               return (
-                <Card.Root key={`ap-${ap.property.id}`} variant="outline" borderColor="orange.300" bg="orange.50">
+                <Card.Root key={`ap-${ap.property.id}`} variant="outline" borderColor="orange.emphasized" bg="orange.faint">
                   <Card.Body py="2.5" px="3">
                     <VStack align="stretch" gap={1.5}>
                       <HStack justify="space-between" align="start">
@@ -653,13 +653,13 @@ export default function ClientMyJobsTab() {
                           {ap.paymentPending ? "Confirming payment" : "Awaiting payment"}
                         </Badge>
                       </HStack>
-                      <Text fontSize="xs" color="orange.900">
+                      <Text fontSize="xs" color="orange.fg">
                         {ap.paymentPending
                           ? `We got your note that you sent $${ap.amountDue.toFixed(2)} for the service on ${fmtDate(ap.lastServiceDate)}. Once it lands on our end we'll confirm here and schedule your next visit.`
                           : `Payment of $${ap.amountDue.toFixed(2)} for the service on ${fmtDate(ap.lastServiceDate)} is still outstanding. Your next visit will be scheduled once payment is received.`}
                       </Text>
                       {ap.projectedNextDate && (
-                        <Text fontSize="xs" color="orange.900">
+                        <Text fontSize="xs" color="orange.fg">
                           <b>Projected next visit:</b> {fmtDate(ap.projectedNextDate)} (once payment is confirmed).
                         </Text>
                       )}
@@ -718,7 +718,7 @@ export default function ClientMyJobsTab() {
               const canRequestChange = (job.status === "SCHEDULED" || job.status === "ACCEPTED") && !job.pendingChangeRequest;
               const addr = [job.property.street1, job.property.city, job.property.state].filter(Boolean).join(", ");
               return (
-                <Card.Root key={job.id} variant="outline" borderColor={isActive ? "blue.300" : undefined} bg={isActive ? "blue.50" : undefined}>
+                <Card.Root key={job.id} variant="outline" borderColor={isActive ? "blue.emphasized" : undefined} bg={isActive ? "blue.faint" : undefined}>
                   <Card.Body py="2" px="3">
                     <HStack justify="space-between" align="start">
                       <VStack align="start" gap={1} flex="1" minW={0}>
@@ -758,7 +758,7 @@ export default function ClientMyJobsTab() {
                           <Text fontSize="xs" color="fg.muted">Crew: {workerLabel(job.workers)}</Text>
                         )}
                         {job.price != null && (
-                          <Text fontSize="xs" color="green.600" fontWeight="medium">
+                          <Text fontSize="xs" color="green.fg" fontWeight="medium">
                             ${job.price.toFixed(2)}
                           </Text>
                         )}
@@ -772,18 +772,18 @@ export default function ClientMyJobsTab() {
 
                     {/* Pending change request banner */}
                     {job.pendingChangeRequest && (
-                      <Box mt={2} p={2} bg="orange.50" borderWidth="1px" borderColor="orange.200" rounded="md">
+                      <Box mt={2} p={2} bg="orange.faint" borderWidth="1px" borderColor="orange.emphasized" rounded="md">
                         <HStack justify="space-between" gap={2} wrap="wrap">
                           <Box flex="1" minW={0}>
-                            <Text fontSize="xs" fontWeight="semibold" color="orange.800">
+                            <Text fontSize="xs" fontWeight="semibold" color="orange.fg">
                               {job.pendingChangeRequest.kind === "RESCHEDULE" ? "Reschedule requested" : "Skip requested"}
                             </Text>
                             {job.pendingChangeRequest.kind === "RESCHEDULE" && job.pendingChangeRequest.proposedStartAt && (
-                              <Text fontSize="2xs" color="orange.700">
+                              <Text fontSize="2xs" color="orange.fg">
                                 Suggested: {fmtDateWeekday(job.pendingChangeRequest.proposedStartAt)}
                               </Text>
                             )}
-                            <Text fontSize="2xs" color="orange.600">
+                            <Text fontSize="2xs" color="orange.fg">
                               {job.pendingChangeRequest.kind === "RESCHEDULE"
                                 ? "We'll reach out shortly to confirm a time."
                                 : "Awaiting admin approval."}
@@ -801,11 +801,11 @@ export default function ClientMyJobsTab() {
                      *  recurring occurrence is created (that's a
                      *  different row with no resolved requests). */}
                     {!job.pendingChangeRequest && job.lastResolvedRequest?.resolutionNote && (
-                      <Box mt={2} p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" rounded="md">
-                        <Text fontSize="xs" fontWeight="semibold" color="blue.800">
+                      <Box mt={2} p={2} bg="blue.faint" borderWidth="1px" borderColor="blue.emphasized" rounded="md">
+                        <Text fontSize="xs" fontWeight="semibold" color="blue.fg">
                           Note from us
                         </Text>
-                        <Text fontSize="sm" color="blue.900" mt={0.5}>
+                        <Text fontSize="sm" color="blue.fg" mt={0.5}>
                           {job.lastResolvedRequest.resolutionNote}
                         </Text>
                       </Box>
@@ -855,7 +855,7 @@ export default function ClientMyJobsTab() {
        *  to expand up to a full year. */}
       {completed.length > 0 && (
         <Box mb={5}>
-          <Text fontSize="xs" fontWeight="semibold" color="green.600" mb={2} px={1} textTransform="uppercase" letterSpacing="wide">
+          <Text fontSize="xs" fontWeight="semibold" color="green.fg" mb={2} px={1} textTransform="uppercase" letterSpacing="wide">
             Service history — {completedMonthsBack === 1
               ? "this month"
               : `last ${completedMonthsBack} months`}
@@ -898,11 +898,11 @@ export default function ClientMyJobsTab() {
                         )}
                         {job.payment && job.paid && (
                           <HStack gap={2} align="center" wrap="wrap">
-                            <Text fontSize="xs" color="green.600" fontWeight="medium">
+                            <Text fontSize="xs" color="green.fg" fontWeight="medium">
                               ${job.payment.amountPaid.toFixed(2)} via {job.payment.method.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase())}
                             </Text>
                             {job.payment.receiptNumber && (
-                              <Text fontSize="xs" color="green.700" fontFamily="mono">
+                              <Text fontSize="xs" color="green.fg" fontFamily="mono">
                                 {job.payment.receiptNumber}
                               </Text>
                             )}
@@ -939,7 +939,7 @@ export default function ClientMyJobsTab() {
                           </HStack>
                         )}
                         {job.payment && !job.paid && job.paymentPending && (
-                          <Text fontSize="xs" color="orange.700">
+                          <Text fontSize="xs" color="orange.fg">
                             We received your note that you sent ${job.payment.amountPaid.toFixed(2)} via {job.payment.method.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase())}.
                             We&apos;ll confirm once it lands on our end — your receipt will be available here as soon as we do.
                           </Text>
@@ -983,7 +983,7 @@ export default function ClientMyJobsTab() {
       )}
 
       {completed.length === 0 && upcoming.length === 0 && awaitingPayment.length === 0 && (
-        <Box p={4} bg="gray.50" rounded="lg" textAlign="center">
+        <Box p={4} bg="gray.faint" rounded="lg" textAlign="center">
           <Text fontSize="md" fontWeight="semibold" color="fg.muted">No services scheduled yet</Text>
           <Text fontSize="sm" color="fg.muted" mt={1}>When your lawn care services are scheduled, you'll see them here along with photos and status updates.</Text>
         </Box>
@@ -1032,7 +1032,7 @@ export default function ClientMyJobsTab() {
               <Dialog.Body>
                 <VStack align="stretch" gap={3}>
                   {actionDialog && (
-                    <Box p={2} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">
+                    <Box p={2} bg="gray.faint" rounded="md" borderWidth="1px" borderColor="gray.emphasized">
                       <Text fontSize="sm" fontWeight="medium">{actionDialog.job.property.displayName}</Text>
                       {actionDialog.job.startAt && (
                         <Text fontSize="xs" color="fg.muted">Currently: {fmtDateWeekday(actionDialog.job.startAt)}</Text>
@@ -1059,7 +1059,7 @@ export default function ClientMyJobsTab() {
                           onChange={(e) => setProposedDate(e.target.value)}
                         />
                         {isPast && (
-                          <Text fontSize="xs" color="red.600" mt={1}>
+                          <Text fontSize="xs" color="red.fg" mt={1}>
                             Pick a date in the future.
                           </Text>
                         )}

@@ -161,12 +161,12 @@ export default function PayrollUploadDialog({
 
                 <Box
                   p={2}
-                  bg="orange.50"
+                  bg="orange.faint"
                   borderWidth="1px"
-                  borderColor="orange.200"
+                  borderColor="orange.emphasized"
                   rounded="md"
                 >
-                  <Text fontSize="xs" color="orange.900">
+                  <Text fontSize="xs" color="orange.fg">
                     Uploading a period that already exists <strong>replaces</strong> it. The
                     previous figures are written to the audit log first, and the original file
                     is kept.
@@ -174,23 +174,23 @@ export default function PayrollUploadDialog({
                 </Box>
 
                 {error && (
-                  <Box p={3} bg="red.50" borderWidth="1px" borderColor="red.300" rounded="md">
-                    <Text fontSize="sm" fontWeight="semibold" color="red.800">
+                  <Box p={3} bg="red.faint" borderWidth="1px" borderColor="red.emphasized" rounded="md">
+                    <Text fontSize="sm" fontWeight="semibold" color="red.fg">
                       Import refused
                     </Text>
-                    <Text fontSize="xs" color="red.900" mt={1}>
+                    <Text fontSize="xs" color="red.fg" mt={1}>
                       {error}
                     </Text>
                     {mismatches.length > 0 && (
                       <VStack align="stretch" gap={1} mt={2}>
                         {mismatches.map((m) => (
                           <HStack key={m.field} justify="space-between" gap={2}>
-                            <Text fontSize="2xs" color="red.900" lineClamp={1}>
+                            <Text fontSize="2xs" color="red.fg" lineClamp={1}>
                               {m.header}
                             </Text>
                             <Text
                               fontSize="2xs"
-                              color="red.900"
+                              color="red.fg"
                               fontVariantNumeric="tabular-nums"
                               flexShrink={0}
                             >
@@ -200,21 +200,21 @@ export default function PayrollUploadDialog({
                         ))}
                       </VStack>
                     )}
-                    <Text fontSize="2xs" color="red.700" mt={2}>
+                    <Text fontSize="2xs" color="red.fg" mt={2}>
                       Nothing was imported. Re-export from Gusto without editing the file.
                     </Text>
                   </Box>
                 )}
 
                 {result && result.length > 0 && (
-                  <Box p={3} bg="green.50" borderWidth="1px" borderColor="green.300" rounded="md">
-                    <Text fontSize="sm" fontWeight="semibold" color="green.800">
+                  <Box p={3} bg="green.faint" borderWidth="1px" borderColor="green.emphasized" rounded="md">
+                    <Text fontSize="sm" fontWeight="semibold" color="green.fg">
                       Imported
                     </Text>
                     <VStack align="stretch" gap={1} mt={1}>
                       {result.map((p) => (
                         <HStack key={p.periodId} justify="space-between" gap={2} wrap="wrap">
-                          <Text fontSize="xs" color="green.900">
+                          <Text fontSize="xs" color="green.fg">
                             {fmtDateKey(p.periodStart)} – {fmtDateKey(p.periodEnd)} · paid{" "}
                             {fmtDateKey(p.payDay)}
                           </Text>
@@ -267,7 +267,7 @@ export default function PayrollUploadDialog({
                       </Box>
                     )}
                     {result.some((p) => p.unmatched.length > 0) && (
-                      <Text fontSize="2xs" color="green.800" mt={2}>
+                      <Text fontSize="2xs" color="green.fg" mt={2}>
                         Names that aren&apos;t linked to an app user yet are listed on the
                         Payroll tab. Workers can&apos;t see their pay until you confirm who they
                         are.

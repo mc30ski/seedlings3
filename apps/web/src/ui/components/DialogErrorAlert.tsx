@@ -35,17 +35,17 @@ export function DialogErrorAlert({
       mt={2}
       mb={1}
       p={2}
-      bg="red.50"
+      bg="red.faint"
       borderWidth="1px"
-      borderColor="red.300"
+      borderColor="red.emphasized"
       borderRadius="md"
       role="alert"
     >
       <HStack gap={2} align="start">
-        <Box color="red.600" flexShrink={0} mt="2px">
+        <Box color="red.fg" flexShrink={0} mt="2px">
           <AlertTriangle size={14} />
         </Box>
-        <Text fontSize="sm" color="red.900" flex="1">
+        <Text fontSize="sm" color="red.fg" flex="1">
           {error}
         </Text>
         {onDismiss && (

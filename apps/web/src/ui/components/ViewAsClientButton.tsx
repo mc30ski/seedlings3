@@ -169,14 +169,14 @@ function ContactPickerDialog({
                       as="button"
                       p={3}
                       borderWidth="1px"
-                      borderColor={isSelected ? "purple.400" : "gray.200"}
+                      borderColor={isSelected ? "purple.strong" : "gray.emphasized"}
                       borderRadius="md"
-                      bg={isSelected ? "purple.50" : canPick ? "white" : "gray.50"}
+                      bg={isSelected ? "purple.faint" : canPick ? "bg.panel" : "gray.faint"}
                       opacity={canPick ? 1 : 0.55}
                       cursor={canPick ? "pointer" : "not-allowed"}
                       onClick={() => canPick && onSelect(c.id)}
                       textAlign="left"
-                      _hover={canPick ? { borderColor: "purple.300" } : {}}
+                      _hover={canPick ? { borderColor: "purple.emphasized" } : {}}
                     >
                       <HStack gap={2} align="start" wrap="wrap">
                         <VStack align="start" gap={0.5} flex="1" minW={0}>

@@ -137,7 +137,7 @@ function AddonFields({
         <VStack align="stretch" gap={2.5} p={2.5}>
           <Box>
             <Text fontSize="xs" fontWeight="medium" mb={1}>
-              Service type <Text as="span" color="red.solid">*</Text>
+              Service type <Text as="span" color="red.fg">*</Text>
             </Text>
             <Box display="flex" gap="4px" flexWrap="wrap">
               {serviceTypes.map((t) => (
@@ -171,7 +171,7 @@ function AddonFields({
           )}
           <Box>
             <Text fontSize="xs" fontWeight="medium" mb={1}>
-              Amount <Text as="span" color="red.solid">*</Text>
+              Amount <Text as="span" color="red.fg">*</Text>
             </Text>
             <CurrencyInput value={price} onChange={setPrice} size="sm" />
             <HStack gap={2} mt={1.5} wrap="wrap">
@@ -411,19 +411,19 @@ export default function AddAddonDialog({
                 {list.length > 0 && (
                   <Box
                     p={2}
-                    bg="green.50"
+                    bg="green.faint"
                     borderWidth="1px"
-                    borderColor="green.200"
+                    borderColor="green.emphasized"
                     borderRadius="md"
                   >
                     <HStack justify="space-between" align="baseline" mb={1.5}>
-                      <Text fontSize="xs" fontWeight="semibold" color="green.800">
+                      <Text fontSize="xs" fontWeight="semibold" color="green.fg">
                         On this visit
                       </Text>
                       <Text
                         fontSize="xs"
                         fontWeight="semibold"
-                        color="green.800"
+                        color="green.fg"
                         fontVariantNumeric="tabular-nums"
                       >
                         +${list.reduce((t, a) => t + (a.price ?? 0), 0).toFixed(2)}
@@ -541,28 +541,28 @@ export default function AddAddonDialog({
                     entirely on the margin and fee settings. Copy that promises
                     the crew the whole amount is a promise the engine does not
                     keep. */}
-                <Box p={2} bg="blue.50" borderWidth="1px" borderLeftWidth="3px" borderColor="blue.200" borderRadius="md">
-                  <Text fontSize="xs" color="blue.800">
+                <Box p={2} bg="blue.faint" borderWidth="1px" borderLeftWidth="3px" borderColor="blue.emphasized" borderRadius="md">
+                  <Text fontSize="xs" color="blue.fg">
                     A service is <Text as="span" fontWeight="semibold">work</Text>, so it goes
                     on the client&rsquo;s invoice <Text as="span" fontWeight="semibold">and into
                     the crew&rsquo;s pool</Text> &mdash; unlike a charge, which is billed on
                     top and leaves the pool alone.
                   </Text>
-                    <Text fontSize="xs" color="blue.800" mt={1}>
+                    <Text fontSize="xs" color="blue.fg" mt={1}>
                       How much of that pool reaches each person depends on your margin
                       and fee settings &mdash; a service raises the pool, it isn&rsquo;t
                       handed over dollar-for-dollar.
                     </Text>
-                  <Text fontSize="xs" color="blue.800" mt={1}>
+                  <Text fontSize="xs" color="blue.fg" mt={1}>
                     This is also the only place a service comes off a visit &mdash; the
                     job card lists them, it doesn&rsquo;t change them.
                   </Text>
-                  <Box borderTopWidth="1px" borderColor="blue.200" mt={1.5} pt={1.5}>
-                    <Text fontSize="xs" color="blue.800">
+                  <Box borderTopWidth="1px" borderColor="blue.emphasized" mt={1.5} pt={1.5}>
+                    <Text fontSize="xs" color="blue.fg">
                       <Text as="span" fontWeight="semibold">Did you buy a thing?</Text>{" "}
                       Add Charge. Billed on top, pool unchanged.
                     </Text>
-                    <Text fontSize="xs" color="blue.800">
+                    <Text fontSize="xs" color="blue.fg">
                       <Text as="span" fontWeight="semibold">Did someone do work?</Text>{" "}
                       Add Service. Billed on top, <Text as="span" fontWeight="semibold">and it
                       raises the crew&rsquo;s pool</Text>.

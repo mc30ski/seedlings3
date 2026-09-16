@@ -69,17 +69,17 @@ export default function HomeBanners({ disabled }: { disabled?: boolean }) {
   return (
     <VStack align="stretch" gap={2}>
       {banners.map((b) => (
-        <Card.Root key={b.id} variant="outline" bg="blue.50" borderColor="blue.300" borderWidth="1px">
+        <Card.Root key={b.id} variant="outline" bg="blue.faint" borderColor="blue.emphasized" borderWidth="1px">
           <Card.Body p={3}>
             <HStack align="start" gap={3}>
-              <Box flexShrink={0} color="blue.600" mt="2px"><Megaphone size={16} /></Box>
+              <Box flexShrink={0} color="blue.fg" mt="2px"><Megaphone size={16} /></Box>
               <VStack align="start" gap={0} flex="1" minW={0}>
                 {b.title && (
-                  <Text fontSize="sm" fontWeight="semibold" color="blue.900">{b.title}</Text>
+                  <Text fontSize="sm" fontWeight="semibold" color="blue.fg">{b.title}</Text>
                 )}
-                <Text fontSize="sm" color="blue.900" whiteSpace="pre-wrap">{b.body}</Text>
+                <Text fontSize="sm" color="blue.fg" whiteSpace="pre-wrap">{b.body}</Text>
                 {b.createdBy?.displayName && (
-                  <Text fontSize="xs" color="blue.700" mt={1}>
+                  <Text fontSize="xs" color="blue.fg" mt={1}>
                     — {b.createdBy.displayName}
                   </Text>
                 )}

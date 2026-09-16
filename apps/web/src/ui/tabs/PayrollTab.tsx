@@ -355,8 +355,8 @@ export default function PayrollTab({
               px={1.5}
               py={0.5}
               rounded="sm"
-              bg="orange.100"
-              color="orange.800"
+              bg="orange.subtle"
+              color="orange.fg"
               fontSize="2xs"
               fontWeight="bold"
               letterSpacing="wide"
@@ -391,18 +391,18 @@ export default function PayrollTab({
       {!showAdminExtras && !isOwner && (
         <Box
           p={3}
-          bg="blue.50"
+          bg="blue.faint"
           borderWidth="1px"
-          borderColor="blue.300"
+          borderColor="blue.emphasized"
           borderLeftWidth="4px"
-          borderLeftColor="blue.400"
+          borderLeftColor="blue.strong"
           rounded="md"
         >
           <HStack gap={2} align="start">
-            <Box color="blue.600" flexShrink={0} mt="1px">
+            <Box color="blue.fg" flexShrink={0} mt="1px">
               <FiInfo />
             </Box>
-            <Text fontSize="sm" color="blue.900" lineHeight="1.45">
+            <Text fontSize="sm" color="blue.fg" lineHeight="1.45">
               <Text as="span" fontWeight="bold">
                 These are actual amounts paid.
               </Text>{" "}
@@ -416,8 +416,8 @@ export default function PayrollTab({
       {/* Worker-facing pending-match notice. The Super sees the same
           situation as a review queue below; this is the worker's half. */}
       {!showAdminExtras && pending.affected && (
-        <Box p={2} bg="orange.50" borderWidth="1px" borderColor="orange.300" rounded="md">
-          <Text fontSize="xs" color="orange.900">
+        <Box p={2} bg="orange.faint" borderWidth="1px" borderColor="orange.emphasized" rounded="md">
+          <Text fontSize="xs" color="orange.fg">
             A pay period{pending.payDay ? ` from ${fmtDateKey(pending.payDay)}` : ""} hasn&apos;t
             been matched to an account yet. If it&apos;s yours, ask your admin to match it —
             payroll is matched by name, so a name change can leave it unlinked.
@@ -513,7 +513,7 @@ export default function PayrollTab({
                 <Text fontSize="2xs" color="fg.muted" textTransform="uppercase" letterSpacing="wide">
                   {showAdminExtras ? "Team net" : "Net"}
                 </Text>
-                <Text fontSize="sm" fontWeight="bold" color="green.700" fontVariantNumeric="tabular-nums">
+                <Text fontSize="sm" fontWeight="bold" color="green.fg" fontVariantNumeric="tabular-nums">
                   {fmtPayrollMoney(rangeTotals.netPay)}
                 </Text>
               </VStack>
@@ -537,7 +537,7 @@ export default function PayrollTab({
                   <Text fontSize="2xs" color="fg.muted" textTransform="uppercase" letterSpacing="wide">
                     Tips
                   </Text>
-                  <Text fontSize="sm" fontWeight="bold" fontVariantNumeric="tabular-nums" color="teal.700">
+                  <Text fontSize="sm" fontWeight="bold" fontVariantNumeric="tabular-nums" color="teal.fg">
                     {fmtPayrollMoney(rangeTotals.paycheckTips)}
                   </Text>
                   <Text fontSize="2xs" color="fg.muted">of gross</Text>
@@ -557,7 +557,7 @@ export default function PayrollTab({
                   <Text
                     fontSize="sm"
                     fontWeight="bold"
-                    color="purple.700"
+                    color="purple.fg"
                     fontVariantNumeric="tabular-nums"
                   >
                     {fmtPayrollMoney(teamTotals.employerCost)}
@@ -612,7 +612,7 @@ export default function PayrollTab({
           {shown.map((p) => {
             const isOpen = openId === p.id;
             return (
-              <Card.Root key={p.id} variant="outline" borderColor={isOpen ? "green.300" : undefined}>
+              <Card.Root key={p.id} variant="outline" borderColor={isOpen ? "green.emphasized" : undefined}>
                 <Card.Body p={3}>
                   <HStack
                     justify="space-between"
@@ -676,7 +676,7 @@ export default function PayrollTab({
                             <Text
                               fontSize="sm"
                               fontWeight="bold"
-                              color="green.700"
+                              color="green.fg"
                               fontVariantNumeric="tabular-nums"
                             >
                               {fmtPayrollMoney(
@@ -716,7 +716,7 @@ export default function PayrollTab({
                                 <Text
                                   fontSize="xs"
                                   fontWeight="medium"
-                                  color="teal.700"
+                                  color="teal.fg"
                                   fontVariantNumeric="tabular-nums"
                                 >
                                   {fmtPayrollMoney(tips)}
@@ -737,7 +737,7 @@ export default function PayrollTab({
                               <Text
                                 fontSize="xs"
                                 fontWeight="medium"
-                                color="purple.700"
+                                color="purple.fg"
                                 fontVariantNumeric="tabular-nums"
                               >
                                 {fmtPayrollMoney(p.teamTotals.employerCost)}
@@ -881,11 +881,11 @@ function PeriodDetail({
   return (
     <VStack align="stretch" gap={3}>
       {et && (
-        <Box borderWidth="1px" borderColor="purple.200" bg="purple.50" rounded="md" p={3}>
+        <Box borderWidth="1px" borderColor="purple.emphasized" bg="purple.faint" rounded="md" p={3}>
           <Text
             fontSize="2xs"
             fontWeight="bold"
-            color="purple.700"
+            color="purple.fg"
             mb={2}
             letterSpacing="wide"
           >
@@ -902,10 +902,10 @@ function PeriodDetail({
               label="Total cost"
               value={fmtPayrollMoney(et.employerCost)}
               emphasis
-              tone="purple.700"
+              tone="purple.fg"
             />
           </SimpleGrid>
-          <Text fontSize="2xs" color="purple.600" mt={2}>
+          <Text fontSize="2xs" color="purple.fg" mt={2}>
             {/* Says out loud what the number is made of, so nobody has to
                 reverse-engineer whether wages are included. */}
             Gross wages plus the employer&apos;s share of taxes. Actuals from Gusto — unrelated
@@ -947,7 +947,7 @@ function EntryRow({
     v.employerCost != null || v.employerTaxes != null || v.socialSecurityEmployer != null;
 
   return (
-    <Box borderWidth="1px" borderColor="gray.200" rounded="md" p={3}>
+    <Box borderWidth="1px" borderColor="gray.emphasized" rounded="md" p={3}>
       <HStack justify="space-between" align="start" gap={2} mb={2}>
         <VStack align="start" gap={0} minW={0}>
           <Text fontSize="sm" fontWeight="semibold">
@@ -1014,7 +1014,7 @@ function EntryRow({
       {showSuperExtras && hasEmployerDetail && (
         <>
           <Separator my={3} />
-          <Text fontSize="2xs" fontWeight="bold" color="purple.600" mb={1} letterSpacing="wide">
+          <Text fontSize="2xs" fontWeight="bold" color="purple.fg" mb={1} letterSpacing="wide">
             EMPLOYER COST
           </Text>
           <SimpleGrid columns={{ base: 2, md: 3 }} gap={2}>
@@ -1030,7 +1030,7 @@ function EntryRow({
               label="Total cost"
               value={fmtPayrollMoney(v.employerCost)}
               emphasis
-              tone="purple.700"
+              tone="purple.fg"
             />
           </SimpleGrid>
         </>
@@ -1059,7 +1059,7 @@ function Figure({
       <Text
         fontSize={emphasis ? "sm" : "xs"}
         fontWeight={emphasis ? "bold" : "medium"}
-        color={tone ?? (emphasis ? "green.700" : undefined)}
+        color={tone ?? (emphasis ? "green.fg" : undefined)}
         fontVariantNumeric="tabular-nums"
       >
         {value}

@@ -180,7 +180,7 @@ function Lever({
               as="button"
               aria-label={`What does "${label}" do?`}
               onClick={() => setShowInfo((v) => !v)}
-              color={showInfo ? "blue.solid" : "fg.muted"}
+              color={showInfo ? "blue.fg" : "fg.muted"}
               display="inline-flex"
               flexShrink={0}
               _hover={{ color: "blue.solid" }}
@@ -698,7 +698,7 @@ export default function ForecastTab() {
               {PRESETS.find((p) => p.key === presetKey)?.label ?? "Custom dates"}
               {" "}
               <Box as="span" display="inline-flex" alignItems="center" justifyContent="center"
-                   w="14px" h="14px" borderRadius="full" bg="green.500" color="white"
+                   w="14px" h="14px" borderRadius="full" bg="green.solid" color="green.contrast"
                    verticalAlign="middle">
                 <ChevronDown size={9} />
               </Box>
@@ -743,7 +743,7 @@ export default function ForecastTab() {
             {data.baseline.jobs.length} paid jobs · {sq.totalClockedHours.toFixed(0)}h clocked ·
             replaying today's settings lands within{" "}
             <Text as="span" fontWeight="semibold"
-                  color={data.backtest.differencePercent < 10 ? "green.solid" : "orange.solid"}>
+                  color={data.backtest.differencePercent < 10 ? "green.fg" : "orange.fg"}>
               {data.backtest.differencePercent}%
             </Text>{" "}
             of the books

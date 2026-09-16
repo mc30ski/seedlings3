@@ -95,7 +95,7 @@ export default function PayrollIdentityReview({
     // "N names need matching" heading moved there; the explanation below
     // stays, because it is the part that says WHY it matters.
     <Box>
-      <Text fontSize="xs" color="orange.900" mb={3}>
+      <Text fontSize="xs" color="orange.fg" mb={3}>
         Gusto&apos;s export doesn&apos;t identify people beyond their name. Until you confirm who
         each one is, <strong>that worker can&apos;t see their pay</strong>. Confirming applies to
         their whole history, not just the latest period.
@@ -116,9 +116,9 @@ export default function PayrollIdentityReview({
               data-name={`${n.firstName} ${n.lastName}`}
               gap={2}
               wrap="wrap"
-              bg="white"
+              bg="bg.panel"
               borderWidth="1px"
-              borderColor="orange.200"
+              borderColor="orange.emphasized"
               rounded="md"
               p={2}
             >

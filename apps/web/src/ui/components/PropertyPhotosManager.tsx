@@ -123,13 +123,13 @@ export default function PropertyPhotosManager({ propertyId, readOnly }: Props) {
   if (loading) return <HStack gap={2} py={2}><Spinner size="sm" /><Text fontSize="xs" color="fg.muted">Loading photos...</Text></HStack>;
 
   return (
-    <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" overflow="hidden">
+    <Box borderWidth="1px" borderColor="gray.emphasized" borderRadius="md" overflow="hidden">
       <HStack
         px={3} py={2}
         cursor="pointer"
         onClick={() => setExpanded((v) => !v)}
         justify="space-between"
-        bg="gray.50"
+        bg="gray.faint"
       >
         <HStack gap={1.5} fontSize="xs" fontWeight="semibold" color="fg.muted">
           <Camera size={14} />
@@ -161,7 +161,7 @@ export default function PropertyPhotosManager({ propertyId, readOnly }: Props) {
 
       {expanded && <VStack align="stretch" gap={2} p={2}>
         {photos.map((photo, idx) => (
-          <HStack key={photo.id} gap={3} p={2} borderWidth="1px" borderColor="gray.200" borderRadius="md" align="start">
+          <HStack key={photo.id} gap={3} p={2} borderWidth="1px" borderColor="gray.emphasized" borderRadius="md" align="start">
             <Box
               flexShrink={0}
               w="80px"
@@ -199,7 +199,7 @@ export default function PropertyPhotosManager({ propertyId, readOnly }: Props) {
                     color={photo.description ? "fg.default" : "fg.muted"}
                     fontStyle={photo.description ? "normal" : "italic"}
                     cursor={readOnly ? undefined : "pointer"}
-                    _hover={readOnly ? undefined : { color: "blue.500" }}
+                    _hover={readOnly ? undefined : { color: "blue.fg" }}
                     onClick={readOnly ? undefined : () => { setEditingId(photo.id); setEditDesc(photo.description ?? ""); }}
                   >
                     {photo.description || (readOnly ? "No description" : "Click to add description…")}

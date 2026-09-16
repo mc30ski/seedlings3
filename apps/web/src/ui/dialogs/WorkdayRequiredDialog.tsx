@@ -241,16 +241,16 @@ function WorkdayRequiredDialog({
                   </Text>
                   <Box
                     p={3}
-                    bg="orange.50"
+                    bg="orange.faint"
                     borderWidth="1px"
-                    borderColor="orange.300"
+                    borderColor="orange.emphasized"
                     borderRadius="md"
                   >
                     <HStack gap={2} align="start">
-                      <Box color="orange.600" flexShrink={0} mt="2px">
+                      <Box color="orange.fg" flexShrink={0} mt="2px">
                         <AlertTriangle size={16} />
                       </Box>
-                      <Text fontSize="xs" color="orange.900">
+                      <Text fontSize="xs" color="orange.fg">
                         Past workdays don't auto-close — they need an end time so your hours
                         for that day are recorded correctly.
                       </Text>
@@ -333,17 +333,17 @@ function WorkdayRequiredDialog({
                 mt={2}
                 mb={1}
                 p={2}
-                bg="red.50"
+                bg="red.faint"
                 borderWidth="1px"
-                borderColor="red.300"
+                borderColor="red.emphasized"
                 borderRadius="md"
                 role="alert"
               >
                 <HStack gap={2} align="start">
-                  <Box color="red.600" flexShrink={0} mt="2px">
+                  <Box color="red.fg" flexShrink={0} mt="2px">
                     <AlertTriangle size={14} />
                   </Box>
-                  <Text fontSize="sm" color="red.900" flex="1">
+                  <Text fontSize="sm" color="red.fg" flex="1">
                     {error}
                   </Text>
                   <Button
@@ -457,9 +457,9 @@ function TeamWorkdayRequiredDialog({
                 </Text>
                 <Box
                   p={3}
-                  bg="orange.50"
+                  bg="orange.faint"
                   borderWidth="1px"
-                  borderColor="orange.200"
+                  borderColor="orange.emphasized"
                   rounded="md"
                 >
                   <VStack align="stretch" gap={1.5}>
@@ -472,7 +472,7 @@ function TeamWorkdayRequiredDialog({
                           bg="orange.400"
                           flexShrink={0}
                         />
-                        <Text fontSize="sm" fontWeight="medium" color="orange.900">
+                        <Text fontSize="sm" fontWeight="medium" color="orange.fg">
                           {t.name}
                         </Text>
                       </HStack>

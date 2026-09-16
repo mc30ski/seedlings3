@@ -189,7 +189,7 @@ function CardActionBands(props: {
               busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
           )}
           {showTraineeHint && (
-            <HStack gap={1} fontSize="xs" color="gray.500"><AlertTriangle size={12} /><Text>Trainees cannot reserve equipment</Text></HStack>
+            <HStack gap={1} fontSize="xs" color="gray.fg"><AlertTriangle size={12} /><Text>Trainees cannot reserve equipment</Text></HStack>
           )}
         </HStack>
       )}
@@ -775,9 +775,9 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
             />
             <VStack
               position="fixed"
-              bg="white"
+              bg="bg.panel"
               borderWidth="1px"
-              borderColor="gray.200"
+              borderColor="gray.emphasized"
               rounded="md"
               shadow="lg"
               zIndex={10000}
@@ -1471,7 +1471,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
 
       return (
         <Box pt="2">
-          <Badge bg={groupName ? "purple.100" : "gray.100"}>{str}</Badge>
+          <Badge bg={groupName ? "purple.subtle" : "gray.subtle"}>{str}</Badge>
         </Box>
       );
     } else {
@@ -1624,7 +1624,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                 mb={1}
                 h="20px"
                 fontWeight="semibold"
-                color="gray.600"
+                color="gray.fg"
                 aria-expanded={open}
                 aria-controls="item-details"
               >
@@ -1654,7 +1654,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                   style={{ rowGap: "0.25rem" }}
                 >
                   {item.longDesc && (
-                    <Text fontSize="xs" color="gray.500" mt={1}>
+                    <Text fontSize="xs" color="gray.fg" mt={1}>
                       <Text as="span" fontWeight="bold">
                         Description:{" "}
                       </Text>
@@ -1662,7 +1662,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                     </Text>
                   )}
                   {item.features && (
-                    <Text fontSize="xs" color="gray.500" mt={1}>
+                    <Text fontSize="xs" color="gray.fg" mt={1}>
                       <Text as="span" fontWeight="bold">
                         Features:{" "}
                       </Text>
@@ -1670,7 +1670,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                     </Text>
                   )}
                   {item.condition && (
-                    <Text fontSize="xs" color="gray.500" mt={1}>
+                    <Text fontSize="xs" color="gray.fg" mt={1}>
                       <Text as="span" fontWeight="bold">
                         Condition:{" "}
                       </Text>
@@ -1678,7 +1678,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                     </Text>
                   )}
                   {item.issues && (
-                    <Text fontSize="xs" color="gray.500" mt={1}>
+                    <Text fontSize="xs" color="gray.fg" mt={1}>
                       <Text as="span" fontWeight="bold">
                         Issues:{" "}
                       </Text>
@@ -1686,7 +1686,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                     </Text>
                   )}
                   {item.age && (
-                    <Text fontSize="xs" color="gray.500" mt={1}>
+                    <Text fontSize="xs" color="gray.fg" mt={1}>
                       <Text as="span" fontWeight="bold">
                         Age:{" "}
                       </Text>
@@ -1817,7 +1817,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
           disabled={isRefreshing}
           px="2"
           flexShrink={0}
-          css={{ background: "var(--chakra-colors-gray-100)" }}
+          css={{ background: "var(--chakra-colors-gray-subtle)" }}
           title="Refresh all sections"
         >
           <Box css={isRefreshing ? { animation: "seedlings-spin 0.9s linear infinite" } : undefined}>
@@ -1831,7 +1831,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
           flexShrink={0}
           onClick={() => setScanSearchOpen(true)}
           title="Scan a QR code to find equipment"
-          css={{ background: "var(--chakra-colors-gray-100)" }}
+          css={{ background: "var(--chakra-colors-gray-subtle)" }}
         >
           <ScanLine size={14} />
         </Button>
@@ -1882,9 +1882,9 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
         const isGroup = !!activeGroup;
         // Unselected state shouts louder than the made-a-choice states so
         // workers don't accidentally hit Reserve without picking a scope.
-        const bg = isUnset ? "yellow.50" : isGroup ? "purple.100" : "blue.50";
-        const borderColor = isUnset ? "yellow.400" : isGroup ? "purple.400" : "blue.300";
-        const headerColor = isUnset ? "yellow.900" : isGroup ? "purple.900" : "blue.900";
+        const bg = isUnset ? "yellow.faint" : isGroup ? "purple.subtle" : "blue.faint";
+        const borderColor = isUnset ? "yellow.strong" : isGroup ? "purple.strong" : "blue.emphasized";
+        const headerColor = isUnset ? "yellow.fg" : isGroup ? "purple.fg" : "blue.fg";
         return (
           <Box mb={3} p={3} bg={bg} borderWidth="2px" borderColor={borderColor} borderRadius="md">
             <HStack gap={2} mb={2} align="center">
@@ -1931,12 +1931,12 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
               })}
             </HStack>
             {isGroup && (
-              <Text fontSize="xs" color="purple.800" mt={2}>
+              <Text fontSize="xs" color="purple.fg" mt={2}>
                 Cost will be split among {activeGroup!.members.length + 1} workers on release.
               </Text>
             )}
             {isUnset && (
-              <Text fontSize="xs" color="yellow.900" mt={2}>
+              <Text fontSize="xs" color="yellow.fg" mt={2}>
                 You'll be asked to pick when you tap Reserve.
               </Text>
             )}
@@ -1971,7 +1971,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
           `/api/admin/equipment-usage` endpoint that returns every
           worker's checkouts) and unlocks the Person group-by. */}
       {showAdminExtras && (
-        <Box mt={3} borderWidth="1px" borderColor="gray.300" borderRadius="md" p={3}>
+        <Box mt={3} borderWidth="1px" borderColor="gray.emphasized" borderRadius="md" p={3}>
           <HStack
             gap={2}
             align="center"
@@ -1981,10 +1981,10 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
             _hover={{ opacity: 0.7 }}
           >
             <Users size={14} color="var(--chakra-colors-gray-600)" />
-            <Text fontSize="sm" fontWeight="bold" color="gray.600" textTransform="uppercase" letterSpacing="wide">
+            <Text fontSize="sm" fontWeight="bold" color="gray.fg" textTransform="uppercase" letterSpacing="wide">
               Team Usage
             </Text>
-            <Text fontSize="xs" color="gray.400">{teamUsageCollapsed ? "▶" : "▼"}</Text>
+            <Text fontSize="xs" color="fg.muted">{teamUsageCollapsed ? "▶" : "▼"}</Text>
           </HStack>
           {!teamUsageCollapsed && <UsageBreakdown purpose="SUPER" />}
         </Box>
@@ -1994,7 +1994,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
           the caller's own history alongside everyone else's under
           Person group-by). Collapsed by default. */}
       {showWorkerExtras && !showAdminExtras && (
-        <Box mt={3} borderWidth="1px" borderColor="gray.300" borderRadius="md" p={3}>
+        <Box mt={3} borderWidth="1px" borderColor="gray.emphasized" borderRadius="md" p={3}>
           <HStack
             gap={2}
             align="center"
@@ -2004,16 +2004,16 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
             _hover={{ opacity: 0.7 }}
           >
             <User size={14} color="var(--chakra-colors-gray-600)" />
-            <Text fontSize="sm" fontWeight="bold" color="gray.600" textTransform="uppercase" letterSpacing="wide">
+            <Text fontSize="sm" fontWeight="bold" color="gray.fg" textTransform="uppercase" letterSpacing="wide">
               Your Usage
             </Text>
-            <Text fontSize="xs" color="gray.400">{usageCollapsed ? "▶" : "▼"}</Text>
+            <Text fontSize="xs" color="fg.muted">{usageCollapsed ? "▶" : "▼"}</Text>
           </HStack>
           {!usageCollapsed && <UsageBreakdown purpose="WORKER" />}
         </Box>
       )}
       {collections.length > 0 && (
-        <Box mt={3} borderWidth="1px" borderColor="gray.300" borderRadius="md" p={3}>
+        <Box mt={3} borderWidth="1px" borderColor="gray.emphasized" borderRadius="md" p={3}>
           <HStack gap={2} align="center" mb={collectionsCollapsed ? 0 : 2}>
             <HStack
               gap={2}
@@ -2023,9 +2023,9 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
               _hover={{ opacity: 0.7 }}
             >
               <Package size={14} color="var(--chakra-colors-gray-600)" />
-              <Text fontSize="sm" fontWeight="bold" color="gray.600" textTransform="uppercase" letterSpacing="wide">Collections</Text>
+              <Text fontSize="sm" fontWeight="bold" color="gray.fg" textTransform="uppercase" letterSpacing="wide">Collections</Text>
               <Badge size="sm" colorPalette="gray" variant="subtle" borderRadius="full" px="1.5" fontSize="2xs">{collections.length}</Badge>
-              <Text fontSize="xs" color="gray.400">{collectionsCollapsed ? "▶" : "▼"}</Text>
+              <Text fontSize="xs" color="fg.muted">{collectionsCollapsed ? "▶" : "▼"}</Text>
             </HStack>
             {showAdminExtras && (
               <Badge
@@ -2069,7 +2069,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                   <Card.Root
                     key={c.id}
                     variant="outline"
-                    borderColor={highlightCollectionId === c.id ? "purple.500" : (allAvail ? "green.300" : someAvail ? "yellow.300" : "gray.300")}
+                    borderColor={highlightCollectionId === c.id ? "purple.500" : (allAvail ? "green.emphasized" : someAvail ? "yellow.emphasized" : "gray.emphasized")}
                     borderWidth={highlightCollectionId === c.id ? "2px" : "1px"}
                     style={highlightCollectionId === c.id ? { animation: "seedlings-pulse 2.5s ease-in-out infinite" } : undefined}
                   >
@@ -2120,7 +2120,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                         </HStack>
                       </HStack>
                       {isExpanded && (
-                        <VStack align="stretch" gap={1.5} mt={2} pt={2} borderTopWidth="1px" borderColor="gray.200">
+                        <VStack align="stretch" gap={1.5} mt={2} pt={2} borderTopWidth="1px" borderColor="gray.emphasized">
                           {c.description ? (
                             <Text fontSize="xs" color="fg.muted">{c.description}</Text>
                           ) : (
@@ -2175,7 +2175,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
         </Box>
       )}
 
-      <Box position="relative" mt={3} borderWidth="1px" borderColor="gray.300" borderRadius="md" p={3}>
+      <Box position="relative" mt={3} borderWidth="1px" borderColor="gray.emphasized" borderRadius="md" p={3}>
         {loading && items.length > 0 && (<>
           <Box position="absolute" inset="0" bg="bg/80" zIndex="1" />
           <Box position="fixed" top="50%" left="50%" transform="translate(-50%, -50%)" zIndex="2">
@@ -2191,9 +2191,9 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
         _hover={{ opacity: 0.7 }}
       >
         <LayoutGrid size={14} color="var(--chakra-colors-gray-600)" />
-        <Text fontSize="sm" fontWeight="bold" color="gray.600" textTransform="uppercase" letterSpacing="wide">Equipment</Text>
+        <Text fontSize="sm" fontWeight="bold" color="gray.fg" textTransform="uppercase" letterSpacing="wide">Equipment</Text>
         <Badge size="sm" colorPalette="gray" variant="subtle" borderRadius="full" px="1.5" fontSize="2xs">{filtered.length}</Badge>
-        <Text fontSize="xs" color="gray.400">{equipmentCollapsed ? "▶" : "▼"}</Text>
+        <Text fontSize="xs" color="fg.muted">{equipmentCollapsed ? "▶" : "▼"}</Text>
       </HStack>
       {!equipmentCollapsed && (
       <VStack align="stretch" gap={3}>
@@ -2250,8 +2250,8 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
             flexShrink={0}
             onClick={() => { setCompact((v) => !v); setExpandedCards(new Set()); }}
             css={{
-              background: !compact ? "var(--chakra-colors-gray-200)" : "var(--chakra-colors-gray-100)",
-              color: !compact ? "var(--chakra-colors-gray-700)" : undefined,
+              background: !compact ? "var(--chakra-colors-gray-muted)" : "var(--chakra-colors-gray-subtle)",
+              color: !compact ? "var(--chakra-colors-gray-fg)" : undefined,
             }}
             title={compact ? "Expand all cards" : "Collapse all cards"}
           >
@@ -2266,7 +2266,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
             css={{ width: "auto", flex: "0 0 auto" }}
           >
             <Select.Control>
-              <Select.Trigger w="auto" minW="0" px="2" css={{ background: kind[0] !== "ALL" ? "var(--chakra-colors-blue-200)" : "var(--chakra-colors-blue-100)", border: kind[0] !== "ALL" ? "1px solid var(--chakra-colors-blue-400)" : "1px solid var(--chakra-colors-blue-300)", borderRadius: "6px" }}>
+              <Select.Trigger w="auto" minW="0" px="2" css={{ background: kind[0] !== "ALL" ? "var(--chakra-colors-blue-muted)" : "var(--chakra-colors-blue-subtle)", border: kind[0] !== "ALL" ? "1px solid var(--chakra-colors-blue-strong)" : "1px solid var(--chakra-colors-blue-emphasized)", borderRadius: "6px" }}>
                 <LayoutList size={14} />
                 <Select.Indicator display="none" />
               </Select.Trigger>
@@ -2290,7 +2290,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
             css={{ width: "auto", flex: "0 0 auto" }}
           >
             <Select.Control>
-              <Select.Trigger w="auto" minW="0" px="2" css={{ background: statusFilter[0] !== "ALL" ? "var(--chakra-colors-purple-200)" : "var(--chakra-colors-purple-100)", border: statusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-purple-400)" : "1px solid var(--chakra-colors-purple-300)", borderRadius: "6px" }}>
+              <Select.Trigger w="auto" minW="0" px="2" css={{ background: statusFilter[0] !== "ALL" ? "var(--chakra-colors-purple-muted)" : "var(--chakra-colors-purple-subtle)", border: statusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-purple-strong)" : "1px solid var(--chakra-colors-purple-emphasized)", borderRadius: "6px" }}>
                 <Filter size={14} />
                 <Select.Indicator display="none" />
               </Select.Trigger>
@@ -2313,10 +2313,10 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
               flexShrink={0}
               onClick={() => setLikedOnly(!likedOnly)}
               css={likedOnly ? {
-                background: "var(--chakra-colors-red-100)",
-                color: "var(--chakra-colors-red-600)",
-                border: "1px solid var(--chakra-colors-red-400)",
-                "&:hover": { background: "var(--chakra-colors-red-200)" },
+                background: "var(--chakra-colors-red-subtle)",
+                color: "var(--chakra-colors-red-fg)",
+                border: "1px solid var(--chakra-colors-red-strong)",
+                "&:hover": { background: "var(--chakra-colors-red-muted)" },
               } : undefined}
               title="Show liked only"
             >
@@ -2396,17 +2396,17 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                 })}
                 _hover={{ opacity: 0.7 }}
               >
-                <Box flex="1" borderBottomWidth="2px" borderColor="gray.300" />
+                <Box flex="1" borderBottomWidth="2px" borderColor="gray.emphasized" />
                 <HStack gap={1.5} align="center">
-                  <Text fontSize="sm" fontWeight="bold" color="gray.600" whiteSpace="nowrap" textTransform="uppercase" letterSpacing="wide">
+                  <Text fontSize="sm" fontWeight="bold" color="gray.fg" whiteSpace="nowrap" textTransform="uppercase" letterSpacing="wide">
                     {group.label}
                   </Text>
                   <Badge size="sm" colorPalette="gray" variant="subtle" borderRadius="full" px="1.5" fontSize="2xs" lineHeight="1">
                     {group.items.length}
                   </Badge>
-                  <Text fontSize="xs" color="gray.400">{collapsedGroups.has(group.key) ? "▶" : "▼"}</Text>
+                  <Text fontSize="xs" color="fg.muted">{collapsedGroups.has(group.key) ? "▶" : "▼"}</Text>
                 </HStack>
-                <Box flex="1" borderBottomWidth="2px" borderColor="gray.300" />
+                <Box flex="1" borderBottomWidth="2px" borderColor="gray.emphasized" />
               </HStack>
             )}
             {!collapsedGroups.has(group.key) && <VStack align="stretch" gap={3}>
@@ -2443,19 +2443,19 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
               isCardCompact ? (
                 <Box mx="3" mt="2" mb="0" display="flex" flexWrap="wrap" gap="1">
                   {(e.instructions ?? []).map((inst) => (
-                    <HStack key={inst.id} gap="1.5" px="2" py="1" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
+                    <HStack key={inst.id} gap="1.5" px="2" py="1" bg="yellow.subtle" borderWidth="1px" borderColor="yellow.strong" borderRadius="md">
                       <AlertCircle
                         size={18}
                         color="var(--chakra-colors-yellow-900)"
                         fill="var(--chakra-colors-yellow-400)"
                         strokeWidth={2.5}
                       />
-                      <Text fontSize="xs" fontWeight="semibold" color="yellow.700">{inst.text}</Text>
+                      <Text fontSize="xs" fontWeight="semibold" color="yellow.fg">{inst.text}</Text>
                     </HStack>
                   ))}
                 </Box>
               ) : (
-                <Box mx="3" mt="2" mb="0" px="3" py="1.5" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
+                <Box mx="3" mt="2" mb="0" px="3" py="1.5" bg="yellow.subtle" borderWidth="1px" borderColor="yellow.strong" borderRadius="md">
                   <VStack align="stretch" gap="0.5">
                     {(e.instructions ?? []).map((inst) => (
                       <HStack key={inst.id} gap="1.5" align="center">
@@ -2465,7 +2465,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                           fill="var(--chakra-colors-yellow-400)"
                           strokeWidth={2.5}
                         />
-                        <Text fontSize="xs" fontWeight="semibold" color="yellow.700">
+                        <Text fontSize="xs" fontWeight="semibold" color="yellow.fg">
                           {inst.text}
                         </Text>
                       </HStack>
@@ -2484,7 +2484,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                       {(() => {
                         if (canWorkerReserve(e)) {
                           return (
-                            <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="green.400" color="green.900" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "green.500" }} title="Reserve" onClick={(ev: any) => {
+                            <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="green.400" color="green.fg" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "green.500" }} title="Reserve" onClick={(ev: any) => {
                               ev.stopPropagation();
                               void openReserveConfirm(e);
                             }}><Hand size={12} /></Box>
@@ -2492,7 +2492,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                         }
                         if (canWorkerCheckout(e)) {
                           return (
-                            <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="blue.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "blue.600" }} title="Check Out" onClick={(ev: any) => {
+                            <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="blue.solid" color="blue.contrast" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "blue.600" }} title="Check Out" onClick={(ev: any) => {
                               ev.stopPropagation();
                               setScanFor(e.id);
                             }}><ScanLine size={12} /></Box>
@@ -2500,7 +2500,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                         }
                         if (canWorkerReturn(e)) {
                           return (
-                            <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="orange.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "orange.600" }} title="Return" onClick={(ev: any) => {
+                            <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="orange.solid" color="orange.contrast" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "orange.600" }} title="Return" onClick={(ev: any) => {
                               ev.stopPropagation();
                               setReturnConfirmEquip(e);
                             }}><RotateCcw size={12} /></Box>
@@ -2609,7 +2609,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                 </Box>
                 {e.qrSlug && (
                   <HStack gap={1} mt={0} align="center">
-                    <Text fontSize="xs" color="gray.500">
+                    <Text fontSize="xs" color="gray.fg">
                       <Text as="span" fontWeight="bold">
                         ID:{" "}
                       </Text>
@@ -2618,8 +2618,8 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                     <Box
                       as="button"
                       flexShrink={0}
-                      color="gray.400"
-                      _hover={{ color: "blue.600" }}
+                      color="fg.muted"
+                      _hover={{ color: "blue.fg" }}
                       title="Copy ID"
                       onClick={(ev: any) => {
                         ev.stopPropagation();
@@ -2634,7 +2634,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                   </HStack>
                 )}
                 {e.energy && (
-                  <Text fontSize="xs" color="gray.500" mt={0}>
+                  <Text fontSize="xs" color="gray.fg" mt={0}>
                     <Text as="span" fontWeight="bold">
                       Power:{" "}
                     </Text>
@@ -2670,10 +2670,10 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                     return chip ? (
                       <>
                         <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="2" borderRadius="full">{chip}</Badge>
-                        <Text fontSize="xs" color="orange.500">rental cost</Text>
+                        <Text fontSize="xs" color="orange.fg">rental cost</Text>
                       </>
                     ) : (
-                      <Text fontSize="xs" color="orange.500">No rental cost</Text>
+                      <Text fontSize="xs" color="orange.fg">No rental cost</Text>
                     );
                   })();
                   return (
@@ -2829,13 +2829,13 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
               Reserve the {kitPartialConfirm.available.length} available piece{kitPartialConfirm.available.length === 1 ? "" : "s"}
               {" "}and skip the {kitPartialConfirm.unavailable.length} that {kitPartialConfirm.unavailable.length === 1 ? "isn't" : "aren't"} ready?
             </Text>
-            <Box borderWidth="1px" borderColor="green.300" borderRadius="md" bg="green.50" px={2} py={1.5}>
-              <Text fontSize="xs" color="green.800" fontWeight="semibold" mb={1}>
+            <Box borderWidth="1px" borderColor="green.emphasized" borderRadius="md" bg="green.faint" px={2} py={1.5}>
+              <Text fontSize="xs" color="green.fg" fontWeight="semibold" mb={1}>
                 Will reserve ({kitPartialConfirm.available.length})
               </Text>
               <VStack align="stretch" gap={0.5}>
                 {kitPartialConfirm.available.map((it) => (
-                  <Text key={it.id} fontSize="xs" color="green.900">
+                  <Text key={it.id} fontSize="xs" color="green.fg">
                     • {it.equipment.shortDesc
                         || [it.equipment.brand, it.equipment.model].filter(Boolean).join(" ")
                         || it.equipment.type
@@ -2844,14 +2844,14 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                 ))}
               </VStack>
             </Box>
-            <Box borderWidth="1px" borderColor="yellow.300" borderRadius="md" bg="yellow.50" px={2} py={1.5}>
-              <Text fontSize="xs" color="yellow.900" fontWeight="semibold" mb={1}>
+            <Box borderWidth="1px" borderColor="yellow.emphasized" borderRadius="md" bg="yellow.faint" px={2} py={1.5}>
+              <Text fontSize="xs" color="yellow.fg" fontWeight="semibold" mb={1}>
                 Will skip ({kitPartialConfirm.unavailable.length})
               </Text>
               <VStack align="stretch" gap={0.5}>
                 {kitPartialConfirm.unavailable.map((u) => (
                   <HStack key={u.item.id} gap={2} justify="space-between">
-                    <Text fontSize="xs" color="yellow.900">
+                    <Text fontSize="xs" color="yellow.fg">
                       • {u.item.equipment.shortDesc
                           || [u.item.equipment.brand, u.item.equipment.model].filter(Boolean).join(" ")
                           || u.item.equipment.type
@@ -2979,7 +2979,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
               <Dialog.Body>
                 {reserveConfirmEquip && (
                   <VStack align="stretch" gap={3}>
-                    <Box p={3} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">
+                    <Box p={3} bg="gray.faint" rounded="md" borderWidth="1px" borderColor="gray.emphasized">
                       <Text fontSize="sm" fontWeight="medium">{reserveConfirmEquip.shortDesc}</Text>
                       {(reserveConfirmEquip.brand || reserveConfirmEquip.model) && (
                         <Text fontSize="xs" color="fg.muted">
@@ -3000,19 +3000,19 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                         const isContractor = wt === "CONTRACTOR" || !wt;
                         if (mode.kind !== "free" && isContractor) {
                           return (
-                            <Box mt={1} p={2} bg="orange.50" rounded="md" borderWidth="1px" borderColor="orange.300">
-                              <Text fontSize="sm" color="orange.800" fontWeight="semibold">
+                            <Box mt={1} p={2} bg="orange.faint" rounded="md" borderWidth="1px" borderColor="orange.emphasized">
+                              <Text fontSize="sm" color="orange.fg" fontWeight="semibold">
                                 Rental charge: {shortBillingChip(mode)}
                               </Text>
-                              <Text fontSize="xs" color="orange.700" mt={0.5}>
+                              <Text fontSize="xs" color="orange.fg" mt={0.5}>
                                 {instructiveBillingText(mode)}
                               </Text>
                             </Box>
                           );
                         }
                         return (
-                          <Box mt={1} p={2} bg="green.50" rounded="md">
-                            <Text fontSize="xs" color="green.700" fontWeight="medium">
+                          <Box mt={1} p={2} bg="green.faint" rounded="md">
+                            <Text fontSize="xs" color="green.fg" fontWeight="medium">
                               {wt === "EMPLOYEE" ? "No charge  — equipment covered for employees"
                                 : wt === "TRAINEE" ? "No charge  — equipment covered for employees"
                                 : "No rental charge for this equipment"}
@@ -3116,7 +3116,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                 />
                 {superActionFor && (
                   <VStack align="stretch" gap={3}>
-                    <Box p={3} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">
+                    <Box p={3} bg="gray.faint" rounded="md" borderWidth="1px" borderColor="gray.emphasized">
                       <Text fontSize="sm" fontWeight="medium">
                         {superActionFor.equipment.shortDesc}
                       </Text>
@@ -3164,8 +3164,8 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                         </Box>
                       </>
                     ) : (
-                      <Box p={2} bg="purple.50" rounded="md" borderWidth="1px" borderColor="purple.200">
-                        <Text fontSize="sm" color="purple.800">
+                      <Box p={2} bg="purple.faint" rounded="md" borderWidth="1px" borderColor="purple.emphasized">
+                        <Text fontSize="sm" color="purple.fg">
                           {superActionFor.action === "cancel" && "Cancel "}
                           {superActionFor.action === "checkout" && "Check out "}
                           {superActionFor.action === "return" && "Return "}
@@ -3178,7 +3178,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                           .
                         </Text>
                         {superActionFor.action === "checkout" && (
-                          <Text fontSize="xs" color="purple.700" mt={1}>
+                          <Text fontSize="xs" color="purple.fg" mt={1}>
                             QR scan is bypassed — Super override.
                           </Text>
                         )}
@@ -3471,9 +3471,9 @@ function EquipmentInsightsSection() {
                 In This Window ({data.windowDays} {data.windowDays === 1 ? "day" : "days"})
               </Text>
               <Box display="grid" gridTemplateColumns="repeat(3, 1fr)" gap={2}>
-                <InsightsMetric label="Checkouts" value={String(data.windowCheckouts)} color="blue.600" />
-                <InsightsMetric label="Rental Income" value={fmtMoney(data.windowIncome)} color="green.600" />
-                <InsightsMetric label="Pieces Used" value={`${data.windowDistinctUsed} / ${data.total}`} color="gray.700" />
+                <InsightsMetric label="Checkouts" value={String(data.windowCheckouts)} color="blue.fg" />
+                <InsightsMetric label="Rental Income" value={fmtMoney(data.windowIncome)} color="green.fg" />
+                <InsightsMetric label="Pieces Used" value={`${data.windowDistinctUsed} / ${data.total}`} color="gray.fg" />
               </Box>
 
               {data.leaderboard.length > 0 && (
@@ -3588,7 +3588,7 @@ function EquipmentLeaderboard({
         ) : (
           <Box flex="1" minW={0} />
         )}
-        <HStack gap={0} borderWidth="1px" borderColor="gray.300" borderRadius="md" overflow="hidden" flexShrink={0}>
+        <HStack gap={0} borderWidth="1px" borderColor="gray.emphasized" borderRadius="md" overflow="hidden" flexShrink={0}>
           <Button
             size="xs"
             variant={view === "table" ? "solid" : "ghost"}
@@ -3615,7 +3615,7 @@ function EquipmentLeaderboard({
       {view === "table" && (
         <Card.Root variant="outline">
           <Card.Body py="2" px="0">
-            <HStack px={3} py={1} borderBottomWidth="1px" borderColor="gray.200" fontSize="xs" fontWeight="semibold" color="fg.muted" gap={2}>
+            <HStack px={3} py={1} borderBottomWidth="1px" borderColor="gray.emphasized" fontSize="xs" fontWeight="semibold" color="fg.muted" gap={2}>
               <Text flex="1" minW={0}>Equipment</Text>
               <Text w="55px" textAlign="right">Days</Text>
               <Text w="50px" textAlign="right" display={{ base: "none", sm: "block" }} title="Number of billed jobs across the window (per-job billing)">Jobs</Text>
@@ -3624,8 +3624,8 @@ function EquipmentLeaderboard({
               <Text w="55px" textAlign="right">Util %</Text>
             </HStack>
             {leaderboard.map((e) => (
-              <HStack key={e.id} px={3} py={1.5} borderBottomWidth="1px" borderColor="gray.50" fontSize="xs" gap={2}
-                _hover={{ bg: "gray.50" }}
+              <HStack key={e.id} px={3} py={1.5} borderBottomWidth="1px" borderColor="gray.faint" fontSize="xs" gap={2}
+                _hover={{ bg: "gray.faint" }}
               >
                 <VStack align="start" gap={0} flex="1" minW={0}>
                   <Text fontWeight="medium" truncate>{e.shortDesc ?? "—"}</Text>
@@ -3635,13 +3635,13 @@ function EquipmentLeaderboard({
                     </Text>
                   )}
                 </VStack>
-                <Text w="55px" textAlign="right" color="blue.600" fontWeight="medium">{e.daysOut}</Text>
-                <Text w="50px" textAlign="right" color="teal.600" display={{ base: "none", sm: "block" }}>
+                <Text w="55px" textAlign="right" color="blue.fg" fontWeight="medium">{e.daysOut}</Text>
+                <Text w="50px" textAlign="right" color="teal.fg" display={{ base: "none", sm: "block" }}>
                   {e.jobsBilled != null ? e.jobsBilled : "—"}
                 </Text>
                 <Text w="55px" textAlign="right" color="fg.muted">{e.checkouts}</Text>
-                <Text w="70px" textAlign="right" color="green.600" display={{ base: "none", md: "block" }}>{fmtMoney(e.income)}</Text>
-                <Text w="55px" textAlign="right" color={e.utilizationPct >= 50 ? "green.600" : e.utilizationPct > 0 ? "orange.600" : "fg.muted"}>{e.utilizationPct}%</Text>
+                <Text w="70px" textAlign="right" color="green.fg" display={{ base: "none", md: "block" }}>{fmtMoney(e.income)}</Text>
+                <Text w="55px" textAlign="right" color={e.utilizationPct >= 50 ? "green.fg" : e.utilizationPct > 0 ? "orange.fg" : "fg.muted"}>{e.utilizationPct}%</Text>
               </HStack>
             ))}
           </Card.Body>
@@ -3975,7 +3975,7 @@ function UsageSummaryCard(props: { label: string; value: number; colorPalette?: 
   return (
     <Card.Root variant="outline">
       <Card.Body py="2" px="3">
-        <Text fontSize="xl" fontWeight="bold" color={props.colorPalette ? `${props.colorPalette}.600` : undefined}>
+        <Text fontSize="xl" fontWeight="bold" color={props.colorPalette ? `${props.colorPalette}.fg` : undefined}>
           {props.value}
         </Text>
         <Text fontSize="xs" color="fg.muted">{props.label}</Text>

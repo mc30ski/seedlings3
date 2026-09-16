@@ -279,7 +279,11 @@ test.describe("Tips — payroll surface", () => {
     await page.keyboard.press("Escape");
 
     await page.getByText(/^Worker Payroll/).first().click();
-    await page.waitForTimeout(2500);
+    // Wait for the TABLE, not for a fixed delay. The 2500ms sleep this
+    // replaces was enough on an idle machine and not enough on a loaded one —
+    // it failed once in a full-suite run and passed 3/3 in isolation, which
+    // is a timing tell, not a real regression.
+    await page.getByText("Total Gross").first().waitFor({ state: "visible", timeout: 30_000 });
 
     // Gusto treats tips as a distinct earning type (and cash vs paycheck
     // tips differ), so folding them into Additional Earnings would lose the

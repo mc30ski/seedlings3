@@ -98,11 +98,11 @@ export default function VanityLandingPage({ page, ogTitle, ogDescription, ogImag
         {ogImage && <meta property="og:image" content={ogImage} />}
         <meta name="twitter:card" content={ogImage ? "summary_large_image" : "summary"} />
       </Head>
-      <Box minH="100vh" bg="gray.50" py={{ base: 6, md: 12 }}>
+      <Box minH="100vh" bg="gray.faint" py={{ base: 6, md: 12 }}>
         <Container maxW="2xl">
           <VStack align="stretch" gap={6}>
             {page.imageUrl && (
-              <Box overflow="hidden" borderRadius="lg" borderWidth="1px" borderColor="gray.200" bg="white">
+              <Box overflow="hidden" borderRadius="lg" borderWidth="1px" borderColor="gray.emphasized" bg="white">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={page.imageUrl}
@@ -111,7 +111,7 @@ export default function VanityLandingPage({ page, ogTitle, ogDescription, ogImag
                 />
               </Box>
             )}
-            <VStack align="stretch" gap={4} p={{ base: 4, md: 6 }} bg="white" borderRadius="lg" borderWidth="1px" borderColor="gray.200">
+            <VStack align="stretch" gap={4} p={{ base: 4, md: 6 }} bg="white" borderRadius="lg" borderWidth="1px" borderColor="gray.emphasized">
               {page.headline && (
                 <Heading size={{ base: "lg", md: "xl" }} color="fg.default">
                   {page.headline}

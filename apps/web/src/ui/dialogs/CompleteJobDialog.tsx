@@ -242,7 +242,7 @@ export default function CompleteJobDialog({
                     style={{ width: "100%", padding: "6px 10px", fontSize: "16px", border: "1px solid #ccc", borderRadius: "6px" }}
                   />
                   {endBeforeStart && (
-                    <Text fontSize="xs" color="red.500" mt={1}>End time cannot be before start time.</Text>
+                    <Text fontSize="xs" color="red.fg" mt={1}>End time cannot be before start time.</Text>
                   )}
                 </Box>
                 <Box>
@@ -271,7 +271,7 @@ export default function CompleteJobDialog({
                     </Box>
                   </HStack>
                   {offTooLarge && (
-                    <Text fontSize="xs" color="red.500" mt={1}>Off-the-clock time exceeds the span between start and end.</Text>
+                    <Text fontSize="xs" color="red.fg" mt={1}>Off-the-clock time exceeds the span between start and end.</Text>
                   )}
                   {elapsedMin != null && (
                     <Text fontSize="xs" color="fg.muted" mt={1}>
@@ -284,14 +284,14 @@ export default function CompleteJobDialog({
                 </Text>
 
                 {showDiscrepancyWarning && elapsedMin != null && adjEst != null && (
-                  <Box p={3} bg="orange.50" borderWidth="2px" borderColor="orange.400" rounded="md">
-                    <Text fontSize="sm" fontWeight="semibold" color="orange.800" mb={1}>
+                  <Box p={3} bg="orange.faint" borderWidth="2px" borderColor="orange.strong" rounded="md">
+                    <Text fontSize="sm" fontWeight="semibold" color="orange.fg" mb={1}>
                       ⚠ Time discrepancy: {Math.round(discrepancy * 100)}% {isOver ? "over" : "under"} estimate
                     </Text>
-                    <Text fontSize="xs" color="orange.700">
+                    <Text fontSize="xs" color="orange.fg">
                       Actual: {fmt(elapsedMin)} · Estimate: {fmt(adjEst)}{wc > 1 ? ` (${wc} workers)` : ""}
                     </Text>
-                    <Text fontSize="xs" color="orange.700" mt={1} mb={2}>
+                    <Text fontSize="xs" color="orange.fg" mt={1} mb={2}>
                       You can adjust the completion time above, or confirm below to continue.
                     </Text>
                     <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
@@ -301,7 +301,7 @@ export default function CompleteJobDialog({
                         onChange={(e) => setAcknowledgedDiscrepancy(e.target.checked)}
                         style={{ width: 16, height: 16, cursor: "pointer" }}
                       />
-                      <Text fontSize="sm" color="orange.900" fontWeight="medium">
+                      <Text fontSize="sm" color="orange.fg" fontWeight="medium">
                         I confirm the completion time is correct
                       </Text>
                     </label>
@@ -346,11 +346,11 @@ export default function CompleteJobDialog({
                       ))}
                     </VStack>
                     <HStack justify="space-between" mt={2}>
-                      <Text fontSize="xs" color={splitsValid ? "fg.muted" : "red.600"} fontWeight={splitsValid ? "normal" : "semibold"}>
+                      <Text fontSize="xs" color={splitsValid ? "fg.muted" : "red.fg"} fontWeight={splitsValid ? "normal" : "semibold"}>
                         Total: {splitsSum.toFixed(2)}%
                       </Text>
                       {!splitsValid && (
-                        <Text fontSize="xs" color="red.600">Must total 100%</Text>
+                        <Text fontSize="xs" color="red.fg">Must total 100%</Text>
                       )}
                     </HStack>
                   </Box>
@@ -358,18 +358,18 @@ export default function CompleteJobDialog({
 
                 {/* Summary */}
                 {occurrencePrice != null && (
-                  <Box p={3} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">
+                  <Box p={3} bg="gray.faint" rounded="md" borderWidth="1px" borderColor="gray.emphasized">
                     <HStack justify="space-between" fontSize="sm">
                       <Text>Job Price</Text>
                       <Text fontWeight="medium">${occurrencePrice.toFixed(2)}</Text>
                     </HStack>
                     {totalExpenses > 0 && (
                       <HStack justify="space-between" fontSize="sm">
-                        <Text color="orange.600">Total invoice charges</Text>
-                        <Text color="orange.600">−${totalExpenses.toFixed(2)}</Text>
+                        <Text color="orange.fg">Total invoice charges</Text>
+                        <Text color="orange.fg">−${totalExpenses.toFixed(2)}</Text>
                       </HStack>
                     )}
-                    <Box borderTopWidth="1px" borderColor="gray.300" pt={1} mt={1}>
+                    <Box borderTopWidth="1px" borderColor="gray.emphasized" pt={1} mt={1}>
                       <HStack justify="space-between">
                         <Text fontWeight="bold" fontSize="sm">Net</Text>
                         <Text fontWeight="bold" fontSize="sm">${(occurrencePrice - totalExpenses).toFixed(2)}</Text>
@@ -384,7 +384,7 @@ export default function CompleteJobDialog({
                     <Text fontSize="sm" fontWeight="medium" mb={1}>Invoice charges</Text>
                     <VStack align="stretch" gap={1}>
                       {expenses.map((exp) => (
-                        <Text key={exp.id} fontSize="xs" color="orange.600">
+                        <Text key={exp.id} fontSize="xs" color="orange.fg">
                           −${exp.cost.toFixed(2)} — {exp.description}
                         </Text>
                       ))}

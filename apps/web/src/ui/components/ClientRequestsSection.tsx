@@ -301,8 +301,8 @@ export default function ClientRequestsSection({
             <Card.Root
               key={row.id}
               variant="outline"
-              borderColor={row.kind === "RESCHEDULE" ? "orange.300" : "purple.300"}
-              bg={row.kind === "RESCHEDULE" ? "orange.50" : "purple.50"}
+              borderColor={row.kind === "RESCHEDULE" ? "orange.emphasized" : "purple.emphasized"}
+              bg={row.kind === "RESCHEDULE" ? "orange.faint" : "purple.faint"}
             >
               <Card.Body p={3}>
                 <VStack align="stretch" gap={2}>
@@ -341,14 +341,14 @@ export default function ClientRequestsSection({
                       Scheduled: {fmtDateWithWeekdayShort(row.occurrence.startAt)}
                     </Text>
                     {row.kind === "RESCHEDULE" && row.proposedStartAt && (
-                      <Text fontSize="xs" color="orange.700" fontWeight="medium">
+                      <Text fontSize="xs" color="orange.fg" fontWeight="medium">
                         Client suggested: {fmtDateWithWeekdayShort(row.proposedStartAt)}
                       </Text>
                     )}
                   </Box>
 
                   {row.comment && (
-                    <Box p={2} bg="white" borderWidth="1px" borderColor="gray.200" rounded="md">
+                    <Box p={2} bg="bg.panel" borderWidth="1px" borderColor="gray.emphasized" rounded="md">
                       <Text fontSize="xs" color="fg.muted" mb={0.5}>Client said:</Text>
                       <Text fontSize="sm">&ldquo;{row.comment}&rdquo;</Text>
                     </Box>
@@ -360,19 +360,19 @@ export default function ClientRequestsSection({
                       <Text fontSize="xs" color="fg.muted" mb={1}>Reach out to {contact?.firstName ?? "client"}:</Text>
                       <HStack gap={1.5} wrap="wrap">
                         {openSms && (
-                          <Button size="xs" variant="outline" colorPalette="orange" _hover={{ bg: "orange.100" }} onClick={() => void openSms()}>
+                          <Button size="xs" variant="outline" colorPalette="orange" _hover={{ bg: "orange.subtle" }} onClick={() => void openSms()}>
                             <Mail size={12} /> Text
                           </Button>
                         )}
                         {telHref && (
-                          <Button size="xs" variant="outline" colorPalette="orange" _hover={{ bg: "orange.100" }} asChild>
+                          <Button size="xs" variant="outline" colorPalette="orange" _hover={{ bg: "orange.subtle" }} asChild>
                             <a href={telHref}>
                               <Phone size={12} /> Call
                             </a>
                           </Button>
                         )}
                         {openMail && (
-                          <Button size="xs" variant="outline" colorPalette="orange" _hover={{ bg: "orange.100" }} onClick={() => void openMail()}>
+                          <Button size="xs" variant="outline" colorPalette="orange" _hover={{ bg: "orange.subtle" }} onClick={() => void openMail()}>
                             <Mail size={12} /> Email
                           </Button>
                         )}
@@ -380,7 +380,7 @@ export default function ClientRequestsSection({
                     </Box>
                   )}
                   {!openSms && !telHref && !openMail && (
-                    <Text fontSize="xs" color="red.700">
+                    <Text fontSize="xs" color="red.fg">
                       No phone or email on the primary contact. Set one before reaching out.
                     </Text>
                   )}
@@ -418,7 +418,7 @@ export default function ClientRequestsSection({
                         // Orange like its neighbours — a zinc hover inside
                         // the orange card reads as light blue.
                         colorPalette="orange"
-                        _hover={{ bg: "orange.100" }}
+                        _hover={{ bg: "orange.subtle" }}
                         onClick={() => setDismissingRow(row)}
                       >
                         <X size={12} /> Dismiss
@@ -490,12 +490,12 @@ export default function ClientRequestsSection({
                   const isPast = !!rescheduleDate && rescheduleDate < minDate;
                   return (
                     <VStack align="stretch" gap={3}>
-                      <Box p={2} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">
+                      <Box p={2} bg="gray.faint" rounded="md" borderWidth="1px" borderColor="gray.emphasized">
                         <Text fontSize="xs" color="fg.muted">
                           Currently scheduled: <b>{fmtDateWithWeekdayShort(reschedulingRow.occurrence.startAt)}</b>
                         </Text>
                         {reschedulingRow.proposedStartAt && (
-                          <Text fontSize="xs" color="orange.700">
+                          <Text fontSize="xs" color="orange.fg">
                             Client suggested: <b>{fmtDateWithWeekdayShort(reschedulingRow.proposedStartAt)}</b>
                           </Text>
                         )}
@@ -510,7 +510,7 @@ export default function ClientRequestsSection({
                           onChange={(e) => setRescheduleDate(e.target.value)}
                         />
                         {isPast && (
-                          <Text fontSize="xs" color="red.600" mt={1}>
+                          <Text fontSize="xs" color="red.fg" mt={1}>
                             Pick a date that isn&apos;t in the past.
                           </Text>
                         )}

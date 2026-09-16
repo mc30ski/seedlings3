@@ -119,14 +119,14 @@ export default function SendReceiptDialog({ open, onOpenChange, data, contactPho
             </Dialog.Header>
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
-                <Box p={3} bg="green.50" borderWidth="1px" borderColor="green.200" rounded="md">
-                  <Text fontSize="sm" fontWeight="medium" color="green.800">
+                <Box p={3} bg="green.faint" borderWidth="1px" borderColor="green.emphasized" rounded="md">
+                  <Text fontSize="sm" fontWeight="medium" color="green.fg">
                     Receipt #{data.receiptId}
                   </Text>
-                  <Text fontSize="xs" color="green.700">
+                  <Text fontSize="xs" color="green.fg">
                     {data.clientName} — {data.propertyAddress}
                   </Text>
-                  <Text fontSize="xs" color="green.700">
+                  <Text fontSize="xs" color="green.fg">
                     {data.serviceDate} · ${data.amount.toFixed(2)}
                   </Text>
                 </Box>

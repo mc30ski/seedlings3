@@ -177,8 +177,8 @@ export default function ScrollableUnderlineTabs({
       className={className}
     >
       <Box
-        borderColor="gray.200"
-        bg="white"
+        borderColor="gray.emphasized"
+        bg="bg.panel"
         position="relative"
         px={headerPaddingX}
         py={headerPaddingY}
@@ -223,12 +223,12 @@ export default function ScrollableUnderlineTabs({
                       py={2}
                       flex="0 0 auto"
                       borderBottom="2px solid transparent"
-                      color="gray.700"
-                      _hover={{ color: "gray.900", bg: "gray.50" }}
+                      color="gray.fg"
+                      _hover={{ color: "gray.fg", bg: "gray.faint" }}
                       css={{
                         "&[data-state=active]": {
                           borderColor: "blue.600",
-                          color: "blue.700",
+                          color: "blue.fg",
                           fontWeight: 600,
                         },
                       }}
@@ -252,9 +252,9 @@ export default function ScrollableUnderlineTabs({
                   cursor="pointer"
                   fontSize="sm"
                   borderBottom="2px solid transparent"
-                  color={overflowTabs.some((t) => t.value === current) ? "blue.700" : "gray.700"}
+                  color={overflowTabs.some((t) => t.value === current) ? "blue.fg" : "gray.fg"}
                   fontWeight={overflowTabs.some((t) => t.value === current) ? 600 : undefined}
-                  _hover={{ color: "gray.900", bg: "gray.50" }}
+                  _hover={{ color: "gray.fg", bg: "gray.faint" }}
                   css={overflowTabs.some((t) => t.value === current) ? {
                     borderColor: "blue.600",
                   } : undefined}

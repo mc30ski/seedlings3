@@ -320,7 +320,7 @@ export default function RedactPhotoDialog({ file, onCommit, onCancel }: Props) {
                     ref={overlayRef}
                     position="relative"
                     style={{ width: dispW, height: dispH, touchAction: "none", userSelect: "none" }}
-                    bg="gray.100"
+                    bg="gray.subtle"
                     borderRadius="md"
                     overflow="hidden"
                     onClick={(e) => e.stopPropagation()}

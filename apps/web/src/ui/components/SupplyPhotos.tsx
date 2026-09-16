@@ -210,7 +210,7 @@ export default function SupplyPhotos({ supplyId, readOnly, staged = [], onStaged
             cursor="pointer"
             onClick={(e) => { e.stopPropagation(); setViewerIndex(idx); }}
             borderWidth="1px"
-            borderColor="gray.200"
+            borderColor="gray.strong"
             flexShrink={0}
           >
             <img
@@ -233,7 +233,7 @@ export default function SupplyPhotos({ supplyId, readOnly, staged = [], onStaged
             overflow="hidden"
             borderWidth="2px"
             borderStyle="dashed"
-            borderColor="blue.400"
+            borderColor="blue.emphasized"
             flexShrink={0}
             title={`${s.file.name} — uploads when you save`}
           >
@@ -279,14 +279,14 @@ export default function SupplyPhotos({ supplyId, readOnly, staged = [], onStaged
       </HStack>
 
       {staged.length > 0 && (
-        <Text fontSize="xs" color="blue.600" mt={1}>
+        <Text fontSize="xs" color="blue.fg" mt={1}>
           {staged.length} photo{staged.length === 1 ? "" : "s"} will upload when you save.
         </Text>
       )}
 
       {!readOnly && photos.map((photo) =>
         editingId === photo.id ? (
-          <VStack key={`edit-${photo.id}`} align="stretch" gap={1} w="full" mt={2} p={2} bg="blue.50" borderRadius="md">
+          <VStack key={`edit-${photo.id}`} align="stretch" gap={1} w="full" mt={2} p={2} bg="blue.faint" borderRadius="md">
             <Text fontSize="xs" color="fg.muted">Description for: {photo.fileName ?? "photo"}</Text>
             <Textarea
               size="sm"

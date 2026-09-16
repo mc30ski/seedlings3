@@ -404,8 +404,8 @@ function PromotionsList({
           <Box
             p={3}
             borderWidth="1px"
-            borderColor={selectedId === p.id ? "blue.400" : "gray.200"}
-            bg={selectedId === p.id ? "blue.50" : "white"}
+            borderColor={selectedId === p.id ? "blue.strong" : "gray.emphasized"}
+            bg={selectedId === p.id ? "blue.faint" : "bg.panel"}
             rounded="md"
             // When the detail hangs below, drop this row's bottom edge so
             // the two read as one block instead of two stacked boxes.
@@ -453,9 +453,9 @@ function PromotionsList({
             <Box
               borderWidth="1px"
               borderTopWidth={0}
-              borderColor="blue.400"
+              borderColor="blue.strong"
               roundedBottom="md"
-              bg="white"
+              bg="bg.panel"
             >
               {renderDetail(p)}
             </Box>
@@ -777,12 +777,12 @@ function PromotionDetail({
           message={`${deleting.deliveryCount} delivery records will be permanently destroyed.`}
           messageNode={
             <VStack align="stretch" gap={2}>
-              <Box p={2} bg="red.50" borderWidth="1px" borderColor="red.300" rounded="md">
-                <Text fontSize="sm" color="red.900" fontWeight="semibold">
+              <Box p={2} bg="red.faint" borderWidth="1px" borderColor="red.emphasized" rounded="md">
+                <Text fontSize="sm" color="red.fg" fontWeight="semibold">
                   {deleting.deliveryCount} delivery record
                   {deleting.deliveryCount === 1 ? "" : "s"} will be destroyed.
                 </Text>
-                <Text fontSize="xs" color="red.900" mt={1}>
+                <Text fontSize="xs" color="red.fg" mt={1}>
                   Those rows are the record of which client contacts were
                   messaged, and which were deliberately skipped. That history
                   is what you would rely on in a CAN-SPAM dispute. Deleting it
@@ -817,7 +817,7 @@ function PromotionDetail({
         )}
 
         {/* Config summary */}
-        <VStack align="stretch" gap={1} fontSize="xs" mb={4} p={2} bg="gray.50" rounded="md">
+        <VStack align="stretch" gap={1} fontSize="xs" mb={4} p={2} bg="gray.faint" rounded="md">
           <HStack gap={2} align="baseline" wrap="wrap">
             <Text fontWeight="semibold">Link:</Text>
             {promotion.linkKind === "LANDING_PAGE" && promotion.landingPage?.slug ? (
@@ -826,7 +826,7 @@ function PromotionDetail({
                   Custom landing page →{" "}
                   <Text
                     as="a"
-                    color="blue.600"
+                    color="blue.fg"
                     textDecoration="underline"
                     {...({
                       href:
@@ -847,7 +847,7 @@ function PromotionDetail({
             ) : promotion.link ? (
               <Text
                 as="a"
-                color="blue.600"
+                color="blue.fg"
                 textDecoration="underline"
                 {...({
                   href: promotion.link,
@@ -890,9 +890,9 @@ function PromotionDetail({
 
         {/* Delivery log */}
         <Text fontSize="sm" fontWeight="semibold" mt={4} mb={1}>Deliveries ({deliveries?.length ?? "…"})</Text>
-        <Box maxH="240px" overflowY="auto" borderWidth="1px" borderColor="gray.200" rounded="md">
+        <Box maxH="240px" overflowY="auto" borderWidth="1px" borderColor="gray.emphasized" rounded="md">
           <Table.Root size="sm" variant="line">
-            <Table.Header position="sticky" top={0} bg="gray.50" zIndex={1}>
+            <Table.Header position="sticky" top={0} bg="gray.faint" zIndex={1}>
               <Table.Row>
                 <Table.ColumnHeader fontSize="2xs">When</Table.ColumnHeader>
                 <Table.ColumnHeader fontSize="2xs">Client</Table.ColumnHeader>
@@ -1242,7 +1242,7 @@ function PromotionEditor({
                     invoice_page, and the landing page's own columns) that
                     had nothing linking them — so the same offer read
                     differently depending on where a client saw it. */}
-                <Box borderWidth="1px" borderColor="blue.200" bg="blue.50" rounded="md" p={3}>
+                <Box borderWidth="1px" borderColor="blue.emphasized" bg="blue.faint" rounded="md" p={3}>
                   <Text fontSize="sm" fontWeight="semibold" mb={1}>The offer</Text>
                   <Text fontSize="2xs" color="fg.muted" mb={3}>
                     Written once. Shown on your landing page and on client
@@ -1253,7 +1253,7 @@ function PromotionEditor({
                       <Text fontSize="2xs" fontWeight="semibold" mb={1}>Offer title</Text>
                       <Input
                         size="sm"
-                        bg="white"
+                        bg="bg.panel"
                         placeholder="Don't Let Fall Get Away From You"
                         value={content.shared?.headline ?? ""}
                         onChange={(e) =>
@@ -1268,7 +1268,7 @@ function PromotionEditor({
                       <Text fontSize="2xs" fontWeight="semibold" mb={1}>Offer description (Markdown)</Text>
                       <Textarea
                         size="sm"
-                        bg="white"
+                        bg="bg.panel"
                         rows={6}
                         placeholder={"Winter is coming. Is your property ready?\n\n**Seedlings Lawn & Home** is booking fall cleanups now."}
                         value={content.shared?.body ?? ""}
@@ -1284,7 +1284,7 @@ function PromotionEditor({
                       <Text fontSize="2xs" fontWeight="semibold" mb={1}>Button label</Text>
                       <Input
                         size="sm"
-                        bg="white"
+                        bg="bg.panel"
                         placeholder="Get a quote"
                         value={content.shared?.ctaText ?? ""}
                         onChange={(e) =>
@@ -1296,11 +1296,11 @@ function PromotionEditor({
                       />
                     </Box>
                     {content.shared?.body ? (
-                      <Box borderTopWidth="1px" borderColor="blue.200" pt={2} mt={1}>
+                      <Box borderTopWidth="1px" borderColor="blue.emphasized" pt={2} mt={1}>
                         <Text fontSize="2xs" color="fg.muted" mb={1}>Preview</Text>
-                        <Box bg="white" rounded="md" p={2}>
+                        <Box bg="bg.panel" rounded="md" p={2}>
                           {content.shared.headline && (
-                            <Text fontSize="sm" fontWeight="bold" color="blue.900" mb={1}>
+                            <Text fontSize="sm" fontWeight="bold" color="blue.fg" mb={1}>
                               {content.shared.headline}
                             </Text>
                           )}
@@ -1339,7 +1339,7 @@ function PromotionEditor({
                 {/* Short URL (optional) — branded per-recipient URL for
                     outbound messages. Leaving both fields blank keeps the
                     campaign on the legacy long-form wrapper URL. */}
-                <Box borderTopWidth="1px" borderColor="gray.200" pt={4}>
+                <Box borderTopWidth="1px" borderColor="gray.emphasized" pt={4}>
                   <Text fontSize="xs" fontWeight="semibold" mb={1}>Short link (optional)</Text>
                   <Text fontSize="2xs" color="fg.muted" mb={2}>
                     A short branded <b>tracker</b> link like <b>{previewBase}/mo/&lt;code&gt;/abcd</b> to
@@ -1363,11 +1363,11 @@ function PromotionEditor({
                         fontFamily="mono"
                       />
                       {slugValidationError && (
-                        <Text fontSize="2xs" color="red.600" mt={1}>{slugValidationError}</Text>
+                        <Text fontSize="2xs" color="red.fg" mt={1}>{slugValidationError}</Text>
                       )}
                       {/* Advisory, never a block — the operator decides. */}
                       {!slugValidationError && slugLengthWarning && (
-                        <Text fontSize="2xs" color="orange.700" mt={1}>{slugLengthWarning}</Text>
+                        <Text fontSize="2xs" color="orange.fg" mt={1}>{slugLengthWarning}</Text>
                       )}
                       {!shortSlugTouched && !slugLocked && linkKind === "LANDING_PAGE" && landingSlug && (
                         <Text fontSize="2xs" color="fg.muted" mt={1}>
@@ -1416,7 +1416,7 @@ function PromotionEditor({
                       );
                     })()}
                     {previewSlug && !slugValidationError && (
-                      <Box p={3} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">
+                      <Box p={3} bg="gray.faint" rounded="md" borderWidth="1px" borderColor="gray.emphasized">
                         <Text fontSize="2xs" color="fg.muted" mb={1}>Preview short links (both forward to the destination above)</Text>
                         <Text fontSize="xs" fontFamily="mono" wordBreak="break-all">
                           <b>Per-recipient</b> (sent in messages, tracks who clicked):
@@ -1579,14 +1579,14 @@ function PromotionEditor({
                   />
                 )}
                 {linkKind === "LANDING_PAGE" && !initial?.landingPageId && (
-                  <Box p={3} bg="blue.50" borderWidth="1px" borderColor="blue.200" rounded="md" fontSize="xs" color="blue.900">
+                  <Box p={3} bg="blue.faint" borderWidth="1px" borderColor="blue.emphasized" rounded="md" fontSize="xs" color="blue.fg">
                     Save this promotion first — the landing page editor will
                     appear next time you open it. The landing page's public URL
                     will be generated from the title (you can customize it).
                   </Box>
                 )}
 
-                <Box p={2} bg="gray.50" rounded="md" fontSize="xs" color="fg.muted">
+                <Box p={2} bg="gray.faint" rounded="md" fontSize="xs" color="fg.muted">
                   <Text fontWeight="semibold" mb={1}>Offer / discount (coming soon)</Text>
                   <Text>Discount mechanics will be added in a future update — the field exists in the model but is disabled today.</Text>
                 </Box>
@@ -1677,7 +1677,7 @@ function ChannelOverridePanel({
           Uses <b>The offer</b>. {hint}
         </Text>
         {shared?.body ? (
-          <Box p={2} bg="gray.50" rounded="md">
+          <Box p={2} bg="gray.faint" rounded="md">
             {shared.headline && (
               <Text fontSize="xs" fontWeight="semibold" mb={1}>{shared.headline}</Text>
             )}
@@ -1686,7 +1686,7 @@ function ChannelOverridePanel({
             </Text>
           </Box>
         ) : (
-          <Text fontSize="2xs" color="orange.700">
+          <Text fontSize="2xs" color="orange.fg">
             No offer copy written yet — fill in <b>The offer</b> above.
           </Text>
         )}
@@ -1721,10 +1721,10 @@ function ChannelPanelSms({
             onChange={(e) => onChange({ ...content, body: e.target.value })} />
           <Input size="sm" placeholder="Call-to-action label (e.g. Book now, Learn more)" value={cta}
             onChange={(e) => onChange({ ...content, ctaText: e.target.value })} />
-          <Box p={2} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">
+          <Box p={2} bg="gray.faint" rounded="md" borderWidth="1px" borderColor="gray.emphasized">
             <Text fontSize="2xs" color="fg.muted" mb={1}>Preview (with placeholder opt-out URL)</Text>
             <Text fontSize="xs" whiteSpace="pre-wrap" fontFamily="mono">{preview}</Text>
-            <Text fontSize="2xs" color={info.segments > 1 ? "orange.700" : "fg.muted"} mt={1}>
+            <Text fontSize="2xs" color={info.segments > 1 ? "orange.fg" : "fg.muted"} mt={1}>
               {info.chars} chars · {info.segments} segment{info.segments === 1 ? "" : "s"}
               {info.encoding === "ucs2" ? " · UCS-2 (emoji / non-Latin)" : ""}
             </Text>
@@ -1753,7 +1753,7 @@ function ChannelPanelEmail({
             onChange={(e) => onChange({ ...content, body: e.target.value })} />
           <Input size="sm" placeholder="Call-to-action button label (e.g. Book now, Learn more)" value={content.ctaText ?? ""}
             onChange={(e) => onChange({ ...content, ctaText: e.target.value })} />
-          <Box p={2} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">
+          <Box p={2} bg="gray.faint" rounded="md" borderWidth="1px" borderColor="gray.emphasized">
             <Text fontSize="2xs" color="fg.muted" mb={1}>Preview</Text>
             <Text fontSize="xs" fontWeight="bold">{content.subject || "(subject)"}</Text>
             <Text fontSize="xs" whiteSpace="pre-wrap" mt={1}>{content.body || "(body)"}</Text>
@@ -1837,16 +1837,16 @@ function InvoicePreviewDialog({
               </Text>
 
               {/* Mirrors the pay page's own page shell width + section gap. */}
-              <Box borderWidth="1px" borderColor="gray.200" rounded="lg" p={4} bg="white">
+              <Box borderWidth="1px" borderColor="gray.emphasized" rounded="lg" p={4} bg="bg.panel">
                 <VStack gap={5} align="stretch">
                   {/* ── Invoice total (sample) ── */}
                   <Box>
                     <Text fontSize="md" fontWeight="bold" mb={2} letterSpacing="tight">Invoice</Text>
                     <Box
                       p={4}
-                      bg="gray.100"
+                      bg="gray.subtle"
                       borderWidth="1px"
-                      borderColor="gray.300"
+                      borderColor="gray.emphasized"
                       borderLeftWidth="4px"
                       borderLeftColor="gray.500"
                       rounded="lg"
@@ -1856,7 +1856,7 @@ function InvoicePreviewDialog({
                         <Text fontSize="sm" color="fg.muted">Sample service date</Text>
                         <HStack mt={2} align="baseline" justify="space-between">
                           <Text fontSize="sm" color="fg.muted">Total due</Text>
-                          <Text fontSize="2xl" fontWeight="bold" color="teal.700">$85.00</Text>
+                          <Text fontSize="2xl" fontWeight="bold" color="teal.fg">$85.00</Text>
                         </HStack>
                       </VStack>
                     </Box>
@@ -1867,9 +1867,9 @@ function InvoicePreviewDialog({
                     <Text fontSize="md" fontWeight="bold" mb={2} letterSpacing="tight">Offers</Text>
                     <Box
                       p={4}
-                      bg="blue.50"
+                      bg="blue.faint"
                       borderWidth="1px"
-                      borderColor="blue.200"
+                      borderColor="blue.emphasized"
                       borderLeftWidth="4px"
                       borderLeftColor="blue.500"
                       rounded="lg"
@@ -1887,7 +1887,7 @@ function InvoicePreviewDialog({
                         )}
                         <Box flex="1" minW={0}>
                           {content.headline && (
-                            <Text fontSize="sm" fontWeight="bold" color="blue.900" mb={2}>
+                            <Text fontSize="sm" fontWeight="bold" color="blue.fg" mb={2}>
                               {content.headline}
                             </Text>
                           )}
@@ -1912,7 +1912,7 @@ function InvoicePreviewDialog({
                   {/* ── Payment (sample, dimmed — context only) ── */}
                   <Box opacity={0.55}>
                     <Text fontSize="md" fontWeight="bold" mb={2} letterSpacing="tight">Payment</Text>
-                    <Box p={3} borderWidth="1px" borderColor="gray.200" rounded="md">
+                    <Box p={3} borderWidth="1px" borderColor="gray.emphasized" rounded="md">
                       <Text fontSize="sm" color="fg.muted">
                         Payment method picker and Pay button appear here.
                       </Text>
@@ -1973,9 +1973,9 @@ function ChannelPanelInvoicePage({
             Uses <b>The offer</b> from the top of this dialog — title,
             description, and button label. Nothing extra to write.
           </Text>
-          <Box p={3} bg="blue.50" borderWidth="1px" borderColor="blue.200" borderLeftWidth="4px" borderLeftColor="blue.500" rounded="md">
+          <Box p={3} bg="blue.faint" borderWidth="1px" borderColor="blue.emphasized" borderLeftWidth="4px" borderLeftColor="blue.500" rounded="md">
             <Text fontSize="2xs" color="fg.muted" mb={1}>Preview (as shown on /pay/[token])</Text>
-            {content.headline && <Text fontSize="md" fontWeight="bold" color="blue.900" mb={1}>{content.headline}</Text>}
+            {content.headline && <Text fontSize="md" fontWeight="bold" color="blue.fg" mb={1}>{content.headline}</Text>}
             {content.body
               ? <MarkdownContent>{content.body}</MarkdownContent>
               : <Text fontSize="sm" color="fg.muted">(body)</Text>}
@@ -2054,9 +2054,9 @@ function ContactsView() {
       {loading ? (
         <HStack><Spinner size="sm" /><Text fontSize="sm">Loading…</Text></HStack>
       ) : (
-        <Box borderWidth="1px" borderColor="gray.200" rounded="md" overflow="hidden">
+        <Box borderWidth="1px" borderColor="gray.emphasized" rounded="md" overflow="hidden">
           <Table.Root size="sm" variant="line" striped>
-            <Table.Header position="sticky" top={0} bg="gray.50" zIndex={1}>
+            <Table.Header position="sticky" top={0} bg="gray.faint" zIndex={1}>
               <Table.Row>
                 <Table.ColumnHeader fontSize="2xs">Client</Table.ColumnHeader>
                 <Table.ColumnHeader fontSize="2xs">Contact</Table.ColumnHeader>
@@ -2184,9 +2184,9 @@ function OptToggleDialog({
                   : `About to turn ${channel === "email" ? "email" : "SMS"} promotions BACK ON for ${contactName}.`}
               </Text>
               {isReOptIn && (
-                <Box p={3} bg="orange.50" borderWidth="1px" borderColor="orange.200" rounded="md" mb={3}>
-                  <Text fontSize="xs" fontWeight="semibold" color="orange.900" mb={1}>Important</Text>
-                  <Text fontSize="xs" color="orange.900">
+                <Box p={3} bg="orange.faint" borderWidth="1px" borderColor="orange.emphasized" rounded="md" mb={3}>
+                  <Text fontSize="xs" fontWeight="semibold" color="orange.fg" mb={1}>Important</Text>
+                  <Text fontSize="xs" color="orange.fg">
                     You must have explicit consent from the client to re-enable promotional messages. Re-enabling without documented consent is a CAN-SPAM violation and can hurt sender reputation.
                   </Text>
                 </Box>
@@ -2250,7 +2250,7 @@ function OptHistoryDialog({ contactId, onClose }: { contactId: string; onClose: 
               ) : (
                 <VStack align="stretch" gap={1} fontSize="xs">
                   {rows.map((r) => (
-                    <Box key={r.id} p={2} borderWidth="1px" borderColor="gray.200" rounded="md">
+                    <Box key={r.id} p={2} borderWidth="1px" borderColor="gray.emphasized" rounded="md">
                       <HStack justify="space-between">
                         <Text fontWeight="semibold">
                           {r.verb === "PROMO_OPTED_OUT" ? "Opted out" : "Opted in"} — {r.metadata?.channel}
@@ -2567,7 +2567,7 @@ function LandingPageEditor({
   }
   if (!page) {
     return (
-      <Box p={3} bg="red.50" borderWidth="1px" borderColor="red.200" rounded="md" fontSize="xs" color="red.900">
+      <Box p={3} bg="red.faint" borderWidth="1px" borderColor="red.emphasized" rounded="md" fontSize="xs" color="red.fg">
         Could not load landing page.
       </Box>
     );
@@ -2608,10 +2608,10 @@ function LandingPageEditor({
                 fontSize="xs"
                 fontFamily="mono"
                 color="fg.muted"
-                bg="gray.100"
+                bg="gray.subtle"
                 borderWidth="1px"
                 borderRightWidth={0}
-                borderColor="gray.200"
+                borderColor="gray.strong"
                 borderLeftRadius="md"
                 flexShrink={0}
               >
@@ -2638,8 +2638,8 @@ function LandingPageEditor({
               different words for the same offer. The page header now
               renders "The offer" from the promotion editor. Items below
               keep their own per-entry title and description. */}
-          <Box p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" rounded="md">
-            <Text fontSize="2xs" color="blue.900">
+          <Box p={2} bg="blue.faint" borderWidth="1px" borderColor="blue.emphasized" rounded="md">
+            <Text fontSize="2xs" color="blue.fg">
               The heading and description at the top of this page come from{" "}
               <b>The offer</b> in the promotion editor — written once, shown
               here and on invoices. Each item below has its own title and
@@ -2730,7 +2730,7 @@ function LandingItemRow({
                 position="relative"
                 w="48px"
                 h="48px"
-                bg="gray.100"
+                bg="gray.subtle"
                 rounded="md"
                 overflow="hidden"
                 role="group"
@@ -2784,7 +2784,7 @@ function LandingItemRow({
                 position="relative"
                 w="48px"
                 h="48px"
-                bg="gray.100"
+                bg="gray.subtle"
                 rounded="md"
                 overflow="hidden"
               >
@@ -2803,7 +2803,7 @@ function LandingItemRow({
                   alignItems="center"
                   justifyContent="center"
                 >
-                  <Spinner size="sm" color="blue.600" />
+                  <Spinner size="sm" color="blue.fg" />
                 </Box>
               </Box>
             ))}
@@ -2811,16 +2811,16 @@ function LandingItemRow({
               <Box
                 w="48px"
                 h="48px"
-                bg="yellow.50"
+                bg="yellow.faint"
                 borderWidth="1px"
                 borderStyle="dashed"
-                borderColor="yellow.400"
+                borderColor="yellow.emphasized"
                 rounded="md"
                 display="flex"
                 alignItems="center"
                 justifyContent="center"
                 cursor="pointer"
-                color="yellow.700"
+                color="yellow.fg"
                 onClick={() => fileInputRef.current?.click()}
                 title="Add a photo"
               >
@@ -2832,7 +2832,7 @@ function LandingItemRow({
             )}
           </HStack>
           {pendingUploads.length > 0 && (
-            <Text fontSize="2xs" color="blue.600" mt={1}>
+            <Text fontSize="2xs" color="blue.fg" mt={1}>
               Uploading {pendingUploads.length} photo{pendingUploads.length === 1 ? "" : "s"}…
             </Text>
           )}
@@ -3066,7 +3066,7 @@ function InvoicePhotosPanel({ promotionId }: { promotionId: string }) {
   }
 
   return (
-    <Box borderWidth="1px" borderColor="gray.200" rounded="md" p={3} bg="white">
+    <Box borderWidth="1px" borderColor="gray.emphasized" rounded="md" p={3} bg="bg.panel">
       <HStack justify="space-between" align="center" mb={1}>
         <Text fontSize="sm" fontWeight="bold">Invoice photos</Text>
         <Button
@@ -3114,7 +3114,7 @@ function InvoicePhotosPanel({ promotionId }: { promotionId: string }) {
                 overflow="hidden"
                 bg="blackAlpha.100"
                 borderWidth={i === 0 ? "2px" : "1px"}
-                borderColor={i === 0 ? "blue.500" : "gray.200"}
+                borderColor={i === 0 ? "blue.500" : "gray.emphasized"}
                 position="relative"
               >
                 {p.url && (
@@ -3150,7 +3150,7 @@ function InvoicePhotosPanel({ promotionId }: { promotionId: string }) {
               overflow="hidden"
               bg="blackAlpha.100"
               borderWidth="1px"
-              borderColor="gray.200"
+              borderColor="gray.emphasized"
               position="relative"
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}

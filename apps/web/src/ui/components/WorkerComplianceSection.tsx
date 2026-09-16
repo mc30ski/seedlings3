@@ -143,7 +143,7 @@ export default function WorkerComplianceSection() {
     <>
       <Card.Root
         variant="outline"
-        borderColor={hasBlocking ? "red.400" : requiredCount > 0 ? "orange.400" : "gray.200"}
+        borderColor={hasBlocking ? "red.strong" : requiredCount > 0 ? "orange.strong" : "gray.emphasized"}
       >
         <Card.Body p={3}>
           <VStack align="stretch" gap={3}>
@@ -366,11 +366,11 @@ function AwaitingReviewRowView({
       p={2}
       borderRadius="md"
       borderWidth="1px"
-      borderColor="blue.200"
-      bg="blue.50"
+      borderColor="blue.emphasized"
+      bg="blue.faint"
       align="flex-start"
     >
-      <Box color="blue.600" flexShrink={0} mt={0.5}>
+      <Box color="blue.fg" flexShrink={0} mt={0.5}>
         <Clock size={14} />
       </Box>
       <VStack align="start" gap={0} flex="1" minW={0}>
@@ -413,11 +413,11 @@ function RequiredRow({
       p={2}
       borderRadius="md"
       borderWidth="1px"
-      borderColor={policy.enforcement === "BLOCK" ? "red.200" : "orange.200"}
-      bg={policy.enforcement === "BLOCK" ? "red.50" : "orange.50"}
+      borderColor={policy.enforcement === "BLOCK" ? "red.emphasized" : "orange.emphasized"}
+      bg={policy.enforcement === "BLOCK" ? "red.faint" : "orange.faint"}
       align="flex-start"
     >
-      <Box color={policy.enforcement === "BLOCK" ? "red.600" : "orange.600"} flexShrink={0} mt={0.5}>
+      <Box color={policy.enforcement === "BLOCK" ? "red.fg" : "orange.fg"} flexShrink={0} mt={0.5}>
         <AlertTriangle size={14} />
       </Box>
       <VStack align="start" gap={0} flex="1" minW={0}>
@@ -478,7 +478,7 @@ function HistoryRow({ row, onView }: { row: HistoryRow; onView: () => void }) {
           : "Signed";
 
   return (
-    <HStack gap={2} p={2} borderRadius="md" borderWidth="1px" borderColor="gray.100">
+    <HStack gap={2} p={2} borderRadius="md" borderWidth="1px" borderColor="gray.muted">
       <Box flexShrink={0} color={iconColor}>
         {row.revokedAt || row.uploadStatus === "REJECTED" ? (
           <XCircle size={14} />
@@ -513,7 +513,7 @@ function HistoryRow({ row, onView }: { row: HistoryRow; onView: () => void }) {
           )}
         </HStack>
         {row.uploadStatus === "REJECTED" && row.uploadRejectionReason && (
-          <Text fontSize="xs" color="red.700">
+          <Text fontSize="xs" color="red.fg">
             {row.uploadRejectionReason}
           </Text>
         )}

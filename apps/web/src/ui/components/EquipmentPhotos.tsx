@@ -148,7 +148,7 @@ export default function EquipmentPhotos({ equipmentId, readOnly, hasPhotos }: Pr
             cursor="pointer"
             onClick={(e) => { e.stopPropagation(); setViewerIndex(idx); }}
             borderWidth="1px"
-            borderColor="gray.200"
+            borderColor="gray.emphasized"
             flexShrink={0}
           >
             <img
@@ -178,7 +178,7 @@ export default function EquipmentPhotos({ equipmentId, readOnly, hasPhotos }: Pr
       {/* Description editor (admin only) */}
       {!readOnly && photos.map((photo) => (
         editingId === photo.id ? (
-          <VStack key={`edit-${photo.id}`} align="stretch" gap={1} w="full" mt={2} p={2} bg="blue.50" borderRadius="md">
+          <VStack key={`edit-${photo.id}`} align="stretch" gap={1} w="full" mt={2} p={2} bg="blue.faint" borderRadius="md">
             <Text fontSize="xs" color="fg.muted">Description for: {photo.fileName ?? "photo"}</Text>
             <Textarea
               size="sm"

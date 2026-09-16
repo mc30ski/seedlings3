@@ -615,7 +615,12 @@ describe("[build-gate] a job line is an invoice charge, never an expense", () =>
     // that connects them share a container. Split across two surfaces the
     // reader has to work out whether the small print belongs to the number
     // above it.
-    expect(TAB).toMatch(/borderColor="green\.300" borderRadius="xl"[^\n]*bg="green\.50"/);
+    // Semantic tokens, not raw palette steps. The whole app moved off
+    // `green.300` / `green.50` onto Chakra's `emphasized` / `subtle` names so
+    // the money box themes correctly in dark — the raw values only ever had a
+    // light-mode meaning. What this gate cares about is unchanged: the
+    // expanded card carries the same bordered green box as the compact one.
+    expect(TAB).toMatch(/borderColor="green\.emphasized" borderRadius="xl"[^\n]*bg="green\.faint"/);
 
     // Both read every charge — there is no era in which one is suppressed.
     expect((TAB.match(/materialChargeTotal\(occ\)/g) ?? []).length).toBe(2);
@@ -3266,21 +3271,30 @@ describe("[build-gate] every Money tab explains itself", () => {
     const colorsAt = E.indexOf("const COLORS");
     expect(colorsAt, "the COLORS legend array must exist").toBeGreaterThan(-1);
     const legend = E.slice(colorsAt, E.indexOf("];", colorsAt));
-    for (const token of ["teal.50", "yellow.50", "green.100", "orange.50", "orange.100",
-                         "pink.50", "blue.50", "purple.50", "purple.200", "red.200",
-                         "yellow.200", "gray.100", "purple.100"]) {
+    // Card fills are per-theme semantic steps now (faint < subtle < muted <
+    // emphasized) rather than raw ramp values, so that a card reads as a pale
+    // wash in Original and as a deep ink in Dark. `faint` is the .50 step,
+    // which Chakra's own scale lacks — without it the pale fills all landed
+    // on `subtle` (= .100) and every card shipped a shade too saturated.
+    // The legend has to name the SAME step — converting the two files independently is exactly how the
+    // four rows below drifted apart the first time.
+    for (const token of ["teal.faint", "yellow.faint", "green.subtle", "orange.faint",
+                         "orange.subtle", "pink.faint", "blue.faint", "purple.faint",
+                         "purple.muted", "red.muted", "yellow.muted",
+                         "gray.subtle", "purple.subtle"]) {
       expect(legend, `the legend no longer shows the ${token} card fill`).toContain(`bg: "${token}"`);
     }
     // The subset JobsTab writes out literally (the rest come from the
     // `${cardColorBase}.50` template, which is why they cannot be matched
     // as strings here).
-    for (const token of ["green.100", "orange.100", "purple.200", "red.200", "red.100",
-                         "yellow.200", "yellow.100", "gray.100", "purple.100", "yellow.50"]) {
+    for (const token of ["green.subtle", "orange.subtle", "purple.muted", "red.muted",
+                         "red.subtle", "yellow.muted", "yellow.subtle", "gray.subtle",
+                         "purple.subtle", "yellow.faint"]) {
       expect(J, `${token} is in the legend but no longer in JobsTab's cardBg`).toContain(token);
     }
     // …and the template that produces the pale fills is still there.
-    expect(J, "the .50 card fills are built from cardColorBase")
-      .toMatch(/cardColorBase !== "gray" \? `\$\{cardColorBase\}\.50`/);
+    expect(J, "the palest card fills are built from cardColorBase")
+      .toMatch(/cardColorBase !== "gray" \? `\$\{cardColorBase\}\.faint`/);
     // High priority is a REMINDER-only flag — saying otherwise sends people
     // looking for a control that is not on their card.
     expect(E.replace(/\s+/g, " "), "high priority is reminder-only")

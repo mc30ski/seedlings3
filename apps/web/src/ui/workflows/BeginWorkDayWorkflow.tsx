@@ -359,8 +359,8 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                 <Dialog.Header><Dialog.Title>Prepare for work day</Dialog.Title></Dialog.Header>
                 <Dialog.Body>
                   <Box py={6} textAlign="center">
-                    <CheckCircle size={48} style={{ margin: "0 auto", color: "var(--chakra-colors-green-500)" }} />
-                    <Text fontSize="lg" fontWeight="semibold" mt={3} color="green.600">No jobs scheduled for today</Text>
+                    <CheckCircle size={48} style={{ margin: "0 auto", color: "var(--chakra-colors-green-fg)" }} />
+                    <Text fontSize="lg" fontWeight="semibold" mt={3} color="green.fg">No jobs scheduled for today</Text>
                     <Text fontSize="sm" color="fg.muted" mt={1}>You don't have any jobs assigned for today. Check the Jobs tab for available work to claim.</Text>
                   </Box>
                 </Dialog.Body>
@@ -377,7 +377,7 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                 <Dialog.Body>
                   <VStack align="stretch" gap={3}>
                     {/* Summary bar */}
-                    <HStack gap={3} p={3} bg="green.50" rounded="md" wrap="wrap">
+                    <HStack gap={3} p={3} bg="green.faint" rounded="md" wrap="wrap">
                       <Badge colorPalette="green" variant="solid" fontSize="sm" px="3" borderRadius="full">
                         {totalJobs} job{totalJobs !== 1 ? "s" : ""}
                       </Badge>
@@ -395,8 +395,8 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
 
                     {/* Overdue warning */}
                     {overdueJobs.length > 0 && (
-                      <Box p={3} bg="red.50" borderWidth="1px" borderColor="red.200" rounded="md">
-                        <Text fontSize="sm" fontWeight="medium" color="red.700">
+                      <Box p={3} bg="red.faint" borderWidth="1px" borderColor="red.emphasized" rounded="md">
+                        <Text fontSize="sm" fontWeight="medium" color="red.fg">
                           {overdueJobs.length} overdue job{overdueJobs.length !== 1 ? "s" : ""} from previous days
                         </Text>
                       </Box>
@@ -414,7 +414,7 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                         // same wherever an occurrence shows up.
                         const isObserverHere = (occ.assignees ?? []).some((a) => a.userId === myId && a.role === "observer");
                         return (
-                          <Card.Root key={occ.id} variant="outline" borderColor={isOverdue ? "red.200" : isInProgress ? "blue.200" : "gray.200"} bg={isOverdue ? "red.50" : isInProgress ? "blue.50" : undefined}>
+                          <Card.Root key={occ.id} variant="outline" borderColor={isOverdue ? "red.emphasized" : isInProgress ? "blue.emphasized" : "gray.emphasized"} bg={isOverdue ? "red.faint" : isInProgress ? "blue.faint" : undefined}>
                             <Card.Body py="2" px="3">
                               <HStack justify="space-between" align="start" gap={2}>
                                 <VStack align="start" gap={0.5} flex="1" minW={0}>
@@ -443,7 +443,7 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                                       <Text color="fg.muted">{jobTypeLabel((occ as any).jobType)}</Text>
                                     )}
                                     {occ.estimatedMinutes && <Text color="fg.muted">~{formatDuration(occ.estimatedMinutes)}</Text>}
-                                    {occ.price != null && <Text color="green.600">${occ.price.toFixed(2)}</Text>}
+                                    {occ.price != null && <Text color="green.fg">${occ.price.toFixed(2)}</Text>}
                                   </HStack>
                                 </VStack>
                                 <Text fontSize="xs" color="fg.muted" flexShrink={0}>
@@ -459,12 +459,12 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                     {/* Tasks for today */}
                     {tasks.length > 0 && (
                       <Box>
-                        <Text fontSize="xs" fontWeight="semibold" color="blue.600" mb={1} textTransform="uppercase" letterSpacing="wide">
+                        <Text fontSize="xs" fontWeight="semibold" color="blue.fg" mb={1} textTransform="uppercase" letterSpacing="wide">
                           Tasks for Today ({tasks.length})
                         </Text>
                         <VStack align="stretch" gap={1}>
                           {tasks.map((t) => (
-                            <HStack key={t.id} p={2} bg="blue.50" rounded="md" gap={2}>
+                            <HStack key={t.id} p={2} bg="blue.faint" rounded="md" gap={2}>
                               <Text fontSize="sm" flex="1">{t.title}</Text>
                             </HStack>
                           ))}
@@ -517,8 +517,8 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                     <Dialog.Header><Dialog.Title>All Confirmed</Dialog.Title></Dialog.Header>
                     <Dialog.Body>
                       <Box py={6} textAlign="center">
-                        <CheckCircle size={48} style={{ margin: "0 auto", color: "var(--chakra-colors-green-500)" }} />
-                        <Text fontSize="md" fontWeight="semibold" mt={3} color="green.600">All clients confirmed</Text>
+                        <CheckCircle size={48} style={{ margin: "0 auto", color: "var(--chakra-colors-green-fg)" }} />
+                        <Text fontSize="md" fontWeight="semibold" mt={3} color="green.fg">All clients confirmed</Text>
                       </Box>
                     </Dialog.Body>
                     <Dialog.Footer>
@@ -539,7 +539,7 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                   </Dialog.Header>
                   <Dialog.Body>
                     <VStack align="stretch" gap={3}>
-                      <Card.Root variant="outline" borderColor="orange.300" bg="orange.50">
+                      <Card.Root variant="outline" borderColor="orange.emphasized" bg="orange.faint">
                         <Card.Body py="2" px="3">
                           <VStack align="start" gap={1}>
                             <Text fontSize="sm" fontWeight="semibold">
@@ -551,7 +551,7 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                             {address && <Text fontSize="xs" color="fg.muted">{address}</Text>}
                             {contactName && <Text fontSize="xs" color="fg.muted">Contact: {contactName}{poc?.phone ? ` · ${poc.phone}` : ""}</Text>}
                             {(current as any).pinnedNote && (
-                              <Box px={2} py={1} bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md" w="full">
+                              <Box px={2} py={1} bg="yellow.subtle" borderWidth="1px" borderColor="yellow.strong" borderRadius="md" w="full">
                                 <HStack gap="1.5" align="center">
                                   <AlertCircle
                                     size={18}
@@ -559,13 +559,13 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                                     fill="var(--chakra-colors-yellow-400)"
                                     strokeWidth={2.5}
                                   />
-                                  <Text fontSize="xs" fontWeight="semibold" color="yellow.700">{(current as any).pinnedNote}</Text>
+                                  <Text fontSize="xs" fontWeight="semibold" color="yellow.fg">{(current as any).pinnedNote}</Text>
                                 </HStack>
                               </Box>
                             )}
                             <HStack gap={2} fontSize="xs" wrap="wrap" mt={1}>
                               {current.estimatedMinutes && <Text color="fg.muted">~{formatDuration(current.estimatedMinutes)}</Text>}
-                              {current.price != null && <Text color="green.600">${current.price.toFixed(2)}</Text>}
+                              {current.price != null && <Text color="green.fg">${current.price.toFixed(2)}</Text>}
                             </HStack>
                           </VStack>
                         </Card.Body>
@@ -578,14 +578,14 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                           ConfirmDialog component's `warning` slot exactly. */}
                       <Box
                         p={3}
-                        bg="blue.50"
+                        bg="blue.faint"
                         borderWidth="1px"
-                        borderColor="blue.300"
+                        borderColor="blue.emphasized"
                         borderLeftWidth="4px"
                         borderLeftColor="blue.500"
                         rounded="md"
                       >
-                        <Text fontSize="sm" color="blue.900">
+                        <Text fontSize="sm" color="blue.fg">
                           Only confirm if client has approved the appointment. Otherwise tap "Request Confirmation" to send them a message — a job that starts without the client's go-ahead can cause issues.
                         </Text>
                       </Box>
@@ -668,12 +668,12 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                 <Dialog.Header><Dialog.Title>Today's Route</Dialog.Title></Dialog.Header>
                 <Dialog.Body>
                   <VStack align="stretch" gap={3}>
-                    <Box p={3} bg="blue.50" rounded="md">
+                    <Box p={3} bg="blue.faint" rounded="md">
                       <HStack gap={2} mb={2}>
                         <MapPin size={16} />
-                        <Text fontSize="sm" fontWeight="medium" color="blue.700">Route for {todayJobs.length + overdueJobs.length} stops</Text>
+                        <Text fontSize="sm" fontWeight="medium" color="blue.fg">Route for {todayJobs.length + overdueJobs.length} stops</Text>
                       </HStack>
-                      <Text fontSize="xs" color="blue.600">
+                      <Text fontSize="xs" color="blue.fg">
                         Review your optimized route to minimize drive time between jobs.
                       </Text>
                     </Box>
@@ -721,12 +721,12 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                 <Dialog.Header><Dialog.Title>Equipment Check</Dialog.Title></Dialog.Header>
                 <Dialog.Body>
                   <VStack align="stretch" gap={3}>
-                    <Box p={3} bg="orange.50" rounded="md">
+                    <Box p={3} bg="orange.faint" rounded="md">
                       <HStack gap={2} mb={2}>
                         <Wrench size={16} />
-                        <Text fontSize="sm" fontWeight="medium" color="orange.700">Your Equipment</Text>
+                        <Text fontSize="sm" fontWeight="medium" color="orange.fg">Your Equipment</Text>
                       </HStack>
-                      <Text fontSize="xs" color="orange.600">
+                      <Text fontSize="xs" color="orange.fg">
                         Make sure you have everything you need for today's jobs. Remember to check out each item when you pick it up.
                       </Text>
                     </Box>
@@ -734,13 +734,13 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                     {!equipmentLoaded ? (
                       <Box py={4} textAlign="center"><Spinner size="sm" /></Box>
                     ) : equipment.length === 0 ? (
-                      <Box p={3} bg="gray.50" rounded="md">
+                      <Box p={3} bg="gray.faint" rounded="md">
                         <Text fontSize="sm" color="fg.muted">No equipment currently checked out.</Text>
                       </Box>
                     ) : (
                       <VStack align="stretch" gap={1}>
                         {equipment.map((eq) => (
-                          <HStack key={eq.id} justify="space-between" px={2} py={1} bg={eq.status === "MAINTENANCE" ? "red.50" : undefined} rounded="md">
+                          <HStack key={eq.id} justify="space-between" px={2} py={1} bg={eq.status === "MAINTENANCE" ? "red.faint" : undefined} rounded="md">
                             <VStack align="start" gap={0}>
                               <Text fontSize="sm">
                                 {eq.shortDesc || eq.type || "Equipment"}
@@ -748,7 +748,7 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                                 {eq.model ? ` ${eq.model}` : ""}
                               </Text>
                               {eq.status === "MAINTENANCE" && (
-                                <Text fontSize="xs" color="red.600">In maintenance{eq.issues ? `: ${eq.issues}` : ""}</Text>
+                                <Text fontSize="xs" color="red.fg">In maintenance{eq.issues ? `: ${eq.issues}` : ""}</Text>
                               )}
                             </VStack>
                             {/* Daily-rate cost is contractor-only — employees
@@ -762,7 +762,7 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                                 resolveBillingMode((eq as any).dailyRate, (eq as any).equivalentJobs, equipmentBillingEnabled),
                               );
                               return chip ? (
-                                <Text fontSize="xs" fontWeight="medium" color="orange.700" flexShrink={0}>{chip}</Text>
+                                <Text fontSize="xs" fontWeight="medium" color="orange.fg" flexShrink={0}>{chip}</Text>
                               ) : null;
                             })()}
                           </HStack>
@@ -771,15 +771,15 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                     )}
 
                     {maintenanceEquipment.length > 0 && (
-                      <Box p={2} bg="red.50" borderWidth="1px" borderColor="red.200" rounded="md">
-                        <Text fontSize="xs" color="red.700" fontWeight="medium">
+                      <Box p={2} bg="red.faint" borderWidth="1px" borderColor="red.emphasized" rounded="md">
+                        <Text fontSize="xs" color="red.fg" fontWeight="medium">
                           {maintenanceEquipment.length} item{maintenanceEquipment.length !== 1 ? "s" : ""} in maintenance — you may need a substitute.
                         </Text>
                       </Box>
                     )}
 
-                    <Box p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" rounded="md">
-                      <Text fontSize="xs" color="blue.700">
+                    <Box p={2} bg="blue.faint" borderWidth="1px" borderColor="blue.emphasized" rounded="md">
+                      <Text fontSize="xs" color="blue.fg">
                         Remember to return all equipment at the end of the day. Check items back in through the Equipment tab so they're available for the next crew.
                       </Text>
                     </Box>
@@ -810,14 +810,14 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                 <Dialog.Header><Dialog.Title>Start driving?</Dialog.Title></Dialog.Header>
                 <Dialog.Body>
                   <VStack align="stretch" gap={3}>
-                    <Box p={4} bg="orange.50" rounded="lg" textAlign="center">
-                      <Truck size={40} style={{ margin: "0 auto", color: "var(--chakra-colors-orange-500)" }} />
-                      <Text fontSize="lg" fontWeight="bold" color="orange.700" mt={2}>
+                    <Box p={4} bg="orange.faint" rounded="lg" textAlign="center">
+                      <Truck size={40} style={{ margin: "0 auto", color: "var(--chakra-colors-orange-fg)" }} />
+                      <Text fontSize="lg" fontWeight="bold" color="orange.fg" mt={2}>
                         {vehicles.length === 1
                           ? `You're assigned ${vehicles[0].displayName}`
                           : "You have vehicles assigned"}
                       </Text>
-                      <Text fontSize="sm" color="orange.600" mt={1}>
+                      <Text fontSize="sm" color="orange.fg" mt={1}>
                         Starting a mileage session now records the trip automatically.
                       </Text>
                     </Box>
@@ -931,12 +931,12 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                       (orange &quot;didn&apos;t end your workday&quot; banner) before
                       starting any new jobs.
                     </Text>
-                    <Box p={3} bg="orange.50" borderWidth="1px" borderColor="orange.300" borderRadius="md">
+                    <Box p={3} bg="orange.faint" borderWidth="1px" borderColor="orange.emphasized" borderRadius="md">
                       <HStack gap={2} align="start">
-                        <Box color="orange.600" flexShrink={0} mt="2px">
+                        <Box color="orange.fg" flexShrink={0} mt="2px">
                           <AlertTriangle size={16} />
                         </Box>
-                        <Text fontSize="xs" color="orange.900">
+                        <Text fontSize="xs" color="orange.fg">
                           Past workdays don&apos;t auto-close — they need an end time so your
                           hours for that day are recorded correctly.
                         </Text>
@@ -966,12 +966,12 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                 <Dialog.Header><Dialog.Title>Start your workday?</Dialog.Title></Dialog.Header>
                 <Dialog.Body>
                   <VStack align="stretch" gap={3}>
-                    <Box p={4} bg="green.50" rounded="lg" textAlign="center">
-                      <CheckCircle size={40} style={{ margin: "0 auto", color: "var(--chakra-colors-green-500)" }} />
-                      <Text fontSize="lg" fontWeight="bold" color="green.700" mt={2}>
+                    <Box p={4} bg="green.faint" rounded="lg" textAlign="center">
+                      <CheckCircle size={40} style={{ margin: "0 auto", color: "var(--chakra-colors-green-fg)" }} />
+                      <Text fontSize="lg" fontWeight="bold" color="green.fg" mt={2}>
                         You&apos;re prepared — but not clocked in
                       </Text>
-                      <Text fontSize="sm" color="green.600" mt={1}>
+                      <Text fontSize="sm" color="green.fg" mt={1}>
                         Starting your workday begins tracking your hours for today.
                       </Text>
                     </Box>
@@ -1047,10 +1047,10 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                 <Dialog.Header><Dialog.Title>Ready to Go!</Dialog.Title></Dialog.Header>
                 <Dialog.Body>
                   <VStack align="stretch" gap={3}>
-                    <Box p={4} bg="green.50" rounded="lg" textAlign="center">
-                      <CheckCircle size={40} style={{ margin: "0 auto", color: "var(--chakra-colors-green-500)" }} />
-                      <Text fontSize="lg" fontWeight="bold" color="green.700" mt={2}>You're all set</Text>
-                      <Text fontSize="sm" color="green.600" mt={1}>
+                    <Box p={4} bg="green.faint" rounded="lg" textAlign="center">
+                      <CheckCircle size={40} style={{ margin: "0 auto", color: "var(--chakra-colors-green-fg)" }} />
+                      <Text fontSize="lg" fontWeight="bold" color="green.fg" mt={2}>You're all set</Text>
+                      <Text fontSize="sm" color="green.fg" mt={1}>
                         {totalJobs} job{totalJobs !== 1 ? "s" : ""} today
                         {totalMinutes > 0 ? ` · ~${formatDuration(totalMinutes)}` : ""}
                         {totalRevenue > 0 ? ` · $${totalRevenue.toFixed(2)}` : ""}
@@ -1059,8 +1059,8 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
 
                     {/* First job highlight */}
                     {occurrences.length > 0 && (
-                      <Box p={3} bg="teal.50" borderWidth="1px" borderColor="teal.200" rounded="md">
-                        <Text fontSize="xs" fontWeight="semibold" color="teal.700" mb={1} textTransform="uppercase" letterSpacing="wide">First Stop</Text>
+                      <Box p={3} bg="teal.faint" borderWidth="1px" borderColor="teal.emphasized" rounded="md">
+                        <Text fontSize="xs" fontWeight="semibold" color="teal.fg" mb={1} textTransform="uppercase" letterSpacing="wide">First Stop</Text>
                         <Text fontSize="sm" fontWeight="medium">{occurrences[0].job?.property?.displayName}</Text>
                         <Box fontSize="xs">
                           <MapLink address={[
@@ -1076,18 +1076,18 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                     )}
 
                     {tasks.length > 0 && (
-                      <Box p={3} bg="blue.50" rounded="md">
-                        <Text fontSize="xs" fontWeight="semibold" color="blue.700" mb={1}>Don't forget your {tasks.length} task{tasks.length !== 1 ? "s" : ""} for today</Text>
+                      <Box p={3} bg="blue.faint" rounded="md">
+                        <Text fontSize="xs" fontWeight="semibold" color="blue.fg" mb={1}>Don't forget your {tasks.length} task{tasks.length !== 1 ? "s" : ""} for today</Text>
                         {tasks.map((t) => (
-                          <Text key={t.id} fontSize="xs" color="blue.600">• {t.title}</Text>
+                          <Text key={t.id} fontSize="xs" color="blue.fg">• {t.title}</Text>
                         ))}
                       </Box>
                     )}
 
-                    <Box p={3} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" rounded="md">
-                      <Text fontSize="xs" fontWeight="medium" color="yellow.700" mb={1}>Reminders</Text>
-                      <Text fontSize="xs" color="yellow.600">• Start each job when you arrive and complete it when you're done</Text>
-                      <Text fontSize="xs" color="yellow.600">• Upload a few photos of the finished work — great results help build trust with clients</Text>
+                    <Box p={3} bg="yellow.faint" borderWidth="1px" borderColor="yellow.emphasized" rounded="md">
+                      <Text fontSize="xs" fontWeight="medium" color="yellow.fg" mb={1}>Reminders</Text>
+                      <Text fontSize="xs" color="yellow.fg">• Start each job when you arrive and complete it when you're done</Text>
+                      <Text fontSize="xs" color="yellow.fg">• Upload a few photos of the finished work — great results help build trust with clients</Text>
                     </Box>
                   </VStack>
                 </Dialog.Body>

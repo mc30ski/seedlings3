@@ -117,8 +117,8 @@ export default function GuideApprovalsSection({
             /* A shade darker than the section frame, not white. A white
                card inside a coloured section reads as a different
                component sitting on top of it rather than a row of it. */
-            borderColor={`${palette}.300`}
-            bg={`${palette}.100`}
+            borderColor={`${palette}.emphasized`}
+            bg={`${palette}.subtle`}
             rounded="md"
             p={2}
           >
@@ -136,7 +136,7 @@ export default function GuideApprovalsSection({
                       ? {
                           role: "link",
                           tabIndex: 0,
-                          color: `${palette}.800`,
+                          color: `${palette}.fg`,
                           textDecoration: "underline",
                           cursor: "pointer",
                           onClick: () => onOpenGuide(r.guide.slug),

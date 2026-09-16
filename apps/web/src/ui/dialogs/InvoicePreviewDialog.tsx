@@ -87,8 +87,8 @@ export default function InvoicePreviewDialog({
               <VStack align="stretch" gap={3}>
                 {/* Said BEFORE the numbers, not after. Someone who reads only
                     the first line still learns this isn't a document. */}
-                <Box p={2} bg="blue.50" borderWidth="1px" borderLeftWidth="3px" borderColor="blue.200" borderRadius="md">
-                  <Text fontSize="xs" color="blue.800">
+                <Box p={2} bg="blue.faint" borderWidth="1px" borderLeftWidth="3px" borderColor="blue.emphasized" borderRadius="md">
+                  <Text fontSize="xs" color="blue.fg">
                     This is what the client would see if you requested payment{" "}
                     <Text as="span" fontWeight="semibold">right now</Text>. It isn&rsquo;t a
                     record of anything and nothing has been sent — it changes as soon as

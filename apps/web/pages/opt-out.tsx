@@ -44,12 +44,12 @@ export default function OptOutPage() {
         <title>Opt out of promotional messages</title>
         <meta name="robots" content="noindex, nofollow" />
       </Head>
-      <Box minH="100vh" bg="gray.50" py={{ base: 8, md: 16 }}>
+      <Box minH="100vh" bg="gray.faint" py={{ base: 8, md: 16 }}>
         <Container maxW="md">
           <Box
             bg="white"
             borderWidth="1px"
-            borderColor="gray.200"
+            borderColor="gray.emphasized"
             rounded="lg"
             p={{ base: 6, md: 8 }}
             shadow="sm"
@@ -100,7 +100,7 @@ export default function OptOutPage() {
                       Stop promotional messages
                     </Button>
                     {err && (
-                      <Text color="red.600" fontSize="sm">
+                      <Text color="red.fg" fontSize="sm">
                         Couldn&apos;t submit — {err}. Please try again.
                       </Text>
                     )}

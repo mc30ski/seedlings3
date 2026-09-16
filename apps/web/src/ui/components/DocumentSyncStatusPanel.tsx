@@ -71,9 +71,9 @@ type FailedTask = Omit<PendingTask, "nextAttemptAt" | "state"> & {
 };
 
 const HEALTH_COLORS = {
-  green: { bg: "green.100", label: "Healthy" },
-  amber: { bg: "yellow.100", label: "Backlog" },
-  red: { bg: "red.100", label: "Failing" },
+  green: { bg: "green.subtle", label: "Healthy" },
+  amber: { bg: "yellow.subtle", label: "Backlog" },
+  red: { bg: "red.subtle", label: "Failing" },
 };
 
 function friendlyTaskType(t: string): string {
@@ -443,7 +443,7 @@ export default function DocumentSyncStatusPanel({ refreshNonce = 0 }: Props) {
 
   if (!status) {
     return loading ? (
-      <Box p={3} mb={3} borderRadius="md" bg="gray.50" borderWidth={1}>
+      <Box p={3} mb={3} borderRadius="md" bg="gray.faint" borderWidth={1}>
         <Text fontSize="sm" color="fg.muted">Loading sync status…</Text>
       </Box>
     ) : null;
@@ -459,13 +459,13 @@ export default function DocumentSyncStatusPanel({ refreshNonce = 0 }: Props) {
 
   return (
     <>
-      <Box p={3} mb={3} borderRadius="md" bg="gray.50" borderWidth={1}>
+      <Box p={3} mb={3} borderRadius="md" bg="gray.faint" borderWidth={1}>
         <HStack justify="space-between" wrap="wrap" gap={2}>
           <HStack gap={3} wrap="wrap">
             <HStack gap={2}>
               <Text fontSize="sm" fontWeight="semibold">Drive backup</Text>
               {isSyncing ? (
-                <Badge bg="blue.100" px={2}>
+                <Badge bg="blue.subtle" px={2}>
                   <HStack gap={1}>
                     <Spinner size="xs" borderWidth="2px" />
                     <Text as="span">Syncing…</Text>
@@ -540,8 +540,8 @@ export default function DocumentSyncStatusPanel({ refreshNonce = 0 }: Props) {
           </HStack>
         </HStack>
         {status.recentFailures.length > 0 && (
-          <VStack align="stretch" gap={1} mt={2} pt={2} borderTopWidth={1} borderColor="gray.200">
-            <Text fontSize="xs" fontWeight="semibold" color="red.700">
+          <VStack align="stretch" gap={1} mt={2} pt={2} borderTopWidth={1} borderColor="gray.emphasized">
+            <Text fontSize="xs" fontWeight="semibold" color="red.fg">
               Recent failures ({status.recentFailures.length}):
             </Text>
             {status.recentFailures.slice(0, 3).map((f) => (
@@ -552,13 +552,13 @@ export default function DocumentSyncStatusPanel({ refreshNonce = 0 }: Props) {
           </VStack>
         )}
         {status.counts.terminated > 0 && (
-          <Box mt={2} pt={2} borderTopWidth={1} borderColor="gray.200">
+          <Box mt={2} pt={2} borderTopWidth={1} borderColor="gray.emphasized">
             <Button
               size="xs"
               variant="ghost"
               onClick={() => setFailedOpen((v) => !v)}
               px={1}
-              css={{ color: "var(--chakra-colors-red-700)" }}
+              css={{ color: "var(--chakra-colors-red-fg)" }}
             >
               {failedOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
               <Text as="span" ml={1} fontSize="xs" fontWeight="semibold">
@@ -579,16 +579,16 @@ export default function DocumentSyncStatusPanel({ refreshNonce = 0 }: Props) {
                     gap={2}
                     p={1.5}
                     borderWidth={1}
-                    borderColor="red.200"
+                    borderColor="red.emphasized"
                     borderRadius="sm"
-                    bg="red.50"
+                    bg="red.faint"
                   >
                     <VStack align="start" gap={0} flex={1} minW={0}>
                       <HStack gap={2} wrap="wrap">
                         <Text fontSize="xs" fontWeight="semibold">
                           {friendlyTaskType(task.taskType)}
                         </Text>
-                        <Badge size="xs" bg="red.100">
+                        <Badge size="xs" bg="red.subtle">
                           {task.attempts} attempt{task.attempts === 1 ? "" : "s"}
                         </Badge>
                       </HStack>
@@ -601,7 +601,7 @@ export default function DocumentSyncStatusPanel({ refreshNonce = 0 }: Props) {
                       </Text>
                       <TaskDetail task={task} />
                       {task.lastError && (
-                        <Text fontSize="2xs" color="red.700" lineClamp={3}>
+                        <Text fontSize="2xs" color="red.fg" lineClamp={3}>
                           {task.lastError}
                         </Text>
                       )}
@@ -628,13 +628,13 @@ export default function DocumentSyncStatusPanel({ refreshNonce = 0 }: Props) {
           </Box>
         )}
         {totalPending > 0 && (
-          <Box mt={2} pt={2} borderTopWidth={1} borderColor="gray.200">
+          <Box mt={2} pt={2} borderTopWidth={1} borderColor="gray.emphasized">
             <Button
               size="xs"
               variant="ghost"
               onClick={() => setBacklogOpen((v) => !v)}
               px={1}
-              css={{ color: "var(--chakra-colors-fg-muted)" }}
+              css={{ color: "var(--chakra-colors-gray-fg)" }}
             >
               {backlogOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
               <Text as="span" ml={1} fontSize="xs">
@@ -660,9 +660,9 @@ export default function DocumentSyncStatusPanel({ refreshNonce = 0 }: Props) {
                       gap={2}
                       p={1.5}
                       borderWidth={1}
-                      borderColor="gray.200"
+                      borderColor="gray.emphasized"
                       borderRadius="sm"
-                      bg={task.state === "IN_PROGRESS" ? "blue.50" : "white"}
+                      bg={task.state === "IN_PROGRESS" ? "blue.faint" : "bg.panel"}
                     >
                       <VStack align="start" gap={0} flex={1} minW={0}>
                         <HStack gap={2} wrap="wrap">
@@ -670,10 +670,10 @@ export default function DocumentSyncStatusPanel({ refreshNonce = 0 }: Props) {
                             {friendlyTaskType(task.taskType)}
                           </Text>
                           {task.state === "IN_PROGRESS" && (
-                            <Badge size="xs" bg="blue.100">running</Badge>
+                            <Badge size="xs" bg="blue.subtle">running</Badge>
                           )}
                           {task.attempts > 0 && (
-                            <Badge size="xs" bg={task.attempts >= 3 ? "red.100" : "yellow.100"}>
+                            <Badge size="xs" bg={task.attempts >= 3 ? "red.subtle" : "yellow.subtle"}>
                               {task.attempts} attempt{task.attempts === 1 ? "" : "s"}
                             </Badge>
                           )}
@@ -687,12 +687,12 @@ export default function DocumentSyncStatusPanel({ refreshNonce = 0 }: Props) {
                         </Text>
                         <TaskDetail task={task} />
                         {task.lastError && (
-                          <Text fontSize="2xs" color="red.700" lineClamp={2}>
+                          <Text fontSize="2xs" color="red.fg" lineClamp={2}>
                             Last error: {task.lastError}
                           </Text>
                         )}
                         {isBackedOff && (
-                          <Text fontSize="2xs" color="orange.700">
+                          <Text fontSize="2xs" color="orange.fg">
                             Backed off until {fmtDate(task.nextAttemptAt)} {fmtTimeOpts(task.nextAttemptAt, { hour: "numeric", minute: "2-digit" })}
                           </Text>
                         )}

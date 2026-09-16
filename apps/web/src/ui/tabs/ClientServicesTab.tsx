@@ -43,10 +43,10 @@ export default function ClientServicesTab() {
 
   return (
     <Box w="full" pb={8}>
-      <Box p={5} bg="green.50" borderWidth="1px" borderColor="green.200" rounded="lg" mb={5}>
+      <Box p={5} bg="green.faint" borderWidth="1px" borderColor="green.emphasized" rounded="lg" mb={5}>
         <VStack gap={3} align="start">
-          <Text fontSize="xl" fontWeight="bold" color="green.800">Our Services</Text>
-          <Text fontSize="sm" color="green.700">
+          <Text fontSize="xl" fontWeight="bold" color="green.fg">Our Services</Text>
+          <Text fontSize="sm" color="green.fg">
             Seedlings Lawn Care provides professional lawn maintenance, landscaping, and property care services.
             We'd love to help keep your property looking its best.
           </Text>
@@ -59,12 +59,12 @@ export default function ClientServicesTab() {
       )}
       {!loading && linked && jobs.length > 0 && (
         <Box mb={5}>
-          <Text fontSize="sm" fontWeight="semibold" color="green.800" mb={2} px={1}>
+          <Text fontSize="sm" fontWeight="semibold" color="green.fg" mb={2} px={1}>
             Your Upcoming Services
           </Text>
           <VStack align="stretch" gap={2}>
             {jobs.map((job: any) => (
-              <Card.Root key={job.id} variant="outline" borderColor="green.300">
+              <Card.Root key={job.id} variant="outline" borderColor="green.emphasized">
                 <Card.Body py="2" px="3">
                   <HStack justify="space-between" align="start">
                     <VStack align="start" gap={0.5}>
@@ -87,12 +87,12 @@ export default function ClientServicesTab() {
         </Box>
       )}
       {!loading && linked && jobs.length === 0 && (
-        <Box mb={5} p={3} bg="gray.50" rounded="md">
+        <Box mb={5} p={3} bg="gray.faint" rounded="md">
           <Text fontSize="sm" color="fg.muted" textAlign="center">No upcoming services scheduled.</Text>
         </Box>
       )}
 
-      <Text fontSize="sm" fontWeight="semibold" color="green.800" mb={2} px={1}>
+      <Text fontSize="sm" fontWeight="semibold" color="green.fg" mb={2} px={1}>
         What We Offer
       </Text>
       <VStack align="stretch" gap={3} mb={5}>
@@ -103,18 +103,18 @@ export default function ClientServicesTab() {
           { title: "Leaf & Debris Cleanup", desc: "Seasonal cleanups to clear leaves, branches, and debris. Keeps your yard tidy year-round." },
           { title: "Aeration & Overseeding", desc: "Core aeration and overseeding to promote a thick, healthy lawn. Recommended annually in fall." },
         ].map((svc) => (
-          <Card.Root key={svc.title} variant="outline" borderColor="green.200">
+          <Card.Root key={svc.title} variant="outline" borderColor="green.emphasized">
             <Card.Body py="2" px="3">
-              <Text fontSize="sm" fontWeight="semibold" color="green.800">{svc.title}</Text>
-              <Text fontSize="xs" color="green.700" mt={1}>{svc.desc}</Text>
+              <Text fontSize="sm" fontWeight="semibold" color="green.fg">{svc.title}</Text>
+              <Text fontSize="xs" color="green.fg" mt={1}>{svc.desc}</Text>
             </Card.Body>
           </Card.Root>
         ))}
       </VStack>
 
-      <Box p={4} bg="green.50" borderWidth="1px" borderColor="green.200" rounded="lg">
-        <Text fontSize="md" fontWeight="semibold" color="green.800" mb={2}>Get in Touch</Text>
-        <Text fontSize="sm" color="green.700" mb={3}>
+      <Box p={4} bg="green.faint" borderWidth="1px" borderColor="green.emphasized" rounded="lg">
+        <Text fontSize="md" fontWeight="semibold" color="green.fg" mb={2}>Get in Touch</Text>
+        <Text fontSize="sm" color="green.fg" mb={3}>
           Interested in a quote or have questions? We'd love to hear from you.
         </Text>
         <HStack gap={3} wrap="wrap">

@@ -40,14 +40,14 @@ export default function TabExplainer({
 }) {
   const [open, setOpen] = usePersistedState<boolean>(storageKey, false);
   return (
-    <Box borderWidth="1px" borderColor="blue.200" borderRadius="md" overflow="hidden">
+    <Box borderWidth="1px" borderColor="blue.emphasized" borderRadius="md" overflow="hidden">
       <HStack
         as="button"
         w="full"
         px={2}
         py={1.5}
         gap={2}
-        bg="blue.50"
+        bg="blue.faint"
         cursor="pointer"
         onClick={() => setOpen(!open)}
         aria-expanded={open}
@@ -55,20 +55,20 @@ export default function TabExplainer({
         {/* The icon carries "explanatory, not a warning" — the blue fill alone
             was doing that work and reads the same as an alert to anyone who
             has not learned the convention. */}
-        <Box color="blue.700" flexShrink={0} display="flex" alignItems="center">
+        <Box color="blue.fg" flexShrink={0} display="flex" alignItems="center">
           <Info size={14} />
         </Box>
-        <Text fontSize="xs" color="blue.800" fontWeight="semibold" flex="1" textAlign="left">
+        <Text fontSize="xs" color="blue.fg" fontWeight="semibold" flex="1" textAlign="left">
           {title}
         </Text>
         {/* A chevron says it opens. "Show"/"Hide" as the only affordance reads
             as a link to somewhere else. */}
-        <Box color="blue.700" flexShrink={0} display="flex" alignItems="center">
+        <Box color="blue.fg" flexShrink={0} display="flex" alignItems="center">
           {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
         </Box>
       </HStack>
       {open && (
-        <Box px={2} py={2} bg="blue.50" borderTopWidth="1px" borderColor="blue.200">
+        <Box px={2} py={2} bg="blue.faint" borderTopWidth="1px" borderColor="blue.emphasized">
           <VStack align="stretch" gap={1.5}>
             {children}
           </VStack>
@@ -82,7 +82,7 @@ export default function TabExplainer({
  *  the size and colour — three copies of this markup had already drifted. */
 export function ExplainerText({ children }: { children: ReactNode }) {
   return (
-    <Text fontSize="xs" color="blue.800">
+    <Text fontSize="xs" color="blue.fg">
       {children}
     </Text>
   );

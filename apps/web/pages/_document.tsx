@@ -1,4 +1,5 @@
 import { Html, Head, Main, NextScript } from "next/document";
+import { THEME_PAGE_BG, THEME_COLOR_SCHEME, THEME_STORAGE_KEY, CONTRAST_RAMP_CSS, THEME_SEASON, THEME_BOOT_FG, THEME_BOOT_FG_MUTED, PULSE_CSS } from "@/src/styles/themeTokens";
 
 // Custom document — sole purpose is to paint a pre-hydration white
 // shield the very moment the HTML lands in the browser, and then hand
@@ -43,7 +44,7 @@ const SHIELD_CSS = `
   left: -100vw;
   width: 300vw;
   height: 300vh;
-  background: #ffffff;
+  background: var(--seedlings-boot-bg, #ffffff);
   z-index: 19999;
   pointer-events: none;
 }
@@ -52,7 +53,7 @@ const SHIELD_CSS = `
    browser (e.g. a UA extension, or a pathological viewport bug), the
    base color underneath is still white instead of app content. */
 body:has(#pre-splash-shield) {
-  background: #ffffff !important;
+  background: var(--seedlings-boot-bg, #ffffff) !important;
 }
 /* AppSplash's own overlay uses width:100dvw height:100dvh, which on
    some devices (particularly Android PWAs) doesn't cover the full
@@ -63,7 +64,7 @@ body:has(#pre-splash-shield) {
    box-shadow doesn't affect layout, so AppSplash's fragile layout
    code isn't disturbed. */
 [data-app-splash-overlay="1"] {
-  box-shadow: 0 0 0 100vmax #ffffff !important;
+  box-shadow: 0 0 0 100vmax var(--seedlings-boot-bg, #ffffff) !important;
 }
 /* ── App content coordination with the splash ─────────────────────────
    Kills the flash entirely by hiding #__next while the splash is up,
@@ -148,11 +149,68 @@ const SHIELD_REMOVER_JS = `
 })();
 `;
 
+// Runs BEFORE anything paints: stamps `data-theme` so Chakra's conditions
+// resolve on the first paint, repaints the pre-splash shield in the theme's
+// own colour (hardcoded white flashed white on the way into dark — the exact
+// failure the shield exists to prevent), and sets `color-scheme` so the
+// browser paints native controls correctly.
+const THEME_BOOT_JS = `
+(function () {
+  try {
+    var BG = ${JSON.stringify(THEME_PAGE_BG)};
+    var FG = ${JSON.stringify(THEME_BOOT_FG)};
+    var FGM = ${JSON.stringify(THEME_BOOT_FG_MUTED)};
+    var CS = ${JSON.stringify(THEME_COLOR_SCHEME)};
+    var t = localStorage.getItem(${JSON.stringify(THEME_STORAGE_KEY)});
+    if (!BG[t]) t = "original";
+    if (t !== "original") document.documentElement.setAttribute("data-theme", t);
+    document.documentElement.style.setProperty("--seedlings-boot-bg", BG[t]);
+    // The splash reads these; it renders before any Chakra token exists.
+    document.documentElement.style.setProperty("--seedlings-boot-fg", FG[t]);
+    document.documentElement.style.setProperty("--seedlings-boot-fg-muted", FGM[t]);
+    document.documentElement.style.colorScheme = CS[t] || "light";
+
+    // SEASON. A theme that names a season pins the logo to it; Original and
+    // Dark leave it on the natural month.
+    //
+    // This has to happen HERE, not in useAppTheme, because that hook is
+    // mounted in exactly one place — the Profile tab's theme picker. Anywhere
+    // else in the app the override was never written, so Spring and Fall got
+    // their colours from the boot script above and their LOGO from the
+    // calendar: the fall mark, under every theme, all autumn.
+    //
+    // Doing it before React also means the first painted frame is already
+    // right, instead of the logo swapping after hydration.
+    var SEASON = ${JSON.stringify(THEME_SEASON)};
+    var want = SEASON[t] || "auto";
+    if (want === "auto") {
+      // Clear only what a THEME set. An admin who picked a season by hand on
+      // the Profile tab keeps it when they switch to Original or Dark.
+      if (localStorage.getItem("seedlings_seasonOverrideSource") === "theme") {
+        localStorage.removeItem("seedlings_seasonOverride");
+        localStorage.removeItem("seedlings_seasonOverrideSource");
+      }
+    } else {
+      localStorage.setItem("seedlings_seasonOverride", want);
+      localStorage.setItem("seedlings_seasonOverrideSource", "theme");
+    }
+  } catch (e) {
+    /* Blocked storage — fall through to Original, which needs no attribute. */
+  }
+})();
+`;
+
 export default function Document() {
   return (
     <Html lang="en">
       <Head>
+        {/* FIRST — sets --seedlings-boot-bg, which the shield CSS below reads. */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_JS }} />
         <style dangerouslySetInnerHTML={{ __html: SHIELD_CSS }} />
+        {/* Unlayered, so it outranks Chakra's `tokens` layer. Contrast theme only. */}
+        <style dangerouslySetInnerHTML={{ __html: CONTRAST_RAMP_CSS }} />
+        {/* Pulse ring tints, derived per theme — see PULSE_CSS. */}
+        <style dangerouslySetInnerHTML={{ __html: PULSE_CSS }} />
       </Head>
       <body>
         <div id="pre-splash-shield" />

@@ -102,8 +102,8 @@ export default function ClaimAgreementDialog({
                     reads as "shared with N workers" without surprising the
                     user mid-breakdown. */}
                 {group && (
-                  <Box p={2} bg="purple.50" borderWidth="1px" borderColor="purple.200" rounded="md">
-                    <Text fontSize="sm" color="purple.800">
+                  <Box p={2} bg="purple.faint" borderWidth="1px" borderColor="purple.emphasized" rounded="md">
+                    <Text fontSize="sm" color="purple.fg">
                       Claiming for <Text as="span" fontWeight="semibold">{group.name}</Text> ({group.activeWorkerCount} worker{group.activeWorkerCount === 1 ? "" : "s"}, observers don't share payout).
                       The payout is split evenly across active workers.
                     </Text>
@@ -112,7 +112,7 @@ export default function ClaimAgreementDialog({
 
                 {/* Payout breakdown */}
                 {price > 0 && (
-                  <Box p={3} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">
+                  <Box p={3} bg="gray.faint" rounded="md" borderWidth="1px" borderColor="gray.emphasized">
                     <Text fontSize="sm" fontWeight="medium" mb={2}>Payout Details</Text>
                     <VStack align="stretch" gap={1} fontSize="sm">
                       <HStack justify="space-between">
@@ -121,27 +121,27 @@ export default function ClaimAgreementDialog({
                       </HStack>
                       {addonsTotal > 0 && (
                         <HStack justify="space-between">
-                          <Text color="green.600">Added services</Text>
-                          <Text color="green.600">+${addonsTotal.toFixed(2)}</Text>
+                          <Text color="green.fg">Added services</Text>
+                          <Text color="green.fg">+${addonsTotal.toFixed(2)}</Text>
                         </HStack>
                       )}
                       {expTotal > 0 && (
                         <HStack justify="space-between">
-                          <Text color="orange.600">
+                          <Text color="orange.fg">
                             Charges (billed on top)
                           </Text>
-                          <Text color="orange.600">
+                          <Text color="orange.fg">
                             +${expTotal.toFixed(2)}
                           </Text>
                         </HStack>
                       )}
                       {pct > 0 && (
                         <HStack justify="space-between">
-                          <Text color="orange.600">{label} ({pct}%)</Text>
-                          <Text color="orange.600">−${deduction.toFixed(2)}</Text>
+                          <Text color="orange.fg">{label} ({pct}%)</Text>
+                          <Text color="orange.fg">−${deduction.toFixed(2)}</Text>
                         </HStack>
                       )}
-                      <Box borderTopWidth="1px" borderColor="gray.300" pt={1} mt={1}>
+                      <Box borderTopWidth="1px" borderColor="gray.emphasized" pt={1} mt={1}>
                         <HStack justify="space-between">
                           <Text fontWeight="bold">
                             {group ? "Group Payout Pool" : "Your Payout"}
@@ -152,7 +152,7 @@ export default function ClaimAgreementDialog({
                         </HStack>
                         {group && (
                           <HStack justify="space-between" mt={1}>
-                            <Text fontWeight="bold" color="purple.800">
+                            <Text fontWeight="bold" color="purple.fg">
                               Each worker's share ({group.activeWorkerCount}-way split)
                             </Text>
                             <Badge colorPalette="purple" variant="solid" fontSize="sm" px="3" py="0.5" borderRadius="full">
@@ -165,7 +165,7 @@ export default function ClaimAgreementDialog({
                   </Box>
                 )}
 
-                <Text fontSize="xs" color="orange.500" fontStyle="italic">
+                <Text fontSize="xs" color="orange.fg" fontStyle="italic">
                   Note: {group ? "Each worker's payout" : "This payout"} is an estimate based on the charges on this job right now. The final amount may change if charges are added, updated, or removed before the job is completed.
                 </Text>
 

@@ -157,15 +157,15 @@ export default function PWAPullToRefresh({
           px="20px"
           py="12px"
           borderRadius="full"
-          bg="white"
+          bg="bg.panel"
           boxShadow="xl"
           borderWidth="2px"
-          borderColor="gray.300"
+          borderColor="gray.emphasized"
         >
           {refreshing ? (
             <>
-              <Spinner size="sm" color="blue.500" />
-              <Text fontSize="sm" fontWeight="bold" color="blue.600">Refreshing…</Text>
+              <Spinner size="sm" color="blue.fg" />
+              <Text fontSize="sm" fontWeight="bold" color="blue.fg">Refreshing…</Text>
             </>
           ) : (
             <>
@@ -174,14 +174,14 @@ export default function PWAPullToRefresh({
                 h="20px"
                 borderRadius="full"
                 borderWidth="3px"
-                borderColor={progress >= 1 ? "blue.400" : "gray.300"}
+                borderColor={progress >= 1 ? "blue.strong" : "gray.emphasized"}
                 bgGradient={`conic-gradient(#3182ce ${Math.floor(
                   progress * 360
                 )}deg, transparent 0deg)`}
                 mask="radial-gradient(circle 7px, transparent 7px, black 8px)"
                 transition="border-color 0.2s"
               />
-              <Text fontSize="sm" fontWeight="bold" color={progress >= 1 ? "blue.600" : "gray.600"}>
+              <Text fontSize="sm" fontWeight="bold" color={progress >= 1 ? "blue.fg" : "gray.fg"}>
                 {progress >= 1 ? "Release to refresh" : "Pull to refresh"}
               </Text>
             </>

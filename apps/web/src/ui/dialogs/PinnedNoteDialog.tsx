@@ -197,9 +197,9 @@ export default function PinnedNoteDialog({
                         // A delivered next-visit request is history, not a
                         // standing instruction — it reads as a record rather
                         // than something the crew still has to do.
-                        bg={inst.deliveredAt ? "bg.subtle" : "yellow.50"}
+                        bg={inst.deliveredAt ? "bg.subtle" : "yellow.faint"}
                         borderWidth="1px"
-                        borderColor={inst.deliveredAt ? "border" : "yellow.200"}
+                        borderColor={inst.deliveredAt ? "border" : "yellow.emphasized"}
                         borderStyle={inst.scope === "NEXT_VISIT_ONLY" && !inst.deliveredAt ? "dashed" : "solid"}
                         borderRadius="md"
                         align="center"
@@ -307,7 +307,7 @@ export default function PinnedNoteDialog({
                         cursor="pointer"
                         px="2"
                         borderRadius="full"
-                        _hover={{ bg: "yellow.100" }}
+                        _hover={{ bg: "yellow.subtle" }}
                         onClick={() => void addPreset(preset)}
                       >
                         + {preset}

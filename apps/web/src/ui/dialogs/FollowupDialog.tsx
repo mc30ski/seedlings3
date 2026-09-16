@@ -229,8 +229,8 @@ export default function FollowupDialog({ open, onOpenChange, onCreated, editFoll
             </Dialog.Header>
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
-                <Box px={3} py={2} bg="#FEE2E2" borderWidth="1px" borderColor="#BE123C" borderRadius="md">
-                  <Text fontSize="xs" color="#881337" fontWeight="medium">
+                <Box px={3} py={2} bg="red.subtle" borderWidth="1px" borderColor="red.emphasized" borderRadius="md">
+                  <Text fontSize="xs" color="red.fg" fontWeight="medium">
                     Team — only visible to people added via Manage Team
                   </Text>
                 </Box>
@@ -266,7 +266,7 @@ export default function FollowupDialog({ open, onOpenChange, onCreated, editFoll
                   {selectedClientIds.length > 0 && (
                     <VStack align="stretch" gap={1} mb={2}>
                       {selectedClientIds.map((id) => (
-                        <HStack key={id} px={2} py={1} rounded="md" borderWidth="1px" borderColor="gray.200" justify="space-between">
+                        <HStack key={id} px={2} py={1} rounded="md" borderWidth="1px" borderColor="gray.emphasized" justify="space-between">
                           <Text fontSize="sm">{clientLabel(id)}</Text>
                           <Button size="xs" variant="ghost" px="1" minW="0" onClick={() => setSelectedClientIds((prev) => prev.filter((c) => c !== id))}>
                             <X size={14} />
@@ -314,7 +314,7 @@ export default function FollowupDialog({ open, onOpenChange, onCreated, editFoll
                   {selectedJobIds.length > 0 && (
                     <VStack align="stretch" gap={1} mb={2}>
                       {selectedJobIds.map((id) => (
-                        <HStack key={id} px={2} py={1} rounded="md" borderWidth="1px" borderColor="gray.200" justify="space-between">
+                        <HStack key={id} px={2} py={1} rounded="md" borderWidth="1px" borderColor="gray.emphasized" justify="space-between">
                           <Text fontSize="sm">{jobLabel(id)}</Text>
                           <Button size="xs" variant="ghost" px="1" minW="0" onClick={() => setSelectedJobIds((prev) => prev.filter((j) => j !== id))}>
                             <X size={14} />

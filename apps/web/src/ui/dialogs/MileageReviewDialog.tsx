@@ -223,9 +223,9 @@ function EntryCard({
     <Box
       borderWidth="1px"
       borderColor={
-        isApproved ? "green.200" : isOpen ? "teal.200" : "orange.200"
+        isApproved ? "green.emphasized" : isOpen ? "teal.emphasized" : "orange.emphasized"
       }
-      bg={isApproved ? "green.50" : isOpen ? "teal.50" : "orange.50"}
+      bg={isApproved ? "green.faint" : isOpen ? "teal.faint" : "orange.faint"}
       borderRadius="md"
       p={3}
     >
@@ -283,7 +283,7 @@ function EntryCard({
               size="sm"
               value={liveMiles != null ? String(liveMiles) : "—"}
               readOnly
-              bg="gray.100"
+              bg="gray.subtle"
             />
           </Field>
         </HStack>

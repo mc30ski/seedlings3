@@ -119,12 +119,12 @@ export default function ChangeRequestsPanel({ bare = false, onReady }: Props = {
               const clientName = cr.occurrence.job?.property?.client?.displayName ?? "";
               const requesterName = cr.requestedBy.displayName ?? cr.requestedBy.email ?? "Client";
               return (
-                <Box key={cr.id} p={2} bg="orange.50" borderWidth="1px" borderColor="orange.200" rounded="md">
+                <Box key={cr.id} p={2} bg="orange.faint" borderWidth="1px" borderColor="orange.emphasized" rounded="md">
                   <HStack justify="space-between" align="start" wrap="wrap" gap={2}>
                     <Box flex="1" minW={0}>
                       <HStack gap={1} mb={0.5}>
                         {cr.kind === "RESCHEDULE" ? <Calendar size={14} color="var(--chakra-colors-orange-700)" /> : <SkipForward size={14} color="var(--chakra-colors-orange-700)" />}
-                        <Text fontSize="sm" fontWeight="semibold" color="orange.900">
+                        <Text fontSize="sm" fontWeight="semibold" color="orange.fg">
                           {cr.kind === "RESCHEDULE" ? "Reschedule" : "Skip"} — {propName}
                           {clientName && <Text as="span" color="fg.muted" fontWeight="normal"> ({clientName})</Text>}
                         </Text>
@@ -133,7 +133,7 @@ export default function ChangeRequestsPanel({ bare = false, onReady }: Props = {
                         Currently: {cr.occurrence.startAt ? fmtDateWeekday(cr.occurrence.startAt) : "—"}
                       </Text>
                       {cr.kind === "RESCHEDULE" && cr.proposedStartAt && (
-                        <Text fontSize="xs" color="orange.800">
+                        <Text fontSize="xs" color="orange.fg">
                           Proposed: <b>{fmtDateWeekday(cr.proposedStartAt)}</b>
                         </Text>
                       )}
@@ -167,7 +167,7 @@ export default function ChangeRequestsPanel({ bare = false, onReady }: Props = {
                   </HStack>
 
                   {denyDialog?.id === cr.id && (
-                    <Box mt={2} p={2} bg="white" borderWidth="1px" borderColor="gray.200" rounded="md">
+                    <Box mt={2} p={2} bg="bg.panel" borderWidth="1px" borderColor="gray.emphasized" rounded="md">
                       <Text fontSize="xs" mb={1}>Optional note for the client:</Text>
                       <Textarea
                         size="sm"

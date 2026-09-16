@@ -205,8 +205,8 @@ function ClerkUserPickerDialog({
               </Dialog.Header>
               <Dialog.Body>
                 <VStack align="stretch" gap={3}>
-                  <Box p={2} bg="orange.50" borderWidth="1px" borderColor="orange.200" borderRadius="md">
-                    <Text fontSize="xs" color="orange.800">
+                  <Box p={2} bg="orange.faint" borderWidth="1px" borderColor="orange.emphasized" borderRadius="md">
+                    <Text fontSize="xs" color="orange.fg">
                       Contact: <Text as="span" fontWeight="semibold">{contactName}</Text>
                       {contact.email && (
                         <> · {contact.email}</>
@@ -239,9 +239,9 @@ function ClerkUserPickerDialog({
                           py={1.5}
                           borderRadius="md"
                           borderWidth="1px"
-                          borderColor="gray.200"
-                          bg="white"
-                          _hover={{ bg: "gray.50" }}
+                          borderColor="gray.emphasized"
+                          bg="bg.panel"
+                          _hover={{ bg: "gray.faint" }}
                           cursor="pointer"
                           textAlign="left"
                           onClick={() => setConfirmUser(u)}

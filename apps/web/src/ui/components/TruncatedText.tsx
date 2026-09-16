@@ -46,7 +46,7 @@ export default function TruncatedText({
         </Text>
         <Text
           as="span"
-          color="blue.500"
+          color="blue.fg"
           fontSize={fontSize}
           fontWeight="medium"
           cursor="pointer"
@@ -79,7 +79,7 @@ export default function TruncatedText({
       {isClamped && (
         <Text
           as="span"
-          color="blue.500"
+          color="blue.fg"
           fontSize={fontSize}
           fontWeight="medium"
           cursor="pointer"

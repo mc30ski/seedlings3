@@ -567,11 +567,11 @@ export default function PreviewRoutesTab({ scope }: Props) {
       {/* Primary CTA — one clear next step. Big date + Plan button,
           replaces the previous three-separate-cards layout for date
           + mode + settings + Analyze button. */}
-      <Box mb={3} p={4} bg="blue.50" borderWidth="1px" borderColor="blue.200" rounded="lg">
+      <Box mb={3} p={4} bg="blue.faint" borderWidth="1px" borderColor="blue.emphasized" rounded="lg">
         <HStack gap={3} align="flex-end" wrap="wrap">
           <Box flex="1" minW="140px">
             <HStack mb={1} gap={2}>
-              <Text fontSize="xs" fontWeight="semibold" color="blue.900" textTransform="uppercase" letterSpacing="wide">
+              <Text fontSize="xs" fontWeight="semibold" color="blue.fg" textTransform="uppercase" letterSpacing="wide">
                 Plan for
               </Text>
               {dateBadge && <Badge size="sm" colorPalette="blue" variant="subtle">{dateBadge}</Badge>}
@@ -582,7 +582,7 @@ export default function PreviewRoutesTab({ scope }: Props) {
               value={targetDate}
               min={todayStr}
               onChange={(e) => setTargetDate(e.target.value as EtDateKey)}
-              bg="white"
+              bg="bg.panel"
             />
           </Box>
           <Button
@@ -602,7 +602,7 @@ export default function PreviewRoutesTab({ scope }: Props) {
           )}
         </HStack>
         {lastUpdatedAt && (
-          <Text fontSize="xs" color="blue.700" mt={2}>
+          <Text fontSize="xs" color="blue.fg" mt={2}>
             Last analyzed {fmtDateTime(lastUpdatedAt)}
           </Text>
         )}
@@ -784,30 +784,30 @@ export default function PreviewRoutesTab({ scope }: Props) {
           in-flight analysis, so the CTA card above is the loudest
           thing on the page. */}
       {!data && !loading && (
-        <Box mb={4} p={4} bg="gray.50" rounded="md" textAlign="center" borderWidth="1px" borderColor="gray.200">
+        <Box mb={4} p={4} bg="gray.faint" rounded="md" textAlign="center" borderWidth="1px" borderColor="gray.emphasized">
           <Text fontSize="sm" color="fg.muted">
             Pick a date above, then tap <Text as="span" fontWeight="semibold">Plan route</Text> to see the best order to run your day.
           </Text>
         </Box>
       )}
 
-      {error && <Text color="red.500" fontSize="sm" mb={4}>{error}</Text>}
+      {error && <Text color="red.fg" fontSize="sm" mb={4}>{error}</Text>}
 
       {/* Server-side AI failure — red banner (loud, so operators
           immediately know the route planner didn't run rather than
           staring at raw job list wondering what's wrong). */}
       {data?.error && (
-        <Box p={4} bg="red.50" borderWidth="1px" borderColor="red.300" rounded="md" mb={4}>
-          <Text fontSize="sm" fontWeight="semibold" color="red.900" mb={1}>
+        <Box p={4} bg="red.faint" borderWidth="1px" borderColor="red.emphasized" rounded="md" mb={4}>
+          <Text fontSize="sm" fontWeight="semibold" color="red.fg" mb={1}>
             Route planner failed to run
           </Text>
-          <Text fontSize="xs" color="red.800">{data.error}</Text>
+          <Text fontSize="xs" color="red.fg">{data.error}</Text>
         </Box>
       )}
 
       {/* Informational note (e.g. "no jobs found") — muted, low-key. */}
       {data?.message && !data.suggestions && !data.error && (
-        <Box p={4} bg="gray.50" rounded="md" mb={4}>
+        <Box p={4} bg="gray.faint" rounded="md" mb={4}>
           <Text fontSize="sm" color="fg.muted">{data.message}</Text>
         </Box>
       )}
@@ -815,8 +815,8 @@ export default function PreviewRoutesTab({ scope }: Props) {
       {data?.suggestions && (
         <VStack align="stretch" gap={4}>
           {/* Summary */}
-          <Box p={4} bg="blue.50" rounded="xl" borderWidth="1px" borderColor="blue.200">
-            <Text fontSize="sm" fontWeight="medium" color="blue.700" mb={3}>{data.suggestions.summary}</Text>
+          <Box p={4} bg="blue.faint" rounded="xl" borderWidth="1px" borderColor="blue.emphasized">
+            <Text fontSize="sm" fontWeight="medium" color="blue.fg" mb={3}>{data.suggestions.summary}</Text>
             {(() => {
               const jobCount = days.reduce((n, d) => n + (d.route ?? []).length, 0);
               let assumedCount = 0;
@@ -838,20 +838,20 @@ export default function PreviewRoutesTab({ scope }: Props) {
               }, 0);
               return (
                 <Box display="grid" gridTemplateColumns="auto 1fr" gap={1} rowGap={1.5} fontSize="sm" maxW="320px">
-                  <Text color="blue.600">Jobs:</Text>
-                  <Text fontWeight="semibold" color="blue.800">{jobCount}</Text>
+                  <Text color="blue.fg">Jobs:</Text>
+                  <Text fontWeight="semibold" color="blue.fg">{jobCount}</Text>
 
                   {totalCustomerCost > 0 && (
                     <>
-                      <Text color="blue.600">Customer cost:</Text>
-                      <Text fontWeight="semibold" color="blue.800">${totalCustomerCost.toFixed(2)}</Text>
+                      <Text color="blue.fg">Customer cost:</Text>
+                      <Text fontWeight="semibold" color="blue.fg">${totalCustomerCost.toFixed(2)}</Text>
                     </>
                   )}
 
                   {totalCustomerCost > 0 && (
                     <>
-                      <Text color="blue.600">Est. payout:</Text>
-                      <Text fontWeight="semibold" color="green.700">
+                      <Text color="blue.fg">Est. payout:</Text>
+                      <Text fontWeight="semibold" color="green.fg">
                         ${(totalCustomerCost * (1 - marginPercent / 100)).toFixed(2)}
                       </Text>
                     </>
@@ -859,22 +859,22 @@ export default function PreviewRoutesTab({ scope }: Props) {
 
                   {jobCount > 0 && (
                     <>
-                      <Text color="blue.600" borderTop="1px solid" borderColor="blue.200" pt={1}>Job time:</Text>
-                      <Text fontWeight="semibold" color="blue.800" borderTop="1px solid" borderColor="blue.200" pt={1}>~{formatDuration(totalWorkMins)}</Text>
+                      <Text color="blue.fg" borderTop="1px solid" borderColor="blue.emphasized" pt={1}>Job time:</Text>
+                      <Text fontWeight="semibold" color="blue.fg" borderTop="1px solid" borderColor="blue.emphasized" pt={1}>~{formatDuration(totalWorkMins)}</Text>
 
-                      <Text color="blue.600">Buffer:</Text>
-                      <Text fontWeight="semibold" color="blue.800">~{formatDuration(setupMins)} ({bufferPercent}%)</Text>
+                      <Text color="blue.fg">Buffer:</Text>
+                      <Text fontWeight="semibold" color="blue.fg">~{formatDuration(setupMins)} ({bufferPercent}%)</Text>
 
-                      <Text color="blue.600">Drive time:</Text>
-                      <Text fontWeight="semibold" color="blue.800">{data.routing ? formatDuration(driveMins) : "N/A"}{data.routing ? ` / ${data.routing.totalDriveMiles} mi` : ""}</Text>
+                      <Text color="blue.fg">Drive time:</Text>
+                      <Text fontWeight="semibold" color="blue.fg">{data.routing ? formatDuration(driveMins) : "N/A"}{data.routing ? ` / ${data.routing.totalDriveMiles} mi` : ""}</Text>
 
-                      <Text color="blue.700" fontWeight="medium" borderTop="1px solid" borderColor="blue.200" pt={1}>Total time:</Text>
-                      <Text fontWeight="bold" color="blue.900" fontSize="md" borderTop="1px solid" borderColor="blue.200" pt={1}>~{formatDuration(totalMins)}</Text>
+                      <Text color="blue.fg" fontWeight="medium" borderTop="1px solid" borderColor="blue.emphasized" pt={1}>Total time:</Text>
+                      <Text fontWeight="bold" color="blue.fg" fontSize="md" borderTop="1px solid" borderColor="blue.emphasized" pt={1}>~{formatDuration(totalMins)}</Text>
 
                       {assumedCount > 0 && (
                         <>
                           <Text />
-                          <Text fontSize="xs" color="orange.500">
+                          <Text fontSize="xs" color="orange.fg">
                             * {assumedCount} job{assumedCount !== 1 ? "s" : ""} assumed 60 min (no duration set)
                           </Text>
                         </>
@@ -885,7 +885,7 @@ export default function PreviewRoutesTab({ scope }: Props) {
                           {/* A heads-up, not a trim. Every job is still in the
                               route — the worker decides whether the day is
                               too long, not us. */}
-                          <Text fontSize="xs" color="red.500" fontWeight="medium">
+                          <Text fontSize="xs" color="red.fg" fontWeight="medium">
                             ⚠ Over your {availableHours}h setting by ~{formatDuration(Math.round(totalMins - availableHours * 60))} — all jobs still routed
                           </Text>
                         </>
@@ -906,7 +906,7 @@ export default function PreviewRoutesTab({ scope }: Props) {
               </Badge>
             )}
             {data.routeError && (
-              <Text fontSize="xs" color="orange.500" mt={2}>Route optimization note: {data.routeError}</Text>
+              <Text fontSize="xs" color="orange.fg" mt={2}>Route optimization note: {data.routeError}</Text>
             )}
           </Box>
 
@@ -917,11 +917,11 @@ export default function PreviewRoutesTab({ scope }: Props) {
             const noAddr = data.dataIssues.filter((i) => i.missingAddress).length;
             const noName = data.dataIssues.filter((i) => i.missingProperty && !i.missingAddress).length;
             return (
-              <Box p={3} bg="yellow.50" rounded="md" borderWidth="1px" borderColor="yellow.300">
-                <Text fontSize="sm" fontWeight="medium" color="yellow.700">
+              <Box p={3} bg="yellow.faint" rounded="md" borderWidth="1px" borderColor="yellow.emphasized">
+                <Text fontSize="sm" fontWeight="medium" color="yellow.fg">
                   {data.dataIssues.length} job{data.dataIssues.length !== 1 ? "s" : ""} can't be fully optimized — missing property data
                 </Text>
-                <Text fontSize="xs" color="yellow.700" mt={1}>
+                <Text fontSize="xs" color="yellow.fg" mt={1}>
                   {noAddr > 0 && <>{noAddr} without an address (skipped from distance optimization). </>}
                   {noName > 0 && <>{noName} without a property name. </>}
                   Open the property in Clients/Properties and fill in {noAddr > 0 ? "street/city/state" : "displayName"} so the route can include real driving distances.
@@ -932,11 +932,11 @@ export default function PreviewRoutesTab({ scope }: Props) {
 
           {/* Date change warning */}
           {dateChangeCount > 0 && (
-            <Box p={3} bg="orange.50" rounded="md" borderWidth="1px" borderColor="orange.300">
-              <Text fontSize="sm" fontWeight="medium" color="orange.700">
+            <Box p={3} bg="orange.faint" rounded="md" borderWidth="1px" borderColor="orange.emphasized">
+              <Text fontSize="sm" fontWeight="medium" color="orange.fg">
                 {dateChangeCount} job{dateChangeCount !== 1 ? "s" : ""} from other days could be added to this route
               </Text>
-              <Text fontSize="xs" color="orange.600" mt={1}>
+              <Text fontSize="xs" color="orange.fg" mt={1}>
                 These jobs are currently scheduled for different dates. You'd need to contact the client to confirm moving them. No changes have been made.
               </Text>
             </Box>
@@ -952,7 +952,7 @@ export default function PreviewRoutesTab({ scope }: Props) {
                 </VStack>
                 <VStack align="end" gap={0}>
                   {day.estimatedEarnings > 0 && (
-                    <Text fontSize="xs" color="green.600" fontWeight="medium">${day.estimatedEarnings.toFixed(2)}</Text>
+                    <Text fontSize="xs" color="green.fg" fontWeight="medium">${day.estimatedEarnings.toFixed(2)}</Text>
                   )}
                   {day.estimatedHours > 0 && (
                     <Text fontSize="xs" color="fg.muted">{formatDuration(Math.round(day.estimatedHours * 60))}</Text>
@@ -990,8 +990,8 @@ export default function PreviewRoutesTab({ scope }: Props) {
                     <Card.Root
                       key={stop.occurrenceId}
                       variant="outline"
-                      borderColor={stop.dateChanged ? "orange.300" : isClaimed ? "teal.200" : undefined}
-                      bg={stop.dateChanged ? "orange.50" : isClaimed ? "teal.50" : undefined}
+                      borderColor={stop.dateChanged ? "orange.emphasized" : isClaimed ? "teal.emphasized" : undefined}
+                      bg={stop.dateChanged ? "orange.faint" : isClaimed ? "teal.faint" : undefined}
                     >
                       <Card.Body py="2" px="3">
                         <HStack gap={3} align="start">
@@ -1051,7 +1051,7 @@ export default function PreviewRoutesTab({ scope }: Props) {
                                     <Badge colorPalette="orange" variant="solid" fontSize="xs" borderRadius="full" px="2">
                                       Reschedule needed
                                     </Badge>
-                                    <Text color="orange.600">
+                                    <Text color="orange.fg">
                                       Currently {stop.originalDate ? fmtDate(stop.originalDate + "T12:00:00Z") : "unscheduled"} → {stop.suggestedDate ? fmtDate(stop.suggestedDate + "T12:00:00Z") : fmtDate(day.date + "T12:00:00Z")}
                                     </Text>
                                     <Button
@@ -1120,7 +1120,7 @@ export default function PreviewRoutesTab({ scope }: Props) {
                   const job = jobMap.get(id);
                   if (!job) return null;
                   return (
-                    <HStack key={id} fontSize="xs" px={2} py={1} bg="gray.50" rounded="md" gap={2} wrap="wrap">
+                    <HStack key={id} fontSize="xs" px={2} py={1} bg="gray.faint" rounded="md" gap={2} wrap="wrap">
                       <Text fontWeight="medium">{job.property}{job.client ? ` — ${job.client}` : ""}</Text>
                       <Text color="fg.muted">{job.city}</Text>
                       {job.currentDate && <Text color="fg.muted">{fmtDate(job.currentDate + "T12:00:00Z")}</Text>}
@@ -1149,7 +1149,7 @@ export default function PreviewRoutesTab({ scope }: Props) {
 
       {/* Raw fallback */}
       {data?.raw && (
-        <Box p={4} bg="gray.50" rounded="md" whiteSpace="pre-wrap" fontSize="sm">
+        <Box p={4} bg="gray.faint" rounded="md" whiteSpace="pre-wrap" fontSize="sm">
           {data.raw}
         </Box>
       )}
@@ -1186,7 +1186,7 @@ export default function PreviewRoutesTab({ scope }: Props) {
                   </HStack>
                   <HStack gap={2} flexShrink={0}>
                     {job.currentDate && <Text color="fg.muted">{fmtDate(job.currentDate + "T12:00:00Z")}</Text>}
-                    {job.price != null && <Text color="green.600">${job.price.toFixed(2)}</Text>}
+                    {job.price != null && <Text color="green.fg">${job.price.toFixed(2)}</Text>}
                     {job.estimatedMinutes != null && <Text color="fg.muted">~{formatDuration(job.estimatedMinutes)}</Text>}
                   </HStack>
                 </HStack>

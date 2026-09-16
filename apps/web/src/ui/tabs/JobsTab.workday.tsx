@@ -181,10 +181,10 @@ function StopMileageDialog({
                     autoFocus
                   />
                   {miles != null && (
-                    <Text fontSize="xs" color="green.700">= {miles} mi driven</Text>
+                    <Text fontSize="xs" color="green.fg">= {miles} mi driven</Text>
                   )}
                   {odometer.trim() !== "" && !valid && (
-                    <Text fontSize="xs" color="red.600">
+                    <Text fontSize="xs" color="red.fg">
                       Must be a whole number ≥ {entry.startOdometer.toLocaleString()}
                     </Text>
                   )}
@@ -305,7 +305,7 @@ function SetEndTimeDialog({
                     autoFocus
                   />
                   {isBeforeStart && (
-                    <Text fontSize="xs" color="red.600">
+                    <Text fontSize="xs" color="red.fg">
                       End time must be after the workday's start time.
                     </Text>
                   )}
@@ -495,7 +495,7 @@ export function WorkdayBanner({ viewAsUserId }: { viewAsUserId?: string | null }
                 haven't already.
               </Text>
               {priorPending && (
-                <Text fontSize="xs" color="orange.700" fontWeight="medium">
+                <Text fontSize="xs" color="orange.fg" fontWeight="medium">
                   Set the end time on your prior workday above before
                   starting a new one.
                 </Text>
@@ -560,14 +560,14 @@ export function WorkdayBanner({ viewAsUserId }: { viewAsUserId?: string | null }
           {endBlocked ? (
             <>
               {" · "}
-              <Text as="span" color="red.700" fontWeight="semibold">
+              <Text as="span" color="red.fg" fontWeight="semibold">
                 End blocked ({blockerSummary} open below)
               </Text>
             </>
           ) : openMileageCount > 0 ? (
             <>
               {" · "}
-              <Text as="span" color="orange.700" fontWeight="semibold">
+              <Text as="span" color="orange.fg" fontWeight="semibold">
                 {openMileageCount} driving session{openMileageCount === 1 ? "" : "s"} running
               </Text>
             </>
@@ -602,14 +602,14 @@ export function WorkdayBanner({ viewAsUserId }: { viewAsUserId?: string | null }
           {endBlocked ? (
             <>
               {" · "}
-              <Text as="span" color="red.700" fontWeight="semibold">
+              <Text as="span" color="red.fg" fontWeight="semibold">
                 End blocked ({blockerSummary} open below)
               </Text>
             </>
           ) : openMileageCount > 0 ? (
             <>
               {" · "}
-              <Text as="span" color="orange.700" fontWeight="semibold">
+              <Text as="span" color="orange.fg" fontWeight="semibold">
                 {openMileageCount} driving session{openMileageCount === 1 ? "" : "s"} running
               </Text>
             </>

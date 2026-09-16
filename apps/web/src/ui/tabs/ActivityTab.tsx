@@ -65,7 +65,7 @@ function DetailsBlock({ details }: { details?: Record<string, any> | null }) {
             {details.model ? `${details.model} ` : ""}
           </Heading>
           {details.qrSlug && (
-            <Text fontSize="sm" color="gray.500" mt={1}>
+            <Text fontSize="sm" color="gray.fg" mt={1}>
               <Text as="span" fontWeight="bold">
                 ID:{" "}
               </Text>
@@ -78,9 +78,9 @@ function DetailsBlock({ details }: { details?: Record<string, any> | null }) {
                     true,
                   )
                 }
-                color="blue.600"
+                color="blue.fg"
                 textDecoration="underline"
-                _hover={{ color: "blue.700" }}
+                _hover={{ color: "blue.fg" }}
                 p={0}
               >
                 {details.qrSlug}
@@ -200,7 +200,7 @@ export default function ActivityTab({ role = "worker" }: TabRolePropType) {
         </HStack>
       </HStack>
 
-      <HStack fontSize="sm" color="gray.600" mb="2">
+      <HStack fontSize="sm" color="gray.fg" mb="2">
         <Text>
           {rows.length} user{rows.length !== 1 ? "s" : ""}
         </Text>
@@ -212,7 +212,7 @@ export default function ActivityTab({ role = "worker" }: TabRolePropType) {
 
       {loading && <LoadingCenter />}
       {!loading && rows.length === 0 && (
-        <Text color="gray.600">No matching activity.</Text>
+        <Text color="gray.fg">No matching activity.</Text>
       )}
 
       {!loading && sortedRows.length > 0 && (
@@ -229,21 +229,23 @@ export default function ActivityTab({ role = "worker" }: TabRolePropType) {
               <Accordion.Item
                 key={u.userId}
                 value={u.userId}
-                style={{
-                  borderRadius: "12px",
-                  overflow: "hidden",
-                  border: "1px solid var(--chakra-colors-gray-200)",
-                  marginBottom: "8px",
-                  background: "var(--chakra-colors-white)",
-                }}
+                // Chakra PROPS, not an inline style. `bg.panel` emits no CSS
+                // variable, so `background: var(--chakra-colors-bg-panel)`
+                // resolved to nothing and these rows rendered with no
+                // background at all — invisible against a dark page.
+                borderRadius="12px"
+                overflow="hidden"
+                borderWidth="1px"
+                borderColor="border.default"
+                mb="8px"
+                bg="bg.panel"
               >
                 <Accordion.ItemTrigger
-                  style={{
-                    width: "100%",
-                    padding: "10px 12px",
-                    display: "block",
-                    background: "var(--chakra-colors-white)",
-                  }}
+                  w="100%"
+                  px="12px"
+                  py="10px"
+                  display="block"
+                  bg="bg.panel"
                 >
                   <HStack
                     justify="space-between"
@@ -276,7 +278,7 @@ export default function ActivityTab({ role = "worker" }: TabRolePropType) {
                 <Accordion.ItemContent>
                   <Stack p="12px" gap="8px">
                     {u.events.length === 0 && (
-                      <Text color="gray.600" fontSize="sm">
+                      <Text color="gray.fg" fontSize="sm">
                         No activity found for this user (within current limits).
                       </Text>
                     )}
@@ -286,7 +288,7 @@ export default function ActivityTab({ role = "worker" }: TabRolePropType) {
                         p="12px"
                         borderWidth="1px"
                         borderRadius="8px"
-                        bg="white"
+                        bg="bg.panel"
                       >
                         <HStack
                           justify="space-between"
@@ -301,7 +303,7 @@ export default function ActivityTab({ role = "worker" }: TabRolePropType) {
                             {prettyStatus(e.type)}
                           </Badge>
 
-                          <Text fontSize="xs" color="gray.600">
+                          <Text fontSize="xs" color="gray.fg">
                             {prettyDate(e.at)}
                           </Text>
                         </HStack>

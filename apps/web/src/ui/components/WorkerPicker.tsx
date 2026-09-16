@@ -118,9 +118,9 @@ export default function WorkerPicker({
         <Box
           position="fixed"
           zIndex={9999}
-          bg="white"
+          bg="bg.panel"
           borderWidth="1px"
-          borderColor="gray.200"
+          borderColor="gray.emphasized"
           rounded="md"
           shadow="lg"
           w="280px"
@@ -152,8 +152,8 @@ export default function WorkerPicker({
                     py="1.5"
                     fontSize="sm"
                     cursor="pointer"
-                    bg={selected ? "blue.50" : undefined}
-                    _hover={{ bg: "gray.100" }}
+                    bg={selected ? "blue.faint" : undefined}
+                    _hover={{ bg: "gray.subtle" }}
                     onMouseDown={(e) => {
                       e.preventDefault();
                       toggle(w.id);
@@ -169,7 +169,7 @@ export default function WorkerPicker({
                         )}
                       </Text>
                       {selected && (
-                        <Text color="blue.500" fontWeight="bold">
+                        <Text color="blue.fg" fontWeight="bold">
                           ✓
                         </Text>
                       )}

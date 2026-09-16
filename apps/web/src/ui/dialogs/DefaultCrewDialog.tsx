@@ -203,8 +203,8 @@ export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAs
             </Dialog.Header>
             <Dialog.Body>
               <VStack align="stretch" gap={4}>
-                <Box px={2} py={1.5} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" rounded="md">
-                  <Text fontSize="2xs" color="yellow.700">
+                <Box px={2} py={1.5} bg="yellow.faint" borderWidth="1px" borderColor="yellow.emphasized" rounded="md">
+                  <Text fontSize="2xs" color="yellow.fg">
                     The default team is automatically assigned to each new occurrence. One-time team changes on individual occurrences won't affect these defaults.
                   </Text>
                 </Box>
@@ -253,9 +253,9 @@ export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAs
                       </Select.Positioner>
                     </Select.Root>
                     {activeGroup && (
-                      <Box p={2} bg="purple.50" rounded="md" borderWidth="1px" borderColor="purple.200">
+                      <Box p={2} bg="purple.faint" rounded="md" borderWidth="1px" borderColor="purple.emphasized">
                         <HStack justify="space-between">
-                          <Text fontSize="xs" color="purple.800">
+                          <Text fontSize="xs" color="purple.fg">
                             Current: <Text as="span" fontWeight="semibold">{activeGroup.name}</Text>
                           </Text>
                           <Button
@@ -285,9 +285,9 @@ export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAs
                 ) : (
                   <>
                     {activeGroup && (
-                      <Box p={2} bg="orange.50" rounded="md" borderWidth="1px" borderColor="orange.200">
+                      <Box p={2} bg="orange.faint" rounded="md" borderWidth="1px" borderColor="orange.emphasized">
                         <HStack justify="space-between" gap={2} wrap="wrap">
-                          <Text fontSize="xs" color="orange.800">
+                          <Text fontSize="xs" color="orange.fg">
                             A default group <Text as="span" fontWeight="semibold">{activeGroup.name}</Text> is currently set. Adding individuals will clear it.
                           </Text>
                           <Button

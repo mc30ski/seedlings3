@@ -135,28 +135,28 @@ export default function OwnerEquityPanel({
         </Text>
       </HStack>
 
-      <SimpleGrid columns={3} gap={0} borderWidth="1px" borderColor="blue.200" borderRadius="md" overflow="hidden">
+      <SimpleGrid columns={3} gap={0} borderWidth="1px" borderColor="blue.emphasized" borderRadius="md" overflow="hidden">
         <VStack align="center" gap={0} py={2} px={2}>
-          <Text fontSize="2xs" color="blue.700" textTransform="uppercase" letterSpacing="wide">
+          <Text fontSize="2xs" color="blue.fg" textTransform="uppercase" letterSpacing="wide">
             Contributed
           </Text>
-          <Text fontSize="md" fontWeight="bold" color="green.700">{money(inTotal)}</Text>
+          <Text fontSize="md" fontWeight="bold" color="green.fg">{money(inTotal)}</Text>
           <Text fontSize="2xs" color="fg.muted">{contributions.length} in</Text>
         </VStack>
-        <VStack align="center" gap={0} py={2} px={2} borderLeftWidth="1px" borderColor="blue.200">
-          <Text fontSize="2xs" color="blue.700" textTransform="uppercase" letterSpacing="wide">
+        <VStack align="center" gap={0} py={2} px={2} borderLeftWidth="1px" borderColor="blue.emphasized">
+          <Text fontSize="2xs" color="blue.fg" textTransform="uppercase" letterSpacing="wide">
             Drawn
           </Text>
-          <Text fontSize="md" fontWeight="bold" color="orange.700">{money(outTotal)}</Text>
+          <Text fontSize="md" fontWeight="bold" color="orange.fg">{money(outTotal)}</Text>
           <Text fontSize="2xs" color="fg.muted">{draws.length} out</Text>
         </VStack>
-        <VStack align="center" gap={0} py={2} px={2} borderLeftWidth="1px" borderColor="blue.200">
-          <Text fontSize="2xs" color="blue.700" textTransform="uppercase" letterSpacing="wide">
+        <VStack align="center" gap={0} py={2} px={2} borderLeftWidth="1px" borderColor="blue.emphasized">
+          <Text fontSize="2xs" color="blue.fg" textTransform="uppercase" letterSpacing="wide">
             Net
           </Text>
           {/* Net is contributions − draws: positive means you have put more
               in than you have taken out over this window. */}
-          <Text fontSize="md" fontWeight="bold" color={net >= 0 ? "green.800" : "orange.800"}>
+          <Text fontSize="md" fontWeight="bold" color={net >= 0 ? "green.fg" : "orange.fg"}>
             {money(net)}
           </Text>
           <Text fontSize="2xs" color="fg.muted">{net >= 0 ? "into the business" : "out of the business"}</Text>
@@ -176,8 +176,8 @@ export default function OwnerEquityPanel({
               px={2}
               py={1.5}
               borderWidth="1px"
-              borderColor="blue.200"
-              bg="blue.50"
+              borderColor="blue.emphasized"
+              bg="blue.faint"
               rounded="md"
               fontSize="xs"
               wrap="wrap"

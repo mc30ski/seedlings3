@@ -299,9 +299,9 @@ export default function OnClockBubble({ isSignedIn, isClientImpersonating, meId,
           zIndex={20000}
           top={`${menuPos.top}px`}
           left={`${menuPos.left}px`}
-          bg="white"
+          bg="bg.panel"
           borderWidth="1px"
-          borderColor="gray.200"
+          borderColor="gray.emphasized"
           rounded="lg"
           shadow="lg"
           minW="200px"
@@ -321,7 +321,7 @@ export default function OnClockBubble({ isSignedIn, isClientImpersonating, meId,
               gap={2}
               cursor={busyAny ? "not-allowed" : "pointer"}
               opacity={busyAny ? 0.6 : 1}
-              _hover={busyAny ? undefined : { bg: "gray.50" }}
+              _hover={busyAny ? undefined : { bg: "gray.faint" }}
               onClick={() => { if (!busyAny) void doPause(); }}
             >
               {busy === "pause" ? <Spinner size="xs" /> : <PauseIcon size={14} />}
@@ -336,7 +336,7 @@ export default function OnClockBubble({ isSignedIn, isClientImpersonating, meId,
               gap={2}
               cursor={busyAny ? "not-allowed" : "pointer"}
               opacity={busyAny ? 0.6 : 1}
-              _hover={busyAny ? undefined : { bg: "gray.50" }}
+              _hover={busyAny ? undefined : { bg: "gray.faint" }}
               onClick={() => { if (!busyAny) void doResume(); }}
             >
               {busy === "resume" ? <Spinner size="xs" /> : <Play size={14} />}
@@ -357,14 +357,14 @@ export default function OnClockBubble({ isSignedIn, isClientImpersonating, meId,
             gap={2}
             cursor={busyAny ? "not-allowed" : "pointer"}
             opacity={busyAny ? 0.6 : 1}
-            color="blue.700"
-            _hover={busyAny ? undefined : { bg: "blue.50" }}
+            color="blue.fg"
+            _hover={busyAny ? undefined : { bg: "blue.faint" }}
             onClick={() => { if (!busyAny) { setOpen(false); setConfirmEnd(true); } }}
           >
             {busy === "end" ? <Spinner size="xs" /> : <Check size={14} strokeWidth={3} />}
             <Text fontSize="sm" fontWeight="medium">Complete workday</Text>
           </HStack>
-          <Box h="1px" bg="gray.200" my={1} />
+          <Box h="1px" bg="gray.muted" my={1} />
           <HStack
             as="button"
             w="full"
@@ -372,7 +372,7 @@ export default function OnClockBubble({ isSignedIn, isClientImpersonating, meId,
             py={2}
             gap={2}
             cursor="pointer"
-            _hover={{ bg: "gray.50" }}
+            _hover={{ bg: "gray.faint" }}
             onClick={() => { setOpen(false); jumpToWorkdayControls(); }}
           >
             <ExternalLink size={14} />

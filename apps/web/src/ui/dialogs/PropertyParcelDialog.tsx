@@ -115,7 +115,7 @@ export default function PropertyParcelDialog({
       onClick={onClose}
     >
       <Box
-        bg="white"
+        bg="bg.panel"
         borderRadius="lg"
         shadow="xl"
         maxW="640px"
@@ -143,9 +143,9 @@ export default function PropertyParcelDialog({
         )}
 
         {err && (
-          <HStack bg="red.50" borderWidth="1px" borderColor="red.200" borderRadius="md" p={2} gap={2} mt={2}>
+          <HStack bg="red.faint" borderWidth="1px" borderColor="red.emphasized" borderRadius="md" p={2} gap={2} mt={2}>
             <TriangleAlert size={15} color="var(--chakra-colors-red-600)" />
-            <Text fontSize="sm" color="red.700">{err}</Text>
+            <Text fontSize="sm" color="red.fg">{err}</Text>
           </HStack>
         )}
 
@@ -153,9 +153,9 @@ export default function PropertyParcelDialog({
             out-of-state property or an address the geocoder can't place.
             Say which, rather than showing an empty dialog. */}
         {result?.error && (
-          <HStack bg="orange.50" borderWidth="1px" borderColor="orange.200" borderRadius="md" p={2} gap={2} mt={2}>
+          <HStack bg="orange.faint" borderWidth="1px" borderColor="orange.emphasized" borderRadius="md" p={2} gap={2} mt={2}>
             <TriangleAlert size={15} color="var(--chakra-colors-orange-600)" />
-            <Text fontSize="sm" color="orange.800">{result.error}</Text>
+            <Text fontSize="sm" color="orange.fg">{result.error}</Text>
           </HStack>
         )}
 
@@ -166,11 +166,11 @@ export default function PropertyParcelDialog({
                 road — so the nearest parcel may be the neighbour's. Say so
                 plainly rather than presenting a guess as a record. */}
             {d.confident === false && (
-              <HStack bg="orange.50" borderWidth="1px" borderColor="orange.200" borderRadius="md" p={2} gap={2} align="start">
+              <HStack bg="orange.faint" borderWidth="1px" borderColor="orange.emphasized" borderRadius="md" p={2} gap={2} align="start">
                 <TriangleAlert size={15} color="var(--chakra-colors-orange-600)" style={{ flexShrink: 0, marginTop: 2 }} />
                 <VStack align="start" gap={0}>
-                  <Text fontSize="sm" fontWeight="semibold" color="orange.800">Approximate match — verify before relying on it</Text>
-                  <Text fontSize="xs" color="orange.800">
+                  <Text fontSize="sm" fontWeight="semibold" color="orange.fg">Approximate match — verify before relying on it</Text>
+                  <Text fontSize="xs" color="orange.fg">
                     {d.county ? `${d.county} County` : "This county"} doesn&apos;t publish parcel addresses, so this is the
                     closest parcel to the address rather than a confirmed one. Check the outline below sits on the right property.
                   </Text>
@@ -207,23 +207,23 @@ export default function PropertyParcelDialog({
                 align="start"
                 gap={2}
                 borderWidth="1px"
-                borderColor="orange.200"
-                bg="orange.50"
+                borderColor="orange.emphasized"
+                bg="orange.faint"
                 borderRadius="md"
                 p={3}
               >
                 <HStack gap={2} align="start">
                   <TriangleAlert size={15} color="var(--chakra-colors-orange-600)" style={{ flexShrink: 0, marginTop: 2 }} />
                   <VStack align="start" gap={0}>
-                    <Text fontSize="sm" fontWeight="semibold" color="orange.800">
+                    <Text fontSize="sm" fontWeight="semibold" color="orange.fg">
                       Overhead image unavailable
                     </Text>
-                    <Text fontSize="xs" color="orange.800">
+                    <Text fontSize="xs" color="orange.fg">
                       {imgErr ?? "The imagery service didn't respond."}
                     </Text>
                   </VStack>
                 </HStack>
-                <Text fontSize="2xs" color="orange.800">
+                <Text fontSize="2xs" color="orange.fg">
                   The parcel details above are unaffected — they're already cached and don't
                   depend on this service.
                 </Text>
@@ -233,7 +233,7 @@ export default function PropertyParcelDialog({
               </VStack>
             )}
             {!imgFailed && (
-              <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" overflow="hidden" bg="gray.50">
+              <Box borderWidth="1px" borderColor="gray.emphasized" borderRadius="md" overflow="hidden" bg="gray.faint">
                 {/* Placeholder holds the space the image will occupy, so the
                     dialog doesn't reflow when it lands and — more importantly
                     — doesn't read as "this property has no imagery" for the
@@ -334,7 +334,7 @@ export default function PropertyParcelDialog({
                 revaluation, which runs on a multi-year county cycle. Showing
                 "Total (Market)" invited reading a figure that can be years
                 old as what the place is worth today. */}
-            <Box borderTopWidth="1px" borderColor="gray.200" pt={2}>
+            <Box borderTopWidth="1px" borderColor="gray.emphasized" pt={2}>
               <Text fontSize="xs" fontWeight="semibold" color="fg.muted" mb={1}>
                 County tax assessment
               </Text>
@@ -400,7 +400,7 @@ export default function PropertyParcelDialog({
               </Button>
             )}
 
-            <VStack align="start" gap={0} borderTopWidth="1px" borderColor="gray.100" pt={2}>
+            <VStack align="start" gap={0} borderTopWidth="1px" borderColor="gray.muted" pt={2}>
               <Text fontSize="2xs" color="fg.muted">
                 Parcel {d.parcelNumber ?? "—"}{d.siteAddress ? ` · ${d.siteAddress}` : ""}
               </Text>

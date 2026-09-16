@@ -166,7 +166,7 @@ export default function UserActivitySection({ userId, lastSignInAt }: Props) {
   }
 
   return (
-    <Box mt={3} pt={3} borderTopWidth="1px" borderColor="gray.200">
+    <Box mt={3} pt={3} borderTopWidth="1px" borderColor="gray.emphasized">
       {/* Header chrome matches the sibling Permissions section in
           UsersTab so the two collapsible rows line up at the same left
           edge and share the same hover-on-color affordance. Earlier
@@ -214,7 +214,7 @@ export default function UserActivitySection({ userId, lastSignInAt }: Props) {
                   px={2}
                   py={1}
                   borderWidth="1px"
-                  borderColor="gray.100"
+                  borderColor="gray.muted"
                   borderRadius="md"
                   align="center"
                 >

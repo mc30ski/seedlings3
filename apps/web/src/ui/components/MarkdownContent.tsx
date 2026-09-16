@@ -78,13 +78,13 @@ export default function MarkdownContent({
           fontSize: "0.8125rem",
         },
         "& th, & td": {
-          border: "1px solid var(--chakra-colors-gray-200)",
+          border: "1px solid var(--chakra-colors-gray-emphasized)",
           padding: "0.375rem 0.625rem",
           textAlign: "left",
           verticalAlign: "top",
         },
         "& th": {
-          backgroundColor: "var(--chakra-colors-gray-50)",
+          backgroundColor: "var(--chakra-colors-gray-faint)",
           fontWeight: 600,
           whiteSpace: "nowrap",
         },
@@ -150,7 +150,7 @@ export default function MarkdownContent({
                 href={href}
                 target="_blank"
                 rel="noreferrer"
-                color="blue.600"
+                color="blue.fg"
                 textDecoration="underline"
               >
                 {c}
@@ -166,7 +166,7 @@ export default function MarkdownContent({
             <Box
               as="pre"
               p={2}
-              bg="gray.100"
+              bg="gray.subtle"
               borderRadius="md"
               overflowX="auto"
               fontSize="xs"
@@ -181,7 +181,7 @@ export default function MarkdownContent({
               as="blockquote"
               pl={3}
               borderLeftWidth="3px"
-              borderLeftColor="gray.300"
+              borderLeftColor="gray.emphasized"
               color="fg.muted"
               mb={2}
             >
@@ -189,7 +189,7 @@ export default function MarkdownContent({
             </Box>
           ),
           hr: () => (
-            <Box as="hr" my={3} borderTopWidth="1px" borderColor="gray.200" />
+            <Box as="hr" my={3} borderTopWidth="1px" borderColor="gray.emphasized" />
           ),
         }}
       >

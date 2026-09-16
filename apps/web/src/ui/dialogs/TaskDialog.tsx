@@ -212,8 +212,8 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask, mo
             </Dialog.Header>
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
-                <Box px={3} py={2} bg={isReminder ? "purple.50" : "blue.50"} borderWidth="1px" borderColor={isReminder ? "purple.200" : "blue.200"} borderRadius="md">
-                  <Text fontSize="xs" color={isReminder ? "purple.700" : "blue.700"} fontWeight="medium">
+                <Box px={3} py={2} bg={isReminder ? "purple.faint" : "blue.faint"} borderWidth="1px" borderColor={isReminder ? "purple.emphasized" : "blue.emphasized"} borderRadius="md">
+                  <Text fontSize="xs" color={isReminder ? "purple.fg" : "blue.fg"} fontWeight="medium">
                     Personal — only visible to you
                   </Text>
                 </Box>
@@ -256,7 +256,7 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask, mo
                 <Box>
                   <Text fontSize="sm" fontWeight="medium" mb={1}>Link to Job Occurrence <Text as="span" fontSize="xs" color="fg.muted" fontWeight="normal">(optional)</Text></Text>
                   {selectedOcc ? (
-                    <HStack gap={2} p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" rounded="md">
+                    <HStack gap={2} p={2} bg="blue.faint" borderWidth="1px" borderColor="blue.emphasized" rounded="md">
                       <VStack align="start" gap={0.5} flex="1" minW={0}>
                         <Text fontSize="sm" fontWeight="medium">{selectedOcc.propertyName}</Text>
                         <HStack gap={1} fontSize="xs" wrap="wrap">
@@ -289,9 +289,12 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask, mo
                           left="0"
                           right="0"
                           zIndex={10}
-                          bg="white"
+                          bg="bg.panel"
+                          // A panel that paints its own background states its own ink, so it
+                          // never inherits a colour meant for the surface it floats over.
+                          color="fg"
                           borderWidth="1px"
-                          borderColor="gray.200"
+                          borderColor="gray.emphasized"
                           rounded="md"
                           shadow="md"
                           maxH="250px"
@@ -304,9 +307,9 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask, mo
                               px={3}
                               py={2}
                               cursor="pointer"
-                              _hover={{ bg: "blue.50" }}
+                              _hover={{ bg: "blue.faint" }}
                               borderBottomWidth="1px"
-                              borderColor="gray.100"
+                              borderColor="gray.muted"
                               onClick={() => {
                                 setSelectedOcc(o);
                                 setOccSearch("");
@@ -330,7 +333,10 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask, mo
                         </Box>
                       )}
                       {showOccResults && occSearch.trim() && filteredOccs.length === 0 && (
-                        <Box position="absolute" top="100%" left="0" right="0" zIndex={10} bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="md" mt="1" p={3}>
+                        <Box position="absolute" top="100%" left="0" right="0" zIndex={10} bg="bg.panel" borderWidth="1px" borderColor="gray.emphasized" rounded="md" shadow="md" mt="1" p={3}>
+                        // A panel that paints its own background states its own ink, so it
+                        // never inherits a colour meant for the surface it floats over.
+                        color="fg"
                           <Text fontSize="xs" color="fg.muted">No occurrences found</Text>
                         </Box>
                       )}

@@ -172,9 +172,9 @@ export default function StatisticsTab({ myId }: Props = {}) {
   return (
     <Box w="full" pb={8}>
       {/* Preview banner */}
-      <Box mb={3} p={3} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" rounded="md">
-        <Text fontSize="sm" fontWeight="medium" color="yellow.700">Preview Feature</Text>
-        <Text fontSize="xs" color="yellow.600">This feature is in preview and will be updated.</Text>
+      <Box mb={3} p={3} bg="yellow.faint" borderWidth="1px" borderColor="yellow.emphasized" rounded="md">
+        <Text fontSize="sm" fontWeight="medium" color="yellow.fg">Preview Feature</Text>
+        <Text fontSize="xs" color="yellow.fg">This feature is in preview and will be updated.</Text>
       </Box>
 
       {/* Controls */}
@@ -201,7 +201,7 @@ export default function StatisticsTab({ myId }: Props = {}) {
             onFocus={() => { setDropOpen(true); setSearchText(""); }}
           />
           {dropOpen && (
-            <Box position="fixed" zIndex={9999} bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" w="240px" mt="1"
+            <Box position="fixed" zIndex={9999} bg="bg.panel" borderWidth="1px" borderColor="gray.emphasized" rounded="md" shadow="lg" w="240px" mt="1"
               ref={(el: HTMLDivElement | null) => {
                 if (el && dropRef.current) {
                   const rect = dropRef.current.getBoundingClientRect();
@@ -213,8 +213,8 @@ export default function StatisticsTab({ myId }: Props = {}) {
               <Box maxH="250px" overflowY="auto">
                 {limited.map((w) => (
                   <Box key={w.userId} px="3" py="1.5" fontSize="sm" cursor="pointer"
-                    bg={selectedWorkers.includes(w.userId) ? "blue.50" : undefined}
-                    _hover={{ bg: "gray.100" }}
+                    bg={selectedWorkers.includes(w.userId) ? "blue.faint" : undefined}
+                    _hover={{ bg: "gray.subtle" }}
                     onMouseDown={(e) => {
                       e.preventDefault();
                       setSelectedWorkers((prev) =>
@@ -225,7 +225,7 @@ export default function StatisticsTab({ myId }: Props = {}) {
                     <HStack gap={2}>
                       <Text flex="1">{w.displayName}</Text>
                       <Badge size="xs" colorPalette={workerTypeColor(w.workerType)}>{workerTypeLabel(w.workerType)}</Badge>
-                      {selectedWorkers.includes(w.userId) && <Text color="blue.500" fontWeight="bold">✓</Text>}
+                      {selectedWorkers.includes(w.userId) && <Text color="blue.fg" fontWeight="bold">✓</Text>}
                     </HStack>
                   </Box>
                 ))}
@@ -243,7 +243,7 @@ export default function StatisticsTab({ myId }: Props = {}) {
           variant={viewMode === "charts" ? "solid" : "ghost"}
           px="2"
           onClick={() => setViewMode(viewMode === "cards" ? "charts" : "cards")}
-          css={viewMode === "charts" ? { background: "var(--chakra-colors-gray-200)", color: "var(--chakra-colors-gray-700)" } : undefined}
+          css={viewMode === "charts" ? { background: "var(--chakra-colors-gray-muted)", color: "var(--chakra-colors-gray-fg)" } : undefined}
           title={viewMode === "cards" ? "Chart view" : "Card view"}
         >
           {viewMode === "cards" ? <BarChart3 size={14} /> : <LayoutGrid size={14} />}
@@ -259,28 +259,28 @@ export default function StatisticsTab({ myId }: Props = {}) {
       )}
 
       {loading && <Box py={10} textAlign="center"><Spinner size="lg" /></Box>}
-      {error && <Text color="red.500" fontSize="sm" mb={4}>{error}</Text>}
+      {error && <Text color="red.fg" fontSize="sm" mb={4}>{error}</Text>}
 
       {data && !loading && (
         <>
           {/* Summary bar */}
-          <HStack gap={4} mb={4} p={3} bg="blue.50" rounded="xl" borderWidth="1px" borderColor="blue.200" wrap="wrap" justify="center">
+          <HStack gap={4} mb={4} p={3} bg="blue.faint" rounded="xl" borderWidth="1px" borderColor="blue.emphasized" wrap="wrap" justify="center">
             <VStack gap={0}>
-              <Text fontSize="xl" fontWeight="bold" color="blue.700">{data.totalOccurrences}</Text>
-              <Text fontSize="xs" color="blue.600">Total Jobs</Text>
+              <Text fontSize="xl" fontWeight="bold" color="blue.fg">{data.totalOccurrences}</Text>
+              <Text fontSize="xs" color="blue.fg">Total Jobs</Text>
             </VStack>
             <VStack gap={0}>
-              <Text fontSize="xl" fontWeight="bold" color="blue.700">{displayed.filter((w) => w.jobsCompleted > 0).length}</Text>
-              <Text fontSize="xs" color="blue.600">Active Workers</Text>
+              <Text fontSize="xl" fontWeight="bold" color="blue.fg">{displayed.filter((w) => w.jobsCompleted > 0).length}</Text>
+              <Text fontSize="xs" color="blue.fg">Active Workers</Text>
             </VStack>
             <VStack gap={0}>
-              <Text fontSize="xl" fontWeight="bold" color="blue.700">{data.daysInRange}</Text>
-              <Text fontSize="xs" color="blue.600">Work Days</Text>
+              <Text fontSize="xl" fontWeight="bold" color="blue.fg">{data.daysInRange}</Text>
+              <Text fontSize="xs" color="blue.fg">Work Days</Text>
             </VStack>
             {teamAvg && (
               <VStack gap={0}>
-                <Text fontSize="xl" fontWeight="bold" color="blue.700">{teamAvg.jobsCompleted}</Text>
-                <Text fontSize="xs" color="blue.600">Avg Jobs/Worker</Text>
+                <Text fontSize="xl" fontWeight="bold" color="blue.fg">{teamAvg.jobsCompleted}</Text>
+                <Text fontSize="xs" color="blue.fg">Avg Jobs/Worker</Text>
               </VStack>
             )}
           </HStack>
@@ -454,12 +454,12 @@ function TeamComparisonChart({
 
 function StatBox({ label, value, highlight, subtitle }: { label: string; value: string; highlight?: "green" | "red"; subtitle?: string }) {
   return (
-    <Box p={2} bg={highlight === "green" ? "green.50" : highlight === "red" ? "red.50" : "gray.50"} rounded="md">
-      <Text fontSize="lg" fontWeight="bold" color={highlight === "green" ? "green.700" : highlight === "red" ? "red.700" : undefined}>
+    <Box p={2} bg={highlight === "green" ? "green.faint" : highlight === "red" ? "red.faint" : "gray.faint"} rounded="md">
+      <Text fontSize="lg" fontWeight="bold" color={highlight === "green" ? "green.fg" : highlight === "red" ? "red.fg" : undefined}>
         {value}
       </Text>
       <Text fontSize="xs" color="fg.muted">{label}</Text>
-      {subtitle && <Text fontSize="xs" color={highlight === "green" ? "green.600" : "red.600"}>{subtitle}</Text>}
+      {subtitle && <Text fontSize="xs" color={highlight === "green" ? "green.fg" : "red.fg"}>{subtitle}</Text>}
     </Box>
   );
 }

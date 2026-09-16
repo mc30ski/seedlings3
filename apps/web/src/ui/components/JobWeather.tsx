@@ -127,7 +127,7 @@ function HourlyChart({ hours }: { hours: ForecastHour[] }) {
               ? "blue.600"
               : measured
                 ? "cyan.600"
-                : "blue.300";
+                : "blue.muted";
 
           return (
             <VStack
@@ -152,7 +152,7 @@ function HourlyChart({ hours }: { hours: ForecastHour[] }) {
                   halves of the chart can never be read as one series. */}
               <Text
                 fontSize="2xs"
-                color={measured ? "cyan.700" : "fg.muted"}
+                color={measured ? "cyan.fg" : "fg.muted"}
                 fontVariantNumeric="tabular-nums"
                 whiteSpace="nowrap"
               >
@@ -169,7 +169,7 @@ function HourlyChart({ hours }: { hours: ForecastHour[] }) {
                 h="46px"
                 display="flex"
                 alignItems="flex-end"
-                bg={h.isCurrentHour ? "blue.100" : "transparent"}
+                bg={h.isCurrentHour ? "blue.subtle" : "transparent"}
                 borderRadius="sm"
               >
                 <Box
@@ -265,13 +265,13 @@ export default function JobWeather({
       w="full"
       mt={2}
       borderWidth="1px"
-      borderColor="blue.300"
-      bg="blue.50"
+      borderColor="blue.emphasized"
+      bg="blue.faint"
       borderRadius="xl"
       overflow="hidden"
     >
       {hasRecorded && (
-        <HStack gap={3} wrap="wrap" px={2.5} py={1.5} borderBottomWidth={showForecast ? "1px" : undefined} borderColor="blue.200">
+        <HStack gap={3} wrap="wrap" px={2.5} py={1.5} borderBottomWidth={showForecast ? "1px" : undefined} borderColor="blue.emphasized">
           {startWeather && <RecordedReading label="At start" wx={startWeather} />}
           {completeWeather && <RecordedReading label="At finish" wx={completeWeather} />}
         </HStack>
@@ -289,7 +289,7 @@ export default function JobWeather({
             alignItems="center"
             gap={1.5}
             cursor="pointer"
-            _hover={{ bg: "blue.100" }}
+            _hover={{ bg: "blue.subtle" }}
             onClick={(e: any) => { e.stopPropagation(); void toggle(); }}
           >
             <Box color="blue.fg" display="inline-flex">
@@ -341,7 +341,7 @@ export default function JobWeather({
                         <Text>now</Text>
                       </HStack>
                       <HStack gap={1}>
-                        <Box w="8px" h="8px" borderRadius="2px" bg="blue.300" />
+                        <Box w="8px" h="8px" borderRadius="2px" bg="blue.muted" />
                         <Text>chance of rain (%)</Text>
                       </HStack>
                       <Text>· times are ET</Text>
@@ -349,7 +349,7 @@ export default function JobWeather({
                   ) : (
                     <HStack gap={2.5} wrap="wrap" fontSize="2xs" color="fg.muted">
                       <HStack gap={1}>
-                        <Box w="8px" h="8px" borderRadius="2px" bg="blue.300" />
+                        <Box w="8px" h="8px" borderRadius="2px" bg="blue.muted" />
                         <Text>chance of rain (%) — the whole day, all still ahead</Text>
                       </HStack>
                       <Text>· times are ET</Text>
@@ -357,7 +357,7 @@ export default function JobWeather({
                   )}
                   <HourlyChart hours={data.hours} />
                   {data.isToday && !data.measuredAvailable && (
-                    <Text fontSize="2xs" color="orange.700">
+                    <Text fontSize="2xs" color="orange.fg">
                       Couldn't reach the record of what already fell, so this
                       morning's hours show as unknown rather than guessed.
                     </Text>
@@ -388,7 +388,7 @@ export default function JobWeather({
                       color="blue.fg"
                       p="1"
                       borderRadius="sm"
-                      _hover={{ bg: "blue.100" }}
+                      _hover={{ bg: "blue.subtle" }}
                       onClick={(e: any) => { e.stopPropagation(); void load(true); }}
                     >
                       <RefreshCw size={13} />

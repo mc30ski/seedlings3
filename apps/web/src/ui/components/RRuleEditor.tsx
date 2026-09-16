@@ -230,7 +230,7 @@ export default function RRuleEditor({ value, onChange, anchorDate }: Props) {
                   fontWeight="medium"
                   borderRadius="full"
                   cursor="pointer"
-                  bg={active ? "teal.500" : "gray.100"}
+                  bg={active ? "teal.500" : "gray.subtle"}
                   color={active ? "white" : "fg.default"}
                   onClick={() =>
                     setByDay((prev) =>

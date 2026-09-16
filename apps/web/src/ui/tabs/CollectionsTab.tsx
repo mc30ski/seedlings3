@@ -305,8 +305,8 @@ function CollectionCard({
   return (
     <Card.Root
       variant="outline"
-      borderColor={usingIt ? "green.300" : undefined}
-      bg={usingIt ? "green.50" : undefined}
+      borderColor={usingIt ? "green.emphasized" : undefined}
+      bg={usingIt ? "green.faint" : undefined}
     >
       <Card.Body py="3" px="3">
         <HStack justify="space-between" align="start" gap={3}>
@@ -362,14 +362,14 @@ function CollectionCard({
                       py={1.5}
                       borderRadius="md"
                       cursor="pointer"
-                      bg={it.heldByMe ? "green.100" : "bg.subtle"}
-                      _hover={{ bg: it.heldByMe ? "green.200" : "gray.100" }}
+                      bg={it.heldByMe ? "green.subtle" : "bg.subtle"}
+                      _hover={{ bg: it.heldByMe ? "green.muted" : "gray.subtle" }}
                       title={`Open ${equipmentLabel(it.equipment)} on the Inventory tab`}
                       onClick={() => onOpenEquipment(it.equipmentId)}
                     >
                       <HStack gap={1.5} minW={0}>
                         {it.heldByMe && (
-                          <Box color="green.600" flexShrink={0}>
+                          <Box color="green.fg" flexShrink={0}>
                             <CheckCircle2 size={14} />
                           </Box>
                         )}
@@ -503,10 +503,10 @@ function InsightPanel(props: {
 }) {
   const { title, icon, emptyText, rows } = props;
   return (
-    <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" bg="white" p={2}>
+    <Box borderWidth="1px" borderColor="gray.emphasized" borderRadius="md" bg="bg.panel" p={2}>
       <HStack gap={1.5} mb={1.5}>
         {icon}
-        <Text fontSize="xs" fontWeight="semibold" color="gray.700" textTransform="uppercase" letterSpacing="wide">
+        <Text fontSize="xs" fontWeight="semibold" color="gray.fg" textTransform="uppercase" letterSpacing="wide">
           {title}
         </Text>
       </HStack>
@@ -604,7 +604,7 @@ function CollectionEditor(props: {
 
   return (
     <Box position="fixed" inset={0} bg="rgba(0,0,0,0.4)" zIndex={1000} display="flex" alignItems="center" justifyContent="center" p={4}>
-      <Box bg="white" borderRadius="md" p={4} maxW="640px" w="full" maxH="90vh" overflowY="auto" boxShadow="lg">
+      <Box bg="bg.panel" borderRadius="md" p={4} maxW="640px" w="full" maxH="90vh" overflowY="auto" boxShadow="lg">
         <HStack justify="space-between" mb={3}>
           <Text fontWeight="semibold">{collection.id ? "Edit collection" : "New collection"}</Text>
           <Button size="xs" variant="ghost" onClick={onClose}><X size={14} /></Button>
@@ -628,7 +628,7 @@ function CollectionEditor(props: {
             </HStack>
             <Box borderWidth="1px" borderRadius="md" p={2} bg="bg.subtle">
               <HStack gap={2} mb={2}>
-                <Box flex={1} display="flex" alignItems="center" borderWidth="1px" borderRadius="md" px={2} bg="white">
+                <Box flex={1} display="flex" alignItems="center" borderWidth="1px" borderRadius="md" px={2} bg="bg.panel">
                   <Search size={14} />
                   <Input
                     variant="outline"
@@ -657,8 +657,8 @@ function CollectionEditor(props: {
                       px={2} py={1.5}
                       borderRadius="md"
                       cursor="pointer"
-                      bg={checked ? "blue.50" : undefined}
-                      _hover={{ bg: checked ? "blue.100" : "gray.50" }}
+                      bg={checked ? "blue.faint" : undefined}
+                      _hover={{ bg: checked ? "blue.subtle" : "gray.faint" }}
                       onClick={() => toggleMember(e.id)}
                       align="start"
                     >

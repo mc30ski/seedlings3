@@ -94,7 +94,7 @@ export default function SafePhoto({
       cursor={onClick ? "pointer" : undefined}
       onClick={onClick}
       borderWidth={bordered ? "1px" : 0}
-      borderColor="gray.200"
+      borderColor="gray.emphasized"
       position="relative"
     >
       {!loaded && (

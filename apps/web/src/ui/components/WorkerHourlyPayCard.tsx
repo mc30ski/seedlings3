@@ -269,10 +269,10 @@ export const TIERS: Tier[] = [
     min: 0,
     label: "Building up",
     tagline: "Every hour adds up.",
-    bg: "gray.50",
-    border: "gray.200",
-    fg: "gray.700",
-    numberFg: "gray.800",
+    bg: "gray.faint",
+    border: "gray.strong",
+    fg: "gray.fg",
+    numberFg: "gray.fg",
     icon: TrendingUp,
     sparkle: false,
   },
@@ -280,10 +280,10 @@ export const TIERS: Tier[] = [
     min: 10,
     label: "Getting there",
     tagline: "Steady progress.",
-    bg: "teal.50",
-    border: "teal.200",
-    fg: "teal.800",
-    numberFg: "teal.900",
+    bg: "teal.faint",
+    border: "teal.strong",
+    fg: "teal.fg",
+    numberFg: "teal.fg",
     icon: TrendingUp,
     sparkle: false,
   },
@@ -291,10 +291,10 @@ export const TIERS: Tier[] = [
     min: 15,
     label: "Solid earner",
     tagline: "You're on solid ground.",
-    bg: "green.50",
-    border: "green.300",
-    fg: "green.800",
-    numberFg: "green.900",
+    bg: "green.faint",
+    border: "green.strong",
+    fg: "green.fg",
+    numberFg: "green.fg",
     icon: DollarSign,
     sparkle: false,
   },
@@ -302,10 +302,10 @@ export const TIERS: Tier[] = [
     min: 25,
     label: "Skilled hand",
     tagline: "Doing really well.",
-    bg: "green.100",
-    border: "green.400",
-    fg: "green.900",
-    numberFg: "green.900",
+    bg: "green.subtle",
+    border: "green.emphasized",
+    fg: "green.fg",
+    numberFg: "green.fg",
     icon: Award,
     sparkle: false,
   },
@@ -313,10 +313,10 @@ export const TIERS: Tier[] = [
     min: 40,
     label: "Top performer",
     tagline: "Top of the field.",
-    bg: "cyan.50",
-    border: "cyan.400",
-    fg: "cyan.900",
-    numberFg: "cyan.900",
+    bg: "cyan.faint",
+    border: "cyan.emphasized",
+    fg: "cyan.fg",
+    numberFg: "cyan.fg",
     icon: Award,
     sparkle: true,
   },
@@ -324,10 +324,10 @@ export const TIERS: Tier[] = [
     min: 60,
     label: "Elite",
     tagline: "Elite earner.",
-    bg: "purple.50",
-    border: "purple.400",
-    fg: "purple.900",
-    numberFg: "purple.900",
+    bg: "purple.faint",
+    border: "purple.emphasized",
+    fg: "purple.fg",
+    numberFg: "purple.fg",
     icon: Crown,
     sparkle: true,
   },
@@ -561,10 +561,10 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName, w
   // section directly below it, which reports what was actually paid.
   const tier = {
     ...tierFor(rate),
-    bg: "yellow.50",
-    border: "yellow.200",
-    fg: "yellow.900",
-    numberFg: "yellow.900",
+    bg: "yellow.faint",
+    border: "yellow.emphasized",
+    fg: "yellow.fg",
+    numberFg: "yellow.fg",
   };
   const Icon = tier.icon;
   const hasHours = data.hours > 0;
@@ -687,14 +687,14 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName, w
                a ghost button's default grey hover read as a foreign
                control dropped onto the card. yellow.200 is the same shade
                the section uses for its own header hover. */
-            _hover={{ bg: "yellow.200" }}
-            _active={{ bg: "yellow.300" }}
+            _hover={{ bg: "yellow.muted" }}
+            _active={{ bg: "yellow.muted" }}
             /* Chakra's Button recipe gives the OPEN state its own resting
                background — zinc grey — which sat there the whole time the
                panel was expanded, not just on hover. yellow.100 is the
                section's header band, so an open expander reads as part of
                the card instead of a grey bar across it. */
-            _expanded={{ bg: "yellow.100" }}
+            _expanded={{ bg: "yellow.subtle" }}
             css={{ color: `var(--chakra-colors-${tier.fg.replace(".", "-")})` }}
           >
             <Text fontSize="xs" fontWeight="medium">
@@ -746,7 +746,7 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName, w
             return `${parseInt(m, 10)}/${parseInt(d, 10)}`;
           };
           return (
-            <Box mt={4} pt={3} borderTopWidth="1px" borderColor="gray.200">
+            <Box mt={4} pt={3} borderTopWidth="1px" borderColor="gray.emphasized">
               <HStack justify="space-between" mb={2} wrap="wrap" gap={2}>
                 <Text fontSize="xs" fontWeight="semibold" color="fg.default" textTransform="uppercase" letterSpacing="wide">
                   Earnings (jobs)
@@ -766,16 +766,16 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName, w
                         if (!active || !payload || !payload.length) return null;
                         const d = payload[0].payload as { weekStart: string; count: number; earnings: number };
                         return (
-                          <Box bg="white" p={2} borderWidth="1px" borderColor="gray.200" rounded="md" fontSize="xs" shadow="sm">
+                          <Box bg="bg.panel" p={2} borderWidth="1px" borderColor="gray.emphasized" rounded="md" fontSize="xs" shadow="sm">
                             <Text fontWeight="semibold" mb={0.5}>Week of {fmtWeek(d.weekStart)}</Text>
                             <Text color="fg.muted">Jobs: <Text as="span" color="fg.default" fontWeight="medium">{d.count}</Text></Text>
-                            <Text color="fg.muted">Earnings: <Text as="span" color="green.700" fontWeight="medium">${d.earnings.toFixed(2)}</Text></Text>
+                            <Text color="fg.muted">Earnings: <Text as="span" color="green.fg" fontWeight="medium">${d.earnings.toFixed(2)}</Text></Text>
                           </Box>
                         );
                       }}
                     />
-                    <Line type="monotone" dataKey="earnings" stroke="var(--chakra-colors-green-600)" strokeWidth={2} dot={{ r: 3, fill: "var(--chakra-colors-green-600)" }}>
-                      <LabelList dataKey="count" position="top" offset={14} fontSize={10} fill="var(--chakra-colors-fg-default)" formatter={(v: any) => (v && v > 0 ? String(v) : "")} />
+                    <Line type="monotone" dataKey="earnings" stroke="var(--chakra-colors-green-600)" strokeWidth={2} dot={{ r: 3, fill: "var(--chakra-colors-green-fg)" }}>
+                      <LabelList dataKey="count" position="top" offset={14} fontSize={10} fill="var(--chakra-colors-fg)" formatter={(v: any) => (v && v > 0 ? String(v) : "")} />
                     </Line>
                   </ComposedChart>
                 </ResponsiveContainer>

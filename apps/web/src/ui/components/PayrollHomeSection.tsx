@@ -221,11 +221,11 @@ export default function PayrollHomeSection({
       // even when there is nothing to total, because the window is still
       // the answer to "what am I looking at".
       collapsedSummarySlot={
-        <Text fontSize="xs" color="blue.800" whiteSpace="nowrap">
+        <Text fontSize="xs" color="blue.fg" whiteSpace="nowrap">
           {ownerMode ? (
             <>
               {"LLC Owner · "}
-              <Box as="span" fontWeight="bold" color="blue.900">
+              <Box as="span" fontWeight="bold" color="blue.fg">
                 {equity.net >= 0 ? "+" : "−"}$
                 {Math.abs(equity.net).toFixed(2)}
               </Box>
@@ -238,7 +238,7 @@ export default function PayrollHomeSection({
           {shown.length > 0 && (
             <>
               {" · "}
-              <Box as="span" fontWeight="bold" color="blue.900">
+              <Box as="span" fontWeight="bold" color="blue.fg">
                 {fmtPayrollMoney(totals.netPay)}
               </Box>
               {" net"}
@@ -267,13 +267,13 @@ export default function PayrollHomeSection({
         {pending.affected && (
           <Box
             borderWidth="1px"
-            borderColor="orange.300"
-            bg="orange.50"
+            borderColor="orange.emphasized"
+            bg="orange.faint"
             rounded="md"
             px={2}
             py={1.5}
           >
-            <Text fontSize="xs" color="orange.900">
+            <Text fontSize="xs" color="orange.fg">
               A pay period{pending.payDay ? ` from ${fmtDateKey(pending.payDay)}` : ""} hasn&apos;t
               been matched to an account yet. If it&apos;s yours, ask your admin to match it —
               payroll is matched by name, so a name change can leave it unlinked.
@@ -285,12 +285,12 @@ export default function PayrollHomeSection({
           // payroll run (every contractor today) still gets told why this
           // is empty instead of wondering whether the feature exists.
           <Box>
-            <Text fontSize="sm" fontWeight="medium" color="blue.900">
+            <Text fontSize="sm" fontWeight="medium" color="blue.fg">
               {periods.length === 0
                 ? "No payroll records yet"
                 : "Nothing in this timeframe"}
             </Text>
-            <Text fontSize="xs" color="blue.800" mt={1}>
+            <Text fontSize="xs" color="blue.fg" mt={1}>
               {periods.length === 0
                 ? // Deliberately does NOT explain WHY it's empty. The two
                   // obvious reasons look identical from here: nothing has
@@ -315,7 +315,7 @@ export default function PayrollHomeSection({
                     that reads differently on two surfaces is the thing that
                     makes an operator distrust both. */}
                 <HStack gap={1.5} align="center" wrap="wrap">
-                  <Text fontSize="sm" fontWeight="bold" color="blue.900">
+                  <Text fontSize="sm" fontWeight="bold" color="blue.fg">
                     {shown.length === 1
                       ? `${payDayVerb(newest!.payDay)} ${fmtDateKey(newest!.payDay)}`
                       : `${shown.length} pay periods`}
@@ -329,7 +329,7 @@ export default function PayrollHomeSection({
                     </Badge>
                   )}
                 </HStack>
-                <Text fontSize="xs" color="blue.800">
+                <Text fontSize="xs" color="blue.fg">
                   {shown.length === 1
                     ? `for ${fmtDateKey(newest!.periodStart)} – ${fmtDateKey(newest!.periodEnd)}`
                     : `most recent ${payDayVerb(newest!.payDay).toLowerCase()} ${fmtDateKey(newest!.payDay)}`}
@@ -342,7 +342,7 @@ export default function PayrollHomeSection({
               <Figure label={shown.length === 1 ? "Gross" : "Total gross"} value={fmtPayrollMoney(totals.grossEarnings)} />
             </SimpleGrid>
 
-            <Text fontSize="2xs" color="blue.700" mt={2}>
+            <Text fontSize="2xs" color="blue.fg" mt={2}>
               {/* "Paid" is a claim about money that has moved. When the
                   window includes a pay day still ahead, the figures are
                   final but the deposit hasn't happened. */}
@@ -363,13 +363,13 @@ export default function PayrollHomeSection({
 function Figure({ label, value }: { label: string; value: string }) {
   return (
     <VStack align="start" gap={0}>
-      <Text fontSize="2xs" color="blue.700" textTransform="uppercase" letterSpacing="wide">
+      <Text fontSize="2xs" color="blue.fg" textTransform="uppercase" letterSpacing="wide">
         {label}
       </Text>
       <Text
         fontSize="lg"
         fontWeight="bold"
-        color="blue.800"
+        color="blue.fg"
         lineHeight="1.1"
         fontVariantNumeric="tabular-nums"
       >

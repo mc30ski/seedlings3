@@ -130,7 +130,7 @@ export default function PricingGuideDialog({ open, onOpenChange, endpoint = "/ap
                           key={entry.key}
                           variant="outline"
                           cursor={onPick ? "pointer" : undefined}
-                          _hover={onPick ? { borderColor: "blue.300", bg: "blue.50" } : undefined}
+                          _hover={onPick ? { borderColor: "blue.emphasized", bg: "blue.faint" } : undefined}
                           onClick={onPick ? () => {
                             onPick(v.amount, entry);
                             onOpenChange(false);

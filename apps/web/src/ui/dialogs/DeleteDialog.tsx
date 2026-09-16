@@ -45,7 +45,7 @@ export default function DeleteDialog({
               <Text mb="2">
                 This will <b>permanently delete</b> record:
               </Text>
-              <Text mb="2" color="gray.600">
+              <Text mb="2" color="gray.fg">
                 {toDelete?.summary}
               </Text>
               {toDelete?.details}
