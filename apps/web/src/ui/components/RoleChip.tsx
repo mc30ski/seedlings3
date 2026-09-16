@@ -84,9 +84,14 @@ export default function RoleChip({ activeRole, availableRoles, onSwitch }: Props
           right={0}
           top="100%"
           mt={1}
-          bg="white"
+          bg="bg.panel"
+          // EXPLICIT INK. This panel renders inside the title bar, which sets
+          // `color="chrome.headerFg"` — white in High contrast, pale green in
+          // Spring, cream in Fall. Inheriting that put near-white labels on a
+          // white panel: the rows were there, with only their icons visible.
+          color="fg"
           borderWidth="1px"
-          borderColor="gray.200"
+          borderColor="border.emphasis"
           rounded="lg"
           shadow="lg"
           minW="160px"
@@ -106,8 +111,8 @@ export default function RoleChip({ activeRole, availableRoles, onSwitch }: Props
               py={2}
               gap={2}
               cursor="pointer"
-              bg={r.value === activeRole ? "blue.50" : undefined}
-              _hover={{ bg: r.value === activeRole ? "blue.100" : "gray.50" }}
+              bg={r.value === activeRole ? "blue.faint" : undefined}
+              _hover={{ bg: r.value === activeRole ? "blue.subtle" : "gray.faint" }}
               onClick={() => {
                 setOpen(false);
                 if (r.value !== activeRole) onSwitch(r.value);
@@ -117,13 +122,13 @@ export default function RoleChip({ activeRole, availableRoles, onSwitch }: Props
                 <Icon
                   as={r.icon}
                   boxSize={4}
-                  color={r.value === activeRole ? "blue.600" : "fg.muted"}
+                  color={r.value === activeRole ? "blue.fg" : "fg.muted"}
                 />
               )}
               <Text
                 fontSize="sm"
                 fontWeight={r.value === activeRole ? "semibold" : "normal"}
-                color={r.value === activeRole ? "blue.700" : undefined}
+                color={r.value === activeRole ? "blue.fg" : undefined}
               >
                 {r.label}
               </Text>

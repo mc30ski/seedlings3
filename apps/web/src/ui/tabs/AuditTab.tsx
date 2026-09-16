@@ -193,10 +193,10 @@ export default function AuditTab() {
                 gap={3}
                 p={2}
                 rounded="md"
-                bg={selected.has(check.id) ? "blue.50" : undefined}
+                bg={selected.has(check.id) ? "blue.faint" : undefined}
                 cursor="pointer"
                 onClick={() => toggleCheck(check.id)}
-                _hover={{ bg: selected.has(check.id) ? "blue.100" : "gray.50" }}
+                _hover={{ bg: selected.has(check.id) ? "blue.subtle" : "gray.faint" }}
               >
                 <Checkbox.Root
                   checked={selected.has(check.id)}
@@ -279,7 +279,7 @@ export default function AuditTab() {
             <Box mb={4}>
               <HStack gap={2} mb={2}>
                 <AlertTriangle size={14} color="var(--chakra-colors-orange-500)" />
-                <Text fontWeight="semibold" fontSize="sm" color="orange.700">Issues</Text>
+                <Text fontWeight="semibold" fontSize="sm" color="orange.fg">Issues</Text>
                 <Text fontSize="xs" color="fg.muted">— things that may need fixing</Text>
               </HStack>
               <VStack align="stretch" gap={3}>
@@ -291,7 +291,7 @@ export default function AuditTab() {
             <Box mb={4}>
               <HStack gap={2} mb={2}>
                 <AlertCircle size={14} color="var(--chakra-colors-yellow-600)" />
-                <Text fontWeight="semibold" fontSize="sm" color="yellow.700">Warnings</Text>
+                <Text fontWeight="semibold" fontSize="sm" color="yellow.fg">Warnings</Text>
                 <Text fontSize="xs" color="fg.muted">— heads-up items worth a look</Text>
               </HStack>
               <VStack align="stretch" gap={3}>
@@ -303,7 +303,7 @@ export default function AuditTab() {
             <Box>
               <HStack gap={2} mb={2}>
                 <Info size={14} color="var(--chakra-colors-blue-500)" />
-                <Text fontWeight="semibold" fontSize="sm" color="blue.700">Information</Text>
+                <Text fontWeight="semibold" fontSize="sm" color="blue.fg">Information</Text>
                 <Text fontSize="xs" color="fg.muted">— FYI, not problems</Text>
               </HStack>
               <VStack align="stretch" gap={3}>
@@ -320,12 +320,12 @@ export default function AuditTab() {
     const severity = AUDIT_CHECKS.find((c) => c.id === r.check)?.severity ?? "issue";
     // Per-severity visual config — keeps the rest of the rendering palette-agnostic.
     const cfg = severity === "info"
-      ? { palette: "blue", border: "blue.300", bg: "blue.50", iconColor: "var(--chakra-colors-blue-500)", Icon: Info, label: "Info", noun: "info" }
+      ? { palette: "blue", border: "blue.emphasized", bg: "blue.faint", iconColor: "var(--chakra-colors-blue-500)", Icon: Info, label: "Info", noun: "info" }
       : severity === "warning"
-        ? { palette: "yellow", border: "yellow.300", bg: "yellow.50", iconColor: "var(--chakra-colors-yellow-600)", Icon: AlertCircle, label: "Warning", noun: "warning" }
-        : { palette: "orange", border: "orange.300", bg: "orange.50", iconColor: "var(--chakra-colors-orange-500)", Icon: AlertTriangle, label: "Issue", noun: "issue" };
+        ? { palette: "yellow", border: "yellow.emphasized", bg: "yellow.faint", iconColor: "var(--chakra-colors-yellow-600)", Icon: AlertCircle, label: "Warning", noun: "warning" }
+        : { palette: "orange", border: "orange.emphasized", bg: "orange.faint", iconColor: "var(--chakra-colors-orange-500)", Icon: AlertTriangle, label: "Issue", noun: "issue" };
     const palette = r.issues.length === 0 ? "green" : cfg.palette;
-    const borderColor = r.issues.length === 0 ? "green.300" : cfg.border;
+    const borderColor = r.issues.length === 0 ? "green.emphasized" : cfg.border;
     const issueBg = cfg.bg;
     const iconColor = cfg.iconColor;
     const IssueIcon = cfg.Icon;

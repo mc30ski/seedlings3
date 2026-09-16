@@ -236,13 +236,13 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
             </Dialog.Header>
             <Dialog.Body>
               {isAdmin && assignedGroup && (
-                <Box mb={3} p={2} bg="purple.50" borderWidth="1px" borderColor="purple.200" rounded="md">
+                <Box mb={3} p={2} bg="purple.faint" borderWidth="1px" borderColor="purple.emphasized" rounded="md">
                   <HStack justify="space-between" gap={2} wrap="wrap">
                     <VStack align="start" gap={0}>
-                      <Text fontSize="xs" fontWeight="semibold" color="purple.800">
+                      <Text fontSize="xs" fontWeight="semibold" color="purple.fg">
                         Group attached: {assignedGroup.name}
                       </Text>
-                      <Text fontSize="xs" color="purple.700">
+                      <Text fontSize="xs" color="purple.fg">
                         Detach the group to add individuals. The group itself stays intact — only this occurrence's link is removed.
                       </Text>
                     </VStack>
@@ -253,8 +253,8 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
                 </Box>
               )}
               {isAdmin && !assignedGroup && members.length === 0 && groups.length > 0 && (
-                <Box mb={3} p={2} bg="purple.50" borderWidth="1px" borderColor="purple.200" rounded="md">
-                  <Text fontSize="xs" fontWeight="semibold" color="purple.800" mb={1}>
+                <Box mb={3} p={2} bg="purple.faint" borderWidth="1px" borderColor="purple.emphasized" rounded="md">
+                  <Text fontSize="xs" fontWeight="semibold" color="purple.fg" mb={1}>
                     Or assign a group
                   </Text>
                   <HStack gap={2} wrap="wrap" align="stretch">
@@ -286,7 +286,7 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
                       Attach
                     </Button>
                   </HStack>
-                  <Text fontSize="xs" color="purple.700" mt={1}>
+                  <Text fontSize="xs" color="purple.fg" mt={1}>
                     Materializes the full group as assignees. Either group OR individuals — not both.
                   </Text>
                 </Box>

@@ -382,7 +382,7 @@ export default function PropertiesTab({
       </TabExplainer>
       </Box>
       <HStack mb={2} gap={2}>
-        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)" }}>
+        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-subtle)" }}>
           <RefreshCw size={14} />
         </Button>
         <SearchWithClear
@@ -401,7 +401,7 @@ export default function PropertiesTab({
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: kind[0] !== "ALL" ? "var(--chakra-colors-blue-200)" : "var(--chakra-colors-blue-100)", border: kind[0] !== "ALL" ? "1px solid var(--chakra-colors-blue-400)" : "1px solid var(--chakra-colors-blue-300)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: kind[0] !== "ALL" ? "var(--chakra-colors-blue-muted)" : "var(--chakra-colors-blue-subtle)", border: kind[0] !== "ALL" ? "1px solid var(--chakra-colors-blue-strong)" : "1px solid var(--chakra-colors-blue-emphasized)", borderRadius: "6px" }}>
               <LayoutList size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -425,7 +425,7 @@ export default function PropertiesTab({
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: statusFilter[0] !== "ALL" ? "var(--chakra-colors-purple-200)" : "var(--chakra-colors-purple-100)", border: statusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-purple-400)" : "1px solid var(--chakra-colors-purple-300)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: statusFilter[0] !== "ALL" ? "var(--chakra-colors-purple-muted)" : "var(--chakra-colors-purple-subtle)", border: statusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-purple-strong)" : "1px solid var(--chakra-colors-purple-emphasized)", borderRadius: "6px" }}>
               <Filter size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -519,7 +519,7 @@ export default function PropertiesTab({
                   {clientName}
                 </Text>
               )}
-            <Card.Root variant="outline" borderColor={p.status === "ARCHIVED" ? "gray.200" : (p.client as any)?.isVip ? "yellow.300" : undefined} bg={p.status === "ARCHIVED" ? "gray.50" : undefined}>
+            <Card.Root variant="outline" borderColor={p.status === "ARCHIVED" ? "gray.emphasized" : (p.client as any)?.isVip ? "yellow.emphasized" : undefined} bg={p.status === "ARCHIVED" ? "gray.faint" : undefined}>
               <Card.Header py="2" px="3" pb="0">
                 <VStack align="start" gap={1.5}>
                   <HStack gap={1} minW={0}>
@@ -586,9 +586,9 @@ export default function PropertiesTab({
                     </Text>
                   </HStack>
                   {(p as any).accessNotes && (
-                    <Box p={2} bg="orange.50" rounded="sm" w="full">
-                      <Text fontSize="xs" fontWeight="medium" color="orange.700">Access Notes</Text>
-                      <Text fontSize="xs" color="orange.600">{(p as any).accessNotes}</Text>
+                    <Box p={2} bg="orange.faint" rounded="sm" w="full">
+                      <Text fontSize="xs" fontWeight="medium" color="orange.fg">Access Notes</Text>
+                      <Text fontSize="xs" color="orange.fg">{(p as any).accessNotes}</Text>
                     </Box>
                   )}
                 </VStack>
@@ -660,11 +660,11 @@ export default function PropertiesTab({
                             summary: p.displayName,
                             disabled: hasJobs || superRequired,
                             details: hasJobs ? (
-                              <Text color="red.500">
+                              <Text color="red.fg">
                                 This property has associated jobs. Delete all jobs before deleting the property.
                               </Text>
                             ) : superRequired ? (
-                              <Text color="red.500">
+                              <Text color="red.fg">
                                 You must be a Super Admin to delete.
                               </Text>
                             ) : undefined,

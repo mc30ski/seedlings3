@@ -399,15 +399,15 @@ export default function EstimateDialog({ open, onOpenChange, onCreated, myId, ed
                   </Select.Root>
                 </Box>
                 {!selectedJobId[0] && (
-                  <Box p={3} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" borderRadius="md">
-                    <Text fontSize="xs" color="yellow.800">
+                  <Box p={3} bg="yellow.faint" borderWidth="1px" borderColor="yellow.emphasized" borderRadius="md">
+                    <Text fontSize="xs" color="yellow.fg">
                       No Job Service linked. If the estimate is accepted, you'll be prompted to create a Client, Property, and Job Service using information below.
                     </Text>
                   </Box>
                 )}
                 {selectedJobId[0] && (
-                  <Box p={3} bg="green.50" borderWidth="1px" borderColor="green.200" borderRadius="md">
-                    <Text fontSize="xs" color="green.800">
+                  <Box p={3} bg="green.faint" borderWidth="1px" borderColor="green.emphasized" borderRadius="md">
+                    <Text fontSize="xs" color="green.fg">
                       Linked to an existing Job Service. Contact and address info comes from the job's property.
                     </Text>
                   </Box>
@@ -452,7 +452,7 @@ export default function EstimateDialog({ open, onOpenChange, onCreated, myId, ed
                         onBlur={() => validatePhone(contactPhone)}
                         style={{ width: "100%", padding: "6px 10px", fontSize: "14px", border: `1px solid ${phoneError ? "#e53e3e" : "#ccc"}`, borderRadius: "6px" }}
                       />
-                      {phoneError && <Text fontSize="xs" color="red.500" mt={0.5}>{phoneError}</Text>}
+                      {phoneError && <Text fontSize="xs" color="red.fg" mt={0.5}>{phoneError}</Text>}
                     </Box>
 
                     <Box>
@@ -468,7 +468,7 @@ export default function EstimateDialog({ open, onOpenChange, onCreated, myId, ed
                         onBlur={() => validateEmail(contactEmail)}
                         style={{ width: "100%", padding: "6px 10px", fontSize: "14px", border: `1px solid ${emailError ? "#e53e3e" : "#ccc"}`, borderRadius: "6px" }}
                       />
-                      {emailError && <Text fontSize="xs" color="red.500" mt={0.5}>{emailError}</Text>}
+                      {emailError && <Text fontSize="xs" color="red.fg" mt={0.5}>{emailError}</Text>}
                     </Box>
 
                     {/* ADDRESS — the same shape a property uses, because an
@@ -560,7 +560,7 @@ export default function EstimateDialog({ open, onOpenChange, onCreated, myId, ed
                   {assigneeIds.length > 0 && (
                     <VStack align="stretch" gap={1} mb={2}>
                       {assigneeIds.map((uid) => (
-                        <HStack key={uid} px={2} py={1} rounded="md" borderWidth="1px" borderColor={uid === myId ? "teal.200" : "gray.200"} bg={uid === myId ? "teal.50" : undefined} justify="space-between">
+                        <HStack key={uid} px={2} py={1} rounded="md" borderWidth="1px" borderColor={uid === myId ? "teal.emphasized" : "gray.emphasized"} bg={uid === myId ? "teal.faint" : undefined} justify="space-between">
                           <Text fontSize="sm">{workerLabel(uid)}{uid === myId ? " (you)" : ""}</Text>
                           {uid !== myId && (
                             <Button size="xs" variant="ghost" px="1" minW="0" onClick={() => removeAssignee(uid)}>

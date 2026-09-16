@@ -9,7 +9,10 @@
    restores body background on unmount, so app-level styling that
    targets #__next or Chakra's Box wrappers is unaffected. */
 html, body {
-  background: #ffffff;
+  /* Was a hard `#ffffff`, which outranked the themed body background and left
+     every theme on a white page. The variable is set by the boot script in
+     _document before first paint, so the anti-flash purpose still holds. */
+  background: var(--seedlings-boot-bg, #ffffff);
 }
 
 /* Prevent Safari iOS from zooming on input focus — requires font-size >= 16px */
@@ -39,19 +42,26 @@ html, body {
    Keep the three-stop form. The 70% stop finishes the expansion early and
    leaves a short rest before the next beat. */
 
+/* ── Pulse tints ─────────────────────────────────────────────────────────
+   The `--pulse-*` variables are NOT defined here. They are derived per theme
+   in styles/themeTokens.ts (PULSE_CSS) and injected by _document, because
+   what makes a ring visible is its contrast with THAT theme's page colour —
+   and a hand-written pair of blocks silently left every theme added later on
+   the light values. Change a tint there, not here. */
+
 /* Soft attention pulse for opt-in banners (push notifications, etc.) */
 @keyframes seedlings-pulse {
-  0% { box-shadow: 0 0 0 0 rgba(236, 72, 153, 0.45); }
-  70% { box-shadow: 0 0 0 8px rgba(236, 72, 153, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(236, 72, 153, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(var(--pulse-pink), 0.45); }
+  70% { box-shadow: 0 0 0 8px rgba(var(--pulse-pink), 0); }
+  100% { box-shadow: 0 0 0 0 rgba(var(--pulse-pink), 0); }
 }
 
 /* Orange pulse — used on the NOT_STARTED workday card so workers
    notice the morning "Start your workday" call to action. */
 @keyframes seedlings-pulse-orange {
-  0% { box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.45); }
-  70% { box-shadow: 0 0 0 8px rgba(249, 115, 22, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(249, 115, 22, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(var(--pulse-orange), 0.45); }
+  70% { box-shadow: 0 0 0 8px rgba(var(--pulse-orange), 0); }
+  100% { box-shadow: 0 0 0 0 rgba(var(--pulse-orange), 0); }
 }
 
 /* Blue pulse — used on the IN_PROGRESS workday card when all of the
@@ -62,17 +72,17 @@ html, body {
    doesn't get confused with earnings/payments. Blue tint from Chakra
    blue.500 (#3b82f6). */
 @keyframes seedlings-pulse-blue {
-  0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.45); }
-  70% { box-shadow: 0 0 0 8px rgba(59, 130, 246, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(var(--pulse-blue), 0.45); }
+  70% { box-shadow: 0 0 0 8px rgba(var(--pulse-blue), 0); }
+  100% { box-shadow: 0 0 0 0 rgba(var(--pulse-blue), 0); }
 }
 
 
 /* Cyan pulse — Worker Home "Earning Power" card, top-performer tier. */
 @keyframes seedlings-pulse-cyan {
-  0% { box-shadow: 0 0 0 0 rgba(6, 182, 212, 0.35); }
-  70% { box-shadow: 0 0 0 6px rgba(6, 182, 212, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(6, 182, 212, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(var(--pulse-cyan), 0.35); }
+  70% { box-shadow: 0 0 0 6px rgba(var(--pulse-cyan), 0); }
+  100% { box-shadow: 0 0 0 0 rgba(var(--pulse-cyan), 0); }
 }
 
 /* Purple pulse — Worker Home "Earning Power" card, elite tier.
@@ -80,18 +90,18 @@ html, body {
    the "you're at the top of the field" moment worth a small
    celebration each time it renders. */
 @keyframes seedlings-pulse-purple {
-  0% { box-shadow: 0 0 0 0 rgba(147, 51, 234, 0.45); }
-  70% { box-shadow: 0 0 0 8px rgba(147, 51, 234, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(147, 51, 234, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(var(--pulse-purple), 0.45); }
+  70% { box-shadow: 0 0 0 8px rgba(var(--pulse-purple), 0); }
+  100% { box-shadow: 0 0 0 0 rgba(var(--pulse-purple), 0); }
 }
 
 /* Red pulse — used on the compliance banner when the worker has
    BLOCK-level policies pending. Signals "you can't start work until
    you sign these". */
 @keyframes seedlings-pulse-red {
-  0% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.5); }
-  70% { box-shadow: 0 0 0 8px rgba(220, 38, 38, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(var(--pulse-red), 0.5); }
+  70% { box-shadow: 0 0 0 8px rgba(var(--pulse-red), 0); }
+  100% { box-shadow: 0 0 0 0 rgba(var(--pulse-red), 0); }
 }
 
 /* Gray pulse — neutral "something needs attention" ripple that
@@ -107,13 +117,13 @@ html, body {
    Chakra gray.900 (#111827). */
 @keyframes seedlings-pulse-ghost {
   0% {
-    box-shadow: 0 0 0 0 rgba(17, 24, 39, 0.9), inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+    box-shadow: 0 0 0 0 rgba(var(--pulse-ghost), 0.9), inset 0 0 0 1px rgba(255, 255, 255, 0.35);
   }
   60% {
-    box-shadow: 0 0 0 14px rgba(17, 24, 39, 0), inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+    box-shadow: 0 0 0 14px rgba(var(--pulse-ghost), 0), inset 0 0 0 1px rgba(255, 255, 255, 0.6);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(17, 24, 39, 0), inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+    box-shadow: 0 0 0 0 rgba(var(--pulse-ghost), 0), inset 0 0 0 1px rgba(255, 255, 255, 0.35);
   }
 }
 
@@ -122,15 +132,15 @@ html, body {
    is small and dark on a plain background, so it only needs a soft ring to
    catch the eye. Same gray.900 tint as the card pulse it points at. */
 @keyframes seedlings-pulse-ghost-chip {
-  0% { box-shadow: 0 0 0 0 rgba(17, 24, 39, 0.7); }
-  70% { box-shadow: 0 0 0 9px rgba(17, 24, 39, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(17, 24, 39, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(var(--pulse-ghost), 0.7); }
+  70% { box-shadow: 0 0 0 9px rgba(var(--pulse-ghost), 0); }
+  100% { box-shadow: 0 0 0 0 rgba(var(--pulse-ghost), 0); }
 }
 
 @keyframes seedlings-pulse-gray {
-  0% { box-shadow: 0 0 0 0 rgba(107, 114, 128, 0.5); }
-  70% { box-shadow: 0 0 0 8px rgba(107, 114, 128, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(107, 114, 128, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(var(--pulse-gray), 0.5); }
+  70% { box-shadow: 0 0 0 8px rgba(var(--pulse-gray), 0); }
+  100% { box-shadow: 0 0 0 0 rgba(var(--pulse-gray), 0); }
 }
 
 /* Yellow pulse — used on the CLIENT REQUESTS section of the Jobs
@@ -138,9 +148,9 @@ html, body {
    the red/orange severity implication. Tint from Chakra yellow.500
    (#eab308). */
 @keyframes seedlings-pulse-yellow {
-  0% { box-shadow: 0 0 0 0 rgba(234, 179, 8, 0.55); }
-  70% { box-shadow: 0 0 0 8px rgba(234, 179, 8, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(234, 179, 8, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(var(--pulse-yellow), 0.55); }
+  70% { box-shadow: 0 0 0 8px rgba(var(--pulse-yellow), 0); }
+  100% { box-shadow: 0 0 0 0 rgba(var(--pulse-yellow), 0); }
 }
 
 /* Green pulse — the `hero` Dashboard palette (MY ACTIVITIES). Added so
@@ -148,9 +158,9 @@ html, body {
    used the gray ripple regardless of palette, which read as a bug on an
    orange or purple section. Tint from Chakra green.500 (#22c55e). */
 @keyframes seedlings-pulse-green {
-  0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.45); }
-  70% { box-shadow: 0 0 0 8px rgba(34, 197, 94, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(var(--pulse-green), 0.45); }
+  70% { box-shadow: 0 0 0 8px rgba(var(--pulse-green), 0); }
+  100% { box-shadow: 0 0 0 0 rgba(var(--pulse-green), 0); }
 }
 
 /* App splash — see components/AppSplash.tsx. Keyframes live here (not
@@ -200,15 +210,15 @@ html, body {
 @keyframes seedlings-pulse-instruction {
   0% {
     background-color: #fde047;
-    box-shadow: 0 0 0 0 rgba(202, 138, 4, 0.7);
+    box-shadow: 0 0 0 0 rgba(var(--pulse-instruction), 0.7);
   }
   70% {
     background-color: #fef9c3;
-    box-shadow: 0 0 0 7px rgba(202, 138, 4, 0);
+    box-shadow: 0 0 0 7px rgba(var(--pulse-instruction), 0);
   }
   100% {
     background-color: #fde047;
-    box-shadow: 0 0 0 0 rgba(202, 138, 4, 0);
+    box-shadow: 0 0 0 0 rgba(var(--pulse-instruction), 0);
   }
 }
 
@@ -219,15 +229,15 @@ html, body {
 @keyframes seedlings-pulse-instruction-icon {
   0% {
     transform: scale(1.25);
-    box-shadow: 0 0 0 0 rgba(202, 138, 4, 0.8);
+    box-shadow: 0 0 0 0 rgba(var(--pulse-instruction), 0.8);
   }
   70% {
     transform: scale(1);
-    box-shadow: 0 0 0 8px rgba(202, 138, 4, 0);
+    box-shadow: 0 0 0 8px rgba(var(--pulse-instruction), 0);
   }
   100% {
     transform: scale(1.25);
-    box-shadow: 0 0 0 0 rgba(202, 138, 4, 0);
+    box-shadow: 0 0 0 0 rgba(var(--pulse-instruction), 0);
   }
 }
 

@@ -518,7 +518,7 @@ export default function TimelineTab({ isSuper = false }: Props) {
           loading={loading}
           px="2"
           flexShrink={0}
-          css={{ background: "var(--chakra-colors-gray-100)" }}
+          css={{ background: "var(--chakra-colors-gray-subtle)" }}
         >
           <RefreshCw size={14} />
         </Button>
@@ -542,8 +542,8 @@ export default function TimelineTab({ isSuper = false }: Props) {
               minW="0"
               px="2"
               css={{
-                background: kindFilter[0] !== "all" ? "var(--chakra-colors-orange-200)" : "var(--chakra-colors-orange-100)",
-                border: kindFilter[0] !== "all" ? "1px solid var(--chakra-colors-orange-400)" : "1px solid var(--chakra-colors-orange-300)",
+                background: kindFilter[0] !== "all" ? "var(--chakra-colors-orange-muted)" : "var(--chakra-colors-orange-subtle)",
+                border: kindFilter[0] !== "all" ? "1px solid var(--chakra-colors-orange-strong)" : "1px solid var(--chakra-colors-orange-emphasized)",
                 borderRadius: "6px",
               }}
               title={kindItems.find((i) => i.value === kindFilter[0])?.label}
@@ -576,8 +576,8 @@ export default function TimelineTab({ isSuper = false }: Props) {
               minW="0"
               px="2"
               css={{
-                background: urgencyFilter[0] !== "all" ? "var(--chakra-colors-teal-200)" : "var(--chakra-colors-teal-100)",
-                border: urgencyFilter[0] !== "all" ? "1px solid var(--chakra-colors-teal-400)" : "1px solid var(--chakra-colors-teal-300)",
+                background: urgencyFilter[0] !== "all" ? "var(--chakra-colors-teal-muted)" : "var(--chakra-colors-teal-subtle)",
+                border: urgencyFilter[0] !== "all" ? "1px solid var(--chakra-colors-teal-strong)" : "1px solid var(--chakra-colors-teal-emphasized)",
                 borderRadius: "6px",
               }}
               title={URGENCY_ITEMS.find((i) => i.value === urgencyFilter[0])?.label}
@@ -608,10 +608,10 @@ export default function TimelineTab({ isSuper = false }: Props) {
           }}
           title={showArchived ? "Showing archived — click to hide" : "Show archived only"}
           css={showArchived ? {
-            background: "var(--chakra-colors-gray-200)",
-            color: "var(--chakra-colors-gray-700)",
-            border: "1px solid var(--chakra-colors-gray-400)",
-            "&:hover": { background: "var(--chakra-colors-gray-300)" },
+            background: "var(--chakra-colors-gray-muted)",
+            color: "var(--chakra-colors-gray-fg)",
+            border: "1px solid var(--chakra-colors-gray-strong)",
+            "&:hover": { background: "var(--chakra-colors-gray-muted)" },
           } : undefined}
         >
           <Archive size={14} />
@@ -632,10 +632,10 @@ export default function TimelineTab({ isSuper = false }: Props) {
               : "Show completed (past 30 days)"
           }
           css={showCompleted ? {
-            background: "var(--chakra-colors-green-100)",
-            color: "var(--chakra-colors-green-800)",
-            border: "1px solid var(--chakra-colors-green-400)",
-            "&:hover": { background: "var(--chakra-colors-green-200)" },
+            background: "var(--chakra-colors-green-subtle)",
+            color: "var(--chakra-colors-green-fg)",
+            border: "1px solid var(--chakra-colors-green-strong)",
+            "&:hover": { background: "var(--chakra-colors-green-muted)" },
           } : undefined}
         >
           <Check size={14} />
@@ -804,13 +804,13 @@ export default function TimelineTab({ isSuper = false }: Props) {
                     py={2}
                     cursor="pointer"
                     onClick={() => toggleSection(section.key)}
-                    bg={`${section.color}.50`}
+                    bg={`${section.color}.faint`}
                     borderWidth="1px"
-                    borderColor={`${section.color}.200`}
+                    borderColor={`${section.color}.emphasized`}
                     borderLeftWidth="4px"
                     borderLeftColor={`${section.color}.500`}
                     borderRadius="md"
-                    _hover={{ bg: `${section.color}.100` }}
+                    _hover={{ bg: `${section.color}.subtle` }}
                     transition="background 0.15s"
                     /* OVERDUE pulses. It is the only bucket here that is
                        work already late — everything else is a forecast,
@@ -824,7 +824,7 @@ export default function TimelineTab({ isSuper = false }: Props) {
                         : undefined
                     }
                   >
-                    <Box color={`${section.color}.700`} flexShrink={0}>
+                    <Box color={`${section.color}.fg`} flexShrink={0}>
                       {collapsed ? <ChevronRight size={18} /> : <ChevronDown size={18} />}
                     </Box>
                     {/* Uppercase + wide tracking, matching the section
@@ -834,7 +834,7 @@ export default function TimelineTab({ isSuper = false }: Props) {
                     <Text
                       fontSize="sm"
                       fontWeight="bold"
-                      color={`${section.color}.900`}
+                      color={`${section.color}.fg`}
                       textTransform="uppercase"
                       letterSpacing="wide"
                       flex="1"

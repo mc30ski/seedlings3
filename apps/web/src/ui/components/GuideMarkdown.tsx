@@ -234,7 +234,7 @@ function VideoBlock({
     if (url === null) return <MissingAsset target={target} kind="video" />;
     if (!url) return <Text fontSize="xs" color="fg.muted">Loading video…</Text>;
     return (
-      <Box my={3} borderRadius="md" overflow="hidden" borderWidth="1px" borderColor="gray.200">
+      <Box my={3} borderRadius="md" overflow="hidden" borderWidth="1px" borderColor="gray.emphasized">
         <video
           src={url}
           controls
@@ -254,7 +254,7 @@ function VideoBlock({
           <Text fontSize="sm" color="fg.muted" wordBreak="break-all">
             {target}
           </Text>
-          <Text fontSize="2xs" color="red.600">
+          <Text fontSize="2xs" color="red.fg">
             Not a valid video link.
           </Text>
         </Box>
@@ -265,7 +265,7 @@ function VideoBlock({
     // material that a Super approved.
     return (
       <Box my={3}>
-        <Link href={target} target="_blank" rel="noreferrer" color="blue.600" textDecoration="underline">
+        <Link href={target} target="_blank" rel="noreferrer" color="blue.fg" textDecoration="underline">
           {target}
         </Link>
         <Text fontSize="2xs" color="fg.muted">
@@ -283,7 +283,7 @@ function VideoBlock({
       borderRadius="md"
       overflow="hidden"
       borderWidth="1px"
-      borderColor="gray.200"
+      borderColor="gray.emphasized"
     >
       <iframe
         src={embed}
@@ -419,7 +419,7 @@ export default function GuideMarkdown({
             <Text as="span" title={showUnpublishedLinkState ? "No guide with that link" : undefined}>
               {label}
               {showUnpublishedLinkState && (
-                <Text as="span" fontSize="2xs" color="red.500" ml={1}>
+                <Text as="span" fontSize="2xs" color="red.fg" ml={1}>
                   (broken link)
                 </Text>
               )}
@@ -432,7 +432,7 @@ export default function GuideMarkdown({
             as="span"
             role={onOpenGuide ? "link" : undefined}
             tabIndex={onOpenGuide ? 0 : undefined}
-            color="blue.600"
+            color="blue.fg"
             textDecoration="underline"
             cursor={onOpenGuide ? "pointer" : "default"}
             onClick={onOpenGuide ? () => onOpenGuide(slug) : undefined}
@@ -449,7 +449,7 @@ export default function GuideMarkdown({
           >
             {label}
             {showUnpublishedLinkState && !target.isPublished && (
-              <Text as="span" fontSize="2xs" color="orange.600" ml={1}>
+              <Text as="span" fontSize="2xs" color="orange.fg" ml={1}>
                 (not published)
               </Text>
             )}

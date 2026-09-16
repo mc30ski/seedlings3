@@ -194,9 +194,9 @@ export default function BreadcrumbNav({
       <Box
         position="fixed"
         zIndex={1000}
-        bg="white"
+        bg="bg.panel"
         borderWidth="1px"
-        borderColor="gray.200"
+        borderColor="gray.emphasized"
         rounded="lg"
         shadow="lg"
         mt={1}
@@ -255,18 +255,18 @@ export default function BreadcrumbNav({
             py={2}
             gap={2}
             cursor="pointer"
-            bg={t.value === activeValue ? "blue.50" : undefined}
-            _hover={{ bg: t.value === activeValue ? "blue.100" : "gray.50" }}
+            bg={t.value === activeValue ? "blue.faint" : undefined}
+            _hover={{ bg: t.value === activeValue ? "blue.subtle" : "gray.faint" }}
             onClick={() => onSelect(t.value)}
           >
             {t.highlight ? (
               <HStack
                 px={2}
                 py={0.5}
-                bg={t.value === activeValue ? "blue.100" : "green.100"}
-                color={t.value === activeValue ? "blue.700" : "green.700"}
+                bg={t.value === activeValue ? "blue.subtle" : "green.subtle"}
+                color={t.value === activeValue ? "blue.fg" : "green.fg"}
                 borderWidth="1px"
-                borderColor={t.value === activeValue ? "blue.300" : "green.300"}
+                borderColor={t.value === activeValue ? "blue.emphasized" : "green.emphasized"}
                 fontSize="sm"
                 fontWeight="bold"
                 borderRadius="full"
@@ -280,29 +280,29 @@ export default function BreadcrumbNav({
               <HStack
                 px={2}
                 py={0.5}
-                bg={t.value === activeValue ? "blue.100" : "gray.100"}
+                bg={t.value === activeValue ? "blue.subtle" : "gray.subtle"}
                 borderWidth="1px"
-                borderColor={t.value === activeValue ? "blue.300" : "gray.200"}
+                borderColor={t.value === activeValue ? "blue.emphasized" : "gray.emphasized"}
                 borderRadius="full"
                 lineHeight="1.2"
                 gap={1.5}
               >
-                {t.icon && <Icon as={t.icon} boxSize={3.5} color={t.value === activeValue ? "blue.600" : "fg.muted"} />}
+                {t.icon && <Icon as={t.icon} boxSize={3.5} color={t.value === activeValue ? "blue.fg" : "fg.muted"} />}
                 <Text
                   fontSize="sm"
                   fontWeight={t.value === activeValue ? "semibold" : "medium"}
-                  color={t.value === activeValue ? "blue.700" : undefined}
+                  color={t.value === activeValue ? "blue.fg" : undefined}
                 >
                   {t.label}
                 </Text>
               </HStack>
             ) : (
               <>
-                {t.icon && <Icon as={t.icon} boxSize={4} color={t.value === activeValue ? "blue.600" : "fg.muted"} />}
+                {t.icon && <Icon as={t.icon} boxSize={4} color={t.value === activeValue ? "blue.fg" : "fg.muted"} />}
                 <Text
                   fontSize="sm"
                   fontWeight={t.value === activeValue ? "semibold" : "normal"}
-                  color={t.value === activeValue ? "blue.700" : undefined}
+                  color={t.value === activeValue ? "blue.fg" : undefined}
                 >
                   {t.label}
                 </Text>
@@ -331,7 +331,7 @@ export default function BreadcrumbNav({
                       e.stopPropagation();
                       jumpToCrossRole(t.value, target.outerValue);
                     }}
-                    _hover={{ bg: "gray.100", borderColor: "gray.400" }}
+                    _hover={{ bg: "gray.subtle", borderColor: "gray.strong" }}
                   >
                     <HStack gap={1} align="center">
                       {target.icon && <Icon as={target.icon} boxSize={3} />}
@@ -365,8 +365,8 @@ export default function BreadcrumbNav({
               px={2}
               py={1}
               rounded="full"
-              bg={outerOpen ? "gray.200" : "gray.100"}
-              _hover={{ bg: "gray.200" }}
+              bg={outerOpen ? "gray.muted" : "gray.subtle"}
+              _hover={{ bg: "gray.muted" }}
               cursor="pointer"
               onClick={() => { setOuterOpen(!outerOpen); setCatOpen(false); setInnerOpen(false); }}
               transition="all 0.1s"
@@ -396,15 +396,15 @@ export default function BreadcrumbNav({
                 px={3}
                 py={1.5}
                 rounded="full"
-                bg={catOpen ? "teal.100" : "teal.50"}
-                _hover={{ bg: "teal.100" }}
+                bg={catOpen ? "teal.subtle" : "teal.faint"}
+                _hover={{ bg: "teal.subtle" }}
                 cursor="pointer"
                 onClick={() => { setCatOpen(!catOpen); setOuterOpen(false); setInnerOpen(false); }}
                 transition="all 0.1s"
               >
-                {activeCatObj?.icon && <Icon as={activeCatObj.icon} boxSize={3.5} color="teal.600" />}
-                <Text fontSize="sm" fontWeight="semibold" color="teal.700" lineHeight="1">{activeCat ?? "—"}</Text>
-                <ChevronDown size={14} style={{ color: "var(--chakra-colors-teal-500)" }} />
+                {activeCatObj?.icon && <Icon as={activeCatObj.icon} boxSize={3.5} color="teal.fg" />}
+                <Text fontSize="sm" fontWeight="semibold" color="teal.fg" lineHeight="1">{activeCat ?? "—"}</Text>
+                <ChevronDown size={14} style={{ color: "var(--chakra-colors-teal-fg)" }} />
               </HStack>
               {catOpen && renderDropdown(
                 catRef,
@@ -435,15 +435,15 @@ export default function BreadcrumbNav({
                     px={3}
                     py={1.5}
                     rounded="full"
-                    bg={innerOpen ? "blue.100" : "blue.50"}
-                    _hover={{ bg: "blue.100" }}
+                    bg={innerOpen ? "blue.subtle" : "blue.faint"}
+                    _hover={{ bg: "blue.subtle" }}
                     cursor="pointer"
                     onClick={() => { setInnerOpen(!innerOpen); setOuterOpen(false); setCatOpen(false); }}
                     transition="all 0.1s"
                   >
-                    {activeInnerResolved?.icon && <Icon as={activeInnerResolved.icon} boxSize={3.5} color="blue.600" />}
-                    <Text fontSize="sm" fontWeight="semibold" color="blue.700" lineHeight="1">{activeInnerResolved?.label ?? "—"}</Text>
-                    <ChevronDown size={14} style={{ color: "var(--chakra-colors-blue-500)" }} />
+                    {activeInnerResolved?.icon && <Icon as={activeInnerResolved.icon} boxSize={3.5} color="blue.fg" />}
+                    <Text fontSize="sm" fontWeight="semibold" color="blue.fg" lineHeight="1">{activeInnerResolved?.label ?? "—"}</Text>
+                    <ChevronDown size={14} style={{ color: "var(--chakra-colors-blue-fg)" }} />
                   </HStack>
                   {innerOpen && renderDropdown(
                     innerRef,
@@ -471,15 +471,15 @@ export default function BreadcrumbNav({
               px={3}
               py={1.5}
               rounded="full"
-              bg={innerOpen ? "blue.100" : "blue.50"}
-              _hover={{ bg: "blue.100" }}
+              bg={innerOpen ? "blue.subtle" : "blue.faint"}
+              _hover={{ bg: "blue.subtle" }}
               cursor="pointer"
               onClick={() => { setInnerOpen(!innerOpen); setOuterOpen(false); }}
               transition="all 0.1s"
             >
-              {activeInnerResolved?.icon && <Icon as={activeInnerResolved.icon} boxSize={3.5} color="blue.600" />}
-              <Text fontSize="sm" fontWeight="semibold" color="blue.700" lineHeight="1">{activeInnerResolved?.label ?? "—"}</Text>
-              <ChevronDown size={14} style={{ color: "var(--chakra-colors-blue-500)" }} />
+              {activeInnerResolved?.icon && <Icon as={activeInnerResolved.icon} boxSize={3.5} color="blue.fg" />}
+              <Text fontSize="sm" fontWeight="semibold" color="blue.fg" lineHeight="1">{activeInnerResolved?.label ?? "—"}</Text>
+              <ChevronDown size={14} style={{ color: "var(--chakra-colors-blue-fg)" }} />
             </HStack>
             {innerOpen && renderDropdown(
               innerRef,

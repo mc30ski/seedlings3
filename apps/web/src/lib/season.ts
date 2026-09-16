@@ -13,6 +13,18 @@ export type Season = "spring" | "fall";
 export type SeasonOverride = "auto" | "spring" | "fall";
 
 const STORAGE_KEY = "seedlings_seasonOverride";
+/** Who set the override: a theme that names a season, or an admin picking
+ *  one by hand. Both write the same value, but only a theme's own entry may
+ *  be cleared when switching to a theme that follows the calendar — wiping
+ *  an admin's deliberate choice because they changed theme is a bug. */
+const SOURCE_KEY = "seedlings_seasonOverrideSource";
+export type SeasonSource = "manual" | "theme";
+
+export function getSeasonSource(): SeasonSource {
+  try {
+    return localStorage.getItem(SOURCE_KEY) === "theme" ? "theme" : "manual";
+  } catch { return "manual"; }
+}
 
 /** Get the natural season based on the current ET month. The business
  *  is anchored to Eastern Time; using `new Date().getMonth()` would key
@@ -34,10 +46,18 @@ export function getSeasonOverride(): SeasonOverride {
 }
 
 /** Set the user's season override preference */
-export function setSeasonOverride(value: SeasonOverride) {
+export function setSeasonOverride(value: SeasonOverride, source: SeasonSource = "manual") {
   try {
-    if (value === "auto") localStorage.removeItem(STORAGE_KEY);
-    else localStorage.setItem(STORAGE_KEY, value);
+    if (value === "auto") {
+      // Only a theme may clear what a theme set. An admin's hand-picked
+      // season survives a theme change.
+      if (source === "theme" && getSeasonSource() === "manual") return;
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(SOURCE_KEY);
+    } else {
+      localStorage.setItem(STORAGE_KEY, value);
+      localStorage.setItem(SOURCE_KEY, source);
+    }
   } catch {}
 }
 

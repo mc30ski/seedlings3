@@ -374,22 +374,22 @@ function PayrollPreviewTable(props: {
   return (
     <Box
       borderWidth="1px"
-      borderColor="gray.200"
+      borderColor="gray.emphasized"
       borderRadius="md"
       overflow="hidden"
     >
       <HStack
         px={3}
         py={2}
-        bg="gray.100"
+        bg="gray.subtle"
         borderBottomWidth="1px"
-        borderColor="gray.200"
+        borderColor="gray.emphasized"
         justify="space-between"
       >
         <Text fontSize="xs" fontWeight="semibold" color="fg.muted">
           Preview
         </Text>
-        <Text fontSize="xs" color={noneChecked ? "orange.700" : "fg.muted"}>
+        <Text fontSize="xs" color={noneChecked ? "orange.fg" : "fg.muted"}>
           {noneChecked
             ? "No workers selected — export will be empty"
             : allChecked
@@ -406,7 +406,7 @@ function PayrollPreviewTable(props: {
           </Box>
         ) : (
           <Table.Root size="sm" variant="line" striped>
-            <Table.Header position="sticky" top={0} bg="white" zIndex={1}>
+            <Table.Header position="sticky" top={0} bg="bg.panel" zIndex={1}>
               <Table.Row>
                 <Table.ColumnHeader w="1" px={2}>
                   <Checkbox.Root
@@ -476,7 +476,7 @@ function PayrollPreviewTable(props: {
                       fontSize="xs"
                       whiteSpace="nowrap"
                       textAlign="right"
-                      color={r.tips > 0 ? "green.700" : undefined}
+                      color={r.tips > 0 ? "green.fg" : undefined}
                       fontWeight={r.tips > 0 ? "semibold" : undefined}
                     >
                       {r.tips.toFixed(2)}
@@ -503,7 +503,7 @@ function PayrollPreviewTable(props: {
                   </Table.Row>
                 );
               })}
-              <Table.Row bg="gray.50" fontWeight="semibold">
+              <Table.Row bg="gray.faint" fontWeight="semibold">
                 <Table.Cell px={2}></Table.Cell>
                 <Table.Cell fontSize="xs">TOTALS</Table.Cell>
                 <Table.Cell fontSize="xs"></Table.Cell>
@@ -1189,7 +1189,7 @@ export default function ReconcileTab() {
       {/* Informational banner — collapsible, collapsed by default.
           When closed, just shows the headline + chevron so the page
           opens straight to the dates + report. */}
-      <Box bg="blue.50" borderLeftWidth="3px" borderColor="blue.400" borderRadius="md">
+      <Box bg="blue.faint" borderLeftWidth="3px" borderColor="blue.strong" borderRadius="md">
         <HStack
           as="button"
           onClick={() => setInfoExpanded((v) => !v)}
@@ -1199,33 +1199,33 @@ export default function ReconcileTab() {
           textAlign="left"
           align="flex-start"
           cursor="pointer"
-          _hover={{ bg: "blue.100" }}
+          _hover={{ bg: "blue.subtle" }}
           borderRadius="md"
         >
           <Box pt={0.5}><FiInfo /></Box>
-          <Text flex="1" fontSize="sm" fontWeight="semibold" color="blue.900">
+          <Text flex="1" fontSize="sm" fontWeight="semibold" color="blue.fg">
             Use this tab to double-check your books against your accounting software
           </Text>
-          <Box pt={0.5} color="blue.900">
+          <Box pt={0.5} color="blue.fg">
             {infoExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
           </Box>
         </HStack>
         {infoExpanded && (
           <VStack align="stretch" gap={2} px={3} pb={3} pl={10}>
-            <Text fontSize="xs" color="blue.900">
+            <Text fontSize="xs" color="blue.fg">
               Your accounting software is the source of truth — it&apos;s wired straight to the bank. Use this tab to spot-check that everything lines up: pick a date range, glance at the Profit and Loss numbers next to the same report in your accounting software, and download a CSV when you want a side-by-side look at money in, money out, or owner contributions and draws. Click any line in the P&amp;L to see the rows behind it.
             </Text>
-            <Text fontSize="xs" color="blue.900">
+            <Text fontSize="xs" color="blue.fg">
               The lower sections show what was actually worked and earned in the same date range: hours clocked, jobs completed, and what each worker took home after fees, top-ups, and the owner&apos;s cut. Workers earning below ${(period?.minWagePerHour ?? 7.25).toFixed(2)}/hr (the minimum wage from settings) are flagged so you can catch shortfalls before payroll runs.
             </Text>
             {/* Red callout — overtime is a known gap; surface it loudly
                 so the operator doesn't trust the numbers blindly when
                 someone has worked more than 40 hours in a week. */}
-            <Box mt={1} p={2} bg="red.50" borderLeftWidth="3px" borderColor="red.500" borderRadius="sm">
-              <Text fontSize="xs" color="red.900" fontWeight="semibold">
+            <Box mt={1} p={2} bg="red.faint" borderLeftWidth="3px" borderColor="red.500" borderRadius="sm">
+              <Text fontSize="xs" color="red.fg" fontWeight="semibold">
                 Heads up: overtime isn&apos;t included yet
               </Text>
-              <Text fontSize="xs" color="red.900">
+              <Text fontSize="xs" color="red.fg">
                 This tab doesn&apos;t currently calculate the 1.5× overtime premium owed when an hourly worker logs more than 40 hours in a workweek. If anyone goes into overtime, you&apos;ll need to add the premium manually in payroll until this gets wired up.
               </Text>
             </Box>
@@ -1291,8 +1291,8 @@ export default function ReconcileTab() {
                     w="14px"
                     h="14px"
                     borderRadius="full"
-                    bg="green.500"
-                    color="white"
+                    bg="green.solid"
+                    color="green.contrast"
                     verticalAlign="middle"
                   >
                     <ChevronDown size={9} />
@@ -1301,9 +1301,9 @@ export default function ReconcileTab() {
                 {quickDateMenuOpen && (
                   <VStack
                     position="fixed"
-                    bg="white"
+                    bg="bg.panel"
                     borderWidth="1px"
-                    borderColor="gray.200"
+                    borderColor="gray.emphasized"
                     rounded="md"
                     shadow="lg"
                     zIndex={10000}
@@ -1433,9 +1433,9 @@ export default function ReconcileTab() {
                 justify="space-between"
                 px={3}
                 py={2}
-                bg="gray.50"
+                bg="gray.faint"
                 borderTopWidth="1px"
-                borderColor="gray.200"
+                borderColor="gray.strong"
               >
                 <HStack gap={2}>
                   <Text fontSize="sm" fontWeight="bold">Gross Profit</Text>
@@ -1443,7 +1443,7 @@ export default function ReconcileTab() {
                     <Text fontSize="xs" color="fg.muted">({grossProfitPct}%)</Text>
                   )}
                 </HStack>
-                <Text fontSize="sm" fontWeight="bold" color={report.grossProfit < 0 ? "red.600" : "fg.default"}>
+                <Text fontSize="sm" fontWeight="bold" color={report.grossProfit < 0 ? "red.fg" : "fg.default"}>
                   {fmtUSD(report.grossProfit)}
                 </Text>
               </HStack>
@@ -1463,9 +1463,9 @@ export default function ReconcileTab() {
                 justify="space-between"
                 px={3}
                 py={2.5}
-                bg={report.netOperatingIncome < 0 ? "red.50" : "green.50"}
+                bg={report.netOperatingIncome < 0 ? "red.faint" : "green.faint"}
                 borderTopWidth="2px"
-                borderColor="gray.300"
+                borderColor="gray.emphasized"
                 mt={2}
               >
                 <HStack gap={2} align="baseline">
@@ -1477,7 +1477,7 @@ export default function ReconcileTab() {
                 <Text
                   fontSize="md"
                   fontWeight="bold"
-                  color={report.netOperatingIncome < 0 ? "red.600" : "green.700"}
+                  color={report.netOperatingIncome < 0 ? "red.fg" : "green.fg"}
                 >
                   {fmtUSD(report.netOperatingIncome)}
                 </Text>
@@ -1497,19 +1497,19 @@ export default function ReconcileTab() {
                 justify="space-between"
                 px={3}
                 py={1.5}
-                bg="orange.50"
+                bg="orange.faint"
                 borderTopWidth="1px"
-                borderColor="gray.200"
+                borderColor="gray.emphasized"
               >
                 <VStack align="start" gap={0}>
-                  <Text fontSize="sm" fontWeight="semibold" color="orange.900">
+                  <Text fontSize="sm" fontWeight="semibold" color="orange.fg">
                     Less: Fixed asset purchases
                   </Text>
-                  <Text fontSize="2xs" color="orange.800" fontStyle="italic">
+                  <Text fontSize="2xs" color="orange.fg" fontStyle="italic">
                     Capitalized to balance sheet — click Excluded below for the row detail
                   </Text>
                 </VStack>
-                <Text fontSize="sm" fontWeight="semibold" color="orange.900">
+                <Text fontSize="sm" fontWeight="semibold" color="orange.fg">
                   −{fmtUSD(report.fixedAssetPurchases)}
                 </Text>
               </HStack>
@@ -1520,15 +1520,15 @@ export default function ReconcileTab() {
                 justify="space-between"
                 px={3}
                 py={2.5}
-                bg={report.operatingCashAfterCapEx < 0 ? "red.100" : "green.100"}
+                bg={report.operatingCashAfterCapEx < 0 ? "red.subtle" : "green.subtle"}
                 borderTopWidth="2px"
-                borderColor="gray.300"
+                borderColor="gray.emphasized"
               >
                 <Text fontSize="md" fontWeight="bold">Operating Cash After CapEx</Text>
                 <Text
                   fontSize="md"
                   fontWeight="bold"
-                  color={report.operatingCashAfterCapEx < 0 ? "red.700" : "green.800"}
+                  color={report.operatingCashAfterCapEx < 0 ? "red.fg" : "green.fg"}
                 >
                   {fmtUSD(report.operatingCashAfterCapEx)}
                 </Text>
@@ -1545,15 +1545,15 @@ export default function ReconcileTab() {
                   justify="space-between"
                   px={3}
                   py={1.5}
-                  bg="blue.50"
+                  bg="blue.faint"
                   borderTopWidth="1px"
-                  borderColor="gray.200"
+                  borderColor="gray.emphasized"
                 >
                   <VStack align="start" gap={0}>
-                    <Text fontSize="sm" fontWeight="semibold" color="blue.900">
+                    <Text fontSize="sm" fontWeight="semibold" color="blue.fg">
                       Estimated taxable operating income
                     </Text>
-                    <Text fontSize="2xs" color="blue.800" fontStyle="italic">
+                    <Text fontSize="2xs" color="blue.fg" fontStyle="italic">
                       NOI + {fmtUSD(report.totalNonDeductibleExpenses)} non-deductible expense
                       {report.totalNonDeductibleExpenses === 1 ? "" : "s"}
                     </Text>
@@ -1561,7 +1561,7 @@ export default function ReconcileTab() {
                   <Text
                     fontSize="sm"
                     fontWeight="semibold"
-                    color={report.estimatedTaxableOperatingIncome < 0 ? "red.700" : "blue.900"}
+                    color={report.estimatedTaxableOperatingIncome < 0 ? "red.fg" : "blue.fg"}
                   >
                     {fmtUSD(report.estimatedTaxableOperatingIncome)}
                   </Text>
@@ -1588,7 +1588,7 @@ export default function ReconcileTab() {
                   drill-down works the same as any other row. */}
               {(report.excluded?.flat.length > 0 || report.excluded?.groups.length > 0) && (
                 <>
-                  <Box mt={4} px={3} py={1.5} bg="gray.100" borderTopWidth="1px" borderColor="gray.300">
+                  <Box mt={4} px={3} py={1.5} bg="gray.subtle" borderTopWidth="1px" borderColor="gray.emphasized">
                     <Text fontSize="xs" fontWeight="semibold" color="fg.muted" textTransform="uppercase" letterSpacing="wide">
                       Excluded from P&amp;L
                     </Text>
@@ -1601,9 +1601,9 @@ export default function ReconcileTab() {
                     justify="space-between"
                     px={3}
                     py={1.5}
-                    bg="gray.50"
+                    bg="gray.faint"
                     borderTopWidth="1px"
-                    borderColor="gray.200"
+                    borderColor="gray.emphasized"
                   >
                     <Text fontSize="sm" fontWeight="semibold" color="fg.muted">Total Excluded</Text>
                     <Text fontSize="sm" fontWeight="semibold" color="fg.muted" fontStyle="italic">
@@ -1822,9 +1822,9 @@ export default function ReconcileTab() {
             {selectedDescription && (
               <Box
                 p={3}
-                bg="gray.50"
+                bg="gray.faint"
                 borderLeftWidth="3px"
-                borderColor="gray.300"
+                borderColor="gray.emphasized"
                 borderRadius="md"
               >
                 <Text fontSize="sm" fontWeight="semibold" mb={1}>
@@ -1869,16 +1869,16 @@ export default function ReconcileTab() {
             ) : downloadKind && downloadKind !== "payroll" ? (
               <Box
                 borderWidth="1px"
-                borderColor="gray.200"
+                borderColor="gray.emphasized"
                 borderRadius="md"
                 overflow="hidden"
               >
                 <HStack
                   px={3}
                   py={2}
-                  bg="gray.100"
+                  bg="gray.subtle"
                   borderBottomWidth="1px"
-                  borderColor="gray.200"
+                  borderColor="gray.emphasized"
                   justify="space-between"
                 >
                   <Text fontSize="xs" fontWeight="semibold" color="fg.muted">
@@ -1896,7 +1896,7 @@ export default function ReconcileTab() {
                 <Box maxH="360px" overflow="auto">
                   {previewError ? (
                     <Box p={3}>
-                      <Text fontSize="xs" color="red.600">{previewError}</Text>
+                      <Text fontSize="xs" color="red.fg">{previewError}</Text>
                     </Box>
                   ) : !previewRows || previewRows.length <= 1 ? (
                     <Box p={3}>
@@ -1906,7 +1906,7 @@ export default function ReconcileTab() {
                     </Box>
                   ) : (
                     <Table.Root size="sm" variant="line" striped>
-                      <Table.Header position="sticky" top={0} bg="white" zIndex={1}>
+                      <Table.Header position="sticky" top={0} bg="bg.panel" zIndex={1}>
                         <Table.Row>
                           {previewRows[0].map((h, i) => (
                             <Table.ColumnHeader key={i} fontSize="2xs" whiteSpace="nowrap">
@@ -1982,15 +1982,15 @@ function CardSectionHeader({
   // (`${palette}.200`) works at runtime but can fall through to white
   // when the variant isn't recognized.
   const palettes: Record<string, { bg: string; hoverBg: string; borderColor: string }> = {
-    gray:   { bg: "gray.100",   hoverBg: "gray.200",   borderColor: "gray.200" },
+    gray:   { bg: "gray.subtle",   hoverBg: "gray.muted",   borderColor: "gray.emphasized" },
     // Custom indigo tokens only define .50 / .200 / .700 / .900 in this
     // codebase. The Reconciliation Targets card body is already
     // `indigo.50`, so the header has to be a DEEPER shade (.200) to
     // visually separate from the body — otherwise the bar disappears
     // into the card.
     indigo: { bg: "indigo.200", hoverBg: "indigo.200", borderColor: "indigo.200" },
-    blue:   { bg: "blue.100",   hoverBg: "blue.200",   borderColor: "blue.200" },
-    green:  { bg: "green.100",  hoverBg: "green.200",  borderColor: "green.200" },
+    blue:   { bg: "blue.subtle",   hoverBg: "blue.muted",   borderColor: "blue.emphasized" },
+    green:  { bg: "green.subtle",  hoverBg: "green.muted",  borderColor: "green.emphasized" },
   };
   const { bg, hoverBg, borderColor } = palettes[palette] ?? palettes.gray;
   // Render as a div (not button). Browser user-agent stylesheets
@@ -2055,7 +2055,7 @@ function PnlModeToggle({
       gap={0}
       mb={3}
       borderWidth="1px"
-      borderColor="gray.300"
+      borderColor="gray.emphasized"
       borderRadius="md"
       overflow="hidden"
       display="inline-flex"
@@ -2071,8 +2071,8 @@ function PnlModeToggle({
             onClick={() => onChange(m)}
             borderRadius="0"
             bg={active ? "blue.500" : "transparent"}
-            color={active ? "white" : "gray.700"}
-            _hover={{ bg: active ? "blue.600" : "gray.100" }}
+            color={active ? "white" : "gray.fg"}
+            _hover={{ bg: active ? "blue.600" : "gray.subtle" }}
             fontWeight={active ? "semibold" : "normal"}
             px={4}
           >
@@ -2101,22 +2101,22 @@ function PnlModeInfo({ mode }: { mode: PnLMode }) {
     <Box
       mb={4}
       p={3}
-      bg="blue.50"
+      bg="blue.faint"
       borderWidth="1px"
-      borderColor="blue.200"
+      borderColor="blue.emphasized"
       borderRadius="md"
     >
       <HStack gap={2} align="start">
-        <Box color="blue.600" mt={0.5} flexShrink={0}>
+        <Box color="blue.fg" mt={0.5} flexShrink={0}>
           <FiInfo size={14} />
         </Box>
         <VStack align="start" gap={1}>
-          <Text fontSize="xs" fontWeight="semibold" color="blue.900">
+          <Text fontSize="xs" fontWeight="semibold" color="blue.fg">
             {mode === "accrual"
               ? "Wages matched to the payment (default)"
               : "Wages matched to the work"}
           </Text>
-          <Text fontSize="xs" color="blue.900">
+          <Text fontSize="xs" color="blue.fg">
             {mode === "accrual"
               ? "Wages and employer payroll taxes are counted in the week the client's payment lands — matched to the money that came in. Net Operating Income tells you whether the work you got paid for this week actually made money. When a client pays late, the wages for that job show up here, not in the week you actually paid your workers."
               : "Wages and employer payroll taxes are counted in the week the work was done — the same week you paid your workers on the regular payroll cycle. Use this view to cross-check the wages column against what you keyed into payroll for this period."}
@@ -2125,14 +2125,14 @@ function PnlModeInfo({ mode }: { mode: PnLMode }) {
               whole-report basis switch, which it is not — and the Forecast
               tab, which DOES spread recurring costs, then looks like it
               disagrees with this report for no stated reason. */}
-          <Text fontSize="xs" color="blue.900">
+          <Text fontSize="xs" color="blue.fg">
             Everything else is identical between the two. Income is counted when the money
             arrived, expenses when they were paid, and nothing is spread over the period it
             covers — so an annual premium lands here in full in the month you paid it. The
             Forecast tab does spread those costs, which is why its figure for a category can be
             smaller than this one over the same range.
           </Text>
-          <Text fontSize="2xs" color="blue.700" opacity={0.85}>
+          <Text fontSize="2xs" color="blue.fg" opacity={0.85}>
             Only the wages and employer-tax lines change between the two views. Income, other expenses, and equipment purchases stay the same.
           </Text>
         </VStack>
@@ -2146,9 +2146,9 @@ function SectionHeader({ label }: { label: string }) {
     <HStack
       px={3}
       py={2}
-      bg="gray.200"
+      bg="gray.muted"
       borderTopWidth="1px"
-      borderColor="gray.300"
+      borderColor="gray.emphasized"
     >
       <Text fontSize="sm" fontWeight="semibold">{label}</Text>
     </HStack>
@@ -2236,7 +2236,7 @@ function BucketRows({
               pr={3}
               py={1.5}
               borderTopWidth="1px"
-              borderColor="gray.100"
+              borderColor="gray.muted"
             >
               <Text fontSize="xs" fontWeight="semibold" color="fg.muted">
                 Total for {entry.group.parent}
@@ -2299,7 +2299,7 @@ function ExpandableRow({
           </Box>
           <Text fontSize="sm" fontWeight={bold ? "semibold" : undefined}>{label}</Text>
         </HStack>
-        <Text fontSize="sm" fontWeight={bold ? "semibold" : undefined} color={amount < 0 ? "red.600" : undefined}>
+        <Text fontSize="sm" fontWeight={bold ? "semibold" : undefined} color={amount < 0 ? "red.fg" : undefined}>
           {fmtUSD(amount)}
         </Text>
       </HStack>
@@ -2346,7 +2346,7 @@ function DetailRows({ state }: { state: DetailState | undefined }) {
     );
   }
   if (typeof state === "object" && "error" in state) {
-    return <Text fontSize="xs" color="red.600">{state.error}</Text>;
+    return <Text fontSize="xs" color="red.fg">{state.error}</Text>;
   }
   if (state.rows.length === 0) {
     return <Text fontSize="xs" color="fg.muted" fontStyle="italic">(no underlying rows)</Text>;
@@ -2357,7 +2357,7 @@ function DetailRows({ state }: { state: DetailState | undefined }) {
       gap={0}
       fontSize="xs"
       borderLeftWidth="2px"
-      borderColor="gray.200"
+      borderColor="gray.emphasized"
       pl={3}
     >
       {state.rows.map((r, i) => {
@@ -2397,7 +2397,7 @@ function DetailRows({ state }: { state: DetailState | undefined }) {
                 {r.secondary && (
                   <Text
                     fontSize="2xs"
-                    color={clickable ? "blue.600" : "fg.muted"}
+                    color={clickable ? "blue.fg" : "fg.muted"}
                     textDecoration={clickable ? "underline" : undefined}
                   >
                     {r.secondary}
@@ -2422,9 +2422,9 @@ function DetailRows({ state }: { state: DetailState | undefined }) {
             gap={2}
             py={0.5}
             borderBottomWidth="1px"
-            borderColor="gray.100"
+            borderColor="gray.muted"
             cursor="pointer"
-            _hover={{ bg: "gray.50" }}
+            _hover={{ bg: "gray.faint" }}
             textAlign="left"
             onClick={() => {
               window.dispatchEvent(
@@ -2448,7 +2448,7 @@ function DetailRows({ state }: { state: DetailState | undefined }) {
             gap={2}
             py={0.5}
             borderBottomWidth="1px"
-            borderColor="gray.100"
+            borderColor="gray.muted"
           >
             {rowContent}
           </HStack>
@@ -2465,11 +2465,11 @@ function TotalRow({ label, amount }: { label: string; amount: number }) {
       px={3}
       py={1.5}
       borderTopWidth="1px"
-      borderColor="gray.200"
-      bg="gray.50"
+      borderColor="gray.emphasized"
+      bg="gray.faint"
     >
       <Text fontSize="sm" fontWeight="bold">{label}</Text>
-      <Text fontSize="sm" fontWeight="bold" color={amount < 0 ? "red.600" : undefined}>
+      <Text fontSize="sm" fontWeight="bold" color={amount < 0 ? "red.fg" : undefined}>
         {fmtUSD(amount)}
       </Text>
     </HStack>
@@ -2551,7 +2551,7 @@ function WorkerCard({
   return (
     <Box
       borderWidth="1px"
-      borderColor="gray.200"
+      borderColor="gray.emphasized"
       borderRadius="md"
     >
       {/* Header + payroll strip — one visual block. Whole row is a
@@ -2690,7 +2690,7 @@ function WorkerCard({
               copyValue={payroll.equivalentHourlyRate == null ? "" : payroll.equivalentHourlyRate.toFixed(2)}
               bold={payrollBelowMin}
               width="120px"
-              color={payrollBelowMin ? "red.600" : undefined}
+              color={payrollBelowMin ? "red.fg" : undefined}
             />
           </HStack>
         )}
@@ -2701,18 +2701,18 @@ function WorkerCard({
         // see at a glance which nested content belongs to which worker.
         // Anomaly cards keep the yellow family (yellow.50 outer →
         // yellow.100 inner); clean cards go plain gray. Day rows inside
-        // set their own bg="white" so they still "float" above this.
+        // set their own bg="bg.panel" so they still "float" above this.
         <Box
           px={3}
           pb={3}
           pt={2}
           borderTopWidth="1px"
-          borderColor="gray.300"
+          borderColor="gray.emphasized"
           // Neutral grey progression for every drilldown level
           // regardless of severity. Issue signal lives on the outer
           // card's border color; the drilldown itself stays calm so
           // the numbers read easily. L1 body is gray.100.
-          bg="gray.100"
+          bg="gray.subtle"
           borderBottomRadius="md"
         >
           {hasWageViolation(worker, minWage) && (
@@ -2726,15 +2726,15 @@ function WorkerCard({
             <Box
               mb={2}
               p={2}
-              bg="red.100"
+              bg="red.subtle"
               borderWidth="1px"
-              borderColor="red.400"
+              borderColor="red.strong"
               borderRadius="md"
             >
               <HStack gap={2} align="flex-start">
                 <Box pt={0.5}><AlertTriangle size={14} color="var(--chakra-colors-red-700)" /></Box>
                 <VStack align="start" gap={0}>
-                  <Text fontSize="xs" color="red.900" fontWeight="semibold">
+                  <Text fontSize="xs" color="red.fg" fontWeight="semibold">
                     Effective rate {worker.preTopUpHourly != null ? `$${worker.preTopUpHourly.toFixed(2)}` : "—"}/hr below the ${minWage.toFixed(2)}/hr floor
                     {worker.workerType === "CONTRACTOR" && " (reclassification risk)"}
                   </Text>
@@ -2755,16 +2755,16 @@ function WorkerCard({
               <Box
                 mb={2}
                 p={2}
-                bg="orange.100"
+                bg="orange.subtle"
                 borderWidth="1px"
-                borderColor="orange.400"
+                borderColor="orange.emphasized"
                 borderRadius="md"
               >
                 <HStack gap={2} align="flex-start">
                   <Box pt={0.5}><AlertTriangle size={14} color="var(--chakra-colors-orange-700)" /></Box>
                   <VStack align="start" gap={0}>
                     {displayAnomalies.map((a, i) => (
-                      <Text key={i} fontSize="xs" color="orange.900" fontWeight="medium">
+                      <Text key={i} fontSize="xs" color="orange.fg" fontWeight="medium">
                         • {a}
                       </Text>
                     ))}
@@ -2936,7 +2936,7 @@ function WorkerCard({
                                           borderWidth="1px"
                                           borderColor="blackAlpha.300"
                                           borderRadius="md"
-                                          bg="#d4d4d8"
+                                          bg="gray.emphasized"
                                         >
                                           <JobAssigneesBreakdown job={j} />
                                         </Box>
@@ -3095,11 +3095,11 @@ function WageComplianceBanner({
   const flagged = workers.filter((w) => hasWageViolation(w, minWagePerHour));
   if (flagged.length === 0) return null;
   return (
-    <Box mb={3} p={2} bg="red.50" borderWidth="1px" borderColor="red.300" rounded="md">
-      <Text fontSize="xs" color="red.900" fontWeight="semibold">
+    <Box mb={3} p={2} bg="red.faint" borderWidth="1px" borderColor="red.emphasized" rounded="md">
+      <Text fontSize="xs" color="red.fg" fontWeight="semibold">
         Below ${minWagePerHour.toFixed(2)}/hr floor in window: {flagged.length} W-2 worker{flagged.length === 1 ? "" : "s"}
       </Text>
-      <Text fontSize="2xs" color="red.800" mt={0.5}>
+      <Text fontSize="2xs" color="red.fg" mt={0.5}>
         Minimum-wage law applies to W-2 employees and trainees. Review the flagged rows before running payroll.
       </Text>
     </Box>

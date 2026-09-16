@@ -180,8 +180,8 @@ export default function AssigneeDialog({ open, onOpenChange, occurrenceId, curre
 
             {hasPayment && assigneesChanged && !showRecalcPrompt && (
               <Box px="4" pb="2">
-                <Box p={3} bg="orange.50" borderWidth="1px" borderColor="orange.300" rounded="md">
-                  <Text fontSize="xs" color="orange.700">
+                <Box p={3} bg="orange.faint" borderWidth="1px" borderColor="orange.emphasized" rounded="md">
+                  <Text fontSize="xs" color="orange.fg">
                     This occurrence has already been paid. The payment splits may no longer match the current team.
                   </Text>
                 </Box>
@@ -191,9 +191,9 @@ export default function AssigneeDialog({ open, onOpenChange, occurrenceId, curre
             {showRecalcPrompt && (
               <Box px="4" pb="2">
                 <VStack align="stretch" gap={2}>
-                  <Box p={3} bg="orange.50" borderWidth="1px" borderColor="orange.300" rounded="md">
-                    <Text fontSize="sm" fontWeight="medium" color="orange.700" mb={1}>Recalculate payment splits?</Text>
-                    <Text fontSize="xs" color="orange.600">
+                  <Box p={3} bg="orange.faint" borderWidth="1px" borderColor="orange.emphasized" rounded="md">
+                    <Text fontSize="sm" fontWeight="medium" color="orange.fg" mb={1}>Recalculate payment splits?</Text>
+                    <Text fontSize="xs" color="orange.fg">
                       This will evenly split the payment amount across the current team. Warning: if financial records have already been acted on (e.g. cash paid out), the previous records may no longer be accurate.
                     </Text>
                   </Box>

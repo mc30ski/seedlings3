@@ -11,8 +11,8 @@ export function TextLink({
     <Text
       as="button"
       textDecoration="underline"
-      color="blue.600"
-      _hover={{ color: "blue.800" }}
+      color="blue.fg"
+      _hover={{ color: "blue.fg" }}
       onClick={() => onClick()}
     >
       {text}
@@ -72,7 +72,7 @@ export function MapLink({ address }: { address: string }) {
         href={mapsUrl}
         target="_blank"
         rel="noopener noreferrer"
-        color="blue.500"
+        color="blue.fg"
         textDecoration="underline"
       >
         {address}

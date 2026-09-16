@@ -378,7 +378,7 @@ function WorkerPayments({
   return (
     <Box w="full">
       <HStack mb={2} gap={2}>
-        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)" }}>
+        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-subtle)" }}>
           <RefreshCw size={14} />
         </Button>
         <Button
@@ -388,8 +388,8 @@ function WorkerPayments({
           flexShrink={0}
           onClick={() => { setCompact((p) => !p); setExpandedCards(new Set()); }}
           css={{
-            background: !compact ? "var(--chakra-colors-gray-200)" : "var(--chakra-colors-gray-100)",
-            color: !compact ? "var(--chakra-colors-gray-700)" : undefined,
+            background: !compact ? "var(--chakra-colors-gray-muted)" : "var(--chakra-colors-gray-subtle)",
+            color: !compact ? "var(--chakra-colors-gray-fg)" : undefined,
           }}
           title={compact ? "Expand all cards" : "Collapse all cards"}
         >
@@ -412,10 +412,10 @@ function WorkerPayments({
         <Box position="relative" onClick={(e: any) => e.stopPropagation()}>
           <Badge size="sm" colorPalette="green" variant="subtle" cursor="pointer" onClick={() => setQuickDateMenuOpen((v) => !v)}>
             {datePreset ? (PRESET_LABELS[datePreset] ?? datePreset) : (dateFrom || dateTo) ? "Custom dates" : "Last month"}
-            {" "}<Box as="span" display="inline-flex" alignItems="center" justifyContent="center" w="14px" h="14px" borderRadius="full" bg="green.500" color="white" verticalAlign="middle"><ChevronDown size={9} /></Box>
+            {" "}<Box as="span" display="inline-flex" alignItems="center" justifyContent="center" w="14px" h="14px" borderRadius="full" bg="green.solid" color="green.contrast" verticalAlign="middle"><ChevronDown size={9} /></Box>
           </Badge>
           {quickDateMenuOpen && (
-            <VStack position="fixed" bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px"
+            <VStack position="fixed" bg="bg.panel" borderWidth="1px" borderColor="gray.emphasized" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px"
               ref={(el: HTMLDivElement | null) => { if (el && el.parentElement) { const rect = el.parentElement.getBoundingClientRect(); el.style.top = `${rect.bottom + 4}px`; el.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 148))}px`; } }}>
               {quickDateItems.map((it) => (
                 <Button key={it.value} size="xs" variant={datePreset === it.value ? "solid" : "ghost"} colorPalette={datePreset === it.value ? "green" : undefined} w="full" justifyContent="start"
@@ -469,29 +469,29 @@ function WorkerPayments({
         const allOwner = showJobs && items.length > 0 && items.every((it) => it.myOwnerEarnings === true);
         const payoutLabel = allOwner ? "Owner Earnings" : "Payout";
         return (
-          <Box mb={3} p={3} bg="green.50" rounded="md">
+          <Box mb={3} p={3} bg="green.faint" rounded="md">
             {showJobs && (
-              <Text fontSize="lg" fontWeight="bold" color="green.700">
+              <Text fontSize="lg" fontWeight="bold" color="green.fg">
                 {payoutLabel}: ${visibleTotal.toFixed(2)}
               </Text>
             )}
             {showJobs && pendingTotal > 0 && (
-              <Text fontSize="xs" color="orange.700">
+              <Text fontSize="xs" color="orange.fg">
                 ${confirmedTotal.toFixed(2)} confirmed · ${pendingTotal.toFixed(2)} pending admin approval
               </Text>
             )}
             {totalEquipCost > 0 && (
-              <Text fontSize="sm" color="orange.600">
+              <Text fontSize="sm" color="orange.fg">
                 Equipment rental: −${totalEquipCost.toFixed(2)}
               </Text>
             )}
             {totalEquipCost > 0 && showJobs && (
-              <Text fontSize="lg" fontWeight="bold" color="green.700">
+              <Text fontSize="lg" fontWeight="bold" color="green.fg">
                 Net: ${finalNet.toFixed(2)}
               </Text>
             )}
             {!showJobs && totalEquipCost > 0 && (
-              <Text fontSize="lg" fontWeight="bold" color="orange.600">
+              <Text fontSize="lg" fontWeight="bold" color="orange.fg">
                 Equipment Total: −${totalEquipCost.toFixed(2)}
               </Text>
             )}
@@ -503,7 +503,7 @@ function WorkerPayments({
           Filter" dropdown so the two lists are clearly separate views
           rather than coexisting on one paginated page. Counts come from
           the FILTERED set so they update with the search/date filters. */}
-      <HStack gap={0} mb={2} borderWidth="1px" borderColor="gray.300" borderRadius="md" overflow="hidden" w="full">
+      <HStack gap={0} mb={2} borderWidth="1px" borderColor="gray.emphasized" borderRadius="md" overflow="hidden" w="full">
         {typeFilterItems.map((it) => {
           const isActive = typeFilter[0] === it.value;
           const count = it.value === "JOBS" ? filteredItems.length : filteredCharges.length;
@@ -515,9 +515,9 @@ function WorkerPayments({
               borderRadius="0"
               flex="1"
               fontWeight={isActive ? "semibold" : "normal"}
-              bg={isActive ? "purple.100" : "transparent"}
-              color={isActive ? "purple.800" : "fg.muted"}
-              _hover={{ bg: isActive ? "purple.200" : "gray.100" }}
+              bg={isActive ? "purple.subtle" : "transparent"}
+              color={isActive ? "purple.fg" : "fg.muted"}
+              _hover={{ bg: isActive ? "purple.muted" : "gray.subtle" }}
               onClick={() => setTypeFilter([it.value])}
             >
               {it.label} ({count})
@@ -584,7 +584,7 @@ function WorkerPayments({
                         )
                       )}
                       <Badge size="sm" colorPalette="gray">{methodLabel(item.payment.method)}</Badge>
-                      <Text fontWeight="bold" color="green.700" fontSize="lg">
+                      <Text fontWeight="bold" color="green.fg" fontSize="lg">
                         ${item.myAmount.toFixed(2)}
                       </Text>
                     </HStack>
@@ -663,7 +663,7 @@ function WorkerPayments({
                       return expTotal > 0 ? (
                         <VStack align="start" gap={0} mt={0.5}>
                           {(item.occurrence?.invoiceCharges ?? []).map((exp) => (
-                            <Text key={exp.id} fontSize="xs" color="orange.600">
+                            <Text key={exp.id} fontSize="xs" color="orange.fg">
                               Charge: ${exp.cost.toFixed(2)} — {exp.description}
                             </Text>
                           ))}
@@ -702,7 +702,7 @@ function WorkerPayments({
                             Owner Earnings
                           </Badge>
                         )}
-                        <Text fontWeight="bold" color="green.700" fontSize="lg">
+                        <Text fontWeight="bold" color="green.fg" fontSize="lg">
                           ${item.myAmount.toFixed(2)}
                         </Text>
                         {/* Pro-rata reduction (contractors only). When the
@@ -713,12 +713,12 @@ function WorkerPayments({
                             expected on this row. Employees skip this —
                             they're made whole, so the gap is always 0. */}
                         {!isEmployeeClass && item.myPromisedNet != null && item.myPromisedNet > item.myAmount && (
-                          <Text fontSize="2xs" color="orange.700" textAlign={{ base: "left", sm: "right" }} maxW={{ base: "100%", sm: "220px" }}>
+                          <Text fontSize="2xs" color="orange.fg" textAlign={{ base: "left", sm: "right" }} maxW={{ base: "100%", sm: "220px" }}>
                             Pro-rata reduction: −${(item.myPromisedNet - item.myAmount).toFixed(2)} due to client underpay
                           </Text>
                         )}
                         {isPending && !isEmployeeClass && (
-                          <Text fontSize="2xs" color="orange.700" textAlign={{ base: "left", sm: "right" }} maxW={{ base: "100%", sm: "200px" }}>
+                          <Text fontSize="2xs" color="orange.fg" textAlign={{ base: "left", sm: "right" }} maxW={{ base: "100%", sm: "200px" }}>
                             If admin adjusts the payment or writes it off, this amount may shrink.
                           </Text>
                         )}
@@ -797,7 +797,7 @@ function WorkerPayments({
                       <Text fontSize="md" fontWeight="semibold" truncate>
                         {c.equipment.shortDesc}
                       </Text>
-                      <Text fontWeight="bold" color="orange.600" fontSize="lg" flexShrink={0}>
+                      <Text fontWeight="bold" color="orange.fg" fontSize="lg" flexShrink={0}>
                         −${(c.rentalCost ?? 0).toFixed(2)}
                       </Text>
                     </HStack>
@@ -844,7 +844,7 @@ function WorkerPayments({
                         </Text>
                       )}
                     </VStack>
-                    <Text fontWeight="bold" color="orange.600" fontSize="lg" textAlign={{ base: "left", sm: "right" }}>
+                    <Text fontWeight="bold" color="orange.fg" fontSize="lg" textAlign={{ base: "left", sm: "right" }}>
                       −${(c.rentalCost ?? 0).toFixed(2)}
                     </Text>
                   </Stack>
@@ -1610,7 +1610,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                it and a long summary runs underneath it on a narrow screen.
                The section title already says what the money is. */
             summarySlot={(approvalsApi?.count ?? 0) > 0 ? (
-              <Text fontSize="xs" fontWeight="semibold" color="orange.700" whiteSpace="nowrap">
+              <Text fontSize="xs" fontWeight="semibold" color="orange.fg" whiteSpace="nowrap">
                 ${(approvalsApi?.totalAmount ?? 0).toFixed(2)}
               </Text>
             ) : undefined}
@@ -1651,7 +1651,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                trailing word pushed the line under the refresh control on a
                phone. "AWAITING PAYMENT $813.37" needs no "expected". */
             summarySlot={(outstandingApi?.count ?? 0) > 0 ? (
-              <Text fontSize="xs" fontWeight="semibold" color="purple.700" whiteSpace="nowrap">
+              <Text fontSize="xs" fontWeight="semibold" color="purple.fg" whiteSpace="nowrap">
                 ${(outstandingApi?.totalAmount ?? 0).toFixed(2)}
               </Text>
             ) : undefined}
@@ -1663,7 +1663,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
         </Box>
       )}
       <HStack mb={2} gap={2}>
-        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)" }}>
+        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-subtle)" }}>
           <RefreshCw size={14} />
         </Button>
         <Button
@@ -1673,8 +1673,8 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
           flexShrink={0}
           onClick={() => { setCompact((p) => !p); setExpandedCards(new Set()); }}
           css={{
-            background: !compact ? "var(--chakra-colors-gray-200)" : "var(--chakra-colors-gray-100)",
-            color: !compact ? "var(--chakra-colors-gray-700)" : undefined,
+            background: !compact ? "var(--chakra-colors-gray-muted)" : "var(--chakra-colors-gray-subtle)",
+            color: !compact ? "var(--chakra-colors-gray-fg)" : undefined,
           }}
           title={compact ? "Expand all cards" : "Collapse all cards"}
         >
@@ -1694,8 +1694,8 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
           onClick={() => setFiltersOpen((v) => !v)}
           title={filtersOpen ? "Collapse filters" : "Expand filters"}
           css={{
-            background: filtersOpen ? "var(--chakra-colors-blue-100)" : "var(--chakra-colors-gray-100)",
-            border: filtersOpen ? "1px solid var(--chakra-colors-blue-300)" : "1px solid var(--chakra-colors-gray-300)",
+            background: filtersOpen ? "var(--chakra-colors-blue-subtle)" : "var(--chakra-colors-gray-subtle)",
+            border: filtersOpen ? "1px solid var(--chakra-colors-blue-emphasized)" : "1px solid var(--chakra-colors-gray-emphasized)",
             borderRadius: "6px",
           }}
         >
@@ -1708,7 +1708,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
           minW="0"
           flexShrink={0}
           title={typeFilter[0] === "EQUIPMENT" ? "Export equipment charges (CSV)" : "Export job payments (CSV)"}
-          css={{ background: "var(--chakra-colors-gray-100)" }}
+          css={{ background: "var(--chakra-colors-gray-subtle)" }}
           onClick={() => {
             // Tab-aware CSV: download mirrors what's on screen. Jobs tab
             // gets one row per PaymentSplit (worker payout); Equipment
@@ -1773,10 +1773,10 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
         <Box position="relative" onClick={(e: any) => e.stopPropagation()}>
           <Badge size="sm" colorPalette="green" variant="subtle" cursor="pointer" onClick={() => setQuickDateMenuOpen((v) => !v)}>
             {datePreset ? (PRESET_LABELS[datePreset] ?? datePreset) : (dateFrom || dateTo) ? "Custom dates" : "Last month"}
-            {" "}<Box as="span" display="inline-flex" alignItems="center" justifyContent="center" w="14px" h="14px" borderRadius="full" bg="green.500" color="white" verticalAlign="middle"><ChevronDown size={9} /></Box>
+            {" "}<Box as="span" display="inline-flex" alignItems="center" justifyContent="center" w="14px" h="14px" borderRadius="full" bg="green.solid" color="green.contrast" verticalAlign="middle"><ChevronDown size={9} /></Box>
           </Badge>
           {quickDateMenuOpen && (
-            <VStack position="fixed" bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px"
+            <VStack position="fixed" bg="bg.panel" borderWidth="1px" borderColor="gray.emphasized" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px"
               ref={(el: HTMLDivElement | null) => { if (el && el.parentElement) { const rect = el.parentElement.getBoundingClientRect(); el.style.top = `${rect.bottom + 4}px`; el.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 148))}px`; } }}>
               {quickDateItems.map((it) => (
                 <Button key={it.value} size="xs" variant={datePreset === it.value ? "solid" : "ghost"} colorPalette={datePreset === it.value ? "green" : undefined} w="full" justifyContent="start"
@@ -1823,7 +1823,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
           )}
         </HStack>
       )}
-      {filtersOpen && <Box borderWidth="1px" borderColor="gray.300" borderRadius="md" bg="gray.100" p={2} pb={0} mb={2} css={{ "& button": { borderColor: "var(--chakra-colors-gray-400)" } }}>
+      {filtersOpen && <Box borderWidth="1px" borderColor="gray.emphasized" borderRadius="md" bg="gray.subtle" p={2} pb={0} mb={2} css={{ "& button": { borderColor: "var(--chakra-colors-gray-strong)" } }}>
       <HStack mb={2} gap={2} wrap="nowrap">
         {/* Method filter is Jobs-only — equipment rentals don't have a
             payment method (they're a per-checkout charge to the
@@ -1839,7 +1839,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: methodFilter[0] !== "ALL" ? "var(--chakra-colors-blue-200)" : "var(--chakra-colors-blue-100)", border: methodFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-blue-400)" : "1px solid var(--chakra-colors-blue-300)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: methodFilter[0] !== "ALL" ? "var(--chakra-colors-blue-muted)" : "var(--chakra-colors-blue-subtle)", border: methodFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-blue-strong)" : "1px solid var(--chakra-colors-blue-emphasized)", borderRadius: "6px" }}>
               <CreditCard size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -1883,9 +1883,9 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
               <Box
                 position="fixed"
                 zIndex={9999}
-                bg="white"
+                bg="bg.panel"
                 borderWidth="1px"
-                borderColor="gray.200"
+                borderColor="gray.emphasized"
                 rounded="md"
                 shadow="lg"
                 w="240px"
@@ -1906,8 +1906,8 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                       py="1.5"
                       fontSize="sm"
                       cursor="pointer"
-                      bg={personFilter.includes(it.value) ? "teal.50" : undefined}
-                      _hover={{ bg: "gray.100" }}
+                      bg={personFilter.includes(it.value) ? "teal.faint" : undefined}
+                      _hover={{ bg: "gray.subtle" }}
                       onMouseDown={(e) => {
                         e.preventDefault();
                         setPersonFilter((prev) =>
@@ -1919,7 +1919,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                     >
                       <HStack gap={2}>
                         <Text flex="1">{it.label}</Text>
-                        {personFilter.includes(it.value) && <Text color="teal.500" fontWeight="bold">✓</Text>}
+                        {personFilter.includes(it.value) && <Text color="teal.fg" fontWeight="bold">✓</Text>}
                       </HStack>
                     </Box>
                   ))}
@@ -1977,10 +1977,10 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
           <Box position="relative" onClick={(e: any) => e.stopPropagation()}>
             <Badge size="sm" colorPalette="green" variant="subtle" cursor="pointer" onClick={() => setQuickDateMenuOpen((v) => !v)}>
               {datePreset ? (PRESET_LABELS[datePreset] ?? datePreset) : (dateFrom || dateTo) ? "Custom dates" : "Last month"}
-              {" "}<Box as="span" display="inline-flex" alignItems="center" justifyContent="center" w="14px" h="14px" borderRadius="full" bg="green.500" color="white" verticalAlign="middle"><ChevronDown size={9} /></Box>
+              {" "}<Box as="span" display="inline-flex" alignItems="center" justifyContent="center" w="14px" h="14px" borderRadius="full" bg="green.solid" color="green.contrast" verticalAlign="middle"><ChevronDown size={9} /></Box>
             </Badge>
             {quickDateMenuOpen && (
-              <VStack position="fixed" bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px"
+              <VStack position="fixed" bg="bg.panel" borderWidth="1px" borderColor="gray.emphasized" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px"
                 ref={(el: HTMLDivElement | null) => { if (el && el.parentElement) { const rect = el.parentElement.getBoundingClientRect(); el.style.top = `${rect.bottom + 4}px`; el.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 148))}px`; } }}>
                 {quickDateItems.map((it) => (
                   <Button key={it.value} size="xs" variant={datePreset === it.value ? "solid" : "ghost"} colorPalette={datePreset === it.value ? "green" : undefined} w="full" justifyContent="start"
@@ -2059,7 +2059,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
         // identity check in displayedTotals) PLUS equipment rental income.
         const netToBusinessFinal = displayedTotals.totalRevenue + (equipmentIsBusinessIncome ? totalEquipCost : 0);
         return (
-      <Box mb={3} p={3} bg="green.50" rounded="md">
+      <Box mb={3} p={3} bg="green.faint" rounded="md">
         {/* Status chips on top of the summary:
             • Projection — visible iff any pending-approval payment is in
               the visible set; signals the totals can shift at approval.
@@ -2101,18 +2101,18 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
         >
           {showJobs && (
             <>
-              <Text fontSize="lg" fontWeight="bold" color="green.700" title={workerScoped ? "Sum of the selected workers' splits on the visible payments." : "Gross collected on the visible payments before any deductions — what came in from clients."}>
+              <Text fontSize="lg" fontWeight="bold" color="green.fg" title={workerScoped ? "Sum of the selected workers' splits on the visible payments." : "Gross collected on the visible payments before any deductions — what came in from clients."}>
                 {workerScoped ? "Earnings" : "Gross Collected"}
               </Text>
-              <Text fontSize="lg" fontWeight="bold" color="green.700" textAlign="right">
+              <Text fontSize="lg" fontWeight="bold" color="green.fg" textAlign="right">
                 ${visibleTotal.toFixed(2)}
               </Text>
             </>
           )}
           {workerScoped && visibleCharges > 0 && (
             <>
-              <Text fontSize="sm" color="orange.600">Invoice charges</Text>
-              <Text fontSize="sm" color="orange.600" textAlign="right">−${visibleCharges.toFixed(2)}</Text>
+              <Text fontSize="sm" color="orange.fg">Invoice charges</Text>
+              <Text fontSize="sm" color="orange.fg" textAlign="right">−${visibleCharges.toFixed(2)}</Text>
             </>
           )}
           {/* Worker-scoped equipment: aggregating it at the top as a
@@ -2122,22 +2122,22 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
               Net line still sums correctly across all selected workers. */}
           {workerScoped && showJobs && (visibleCharges > 0 || totalEquipCost > 0) && (
             <>
-              <Text fontSize="lg" fontWeight="bold" color="green.700">Combined Net</Text>
-              <Text fontSize="lg" fontWeight="bold" color={workerScopedNet < 0 ? "red.700" : "green.700"} textAlign="right">${workerScopedNet.toFixed(2)}</Text>
+              <Text fontSize="lg" fontWeight="bold" color="green.fg">Combined Net</Text>
+              <Text fontSize="lg" fontWeight="bold" color={workerScopedNet < 0 ? "red.fg" : "green.fg"} textAlign="right">${workerScopedNet.toFixed(2)}</Text>
             </>
           )}
           {!showJobs && totalEquipCost > 0 && !equipmentIsBusinessIncome && (
             <>
-              <Text fontSize="lg" fontWeight="bold" color="orange.600">Equipment Total</Text>
-              <Text fontSize="lg" fontWeight="bold" color="orange.600" textAlign="right">−${totalEquipCost.toFixed(2)}</Text>
+              <Text fontSize="lg" fontWeight="bold" color="orange.fg">Equipment Total</Text>
+              <Text fontSize="lg" fontWeight="bold" color="orange.fg" textAlign="right">−${totalEquipCost.toFixed(2)}</Text>
             </>
           )}
           {/* Admin-only equipment-only view (typeFilter = Equipment, no
               worker filter) — equipment IS the income, show the total. */}
           {!showJobs && totalEquipCost > 0 && equipmentIsBusinessIncome && (
             <>
-              <Text fontSize="lg" fontWeight="bold" color="green.700">Equipment Rental Income</Text>
-              <Text fontSize="lg" fontWeight="bold" color="green.700" textAlign="right">${totalEquipCost.toFixed(2)}</Text>
+              <Text fontSize="lg" fontWeight="bold" color="green.fg">Equipment Rental Income</Text>
+              <Text fontSize="lg" fontWeight="bold" color="green.fg" textAlign="right">${totalEquipCost.toFixed(2)}</Text>
             </>
           )}
           {/* Admin job-expenses line — shown in the top section because
@@ -2146,8 +2146,8 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
               service the job). Equipment is NOT shown here. */}
           {!workerScoped && visibleCharges > 0 && showJobs && (
             <>
-              <Text fontSize="sm" color="orange.600">Invoice charges</Text>
-              <Text fontSize="sm" color="orange.600" textAlign="right">−${visibleCharges.toFixed(2)}</Text>
+              <Text fontSize="sm" color="orange.fg">Invoice charges</Text>
+              <Text fontSize="sm" color="orange.fg" textAlign="right">−${visibleCharges.toFixed(2)}</Text>
             </>
           )}
         </Box>
@@ -2156,7 +2156,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
             mt={2}
             pt={2}
             borderTopWidth="1px"
-            borderTopColor="green.200"
+            borderTopColor="green.emphasized"
             display="grid"
             gridTemplateColumns="1fr auto"
             rowGap={0.5}
@@ -2165,20 +2165,20 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
           >
             {displayedTotals.totalPlatformFees > 0 && (
               <>
-                <Text fontSize="sm" fontWeight="medium" color="blue.600">Contractor Commission</Text>
-                <Text fontSize="sm" fontWeight="medium" color="blue.600" textAlign="right">${displayedTotals.totalPlatformFees.toFixed(2)}</Text>
+                <Text fontSize="sm" fontWeight="medium" color="blue.fg">Contractor Commission</Text>
+                <Text fontSize="sm" fontWeight="medium" color="blue.fg" textAlign="right">${displayedTotals.totalPlatformFees.toFixed(2)}</Text>
               </>
             )}
             {displayedTotals.totalBusinessMargin > 0 && (
               <>
-                <Text fontSize="sm" fontWeight="medium" color="blue.600">Employee Business Margin</Text>
-                <Text fontSize="sm" fontWeight="medium" color="blue.600" textAlign="right">${displayedTotals.totalBusinessMargin.toFixed(2)}</Text>
+                <Text fontSize="sm" fontWeight="medium" color="blue.fg">Employee Business Margin</Text>
+                <Text fontSize="sm" fontWeight="medium" color="blue.fg" textAlign="right">${displayedTotals.totalBusinessMargin.toFixed(2)}</Text>
               </>
             )}
             {displayedTotals.totalOverage > 0 && (
               <>
-                <Text fontSize="sm" fontWeight="medium" color="green.600">Overage retained</Text>
-                <Text fontSize="sm" fontWeight="medium" color="green.600" textAlign="right">${displayedTotals.totalOverage.toFixed(2)}</Text>
+                <Text fontSize="sm" fontWeight="medium" color="green.fg">Overage retained</Text>
+                <Text fontSize="sm" fontWeight="medium" color="green.fg" textAlign="right">${displayedTotals.totalOverage.toFixed(2)}</Text>
               </>
             )}
             {/* The business's cut of tips. Its own line, so "Net from Jobs"
@@ -2188,14 +2188,14 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                 workers, not to the business. */}
             {displayedTotals.totalTipToBusiness > 0 && (
               <>
-                <Text fontSize="sm" fontWeight="medium" color="green.700">Tips kept by business</Text>
-                <Text fontSize="sm" fontWeight="medium" color="green.700" textAlign="right">${displayedTotals.totalTipToBusiness.toFixed(2)}</Text>
+                <Text fontSize="sm" fontWeight="medium" color="green.fg">Tips kept by business</Text>
+                <Text fontSize="sm" fontWeight="medium" color="green.fg" textAlign="right">${displayedTotals.totalTipToBusiness.toFixed(2)}</Text>
               </>
             )}
             {displayedTotals.totalShortfall > 0 && (
               <>
-                <Text fontSize="sm" fontWeight="medium" color="red.600">Shortfall absorbed</Text>
-                <Text fontSize="sm" fontWeight="medium" color="red.600" textAlign="right">−${displayedTotals.totalShortfall.toFixed(2)}</Text>
+                <Text fontSize="sm" fontWeight="medium" color="red.fg">Shortfall absorbed</Text>
+                <Text fontSize="sm" fontWeight="medium" color="red.fg" textAlign="right">−${displayedTotals.totalShortfall.toFixed(2)}</Text>
               </>
             )}
             {/* Net from Jobs — sums Commission + Margin + Overage
@@ -2203,10 +2203,10 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                 This is the line covered by the decomposition identity check
                 in `displayedTotals`. The next line (Equipment Rental
                 Income) adds on top to arrive at the final Net to Business. */}
-            <Text fontSize="sm" fontWeight="medium" color="blue.700" title="What the business kept on the visible job payments: collected − worker payouts (including their tips) − invoice charges. Includes commission, margin, any overage, and the business's share of tips; net of shortfalls absorbed on underpaid jobs. Excludes equipment rental income (added separately below).">
+            <Text fontSize="sm" fontWeight="medium" color="blue.fg" title="What the business kept on the visible job payments: collected − worker payouts (including their tips) − invoice charges. Includes commission, margin, any overage, and the business's share of tips; net of shortfalls absorbed on underpaid jobs. Excludes equipment rental income (added separately below).">
               Net from Jobs
             </Text>
-            <Text fontSize="sm" fontWeight="medium" color="blue.700" textAlign="right">
+            <Text fontSize="sm" fontWeight="medium" color="blue.fg" textAlign="right">
               ${displayedTotals.totalRevenue.toFixed(2)}
             </Text>
             {/* Equipment rental income — additive. Contractors pay the
@@ -2215,19 +2215,19 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                 Rental Income". See memory/project_equipment_rental_income.md. */}
             {equipmentIsBusinessIncome && totalEquipCost > 0 && (
               <>
-                <Text fontSize="sm" fontWeight="medium" color="green.700" title="Contractor equipment rentals are income to the business — they pay to use company-owned equipment. Flows to QB Income export as 'Equipment Rental Income'.">
+                <Text fontSize="sm" fontWeight="medium" color="green.fg" title="Contractor equipment rentals are income to the business — they pay to use company-owned equipment. Flows to QB Income export as 'Equipment Rental Income'.">
                   + Equipment Rental Income
                 </Text>
-                <Text fontSize="sm" fontWeight="medium" color="green.700" textAlign="right">
+                <Text fontSize="sm" fontWeight="medium" color="green.fg" textAlign="right">
                   ${totalEquipCost.toFixed(2)}
                 </Text>
               </>
             )}
             {/* Final business net — jobs + equipment combined. */}
-            <Text fontSize="sm" fontWeight="bold" color="blue.700" title="Total cash the business kept across the visible payments: Net from Jobs + Equipment Rental Income.">
+            <Text fontSize="sm" fontWeight="bold" color="blue.fg" title="Total cash the business kept across the visible payments: Net from Jobs + Equipment Rental Income.">
               Net to Business
             </Text>
-            <Text fontSize="sm" fontWeight="bold" color="blue.700" textAlign="right">
+            <Text fontSize="sm" fontWeight="bold" color="blue.fg" textAlign="right">
               ${netToBusinessFinal.toFixed(2)}
             </Text>
           </Box>
@@ -2241,12 +2241,12 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
             pt={2}
             px={2}
             pb={1}
-            bg="green.100"
+            bg="green.subtle"
             borderRadius="md"
             borderWidth="1px"
-            borderColor="green.200"
+            borderColor="green.emphasized"
           >
-            <Text fontSize="xs" color="green.900" fontWeight="semibold" textTransform="uppercase" letterSpacing="wider" mb={1}>
+            <Text fontSize="xs" color="green.fg" fontWeight="semibold" textTransform="uppercase" letterSpacing="wider" mb={1}>
               {workerScoped ? "Per-person breakdown" : "Per-person (net of charges & fees)"}
             </Text>
             <Box
@@ -2265,28 +2265,28 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                   return (
                     <Fragment key={p.userId}>
                       <Box gridColumn="1 / -1" mt={1.5}>
-                        <Text fontSize="sm" color="green.900" fontWeight="semibold">
+                        <Text fontSize="sm" color="green.fg" fontWeight="semibold">
                           {p.displayName ?? p.userId}
                         </Text>
                       </Box>
-                      <Text fontSize="xs" color="green.800" pl={3}>Earnings</Text>
-                      <Text fontSize="xs" color="green.800" textAlign="right">${p.total.toFixed(2)}</Text>
-                      <Text fontSize="xs" color="orange.700" pl={3}>Equipment</Text>
-                      <Text fontSize="xs" color="orange.700" textAlign="right">−${(p.equipment ?? 0).toFixed(2)}</Text>
-                      <Text fontSize="sm" color={p.net < 0 ? "red.700" : "green.800"} fontWeight="semibold" pl={3}>Net</Text>
-                      <Text fontSize="sm" color={p.net < 0 ? "red.700" : "green.800"} fontWeight="semibold" textAlign="right">${(p.net ?? 0).toFixed(2)}</Text>
+                      <Text fontSize="xs" color="green.fg" pl={3}>Earnings</Text>
+                      <Text fontSize="xs" color="green.fg" textAlign="right">${p.total.toFixed(2)}</Text>
+                      <Text fontSize="xs" color="orange.fg" pl={3}>Equipment</Text>
+                      <Text fontSize="xs" color="orange.fg" textAlign="right">−${(p.equipment ?? 0).toFixed(2)}</Text>
+                      <Text fontSize="sm" color={p.net < 0 ? "red.fg" : "green.fg"} fontWeight="semibold" pl={3}>Net</Text>
+                      <Text fontSize="sm" color={p.net < 0 ? "red.fg" : "green.fg"} fontWeight="semibold" textAlign="right">${(p.net ?? 0).toFixed(2)}</Text>
                     </Fragment>
                   );
                 }
                 return (
                   <Fragment key={p.userId}>
-                    <Text fontSize="sm" color="green.800">
+                    <Text fontSize="sm" color="green.fg">
                       {p.displayName ?? p.userId}
                       {(p.tips ?? 0) > 0 && (
-                        <Text as="span" fontSize="2xs" color="green.700"> · incl. ${(p.tips ?? 0).toFixed(2)} tips</Text>
+                        <Text as="span" fontSize="2xs" color="green.fg"> · incl. ${(p.tips ?? 0).toFixed(2)} tips</Text>
                       )}
                     </Text>
-                    <Text fontSize="sm" color="green.800" fontWeight="medium" textAlign="right">${p.total.toFixed(2)}</Text>
+                    <Text fontSize="sm" color="green.fg" fontWeight="medium" textAlign="right">${p.total.toFixed(2)}</Text>
                   </Fragment>
                 );
               })}
@@ -2299,7 +2299,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
 
       {/* Sub-tab bar — Jobs vs. Equipment. See the matching block in
           WorkerPayments for the rationale. */}
-      <HStack gap={0} mb={2} borderWidth="1px" borderColor="gray.300" borderRadius="md" overflow="hidden" w="full">
+      <HStack gap={0} mb={2} borderWidth="1px" borderColor="gray.emphasized" borderRadius="md" overflow="hidden" w="full">
         {typeFilterItems.map((it) => {
           const isActive = typeFilter[0] === it.value;
           const count = it.value === "JOBS" ? filteredItems.length : filteredCharges.length;
@@ -2311,9 +2311,9 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
               borderRadius="0"
               flex="1"
               fontWeight={isActive ? "semibold" : "normal"}
-              bg={isActive ? "purple.100" : "transparent"}
-              color={isActive ? "purple.800" : "fg.muted"}
-              _hover={{ bg: isActive ? "purple.200" : "gray.100" }}
+              bg={isActive ? "purple.subtle" : "transparent"}
+              color={isActive ? "purple.fg" : "fg.muted"}
+              _hover={{ bg: isActive ? "purple.muted" : "gray.subtle" }}
               onClick={() => setTypeFilter([it.value])}
             >
               {it.label} ({count})
@@ -2387,7 +2387,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                       <Badge size="sm" colorPalette="gray">{methodLabel(p.method)}</Badge>
                       <Text
                         fontWeight="bold"
-                        color={(p as any).skippedAt ? "gray.500" : (p as any).writtenOff ? "red.700" : "green.700"}
+                        color={(p as any).skippedAt ? "gray.fg" : (p as any).writtenOff ? "red.fg" : "green.fg"}
                         textDecoration={(p as any).skippedAt ? "line-through" : undefined}
                         fontSize="lg"
                       >
@@ -2612,12 +2612,12 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                                 px={selectedSet ? 1.5 : 0}
                                 py={selectedSet ? 1 : 0}
                                 borderRadius={selectedSet ? "sm" : undefined}
-                                bg={isSelected ? "green.50" : undefined}
+                                bg={isSelected ? "green.faint" : undefined}
                                 borderLeftWidth={isSelected ? "3px" : undefined}
                                 borderLeftColor={isSelected ? "green.500" : undefined}
                               >
                                 <HStack gap={1} wrap="wrap" align="center">
-                                  <Text fontWeight="medium" color={row.isOwner ? "purple.700" : "green.700"}>
+                                  <Text fontWeight="medium" color={row.isOwner ? "purple.fg" : "green.fg"}>
                                     {row.name}
                                     {row.sharePctLabel != null ? ` (${row.sharePctLabel}%)` : ""}
                                   </Text>
@@ -2647,7 +2647,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                                         the worker was actually paid. */}
                                     {row.tip > 0 ? ` + $${row.tip.toFixed(2)} tip` : ""}
                                     {" = "}
-                                    <Text as="span" fontWeight="semibold" color={row.isOwner ? "purple.700" : "green.700"}>
+                                    <Text as="span" fontWeight="semibold" color={row.isOwner ? "purple.fg" : "green.fg"}>
                                       ${row.total.toFixed(2)}
                                     </Text>
                                     {showPromised && (
@@ -2669,7 +2669,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                                   <Text fontSize="2xs" color="fg.muted">
                                     Net payout:{" "}
                                     {row.tip > 0 && `$${row.payout.toFixed(2)} + $${row.tip.toFixed(2)} tip = `}
-                                    <Text as="span" fontWeight="semibold" color={row.isOwner ? "purple.700" : "green.700"}>
+                                    <Text as="span" fontWeight="semibold" color={row.isOwner ? "purple.fg" : "green.fg"}>
                                       ${(row.payout + row.tip).toFixed(2)}
                                     </Text>
                                   </Text>
@@ -2687,7 +2687,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                         <VStack align="start" gap={0} mt={0.5}>
                           {(p.occurrence?.invoiceCharges ?? []).map((exp) => (
                             <HStack key={exp.id} gap={1} w="full">
-                              <Text fontSize="xs" color="orange.600" flex="1">
+                              <Text fontSize="xs" color="orange.fg" flex="1">
                                 Charge: ${exp.cost.toFixed(2)} — {exp.description}
                               </Text>
                             </HStack>
@@ -2890,7 +2890,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                           </Text>
                           <Text
                             fontWeight="bold"
-                            color={skipped ? "gray.500" : writtenOff ? "red.700" : "green.700"}
+                            color={skipped ? "gray.fg" : writtenOff ? "red.fg" : "green.fg"}
                             textDecoration={skipped ? "line-through" : undefined}
                             fontSize="xl"
                             lineHeight="1"
@@ -2898,13 +2898,13 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                             ${splitTotal.toFixed(2)}
                           </Text>
                           {splitTipTotal > 0 && (
-                            <Text fontSize="2xs" color="green.700" mt={0.5}>
+                            <Text fontSize="2xs" color="green.fg" mt={0.5}>
                               ${splitJobTotal.toFixed(2)} job pay + ${splitTipTotal.toFixed(2)} tips
                             </Text>
                           )}
                         </VStack>
                         {isPending && hasContingent && (
-                          <Text fontSize="2xs" color="orange.700" mt={1} maxW={{ base: "100%", sm: "240px" }} textAlign={{ base: "left", sm: "right" }}>
+                          <Text fontSize="2xs" color="orange.fg" mt={1} maxW={{ base: "100%", sm: "240px" }} textAlign={{ base: "left", sm: "right" }}>
                             Contractor pay is contingent on the collected amount and reconciles at admin approval.
                           </Text>
                         )}
@@ -2956,12 +2956,12 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                           </Text>
                         )}
                         {!skipped && shortfall > 0 && (
-                          <Text fontSize="xs" color="red.600" mt={1}>
+                          <Text fontSize="xs" color="red.fg" mt={1}>
                             Business absorbed ${shortfall.toFixed(2)} shortfall
                           </Text>
                         )}
                         {!skipped && overage > 0 && (
-                          <Text fontSize="xs" color="green.600" mt={1}>
+                          <Text fontSize="xs" color="green.fg" mt={1}>
                             Business kept ${overage.toFixed(2)} overage
                           </Text>
                         )}
@@ -3068,7 +3068,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                           // company equipment). See memory/project_equipment_rental_income.md.
                           // Rendered green + positive sign to match the
                           // green summary panel above.
-                          <Text fontWeight="bold" color="green.700" fontSize="lg">
+                          <Text fontWeight="bold" color="green.fg" fontSize="lg">
                             +${(c.rentalCost ?? 0).toFixed(2)}
                           </Text>
                         )}
@@ -3138,7 +3138,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                       // Admin/Super view: equipment rentals are INCOME
                       // (see compact view above and
                       // memory/project_equipment_rental_income.md).
-                      <Text fontWeight="bold" color="green.700" fontSize="lg" flexShrink={0} textAlign={{ base: "left", sm: "right" }}>
+                      <Text fontWeight="bold" color="green.fg" fontSize="lg" flexShrink={0} textAlign={{ base: "left", sm: "right" }}>
                         +${(c.rentalCost ?? 0).toFixed(2)}
                       </Text>
                     )}
@@ -3264,11 +3264,11 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
 
               {editConfirm && (
                 <VStack align="stretch" px="4" pb="2" gap={1}>
-                  <Text fontSize="sm" color="orange.600" fontWeight="medium">
+                  <Text fontSize="sm" color="orange.fg" fontWeight="medium">
                     Are you sure you want to update this payment? This will change the recorded payment amounts.
                   </Text>
                   {editPayment && editPaidAt && editPaidAt !== bizDateKey(editPayment.createdAt ?? "") && (
-                    <Text fontSize="sm" color="orange.600">
+                    <Text fontSize="sm" color="orange.fg">
                       The received date moves from{" "}
                       {editPayment.createdAt ? fmtDate(editPayment.createdAt) : "—"} to{" "}
                       {fmtDateKey(editPaidAt)}. Reports, exports, and payroll
@@ -3621,9 +3621,9 @@ function SuperPaymentsTabWithViewAs({ me, forAdmin }: { me: TabPropsType["me"]; 
             <Box
               position="fixed"
               zIndex={9999}
-              bg="white"
+              bg="bg.panel"
               borderWidth="1px"
-              borderColor="gray.200"
+              borderColor="gray.emphasized"
               rounded="md"
               shadow="lg"
               w="240px"
@@ -3645,8 +3645,8 @@ function SuperPaymentsTabWithViewAs({ me, forAdmin }: { me: TabPropsType["me"]; 
                     py="1.5"
                     fontSize="sm"
                     cursor="pointer"
-                    bg={selectedWorkers.includes(it.value) ? "blue.50" : undefined}
-                    _hover={{ bg: "gray.100" }}
+                    bg={selectedWorkers.includes(it.value) ? "blue.faint" : undefined}
+                    _hover={{ bg: "gray.subtle" }}
                     onMouseDown={(e) => {
                       e.preventDefault();
                       setSelectedWorkers((prev) =>
@@ -3658,7 +3658,7 @@ function SuperPaymentsTabWithViewAs({ me, forAdmin }: { me: TabPropsType["me"]; 
                   >
                     <HStack gap={2}>
                       <Text flex="1">{it.label}</Text>
-                      {selectedWorkers.includes(it.value) && <Text color="blue.500" fontWeight="bold">✓</Text>}
+                      {selectedWorkers.includes(it.value) && <Text color="blue.fg" fontWeight="bold">✓</Text>}
                     </HStack>
                   </Box>
                 ))}
@@ -3706,8 +3706,8 @@ function SuperPaymentsTabWithViewAs({ me, forAdmin }: { me: TabPropsType["me"]; 
       ) : (
         <VStack align="stretch" gap={4}>
           {selectedWorkerObjs.map((w) => (
-            <Box key={w.id} borderTopWidth="2px" borderColor="blue.300" pt={2}>
-              <Text fontSize="md" fontWeight="bold" color="blue.700" mb={1}>
+            <Box key={w.id} borderTopWidth="2px" borderColor="blue.emphasized" pt={2}>
+              <Text fontSize="md" fontWeight="bold" color="blue.fg" mb={1}>
                 {w.displayName ?? w.id.slice(-6)}
               </Text>
               <WorkerPayments

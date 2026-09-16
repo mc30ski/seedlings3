@@ -9,7 +9,7 @@ import { getSeasonIcons } from "@/src/lib/season";
 import { apiGet } from "@/src/lib/api";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AppSplash — full-viewport white overlay with a centered logo and, on
+// AppSplash — full-viewport themed overlay with a centered logo and, on
 // eligible loads, a typing animation that cycles vanity URLs.
 //
 // Lifecycle (single state machine, no interleaved flags):
@@ -24,7 +24,7 @@ import { apiGet } from "@/src/lib/api";
 //     what. Fail-safe for hung auth / hung DB.
 //   • Portal to document.body so the overlay escapes any ancestor's
 //     transform / filter containing block.
-//   • Body background painted white while visible so brief iOS PWA
+//   • Body background painted in the theme's page colour while visible so brief iOS PWA
 //     viewport shifts (URL/status bar animations) show white instead
 //     of app content peeking through.
 //   • Click anywhere → skip.
@@ -161,12 +161,17 @@ export default function AppSplash({ show }: { show: boolean }) {
 
   const willAnimate = shouldAttemptAnimation && config.enabled;
 
-  // Paint body white while visible so brief iOS viewport shifts
-  // don't reveal app content underneath. Restore on unmount.
+  // Paint the body in the THEME's page colour while visible, so brief iOS
+  // viewport shifts don't reveal app content underneath. Restore on unmount.
+  //
+  // This is an inline style on <body>, so it outranks every stylesheet —
+  // which is why hardcoding "white" here flashed white on a dark-theme
+  // refresh even though the shield and the body rule were already themed.
+  // The variable is set by the boot script before first paint.
   useEffect(() => {
     if (phase === "gone" || phase === "idle") return;
     const prev = document.body.style.background;
-    document.body.style.background = "white";
+    document.body.style.background = "var(--seedlings-boot-bg, #ffffff)";
     return () => {
       document.body.style.background = prev;
     };
@@ -245,7 +250,7 @@ export default function AppSplash({ show }: { show: boolean }) {
         minWidth: "100vw",
         minHeight: "100vh",
         zIndex: 20000,
-        background: "white",
+        background: "var(--seedlings-boot-bg, #ffffff)",
         cursor: "pointer",
         display: "flex",
         flexDirection: "column",
@@ -457,7 +462,7 @@ function TypingAnimation({
         fontFamily:
           "ui-monospace, SFMono-Regular, Menlo, Consolas, 'Roboto Mono', monospace",
         fontSize: "clamp(15px, 4.5vw, 22px)",
-        color: "#4a5568",
+        color: "var(--seedlings-boot-fg, #4a5568)",
         letterSpacing: "0.5px",
         maxWidth: "92vw",
         userSelect: "none",
@@ -474,7 +479,7 @@ function TypingAnimation({
       >
         <span style={{ fontWeight: 700 }}>{domainBold}</span>
         {domainTail}
-        <span style={{ color: "#a0aec0" }}>{slash}</span>
+        <span style={{ color: "var(--seedlings-boot-fg-muted, #a0aec0)" }}>{slash}</span>
         {slugPart}
         {/* The caret. HEIGHT IS LOAD-BEARING: this span has no text in it, so
             an inline-block with no explicit height collapses to zero and the
@@ -488,7 +493,7 @@ function TypingAnimation({
             height: "1.05em",
             marginLeft: "0.16em",
             verticalAlign: "text-bottom",
-            background: "#4a5568",
+            background: "var(--seedlings-boot-fg, #4a5568)",
             animation: `seedlings-splash-cursor-blink ${blink}ms step-end infinite`,
           }}
         />

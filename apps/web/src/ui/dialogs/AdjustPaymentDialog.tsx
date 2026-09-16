@@ -314,7 +314,7 @@ export default function AdjustPaymentDialog({ row, willScheduleNext, onConfirm, 
                     recording a tip: the worker tells you the client left one,
                     you enter the real amount, and split the difference. */}
                 {canTip && (
-                  <Box borderWidth="1px" borderColor={isTip ? "green.300" : "gray.200"} bg={isTip ? "green.50" : undefined} borderRadius="md" p={3}>
+                  <Box borderWidth="1px" borderColor={isTip ? "green.emphasized" : "gray.emphasized"} bg={isTip ? "green.faint" : undefined} borderRadius="md" p={3}>
                     <VStack align="stretch" gap={2}>
                       <HStack justify="space-between" align="center">
                         <VStack align="start" gap={0}>
@@ -364,7 +364,7 @@ export default function AdjustPaymentDialog({ row, willScheduleNext, onConfirm, 
                               <Text fontSize="sm">
                                 {a.displayName}
                                 {a.isOwner && (
-                                  <Text as="span" fontSize="2xs" color="purple.700" ml={1} fontWeight="semibold">
+                                  <Text as="span" fontSize="2xs" color="purple.fg" ml={1} fontWeight="semibold">
                                     LLC Owner
                                   </Text>
                                 )}
@@ -380,11 +380,11 @@ export default function AdjustPaymentDialog({ row, willScheduleNext, onConfirm, 
                               </HStack>
                             </HStack>
                           ))}
-                          <Text fontSize="xs" fontWeight="medium" color={tipPctValid ? "fg.muted" : "red.600"} pt={1} borderTopWidth="1px" borderColor="green.200">
+                          <Text fontSize="xs" fontWeight="medium" color={tipPctValid ? "fg.muted" : "red.fg"} pt={1} borderTopWidth="1px" borderColor="green.emphasized">
                             Total {tipPctSum.toFixed(2)}%{!tipPctValid && " — must be 100%"}
                           </Text>
                           {ownerPct > 0 && (
-                            <Text fontSize="xs" color="purple.700">
+                            <Text fontSize="xs" color="purple.fg">
                               Business keeps {effectiveBizPct.toFixed(2)}% —{" "}
                               {(Number.parseFloat(bizPct) || 0).toFixed(2)}% business share +{" "}
                               {ownerPct.toFixed(2)}% owner share (owner earnings are business money).
@@ -431,7 +431,7 @@ export default function AdjustPaymentDialog({ row, willScheduleNext, onConfirm, 
                   <Text fontSize="sm" fontWeight="medium" mb={1}>
                     Payment received on{" "}
                     {paidAt !== bizToday() && (
-                      <Text as="span" fontSize="2xs" color="orange.700" fontWeight="normal">
+                      <Text as="span" fontSize="2xs" color="orange.fg" fontWeight="normal">
                         — back-dated
                       </Text>
                     )}
@@ -460,7 +460,7 @@ export default function AdjustPaymentDialog({ row, willScheduleNext, onConfirm, 
                 </Box>
 
                 {hasFee && (
-                  <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" p={3}>
+                  <Box borderWidth="1px" borderColor="gray.emphasized" borderRadius="md" p={3}>
                     <VStack align="stretch" gap={2}>
                       <HStack justify="space-between">
                         <Text fontSize="sm" color="fg.muted">Gross charged</Text>
@@ -483,16 +483,16 @@ export default function AdjustPaymentDialog({ row, willScheduleNext, onConfirm, 
                             setFeeStr(e.target.value);
                             setFeeManuallyEdited(true);
                           }}
-                          borderColor={feeValid ? undefined : "red.400"}
+                          borderColor={feeValid ? undefined : "red.strong"}
                         />
                       </HStack>
-                      <Box borderTopWidth="1px" borderColor="gray.200" pt={2}>
+                      <Box borderTopWidth="1px" borderColor="gray.emphasized" pt={2}>
                         <HStack justify="space-between">
                           <Text fontSize="sm" fontWeight="semibold">Net received</Text>
                           <Text
                             fontSize="md"
                             fontWeight="bold"
-                            color={feeValid ? "green.600" : "red.500"}
+                            color={feeValid ? "green.fg" : "red.fg"}
                           >
                             {net != null ? `$${net.toFixed(2)}` : "—"}
                           </Text>

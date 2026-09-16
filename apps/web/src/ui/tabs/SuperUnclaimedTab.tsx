@@ -130,9 +130,9 @@ export default function SuperUnclaimedTab() {
 
   return (
     <Box w="full" pb={8}>
-      <Box mb={3} p={3} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" rounded="md">
-        <Text fontSize="sm" fontWeight="medium" color="yellow.700">Unclaimed Jobs</Text>
-        <Text fontSize="xs" color="yellow.600">Showing overdue and upcoming unassigned jobs. Red = overdue, yellow = today/tomorrow, green = upcoming. Default view: overdue + next 3 days.</Text>
+      <Box mb={3} p={3} bg="yellow.faint" borderWidth="1px" borderColor="yellow.emphasized" rounded="md">
+        <Text fontSize="sm" fontWeight="medium" color="yellow.fg">Unclaimed Jobs</Text>
+        <Text fontSize="xs" color="yellow.fg">Showing overdue and upcoming unassigned jobs. Red = overdue, yellow = today/tomorrow, green = upcoming. Default view: overdue + next 3 days.</Text>
       </Box>
 
       <HStack mb={2} gap={2}>
@@ -206,7 +206,7 @@ export default function SuperUnclaimedTab() {
             {" "}<Box as="span" display="inline-flex" alignItems="center" justifyContent="center" w="14px" h="14px" borderRadius="full" bg={datePreset === "overdueOnly" ? "red.500" : "yellow.500"} color="white" verticalAlign="middle"><ChevronDown size={9} /></Box>
           </Badge>
           {quickDateMenuOpen && (
-            <VStack position="fixed" bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="160px"
+            <VStack position="fixed" bg="bg.panel" borderWidth="1px" borderColor="gray.emphasized" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="160px"
               ref={(el: HTMLDivElement | null) => { if (el && el.parentElement) { const rect = el.parentElement.getBoundingClientRect(); el.style.top = `${rect.bottom + 4}px`; el.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 168))}px`; } }}>
               {superPresetItems.map((it) => (
                 <Button key={it.value} size="xs" variant={datePreset === it.value ? "solid" : "ghost"} colorPalette={datePreset === it.value ? (it.value === "overdueOnly" ? "red" : "yellow") : undefined} w="full" justifyContent="start"
@@ -240,7 +240,7 @@ export default function SuperUnclaimedTab() {
 
       {filtered.length === 0 && !loading && (
         <Box textAlign="center" py={10}>
-          <Text fontSize="lg" fontWeight="semibold" color="green.600">All jobs are assigned!</Text>
+          <Text fontSize="lg" fontWeight="semibold" color="green.fg">All jobs are assigned!</Text>
           <Text fontSize="sm" color="fg.muted" mt={1}>No unclaimed jobs in the selected date range.</Text>
         </Box>
       )}
@@ -258,8 +258,8 @@ export default function SuperUnclaimedTab() {
           const isFuture = occDate > tomorrow;
 
           // Card colors: overdue=red, today/tomorrow=yellow, future=green, VIP overlay
-          const cardBg = isOverdue ? "red.50" : isTodayOrTomorrow ? "yellow.50" : isFuture ? "green.50" : undefined;
-          const cardBorder = isOverdue ? "red.300" : isTodayOrTomorrow ? "yellow.400" : isFuture ? "green.300" : isVip ? "yellow.400" : undefined;
+          const cardBg = isOverdue ? "red.faint" : isTodayOrTomorrow ? "yellow.faint" : isFuture ? "green.faint" : undefined;
+          const cardBorder = isOverdue ? "red.emphasized" : isTodayOrTomorrow ? "yellow.strong" : isFuture ? "green.emphasized" : isVip ? "yellow.strong" : undefined;
 
           return (
             <Card.Root
@@ -279,7 +279,7 @@ export default function SuperUnclaimedTab() {
                   </Text>
 
                   {isVip && vipReason && (
-                    <Text fontSize="xs" color="yellow.700" fontWeight="medium">⭐ VIP: {vipReason}</Text>
+                    <Text fontSize="xs" color="yellow.fg" fontWeight="medium">⭐ VIP: {vipReason}</Text>
                   )}
 
                   <Box display="flex" gap={1} flexWrap="wrap" alignItems="center">
@@ -298,7 +298,7 @@ export default function SuperUnclaimedTab() {
                   </Box>
 
                   <HStack gap={3} fontSize="xs" wrap="wrap">
-                    {occ.startAt && <Text color={isOverdue ? "red.600" : isTodayOrTomorrow ? "yellow.700" : isFuture ? "green.700" : "fg.muted"} fontWeight={isOverdue || isTodayOrTomorrow ? "medium" : "normal"}>{fmtDate(occ.startAt)}</Text>}
+                    {occ.startAt && <Text color={isOverdue ? "red.fg" : isTodayOrTomorrow ? "yellow.fg" : isFuture ? "green.fg" : "fg.muted"} fontWeight={isOverdue || isTodayOrTomorrow ? "medium" : "normal"}>{fmtDate(occ.startAt)}</Text>}
                     {(occ as any).jobType && (
                       <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">
                         {prettyStatus((occ as any).jobType)}

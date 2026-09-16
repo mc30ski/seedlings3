@@ -213,14 +213,14 @@ export default function ConfirmDialog({
                 <Box
                   mt={3}
                   p={3}
-                  bg="blue.50"
+                  bg="blue.faint"
                   borderWidth="1px"
-                  borderColor="blue.300"
+                  borderColor="blue.emphasized"
                   borderLeftWidth="4px"
                   borderLeftColor="blue.500"
                   rounded="md"
                 >
-                  <Text fontSize="sm" color="blue.900">{warning}</Text>
+                  <Text fontSize="sm" color="blue.fg">{warning}</Text>
                 </Box>
               )}
               {hasInput && (
@@ -271,7 +271,7 @@ export default function ConfirmDialog({
                     />
                   )}
                   {requiredInputValue != null && inputValue.trim().length > 0 && !typedMatchesRequired && (
-                    <Text fontSize="xs" color="red.600" mt={1}>
+                    <Text fontSize="xs" color="red.fg" mt={1}>
                       Doesn't match. Re-enter <Text as="span" fontWeight="semibold">{requiredInputValue}</Text> exactly.
                     </Text>
                   )}
@@ -297,7 +297,7 @@ export default function ConfirmDialog({
                   {pricingReferenceTags && pricingReferenceTags.length > 0 && (
                     <Box mt={2}>
                       {referenceMatches.length > 0 && (
-                        <Box p={2} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200" mb={2}>
+                        <Box p={2} bg="gray.faint" rounded="md" borderWidth="1px" borderColor="gray.emphasized" mb={2}>
                           <Text fontSize="xs" fontWeight="semibold" mb={1} color="fg.muted">
                             Reference (based on tags)
                           </Text>
@@ -310,7 +310,7 @@ export default function ConfirmDialog({
                                 <Text fontWeight="medium">${r.amount.toFixed(2)}</Text>
                               </HStack>
                             ))}
-                            <HStack justify="space-between" fontSize="xs" pt={1} borderTopWidth="1px" borderColor="gray.300" mt={1}>
+                            <HStack justify="space-between" fontSize="xs" pt={1} borderTopWidth="1px" borderColor="gray.emphasized" mt={1}>
                               <Text fontWeight="bold">Suggested total</Text>
                               <Text fontWeight="bold">${referenceTotal.toFixed(2)}</Text>
                             </HStack>

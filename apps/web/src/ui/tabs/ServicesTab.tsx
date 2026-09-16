@@ -867,11 +867,11 @@ export default function ServicesTab({
       summary: job.property?.displayName ?? job.id,
       disabled: hasOccurrences || superRequired,
       details: hasOccurrences ? (
-        <Text color="red.500">
+        <Text color="red.fg">
           This job has {occurrenceCount} occurrence{occurrenceCount !== 1 ? "s" : ""}. Delete all job occurrences before deleting the job.
         </Text>
       ) : superRequired ? (
-        <Text color="red.500">You must be a Super Admin to delete.</Text>
+        <Text color="red.fg">You must be a Super Admin to delete.</Text>
       ) : undefined,
     });
   }
@@ -1013,7 +1013,7 @@ export default function ServicesTab({
         </Box>
       )}
       <HStack mb={2} gap={2}>
-        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)" }}>
+        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-subtle)" }}>
           <RefreshCw size={14} />
         </Button>
         <SearchWithClear
@@ -1031,8 +1031,8 @@ export default function ServicesTab({
           onClick={() => setFiltersOpen((v) => !v)}
           title={filtersOpen ? "Collapse filters" : "Expand filters"}
           css={{
-            background: filtersOpen ? "var(--chakra-colors-blue-100)" : "var(--chakra-colors-gray-100)",
-            border: filtersOpen ? "1px solid var(--chakra-colors-blue-300)" : "1px solid var(--chakra-colors-gray-300)",
+            background: filtersOpen ? "var(--chakra-colors-blue-subtle)" : "var(--chakra-colors-gray-subtle)",
+            border: filtersOpen ? "1px solid var(--chakra-colors-blue-emphasized)" : "1px solid var(--chakra-colors-gray-emphasized)",
             borderRadius: "6px",
           }}
         >
@@ -1061,10 +1061,10 @@ export default function ServicesTab({
           <Box position="relative" onClick={(e: any) => e.stopPropagation()}>
             <Badge size="sm" colorPalette="green" variant="subtle" cursor="pointer" onClick={() => setQuickDateMenuOpen((v) => !v)}>
               {datePreset ? (PRESET_LABELS[datePreset] ?? datePreset) : (dateFrom || dateTo) ? (dateFrom === dateTo && dateFrom === bizDateKey(new Date()) ? "Today" : "Custom dates") : "Now"}
-              {" "}<Box as="span" display="inline-flex" alignItems="center" justifyContent="center" w="14px" h="14px" borderRadius="full" bg="green.500" color="white" verticalAlign="middle"><ChevronDown size={9} /></Box>
+              {" "}<Box as="span" display="inline-flex" alignItems="center" justifyContent="center" w="14px" h="14px" borderRadius="full" bg="green.solid" color="green.contrast" verticalAlign="middle"><ChevronDown size={9} /></Box>
             </Badge>
             {quickDateMenuOpen && (
-              <VStack position="fixed" bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px"
+              <VStack position="fixed" bg="bg.panel" borderWidth="1px" borderColor="gray.emphasized" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px"
                 ref={(el: HTMLDivElement | null) => { if (el && el.parentElement) { const rect = el.parentElement.getBoundingClientRect(); el.style.top = `${rect.bottom + 4}px`; el.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 148))}px`; } }}>
                 {quickDateItems.map((it) => (
                   <Button key={it.value} size="xs" variant={datePreset === it.value ? "solid" : "ghost"} colorPalette={datePreset === it.value ? "green" : undefined} w="full" justifyContent="start"
@@ -1134,10 +1134,10 @@ export default function ServicesTab({
           )}
         </HStack>
       )}
-      {filtersOpen && <Box borderWidth="1px" borderColor="gray.300" borderRadius="md" bg="gray.100" p={2} pb={0} mb={2} css={{ "& button": { borderColor: "var(--chakra-colors-gray-400)" } }}>
+      {filtersOpen && <Box borderWidth="1px" borderColor="gray.emphasized" borderRadius="md" bg="gray.subtle" p={2} pb={0} mb={2} css={{ "& button": { borderColor: "var(--chakra-colors-gray-strong)" } }}>
       {/* Job-level filters: control which Job cards appear. */}
       <HStack mb={2} gap={1} wrap="wrap" pl="1" align="center">
-        <Text fontSize="xs" fontWeight="semibold" color="gray.600" mr={1} minW="56px">Job:</Text>
+        <Text fontSize="xs" fontWeight="semibold" color="gray.fg" mr={1} minW="56px">Job:</Text>
         <Select.Root
           collection={kindCollection}
           value={kind}
@@ -1147,7 +1147,7 @@ export default function ServicesTab({
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: kind[0] !== "ALL" ? "var(--chakra-colors-blue-200)" : "var(--chakra-colors-blue-100)", border: kind[0] !== "ALL" ? "1px solid var(--chakra-colors-blue-400)" : "1px solid var(--chakra-colors-blue-300)", borderRadius: "6px" }} title="Job kind">
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: kind[0] !== "ALL" ? "var(--chakra-colors-blue-muted)" : "var(--chakra-colors-blue-subtle)", border: kind[0] !== "ALL" ? "1px solid var(--chakra-colors-blue-strong)" : "1px solid var(--chakra-colors-blue-emphasized)", borderRadius: "6px" }} title="Job kind">
               <LayoutList size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -1171,7 +1171,7 @@ export default function ServicesTab({
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: jobStatusFilter[0] !== "ALL" ? "var(--chakra-colors-purple-200)" : "var(--chakra-colors-purple-100)", border: jobStatusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-purple-400)" : "1px solid var(--chakra-colors-purple-300)", borderRadius: "6px" }} title="Job status">
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: jobStatusFilter[0] !== "ALL" ? "var(--chakra-colors-purple-muted)" : "var(--chakra-colors-purple-subtle)", border: jobStatusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-purple-strong)" : "1px solid var(--chakra-colors-purple-emphasized)", borderRadius: "6px" }} title="Job status">
               <Filter size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -1193,10 +1193,10 @@ export default function ServicesTab({
           onClick={() => setVipOnly(!vipOnly)}
           title={vipOnly ? "Showing VIP only — click to hide" : "Show VIP only"}
           css={vipOnly ? {
-            background: "var(--chakra-colors-yellow-100)",
-            color: "var(--chakra-colors-yellow-800)",
-            border: "1px solid var(--chakra-colors-yellow-400)",
-            "&:hover": { background: "var(--chakra-colors-yellow-200)" },
+            background: "var(--chakra-colors-yellow-subtle)",
+            color: "var(--chakra-colors-yellow-fg)",
+            border: "1px solid var(--chakra-colors-yellow-strong)",
+            "&:hover": { background: "var(--chakra-colors-yellow-muted)" },
           } : undefined}
         >
           <Star size={14} fill={vipOnly ? "var(--chakra-colors-yellow-500)" : "none"} color={vipOnly ? "var(--chakra-colors-yellow-500)" : undefined} />
@@ -1208,10 +1208,10 @@ export default function ServicesTab({
           onClick={() => setShowArchived(!showArchived)}
           title={showArchived ? "Showing archived only — click to hide" : "Show archived only"}
           css={showArchived ? {
-            background: "var(--chakra-colors-gray-200)",
-            color: "var(--chakra-colors-gray-700)",
-            border: "1px solid var(--chakra-colors-gray-400)",
-            "&:hover": { background: "var(--chakra-colors-gray-300)" },
+            background: "var(--chakra-colors-gray-muted)",
+            color: "var(--chakra-colors-gray-fg)",
+            border: "1px solid var(--chakra-colors-gray-strong)",
+            "&:hover": { background: "var(--chakra-colors-gray-muted)" },
           } : undefined}
         >
           <Archive size={14} />
@@ -1221,7 +1221,7 @@ export default function ServicesTab({
       {/* Occurrence-level filters: narrow which occurrences are visible
           inside each expanded Job card. */}
       <HStack mb={2} gap={1} wrap="wrap" pl="1" align="center">
-        <Text fontSize="xs" fontWeight="semibold" color="gray.600" mr={1} minW="56px">Occurrence:</Text>
+        <Text fontSize="xs" fontWeight="semibold" color="gray.fg" mr={1} minW="56px">Occurrence:</Text>
         <Select.Root
           collection={occStatusCollection}
           value={occStatusFilter}
@@ -1231,7 +1231,7 @@ export default function ServicesTab({
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: occStatusFilter[0] !== "ALL" ? "var(--chakra-colors-teal-200)" : "var(--chakra-colors-teal-100)", border: occStatusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-teal-400)" : "1px solid var(--chakra-colors-teal-300)", borderRadius: "6px" }} title="Occurrence status">
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: occStatusFilter[0] !== "ALL" ? "var(--chakra-colors-teal-muted)" : "var(--chakra-colors-teal-subtle)", border: occStatusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-teal-strong)" : "1px solid var(--chakra-colors-teal-emphasized)", borderRadius: "6px" }} title="Occurrence status">
               <Layers size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -1255,7 +1255,7 @@ export default function ServicesTab({
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: typeFilter[0] !== "ALL" ? "var(--chakra-colors-orange-200)" : "var(--chakra-colors-orange-100)", border: typeFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-orange-400)" : "1px solid var(--chakra-colors-orange-300)", borderRadius: "6px" }} title="Occurrence type">
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: typeFilter[0] !== "ALL" ? "var(--chakra-colors-orange-muted)" : "var(--chakra-colors-orange-subtle)", border: typeFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-orange-strong)" : "1px solid var(--chakra-colors-orange-emphasized)", borderRadius: "6px" }} title="Occurrence type">
               <Tag size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -1277,10 +1277,10 @@ export default function ServicesTab({
           onClick={() => setShowCanceled(!showCanceled)}
           title={showCanceled ? "Hide canceled" : "Show canceled"}
           css={showCanceled ? {
-            background: "var(--chakra-colors-red-100)",
-            color: "var(--chakra-colors-red-700)",
-            border: "1px solid var(--chakra-colors-red-300)",
-            "&:hover": { background: "var(--chakra-colors-red-200)" },
+            background: "var(--chakra-colors-red-subtle)",
+            color: "var(--chakra-colors-red-fg)",
+            border: "1px solid var(--chakra-colors-red-strong)",
+            "&:hover": { background: "var(--chakra-colors-red-muted)" },
           } : undefined}
         >
           <Ban size={14} />
@@ -1300,10 +1300,10 @@ export default function ServicesTab({
           }}
           title={pausedRepeatingOnly ? "Show all occurrences" : "Show only paused repeating"}
           css={pausedRepeatingOnly ? {
-            background: "var(--chakra-colors-purple-100)",
-            color: "var(--chakra-colors-purple-800)",
-            border: "1px solid var(--chakra-colors-purple-400)",
-            "&:hover": { background: "var(--chakra-colors-purple-200)" },
+            background: "var(--chakra-colors-purple-subtle)",
+            color: "var(--chakra-colors-purple-fg)",
+            border: "1px solid var(--chakra-colors-purple-strong)",
+            "&:hover": { background: "var(--chakra-colors-purple-muted)" },
           } : undefined}
         >
           <Repeat size={14} />
@@ -1327,10 +1327,10 @@ export default function ServicesTab({
             }
           }}
           css={overdueActive ? {
-            background: "var(--chakra-colors-red-100)",
-            color: "var(--chakra-colors-red-700)",
-            border: "1px solid var(--chakra-colors-red-400)",
-            "&:hover": { background: "var(--chakra-colors-red-200)" },
+            background: "var(--chakra-colors-red-subtle)",
+            color: "var(--chakra-colors-red-fg)",
+            border: "1px solid var(--chakra-colors-red-strong)",
+            "&:hover": { background: "var(--chakra-colors-red-muted)" },
           } : undefined}
           title="Show overdue — the scheduled day has passed and the item isn't in a done status. Awaiting-payment rows only count once the client's invoice pay link has expired (see PAYMENT_REQUEST_TOKEN_EXPIRY_HOURS setting)."
         >
@@ -1372,10 +1372,10 @@ export default function ServicesTab({
             }
           }}
           css={skippedNextOnly ? {
-            background: "var(--chakra-colors-red-100)",
-            color: "var(--chakra-colors-red-700)",
-            border: "1px solid var(--chakra-colors-red-400)",
-            "&:hover": { background: "var(--chakra-colors-red-200)" },
+            background: "var(--chakra-colors-red-subtle)",
+            color: "var(--chakra-colors-red-fg)",
+            border: "1px solid var(--chakra-colors-red-emphasized)",
+            "&:hover": { background: "var(--chakra-colors-red-muted)" },
           } : undefined}
           title="Show only occurrences where next was not auto-created"
         >
@@ -1385,7 +1385,7 @@ export default function ServicesTab({
 
       {/* Date range also filters occurrences (by startAt). */}
       <HStack mb={2} gap={2} align="center" pl="1">
-        <Text fontSize="xs" fontWeight="semibold" color="gray.600" mr={1} minW="56px">Date:</Text>
+        <Text fontSize="xs" fontWeight="semibold" color="gray.fg" mr={1} minW="56px">Date:</Text>
         <DateInput
           value={dateFrom}
           onChange={(val) => {
@@ -1457,10 +1457,10 @@ export default function ServicesTab({
           <Box position="relative" onClick={(e: any) => e.stopPropagation()}>
             <Badge size="sm" colorPalette="green" variant="subtle" cursor="pointer" onClick={() => setQuickDateMenuOpen((v) => !v)}>
               {datePreset ? (PRESET_LABELS[datePreset] ?? datePreset) : (dateFrom || dateTo) ? (dateFrom === dateTo && dateFrom === bizDateKey(new Date()) ? "Today" : "Custom dates") : "Now"}
-              {" "}<Box as="span" display="inline-flex" alignItems="center" justifyContent="center" w="14px" h="14px" borderRadius="full" bg="green.500" color="white" verticalAlign="middle"><ChevronDown size={9} /></Box>
+              {" "}<Box as="span" display="inline-flex" alignItems="center" justifyContent="center" w="14px" h="14px" borderRadius="full" bg="green.solid" color="green.contrast" verticalAlign="middle"><ChevronDown size={9} /></Box>
             </Badge>
             {quickDateMenuOpen && (
-              <VStack position="fixed" bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px"
+              <VStack position="fixed" bg="bg.panel" borderWidth="1px" borderColor="gray.emphasized" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px"
                 ref={(el: HTMLDivElement | null) => { if (el && el.parentElement) { const rect = el.parentElement.getBoundingClientRect(); el.style.top = `${rect.bottom + 4}px`; el.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 148))}px`; } }}>
                 {quickDateItems.map((it) => (
                   <Button key={it.value} size="xs" variant={datePreset === it.value ? "solid" : "ghost"} colorPalette={datePreset === it.value ? "green" : undefined} w="full" justifyContent="start"
@@ -1636,7 +1636,7 @@ export default function ServicesTab({
                       )}
                     </Text>
                     {(job.property?.client as any)?.isVip && (job.property?.client as any)?.vipReason && (
-                      <Text fontSize="xs" color="yellow.700" fontWeight="medium">VIP: {(job.property?.client as any).vipReason}</Text>
+                      <Text fontSize="xs" color="yellow.fg" fontWeight="medium">VIP: {(job.property?.client as any).vipReason}</Text>
                     )}
                     {forAdmin && (() => {
                       const tags = parseAdminTags((job.property?.client as any)?.adminTags);
@@ -1716,7 +1716,7 @@ export default function ServicesTab({
                         : `${job.estimatedMinutes}m`}
                     </Text>
                   )}
-                  <Text fontSize="xs" color={job.frequencyDays ? "fg.muted" : "orange.500"}>
+                  <Text fontSize="xs" color={job.frequencyDays ? "fg.muted" : "orange.fg"}>
                     {job.frequencyDays
                       ? `Default frequency: every ${job.frequencyDays} day${job.frequencyDays !== 1 ? "s" : ""}`
                       : "Default frequency: not set"}
@@ -1732,7 +1732,7 @@ export default function ServicesTab({
                     if (defaultGroup) {
                       const memberCount = (defaultGroup.members?.length ?? 0) + 1;
                       return (
-                        <Text fontSize="xs" color="purple.700">
+                        <Text fontSize="xs" color="purple.fg">
                           Default group: <Text as="span" fontWeight="semibold">{defaultGroup.name}</Text> ({memberCount} member{memberCount === 1 ? "" : "s"})
                         </Text>
                       );
@@ -1740,7 +1740,7 @@ export default function ServicesTab({
                     const teamSource = detail?.defaultAssignees ?? (job as any).defaultAssignees;
                     if (teamSource && teamSource.length > 0) {
                       return (
-                        <Text fontSize="xs" color="teal.600">
+                        <Text fontSize="xs" color="teal.fg">
                           Default team: {teamSource.map((a: any, i: number) => (
                             <span key={a.userId}>
                               {i > 0 && ", "}
@@ -1758,8 +1758,8 @@ export default function ServicesTab({
                     return <Text fontSize="xs" color="fg.muted">Default team: not set</Text>;
                   })()}
                   {((job as any).assigneeCount > 0 || (detail?.defaultAssignees && detail.defaultAssignees.length > 0)) && (
-                    <Box px={2} py={1} mt={1} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" rounded="md">
-                      <Text fontSize="2xs" color="yellow.700">
+                    <Box px={2} py={1} mt={1} bg="yellow.faint" borderWidth="1px" borderColor="yellow.emphasized" rounded="md">
+                      <Text fontSize="2xs" color="yellow.fg">
                         The default team is automatically assigned to each new occurrence. If a team member is swapped for a single occurrence, the default team is restored on the next one.
                       </Text>
                     </Box>
@@ -1964,8 +1964,8 @@ export default function ServicesTab({
                         key={occ.id}
                         p={2}
                         borderWidth={flashOccId === occ.id ? "2px" : "1px"}
-                        borderColor={flashOccId === occ.id ? "blue.400" : undefined}
-                        bg={flashOccId === occ.id ? "blue.50" : "gray.100"}
+                        borderColor={flashOccId === occ.id ? "blue.strong" : undefined}
+                        bg={flashOccId === occ.id ? "blue.faint" : "gray.subtle"}
                         rounded="md"
                         mb={2}
                         // A STABLE DOM ID, scrolled to by an effect — see
@@ -1977,13 +1977,13 @@ export default function ServicesTab({
                         <VStack align="start" gap={0} w="full" overflow="hidden">
                           {/* Warning: next occurrence not created */}
                           {(occ.payment as any)?.nextOccurrenceSkipReason && (occ.payment as any).nextOccurrenceSkipReason !== "one_off" && (
-                            <Box w="full" p={1.5} mb={1} bg="red.50" borderWidth="1px" borderColor="red.300" borderRadius="md">
+                            <Box w="full" p={1.5} mb={1} bg="red.faint" borderWidth="1px" borderColor="red.emphasized" borderRadius="md">
                               <HStack justify="space-between" align="start" w="full">
                                 <Box>
-                                  <Text fontSize="xs" fontWeight="bold" color="red.700">
+                                  <Text fontSize="xs" fontWeight="bold" color="red.fg">
                                     ⚠️ Next occurrence was NOT auto-created
                                   </Text>
-                                  <Text fontSize="xs" color="red.600">
+                                  <Text fontSize="xs" color="red.fg">
                                     {(occ.payment as any).nextOccurrenceSkipReason === "no_frequency_set" && "No repeat frequency set."}
                                     {(occ.payment as any).nextOccurrenceSkipReason === "job_paused" && "Job service is paused."}
                                     {(occ.payment as any).nextOccurrenceSkipReason === "duplicate_exists" && "Scheduled occurrence already exists on next date."}
@@ -2048,7 +2048,7 @@ export default function ServicesTab({
                               )}
                             </Text>
                             {occ.assignees.length === 0 ? (
-                              <Text fontSize="xs" color="orange.500" fontWeight="medium">
+                              <Text fontSize="xs" color="orange.fg" fontWeight="medium">
                                 {occ.isTentative
                                   ? "Unclaimed — tentative, awaiting admin confirmation"
                                   : (occ as any).isAdminOnly
@@ -2064,7 +2064,7 @@ export default function ServicesTab({
                                       key={a.userId}
                                       fontSize="xs"
                                       fontWeight={isClaimer ? "medium" : "normal"}
-                                      color={isClaimer ? "teal.700" : "fg.muted"}
+                                      color={isClaimer ? "teal.fg" : "fg.muted"}
                                     >
                                       <span
                                         style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}
@@ -2111,7 +2111,7 @@ export default function ServicesTab({
                                     const p_ = occ.payment as any;
                                     return (
                                     <Text
-                                      color={p_.confirmed === false ? "blue.700" : p_.amountPaid ? "green.700" : "fg.muted"}
+                                      color={p_.confirmed === false ? "blue.fg" : p_.amountPaid ? "green.fg" : "fg.muted"}
                                       fontWeight="medium"
                                     >
                                       {p_.confirmed === false
@@ -2188,7 +2188,7 @@ export default function ServicesTab({
                                   const fmt = actual >= 60 ? `${Math.floor(actual / 60)}h ${Math.round(actual % 60)}m` : `${Math.round(actual)}m`;
                                   const adjEst = occ.estimatedMinutes && workerCount > 1 ? occ.estimatedMinutes / workerCount : occ.estimatedMinutes;
                                   const color = adjEst
-                                    ? actual <= adjEst ? "green.600" : "red.600"
+                                    ? actual <= adjEst ? "green.fg" : "red.fg"
                                     : "fg.muted";
                                   return <Text color={color} fontWeight="medium">Actual: {fmt}</Text>;
                                 })()}
@@ -2216,29 +2216,29 @@ export default function ServicesTab({
                                     <TruncatedText>{otherLines}</TruncatedText>
                                   )}
                                   {(occ as any).proposalNotes && (
-                                    <Box mt={1} p={1} bg="purple.50" rounded="sm">
-                                      <Text fontSize="xs" fontWeight="medium" color="purple.700">Completed:</Text>
-                                      <TruncatedText color="purple.600">{(occ as any).proposalNotes}</TruncatedText>
+                                    <Box mt={1} p={1} bg="purple.faint" rounded="sm">
+                                      <Text fontSize="xs" fontWeight="medium" color="purple.fg">Completed:</Text>
+                                      <TruncatedText color="purple.fg">{(occ as any).proposalNotes}</TruncatedText>
                                       {(occ as any).proposalAmount != null && (
-                                        <Text fontSize="xs" color="purple.600" mt={0.5}>Amount: ${(occ as any).proposalAmount.toFixed(2)}</Text>
+                                        <Text fontSize="xs" color="purple.fg" mt={0.5}>Amount: ${(occ as any).proposalAmount.toFixed(2)}</Text>
                                       )}
                                     </Box>
                                   )}
                                   {(occ.status === "ACCEPTED" || acceptComment) && (
-                                    <Box mt={1} p={1} bg="green.50" rounded="sm">
-                                      <Text fontSize="xs" fontWeight="medium" color="green.700">Accepted{acceptComment ? ":" : ""}</Text>
-                                      {acceptComment && <TruncatedText color="green.600">{acceptComment}</TruncatedText>}
+                                    <Box mt={1} p={1} bg="green.faint" rounded="sm">
+                                      <Text fontSize="xs" fontWeight="medium" color="green.fg">Accepted{acceptComment ? ":" : ""}</Text>
+                                      {acceptComment && <TruncatedText color="green.fg">{acceptComment}</TruncatedText>}
                                     </Box>
                                   )}
                                   {(occ as any).rejectionReason && (
-                                    <Box mt={1} p={1} bg="red.50" rounded="sm">
-                                      <Text fontSize="xs" fontWeight="medium" color="red.700">Rejected:</Text>
-                                      <TruncatedText color="red.600">{(occ as any).rejectionReason}</TruncatedText>
+                                    <Box mt={1} p={1} bg="red.faint" rounded="sm">
+                                      <Text fontSize="xs" fontWeight="medium" color="red.fg">Rejected:</Text>
+                                      <TruncatedText color="red.fg">{(occ as any).rejectionReason}</TruncatedText>
                                     </Box>
                                   )}
                                   {occ.status === "REJECTED" && !(occ as any).rejectionReason && (
-                                    <Box mt={1} p={1} bg="red.50" rounded="sm">
-                                      <Text fontSize="xs" fontWeight="medium" color="red.700">Rejected</Text>
+                                    <Box mt={1} p={1} bg="red.faint" rounded="sm">
+                                      <Text fontSize="xs" fontWeight="medium" color="red.fg">Rejected</Text>
                                     </Box>
                                   )}
                                 </>
@@ -2247,12 +2247,12 @@ export default function ServicesTab({
                             {(occ.startLat != null || occ.completeLat != null) && (
                               <VStack align="start" gap={0} fontSize="xs" color="fg.muted">
                                 {occ.startLat != null && occ.startLng != null && (
-                                  <a href={`https://maps.google.com/?q=${occ.startLat},${occ.startLng}`} target="_blank" rel="noopener" style={{ color: "var(--chakra-colors-blue-600)" }}>
+                                  <a href={`https://maps.google.com/?q=${occ.startLat},${occ.startLng}`} target="_blank" rel="noopener" style={{ color: "var(--chakra-colors-blue-fg)" }}>
                                     Start Location: {occ.startLat.toFixed(4)}, {occ.startLng.toFixed(4)}
                                   </a>
                                 )}
                                 {occ.completeLat != null && occ.completeLng != null && (
-                                  <a href={`https://maps.google.com/?q=${occ.completeLat},${occ.completeLng}`} target="_blank" rel="noopener" style={{ color: "var(--chakra-colors-blue-600)" }}>
+                                  <a href={`https://maps.google.com/?q=${occ.completeLat},${occ.completeLng}`} target="_blank" rel="noopener" style={{ color: "var(--chakra-colors-blue-fg)" }}>
                                     Complete Location: {occ.completeLat.toFixed(4)}, {occ.completeLng.toFixed(4)}
                                   </a>
                                 )}
@@ -2281,11 +2281,11 @@ export default function ServicesTab({
                               const businessTotal = fee + margin + tipToBiz + overage + expTotal;
                               const unaccounted = Math.round((pay.amountPaid - (splitTotal + tipTotal + businessTotal - shortfall)) * 100) / 100;
                               return (
-                                <Box mt={1} p={2} bg="green.50" rounded="sm">
+                                <Box mt={1} p={2} bg="green.faint" rounded="sm">
                                   <Text
                                     fontSize="xs"
                                     fontWeight="medium"
-                                    color={pay.confirmed === false ? "blue.700" : pay.amountPaid ? "green.700" : "fg.muted"}
+                                    color={pay.confirmed === false ? "blue.fg" : pay.amountPaid ? "green.fg" : "fg.muted"}
                                   >
                                     {pay.confirmed === false
                                       ? `Pending approval: $${pay.amountPaid.toFixed(2)} via ${methodLabel(pay.method)}`
@@ -2294,25 +2294,25 @@ export default function ServicesTab({
                                         : "Closed with nothing collected"}
                                   </Text>
                                   {pay.receiptNumber && (
-                                    <Text fontSize="xs" color="green.700" fontFamily="mono" mt={0.5}>
+                                    <Text fontSize="xs" color="green.fg" fontFamily="mono" mt={0.5}>
                                       Receipt: {pay.receiptNumber}
                                     </Text>
                                   )}
                                   {pay.note && (
-                                    <TruncatedText color="green.600">{pay.note}</TruncatedText>
+                                    <TruncatedText color="green.fg">{pay.note}</TruncatedText>
                                   )}
                                   {(pay.splits ?? []).length > 0 && (
                                     <VStack align="start" gap={1} mt={1}>
                                       {(pay.splits ?? []).map((sp: any) => (
                                         <HStack key={sp.userId} gap={2} align="center" fontSize="xs">
-                                          <Text fontWeight="medium" color="green.700">
+                                          <Text fontWeight="medium" color="green.fg">
                                             {sp.user?.displayName ?? sp.user?.email ?? sp.userId}
                                           </Text>
                                           <Badge colorPalette="green" variant="solid" fontSize="xs" px="2" borderRadius="full">
                                             ${sp.amount.toFixed(2)}
                                           </Badge>
                                           {(sp.tipAmount ?? 0) > 0 && (
-                                            <Text color="green.700">+ ${(sp.tipAmount as number).toFixed(2)} tip</Text>
+                                            <Text color="green.fg">+ ${(sp.tipAmount as number).toFixed(2)} tip</Text>
                                           )}
                                         </HStack>
                                       ))}
@@ -2325,7 +2325,7 @@ export default function ServicesTab({
                                           {overage > 0 && <Text>Overpayment (not designated as a tip): ${overage.toFixed(2)}</Text>}
                                         </Box>
                                       )}
-                                      <Box fontSize="xs" color="fg.muted" mt={0.5} borderTopWidth="1px" borderColor="green.200" pt={0.5}>
+                                      <Box fontSize="xs" color="fg.muted" mt={0.5} borderTopWidth="1px" borderColor="green.emphasized" pt={0.5}>
                                         <Text>
                                           ${splitTotal.toFixed(2)} job pay
                                           {tipTotal > 0 ? ` + $${tipTotal.toFixed(2)} tips` : ""}
@@ -2334,7 +2334,7 @@ export default function ServicesTab({
                                           {Math.abs(unaccounted) < 0.02 ? ` = $${pay.amountPaid.toFixed(2)} paid` : ""}
                                         </Text>
                                         {Math.abs(unaccounted) >= 0.02 && (
-                                          <Text color="red.600" fontWeight="medium">
+                                          <Text color="red.fg" fontWeight="medium">
                                             Unaccounted: ${unaccounted.toFixed(2)} of the ${pay.amountPaid.toFixed(2)} paid
                                           </Text>
                                         )}
@@ -2355,14 +2355,14 @@ export default function ServicesTab({
                               // invoice, in a different place, with its own
                               // copy of the confirm text.
                               return (
-                              <Box mt={1} p={1} bg="green.50" rounded="sm" borderWidth="1px" borderColor="green.200">
-                                <Text fontSize="xs" fontWeight="medium" color="green.700">
+                              <Box mt={1} p={1} bg="green.faint" rounded="sm" borderWidth="1px" borderColor="green.emphasized">
+                                <Text fontSize="xs" fontWeight="medium" color="green.fg">
                                   Added Services: +${((occ as any).addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0).toFixed(2)}
                                 </Text>
                                 <VStack align="start" gap={0} mt={0.5}>
                                   {((occ as any).addons ?? []).map((addon: any) => (
                                     <Box key={addon.id}>
-                                      <Text fontSize="xs" color="green.600">
+                                      <Text fontSize="xs" color="green.fg">
                                         +${addon.price.toFixed(2)} — {addon.tag ? jobTagLabel(addon.tag) : addon.customLabel}
                                       </Text>
                                       {/* The note captured when the service was
@@ -2371,7 +2371,7 @@ export default function ServicesTab({
                                           since day one, shipped nowhere until
                                           the server select was widened. */}
                                       {addon.detail && (
-                                        <Text fontSize="2xs" color="green.700" pl={2} whiteSpace="pre-wrap">
+                                        <Text fontSize="2xs" color="green.fg" pl={2} whiteSpace="pre-wrap">
                                           {addon.detail}
                                         </Text>
                                       )}
@@ -2383,13 +2383,13 @@ export default function ServicesTab({
                             })()}
                             {/* Expenses */}
                             {occ.invoiceCharges && occ.invoiceCharges.length > 0 && (
-                              <Box mt={1} p={1} bg="red.50" rounded="sm" borderWidth="1px" borderColor="red.200">
-                                <Text fontSize="xs" fontWeight="medium" color="red.700">
+                              <Box mt={1} p={1} bg="red.faint" rounded="sm" borderWidth="1px" borderColor="red.emphasized">
+                                <Text fontSize="xs" fontWeight="medium" color="red.fg">
                                   Expenses: −${occ.invoiceCharges.reduce((s: number, e: any) => s + e.cost, 0).toFixed(2)}
                                 </Text>
                                 <VStack align="start" gap={0} mt={0.5}>
                                   {occ.invoiceCharges.map((exp: any) => (
-                                    <Text key={exp.id} fontSize="xs" color="red.600">
+                                    <Text key={exp.id} fontSize="xs" color="red.fg">
                                       −${exp.cost.toFixed(2)} — {exp.description}
                                     </Text>
                                   ))}
@@ -2420,11 +2420,11 @@ export default function ServicesTab({
                                       py="1"
                                       borderWidth="1px"
                                       borderRadius="md"
-                                      bg={inst.scope === "NEXT_VISIT_ONLY" ? "bg.subtle" : "yellow.100"}
+                                      bg={inst.scope === "NEXT_VISIT_ONLY" ? "bg.subtle" : "yellow.subtle"}
                                       borderStyle={inst.scope === "NEXT_VISIT_ONLY" ? "dashed" : "solid"}
                                       borderColor={
                                         inst.scope === "NEXT_VISIT_ONLY" ? "border.emphasized"
-                                          : inst.scope === "THIS_VISIT" ? "yellow.500" : "yellow.400"
+                                          : inst.scope === "THIS_VISIT" ? "yellow.500" : "yellow.strong"
                                       }
                                       data-instruction-pulse={inst.scope === "THIS_VISIT" ? "1" : undefined}
                                       css={inst.scope === "THIS_VISIT"
@@ -2446,7 +2446,7 @@ export default function ServicesTab({
                                       <Text
                                         fontSize="xs"
                                         fontWeight={inst.scope === "NEXT_VISIT_ONLY" ? "normal" : "semibold"}
-                                        color={inst.scope === "NEXT_VISIT_ONLY" ? "fg" : "yellow.700"}
+                                        color={inst.scope === "NEXT_VISIT_ONLY" ? "fg" : "yellow.fg"}
                                         flex="1"
                                       >
                                         {inst.text}
@@ -2457,7 +2457,7 @@ export default function ServicesTab({
                                         </Text>
                                       )}
                                       {inst.scope === "THIS_VISIT" && (
-                                        <Text fontSize="2xs" color="yellow.800" fontWeight="bold" whiteSpace="nowrap">
+                                        <Text fontSize="2xs" color="yellow.fg" fontWeight="bold" whiteSpace="nowrap">
                                           just this visit
                                         </Text>
                                       )}
@@ -2477,8 +2477,8 @@ export default function ServicesTab({
                               const suggestions = suggestedEquipment(serviceTypes, allTags, equipmentKinds);
                               if (suggestions.length === 0) return null;
                               return (
-                                <Box mt={1} p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" borderRadius="md">
-                                  <Text fontSize="xs" fontWeight="semibold" color="blue.700" mb={1}>Suggested Equipment</Text>
+                                <Box mt={1} p={2} bg="blue.faint" borderWidth="1px" borderColor="blue.emphasized" borderRadius="md">
+                                  <Text fontSize="xs" fontWeight="semibold" color="blue.fg" mb={1}>Suggested Equipment</Text>
                                   <HStack gap={1.5} wrap="wrap">
                                     {suggestions.map((s) => (
                                       <Button
@@ -2540,7 +2540,7 @@ export default function ServicesTab({
                                     <Text fontSize="xs" color="fg.muted">No comments yet.</Text>
                                   )}
                                   {(commentsCache[occ.id] ?? []).map((c) => (
-                                    <Box key={c.id} p={2} bg="gray.100" rounded="md" fontSize="xs">
+                                    <Box key={c.id} p={2} bg="gray.subtle" rounded="md" fontSize="xs">
                                       <HStack justifyContent="space-between" alignItems="center">
                                         <Text fontWeight="semibold">{c.author.displayName ?? c.author.email ?? "Unknown"}</Text>
                                         <Text color="fg.muted" fontSize="xs">{fmtDateTime(c.createdAt)}</Text>
@@ -2593,8 +2593,8 @@ export default function ServicesTab({
                               );
                               if (linked.length === 0) return null;
                               return (
-                                <Box mt={1} p={1} bg="purple.50" rounded="sm">
-                                  <Text fontSize="xs" fontWeight="medium" color="purple.700">
+                                <Box mt={1} p={1} bg="purple.faint" rounded="sm">
+                                  <Text fontSize="xs" fontWeight="medium" color="purple.fg">
                                     <Link2 size={10} style={{ display: "inline", verticalAlign: "middle", marginRight: 3 }} />
                                     Linked occurrences:
                                   </Text>
@@ -3153,7 +3153,7 @@ export default function ServicesTab({
                                   summary: `Occurrence on ${dateLabel}`,
                                   disabled: !isSuper,
                                   details: !isSuper ? (
-                                    <Text color="red.500">You must be a Super Admin to delete.</Text>
+                                    <Text color="red.fg">You must be a Super Admin to delete.</Text>
                                   ) : undefined,
                                 });
                               }}
@@ -3506,7 +3506,7 @@ export default function ServicesTab({
                         borderWidth="1px"
                         rounded="md"
                         cursor="pointer"
-                        _hover={{ bg: "purple.50", borderColor: "purple.300" }}
+                        _hover={{ bg: "purple.faint", borderColor: "purple.emphasized" }}
                         onClick={async () => {
                           try {
                             const result = await apiPost<{ linkGroupId: string; _linkedUpdated?: string[] }>(

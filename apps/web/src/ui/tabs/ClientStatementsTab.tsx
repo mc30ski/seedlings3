@@ -259,15 +259,15 @@ export default function ClientStatementsTab() {
         align="center"
         px={2.5}
         py={1.5}
-        bg="blue.50"
+        bg="blue.faint"
         borderWidth="1px"
-        borderColor="blue.200"
+        borderColor="blue.emphasized"
         borderRadius="md"
       >
-        <Box color="blue.600" flexShrink={0}>
+        <Box color="blue.fg" flexShrink={0}>
           <Info size={12} />
         </Box>
-        <Text fontSize="xs" color="blue.900" lineHeight="1.3">
+        <Text fontSize="xs" color="blue.fg" lineHeight="1.3">
           Shows payments by the date we received them. Anything unpaid or skipped isn't included.
         </Text>
       </HStack>
@@ -372,7 +372,7 @@ export default function ClientStatementsTab() {
             </HStack>
 
             {rangeInvalid && (
-              <Text fontSize="xs" color="red.600">
+              <Text fontSize="xs" color="red.fg">
                 "From" must be on or before "To".
               </Text>
             )}

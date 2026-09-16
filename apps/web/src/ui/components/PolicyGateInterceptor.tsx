@@ -212,11 +212,11 @@ export default function PolicyGateInterceptor() {
                         p={2}
                         borderRadius="md"
                         borderWidth="1px"
-                        borderColor="blue.200"
-                        bg="blue.50"
+                        borderColor="blue.emphasized"
+                        bg="blue.faint"
                         align="flex-start"
                       >
-                        <Box color="blue.600" flexShrink={0} mt={0.5}>
+                        <Box color="blue.fg" flexShrink={0} mt={0.5}>
                           <Clock size={14} />
                         </Box>
                         <VStack align="start" gap={0} flex="1" minW={0}>

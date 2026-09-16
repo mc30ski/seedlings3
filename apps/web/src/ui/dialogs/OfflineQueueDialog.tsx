@@ -27,10 +27,10 @@ type Props = {
 };
 
 const STATUS_LABEL: Record<string, { text: string; color: string }> = {
-  pending: { text: "Pending", color: "gray.500" },
-  syncing: { text: "Syncing...", color: "blue.500" },
-  synced: { text: "Synced", color: "green.500" },
-  failed: { text: "Failed", color: "red.500" },
+  pending: { text: "Pending", color: "gray.fg" },
+  syncing: { text: "Syncing...", color: "blue.fg" },
+  synced: { text: "Synced", color: "green.fg" },
+  failed: { text: "Failed", color: "red.fg" },
 };
 
 const STATUS_ICON: Record<string, string> = {
@@ -125,8 +125,8 @@ export default function OfflineQueueDialog({ open, onOpenChange }: Props) {
                             p={2}
                             borderWidth="1px"
                             borderRadius="md"
-                            borderColor={a.status === "failed" ? "red.200" : a.status === "synced" ? "green.200" : "gray.200"}
-                            bg={a.status === "failed" ? "red.50" : a.status === "synced" ? "green.50" : undefined}
+                            borderColor={a.status === "failed" ? "red.emphasized" : a.status === "synced" ? "green.emphasized" : "gray.emphasized"}
+                            bg={a.status === "failed" ? "red.faint" : a.status === "synced" ? "green.faint" : undefined}
                           >
                             <HStack justify="space-between" align="start">
                               <VStack align="start" gap={0.5} flex="1" minW={0}>
@@ -147,7 +147,7 @@ export default function OfflineQueueDialog({ open, onOpenChange }: Props) {
                                   )}
                                 </HStack>
                                 {a.error && (
-                                  <Text fontSize="xs" color="red.600" mt={0.5}>{a.error}</Text>
+                                  <Text fontSize="xs" color="red.fg" mt={0.5}>{a.error}</Text>
                                 )}
                               </VStack>
                               <HStack gap={1} flexShrink={0}>

@@ -77,7 +77,15 @@ describe("refund build gate — a refund reads as money coming back", () => {
   it("a negative row is coloured differently from a charge", () => {
     // fmtUSD renders the minus, but in the same orange as a charge it scans
     // as money going out — the opposite of what happened.
-    expect(LEDGER).toMatch(/e\.cost < 0 \? "green\.600" : "orange\.600"/);
+    //
+    // Asserted as "green hue vs orange hue", not as two exact ramp steps:
+    // the app moved from raw palette values to Chakra's per-theme semantic
+    // steps (`green.600` -> `green.fg`), and the invariant this gate exists
+    // to protect is that the two signs are DIFFERENT HUES — not which step
+    // of each hue is in use.
+    const m = LEDGER.match(/e\.cost < 0 \? "(green\.[a-z0-9]+)" : "(orange\.[a-z0-9]+)"/);
+    expect(m, 'a negative cost must render green and a positive one orange').not.toBeNull();
+    expect(m![1]).not.toEqual(m![2]);
   });
 
   it("a negative row carries an explicit Refund chip", () => {

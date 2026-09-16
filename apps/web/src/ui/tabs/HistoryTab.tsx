@@ -479,7 +479,7 @@ export default function HistoryTab({ role = "worker" }: TabRolePropType) {
                 <Fragment key={row.id}>
                   <Table.Row
                     onClick={() => toggleDetails(row.id)}
-                    _hover={{ bg: "gray.50", cursor: "pointer" }}
+                    _hover={{ bg: "gray.faint", cursor: "pointer" }}
                     title="Click to toggle details"
                   >
                     <Table.Cell
@@ -514,7 +514,7 @@ export default function HistoryTab({ role = "worker" }: TabRolePropType) {
                           p={3}
                           borderWidth="1px"
                           borderRadius="md"
-                          bg="gray.50"
+                          bg="gray.faint"
                           overflowX="auto"
                           maxW="100%"
                           style={{ WebkitOverflowScrolling: "touch" }}
@@ -559,7 +559,7 @@ export default function HistoryTab({ role = "worker" }: TabRolePropType) {
         </Text>
 
         <HStack gap="2">
-          <Text fontSize="sm" color="gray.600">
+          <Text fontSize="sm" color="gray.fg">
             Items per page:
           </Text>
           <Select.Root

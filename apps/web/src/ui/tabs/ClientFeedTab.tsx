@@ -86,7 +86,7 @@ function feedMessage(item: FeedItem): string {
 }
 
 const typeStyle: Record<string, { dot: string; color: string; bg?: string; borderColor?: string }> = {
-  in_progress: { dot: "blue.500", color: "blue.700", bg: "blue.50", borderColor: "blue.200" },
+  in_progress: { dot: "blue.500", color: "blue.fg", bg: "blue.faint", borderColor: "blue.emphasized" },
   completed: { dot: "green.500", color: "fg.default" },
   upcoming: { dot: "gray.400", color: "fg.muted" },
 };
@@ -210,25 +210,25 @@ export default function ClientFeedTab() {
         borderRadius="lg"
         bgGradient="linear(to-br, #dce5d0, #e8eedf)"
         borderWidth="1px"
-        borderColor="#8a9e72"
+        borderColor="border.emphasis"
       >
         <VStack align="start" gap={1}>
-          <Text fontSize="lg" fontWeight="bold" color="green.800" lineHeight="1.2">
+          <Text fontSize="lg" fontWeight="bold" color="green.fg" lineHeight="1.2">
             Welcome to Seedlings Lawn Care
           </Text>
-          <Text fontSize="sm" color="green.900">
+          <Text fontSize="sm" color="green.fg">
             See what our crews have been up to around your neighborhood.
           </Text>
         </VStack>
       </Box>
       {error && (
-        <Text textAlign="center" color="red.500" py={4} fontSize="sm">{error}</Text>
+        <Text textAlign="center" color="red.fg" py={4} fontSize="sm">{error}</Text>
       )}
 
       {items.length > 0 && (
         <Box mb={5}>
           <HStack justify="space-between" mb={2} px={1}>
-            <Text fontSize="xs" fontWeight="semibold" color={daysShown <= 7 ? "blue.500" : "green.600"} textTransform="uppercase" letterSpacing="wide">
+            <Text fontSize="xs" fontWeight="semibold" color={daysShown <= 7 ? "blue.fg" : "green.fg"} textTransform="uppercase" letterSpacing="wide">
               {daysShown <= 7 ? "Recent Activity — Last week" : daysShown <= 14 ? "Recent Activity — Last 2 weeks" : daysShown <= 30 ? "Recent Activity — Last month" : `Recent Activity — Last ${daysShown} days`}
             </Text>
             <HStack gap={1}>
@@ -287,7 +287,7 @@ export default function ClientFeedTab() {
           <Text
             as="button"
             fontSize="sm"
-            color="blue.600"
+            color="blue.fg"
             fontWeight="medium"
             cursor="pointer"
             onClick={() => void loadFeed(daysShown < 14 ? 14 : 30)}
@@ -388,7 +388,7 @@ function HeroImage({ src, alt }: { src: string; alt: string }) {
   // layout="fill" stretches to fill that container; the parent provides
   // the fixed 240px height.
   return (
-    <Box w="full" h="240px" bg="gray.200" overflow="hidden">
+    <Box w="full" h="240px" bg="gray.muted" overflow="hidden">
       <SafePhoto src={src} alt={alt} layout="fill" rounded="none" bordered={false} />
     </Box>
   );
@@ -410,7 +410,7 @@ function TileCard({ item, onPhotoClick }: { item: FeedItem; onPhotoClick: (photo
       {hero ? (
         <Box
           position="relative"
-          bg="gray.100"
+          bg="gray.subtle"
           cursor="pointer"
           onClick={() => onPhotoClick(item.photos, 0)}
         >
@@ -433,7 +433,7 @@ function TileCard({ item, onPhotoClick }: { item: FeedItem; onPhotoClick: (photo
           )}
         </Box>
       ) : (
-        <Box h="160px" bg="gray.100" display="flex" alignItems="center" justifyContent="center">
+        <Box h="160px" bg="gray.subtle" display="flex" alignItems="center" justifyContent="center">
           <Text fontSize="xs" color="fg.muted">No photo yet</Text>
         </Box>
       )}

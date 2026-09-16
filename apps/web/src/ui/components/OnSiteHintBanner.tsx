@@ -16,10 +16,10 @@ import type { OnSiteHint } from "@/src/lib/onSiteHint";
  */
 export default function OnSiteHintBanner({ hint }: { hint: OnSiteHint }) {
   const isWarning = hint.mode === "unknown-user";
-  const bg = isWarning ? "yellow.50" : "blue.50";
-  const borderColor = isWarning ? "yellow.300" : "blue.300";
+  const bg = isWarning ? "yellow.faint" : "blue.faint";
+  const borderColor = isWarning ? "yellow.emphasized" : "blue.emphasized";
   const borderLeftColor = isWarning ? "yellow.500" : "blue.500";
-  const fg = isWarning ? "yellow.900" : "blue.900";
+  const fg = isWarning ? "yellow.fg" : "blue.fg";
 
   if (hint.mode === "loading") {
     return (

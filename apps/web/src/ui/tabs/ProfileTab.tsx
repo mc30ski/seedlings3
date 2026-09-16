@@ -13,7 +13,7 @@ import {
   VStack,
   Spinner,
 } from "@chakra-ui/react";
-import { X } from "lucide-react";
+import { Check, X } from "lucide-react";
 import AddressAutocomplete from "@/src/ui/components/AddressAutocomplete";
 import { apiGet, apiPatch, apiPost, apiDelete } from "@/src/lib/api";
 import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
@@ -27,6 +27,8 @@ import { useOffline } from "@/src/lib/offline";
 import { getAllActions, deleteAction, retryAction, clearAllActions, subscribeQueue, type QueuedAction } from "@/src/lib/offlineQueue";
 import { usePushNotifications } from "@/src/lib/usePushNotifications";
 import { getSeasonOverride, setSeasonOverride, getNaturalSeason, type SeasonOverride } from "@/src/lib/season";
+import { useAppTheme } from "@/src/lib/useAppTheme";
+import { SURFACES, THEME_IDS, THEME_LABELS, THEME_DESCRIPTIONS } from "@/src/styles/themeTokens";
 import {
   getImpersonation,
   setImpersonation,
@@ -383,8 +385,8 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
                 {limited.map((w) => (
                   <Box
                     key={w.id} px={3} py={1.5} cursor="pointer" fontSize="sm"
-                    bg={selectedUserId === w.id ? "blue.50" : undefined}
-                    _hover={{ bg: "gray.100" }}
+                    bg={selectedUserId === w.id ? "blue.faint" : undefined}
+                    _hover={{ bg: "gray.subtle" }}
                     onClick={() => { setSelectedUserId(w.id); setDropOpen(false); setSearchText(""); }}
                   >
                     <Text>{w.displayName || w.email || w.id}</Text>
@@ -487,10 +489,10 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
                       value={phone}
                       onChange={(e) => setPhone(e.target.value)}
                       placeholder="(919) 555-0123"
-                      borderColor={phoneError ? "red.400" : undefined}
+                      borderColor={phoneError ? "red.strong" : undefined}
                     />
                     {phoneError ? (
-                      <Text fontSize="xs" color="red.500" mt="0.5">Enter a valid 10-digit US phone number.</Text>
+                      <Text fontSize="xs" color="red.fg" mt="0.5">Enter a valid 10-digit US phone number.</Text>
                     ) : (
                       <Text fontSize="xs" color="fg.muted" mt="0.5">Used for SMS job and payment notifications.</Text>
                     )}
@@ -533,7 +535,7 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
                   </HStack>
                 )}
                 {isSelf && (
-                  <Box pt={2} borderTopWidth="1px" borderColor="gray.200">
+                  <Box pt={2} borderTopWidth="1px" borderColor="gray.emphasized">
                     <VStack align="stretch" gap={1}>
                       <Button
                         size="sm"
@@ -807,11 +809,11 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
                     style={{
                       flex: 1,
                       padding: "4px 8px",
-                      border: "1px solid var(--chakra-colors-border-default)",
+                      border: "1px solid var(--chakra-colors-border)",
                       borderRadius: "4px",
                       fontSize: "14px",
-                      background: isSuper ? undefined : "var(--chakra-colors-gray-100)",
-                      color: isSuper ? undefined : "var(--chakra-colors-fg-muted)",
+                      background: isSuper ? undefined : "var(--chakra-colors-gray-muted)",
+                      color: isSuper ? undefined : "var(--chakra-colors-gray-fg)",
                       cursor: isSuper ? "text" : "not-allowed",
                     }}
                   />
@@ -823,8 +825,8 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
 
           {/* Unsaved changes warning */}
           {hasChanges && (
-            <Box p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" rounded="md">
-              <Text fontSize="xs" color="yellow.700">You have unsaved changes.</Text>
+            <Box p={2} bg="yellow.faint" borderWidth="1px" borderColor="yellow.emphasized" rounded="md">
+              <Text fontSize="xs" color="yellow.fg">You have unsaved changes.</Text>
             </Box>
           )}
 
@@ -849,6 +851,9 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
           {isSelf && <NotificationsSection />}
           {isSelf && <CalendarFeedsSection />}
           {isSelf && <OfflineSection />}
+          {/* High contrast exists for reading a phone in direct sun — a worker on
+              a lawn, not an admin at a desk. */}
+          {isSelf && <ThemeSection />}
           {isSelf && me?.roles?.includes("ADMIN") && <SeasonSection />}
           {/* View-as picker is gated on REAL Super — must be visible even
               while impersonating so Super can switch back without having
@@ -975,8 +980,8 @@ function NotificationsSection() {
           )}
 
           {push.status === "denied" && (
-            <Box p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" rounded="md">
-              <Text fontSize="xs" color="yellow.800">
+            <Box p={2} bg="yellow.faint" borderWidth="1px" borderColor="yellow.emphasized" rounded="md">
+              <Text fontSize="xs" color="yellow.fg">
                 Notifications are blocked in your browser. To turn them back on:
                 {/iPhone|iPad|iPod/.test(navigator.userAgent || "")
                   ? " open the iPhone Settings app → Notifications → Seedlings → Allow Notifications."
@@ -1032,8 +1037,8 @@ function NotificationsSection() {
               <Text fontSize="xs" color="fg.muted">
                 Notifications are on. You'll get a push for each daily plan reminder.
               </Text>
-              <Box p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" rounded="md">
-                <Text fontSize="xs" color="yellow.800">
+              <Box p={2} bg="yellow.faint" borderWidth="1px" borderColor="yellow.emphasized" rounded="md">
+                <Text fontSize="xs" color="yellow.fg">
                   If you don't see notifications, check Settings → Notifications and verify it's enabled for your browser (e.g. Chrome, Safari, etc.).
                 </Text>
               </Box>
@@ -1153,7 +1158,7 @@ function CalendarFeedsSection() {
                       <Text color="fg.muted">Last polled: {fmtDateLong(f.lastAccessedAt)}</Text>
                     )}
                     {!f.lastAccessedAt && (
-                      <Text color="orange.500">Never accessed</Text>
+                      <Text color="orange.fg">Never accessed</Text>
                     )}
                   </VStack>
                   <Button size="xs" variant="outline" colorPalette="red" onClick={() => revoke(f.id)}>
@@ -1188,7 +1193,7 @@ function OfflineSection() {
               w="10px"
               h="10px"
               borderRadius="full"
-              bg={isOffline ? (isForceOffline ? "orange.400" : "red.400") : "green.400"}
+              bg={isOffline ? (isForceOffline ? "orange.strong" : "red.strong") : "green.strong"}
             />
             <Text fontSize="xs" color="fg.muted">
               {isOffline ? (isForceOffline ? "Force offline" : "Offline") : "Online"}
@@ -1239,8 +1244,8 @@ function OfflineSection() {
                     px={2}
                     py={1}
                     borderWidth="1px"
-                    borderColor={a.status === "failed" ? "red.200" : "gray.200"}
-                    bg={a.status === "failed" ? "red.50" : undefined}
+                    borderColor={a.status === "failed" ? "red.emphasized" : "gray.emphasized"}
+                    bg={a.status === "failed" ? "red.faint" : undefined}
                     rounded="md"
                     justify="space-between"
                     fontSize="xs"
@@ -1249,7 +1254,7 @@ function OfflineSection() {
                       <Text fontWeight="medium">
                         {a.status === "pending" ? "⏳" : a.status === "failed" ? "❌" : "🔄"} {a.label}
                       </Text>
-                      {a.error && <Text color="red.600">{a.error}</Text>}
+                      {a.error && <Text color="red.fg">{a.error}</Text>}
                     </VStack>
                     <HStack gap={1}>
                       {a.status === "failed" && (
@@ -1317,7 +1322,7 @@ function ImpersonationSection() {
   }
 
   return (
-    <Card.Root variant="outline" mt={4} borderColor="red.300">
+    <Card.Root variant="outline" mt={4} borderColor="red.emphasized">
       <Card.Header py="2" px="3" pb="0">
         <Text fontWeight="semibold">🛡 View as another role (Super only)</Text>
       </Card.Header>
@@ -1340,14 +1345,14 @@ function ImpersonationSection() {
           {detailsOpen && (
             <Box
               p={3}
-              bg="blue.50"
+              bg="blue.faint"
               borderWidth="1px"
-              borderColor="blue.300"
+              borderColor="blue.emphasized"
               borderLeftWidth="4px"
               borderLeftColor="blue.500"
               rounded="md"
             >
-              <VStack align="stretch" gap={3} fontSize="sm" color="blue.900">
+              <VStack align="stretch" gap={3} fontSize="sm" color="blue.fg">
                 <Box>
                   <Text fontWeight="semibold" mb={1}>What changes</Text>
                   <Text>When you pick a role here, the following behave as if you had only that role:</Text>
@@ -1423,6 +1428,76 @@ function ImpersonationSection() {
               </Button>
             ))}
           </HStack>
+        </VStack>
+      </Card.Body>
+    </Card.Root>
+  );
+}
+
+/**
+ * Appearance — the five themes. Sits above SeasonSection because it can
+ * OVERRIDE it: Spring and Fall are a season as well as a palette.
+ */
+function ThemeSection() {
+  const { theme, setTheme } = useAppTheme();
+  return (
+    <Card.Root variant="outline" mt={4}>
+      <Card.Header py="2" px="3" pb="0">
+        <Text fontWeight="semibold">Appearance</Text>
+      </Card.Header>
+      <Card.Body py="2" px="3">
+        <VStack align="stretch" gap={2}>
+          <Text fontSize="xs" color="fg.muted">
+            Changes how the whole app looks on this device. Nothing is shared
+            with your clients — pages they see keep the standard look.
+          </Text>
+          <VStack align="stretch" gap={1.5}>
+            {THEME_IDS.map((id) => {
+              const active = theme === id;
+              return (
+                <Box
+                  key={id}
+                  as="button"
+                  data-testid={`theme-option-${id}`}
+                  data-active={active ? "true" : "false"}
+                  textAlign="left"
+                  px={3}
+                  py={2}
+                  borderWidth="1px"
+                  borderRadius="lg"
+                  cursor="pointer"
+                  borderColor={active ? "accent.solid" : "border.default"}
+                  bg={active ? "accent.muted" : "surface.panel"}
+                  onClick={() => setTheme(id)}
+                >
+                  <HStack gap={2} align="center">
+                    {/* The palette itself — the fastest way to judge a theme
+                        is to see its colours, not read its name. */}
+                    <HStack gap={0.5} flexShrink={0}>
+                      {(["surface.page", "chrome.header", "accent.solid"] as const).map((k) => (
+                        <Box
+                          key={k}
+                          w="14px"
+                          h="14px"
+                          borderRadius="3px"
+                          borderWidth="1px"
+                          borderColor="border.emphasis"
+                          style={{ background: SURFACES[id][k] }}
+                        />
+                      ))}
+                    </HStack>
+                    <Box flex="1" minW={0}>
+                      <Text fontSize="sm" fontWeight={active ? "semibold" : "medium"}>
+                        {THEME_LABELS[id]}
+                      </Text>
+                      <Text fontSize="2xs" color="fg.muted">{THEME_DESCRIPTIONS[id]}</Text>
+                    </Box>
+                    {active && <Check size={16} />}
+                  </HStack>
+                </Box>
+              );
+            })}
+          </VStack>
         </VStack>
       </Card.Body>
     </Card.Root>
@@ -1524,15 +1599,15 @@ function EarningsSection({ targetUserId, isSelf }: { targetUserId: string; isSel
           <HStack gap={4} wrap="wrap">
             <VStack align="start" gap={0}>
               <Text fontSize="2xs" color="fg.muted" textTransform="uppercase">This Week</Text>
-              <Text fontSize="lg" fontWeight="bold" color="green.600">{fmt(data.thisWeek)}</Text>
+              <Text fontSize="lg" fontWeight="bold" color="green.fg">{fmt(data.thisWeek)}</Text>
             </VStack>
             <VStack align="start" gap={0}>
               <Text fontSize="2xs" color="fg.muted" textTransform="uppercase">This Month</Text>
-              <Text fontSize="lg" fontWeight="bold" color="green.600">{fmt(data.thisMonth)}</Text>
+              <Text fontSize="lg" fontWeight="bold" color="green.fg">{fmt(data.thisMonth)}</Text>
             </VStack>
             <VStack align="start" gap={0}>
               <Text fontSize="2xs" color="fg.muted" textTransform="uppercase">This Year</Text>
-              <Text fontSize="lg" fontWeight="bold" color="green.600">{fmt(data.thisYear)}</Text>
+              <Text fontSize="lg" fontWeight="bold" color="green.fg">{fmt(data.thisYear)}</Text>
             </VStack>
             <VStack align="start" gap={0}>
               <Text fontSize="2xs" color="fg.muted" textTransform="uppercase">All Time</Text>

@@ -100,7 +100,7 @@ export default function SignedPolicyViewDialog({
                   borderWidth="1px"
                   borderRadius="md"
                   p={4}
-                  bg="white"
+                  bg="bg.panel"
                   fontSize="sm"
                   lineHeight="tall"
                 >

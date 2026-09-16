@@ -412,8 +412,8 @@ function VehicleCard({
                   <Box
                     as="button"
                     onClick={() => onUnassign(a.userId)}
-                    color="blue.700"
-                    _hover={{ color: "red.500" }}
+                    color="blue.fg"
+                    _hover={{ color: "red.fg" }}
                     ml={1}
                   >
                     <X size={10} />
@@ -450,7 +450,7 @@ function VehicleCard({
           inline within the card so the log's rows sit with their
           parent vehicle rather than in a modal. */}
       {showSuperExtras && expanded && (
-        <Box bg="gray.50" borderTopWidth="1px" borderColor="gray.200" px={0} py={0}>
+        <Box bg="gray.faint" borderTopWidth="1px" borderColor="gray.emphasized" px={0} py={0}>
           <MileageLog vehicle={vehicle} />
         </Box>
       )}
@@ -687,7 +687,7 @@ function AddMileageEntryDialog({
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
                 {assigned.length === 0 ? (
-                  <Text fontSize="sm" color="red.600">
+                  <Text fontSize="sm" color="red.fg">
                     No workers are assigned to this vehicle. Assign at least one before backfilling entries.
                   </Text>
                 ) : (
@@ -746,7 +746,7 @@ function AddMileageEntryDialog({
                   </Field>
                 </HStack>
                 {miles != null && miles >= 0 && (
-                  <HStack justify="space-between" bg="gray.50" p={2} borderRadius="md">
+                  <HStack justify="space-between" bg="gray.faint" p={2} borderRadius="md">
                     <Text fontSize="xs" color="fg.muted">Session miles</Text>
                     <Text fontSize="sm" fontWeight="semibold">{miles.toLocaleString()} mi</Text>
                   </HStack>
@@ -1143,11 +1143,11 @@ function InsightPanel({
   palette?: string;
 }) {
   return (
-    <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" bg="white" p={2}>
-      <Text fontSize="2xs" fontWeight="semibold" color="gray.700" textTransform="uppercase" letterSpacing="wide">
+    <Box borderWidth="1px" borderColor="gray.emphasized" borderRadius="md" bg="bg.panel" p={2}>
+      <Text fontSize="2xs" fontWeight="semibold" color="gray.fg" textTransform="uppercase" letterSpacing="wide">
         {title}
       </Text>
-      <Text fontSize="xl" fontWeight="bold" color={palette ? `${palette}.600` : undefined}>
+      <Text fontSize="xl" fontWeight="bold" color={palette ? `${palette}.fg` : undefined}>
         {value}
       </Text>
       <Text fontSize="xs" color="fg.muted">{hint}</Text>

@@ -141,9 +141,9 @@ export function CompactBanner({
   return (
     <Box
       minH="48px"
-      bg={`${palette}.50`}
+      bg={`${palette}.faint`}
       borderWidth="1px"
-      borderColor={`${palette}.300`}
+      borderColor={`${palette}.emphasized`}
       borderRadius="md"
       style={animation ? { animation } : undefined}
       overflow="hidden"
@@ -173,7 +173,7 @@ export function CompactBanner({
       >
         {isExpandable && (
           <Box
-            color={`${palette}.600`}
+            color={`${palette}.fg`}
             flexShrink={0}
             display="flex"
             alignItems="center"
@@ -188,7 +188,7 @@ export function CompactBanner({
           </Box>
         )}
         <Box
-          color={`${palette}.600`}
+          color={`${palette}.fg`}
           display="flex"
           alignItems="center"
           flexShrink={0}
@@ -201,7 +201,7 @@ export function CompactBanner({
             expanded so nothing stays hidden. */}
         <Box
           fontSize="sm"
-          color={`${palette}.900`}
+          color={`${palette}.fg`}
           flex="1"
           minW={0}
           overflow={expanded ? undefined : "hidden"}
@@ -251,9 +251,9 @@ export function CompactBanner({
           pt={2}
           pb={3}
           borderTopWidth="1px"
-          borderColor={`${palette}.200`}
+          borderColor={`${palette}.emphasized`}
           fontSize="sm"
-          color={`${palette}.900`}
+          color={`${palette}.fg`}
         >
           {expandedContent}
           {/* Expanded-state action row. Buttons always show labels

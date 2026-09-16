@@ -234,7 +234,7 @@ function getPalette(kind: MessageKind) {
       };
     case "WARNING":
       return {
-        bg: "orange.400",
+        bg: "orange.strong",
         border: "orange.500",
         fg: "white",
         icon: AlertTriangle,

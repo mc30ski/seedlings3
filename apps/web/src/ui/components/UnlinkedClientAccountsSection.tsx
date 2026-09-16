@@ -127,7 +127,7 @@ export default function UnlinkedClientAccountsSection({ onReady }: {
                 align="start"
                 gap={2}
                 borderWidth="1px"
-                borderColor="gray.200"
+                borderColor="gray.emphasized"
                 borderRadius="md"
                 p={2}
               >
@@ -236,8 +236,8 @@ function ContactPickerDialog({
               </Dialog.Header>
               <Dialog.Body>
                 <VStack align="stretch" gap={3}>
-                  <Box p={2} bg="orange.50" borderWidth="1px" borderColor="orange.200" borderRadius="md">
-                    <Text fontSize="xs" color="orange.800">
+                  <Box p={2} bg="orange.faint" borderWidth="1px" borderColor="orange.emphasized" borderRadius="md">
+                    <Text fontSize="xs" color="orange.fg">
                       Clerk account: <Text as="span" fontWeight="semibold">{user.email ?? userLabel(user)}</Text>
                       {user.email && userLabel(user) !== user.email && (
                         <> · {userLabel(user)}</>
@@ -270,9 +270,9 @@ function ContactPickerDialog({
                           py={1.5}
                           borderRadius="md"
                           borderWidth="1px"
-                          borderColor="gray.200"
-                          bg="white"
-                          _hover={{ bg: "gray.50" }}
+                          borderColor="gray.emphasized"
+                          bg="bg.panel"
+                          _hover={{ bg: "gray.faint" }}
                           cursor="pointer"
                           textAlign="left"
                           onClick={() => setConfirmContact(c)}

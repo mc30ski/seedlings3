@@ -441,8 +441,8 @@ export default function OutstandingRequestsSection({ onReady }: {
                  Everything else sits at the section's own purple.50, so
                  the card is delineated by its border alone and the darker
                  fill means exactly one thing: this has been waiting. */
-              borderColor={r.stale ? "purple.400" : "purple.200"}
-              bg={r.stale ? "purple.100" : "purple.50"}
+              borderColor={r.stale ? "purple.strong" : "purple.emphasized"}
+              bg={r.stale ? "purple.subtle" : "purple.faint"}
               borderRadius="md"
               p={2}
             >
@@ -533,7 +533,7 @@ export default function OutstandingRequestsSection({ onReady }: {
                   requestSentAt={r.requestedAt}
                   variant="outline"
                   colorPalette="purple"
-                  hoverBg={r.stale ? "purple.200" : "purple.100"}
+                  hoverBg={r.stale ? "purple.muted" : "purple.subtle"}
                   onRequestCanceled={() => void load()}
                 />
                 {/* Purple, and a shade darker than the card behind them.
@@ -545,8 +545,8 @@ export default function OutstandingRequestsSection({ onReady }: {
                   size="xs"
                   variant="ghost"
                   colorPalette="purple"
-                  color="purple.800"
-                  _hover={{ bg: r.stale ? "purple.200" : "purple.100" }}
+                  color="purple.fg"
+                  _hover={{ bg: r.stale ? "purple.muted" : "purple.subtle" }}
                   onClick={() => openJob(r)}
                   title="Open the job"
                 >
@@ -557,8 +557,8 @@ export default function OutstandingRequestsSection({ onReady }: {
                     size="xs"
                     variant="ghost"
                     colorPalette="purple"
-                    color="purple.800"
-                    _hover={{ bg: r.stale ? "purple.200" : "purple.100" }}
+                    color="purple.fg"
+                    _hover={{ bg: r.stale ? "purple.muted" : "purple.subtle" }}
                     asChild
                     title="Open the client-facing invoice page (the same URL the client received)"
                   >
@@ -608,8 +608,8 @@ export default function OutstandingRequestsSection({ onReady }: {
                   size="xs"
                   variant="ghost"
                   colorPalette="gray"
-                  color="gray.700"
-                  _hover={{ bg: "gray.200" }}
+                  color="gray.fg"
+                  _hover={{ bg: "gray.muted" }}
                   onClick={() => setWriteOffRow(r)}
                   title="Super only — write off (client ghosted / never paid). Employees + trainees still get their promised net from business funds; contractors get $0; the loss appears as bad debt on the P&L."
                 >
@@ -666,7 +666,7 @@ export default function OutstandingRequestsSection({ onReady }: {
                   <Box>
                     <Text fontSize="xs" fontWeight="medium" mb={1}>Method</Text>
                     {paymentMethods.length === 0 ? (
-                      <Text fontSize="xs" color="red.600">
+                      <Text fontSize="xs" color="red.fg">
                         No payment methods configured. Add some in Settings → PAYMENT_METHODS first.
                       </Text>
                     ) : (
@@ -698,7 +698,7 @@ export default function OutstandingRequestsSection({ onReady }: {
                     const feeValid = Number.isFinite(fee) && fee >= 0 && Number.isFinite(gross) && fee <= gross;
                     const net = feeValid ? Math.round((gross - fee) * 100) / 100 : null;
                     return (
-                      <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" p={3}>
+                      <Box borderWidth="1px" borderColor="gray.emphasized" borderRadius="md" p={3}>
                         <VStack align="stretch" gap={2}>
                           <HStack justify="space-between">
                             <Text fontSize="sm" color="fg.muted">Gross charged</Text>
@@ -716,13 +716,13 @@ export default function OutstandingRequestsSection({ onReady }: {
                               inputMode="decimal"
                               value={markPaidFee}
                               onChange={(e) => setMarkPaidFee(e.target.value)}
-                              borderColor={feeValid ? undefined : "red.400"}
+                              borderColor={feeValid ? undefined : "red.strong"}
                             />
                           </HStack>
-                          <Box borderTopWidth="1px" borderColor="gray.200" pt={2}>
+                          <Box borderTopWidth="1px" borderColor="gray.emphasized" pt={2}>
                             <HStack justify="space-between">
                               <Text fontSize="sm" fontWeight="semibold">Net received</Text>
-                              <Text fontSize="md" fontWeight="bold" color={feeValid ? "green.600" : "red.500"}>
+                              <Text fontSize="md" fontWeight="bold" color={feeValid ? "green.fg" : "red.fg"}>
                                 {net != null ? `$${net.toFixed(2)}` : "—"}
                               </Text>
                             </HStack>
@@ -740,7 +740,7 @@ export default function OutstandingRequestsSection({ onReady }: {
                     <Text fontSize="xs" fontWeight="medium" mb={1}>
                       Payment received on{" "}
                       {markPaidDate !== bizToday() && (
-                        <Text as="span" fontSize="2xs" color="orange.700" fontWeight="normal">
+                        <Text as="span" fontSize="2xs" color="orange.fg" fontWeight="normal">
                           — back-dated
                         </Text>
                       )}
@@ -826,39 +826,39 @@ export default function OutstandingRequestsSection({ onReady }: {
               </Text>
               <Box
                 borderWidth="1px"
-                borderColor="red.300"
-                bg="red.50"
+                borderColor="red.emphasized"
+                bg="red.faint"
                 borderRadius="md"
                 p={3}
               >
                 <VStack align="start" gap={1.5}>
-                  <Text fontSize="xs" fontWeight="semibold" color="red.900">
+                  <Text fontSize="xs" fontWeight="semibold" color="red.fg">
                     What this does — read before typing APPROVE:
                   </Text>
-                  <Text fontSize="xs" color="red.900">
+                  <Text fontSize="xs" color="red.fg">
                     • No income will be recorded for this visit.
                   </Text>
-                  <Text fontSize="xs" color="red.900">
+                  <Text fontSize="xs" color="red.fg">
                     • Workers who worked this job will not be paid for it —
                     including hourly employees. Confirm they've been paid
                     separately if hours were logged.
                   </Text>
-                  <Text fontSize="xs" color="red.900">
+                  <Text fontSize="xs" color="red.fg">
                     • The visit will not appear in Income, Payroll, Processing
                     Fees, 1099, P&amp;L, or Accounting exports.
                   </Text>
-                  <Text fontSize="xs" color="red.900">
+                  <Text fontSize="xs" color="red.fg">
                     • Any pending payment request link becomes moot.
                   </Text>
-                  <Text fontSize="xs" color="red.900">
+                  <Text fontSize="xs" color="red.fg">
                     • Rows already exported to QuickBooks are unaffected —
                     remove them there manually if needed.
                   </Text>
-                  <Text fontSize="xs" color="red.900">
+                  <Text fontSize="xs" color="red.fg">
                     • The next occurrence for this job will still be created
                     (schedule continuity preserved).
                   </Text>
-                  <Text fontSize="xs" color="red.900">
+                  <Text fontSize="xs" color="red.fg">
                     • Undoing this is possible via the Payments tab (same
                     Super + APPROVE gate).
                   </Text>
@@ -900,35 +900,35 @@ export default function OutstandingRequestsSection({ onReady }: {
               </Text>
               <Box
                 borderWidth="1px"
-                borderColor="purple.300"
-                bg="purple.50"
+                borderColor="purple.emphasized"
+                bg="purple.faint"
                 borderRadius="md"
                 p={3}
               >
                 <VStack align="start" gap={1.5}>
-                  <Text fontSize="xs" fontWeight="semibold" color="purple.900">
+                  <Text fontSize="xs" fontWeight="semibold" color="purple.fg">
                     What this does — read before typing APPROVE:
                   </Text>
-                  <Text fontSize="xs" color="purple.900">
+                  <Text fontSize="xs" color="purple.fg">
                     • Income recorded as $0 for this visit.
                   </Text>
-                  <Text fontSize="xs" color="purple.900">
+                  <Text fontSize="xs" color="purple.fg">
                     • Employees + trainees are still paid their promised
                     net (business absorbs the shortfall).
                   </Text>
-                  <Text fontSize="xs" color="purple.900">
+                  <Text fontSize="xs" color="purple.fg">
                     • Contractors get $0 — their pay is contingent on
                     client payment.
                   </Text>
-                  <Text fontSize="xs" color="purple.900">
+                  <Text fontSize="xs" color="purple.fg">
                     • The row stays visible on the operator dashboards +
                     P&L as an acknowledged loss (bad debt).
                   </Text>
-                  <Text fontSize="xs" color="purple.900">
+                  <Text fontSize="xs" color="purple.fg">
                     • The next occurrence for this job will still be
                     created (schedule continuity preserved).
                   </Text>
-                  <Text fontSize="xs" color="purple.900">
+                  <Text fontSize="xs" color="purple.fg">
                     • Undoing this is possible via the Payments tab.
                   </Text>
                 </VStack>

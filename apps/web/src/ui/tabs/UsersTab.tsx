@@ -619,7 +619,7 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
       </Box>
       {/* Filters */}
       <HStack mb={2} gap={2}>
-        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)" }}>
+        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-subtle)" }}>
           <RefreshCw size={14} />
         </Button>
         <SearchWithClear
@@ -640,7 +640,7 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: status !== "all" ? "var(--chakra-colors-blue-200)" : "var(--chakra-colors-blue-100)", border: status !== "all" ? "1px solid var(--chakra-colors-blue-400)" : "1px solid var(--chakra-colors-blue-300)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: status !== "all" ? "var(--chakra-colors-blue-muted)" : "var(--chakra-colors-blue-subtle)", border: status !== "all" ? "1px solid var(--chakra-colors-blue-strong)" : "1px solid var(--chakra-colors-blue-emphasized)", borderRadius: "6px" }}>
               <Filter size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -664,7 +664,7 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: accessRole !== "all" ? "var(--chakra-colors-purple-200)" : "var(--chakra-colors-purple-100)", border: accessRole !== "all" ? "1px solid var(--chakra-colors-purple-400)" : "1px solid var(--chakra-colors-purple-300)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: accessRole !== "all" ? "var(--chakra-colors-purple-muted)" : "var(--chakra-colors-purple-subtle)", border: accessRole !== "all" ? "1px solid var(--chakra-colors-purple-strong)" : "1px solid var(--chakra-colors-purple-emphasized)", borderRadius: "6px" }}>
               <Shield size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -688,7 +688,7 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: workerTypeFilter !== "all" ? "var(--chakra-colors-orange-200)" : "var(--chakra-colors-orange-100)", border: workerTypeFilter !== "all" ? "1px solid var(--chakra-colors-orange-400)" : "1px solid var(--chakra-colors-orange-300)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: workerTypeFilter !== "all" ? "var(--chakra-colors-orange-muted)" : "var(--chakra-colors-orange-subtle)", border: workerTypeFilter !== "all" ? "1px solid var(--chakra-colors-orange-strong)" : "1px solid var(--chakra-colors-orange-emphasized)", borderRadius: "6px" }}>
               <Tag size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -819,8 +819,8 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
                       <Badge
                         colorPalette={u.isApproved ? undefined : "orange"}
                         variant={u.isApproved ? undefined : "solid"}
-                        bg={u.isApproved ? undefined : "orange.200"}
-                        color={u.isApproved ? undefined : "orange.900"}
+                        bg={u.isApproved ? undefined : "orange.muted"}
+                        color={u.isApproved ? undefined : "orange.fg"}
                       >
                         {u.email}
                       </Badge>
@@ -1101,7 +1101,7 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
                 {isWorker && (() => {
                   const open = permsOpen.has(u.id);
                   return (
-                    <Box mt={3} pt={3} borderTopWidth="1px" borderColor="gray.200">
+                    <Box mt={3} pt={3} borderTopWidth="1px" borderColor="gray.emphasized">
                       <HStack
                         gap={1}
                         cursor="pointer"
@@ -1194,15 +1194,15 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
                   p={3}
                   borderRadius="md"
                   borderWidth="1px"
-                  borderColor="red.300"
-                  bg="red.50"
+                  borderColor="red.emphasized"
+                  bg="red.faint"
                   justify="space-between"
                   flexWrap="wrap"
                   gap="2"
                 >
                   <Text
                     fontSize="sm"
-                    color="red.900"
+                    color="red.fg"
                     flex="1 1 auto"
                     minW="220px"
                   >
@@ -1273,12 +1273,12 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
             cursor="pointer"
             onClick={onToggle}
             borderRadius="md"
-            bg="gray.100"
+            bg="gray.subtle"
             borderWidth="1px"
-            borderColor="gray.300"
+            borderColor="gray.emphasized"
             borderLeftWidth="4px"
             borderLeftColor={accent}
-            _hover={{ bg: "gray.200" }}
+            _hover={{ bg: "gray.muted" }}
             userSelect="none"
           >
             {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
@@ -1421,22 +1421,22 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
                     <Text fontSize="xs" color="fg.muted" mb={2}>Classifies how a worker is employed. Determines financial treatment and access restrictions.</Text>
                   </Box>
 
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="gray.300">
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="gray.emphasized">
                     <Badge colorPalette="gray" variant="outline" mb={1}>Unclassified</Badge>
                     <Text fontSize="sm">Worker type not yet assigned. Can claim standard jobs (under the high-value threshold). Cannot claim high-value jobs. No platform fee. No insurance requirement. Should be classified by an admin.</Text>
                   </Box>
 
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="cyan.300">
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="cyan.emphasized">
                     <Badge colorPalette="cyan" mb={1}>Trainee</Badge>
                     <Text fontSize="sm">A restricted Employee (W-2) intended for new hires who are shadowing or in training. Treated the same as an Employee financially — no platform fee, no insurance requirement, no contractor agreement. However, they have limited capabilities: cannot claim jobs, take actions (start/complete), accept payments, or reserve equipment. Limited visibility — only sees jobs, clients, and properties they participate in. Cannot see tentative or unassigned jobs. Must rely on a team manager for all actions on their behalf.</Text>
                   </Box>
 
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="blue.300">
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="blue.emphasized">
                     <Badge colorPalette="blue" mb={1}>Employee (W-2)</Badge>
                     <Text fontSize="sm">Full access. Can claim any job including high-value. Can reserve any equipment. No insurance requirement. No platform fee on payments. No contractor agreement required.</Text>
                   </Box>
 
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="orange.300">
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="orange.emphasized">
                     <Badge colorPalette="orange" mb={1}>Contractor (1099)</Badge>
                     <Text fontSize="sm">Must acknowledge a contractor agreement every time they claim a job. Can claim standard jobs without insurance. High-value jobs and insurance-flagged equipment require a valid insurance certificate. Platform fee (configured in Settings) is deducted from their payment splits after expenses. Admin tracks W-9 collection and insurance expiration.</Text>
                   </Box>
@@ -1474,7 +1474,7 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
         messageNode={
           approveWorkerTarget ? (
             <VStack align="stretch" gap={2}>
-              <Box p={3} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">
+              <Box p={3} bg="gray.faint" rounded="md" borderWidth="1px" borderColor="gray.emphasized">
                 <Text fontSize="sm" color="fg.muted">User</Text>
                 <Text fontSize="md" fontWeight="semibold">{approveWorkerTarget.displayName}</Text>
                 <Text fontSize="sm" color="fg.muted" fontFamily="mono">{approveWorkerTarget.email}</Text>

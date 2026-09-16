@@ -161,12 +161,12 @@ export default function ApproveAndLinkClientDialog({
                 <VStack align="stretch" gap={3}>
                   <Box
                     p={2}
-                    bg="blue.50"
+                    bg="blue.faint"
                     borderWidth="1px"
-                    borderColor="blue.200"
+                    borderColor="blue.emphasized"
                     borderRadius="md"
                   >
-                    <Text fontSize="xs" color="blue.900">
+                    <Text fontSize="xs" color="blue.fg">
                       Pick the ClientContact this Clerk account belongs to.
                       Approval and the contact link happen together so the
                       new user can&apos;t end up in the &quot;Unlinked client
@@ -175,9 +175,9 @@ export default function ApproveAndLinkClientDialog({
                   </Box>
                   <Box
                     p={2}
-                    bg="gray.50"
+                    bg="gray.faint"
                     borderWidth="1px"
-                    borderColor="gray.200"
+                    borderColor="gray.emphasized"
                     borderRadius="md"
                   >
                     <Text fontSize="xs" color="fg.muted">
@@ -206,18 +206,18 @@ export default function ApproveAndLinkClientDialog({
                   ) : filtered.length === 0 ? (
                     <Box
                       p={3}
-                      bg="orange.50"
+                      bg="orange.faint"
                       borderWidth="1px"
-                      borderColor="orange.300"
+                      borderColor="orange.emphasized"
                       borderRadius="md"
                     >
-                      <Text fontSize="sm" color="orange.900">
+                      <Text fontSize="sm" color="orange.fg">
                         No unlinked contact matches.{" "}
                         {contacts.length === 0
                           ? "There are no unlinked ClientContacts on file."
                           : "Try clearing the search."}
                       </Text>
-                      <Text fontSize="xs" color="orange.800" mt={1}>
+                      <Text fontSize="xs" color="orange.fg" mt={1}>
                         If the contact doesn&apos;t exist yet, cancel and add
                         it from Admin → Directory → Clients first, then return
                         here to approve.
@@ -234,9 +234,9 @@ export default function ApproveAndLinkClientDialog({
                           py={1.5}
                           borderRadius="md"
                           borderWidth="1px"
-                          borderColor="gray.200"
-                          bg="white"
-                          _hover={{ bg: "gray.50" }}
+                          borderColor="gray.emphasized"
+                          bg="bg.panel"
+                          _hover={{ bg: "gray.faint" }}
                           cursor="pointer"
                           textAlign="left"
                           onClick={() => setConfirmContact(c)}

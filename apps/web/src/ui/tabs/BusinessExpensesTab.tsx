@@ -1239,12 +1239,12 @@ export default function BusinessExpensesTab() {
             tax time whether to depreciate it over several years or take the full Section 179
             deduction (usually 179 for a small business).
           </ExplainerText>
-          <Box borderWidth="1px" borderColor="blue.200" borderRadius="md" bg="white" overflow="hidden">
+          <Box borderWidth="1px" borderColor="blue.emphasized" borderRadius="md" bg="bg.panel" overflow="hidden">
             <Box as="table" w="full" fontSize="xs">
-              <Box as="thead" bg="blue.100">
+              <Box as="thead" bg="blue.subtle">
                 <Box as="tr">
-                  <Box as="th" textAlign="left" px="2" py="1.5" color="blue.900" fontWeight="semibold">Item</Box>
-                  <Box as="th" textAlign="left" px="2" py="1.5" color="blue.900" fontWeight="semibold">How to record</Box>
+                  <Box as="th" textAlign="left" px="2" py="1.5" color="blue.fg" fontWeight="semibold">Item</Box>
+                  <Box as="th" textAlign="left" px="2" py="1.5" color="blue.fg" fontWeight="semibold">How to record</Box>
                 </Box>
               </Box>
               <Box as="tbody">
@@ -1255,7 +1255,7 @@ export default function BusinessExpensesTab() {
                   { item: "Blower $250", how: "Expense immediately — Equipment & Tools" },
                   { item: "Shovel $30", how: "Expense immediately — Supplies & Materials" },
                 ].map((row, i) => (
-                  <Box as="tr" key={i} borderTopWidth={i === 0 ? "0" : "1px"} borderTopColor="blue.100">
+                  <Box as="tr" key={i} borderTopWidth={i === 0 ? "0" : "1px"} borderTopColor="blue.muted">
                     <Box as="td" px="2" py="1.5" color="fg.default">{row.item}</Box>
                     <Box as="td" px="2" py="1.5" color="fg.default">{row.how}</Box>
                   </Box>
@@ -1299,15 +1299,15 @@ export default function BusinessExpensesTab() {
                     key={s.latestId}
                     gap={2}
                     p={2}
-                    bg="white"
+                    bg="bg.panel"
                     borderRadius="md"
                     borderWidth="1px"
-                    borderColor={isOverdue ? "red.200" : "gray.200"}
+                    borderColor={isOverdue ? "red.emphasized" : "gray.emphasized"}
                     fontSize="sm"
                     wrap="wrap"
                   >
                     <Box flex="1" minW="200px">
-                      <Text fontWeight="medium" color="gray.800">
+                      <Text fontWeight="medium" color="gray.fg">
                         {s.prefill.description}
                         {s.prefill.vendor && <Text as="span" color="fg.muted"> — {s.prefill.vendor}</Text>}
                       </Text>
@@ -1316,7 +1316,7 @@ export default function BusinessExpensesTab() {
                           {RECURRENCE_LABELS[s.recurrence]}
                         </Badge>
                         <Text>last {fmtUSD(s.latestCost)} on {fmtDate(s.latestDate)}</Text>
-                        <Text color={isOverdue ? "red.600" : "fg.muted"} fontWeight={isOverdue ? "medium" : "normal"}>
+                        <Text color={isOverdue ? "red.fg" : "fg.muted"} fontWeight={isOverdue ? "medium" : "normal"}>
                           · {isOverdue ? `${s.overdueDays} day${s.overdueDays === 1 ? "" : "s"} overdue` : `due ${expectedLabel}`}
                         </Text>
                       </HStack>
@@ -1427,8 +1427,8 @@ export default function BusinessExpensesTab() {
                     w="14px"
                     h="14px"
                     borderRadius="full"
-                    bg="green.500"
-                    color="white"
+                    bg="green.solid"
+                    color="green.contrast"
                     verticalAlign="middle"
                   >
                     <ChevronDown size={9} />
@@ -1437,9 +1437,9 @@ export default function BusinessExpensesTab() {
                 {quickDateMenuOpen && (
                   <VStack
                     position="fixed"
-                    bg="white"
+                    bg="bg.panel"
                     borderWidth="1px"
-                    borderColor="gray.200"
+                    borderColor="gray.emphasized"
                     rounded="md"
                     shadow="lg"
                     zIndex={10000}
@@ -1573,10 +1573,10 @@ export default function BusinessExpensesTab() {
                     <Select.Trigger
                       css={{
                         background: filterPaymentFrom
-                          ? "var(--chakra-colors-blue-50)"
+                          ? "var(--chakra-colors-blue-faint)"
                           : "var(--chakra-colors-bg)",
                         borderColor: filterPaymentFrom
-                          ? "var(--chakra-colors-blue-400)"
+                          ? "var(--chakra-colors-blue-strong)"
                           : undefined,
                       }}
                       title="Filter by Payment From account"
@@ -1715,8 +1715,8 @@ export default function BusinessExpensesTab() {
               variant="outline"
               // Light-green wash when reconciled — visually separates
               // "done" rows from the outstanding work queue at a glance.
-              bg={e.reconciledAt ? "green.50" : undefined}
-              borderColor={e.reconciledAt ? "green.200" : undefined}
+              bg={e.reconciledAt ? "green.faint" : undefined}
+              borderColor={e.reconciledAt ? "green.emphasized" : undefined}
             >
               <Card.Body p={3}>
                 <HStack justify="space-between" align="flex-start" gap={2}>
@@ -1817,7 +1817,7 @@ export default function BusinessExpensesTab() {
                           borderRadius="full"
                           px="2"
                           cursor="pointer"
-                          _hover={{ bg: "teal.100" }}
+                          _hover={{ bg: "teal.subtle" }}
                           title="View this occurrence on the Admin Jobs tab"
                           onClick={() => {
                             try {
@@ -1846,7 +1846,7 @@ export default function BusinessExpensesTab() {
                           borderRadius="full"
                           px="2"
                           cursor="pointer"
-                          _hover={{ bg: "blue.100" }}
+                          _hover={{ bg: "blue.subtle" }}
                           title="View this supply on the Supplies tab"
                           onClick={() => {
                             // Hand off to the Super → Supplies tab. Same pattern as
@@ -1882,7 +1882,7 @@ export default function BusinessExpensesTab() {
                           borderRadius="full"
                           px="2"
                           cursor="pointer"
-                          _hover={{ bg: "orange.100" }}
+                          _hover={{ bg: "orange.subtle" }}
                           title="View this equipment on the Equipment tab"
                           onClick={() => {
                             try {
@@ -1929,26 +1929,26 @@ export default function BusinessExpensesTab() {
                         <Box
                           mt={2}
                           p={2}
-                          bg="yellow.50"
+                          bg="yellow.faint"
                           borderWidth="1px"
-                          borderColor="yellow.300"
+                          borderColor="yellow.emphasized"
                           borderRadius="md"
                           cursor="pointer"
-                          _hover={{ bg: "yellow.100" }}
+                          _hover={{ bg: "yellow.subtle" }}
                           onClick={() => openFollowupDialog(e)}
                         >
                           <HStack gap={2} align="start">
-                            <Box color="yellow.700" flexShrink={0} mt="2px">
+                            <Box color="yellow.fg" flexShrink={0} mt="2px">
                               <Flag size={12} fill="currentColor" />
                             </Box>
                             <Box flex="1" minW={0}>
-                              <Text fontSize="xs" color="yellow.900" fontWeight="semibold">
+                              <Text fontSize="xs" color="yellow.fg" fontWeight="semibold">
                                 Followup
                                 {f.createdBy?.displayName ? ` · ${f.createdBy.displayName}` : ""}
                                 {" · "}{fmtDate(f.createdAt)}
                               </Text>
                               {f.note && (
-                                <Text fontSize="xs" color="yellow.900" whiteSpace="pre-wrap" mt={0.5}>
+                                <Text fontSize="xs" color="yellow.fg" whiteSpace="pre-wrap" mt={0.5}>
                                   {f.note}
                                 </Text>
                               )}
@@ -1972,7 +1972,7 @@ export default function BusinessExpensesTab() {
                       <Text
                         fontSize="md"
                         fontWeight="bold"
-                        color={e.cost < 0 ? "green.600" : "orange.600"}
+                        color={e.cost < 0 ? "green.fg" : "orange.fg"}
                       >
                         {fmtUSD(e.cost)}
                       </Text>
@@ -2097,15 +2097,15 @@ export default function BusinessExpensesTab() {
                   {continuationCandidates.length > 0 && (
                     <Box
                       borderWidth="1px"
-                      borderColor="orange.300"
-                      bg="orange.50"
+                      borderColor="orange.emphasized"
+                      bg="orange.faint"
                       borderRadius="md"
                       p={3}
                     >
-                      <Text fontSize="sm" fontWeight="semibold" color="orange.900" mb={1}>
+                      <Text fontSize="sm" fontWeight="semibold" color="orange.fg" mb={1}>
                         Looks like a continuation of an existing series
                       </Text>
-                      <Text fontSize="xs" color="orange.900" mb={2}>
+                      <Text fontSize="xs" color="orange.fg" mb={2}>
                         Joining glues this row to the same series so future Records stay in sync — even if the description drifts. Creating as new starts a separate series.
                       </Text>
                       <VStack align="stretch" gap={2}>
@@ -2115,9 +2115,9 @@ export default function BusinessExpensesTab() {
                             justify="space-between"
                             gap={2}
                             p={2}
-                            bg="white"
+                            bg="bg.panel"
                             borderWidth="1px"
-                            borderColor="orange.200"
+                            borderColor="orange.emphasized"
                             borderRadius="md"
                           >
                             <VStack align="start" gap={0} flex="1" minW={0}>
@@ -2202,7 +2202,7 @@ export default function BusinessExpensesTab() {
                       type="date"
                       value={fDate}
                       onChange={(e) => setFDate(e.target.value)}
-                      style={{ width: "100%", padding: "6px 10px", fontSize: "14px", border: "1px solid var(--chakra-colors-gray-200)", borderRadius: "6px" }}
+                      style={{ width: "100%", padding: "6px 10px", fontSize: "14px", border: "1px solid var(--chakra-colors-gray-emphasized)", borderRadius: "6px" }}
                     />
                   </Box>
                   <Box>
@@ -2241,7 +2241,7 @@ export default function BusinessExpensesTab() {
                     />
                     {fType === "EXPENSE" && parseFloat(fCost) < 0 && (
                       <HStack gap={1.5} mt={1.5} align="start">
-                        <Box as={CornerUpLeft} mt="2px" color="green.solid" flexShrink={0} />
+                        <Box as={CornerUpLeft} mt="2px" color="green.fg" flexShrink={0} />
                         <Text fontSize="xs" color="green.fg">
                           Recorded as a <Text as="span" fontWeight="semibold">refund</Text> — it
                           reduces this category's total and its Schedule C deduction. Date it when
@@ -2262,14 +2262,14 @@ export default function BusinessExpensesTab() {
                             P&L. That is worth flagging — but as the
                             consequence, not as a vintage. */}
                         {fCategory && !selectableCategories.some((c) => c.label === fCategory) && (
-                          <Text fontSize="xs" color="orange.600" mt={1}>
+                          <Text fontSize="xs" color="orange.fg" mt={1}>
                             &ldquo;{fCategory}&rdquo; isn&rsquo;t one of your Schedule C lines, so
                             this row lands under <Text as="span" fontWeight="semibold">Unmapped</Text>{" "}
                             on the P&amp;L. Pick a line to file it properly.
                           </Text>
                         )}
-                        <Box mt={2} p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" borderRadius="md">
-                          <Text fontSize="xs" color="blue.800">
+                        <Box mt={2} p={2} bg="blue.faint" borderWidth="1px" borderColor="blue.emphasized" borderRadius="md">
+                          <Text fontSize="xs" color="blue.fg">
                             <Text as="span" fontWeight="semibold">Supplies vs Depreciation:</Text>{" "}
                             Use <Text as="span" fontWeight="semibold">Supplies (line 22)</Text> for consumables and small items
                             — string trimmer line, fertilizer, fuel, hand tools, anything under roughly{" "}
@@ -2403,8 +2403,8 @@ export default function BusinessExpensesTab() {
                           gap={2}
                           p={2}
                           borderWidth="1px"
-                          borderColor="green.200"
-                          bg="green.50"
+                          borderColor="green.emphasized"
+                          bg="green.faint"
                           borderRadius="md"
                           fontSize="sm"
                         >
@@ -2642,7 +2642,7 @@ export default function BusinessExpensesTab() {
               <Dialog.Body>
                 <VStack align="stretch" gap={3}>
                   {followupDialog?.row && (
-                    <Box p={2} bg="gray.50" borderWidth="1px" borderColor="gray.200" borderRadius="md">
+                    <Box p={2} bg="gray.faint" borderWidth="1px" borderColor="gray.emphasized" borderRadius="md">
                       <Text fontSize="sm" fontWeight="semibold">{followupDialog.row.description}</Text>
                       <Text fontSize="xs" color="fg.muted">
                         {fmtDate(followupDialog.row.date)} · {fmtUSD(followupDialog.row.cost)}

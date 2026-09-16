@@ -547,7 +547,7 @@ function BackHeader({
       justify="space-between"
       align="center"
       borderBottomWidth="1px"
-      borderColor="gray.200"
+      borderColor="gray.emphasized"
       pb={2}
     >
       <Button size="sm" variant="outline" onClick={onClose}>
@@ -774,7 +774,7 @@ function EmptyState({
     <Card.Root variant="outline" mt={mt}>
       <Card.Body p={6}>
         <VStack gap={2} align="center">
-          <Box color="green.500"><CheckCircle2 size={32} /></Box>
+          <Box color="green.fg"><CheckCircle2 size={32} /></Box>
           <Text fontSize="md" fontWeight="semibold">{title}</Text>
           <Text fontSize="sm" color="fg.muted" textAlign="center">{body}</Text>
         </VStack>

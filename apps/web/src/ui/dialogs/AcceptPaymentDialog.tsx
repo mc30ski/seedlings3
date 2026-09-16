@@ -541,14 +541,14 @@ export default function AcceptPaymentDialog({
                   <VStack align="stretch" gap={3}>
                     <Box
                       p={3}
-                      bg="blue.50"
+                      bg="blue.faint"
                       borderWidth="1px"
-                      borderColor="blue.300"
+                      borderColor="blue.emphasized"
                       borderLeftWidth="4px"
                       borderLeftColor="blue.500"
                       rounded="md"
                     >
-                      <Text fontSize="sm" color="blue.900">
+                      <Text fontSize="sm" color="blue.fg">
                         Enter the amount you actually received. Defaults to the invoice total — only change it if the amount was different.
                       </Text>
                     </Box>
@@ -587,7 +587,7 @@ export default function AcceptPaymentDialog({
                         <Text
                           mt={1}
                           fontSize="xs"
-                          color="blue.600"
+                          color="blue.fg"
                           cursor="pointer"
                           textDecoration="underline"
                           textDecorationStyle="dotted"
@@ -621,14 +621,14 @@ export default function AcceptPaymentDialog({
                         fee-bearing methods, shows gross / fee / net so the
                         worker can see exactly what hits the bank account. */}
                     {selectedMethodConfig && liveFee.fee > 0 && (
-                      <Box p={2} bg="orange.50" rounded="md" borderWidth="1px" borderColor="orange.200">
+                      <Box p={2} bg="orange.faint" rounded="md" borderWidth="1px" borderColor="orange.emphasized">
                         <VStack align="stretch" gap={0.5} fontSize="xs">
                           <HStack justify="space-between">
                             <Text color="fg.muted">Gross charged:</Text>
                             <Text fontWeight="medium">${liveFee.gross.toFixed(2)}</Text>
                           </HStack>
                           <HStack justify="space-between">
-                            <Text color="orange.700">
+                            <Text color="orange.fg">
                               {selectedMethodConfig.label} fee
                               {selectedMethodConfig.feePercent > 0
                                 ? ` (${selectedMethodConfig.feePercent}%${selectedMethodConfig.feeFixed > 0 ? ` + $${selectedMethodConfig.feeFixed.toFixed(2)}` : ""})`
@@ -636,9 +636,9 @@ export default function AcceptPaymentDialog({
                                   ? ` ($${selectedMethodConfig.feeFixed.toFixed(2)})`
                                   : ""}:
                             </Text>
-                            <Text color="orange.700" fontWeight="medium">−${liveFee.fee.toFixed(2)}</Text>
+                            <Text color="orange.fg" fontWeight="medium">−${liveFee.fee.toFixed(2)}</Text>
                           </HStack>
-                          <HStack justify="space-between" borderTopWidth="1px" borderColor="orange.200" pt={0.5} mt={0.5}>
+                          <HStack justify="space-between" borderTopWidth="1px" borderColor="orange.emphasized" pt={0.5} mt={0.5}>
                             <Text fontWeight="semibold">Net received:</Text>
                             <Text fontWeight="semibold">${liveFee.net.toFixed(2)}</Text>
                           </HStack>
@@ -716,14 +716,14 @@ export default function AcceptPaymentDialog({
                         <>
                           <Box
                             p={3}
-                            bg={channel === "missing-primary" ? "red.50" : "blue.50"}
+                            bg={channel === "missing-primary" ? "red.faint" : "blue.faint"}
                             borderWidth="1px"
-                            borderColor={channel === "missing-primary" ? "red.300" : "blue.300"}
+                            borderColor={channel === "missing-primary" ? "red.emphasized" : "blue.emphasized"}
                             borderLeftWidth="4px"
                             borderLeftColor={channel === "missing-primary" ? "red.500" : "blue.500"}
                             rounded="md"
                           >
-                            <Text fontSize="sm" color={channel === "missing-primary" ? "red.900" : "blue.900"}>
+                            <Text fontSize="sm" color={channel === "missing-primary" ? "red.fg" : "blue.fg"}>
                               {channel === "server" && (
                                 <>The payment request was already sent. Confirming will save the per-worker splits. Once the client indicates payment, an admin will review before the job is closed.</>
                               )}
@@ -737,13 +737,13 @@ export default function AcceptPaymentDialog({
                                 <>This client has no primary contact set. Open the client's contacts and mark one as Primary before requesting payment.</>
                               )}
                               {channel === "none" && (
-                                <Text color="red.700">
+                                <Text color="red.fg">
                                   The primary contact has no phone or email on file. Update their contact info before requesting payment.
                                 </Text>
                               )}
                             </Text>
                           </Box>
-                          <Box p={3} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">
+                          <Box p={3} bg="gray.faint" rounded="md" borderWidth="1px" borderColor="gray.emphasized">
                             <VStack align="stretch" gap={0.5} fontSize="xs">
                               <HStack justify="space-between"><Text>Amount to request</Text><Text fontWeight="semibold">${(parseFloat(amountPaid) || 0).toFixed(2)}</Text></HStack>
                               <HStack justify="space-between"><Text>Property</Text><Text fontWeight="semibold" truncate>{handoff?.propertyLabel ?? "—"}</Text></HStack>
@@ -793,14 +793,14 @@ export default function AcceptPaymentDialog({
               <VStack align="stretch" gap={3}>
                 <Box
                   p={3}
-                  bg="blue.50"
+                  bg="blue.faint"
                   borderWidth="1px"
-                  borderColor="blue.300"
+                  borderColor="blue.emphasized"
                   borderLeftWidth="4px"
                   borderLeftColor="blue.500"
                   rounded="md"
                 >
-                  <Text fontSize="sm" color="blue.900">
+                  <Text fontSize="sm" color="blue.fg">
                     <Text as="span" fontWeight="semibold">Request Payment</Text> sends the client a message with a link to pay the invoice.{" "}
                     <Text as="span" fontWeight="semibold">Accept Now</Text> records a direct payment (e.g. cash on-site).
                     Either way the payment will be reviewed by an admin before the job closes.
@@ -824,13 +824,13 @@ export default function AcceptPaymentDialog({
                   const invoiceTotal = (basePrice ?? 0) + addonsTotal;
                   const differs = Math.abs(enteredAmount - invoiceTotal) > 0.01 && enteredAmount > 0;
                   return (
-                    <Box p={3} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">
+                    <Box p={3} bg="gray.faint" rounded="md" borderWidth="1px" borderColor="gray.emphasized">
                       <VStack align="stretch" gap={0.5} fontSize="xs">
                         <HStack justify="space-between" color="fg.muted">
                           <Text>Base price</Text>
                           <Text>${(basePrice ?? 0).toFixed(2)}</Text>
                         </HStack>
-                        <HStack justify="space-between" color={addonsTotal > 0 ? "green.700" : "fg.muted"}>
+                        <HStack justify="space-between" color={addonsTotal > 0 ? "green.fg" : "fg.muted"}>
                           <Text>+ Add-ons</Text>
                           <Text>${addonsTotal.toFixed(2)}</Text>
                         </HStack>
@@ -838,32 +838,32 @@ export default function AcceptPaymentDialog({
                           <Text>= Invoice</Text>
                           <Text>${invoiceTotal.toFixed(2)}</Text>
                         </HStack>
-                        <Box borderTopWidth="1px" borderColor="gray.300" my={1} />
-                        <HStack justify="space-between" fontWeight="semibold" color={differs ? "orange.600" : undefined}>
+                        <Box borderTopWidth="1px" borderColor="gray.emphasized" my={1} />
+                        <HStack justify="space-between" fontWeight="semibold" color={differs ? "orange.fg" : undefined}>
                           <Text>Amount paid</Text>
                           <Text>${enteredAmount.toFixed(2)}</Text>
                         </HStack>
                         {differs && (
-                          <Text fontSize="2xs" color="orange.600" textAlign="right">
+                          <Text fontSize="2xs" color="orange.fg" textAlign="right">
                             ({enteredAmount > invoiceTotal ? "over" : "under"} invoice by ${Math.abs(enteredAmount - invoiceTotal).toFixed(2)})
                           </Text>
                         )}
-                        <HStack justify="space-between" color={totalInvoiceCharges > 0 ? "orange.600" : "fg.muted"}>
+                        <HStack justify="space-between" color={totalInvoiceCharges > 0 ? "orange.fg" : "fg.muted"}>
                           <Text>− Invoice charges</Text>
                           <Text>${totalInvoiceCharges.toFixed(2)}</Text>
                         </HStack>
-                        <HStack justify="space-between" color={breakdown.platformFeeTotal > 0 ? "orange.600" : "fg.muted"}>
+                        <HStack justify="space-between" color={breakdown.platformFeeTotal > 0 ? "orange.fg" : "fg.muted"}>
                           <Text>− Platform fee ({commissionPercent}% of contractor shares)</Text>
                           <Text>${breakdown.platformFeeTotal.toFixed(2)}</Text>
                         </HStack>
-                        <HStack justify="space-between" color={breakdown.businessMarginTotal > 0 ? "orange.600" : "fg.muted"}>
+                        <HStack justify="space-between" color={breakdown.businessMarginTotal > 0 ? "orange.fg" : "fg.muted"}>
                           <Text>− Business margin ({marginPercent}% of employee shares)</Text>
                           <Text>${breakdown.businessMarginTotal.toFixed(2)}</Text>
                         </HStack>
-                        <Box borderTopWidth="1px" borderColor="gray.300" my={1} />
+                        <Box borderTopWidth="1px" borderColor="gray.emphasized" my={1} />
                         <HStack justify="space-between" fontWeight="bold">
                           <Text>Workers receive</Text>
-                          <Text color="green.700">${breakdown.totalPayout.toFixed(2)}</Text>
+                          <Text color="green.fg">${breakdown.totalPayout.toFixed(2)}</Text>
                         </HStack>
                       </VStack>
                     </Box>
@@ -906,7 +906,7 @@ export default function AcceptPaymentDialog({
                                 ${r.gross.toFixed(2)} gross
                                 {r.fee > 0 && <> − ${r.fee.toFixed(2)} {r.isEmployeeClass ? "margin" : "fee"} ({r.ratePercent}%)</>}
                                 {" = "}
-                                <Text as="span" color="green.700" fontWeight="semibold">${r.net.toFixed(2)}</Text>
+                                <Text as="span" color="green.fg" fontWeight="semibold">${r.net.toFixed(2)}</Text>
                               </Text>
                             )}
                           </VStack>
@@ -945,9 +945,9 @@ export default function AcceptPaymentDialog({
                       mt={2}
                       pt={2}
                       borderTopWidth="1px"
-                      borderColor="gray.200"
+                      borderColor="gray.emphasized"
                     >
-                      <Text fontSize="xs" color={percentSum !== 100 ? "red.600" : "fg.muted"}>
+                      <Text fontSize="xs" color={percentSum !== 100 ? "red.fg" : "fg.muted"}>
                         {percentSum !== 100
                           ? `Splits sum to ${percentSum}% — must be 100%`
                           : "Splits sum to 100% ✓"}

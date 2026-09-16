@@ -384,8 +384,8 @@ export default function JobDialog({
                     min={1}
                     size="sm"
                   />
-                  <Box px={2} py={1} mt={1} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" rounded="md">
-                    <Text fontSize="2xs" color="yellow.700">Enter the time as if one person were completing the job alone. The app will automatically adjust the estimate when multiple workers are assigned.</Text>
+                  <Box px={2} py={1} mt={1} bg="yellow.faint" borderWidth="1px" borderColor="yellow.emphasized" rounded="md">
+                    <Text fontSize="2xs" color="yellow.fg">Enter the time as if one person were completing the job alone. The app will automatically adjust the estimate when multiple workers are assigned.</Text>
                   </Box>
                 </div>
 
@@ -399,8 +399,8 @@ export default function JobDialog({
                     min={1}
                     size="sm"
                   />
-                  <Box p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" borderRadius="md" mt={2}>
-                    <Text fontSize="xs" color="yellow.800">
+                  <Box p={2} bg="yellow.faint" borderWidth="1px" borderColor="yellow.emphasized" borderRadius="md" mt={2}>
+                    <Text fontSize="xs" color="yellow.fg">
                       This is the default repeat frequency for new occurrences on this job. Individual occurrences can override this with their own frequency.
                     </Text>
                   </Box>

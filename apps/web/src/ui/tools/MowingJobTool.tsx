@@ -343,8 +343,8 @@ export default function MowingJobTool() {
                 <Box>
                   {standardMowOptions.length === 0 ? (
                     <HStack gap={2} align="start">
-                      <Box color="orange.500" mt="0.5"><TriangleAlert size={16} /></Box>
-                      <Text fontSize="sm" color="orange.800">
+                      <Box color="orange.fg" mt="0.5"><TriangleAlert size={16} /></Box>
+                      <Text fontSize="sm" color="orange.fg">
                         No standard mow rate found (looking for a pricing
                         entry tagged exclusively <code>MOW</code>).
                         Pick another mode or add one in Pricing settings.
@@ -366,7 +366,7 @@ export default function MowingJobTool() {
                         <Text fontSize="sm">
                           <Text as="span" fontWeight="medium">{standardMow.parsedValue?.label}</Text>
                           {" — "}
-                          <Text as="span" color="green.700" fontWeight="bold">${Number(standardMow.parsedValue?.amount ?? 0).toFixed(2)}</Text>
+                          <Text as="span" color="green.fg" fontWeight="bold">${Number(standardMow.parsedValue?.amount ?? 0).toFixed(2)}</Text>
                           {" "}{standardMow.parsedValue?.unit ?? "per visit"}
                         </Text>
                       )}
@@ -470,8 +470,8 @@ export default function MowingJobTool() {
                     gap={2}
                     p={2}
                     borderWidth="1px"
-                    borderColor={isOn ? "blue.300" : "gray.200"}
-                    bg={isOn ? "blue.50" : undefined}
+                    borderColor={isOn ? "blue.emphasized" : "gray.emphasized"}
+                    bg={isOn ? "blue.faint" : undefined}
                     borderRadius="md"
                     cursor="pointer"
                     onClick={() => toggleAddOn(a.key)}
@@ -504,7 +504,7 @@ export default function MowingJobTool() {
                       </HStack>
                       <Text fontSize="xs" color="fg.muted">{a.unit}</Text>
                     </Box>
-                    <Text fontSize="sm" color="green.700" fontWeight="bold">${a.amount.toFixed(2)}</Text>
+                    <Text fontSize="sm" color="green.fg" fontWeight="bold">${a.amount.toFixed(2)}</Text>
                   </HStack>
                 );
               })}
@@ -539,27 +539,27 @@ export default function MowingJobTool() {
       </Card.Root>
 
       {/* Quote */}
-      <Card.Root variant="outline" borderColor="green.300" bg="green.50">
+      <Card.Root variant="outline" borderColor="green.emphasized" bg="green.faint">
         <Card.Body p={3}>
           <HStack justify="space-between" align="start" wrap="wrap" gap={3}>
             <VStack align="start" gap={1} minW={0}>
-              <Text fontSize="xs" color="green.800" fontWeight="medium">Per visit</Text>
-              <Text fontSize="3xl" fontWeight="bold" color="green.900" lineHeight="1">
+              <Text fontSize="xs" color="green.fg" fontWeight="medium">Per visit</Text>
+              <Text fontSize="3xl" fontWeight="bold" color="green.fg" lineHeight="1">
                 ${perVisitTotal.toFixed(2)}
               </Text>
-              <Text fontSize="xs" color="green.700">
+              <Text fontSize="xs" color="green.fg">
                 Base ${baseAmount.toFixed(2)}
                 {selectedAddOns.length > 0 && ` + ${selectedAddOns.length} add-on${selectedAddOns.length === 1 ? "" : "s"} ($${addOnsTotal.toFixed(2)})`}
               </Text>
               {isRecurring && monthlyTotal != null && annualTotal != null && (
                 <HStack gap={3} mt={2} wrap="wrap">
                   <Box>
-                    <Text fontSize="2xs" color="green.700">Monthly (est)</Text>
-                    <Text fontSize="md" fontWeight="bold" color="green.900">${monthlyTotal.toFixed(2)}</Text>
+                    <Text fontSize="2xs" color="green.fg">Monthly (est)</Text>
+                    <Text fontSize="md" fontWeight="bold" color="green.fg">${monthlyTotal.toFixed(2)}</Text>
                   </Box>
                   <Box>
-                    <Text fontSize="2xs" color="green.700">Annual (est)</Text>
-                    <Text fontSize="md" fontWeight="bold" color="green.900">${annualTotal.toFixed(2)}</Text>
+                    <Text fontSize="2xs" color="green.fg">Annual (est)</Text>
+                    <Text fontSize="md" fontWeight="bold" color="green.fg">${annualTotal.toFixed(2)}</Text>
                   </Box>
                 </HStack>
               )}

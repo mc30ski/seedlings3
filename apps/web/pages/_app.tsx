@@ -21,6 +21,14 @@ import { clearAllPersistedState } from "../src/lib/usePersistedState";
 import InlineMessage, { publishInlineMessage } from "../src/ui/components/InlineMessage";
 import { initOfflineExecutor } from "../src/lib/offlineExecutor";
 import { getSeasonIcons } from "../src/lib/season";
+
+/** What the SERVER renders. The real season is resolved on the client, where
+ *  localStorage and the ET clock are available. */
+const DEFAULT_SEASON_ICONS = {
+  icon: "/seedlings-icon.png",
+  icon32: "/seedlings-icon-32.png",
+  icon16: "/seedlings-icon-16.png",
+};
 import { refreshPushSubscription } from "../src/lib/usePushNotifications";
 import { BusinessStartProvider } from "../src/lib/businessStartCutoff";
 import BusinessStartRevealBanner from "../src/ui/components/BusinessStartRevealBanner";
@@ -72,24 +80,6 @@ function AppInner({ Component, pageProps }: AppProps) {
     if (!userId) return;
     void refreshPushSubscription();
   }, [userId]);
-
-  // Update favicon/icons based on season
-  useEffect(() => {
-    function updateFavicons() {
-      const icons = getSeasonIcons();
-      document.querySelectorAll<HTMLLinkElement>("link[rel='icon']").forEach((el) => {
-        if (el.sizes?.contains("32x32")) el.href = icons.icon32;
-        else if (el.sizes?.contains("16x16")) el.href = icons.icon16;
-        else el.href = icons.icon;
-      });
-      document.querySelectorAll<HTMLLinkElement>("link[rel='apple-touch-icon']").forEach((el) => {
-        el.href = icons.icon;
-      });
-    }
-    updateFavicons();
-    window.addEventListener("seedlings:seasonChanged", updateFavicons);
-    return () => window.removeEventListener("seedlings:seasonChanged", updateFavicons);
-  }, []);
 
   // Show toast when offline queue processes after coming back online
   useEffect(() => {
@@ -176,6 +166,23 @@ function AppInner({ Component, pageProps }: AppProps) {
 }
 
 export default function MyApp(props: AppProps) {
+  // Seasonal favicon.
+  //
+  // This used to reach into the DOM and rewrite each <link href> after the
+  // fact. Those links are rendered by next/head, so every subsequent render
+  // put the default straight back and the tab icon stayed on the spring mark
+  // all autumn. Holding the season in STATE and rendering the href from it
+  // means React owns the value and nothing overwrites it.
+  //
+  // The initial value must match what the server rendered, or hydration
+  // warns; the effect swaps it on the client where localStorage exists.
+  const [seasonIcons, setSeasonIcons] = useState(DEFAULT_SEASON_ICONS);
+  useEffect(() => {
+    const sync = () => setSeasonIcons(getSeasonIcons());
+    sync();
+    window.addEventListener("seedlings:seasonChanged", sync);
+    return () => window.removeEventListener("seedlings:seasonChanged", sync);
+  }, []);
   return (
     <>
       <Head>
@@ -193,21 +200,21 @@ export default function MyApp(props: AppProps) {
         <link rel="manifest" href="/manifest.webmanifest" />
         <meta name="theme-color" content="#0a7cff" />
 
-        {/* Icons */}
-        <link rel="icon" href="/seedlings-icon.png" />
+        {/* Icons — seasonal; see the seasonIcons state above. */}
+        <link rel="icon" href={seasonIcons.icon} />
         <link
           rel="icon"
           type="image/png"
           sizes="32x32"
-          href="/seedlings-icon-32.png"
+          href={seasonIcons.icon32}
         />
         <link
           rel="icon"
           type="image/png"
           sizes="16x16"
-          href="/seedlings-icon-16.png"
+          href={seasonIcons.icon16}
         />
-        <link rel="apple-touch-icon" href="/seedlings-icon.png" />
+        <link rel="apple-touch-icon" href={seasonIcons.icon} />
       </Head>
 
       <ClerkProvider

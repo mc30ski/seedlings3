@@ -168,7 +168,7 @@ export function OperationsPanel({
    */
   const summaryNode = useMemo(
     () => (
-      <Text fontSize="xs" color="orange.900" lineClamp={1}>
+      <Text fontSize="xs" color="orange.fg" lineClamp={1}>
         {period.label}
         {data ? (
           <>
@@ -636,7 +636,7 @@ export function MyVehiclesSection({
             {totals.open > 0 && (
               <>
                 {" · "}
-                <Box as="span" fontWeight="bold" color="orange.700">
+                <Box as="span" fontWeight="bold" color="orange.fg">
                   {totals.open} driving now
                 </Box>
               </>
@@ -700,8 +700,8 @@ export function MyVehiclesSection({
               p={2.5}
               borderWidth="1px"
               borderRadius="md"
-              borderColor={r.openSessionCount > 0 ? "orange.300" : "gray.200"}
-              bg={r.openSessionCount > 0 ? "orange.50" : "white"}
+              borderColor={r.openSessionCount > 0 ? "orange.emphasized" : "gray.emphasized"}
+              bg={r.openSessionCount > 0 ? "orange.faint" : "bg.panel"}
             >
               <HStack justify="space-between" align="flex-start" gap={2} wrap="wrap">
                 <VStack align="start" gap={0} minW={0} flex="1">
@@ -734,7 +734,7 @@ export function MyVehiclesSection({
                 </VStack>
               </HStack>
               {r.unapprovedMiles > 0 && (
-                <Text fontSize="2xs" color="orange.700" mt={1}>
+                <Text fontSize="2xs" color="orange.fg" mt={1}>
                   {fmtMiles(r.unapprovedMiles)} mi still awaiting review
                 </Text>
               )}

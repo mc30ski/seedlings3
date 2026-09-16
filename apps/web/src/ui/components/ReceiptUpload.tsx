@@ -169,7 +169,7 @@ export default function ReceiptUpload({
       <HStack gap={2} fontSize="xs" wrap="wrap">
         {hasReceipt ? (
           <>
-            <HStack gap={1} color="green.700">
+            <HStack gap={1} color="green.fg">
               <Paperclip size={12} />
               <Text fontSize="xs">{existing?.receiptFileName ?? "Receipt"}</Text>
             </HStack>
@@ -249,8 +249,8 @@ export default function ReceiptUpload({
           gap={2}
           p={2}
           borderWidth="1px"
-          borderColor="green.200"
-          bg="green.50"
+          borderColor="green.emphasized"
+          bg="green.faint"
           borderRadius="md"
           fontSize="sm"
         >

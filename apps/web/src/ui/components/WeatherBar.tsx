@@ -64,14 +64,14 @@ function dayLabel(date: string, label?: string): string {
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 function getTheme(icon: string, rainChance: number) {
-  if (rainChance >= 50 || icon.startsWith("09") || icon.startsWith("10")) return { bg: "blue.200", border: "blue.400", text: "blue.800", sub: "blue.600" };
-  if (icon.startsWith("11")) return { bg: "purple.200", border: "purple.400", text: "purple.800", sub: "purple.600" };
-  if (icon.startsWith("13")) return { bg: "gray.200", border: "gray.400", text: "gray.700", sub: "gray.500" };
-  if (icon.startsWith("01")) return { bg: "yellow.200", border: "yellow.400", text: "yellow.800", sub: "yellow.600" };
-  if (icon.startsWith("02")) return { bg: "orange.200", border: "orange.400", text: "orange.800", sub: "orange.600" };
-  if (icon.startsWith("03") || icon.startsWith("04")) return { bg: "gray.200", border: "gray.400", text: "gray.700", sub: "gray.500" };
-  if (icon.startsWith("50")) return { bg: "gray.200", border: "gray.400", text: "gray.700", sub: "gray.500" };
-  return { bg: "blue.200", border: "blue.400", text: "blue.800", sub: "blue.600" };
+  if (rainChance >= 50 || icon.startsWith("09") || icon.startsWith("10")) return { bg: "blue.muted", border: "blue.strong", text: "blue.fg", sub: "blue.fg" };
+  if (icon.startsWith("11")) return { bg: "purple.muted", border: "purple.strong", text: "purple.fg", sub: "purple.fg" };
+  if (icon.startsWith("13")) return { bg: "gray.muted", border: "gray.strong", text: "gray.fg", sub: "gray.fg" };
+  if (icon.startsWith("01")) return { bg: "yellow.muted", border: "yellow.strong", text: "yellow.fg", sub: "yellow.fg" };
+  if (icon.startsWith("02")) return { bg: "orange.muted", border: "orange.strong", text: "orange.fg", sub: "orange.fg" };
+  if (icon.startsWith("03") || icon.startsWith("04")) return { bg: "gray.muted", border: "gray.strong", text: "gray.fg", sub: "gray.fg" };
+  if (icon.startsWith("50")) return { bg: "gray.muted", border: "gray.strong", text: "gray.fg", sub: "gray.fg" };
+  return { bg: "blue.muted", border: "blue.strong", text: "blue.fg", sub: "blue.fg" };
 }
 
 export type WeatherBarMode = "hidden" | "collapsed" | "expanded";
@@ -253,9 +253,9 @@ export default function WeatherBar({
   if (mode === "hidden") return null;
 
   if (loading && !data) return (
-    <Box px={2} py={1.5} bg="gray.200" borderRadius="md" mb={1} borderWidth="1px" borderColor="gray.400" overflow="hidden" position="relative">
+    <Box px={2} py={1.5} bg="gray.muted" borderRadius="md" mb={1} borderWidth="1px" borderColor="gray.strong" overflow="hidden" position="relative">
       <style>{`@keyframes weather-shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(400%); } }`}</style>
-      <HStack gap={1.5} fontSize="xs" color="gray.500">
+      <HStack gap={1.5} fontSize="xs" color="gray.fg">
         <Cloud size={14} />
         <Text>Loading weather...</Text>
       </HStack>
@@ -270,8 +270,8 @@ export default function WeatherBar({
   );
 
   if (error) return (
-    <Box px={2} py={1.5} bg="red.200" borderRadius="md" mb={1} borderWidth="1px" borderColor="red.400">
-      <Text fontSize="xs" color="red.800">{error}</Text>
+    <Box px={2} py={1.5} bg="red.muted" borderRadius="md" mb={1} borderWidth="1px" borderColor="red.strong">
+      <Text fontSize="xs" color="red.fg">{error}</Text>
     </Box>
   );
   if (!data) return null;
@@ -336,7 +336,7 @@ export default function WeatherBar({
 
   if (expanded) {
     return (
-      <Box borderRadius="md" mb={1} borderWidth="1px" borderColor="gray.400" overflow="hidden" cursor="pointer" onClick={() => onModeChange?.("collapsed")}>
+      <Box borderRadius="md" mb={1} borderWidth="1px" borderColor="gray.strong" overflow="hidden" cursor="pointer" onClick={() => onModeChange?.("collapsed")}>
         <HStack alignItems="stretch" gap={0}>
           <NowCell borderColor={theme.border} sub={theme.sub} text={theme.text} />
           <Box flex="1" minW={0}>
@@ -348,8 +348,8 @@ export default function WeatherBar({
                 </Box>
               );
             })}
-            <HStack px={2} py={1.5} bg="gray.100" justify="center">
-              <Text fontSize="xs" color="blue.600" cursor="pointer" _hover={{ textDecoration: "underline" }} onClick={(e) => { e.stopPropagation(); window.open(weatherUrl, "_blank"); }}>
+            <HStack px={2} py={1.5} bg="gray.subtle" justify="center">
+              <Text fontSize="xs" color="blue.fg" cursor="pointer" _hover={{ textDecoration: "underline" }} onClick={(e) => { e.stopPropagation(); window.open(weatherUrl, "_blank"); }}>
                 View full forecast →
               </Text>
             </HStack>

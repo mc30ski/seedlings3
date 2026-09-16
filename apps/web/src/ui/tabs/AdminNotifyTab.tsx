@@ -503,7 +503,7 @@ function ComposeView(props: {
                 borderWidth="1px"
                 borderRadius="md"
                 px={2}
-                bg="white"
+                bg="bg.panel"
               >
                 <Search size={14} />
                 <Input
@@ -547,8 +547,8 @@ function ComposeView(props: {
                       py={1.5}
                       borderRadius="md"
                       cursor="pointer"
-                      bg={checked ? "blue.50" : undefined}
-                      _hover={{ bg: checked ? "blue.100" : "gray.50" }}
+                      bg={checked ? "blue.faint" : undefined}
+                      _hover={{ bg: checked ? "blue.subtle" : "gray.faint" }}
                       onClick={() => toggleUser(u.id)}
                     >
                       <input type="checkbox" readOnly checked={checked} />
@@ -636,7 +636,7 @@ function ComposeView(props: {
           </Text>
           <Text
             fontSize="xs"
-            color={body.length > 160 ? "yellow.700" : "fg.muted"}
+            color={body.length > 160 ? "yellow.fg" : "fg.muted"}
           >
             {body.length} chars
           </Text>
@@ -649,7 +649,7 @@ function ComposeView(props: {
           rows={4}
         />
         {body.length > 160 && (
-          <Text fontSize="xs" color="yellow.700" mt={1}>
+          <Text fontSize="xs" color="yellow.fg" mt={1}>
             Over 160 characters — Twilio will split into multiple SMS segments
             (each costs separately).
           </Text>
@@ -779,14 +779,14 @@ function PreviewView(props: {
         p={3}
         borderWidth="1px"
         borderRadius="md"
-        bg="blue.50"
-        borderColor="blue.200"
+        bg="blue.faint"
+        borderColor="blue.emphasized"
       >
         <Text fontSize="sm" fontWeight="semibold">
           Sending to {projection.recipients} recipient
           {projection.recipients === 1 ? "" : "s"}
         </Text>
-        <VStack align="start" gap={0.5} mt={1} fontSize="xs" color="blue.900">
+        <VStack align="start" gap={0.5} mt={1} fontSize="xs" color="blue.fg">
           {!pushOnly && projection.sms > 0 && (
             <Text>• {projection.sms} SMS</Text>
           )}
@@ -916,7 +916,7 @@ function HistoryView(props: {
               {summary.failed > 0 && (
                 <>
                   <Text>·</Text>
-                  <Text color="red.600">{summary.failed} failed</Text>
+                  <Text color="red.fg">{summary.failed} failed</Text>
                 </>
               )}
             </HStack>
@@ -1017,7 +1017,7 @@ function TemplateManager(props: {
         p={4}
       >
         <Box
-          bg="white"
+          bg="bg.panel"
           borderRadius="md"
           p={4}
           maxW="600px"

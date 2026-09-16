@@ -181,7 +181,7 @@ export default function TimelineEventDialog({ open, onOpenChange, event, onSaved
                   <Input type="date" size="sm" value={anchorDate} onChange={(e) => setAnchorDate(e.target.value)} />
                   <Text fontSize="xs" color="fg.muted" mt={1}>The reference date — for recurring events the rule extends from here.</Text>
                 </Box>
-                <Box borderWidth="1px" borderColor="gray.200" rounded="md" p={2}>
+                <Box borderWidth="1px" borderColor="gray.emphasized" rounded="md" p={2}>
                   <RRuleEditor value={rrule} onChange={setRRule} anchorDate={anchorDate} />
                 </Box>
                 <Checkbox.Root

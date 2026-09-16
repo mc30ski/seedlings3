@@ -96,6 +96,7 @@ import ScrollableUnderlineTabs, {
 } from "../src/ui/components/ScrollableUnderlineTabs";
 import BreadcrumbNav from "@/src/ui/components/BreadcrumbNav";
 import RoleChip, { type RoleValue } from "@/src/ui/components/RoleChip";
+import ThemeChip from "@/src/ui/components/ThemeChip";
 import TasksPage from "@/src/ui/pages/TasksPage";
 
 const hasRole = (roles: Me["roles"] | undefined, role: Role) =>
@@ -528,7 +529,7 @@ export default function HomePage() {
       description: "Create a new client, property, job, and first occurrence",
       icon: FiPlus,
       colorPalette: "green",
-      bgColor: "green.50",
+      bgColor: "green.faint",
       onClick: () => launchWorkflow("new-job-setup"),
     },
     {
@@ -537,7 +538,7 @@ export default function HomePage() {
       description: "Select photos from jobs and share to Instagram, social media, or download",
       icon: FiShare2,
       colorPalette: "orange",
-      bgColor: "orange.50",
+      bgColor: "orange.faint",
       onClick: () => launchWorkflow("share-photos"),
     },
     {
@@ -546,7 +547,7 @@ export default function HomePage() {
       description: "Download a human-readable summary of all your data",
       icon: FiDownload,
       colorPalette: "blue",
-      bgColor: "blue.50",
+      bgColor: "blue.faint",
       onClick: () =>
         setConfirmAction({
           title: "Export Summary",
@@ -562,7 +563,7 @@ export default function HomePage() {
       description: "Download all raw data as JSON for backup or analysis",
       icon: FiDatabase,
       colorPalette: "purple",
-      bgColor: "purple.50",
+      bgColor: "purple.faint",
       disabled: !isSuper,
       disabledMessage: "Only super administrators can export all data.",
       onClick: () => {
@@ -806,7 +807,7 @@ export default function HomePage() {
       description: isTraineeWorker ? "View your upcoming job summary" : "Confirm your claimed jobs for tomorrow and notify clients",
       icon: FiNavigation,
       colorPalette: "blue",
-      bgColor: "blue.50",
+      bgColor: "blue.faint",
       onClick: () => {
         if (isTraineeWorker) {
           setConfirmAction({
@@ -827,7 +828,7 @@ export default function HomePage() {
       description: "Review today's schedule, confirm jobs, and start your first stop",
       icon: FiSun,
       colorPalette: "green",
-      bgColor: "green.50",
+      bgColor: "green.faint",
       onClick: () => {
         launchWorkflow("begin-workday");
       },
@@ -1273,20 +1274,20 @@ export default function HomePage() {
       headerSlot: (
         <>
           {me && !me.workerType && (
-            <Box mb={2} p={3} bg="orange.50" borderWidth="1px" borderColor="orange.300" rounded="md">
+            <Box mb={2} p={3} bg="orange.faint" borderWidth="1px" borderColor="orange.emphasized" rounded="md">
               <HStack gap={2} align="start">
                 <Box flexShrink={0} pt="0.5"><AlertTriangle size={14} color="var(--chakra-colors-orange-500)" /></Box>
-                <Text fontSize="sm" color="orange.700">
+                <Text fontSize="sm" color="orange.fg">
                   Your worker type has not been assigned yet. Some features may be restricted until assigned by your administrator.
                 </Text>
               </HStack>
             </Box>
           )}
           {me?.workerType === "TRAINEE" && (
-            <Box mb={2} p={3} bg="blue.50" borderWidth="1px" borderColor="blue.300" rounded="md">
+            <Box mb={2} p={3} bg="blue.faint" borderWidth="1px" borderColor="blue.emphasized" rounded="md">
               <HStack gap={2} align="start">
                 <Box flexShrink={0} pt="0.5"><AlertTriangle size={14} color="var(--chakra-colors-blue-500)" /></Box>
-                <Text fontSize="sm" color="blue.700">
+                <Text fontSize="sm" color="blue.fg">
                   You are currently a Trainee. You can view details and be added to a team, but you cannot claim jobs, take actions, or reserve equipment. You also have limited visibility to jobs, clients, and properties you are assigned to. Contact your team manager to take actions on your behalf.
                 </Text>
               </HStack>
@@ -3952,8 +3953,8 @@ chip: false, bucket: t.bucket }));
           bottom="4"
           right="4"
           zIndex="9999"
-          bg="red.500"
-          color="white"
+          bg="red.solid"
+          color="red.contrast"
           fontSize="sm"
           fontWeight="bold"
           px="4"
@@ -3969,10 +3970,24 @@ chip: false, bucket: t.bucket }));
       <AppSplash show={!authLoaded || (isSignedIn && meLoading)} />
       <Box
         as="header"
-        bg="#dce5d0"
-        bgGradient="linear(to-b, #dce5d0, #e8eedf)"
+        // THEMED, not a literal. Was `bg="#dce5d0"` — raw hex resolving through
+        // no token, so the bar rendered the identical pale sage in all five
+        // themes (pixel-sampled to confirm). `chrome.header` carries the
+        // seasonal identity in the brand themes and stays quiet in the others.
+        // The gradient is part of the original look, so it is themed rather
+        // than dropped — two stops, both tokens.
+        //
+        // Chakra's own gradient props, NOT a hand-written
+        // `linear-gradient(var(--chakra-colors-chrome-header), …)`: tokens in
+        // a custom namespace are inlined per condition rather than emitted as
+        // CSS variables, so that var() resolved to nothing and took the whole
+        // gradient down with it — the bar rendered transparent.
+        bgGradient="to-b"
+        gradientFrom="chrome.header"
+        gradientTo="chrome.headerAlt"
+        color="chrome.headerFg"
         borderWidth="2px"
-        borderColor="#8a9e72"
+        borderColor="border.emphasis"
         px={{ base: 2.5, md: 3.5 }}
         py={{ base: 2, md: 2.5 }}
         borderRadius="md"
@@ -4067,8 +4082,8 @@ chip: false, bucket: t.bucket }));
                     height="18px"
                     minW="18px"
                     borderRadius="9999px"
-                    bg="purple.500"
-                    color="white"
+                    bg="purple.solid"
+                    color="purple.contrast"
                     fontSize="10px"
                     fontWeight="bold"
                     display="flex"
@@ -4107,9 +4122,9 @@ chip: false, bucket: t.bucket }));
                 px="2"
                 py="1"
                 borderRadius="md"
-                bg="blue.50"
-                color="blue.700"
-                _hover={{ bg: "blue.100" }}
+                bg="blue.faint"
+                color="blue.fg"
+                _hover={{ bg: "blue.subtle" }}
                 title={
                   weatherMode === "hidden"
                     ? "Weather — click to show forecast bar"
@@ -4164,15 +4179,15 @@ chip: false, bucket: t.bucket }));
                 px="2"
                 py="1"
                 borderRadius="md"
-                bg="green.50"
-                color="green.700"
-                _hover={{ bg: "green.100" }}
+                bg="green.faint"
+                color="green.fg"
+                _hover={{ bg: "green.subtle" }}
                 title={`Earnings (${EARNINGS_LABELS[earningsPeriod]}) — click to cycle period`}
                 onClick={cycleEarningsPeriod}
               >
                 <Text fontSize="sm" fontWeight="semibold" lineHeight="1" whiteSpace="nowrap">
                   ${fmtEarnings(earnings[earningsPeriod])}
-                  <Text as="span" fontSize="2xs" fontWeight="medium" color="green.600" ml={1}>{EARNINGS_LABELS[earningsPeriod]}</Text>
+                  <Text as="span" fontSize="2xs" fontWeight="medium" color="green.fg" ml={1}>{EARNINGS_LABELS[earningsPeriod]}</Text>
                 </Text>
               </Box>
             )}
@@ -4183,6 +4198,11 @@ chip: false, bucket: t.bucket }));
                 has zero or one role; multi-role users get a compact chip
                 + dropdown. Switching preserves the current inner tab
                 when the same tab exists in the target role. */}
+            {/* Theme switcher, ahead of the role chip. Gated on `mounted`
+                because the theme comes from localStorage — rendering it during
+                SSR would hydrate showing the wrong one. Stays in step with the
+                Profile tab's picker automatically; see ThemeChip. */}
+            {mounted && <ThemeChip />}
             {mounted && isSignedIn && hasAnyRole && availableRoles.length > 1 && (
               <RoleChip
                 activeRole={topTab as RoleValue}
@@ -4200,14 +4220,14 @@ chip: false, bucket: t.bucket }));
                 height="24px"
                 minW="24px"
                 borderRadius="9999px"
-                bg="#EF4444"
+                bg="red.solid"
                 display="flex"
                 alignItems="center"
                 justifyContent="center"
                 style={{ animation: "alert-pulse 1.2s ease-in-out infinite" }}
               >
                 <style>{`@keyframes alert-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(0.9); } }`}</style>
-                <Box w="6px" h="6px" borderRadius="full" bg="white" />
+                <Box w="6px" h="6px" borderRadius="full" bg="bg.panel" />
               </Box>
             )}
             {hasAnyRole && alertsReady && (() => {
@@ -4330,7 +4350,7 @@ chip: false, bucket: t.bucket }));
                     }}
                   >
                     {alertsRefreshing ? (
-                      <Box w="6px" h="6px" borderRadius="full" bg="white" />
+                      <Box w="6px" h="6px" borderRadius="full" bg="bg.panel" />
                     ) : (
                       total
                     )}
@@ -4339,9 +4359,9 @@ chip: false, bucket: t.bucket }));
                     <VStack
                       data-alert-dropdown
                       position="fixed"
-                      bg="white"
+                      bg="bg.panel"
                       borderWidth="1px"
-                      borderColor="gray.200"
+                      borderColor="gray.emphasized"
                       rounded="md"
                       shadow="lg"
                       zIndex={10001}
@@ -4407,7 +4427,7 @@ chip: false, bucket: t.bucket }));
                               {alertsRefreshing ? <Spinner size="xs" /> : <FiRefreshCw size={14} />}
                             </Button>
                           </HStack>
-                          <Box w="full" h="1px" bg="gray.300" my={1} />
+                          <Box w="full" h="1px" bg="gray.muted" my={1} />
                         </>
                       )}
                       {alerts.map((a) => (
@@ -4473,8 +4493,8 @@ chip: false, bucket: t.bucket }));
                   height="28px"
                   borderRadius="full"
                   overflow="hidden"
-                  bg="gray.200"
-                  color="gray.700"
+                  bg="gray.muted"
+                  color="gray.fg"
                   display="flex"
                   alignItems="center"
                   justifyContent="center"
@@ -4503,7 +4523,7 @@ chip: false, bucket: t.bucket }));
                   w="10px"
                   h="10px"
                   borderRadius="full"
-                  bg={isOffline ? (isForceOffline ? "orange.400" : "red.400") : queueCount > 0 ? "yellow.400" : "green.400"}
+                  bg={isOffline ? (isForceOffline ? "orange.strong" : "red.strong") : queueCount > 0 ? "yellow.strong" : "green.strong"}
                   borderWidth="2px"
                   borderColor="white"
                   cursor="pointer"
@@ -4541,7 +4561,7 @@ chip: false, bucket: t.bucket }));
                 <Text
                   as="a"
                   fontSize="sm"
-                  color="blue.600"
+                  color="blue.fg"
                   cursor="pointer"
                   _hover={{ textDecoration: "underline" }}
                 >
@@ -4586,17 +4606,17 @@ chip: false, bucket: t.bucket }));
         <Box mx={3} mt={3}>
           <Box
             borderWidth="1px"
-            borderColor="red.300"
-            bg="red.50"
+            borderColor="red.emphasized"
+            bg="red.faint"
             borderRadius="md"
             p={4}
           >
             <VStack align="start" gap={3}>
               <VStack align="start" gap={1}>
-                <Text fontSize="sm" fontWeight="semibold" color="red.900">
+                <Text fontSize="sm" fontWeight="semibold" color="red.fg">
                   Couldn&apos;t load your profile
                 </Text>
-                <Text fontSize="xs" color="red.800">
+                <Text fontSize="xs" color="red.fg">
                   {meError.kind === "timeout" && `The request took longer than ${Math.round(meError.elapsedMs / 1000)}s and was aborted client-side. The server never responded.`}
                   {meError.kind === "http" && `The server returned HTTP ${meError.status}: ${meError.message}`}
                   {meError.kind === "network" && `Network error: ${meError.message}`}
@@ -4604,15 +4624,15 @@ chip: false, bucket: t.bucket }));
                 </Text>
               </VStack>
               <Box
-                bg="white"
+                bg="bg.panel"
                 borderWidth="1px"
-                borderColor="red.200"
+                borderColor="red.emphasized"
                 borderRadius="sm"
                 p={2}
                 w="full"
                 fontSize="10px"
                 fontFamily="mono"
-                color="red.900"
+                color="red.fg"
                 whiteSpace="pre-wrap"
                 overflowX="auto"
               >
@@ -4758,10 +4778,10 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
               px="0"
               py="0"
               flexShrink={0}
-              color={canGoBack ? "blue.600" : "gray.400"}
+              color={canGoBack ? "blue.fg" : "gray.400"}
               opacity={canGoBack ? 1 : 0.6}
               cursor={canGoBack ? "pointer" : "default"}
-              _hover={canGoBack ? { color: "blue.700" } : {}}
+              _hover={canGoBack ? { color: "blue.fg" } : {}}
               transition="all 0.1s"
               style={{ pointerEvents: canGoBack ? "auto" : "none" }}
             >
@@ -4779,9 +4799,9 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
                 py={1}
                 display="inline-flex"
                 alignItems="center"
-                color="gray.500"
+                color="gray.fg"
                 cursor="pointer"
-                _hover={{ color: "blue.600" }}
+                _hover={{ color: "blue.fg" }}
                 transition="color 0.1s"
                 onClick={() => {
                 // Build the deep-link URL for the current tab using the same
@@ -4844,7 +4864,7 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
                       w="12px"
                       h="12px"
                       borderRadius="full"
-                      bg={isOffline ? (isForceOffline ? "orange.400" : "red.400") : queueCount > 0 ? "yellow.400" : "green.400"}
+                      bg={isOffline ? (isForceOffline ? "orange.strong" : "red.strong") : queueCount > 0 ? "yellow.strong" : "green.strong"}
                     />
                     <Text>{isOffline ? (isForceOffline ? "Force Offline Mode" : "No Connection") : queueCount > 0 ? "Syncing..." : "Online"}</Text>
                   </HStack>

@@ -290,7 +290,7 @@ export default function PolicySignWizard({ open, policies, displayName, onClose,
             </Dialog.Header>
             <Dialog.Body overflowY="auto" flex="1" px={4} py={3}>
               {!version ? (
-                <HStack gap={2} p={3} bg="red.50" borderRadius="md" borderWidth="1px" borderColor="red.200">
+                <HStack gap={2} p={3} bg="red.faint" borderRadius="md" borderWidth="1px" borderColor="red.emphasized">
                   <AlertTriangle size={16} />
                   <Text fontSize="sm">This policy has no published version yet. Contact your admin.</Text>
                 </HStack>
@@ -434,7 +434,7 @@ function ReadStep({
 
   return (
     <VStack align="stretch" gap={2}>
-      <HStack gap={2} p={2} bg="blue.50" borderRadius="md" fontSize="xs" color="blue.900">
+      <HStack gap={2} p={2} bg="blue.faint" borderRadius="md" fontSize="xs" color="blue.fg">
         <FileText size={14} />
         <Text>
           {contentIsMarkdown
@@ -451,7 +451,7 @@ function ReadStep({
         borderWidth="1px"
         borderRadius="md"
         p={4}
-        bg="white"
+        bg="bg.panel"
         fontSize="sm"
         lineHeight="tall"
       >
@@ -475,7 +475,7 @@ function ReadStep({
         )}
       </Box>
       {readComplete && (
-        <HStack gap={1} fontSize="xs" color="green.700">
+        <HStack gap={1} fontSize="xs" color="green.fg">
           <CheckCircle2 size={12} /> <Text>Read confirmed.</Text>
         </HStack>
       )}
@@ -529,7 +529,7 @@ function UploadStep({
           </HStack>
         )}
         {uploadedFileName && !uploading && (
-          <HStack gap={1} mt={2} fontSize="xs" color="green.700">
+          <HStack gap={1} mt={2} fontSize="xs" color="green.fg">
             <CheckCircle2 size={12} /> <Text>{uploadedFileName}</Text>
           </HStack>
         )}
@@ -590,10 +590,10 @@ function SignStep({
             onChange={(e) => onTypedName(e.target.value)}
             placeholder={displayName ?? "Your legal name"}
             autoComplete="off"
-            borderColor={showMismatchHint ? "red.400" : undefined}
+            borderColor={showMismatchHint ? "red.strong" : undefined}
           />
           {showMismatchHint && (
-            <Text fontSize="xs" color="red.700" mt={1}>
+            <Text fontSize="xs" color="red.fg" mt={1}>
               That doesn't match your account name. Enter{" "}
               <Text as="span" fontWeight="semibold">
                 {displayName}
@@ -602,7 +602,7 @@ function SignStep({
             </Text>
           )}
           {trimmed.length > 0 && nameMatches && (
-            <Text fontSize="xs" color="green.700" mt={1}>
+            <Text fontSize="xs" color="green.fg" mt={1}>
               ✓ Matches your account name.
             </Text>
           )}

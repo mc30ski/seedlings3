@@ -46,10 +46,10 @@ const GHOST_BG = "#7c8698";
 function SectionTitle({ children, note }: { children: React.ReactNode; note?: string }) {
   return (
     <Box mt={1}>
-      <Text fontSize="xs" fontWeight="bold" color="blue.900" textTransform="uppercase" letterSpacing="wide">
+      <Text fontSize="xs" fontWeight="bold" color="blue.fg" textTransform="uppercase" letterSpacing="wide">
         {children}
       </Text>
-      {note && <Text fontSize="xs" color="blue.700" mt={0.5}>{note}</Text>}
+      {note && <Text fontSize="xs" color="blue.fg" mt={0.5}>{note}</Text>}
     </Box>
   );
 }
@@ -70,8 +70,8 @@ function TypeCard({
   return (
     <Box p={2.5} borderWidth="1px" rounded="md" borderColor={borderColor} bg={bg}>
       <Badge colorPalette={palette} variant={variant} mb={1} fontSize="2xs">{label}</Badge>
-      <Text fontSize="xs" color="gray.800">{children}</Text>
-      {flow && <Text fontSize="2xs" color="gray.600" mt={1}>Flow: {flow}</Text>}
+      <Text fontSize="xs" color="gray.fg">{children}</Text>
+      {flow && <Text fontSize="2xs" color="gray.fg" mt={1}>Flow: {flow}</Text>}
     </Box>
   );
 }
@@ -79,9 +79,9 @@ function TypeCard({
 /** A key-concept panel — no card colour, just a bordered block. */
 function Concept({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <Box p={2.5} borderWidth="1px" rounded="md" borderColor="blue.300" bg="white">
+    <Box p={2.5} borderWidth="1px" rounded="md" borderColor="blue.emphasized" bg="bg.panel">
       <Text fontSize="xs" fontWeight="semibold" mb={0.5}>{title}</Text>
-      <Text fontSize="xs" color="gray.800">{children}</Text>
+      <Text fontSize="xs" color="gray.fg">{children}</Text>
     </Box>
   );
 }
@@ -89,20 +89,20 @@ function Concept({ title, children }: { title: string; children: React.ReactNode
 /** Card-colour legend. Kept in one array so a colour and its meaning cannot
  *  drift apart, and so the swatch is literally the card's own fill. */
 const COLORS: Array<{ name: string; bg: string; border: string; palette: string; means: string }> = [
-  { name: "Teal", bg: "teal.50", border: "teal.300", palette: "teal", means: "Assigned to you — or someone else has it actively in progress" },
-  { name: "Yellow", bg: "yellow.50", border: "yellow.300", palette: "yellow", means: "Unassigned — available to claim" },
-  { name: "Green", bg: "green.100", border: "green.400", palette: "green", means: "Pending payment — work done, money not in yet" },
-  { name: "Orange", bg: "orange.50", border: "orange.300", palette: "orange", means: "Tentative — not yet confirmed by an admin" },
-  { name: "Deep orange", bg: "orange.100", border: "orange.400", palette: "orange", means: "Paused — this visit was started and then stopped. Thicker border, like in-progress" },
-  { name: "Pink", bg: "pink.50", border: "pink.300", palette: "pink", means: "Estimate" },
-  { name: "Blue", bg: "blue.50", border: "blue.300", palette: "blue", means: "Task — yours only" },
-  { name: "Purple", bg: "purple.50", border: "purple.300", palette: "purple", means: "Reminder — yours only" },
-  { name: "Violet", bg: "purple.200", border: "purple.400", palette: "purple", means: "Announcement — everyone sees it" },
-  { name: "Rose", bg: "red.200", border: "red.400", palette: "red", means: "Followup — team-scoped (pale red once completed)" },
-  { name: "Amber", bg: "yellow.200", border: "yellow.400", palette: "yellow", means: "Event — team-scoped (pale yellow once completed)" },
-  { name: "Gray", bg: "gray.100", border: "gray.300", palette: "gray", means: "Assigned to someone else — waiting on their action" },
-  { name: "White", bg: "white", border: "gray.200", palette: "gray", means: "Closed or completed, or an estimate that was accepted or rejected — done, moved on" },
-  { name: "Bright purple", bg: "purple.100", border: "purple.500", palette: "purple", means: "High priority. Only a reminder can carry this flag, and it overrides every colour above" },
+  { name: "Teal", bg: "teal.faint", border: "teal.emphasized", palette: "teal", means: "Assigned to you — or someone else has it actively in progress" },
+  { name: "Yellow", bg: "yellow.faint", border: "yellow.emphasized", palette: "yellow", means: "Unassigned — available to claim" },
+  { name: "Green", bg: "green.subtle", border: "green.strong", palette: "green", means: "Pending payment — work done, money not in yet" },
+  { name: "Orange", bg: "orange.faint", border: "orange.emphasized", palette: "orange", means: "Tentative — not yet confirmed by an admin" },
+  { name: "Deep orange", bg: "orange.subtle", border: "orange.strong", palette: "orange", means: "Paused — this visit was started and then stopped. Thicker border, like in-progress" },
+  { name: "Pink", bg: "pink.faint", border: "pink.emphasized", palette: "pink", means: "Estimate" },
+  { name: "Blue", bg: "blue.faint", border: "blue.emphasized", palette: "blue", means: "Task — yours only" },
+  { name: "Purple", bg: "purple.faint", border: "purple.emphasized", palette: "purple", means: "Reminder — yours only" },
+  { name: "Violet", bg: "purple.muted", border: "purple.strong", palette: "purple", means: "Announcement — everyone sees it" },
+  { name: "Rose", bg: "red.muted", border: "red.strong", palette: "red", means: "Followup — team-scoped (pale red once completed)" },
+  { name: "Amber", bg: "yellow.muted", border: "yellow.strong", palette: "yellow", means: "Event — team-scoped (pale yellow once completed)" },
+  { name: "Gray", bg: "gray.subtle", border: "gray.emphasized", palette: "gray", means: "Assigned to someone else — waiting on their action" },
+  { name: "White", bg: "bg.panel", border: "border.emphasis", palette: "gray", means: "Closed or completed, or an estimate that was accepted or rejected — done, moved on" },
+  { name: "Bright purple", bg: "purple.subtle", border: "purple.solid", palette: "purple", means: "High priority. Only a reminder can carry this flag, and it overrides every colour above" },
 ];
 
 export default function JobsExplainer({
@@ -197,7 +197,7 @@ export default function JobsExplainer({
       <SectionTitle note="Each type has its own workflow and its own audience.">Service cards</SectionTitle>
 
       <TypeCard
-        label="Repeating" palette="blue" variant="subtle" bg="blue.50" borderColor="blue.300"
+        label="Repeating" palette="blue" variant="subtle" bg="blue.faint" borderColor="blue.emphasized"
         flow="Scheduled → Claim or assign → Start → Complete → Payment approved → next visit created"
       >
         A recurring visit on a cadence (every 14 days, say). The next visit is created when
@@ -210,14 +210,14 @@ export default function JobsExplainer({
       </TypeCard>
 
       <TypeCard
-        label="One-Off" palette="cyan" bg="cyan.50" borderColor="cyan.300"
+        label="One-Off" palette="cyan" bg="cyan.faint" borderColor="cyan.emphasized"
         flow="Scheduled → Claim or assign → Start → Complete → Payment approved → done"
       >
         A single visit that does not repeat. Nothing is created after payment.
       </TypeCard>
 
       <TypeCard
-        label="Estimate" palette="pink" bg="pink.50" borderColor="pink.300"
+        label="Estimate" palette="pink" bg="pink.faint" borderColor="pink.emphasized"
         flow="Assign → Start → Complete → Accept or Reject"
       >
         A site visit to price work. Estimates are administered by default, so an admin assigns
@@ -228,14 +228,14 @@ export default function JobsExplainer({
 
       <SectionTitle note="Only you can see these. Nobody else has them in their feed.">Personal</SectionTitle>
 
-      <TypeCard label="Task" palette="blue" bg="blue.50" borderColor="blue.300" flow="Scheduled → Complete">
+      <TypeCard label="Task" palette="blue" bg="blue.faint" borderColor="blue.emphasized" flow="Scheduled → Complete">
         A personal to-do (&ldquo;call the client about pricing&rdquo;). Completed in one tap —
         there is no start/complete cycle — and reopened the same way if you tap it by mistake.
         It can be linked to a job occurrence for context. Tasks cannot be claimed or
         rescheduled; the person who creates one is on it.
       </TypeCard>
 
-      <TypeCard label="Reminder" palette="purple" bg="purple.50" borderColor="purple.300">
+      <TypeCard label="Reminder" palette="purple" bg="purple.faint" borderColor="purple.emphasized">
         A personal nudge (&ldquo;pick up supplies&rdquo;) that surfaces in the feed when due, and
         can be dismissed and reopened. Flag one <Em>high priority</Em> and its card outranks
         every other colour. Reminders cannot be rescheduled — move the reminder itself.
@@ -244,7 +244,7 @@ export default function JobsExplainer({
       <SectionTitle note="Visible to the people added via Manage Team. Admins see them all.">Team</SectionTitle>
 
       <TypeCard
-        label="Event" palette="yellow" bg="yellow.200" borderColor="yellow.400"
+        label="Event" palette="yellow" bg="yellow.muted" borderColor="yellow.strong"
         flow="Scheduled → Complete (admin) → next created if it repeats"
       >
         A team-scoped occurrence — a weekly meeting, an equipment inspection. Created by admins
@@ -254,7 +254,7 @@ export default function JobsExplainer({
       </TypeCard>
 
       <TypeCard
-        label="Followup" palette="red" bg="red.200" borderColor="red.400"
+        label="Followup" palette="red" bg="red.muted" borderColor="red.strong"
         flow="Scheduled → Complete (admin) → next created if it repeats"
       >
         A team-scoped follow-up (&ldquo;follow up on Thompson pricing&rdquo;). Created by admins
@@ -264,7 +264,7 @@ export default function JobsExplainer({
 
       <SectionTitle note="Every worker and admin sees these.">Everyone</SectionTitle>
 
-      <TypeCard label="Announcement" palette="purple" bg="purple.200" borderColor="purple.400">
+      <TypeCard label="Announcement" palette="purple" bg="purple.muted" borderColor="purple.strong">
         A company-wide notice (&ldquo;office closed Friday&rdquo;). Created by admins only. There
         is no Complete on an announcement — an admin edits or deletes it, and otherwise it just
         falls back down the timeline as newer cards arrive. No team, and it is never counted
@@ -338,7 +338,7 @@ export default function JobsExplainer({
         {COLORS.map((c) => (
           <HStack key={c.name} p={2} bg={c.bg} borderWidth="1px" borderColor={c.border} rounded="md" gap={2} align="flex-start">
             <Badge colorPalette={c.palette} variant="solid" fontSize="2xs" flexShrink={0}>{c.name}</Badge>
-            <Text fontSize="xs" color="gray.800">{c.means}</Text>
+            <Text fontSize="xs" color="gray.fg">{c.means}</Text>
           </HStack>
         ))}
       </VStack>
@@ -354,8 +354,8 @@ export default function JobsExplainer({
         Placeholder cards
       </SectionTitle>
 
-      <Box p={2.5} borderWidth="1px" rounded="md" borderColor="gray.400" bg={GHOST_BG}>
-        <Badge variant="solid" colorPalette="gray" bg="gray.100" color="gray.900" mb={1} fontSize="2xs">Expires in 5d</Badge>
+      <Box p={2.5} borderWidth="1px" rounded="md" borderColor="gray.strong" bg={GHOST_BG}>
+        <Badge variant="solid" colorPalette="gray" bg="gray.subtle" color="gray.fg" mb={1} fontSize="2xs">Expires in 5d</Badge>
         <Text fontSize="xs" fontWeight="semibold" color="white">Next visit not scheduled</Text>
         <Text fontSize="xs" color="gray.100" mt={1}>
           A repeating job whose next visit has not posted, because the previous one is not
@@ -379,9 +379,9 @@ export default function JobsExplainer({
         </Text>
       </Box>
 
-      <Box p={2.5} borderWidth="1px" rounded="md" borderColor="gray.400" borderStyle="dashed" bg="white">
+      <Box p={2.5} borderWidth="1px" rounded="md" borderColor="border.emphasis" borderStyle="dashed" bg="bg.panel">
         <Text fontSize="xs" fontWeight="semibold" mb={0.5}>Reminder &amp; pinned ghosts</Text>
-        <Text fontSize="xs" color="gray.800">
+        <Text fontSize="xs" color="gray.fg">
           A second, dashed copy of a card shown on a future date — where a reminder falls due,
           or where a pinned job sits in the regular feed. Same colour as the original so it
           reads as the same card, not a new one.

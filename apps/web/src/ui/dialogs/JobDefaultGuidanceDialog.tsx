@@ -73,7 +73,7 @@ export default function JobDefaultGuidanceDialog({ open, onOpenChange, jobId, pr
                   can then adjust or remove it individually.
                 </Text>
                 <Box>
-                  <Text fontSize="xs" fontWeight="semibold" color="blue.700" mb={1}>Overall description</Text>
+                  <Text fontSize="xs" fontWeight="semibold" color="blue.fg" mb={1}>Overall description</Text>
                   <Textarea
                     size="sm"
                     rows={3}

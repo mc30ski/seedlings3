@@ -226,14 +226,14 @@ export default function PhotoUploadDialog({ files, onUpload, onClose, isOffline 
                   <Box
                     mb={3}
                     p={3}
-                    bg="blue.50"
+                    bg="blue.faint"
                     borderWidth="1px"
-                    borderColor="blue.300"
+                    borderColor="blue.emphasized"
                     borderLeftWidth="4px"
                     borderLeftColor="blue.500"
                     rounded="md"
                   >
-                    <Text fontSize="sm" color="blue.900">
+                    <Text fontSize="sm" color="blue.fg">
                       Tap a photo to hide sensitive areas (black out or blur, optional). Tap the X to remove a photo from this batch.
                     </Text>
                   </Box>
@@ -242,14 +242,14 @@ export default function PhotoUploadDialog({ files, onUpload, onClose, isOffline 
                   <HStack
                     p={2}
                     mb={3}
-                    bg="blue.50"
+                    bg="blue.faint"
                     borderWidth="1px"
-                    borderColor="blue.200"
+                    borderColor="blue.emphasized"
                     rounded="md"
                     gap={2}
                   >
                     <Spinner size="sm" />
-                    <Text fontSize="sm" color="blue.900">
+                    <Text fontSize="sm" color="blue.fg">
                       Don&apos;t close this dialog — uploads are in progress.
                     </Text>
                   </HStack>
@@ -401,8 +401,8 @@ function PhotoTile({
       rounded="md"
       overflow="hidden"
       borderWidth="1px"
-      borderColor="gray.200"
-      bg="gray.50"
+      borderColor="gray.emphasized"
+      bg="gray.faint"
       cursor={tileClickable ? "pointer" : "default"}
       onClick={(e: any) => {
         // Stop the event from bubbling to the Dialog backdrop / surrounding
@@ -410,7 +410,7 @@ function PhotoTile({
         e.stopPropagation();
         if (tileClickable) onBlur();
       }}
-      _hover={tileClickable ? { borderColor: "purple.400" } : undefined}
+      _hover={tileClickable ? { borderColor: "purple.strong" } : undefined}
     >
       <Box css={{ aspectRatio: "1" }}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -433,7 +433,7 @@ function PhotoTile({
       {/* Status overlay — center icon while uploading / done / failed */}
       {isUploading && (
         <Box position="absolute" inset="0" display="flex" alignItems="center" justifyContent="center" pointerEvents="none">
-          <Spinner size="md" color="blue.600" borderWidth="3px" />
+          <Spinner size="md" color="blue.fg" borderWidth="3px" />
         </Box>
       )}
       {isUploaded && (
@@ -444,8 +444,8 @@ function PhotoTile({
           w="24px"
           h="24px"
           rounded="full"
-          bg="green.500"
-          color="white"
+          bg="green.solid"
+          color="green.contrast"
           display="flex"
           alignItems="center"
           justifyContent="center"
@@ -482,8 +482,8 @@ function PhotoTile({
           px="1.5"
           py="0.5"
           rounded="sm"
-          bg="purple.500"
-          color="white"
+          bg="purple.solid"
+          color="purple.contrast"
           fontSize="2xs"
           fontWeight="semibold"
           pointerEvents="none"
@@ -525,13 +525,13 @@ function PhotoTile({
           w="22px"
           h="22px"
           rounded="full"
-          bg="white"
-          color="red.600"
+          bg="bg.panel"
+          color="red.fg"
           display="flex"
           alignItems="center"
           justifyContent="center"
           borderWidth="1px"
-          borderColor="red.300"
+          borderColor="red.emphasized"
           title="Will retry on next upload"
           pointerEvents="none"
         >

@@ -307,11 +307,11 @@ export default function SharePhotosWorkflow({ active, onDone }: Props) {
                         {/* Group header */}
                         <HStack
                           px={3} py={2}
-                          bg="gray.50"
+                          bg="gray.faint"
                           cursor="pointer"
                           onClick={() => toggleGroup(key)}
                           justify="space-between"
-                          _hover={{ bg: "gray.100" }}
+                          _hover={{ bg: "gray.subtle" }}
                         >
                           <VStack align="start" gap={0}>
                             <HStack gap={2}>
@@ -371,9 +371,9 @@ export default function SharePhotosWorkflow({ active, onDone }: Props) {
                                   borderRadius="md"
                                   overflow="hidden"
                                   borderWidth="2px"
-                                  borderColor={isSel ? "green.400" : "transparent"}
+                                  borderColor={isSel ? "green.strong" : "transparent"}
                                   transition="border-color 0.1s"
-                                  _hover={{ borderColor: isSel ? "green.500" : "gray.300" }}
+                                  _hover={{ borderColor: isSel ? "green.500" : "gray.emphasized" }}
                                 >
                                   <img
                                     src={photo.url}
@@ -390,8 +390,8 @@ export default function SharePhotosWorkflow({ active, onDone }: Props) {
                                       position="absolute"
                                       top="4px"
                                       right="4px"
-                                      bg="green.500"
-                                      color="white"
+                                      bg="green.solid"
+                                      color="green.contrast"
                                       borderRadius="full"
                                       w="20px"
                                       h="20px"
@@ -499,8 +499,8 @@ export default function SharePhotosWorkflow({ active, onDone }: Props) {
                   </Box>
 
                   {/* Info box */}
-                  <Box p={3} bg="blue.50" borderWidth="1px" borderColor="blue.200" rounded="md">
-                    <Text fontSize="xs" color="blue.700">
+                  <Box p={3} bg="blue.faint" borderWidth="1px" borderColor="blue.emphasized" rounded="md">
+                    <Text fontSize="xs" color="blue.fg">
                       <strong>For Instagram:</strong> Tap "Save Photos" to download them to your device and copy the caption. Then open Instagram, create a new post, select the saved photos, and paste the caption.
                     </Text>
                   </Box>

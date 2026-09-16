@@ -123,7 +123,7 @@ export default function EquipmentInstructionsDialog({
                 {instructions.length > 0 && (
                   <VStack align="stretch" gap={1}>
                     {instructions.map((inst) => (
-                      <HStack key={inst.id} gap={2} p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" borderRadius="md" align="center">
+                      <HStack key={inst.id} gap={2} p={2} bg="yellow.faint" borderWidth="1px" borderColor="yellow.emphasized" borderRadius="md" align="center">
                         <Text fontSize="sm" flex="1">{inst.text}</Text>
                         <Button
                           size="xs"
@@ -156,7 +156,7 @@ export default function EquipmentInstructionsDialog({
                         cursor="pointer"
                         px="2"
                         borderRadius="full"
-                        _hover={{ bg: "yellow.100" }}
+                        _hover={{ bg: "yellow.subtle" }}
                         onClick={() => void addPreset(preset)}
                       >
                         + {preset}

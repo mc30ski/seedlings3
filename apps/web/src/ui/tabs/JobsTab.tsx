@@ -3175,7 +3175,7 @@ export default function JobsTab({
         )}
       </VStack>
       <HStack mb={2} gap={2} wrap="nowrap">
-        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)", border: "1px solid var(--chakra-colors-gray-300)", borderRadius: "6px" }}>
+        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-subtle)", border: "1px solid var(--chakra-colors-gray-emphasized)", borderRadius: "6px" }}>
           <RefreshCw size={14} />
         </Button>
         {/* Team view toggle — always rendered so its position in the
@@ -3193,20 +3193,20 @@ export default function JobsTab({
           onClick={() => setPeekOthers(!peekOthers)}
           css={
             !teamContextEnabled ? {
-              background: "var(--chakra-colors-gray-100)",
-              border: "1px solid var(--chakra-colors-gray-300)",
+              background: "var(--chakra-colors-gray-subtle)",
+              border: "1px solid var(--chakra-colors-gray-strong)",
               borderRadius: "6px",
               opacity: 0.5,
             }
             : peekOthers ? {
-              background: "var(--chakra-colors-purple-100)",
-              color: "var(--chakra-colors-purple-800)",
-              border: "1px solid var(--chakra-colors-purple-400)",
+              background: "var(--chakra-colors-purple-subtle)",
+              color: "var(--chakra-colors-purple-fg)",
+              border: "1px solid var(--chakra-colors-purple-strong)",
               borderRadius: "6px",
-              "&:hover": { background: "var(--chakra-colors-purple-200)" },
+              "&:hover": { background: "var(--chakra-colors-purple-muted)" },
             } : {
-              background: "var(--chakra-colors-gray-100)",
-              border: "1px solid var(--chakra-colors-gray-300)",
+              background: "var(--chakra-colors-gray-subtle)",
+              border: "1px solid var(--chakra-colors-gray-emphasized)",
               borderRadius: "6px",
             }
           }
@@ -3241,9 +3241,9 @@ export default function JobsTab({
                 setCardOverrides(new Map());
               }}
               css={{
-                background: "var(--chakra-colors-gray-100)",
-                color: "var(--chakra-colors-gray-700)",
-                border: "1px solid var(--chakra-colors-gray-300)",
+                background: "var(--chakra-colors-gray-subtle)",
+                color: "var(--chakra-colors-gray-fg)",
+                border: "1px solid var(--chakra-colors-gray-emphasized)",
                 borderRadius: "6px",
               }}
               title={`${meta[cardDensity].label} — click for ${meta[next].label.toLowerCase()}`}
@@ -3266,8 +3266,8 @@ export default function JobsTab({
           onClick={() => setFiltersOpen((v) => !v)}
           title={filtersOpen ? "Collapse filters" : "Expand filters"}
           css={{
-            background: filtersOpen ? "var(--chakra-colors-blue-100)" : "var(--chakra-colors-gray-100)",
-            border: filtersOpen ? "1px solid var(--chakra-colors-blue-300)" : "1px solid var(--chakra-colors-gray-300)",
+            background: filtersOpen ? "var(--chakra-colors-blue-subtle)" : "var(--chakra-colors-gray-subtle)",
+            border: filtersOpen ? "1px solid var(--chakra-colors-blue-emphasized)" : "1px solid var(--chakra-colors-gray-emphasized)",
             borderRadius: "6px",
           }}
         >
@@ -3294,9 +3294,12 @@ export default function JobsTab({
               top="100%"
               right="0"
               mt={1}
-              bg="white"
+              bg="bg.panel"
+              // A panel that paints its own background states its own ink, so it
+              // never inherits a colour meant for the surface it floats over.
+              color="fg"
               borderWidth="1px"
-              borderColor="gray.200"
+              borderColor="gray.emphasized"
               rounded="md"
               shadow="lg"
               zIndex={10}
@@ -3390,12 +3393,12 @@ export default function JobsTab({
               {datePreset ? (PRESET_LABELS[datePreset] ?? datePreset)
                 : (dateFrom || dateTo) ? (dateFrom === dateTo && dateFrom === bizDateKey(new Date()) ? "Today" : "Custom dates")
                 : "Now"}
-              {" "}<Box as="span" display="inline-flex" alignItems="center" justifyContent="center" w="14px" h="14px" borderRadius="full" bg="green.500" color="white" verticalAlign="middle"><ChevronDown size={9} /></Box>
+              {" "}<Box as="span" display="inline-flex" alignItems="center" justifyContent="center" w="14px" h="14px" borderRadius="full" bg="green.solid" color="green.contrast" verticalAlign="middle"><ChevronDown size={9} /></Box>
             </Badge>
             {quickDateMenuOpen && (
               <VStack
                 position="fixed"
-                bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px"
+                bg="bg.panel" borderWidth="1px" borderColor="gray.emphasized" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px"
                 ref={(el: HTMLDivElement | null) => {
                   if (el && el.parentElement) {
                     const rect = el.parentElement.getBoundingClientRect();
@@ -3516,7 +3519,7 @@ export default function JobsTab({
           )}
         </HStack>
       )}
-      {filtersOpen && <Box borderWidth="1px" borderColor="gray.300" borderRadius="md" bg="gray.100" p={2} pb={0} mb={2} css={{ "& button": { borderColor: "var(--chakra-colors-gray-400)" } }}>
+      {filtersOpen && <Box borderWidth="1px" borderColor="gray.emphasized" borderRadius="md" bg="gray.subtle" p={2} pb={0} mb={2} css={{ "& button": { borderColor: "var(--chakra-colors-gray-strong)" } }}>
       <HStack mb={2} gap={1} wrap="nowrap" pl="1">
         <Select.Root
           collection={kindCollection}
@@ -3527,7 +3530,7 @@ export default function JobsTab({
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: kind[0] !== "ALL" ? "var(--chakra-colors-blue-200)" : "var(--chakra-colors-blue-100)", border: kind[0] !== "ALL" ? "1px solid var(--chakra-colors-blue-400)" : "1px solid var(--chakra-colors-blue-300)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: kind[0] !== "ALL" ? "var(--chakra-colors-blue-muted)" : "var(--chakra-colors-blue-subtle)", border: kind[0] !== "ALL" ? "1px solid var(--chakra-colors-blue-strong)" : "1px solid var(--chakra-colors-blue-emphasized)", borderRadius: "6px" }}>
               <LayoutList size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -3561,7 +3564,7 @@ export default function JobsTab({
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: statusFilter[0] !== "ALL" ? "var(--chakra-colors-purple-200)" : "var(--chakra-colors-purple-100)", border: statusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-purple-400)" : "1px solid var(--chakra-colors-purple-300)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: statusFilter[0] !== "ALL" ? "var(--chakra-colors-purple-muted)" : "var(--chakra-colors-purple-subtle)", border: statusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-purple-strong)" : "1px solid var(--chakra-colors-purple-emphasized)", borderRadius: "6px" }}>
               <Filter size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -3585,7 +3588,7 @@ export default function JobsTab({
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: typeFilter[0] !== "ALL" ? "var(--chakra-colors-orange-200)" : "var(--chakra-colors-orange-100)", border: typeFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-orange-400)" : "1px solid var(--chakra-colors-orange-300)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: typeFilter[0] !== "ALL" ? "var(--chakra-colors-orange-muted)" : "var(--chakra-colors-orange-subtle)", border: typeFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-orange-strong)" : "1px solid var(--chakra-colors-orange-emphasized)", borderRadius: "6px" }}>
               <Tag size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -3606,10 +3609,10 @@ export default function JobsTab({
           px="2"
           onClick={() => setVipOnly(!vipOnly)}
           css={vipOnly ? {
-            background: "var(--chakra-colors-yellow-100)",
-            color: "var(--chakra-colors-yellow-800)",
-            border: "1px solid var(--chakra-colors-yellow-400)",
-            "&:hover": { background: "var(--chakra-colors-yellow-200)" },
+            background: "var(--chakra-colors-yellow-subtle)",
+            color: "var(--chakra-colors-yellow-fg)",
+            border: "1px solid var(--chakra-colors-yellow-strong)",
+            "&:hover": { background: "var(--chakra-colors-yellow-muted)" },
           } : undefined}
         >
           <Star size={14} fill={vipOnly ? "var(--chakra-colors-yellow-500)" : "none"} color={vipOnly ? "var(--chakra-colors-yellow-500)" : undefined} />
@@ -3621,10 +3624,10 @@ export default function JobsTab({
             px="2"
             onClick={() => setLikedOnly(!likedOnly)}
             css={likedOnly ? {
-              background: "var(--chakra-colors-red-100)",
-              color: "var(--chakra-colors-red-600)",
-              border: "1px solid var(--chakra-colors-red-400)",
-              "&:hover": { background: "var(--chakra-colors-red-200)" },
+              background: "var(--chakra-colors-red-subtle)",
+              color: "var(--chakra-colors-red-fg)",
+              border: "1px solid var(--chakra-colors-red-emphasized)",
+              "&:hover": { background: "var(--chakra-colors-red-muted)" },
             } : undefined}
             title="Show liked only"
           >
@@ -3649,10 +3652,10 @@ export default function JobsTab({
             }
           }}
           css={overdueActive ? {
-            background: "var(--chakra-colors-red-100)",
-            color: "var(--chakra-colors-red-700)",
-            border: "1px solid var(--chakra-colors-red-400)",
-            "&:hover": { background: "var(--chakra-colors-red-200)" },
+            background: "var(--chakra-colors-red-subtle)",
+            color: "var(--chakra-colors-red-fg)",
+            border: "1px solid var(--chakra-colors-red-strong)",
+            "&:hover": { background: "var(--chakra-colors-red-muted)" },
           } : undefined}
           title="Show overdue — the scheduled day has passed and the item isn't in a done status. Awaiting-payment rows only count once the client's invoice pay link has expired (see PAYMENT_REQUEST_TOKEN_EXPIRY_HOURS setting)."
         >
@@ -3740,12 +3743,12 @@ export default function JobsTab({
               {datePreset ? (PRESET_LABELS[datePreset] ?? datePreset)
                 : (dateFrom || dateTo) ? (dateFrom === dateTo && dateFrom === bizDateKey(new Date()) ? "Today" : "Custom dates")
                 : "Now"}
-              {" "}<Box as="span" display="inline-flex" alignItems="center" justifyContent="center" w="14px" h="14px" borderRadius="full" bg="green.500" color="white" verticalAlign="middle"><ChevronDown size={9} /></Box>
+              {" "}<Box as="span" display="inline-flex" alignItems="center" justifyContent="center" w="14px" h="14px" borderRadius="full" bg="green.solid" color="green.contrast" verticalAlign="middle"><ChevronDown size={9} /></Box>
             </Badge>
             {quickDateMenuOpen && (
               <VStack
                 position="fixed"
-                bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px"
+                bg="bg.panel" borderWidth="1px" borderColor="gray.emphasized" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px"
                 ref={(el: HTMLDivElement | null) => {
                   if (el && el.parentElement) {
                     const rect = el.parentElement.getBoundingClientRect();
@@ -3941,13 +3944,13 @@ export default function JobsTab({
           {/* Client Requests moved above the filter bar — see the
               Dashboard section render for the actual mount point. */}
           {showAdminExtras && !viewAsUserIds?.length && (
-            <Box px={3} py={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" borderRadius="md">
-              <Text fontSize="xs" color="yellow.800">Showing all jobs for all workers, including unclaimed.</Text>
+            <Box px={3} py={2} bg="yellow.faint" borderWidth="1px" borderColor="yellow.emphasized" borderRadius="md">
+              <Text fontSize="xs" color="yellow.fg">Showing all jobs for all workers, including unclaimed.</Text>
             </Box>
           )}
           {forAdmin && viewAsUserIds && viewAsUserIds.length > 0 && (
-            <Box px={3} py={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" borderRadius="md">
-              <Text fontSize="xs" color="yellow.800">
+            <Box px={3} py={2} bg="yellow.faint" borderWidth="1px" borderColor="yellow.emphasized" borderRadius="md">
+              <Text fontSize="xs" color="yellow.fg">
                 Filtered to jobs assigned to the selected worker{viewAsUserIds.length > 1 ? "s" : ""}. Unclaimed and unrelated jobs are hidden.
               </Text>
             </Box>
@@ -3962,8 +3965,8 @@ export default function JobsTab({
             </Box>
           )}
           {isOffline && dayGroups.length > 0 && (
-            <Box p={3} bg="orange.50" borderWidth="1px" borderColor="orange.200" borderRadius="md" mt={2}>
-              <Text fontSize="xs" color="orange.800">
+            <Box p={3} bg="orange.faint" borderWidth="1px" borderColor="orange.emphasized" borderRadius="md" mt={2}>
+              <Text fontSize="xs" color="orange.fg">
                 You're viewing cached data. Some occurrences may not be available offline. You can still: pin/unpin, like/unlike, set reminders, post comments, start jobs, complete jobs, dismiss reminders, and upload photos — these will sync when you reconnect. Other actions require an internet connection.
               </Text>
             </Box>
@@ -3984,7 +3987,7 @@ export default function JobsTab({
                 })}
                 _hover={{ opacity: 0.7 }}
               >
-                <Box flex="1" borderBottomWidth="2px" borderColor="gray.300" />
+                <Box flex="1" borderBottomWidth="2px" borderColor="gray.emphasized" />
                 <HStack gap={1.5} align="center">
                   {/* Forecast glyph — prefixes the label for any date
                       the forecast covers (today, tomorrow, plus the
@@ -3999,7 +4002,7 @@ export default function JobsTab({
                       <HStack
                         gap={0.5}
                         align="center"
-                        color="gray.600"
+                        color="gray.fg"
                         title={`${f.description}${f.rainChance > 0 ? ` · ${f.rainChance}% rain` : ""} · ${Math.round(f.high)}° / ${Math.round(f.low)}°`}
                       >
                         {/* Temperature leads, icon follows. The high, not the
@@ -4012,7 +4015,7 @@ export default function JobsTab({
                         </Text>
                         <WeatherIcon icon={f.icon} size={14} />
                         {f.rainChance >= 30 && (
-                          <Text fontSize="2xs" color="blue.600" fontWeight="semibold" lineHeight="1">
+                          <Text fontSize="2xs" color="blue.fg" fontWeight="semibold" lineHeight="1">
                             {f.rainChance}%
                           </Text>
                         )}
@@ -4030,7 +4033,7 @@ export default function JobsTab({
                     openId={openAlertId}
                     onToggle={(id) => setOpenAlertId((v) => (v === id ? null : id))}
                   />
-                  <Text fontSize="sm" fontWeight="bold" color="gray.600" whiteSpace="nowrap" textTransform="uppercase" letterSpacing="wide">
+                  <Text fontSize="sm" fontWeight="bold" color="gray.fg" whiteSpace="nowrap" textTransform="uppercase" letterSpacing="wide">
                     {group.label}
                   </Text>
                   <Badge size="sm" colorPalette="gray" variant="subtle" borderRadius="full" px="1.5" fontSize="2xs" lineHeight="1">
@@ -4171,9 +4174,9 @@ export default function JobsTab({
                       </Badge>
                     );
                   })()}
-                  <Text fontSize="xs" color="gray.400">{collapsedGroups.has(group.key) ? "▶" : "▼"}</Text>
+                  <Text fontSize="xs" color="fg.muted">{collapsedGroups.has(group.key) ? "▶" : "▼"}</Text>
                 </HStack>
-                <Box flex="1" borderBottomWidth="2px" borderColor="gray.300" />
+                <Box flex="1" borderBottomWidth="2px" borderColor="gray.emphasized" />
               </HStack>
               {/* Expanded advisory — full width, BELOW the header row. Inside
                   it, this was a flex child and pushed the date sideways. */}
@@ -4471,12 +4474,12 @@ export default function JobsTab({
             //              panel (untruncated note + reminder time).
             const ghostHighPriority = !!(occ as any).isHighPriority;
             if (isGhost) {
-              const ghostBorderColor = ghostHighPriority ? "purple.500" : "purple.300";
-              const ghostBg = ghostHighPriority ? "purple.100" : "purple.50";
+              const ghostBorderColor = ghostHighPriority ? "purple.solid" : "purple.emphasized";
+              const ghostBg = ghostHighPriority ? "purple.muted" : "purple.faint";
               const ghostCss = {
                 borderLeft: ghostHighPriority
-                  ? "4px dashed var(--chakra-colors-purple-600)"
-                  : "4px dashed var(--chakra-colors-purple-400)",
+                  ? "4px dashed var(--chakra-colors-purple-solid)"
+                  : "4px dashed var(--chakra-colors-purple-strong)",
                 borderStyle: "dashed",
                 opacity: ghostHighPriority ? 1 : 0.8,
               };
@@ -4503,7 +4506,7 @@ export default function JobsTab({
                         inside Card.Root — no Card.Body — to avoid the extra
                         body padding the other ultra paths skip. */}
                     <HStack px="3" py="1" gap={2} h="44px" align="center" fontSize="xs">
-                      <Bell size={13} style={{ color: "var(--chakra-colors-purple-600)", flexShrink: 0 }} />
+                      <Bell size={13} style={{ color: "var(--chakra-colors-purple-fg)", flexShrink: 0 }} />
                       <Badge colorPalette="purple" variant="solid" fontSize="xs" px="1.5" borderRadius="full" flexShrink={0}>Reminder</Badge>
                       {ghostHighPriority && <Badge colorPalette="red" variant="solid" fontSize="xs" px="1.5" borderRadius="full" flexShrink={0}>!</Badge>}
                       <Text fontWeight="medium" flex="1" minW={0} overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
@@ -4511,7 +4514,7 @@ export default function JobsTab({
                         {occ.reminder?.note ? ` · ${occ.reminder.note}` : ""}
                       </Text>
                       {occ.reminder?.remindAt && (
-                        <Text color="purple.600" flexShrink={0}>{fmtDate(occ.reminder.remindAt)}</Text>
+                        <Text color="purple.fg" flexShrink={0}>{fmtDate(occ.reminder.remindAt)}</Text>
                       )}
                     </HStack>
                   </Card.Root>
@@ -4552,11 +4555,11 @@ export default function JobsTab({
                           toggleCard();
                         }}
                       >
-                        <Bell size={14} style={{ color: "var(--chakra-colors-purple-600)" }} />
+                        <Bell size={14} style={{ color: "var(--chakra-colors-purple-fg)" }} />
                         <Badge colorPalette="purple" variant="solid" fontSize="xs" px="2" borderRadius="full">Reminder</Badge>
                         {ghostHighPriority && <Badge colorPalette="red" variant="solid" fontSize="xs" px="2" borderRadius="full">High Priority</Badge>}
                         {occ.reminder?.note && (
-                          <Text fontSize="xs" color="purple.700">— {occ.reminder.note.length > 50 ? occ.reminder.note.slice(0, 50) + "…" : occ.reminder.note}</Text>
+                          <Text fontSize="xs" color="purple.fg">— {occ.reminder.note.length > 50 ? occ.reminder.note.slice(0, 50) + "…" : occ.reminder.note}</Text>
                         )}
                       </HStack>
                       <Text fontSize="xs" color="fg.muted">
@@ -4576,21 +4579,21 @@ export default function JobsTab({
                           w="full"
                           px="3"
                           py="2"
-                          bg="purple.100"
+                          bg="purple.subtle"
                           borderRadius="md"
                           borderWidth="1px"
-                          borderColor="purple.200"
+                          borderColor="purple.emphasized"
                         >
-                          <Text fontSize="2xs" fontWeight="semibold" color="purple.800" textTransform="uppercase" letterSpacing="wide" mb={1}>
+                          <Text fontSize="2xs" fontWeight="semibold" color="purple.fg" textTransform="uppercase" letterSpacing="wide" mb={1}>
                             Reminder details
                           </Text>
                           {occ.reminder.remindAt && (
-                            <Text fontSize="xs" color="purple.700">
+                            <Text fontSize="xs" color="purple.fg">
                               Set for {fmtDate(occ.reminder.remindAt)}
                             </Text>
                           )}
                           {occ.reminder.note && (
-                            <Text fontSize="sm" color="purple.900" mt={1} whiteSpace="pre-wrap">
+                            <Text fontSize="sm" color="purple.fg" mt={1} whiteSpace="pre-wrap">
                               {occ.reminder.note}
                             </Text>
                           )}
@@ -4708,9 +4711,9 @@ export default function JobsTab({
                       ? "Expires tomorrow"
                       : `Expires in ${ghostDaysLeft}d`;
               const cardStyle = {
-                borderLeft: "4px dashed var(--chakra-colors-gray-400)",
+                borderLeft: "4px dashed var(--chakra-colors-gray-strong)",
                 borderStyle: "dashed",
-                borderColor: "var(--chakra-colors-gray-400)",
+                borderColor: "var(--chakra-colors-gray-strong)",
                 borderWidth: "1px",
                 ...(ghostUrgent
                   ? { animation: "seedlings-pulse-ghost 1.8s ease-out infinite" }
@@ -4733,7 +4736,7 @@ export default function JobsTab({
                   >
                     <HStack px="3" py="1" gap={2} h="44px" align="center" fontSize="xs">
                       <Clock size={13} style={{ color: "var(--chakra-colors-gray-200)", flexShrink: 0 }} />
-                      <Badge size="xs" variant="solid" colorPalette="gray" bg={ghostExpired ? "gray.700" : "gray.100"} color={ghostExpired ? "gray.50" : "gray.900"} flexShrink={0}>
+                      <Badge size="xs" variant="solid" colorPalette="gray" bg={ghostExpired ? "gray.700" : "gray.subtle"} color={ghostExpired ? "gray.50" : "gray.fg"} flexShrink={0}>
                         {ghostChipLabel}
                       </Badge>
                       <Text fontWeight="medium" color="white" flex="1" minW={0} overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
@@ -4773,7 +4776,7 @@ export default function JobsTab({
                           {ghostExpired ? "Was due" : "Would post on"} {wouldBeDateKey ? fmtDate(wouldBeDateKey) : "—"} · {blockerLabel}
                         </Text>
                         {cardMode === "expanded" && (
-                          <VStack align="start" gap={0.5} pt={2} borderTopWidth="1px" borderColor="gray.400" mt={2} w="full">
+                          <VStack align="start" gap={0.5} pt={2} borderTopWidth="1px" borderColor="gray.strong" mt={2} w="full">
                             {propAddress && (
                               <Text fontSize="xs" color="gray.100">
                                 {propAddress}
@@ -4812,7 +4815,7 @@ export default function JobsTab({
                           </VStack>
                         )}
                       </VStack>
-                      <Badge size="xs" variant="solid" colorPalette="gray" bg={ghostExpired ? "gray.700" : "gray.100"} color={ghostExpired ? "gray.50" : "gray.900"} flexShrink={0} whiteSpace="nowrap">
+                      <Badge size="xs" variant="solid" colorPalette="gray" bg={ghostExpired ? "gray.700" : "gray.subtle"} color={ghostExpired ? "gray.50" : "gray.fg"} flexShrink={0} whiteSpace="nowrap">
                         {ghostChipLabel}
                       </Badge>
                     </HStack>
@@ -4865,8 +4868,8 @@ export default function JobsTab({
                     key={`pin-ghost-${occ.id}-${occIdx}`}
                     variant="outline"
                     overflow="hidden"
-                    borderColor={`${ghostColor}.300`}
-                    bg={`${ghostColor}.50`}
+                    borderColor={`${ghostColor}.emphasized`}
+                    bg={`${ghostColor}.faint`}
                     cursor="pointer"
                     onClick={toggleCard}
                     css={pinCss}
@@ -4885,8 +4888,8 @@ export default function JobsTab({
                 <Card.Root
                   key={`pin-ghost-${occ.id}-${occIdx}`}
                   variant="outline"
-                  borderColor={`${ghostColor}.300`}
-                  bg={`${ghostColor}.50`}
+                  borderColor={`${ghostColor}.emphasized`}
+                  bg={`${ghostColor}.faint`}
                   css={pinCss}
                 >
                   <Card.Body py="2" px="3">
@@ -4932,19 +4935,19 @@ export default function JobsTab({
                           w="full"
                           px="3"
                           py="2"
-                          bg={`${ghostColor}.100`}
+                          bg={`${ghostColor}.subtle`}
                           borderRadius="md"
                           borderWidth="1px"
-                          borderColor={`${ghostColor}.200`}
+                          borderColor={`${ghostColor}.emphasized`}
                         >
-                          <Text fontSize="2xs" fontWeight="semibold" color={`${ghostColor}.800`} textTransform="uppercase" letterSpacing="wide" mb={1}>
+                          <Text fontSize="2xs" fontWeight="semibold" color={`${ghostColor}.fg`} textTransform="uppercase" letterSpacing="wide" mb={1}>
                             Pinned details
                           </Text>
                           <VStack align="stretch" gap={1}>
                             {/* Full address — semi only shows the property
                                 display name; this surfaces the street. */}
                             {occ.job?.property?.street1 && (
-                              <Text fontSize="xs" color={`${ghostColor}.700`}>
+                              <Text fontSize="xs" color={`${ghostColor}.fg`}>
                                 📍 {occ.job.property.street1}
                                 {occ.job.property.city && `, ${occ.job.property.city}`}
                                 {occ.job.property.state && ` ${occ.job.property.state}`}
@@ -4953,7 +4956,7 @@ export default function JobsTab({
                             {/* Assignees — who else is on this occurrence.
                                 Useful to know before you tap View Pinned. */}
                             {(occ.assignees ?? []).length > 0 && (
-                              <Text fontSize="xs" color={`${ghostColor}.700`}>
+                              <Text fontSize="xs" color={`${ghostColor}.fg`}>
                                 👥 {(occ.assignees ?? []).map((a) =>
                                   a.user?.displayName || a.user?.email || "Worker"
                                 ).join(", ")}
@@ -4961,13 +4964,13 @@ export default function JobsTab({
                             )}
                             {/* Status — meaningful for non-default values. */}
                             {occ.status && occ.status !== "SCHEDULED" && (
-                              <Text fontSize="xs" color={`${ghostColor}.700`}>
+                              <Text fontSize="xs" color={`${ghostColor}.fg`}>
                                 · {occ.status.replace(/_/g, " ").toLowerCase()}
                               </Text>
                             )}
                             {/* Price — when the job's value is set. */}
                             {(occ.price ?? 0) > 0 && (
-                              <Text fontSize="xs" color={`${ghostColor}.700`}>
+                              <Text fontSize="xs" color={`${ghostColor}.fg`}>
                                 💰 ${occ.price?.toFixed(2)}
                               </Text>
                             )}
@@ -4978,12 +4981,12 @@ export default function JobsTab({
                                 added on top. */}
                             {(occ.instructions ?? []).filter((i) => !i.isPreset).length > 0 && (
                               <Box mt={1}>
-                                <Text fontSize="2xs" fontWeight="semibold" color={`${ghostColor}.700`} textTransform="uppercase" mb={0.5}>
+                                <Text fontSize="2xs" fontWeight="semibold" color={`${ghostColor}.fg`} textTransform="uppercase" mb={0.5}>
                                   Notes
                                 </Text>
                                 <VStack align="stretch" gap={0.5}>
                                   {(occ.instructions ?? []).filter((i) => !i.isPreset).map((inst) => (
-                                    <Text key={inst.id} fontSize="xs" color={`${ghostColor}.900`} whiteSpace="pre-wrap">
+                                    <Text key={inst.id} fontSize="xs" color={`${ghostColor}.fg`} whiteSpace="pre-wrap">
                                       • {inst.text}
                                     </Text>
                                   ))}
@@ -5032,60 +5035,75 @@ export default function JobsTab({
               : isAssignedToOthers ? "gray"
               : isUnassigned ? "yellow"
               : null;
-            const cardBg = isHighPriority ? "purple.100"
-              : cardColorBase === "paused" ? "orange.100"
-              : cardColorBase === "announce" ? "purple.200"
-              : cardColorBase === "followup-closed" ? "red.100"
-              : cardColorBase === "followup" ? "red.200"
-              : cardColorBase === "event-closed" ? "yellow.100"
-              : cardColorBase === "event" ? "yellow.200"
+            // TINT LEVELS. These are Chakra's per-palette semantic steps —
+            // subtle < muted < emphasized — not raw ramp numbers, because a
+            // raw `purple.100` is a pale wash in every theme, including the
+            // dark one where the card sits on near-black. The semantic step
+            // resolves per theme (see COLOR_PALETTE_FAMILY in themeTokens),
+            // so the same name is a wash on white and a deep ink on black.
+            //
+            // The steps map 1:1 onto the ramp values these cards shipped with
+            // — faint = .50, subtle = .100, muted = .200 — so what renders is
+            // what production renders, not a re-interpretation of it. An
+            // earlier pass had only three steps to spend and pushed each hue a
+            // notch darker to keep its states apart; `faint` removes that
+            // compromise. Purple still reads reminder / high priority /
+            // announcement, and yellow unassigned / closed event / event.
+            const cardBg = isHighPriority ? "purple.subtle"
+              : cardColorBase === "paused" ? "orange.subtle"
+              : cardColorBase === "announce" ? "purple.muted"
+              : cardColorBase === "followup-closed" ? "red.subtle"
+              : cardColorBase === "followup" ? "red.muted"
+              : cardColorBase === "event-closed" ? "yellow.subtle"
+              : cardColorBase === "event" ? "yellow.muted"
               // Completed / closed-out jobs (closed, accepted estimate, rejected estimate)
-              // fall back to the default white card bg so they read as "done — moved on".
-              // Unconfirmed jobs assigned to other workers keep the gray.50 fill, which
-              // is what the operator scans for as "waiting on someone else's action".
-              // Both states previously resolved to gray.50 and were indistinguishable.
+              // fall back to the default card bg so they read as "done — moved on".
+              // Unconfirmed jobs assigned to other workers keep the gray.subtle fill,
+              // which is what the operator scans for as "waiting on someone else's
+              // action". Both states once resolved to the same fill and were
+              // indistinguishable.
               : cardColorBase === "gray" && (isClosed || isAcceptedEstimate || isRejectedEstimate) ? undefined
-              : cardColorBase === "gray" && isAssignedToOthers ? "gray.100"
-              : cardColorBase === "yellow" ? "yellow.50"
-              : cardColorBase === "green" ? "green.100"
-              : cardColorBase && cardColorBase !== "gray" ? `${cardColorBase}.50`
+              : cardColorBase === "gray" && isAssignedToOthers ? "gray.subtle"
+              : cardColorBase === "yellow" ? "yellow.faint"
+              : cardColorBase === "green" ? "green.subtle"
+              : cardColorBase && cardColorBase !== "gray" ? `${cardColorBase}.faint`
               : undefined;
-            const cardBorderColor = isHighPriority ? "purple.500"
-              : cardColorBase === "paused" ? "orange.400"
-              : cardColorBase === "announce" ? "purple.400"
-              : cardColorBase === "followup-closed" ? "red.300"
-              : cardColorBase === "followup" ? "red.400"
-              : cardColorBase === "event-closed" ? "yellow.300"
-              : cardColorBase === "event" ? "yellow.400"
-              : !cardColorBase || (isClosed || isAcceptedEstimate || isRejectedEstimate) ? "gray.200"
-              : cardColorBase === "green" ? "green.400"
-              : `${cardColorBase}.300`;
+            const cardBorderColor = isHighPriority ? "purple.solid"
+              : cardColorBase === "paused" ? "orange.strong"
+              : cardColorBase === "announce" ? "purple.strong"
+              : cardColorBase === "followup-closed" ? "red.emphasized"
+              : cardColorBase === "followup" ? "red.strong"
+              : cardColorBase === "event-closed" ? "yellow.emphasized"
+              : cardColorBase === "event" ? "yellow.strong"
+              : !cardColorBase || (isClosed || isAcceptedEstimate || isRejectedEstimate) ? "border.emphasis"
+              : cardColorBase === "green" ? "green.strong"
+              : `${cardColorBase}.emphasized`;
             const isInProgress = occ.status === "IN_PROGRESS";
             const cardBorderWidth = isHighPriority ? "2px" : (isInProgress || isPaused) ? "2px" : "1px";
 
             // Comment badge color: darker shade of card bg
-            const commentBadgeBg = (isClosed || isAcceptedEstimate || isRejectedEstimate) && !isAnnouncement && !isEvent && !isFollowup ? "gray.200"
-              : isAnnouncement ? "purple.200"
-              : isFollowup ? "red.200"
-              : isEvent ? "yellow.200"
-              : isReminder ? "purple.200"
-              : isTask ? "blue.200"
-              : isTentative ? "orange.200"
-              : isEstimateOcc ? "pink.200"
-              : isAssignedToMe ? "teal.200"
-              : isAssignedToOthers ? "gray.300"
-              : "gray.200";
-            const commentBadgeColor = (isClosed || isAcceptedEstimate || isRejectedEstimate) && !isAnnouncement && !isEvent && !isFollowup ? "gray.700"
-              : isAnnouncement ? "purple.700"
-              : isFollowup ? "red.700"
-              : isEvent ? "yellow.700"
-              : isReminder ? "purple.700"
-              : isTask ? "blue.700"
-              : isTentative ? "orange.700"
-              : isEstimateOcc ? "pink.700"
-              : isAssignedToMe ? "teal.700"
-              : isAssignedToOthers ? "gray.700"
-              : "gray.700";
+            const commentBadgeBg = (isClosed || isAcceptedEstimate || isRejectedEstimate) && !isAnnouncement && !isEvent && !isFollowup ? "gray.muted"
+              : isAnnouncement ? "purple.muted"
+              : isFollowup ? "red.muted"
+              : isEvent ? "yellow.muted"
+              : isReminder ? "purple.muted"
+              : isTask ? "blue.muted"
+              : isTentative ? "orange.muted"
+              : isEstimateOcc ? "pink.muted"
+              : isAssignedToMe ? "teal.muted"
+              : isAssignedToOthers ? "gray.emphasized"
+              : "gray.muted";
+            const commentBadgeColor = (isClosed || isAcceptedEstimate || isRejectedEstimate) && !isAnnouncement && !isEvent && !isFollowup ? "gray.fg"
+              : isAnnouncement ? "purple.fg"
+              : isFollowup ? "red.fg"
+              : isEvent ? "yellow.fg"
+              : isReminder ? "purple.fg"
+              : isTask ? "blue.fg"
+              : isTentative ? "orange.fg"
+              : isEstimateOcc ? "pink.fg"
+              : isAssignedToMe ? "teal.fg"
+              : isAssignedToOthers ? "gray.fg"
+              : "gray.fg";
 
             // STREAM_PAUSED indicator — a purple pause circle that stands
             // in for the quick action button when the repeating service
@@ -5103,8 +5121,8 @@ export default function JobsTab({
                 h="22px"
                 minW="22px"
                 borderRadius="full"
-                bg="purple.500"
-                color="white"
+                bg="purple.solid"
+                color="purple.contrast"
                 display="flex"
                 alignItems="center"
                 justifyContent="center"
@@ -5229,9 +5247,9 @@ export default function JobsTab({
               align="center"
               px="3"
               py="1.5"
-              bg="yellow.100"
+              bg="yellow.subtle"
               borderWidth="1px"
-              borderColor={oneOff ? "yellow.500" : "yellow.400"}
+              borderColor={oneOff ? "yellow.500" : "yellow.strong"}
               borderRadius="md"
               data-instruction-pulse={oneOff ? "1" : undefined}
               css={oneOff ? { animation: "seedlings-pulse-instruction 1.6s ease-in-out infinite" } : undefined}
@@ -5242,7 +5260,7 @@ export default function JobsTab({
                 fill="var(--chakra-colors-yellow-400)"
                 strokeWidth={2.5}
               />
-              <Text fontSize="xs" fontWeight="semibold" color="yellow.700" flex="1">
+              <Text fontSize="xs" fontWeight="semibold" color="yellow.fg" flex="1">
                 {inst.text}
               </Text>
               {inst.scope === "EVERY_VISIT" && (
@@ -5251,7 +5269,7 @@ export default function JobsTab({
                 </Box>
               )}
               {oneOff && (
-                <Text fontSize="2xs" color="yellow.800" fontWeight="bold" whiteSpace="nowrap">
+                <Text fontSize="2xs" color="yellow.fg" fontWeight="bold" whiteSpace="nowrap">
                   just this visit
                 </Text>
               )}
@@ -5314,12 +5332,12 @@ export default function JobsTab({
                     flexShrink={0}
                     w="22px" h="22px" minW="22px"
                     borderRadius="full"
-                    bg={asked ? "transparent" : "orange.400"}
-                    color={asked ? "orange.600" : "white"}
+                    bg={asked ? "transparent" : "orange.strong"}
+                    color={asked ? "orange.fg" : "white"}
                     borderWidth={asked ? "1.5px" : undefined}
-                    borderColor={asked ? "orange.400" : undefined}
+                    borderColor={asked ? "orange.strong" : undefined}
                     display="flex" alignItems="center" justifyContent="center"
-                    _hover={{ bg: asked ? "orange.100" : "orange.500" }}
+                    _hover={{ bg: asked ? "orange.subtle" : "orange.500" }}
                     title={
                       asked
                         ? `Confirmation asked ${fmtRelativeDay(askedAt!)} — tap to confirm or ask again`
@@ -5335,7 +5353,7 @@ export default function JobsTab({
               if (isTentative) return null;
               if (!isTaskOrReminder && occ.status === "SCHEDULED" && !needsConfirmation && (isClaimer || forAdmin)) {
                 return (
-                  <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="blue.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "blue.600" }} title={isEstimateOcc ? "Start Estimate" : "Start Job"} onClick={(e: any) => {
+                  <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="blue.solid" color="blue.contrast" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "blue.600" }} title={isEstimateOcc ? "Start Estimate" : "Start Job"} onClick={(e: any) => {
                     e.stopPropagation();
                     openStartJobDialog(occ);
                   }}><Play size={12} /></Box>
@@ -5344,14 +5362,14 @@ export default function JobsTab({
               if (!isTaskOrReminder && occ.status === "IN_PROGRESS" && (isClaimer || forAdmin) && !isEstimateOcc) {
                 return (
                   <Box position="relative" flexShrink={0}>
-                    <Box as="button" w="22px" h="22px" minW="22px" borderRadius="full" bg="blue.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "blue.600" }} title="Pause / Complete" onClick={(e: any) => {
+                    <Box as="button" w="22px" h="22px" minW="22px" borderRadius="full" bg="blue.solid" color="blue.contrast" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "blue.600" }} title="Pause / Complete" onClick={(e: any) => {
                       e.stopPropagation();
                       setQuickActionMenuOcc((prev) => prev === occ.id ? null : occ.id);
                     }}><CheckCircle2 size={12} /></Box>
                     {quickActionMenuOcc === occ.id && (
                       <VStack
                         position="fixed"
-                        bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="120px"
+                        bg="bg.panel" borderWidth="1px" borderColor="gray.emphasized" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="120px"
                         onClick={(e: any) => e.stopPropagation()}
                         ref={(el: HTMLDivElement | null) => {
                           if (el && el.parentElement) {
@@ -5374,7 +5392,7 @@ export default function JobsTab({
               }
               if (!isTaskOrReminder && occ.status === "IN_PROGRESS" && isEstimateOcc && (isClaimer || forAdmin)) {
                 return (
-                  <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="purple.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "purple.600" }} title="Complete Estimate" onClick={(e: any) => {
+                  <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="purple.solid" color="purple.contrast" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "purple.600" }} title="Complete Estimate" onClick={(e: any) => {
                     e.stopPropagation();
                     setConfirmAction({
                       title: "Complete Estimate?",
@@ -5397,14 +5415,14 @@ export default function JobsTab({
               if (!isTaskOrReminder && occ.status === "PROPOSAL_SUBMITTED" && isEstimateOcc && (isClaimer || forAdmin)) {
                 return (
                   <Box position="relative" flexShrink={0}>
-                    <Box as="button" w="22px" h="22px" minW="22px" borderRadius="full" bg="green.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "green.600" }} title="Accept / Reject Estimate" onClick={(e: any) => {
+                    <Box as="button" w="22px" h="22px" minW="22px" borderRadius="full" bg="green.solid" color="green.contrast" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "green.600" }} title="Accept / Reject Estimate" onClick={(e: any) => {
                       e.stopPropagation();
                       setQuickActionMenuOcc((prev) => prev === occ.id ? null : occ.id);
                     }}><CheckCircle2 size={12} /></Box>
                     {quickActionMenuOcc === occ.id && (
                       <VStack
                         position="fixed"
-                        bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px"
+                        bg="bg.panel" borderWidth="1px" borderColor="gray.emphasized" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px"
                         onClick={(e: any) => e.stopPropagation()}
                         ref={(el: HTMLDivElement | null) => {
                           if (el && el.parentElement) {
@@ -5497,7 +5515,7 @@ export default function JobsTab({
               }
               if (!isTaskOrReminder && occ.status === "PAUSED" && (isClaimer || forAdmin)) {
                 return (
-                  <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="orange.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "orange.600" }} title="Resume Job" onClick={(e: any) => {
+                  <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="orange.solid" color="orange.contrast" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "orange.600" }} title="Resume Job" onClick={(e: any) => {
                     e.stopPropagation();
                     void resumeJob(occ);
                   }}><Play size={12} /></Box>
@@ -5514,7 +5532,7 @@ export default function JobsTab({
                 const open = !pendingPayment && !requestInFlight;
                 if (open) {
                   return (
-                    <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="green.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "green.600" }} title="Initiate Payment" onClick={(e: any) => {
+                    <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="green.solid" color="green.contrast" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "green.600" }} title="Initiate Payment" onClick={(e: any) => {
                       e.stopPropagation();
                       setAcceptPaymentOcc(occ);
                       setAcceptPaymentOpen(true);
@@ -5531,7 +5549,7 @@ export default function JobsTab({
                 const contractorBlocked = isContractor && daysAhead > 2;
                 if (contractorBlocked || isTrainee) return null;
                 return (
-                  <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="yellow.400" color="yellow.900" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "yellow.500" }} title="Claim" onClick={(e: any) => {
+                  <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="yellow.400" color="yellow.fg" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "yellow.500" }} title="Claim" onClick={(e: any) => {
                     e.stopPropagation();
                     void claim(occ.id);
                   }}><Hand size={12} /></Box>
@@ -5577,7 +5595,7 @@ export default function JobsTab({
                 </Button>
                 {actionMenuOcc === occ.id && (
                   <VStack
-                    position="fixed" bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px" align="stretch"
+                    position="fixed" bg="bg.panel" borderWidth="1px" borderColor="gray.emphasized" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px" align="stretch"
                     ref={(el: HTMLDivElement | null) => { if (el && el.parentElement) { const rect = el.parentElement.getBoundingClientRect(); el.style.top = `${rect.bottom + 4}px`; el.style.left = `${Math.max(8, Math.min(rect.right - el.offsetWidth, window.innerWidth - el.offsetWidth - 8))}px`; } }}
                     onClick={(e: any) => e.stopPropagation()}
                   >
@@ -5688,7 +5706,7 @@ export default function JobsTab({
                   // is the dedicated title-bar toggle instead.
                   cursor: cardMode === "ultra" ? "pointer" : "default",
                   "& a, & button": { pointerEvents: "auto" },
-                  ...(isHighPriority ? { borderLeft: "4px solid var(--chakra-colors-purple-600)" } : isReminder ? { borderLeft: "4px solid var(--chakra-colors-purple-400)" } : isAnnouncement ? { borderLeft: "4px solid var(--chakra-colors-purple-400)", ...(isClosed ? { opacity: 0.7 } : {}) } : (isFollowup && !isClosed) ? { borderLeft: "4px solid var(--chakra-colors-red-400)" } : (isFollowup && isClosed) ? { borderLeft: "4px solid var(--chakra-colors-red-300)", opacity: 0.7 } : (isEvent && !isClosed) ? { borderLeft: "4px solid var(--chakra-colors-yellow-400)" } : (isEvent && isClosed) ? { borderLeft: "4px solid var(--chakra-colors-yellow-300)", opacity: 0.7 } : isTask ? { borderLeft: "4px solid var(--chakra-colors-blue-400)" } : {}),
+                  ...(isHighPriority ? { borderLeft: "4px solid var(--chakra-colors-purple-600)" } : isReminder ? { borderLeft: "4px solid var(--chakra-colors-purple-strong)" } : isAnnouncement ? { borderLeft: "4px solid var(--chakra-colors-purple-strong)", ...(isClosed ? { opacity: 0.7 } : {}) } : (isFollowup && !isClosed) ? { borderLeft: "4px solid var(--chakra-colors-red-strong)" } : (isFollowup && isClosed) ? { borderLeft: "4px solid var(--chakra-colors-red-emphasized)", opacity: 0.7 } : (isEvent && !isClosed) ? { borderLeft: "4px solid var(--chakra-colors-yellow-strong)" } : (isEvent && isClosed) ? { borderLeft: "4px solid var(--chakra-colors-yellow-emphasized)", opacity: 0.7 } : isTask ? { borderLeft: "4px solid var(--chakra-colors-blue-strong)" } : {}),
                   // Peek rows previously used opacity 0.6 to recede,
                   // but it made the cards too hard to read. The
                   // purple Users chip + "View only" strip + missing
@@ -5719,7 +5737,7 @@ export default function JobsTab({
               >
                 {/* Loading overlay */}
                 {busyOccId === occ.id && (
-                  <Box position="absolute" inset="0" bg="whiteAlpha.700" zIndex="1" display="flex" alignItems="center" justifyContent="center" borderRadius="inherit">
+                  <Box position="absolute" inset="0" bg={{ base: "whiteAlpha.700", _dark: "blackAlpha.700" }} zIndex="1" display="flex" alignItems="center" justifyContent="center" borderRadius="inherit">
                     <Spinner size="sm" />
                   </Box>
                 )}
@@ -5897,8 +5915,8 @@ export default function JobsTab({
                             px="1"
                             py="0"
                             borderRadius="md"
-                            bg="green.100"
-                            color="green.800"
+                            bg="green.subtle"
+                            color="green.fg"
                             fontSize="2xs"
                             fontWeight="bold"
                             lineHeight="1.3"
@@ -5919,7 +5937,7 @@ export default function JobsTab({
                         <Text
                           flexShrink={0}
                           fontSize="2xs"
-                          color={isUnassigned ? "orange.600" : "fg.muted"}
+                          color={isUnassigned ? "orange.fg" : "fg.muted"}
                           maxW="140px"
                           truncate
                         >
@@ -6038,7 +6056,7 @@ export default function JobsTab({
                                 </Button>
                                 {contactMenuOcc === occ.id && (
                                   <VStack
-                                    position="fixed" bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="150px"
+                                    position="fixed" bg="bg.panel" borderWidth="1px" borderColor="gray.emphasized" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="150px"
                                     ref={(el: HTMLDivElement | null) => { if (el && el.parentElement) { const rect = el.parentElement.getBoundingClientRect(); el.style.top = `${rect.bottom + 4}px`; el.style.left = `${Math.max(8, Math.min(rect.right - el.offsetWidth, window.innerWidth - el.offsetWidth - 8))}px`; } }}
                                     onClick={(e: any) => e.stopPropagation()}
                                   >
@@ -6101,8 +6119,8 @@ export default function JobsTab({
                           the title row, above status badges. Same callout
                           shape as before, just relocated. */}
                       {needsConfirmation && (
-                        <Box px="4" py="3" my={2} bg="orange.50" borderWidth="1px" borderColor="orange.300" borderRadius="md">
-                          <Text fontSize="xs" fontWeight="semibold" color="orange.700">⚠ Client confirmation required before starting</Text>
+                        <Box px="4" py="3" my={2} bg="orange.faint" borderWidth="1px" borderColor="orange.emphasized" borderRadius="md">
+                          <Text fontSize="xs" fontWeight="semibold" color="orange.fg">⚠ Client confirmation required before starting</Text>
                         </Box>
                       )}
                       {isLightEstimate && occ.estimateAddress && (
@@ -6180,12 +6198,12 @@ export default function JobsTab({
                                   px="2"
                                   py="0.5"
                                   borderRadius="full"
-                                  bg="orange.100"
-                                  color="orange.800"
+                                  bg="orange.subtle"
+                                  color="orange.fg"
                                   fontSize="xs"
                                   fontWeight="medium"
                                   cursor="pointer"
-                                  _hover={{ bg: "orange.200" }}
+                                  _hover={{ bg: "orange.muted" }}
                                   onClick={(e: any) => {
                                     e.stopPropagation();
                                     setHoursMenuOcc((v) => v === occ.id ? null : occ.id);
@@ -6196,7 +6214,7 @@ export default function JobsTab({
                                 </Box>
                                 {hoursMenuOcc === occ.id && (
                                   <VStack
-                                    position="fixed" bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px" align="stretch"
+                                    position="fixed" bg="bg.panel" borderWidth="1px" borderColor="gray.emphasized" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px" align="stretch"
                                     ref={(el: HTMLDivElement | null) => { if (el && el.parentElement) { const rect = el.parentElement.getBoundingClientRect(); el.style.top = `${rect.bottom + 4}px`; el.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - el.offsetWidth - 8))}px`; } }}
                                     onClick={(e: any) => e.stopPropagation()}
                                   >
@@ -6366,7 +6384,7 @@ export default function JobsTab({
                                   </Button>
                                   {contactMenuOcc === occ.id && (
                                     <VStack
-                                      position="fixed" bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="150px"
+                                      position="fixed" bg="bg.panel" borderWidth="1px" borderColor="gray.emphasized" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="150px"
                                       ref={(el: HTMLDivElement | null) => { if (el && el.parentElement) { const rect = el.parentElement.getBoundingClientRect(); el.style.top = `${rect.bottom + 4}px`; el.style.left = `${Math.max(8, Math.min(rect.right - el.offsetWidth, window.innerWidth - el.offsetWidth - 8))}px`; } }}
                                       onClick={(e: any) => e.stopPropagation()}
                                     >
@@ -6448,8 +6466,8 @@ export default function JobsTab({
                         {/* Client confirmation banner — under the title row,
                             above sub-title and status badges. */}
                         {needsConfirmation && (
-                          <Box px="4" py="3" my={2} bg="orange.50" borderWidth="1px" borderColor="orange.300" borderRadius="md">
-                            <Text fontSize="xs" fontWeight="semibold" color="orange.700">⚠ Client confirmation required before starting</Text>
+                          <Box px="4" py="3" my={2} bg="orange.faint" borderWidth="1px" borderColor="orange.emphasized" borderRadius="md">
+                            <Text fontSize="xs" fontWeight="semibold" color="orange.fg">⚠ Client confirmation required before starting</Text>
                           </Box>
                         )}
                         {isEstimateOcc && occ.title && !isLightEstimate && (
@@ -6462,7 +6480,7 @@ export default function JobsTab({
                                 <Text color="fg.muted" mb={0.5}>Linked occurrence:</Text>
                                 <a
                                   href="#"
-                                  style={{ color: "var(--chakra-colors-blue-600)", textDecoration: "underline" }}
+                                  style={{ color: "var(--chakra-colors-blue-fg)", textDecoration: "underline" }}
                                   onClick={(e) => {
                                     e.preventDefault();
                                     e.stopPropagation();
@@ -6511,19 +6529,19 @@ export default function JobsTab({
                                 mb={1}
                                 px={2}
                                 py={1.5}
-                                bg="orange.50"
+                                bg="orange.faint"
                                 borderWidth="1px"
-                                borderColor="orange.200"
+                                borderColor="orange.emphasized"
                                 borderRadius="md"
                               >
-                                <Box color="orange.600" flexShrink={0} mt="1px">
+                                <Box color="orange.fg" flexShrink={0} mt="1px">
                                   <KeyRound size={13} />
                                 </Box>
                                 <Box minW={0}>
-                                  <Text fontSize="2xs" fontWeight="semibold" color="orange.700" textTransform="uppercase" letterSpacing="0.03em">
+                                  <Text fontSize="2xs" fontWeight="semibold" color="orange.fg" textTransform="uppercase" letterSpacing="0.03em">
                                     Access
                                   </Text>
-                                  <Text fontSize="xs" color="orange.900" whiteSpace="pre-wrap">
+                                  <Text fontSize="xs" color="orange.fg" whiteSpace="pre-wrap">
                                     {(occ.job?.property as any).accessNotes}
                                   </Text>
                                 </Box>
@@ -6569,7 +6587,7 @@ export default function JobsTab({
                               )}
                             </HStack>
                             {isVipClient && vipReason && (
-                              <Text fontSize="xs" color="yellow.700" fontWeight="medium">⭐ VIP: {vipReason}</Text>
+                              <Text fontSize="xs" color="yellow.fg" fontWeight="medium">⭐ VIP: {vipReason}</Text>
                             )}
                           </VStack>
                         )}
@@ -6644,12 +6662,12 @@ export default function JobsTab({
                                   px="2"
                                   py="0.5"
                                   borderRadius="full"
-                                  bg="orange.100"
-                                  color="orange.800"
+                                  bg="orange.subtle"
+                                  color="orange.fg"
                                   fontSize="xs"
                                   fontWeight="medium"
                                   cursor="pointer"
-                                  _hover={{ bg: "orange.200" }}
+                                  _hover={{ bg: "orange.muted" }}
                                   onClick={(e: any) => {
                                     e.stopPropagation();
                                     setHoursMenuOcc((v) => v === occ.id ? null : occ.id);
@@ -6660,7 +6678,7 @@ export default function JobsTab({
                                 </Box>
                                 {hoursMenuOcc === occ.id && (
                                   <VStack
-                                    position="fixed" bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px" align="stretch"
+                                    position="fixed" bg="bg.panel" borderWidth="1px" borderColor="gray.emphasized" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px" align="stretch"
                                     ref={(el: HTMLDivElement | null) => { if (el && el.parentElement) { const rect = el.parentElement.getBoundingClientRect(); el.style.top = `${rect.bottom + 4}px`; el.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - el.offsetWidth - 8))}px`; } }}
                                     onClick={(e: any) => e.stopPropagation()}
                                   >
@@ -6739,12 +6757,12 @@ export default function JobsTab({
                       px={2}
                       py={1.5}
                       borderRadius="md"
-                      bg="purple.50"
+                      bg="purple.faint"
                       borderWidth="1px"
-                      borderColor="purple.200"
+                      borderColor="purple.emphasized"
                     >
                       <Users size={12} color="var(--chakra-colors-purple-500)" style={{ flexShrink: 0 }} />
-                      <Text fontSize="xs" color="purple.900" lineClamp={1} flex={1} minW={0}>
+                      <Text fontSize="xs" color="purple.fg" lineClamp={1} flex={1} minW={0}>
                         {(() => {
                           const workerAssignees = (occ.assignees ?? [])
                             .filter((a) => (a.role ?? "") !== "observer")
@@ -6772,11 +6790,11 @@ export default function JobsTab({
                   const verb = cr.kind === "RESCHEDULE" ? "Reschedule" : "Skip";
                   const action = cr.status === "DENIED" ? "dismissed" : "approved";
                   return (
-                    <Box mx="4" mt="2" p="2" bg="blue.50" borderWidth="1px" borderLeftWidth="3px" borderColor="blue.200" rounded="md">
-                      <Text fontSize="xs" fontWeight="semibold" color="blue.800">
+                    <Box mx="4" mt="2" p="2" bg="blue.faint" borderWidth="1px" borderLeftWidth="3px" borderColor="blue.emphasized" rounded="md">
+                      <Text fontSize="xs" fontWeight="semibold" color="blue.fg">
                         {verb} request {action} — note to client
                       </Text>
-                      <Text fontSize="sm" color="blue.900" mt={0.5}>
+                      <Text fontSize="sm" color="blue.fg" mt={0.5}>
                         {cr.resolutionNote}
                       </Text>
                     </Box>
@@ -6788,7 +6806,7 @@ export default function JobsTab({
                     <VStack align="start" gap={1} fontSize="xs">
                       {/* Event time */}
                       {isEvent && occ.startAt && (
-                        <Text fontSize="sm" fontWeight="bold" color="#B45309">
+                        <Text fontSize="sm" fontWeight="bold" color="yellow.fg">
                           {fmtTimeOpts(occ.startAt, { hour: "numeric", minute: "2-digit" })}
                         </Text>
                       )}
@@ -6816,7 +6834,7 @@ export default function JobsTab({
                             </Badge>
                           ))}
                           {(occ.addons ?? []).map((addon: any) => (
-                            <Badge key={addon.id} title={addon.detail ?? undefined} fontSize="xs" px="2" borderRadius="full" bg="gray.200" color="gray.700">
+                            <Badge key={addon.id} title={addon.detail ?? undefined} fontSize="xs" px="2" borderRadius="full" bg="gray.muted" color="gray.fg">
                               +{addon.tag ? jobTagLabel(addon.tag) : addon.customLabel}
                             </Badge>
                           ))}
@@ -6850,7 +6868,7 @@ export default function JobsTab({
                           Group: {(occ as any).assignedGroup.name} ({(occ.assignees ?? []).filter((a: any) => a.role !== "observer").length})
                         </Badge>
                       ) : !isUnassigned ? (
-                        <Text fontSize="xs" fontWeight="semibold" color="teal.700">
+                        <Text fontSize="xs" fontWeight="semibold" color="teal.fg">
                           {[...assignees].sort((a, b) => assigneeSortOrder(a) - assigneeSortOrder(b)).map((a) => {
                             const name = a.user?.displayName ?? a.user?.email ?? a.userId;
                             const isCl = a.assignedById === a.userId && a.role !== "observer";
@@ -6859,7 +6877,7 @@ export default function JobsTab({
                           }).join(", ")}
                         </Text>
                       ) : occ.status !== "ARCHIVED" && !(isEvent || isFollowup || isAnnouncement) ? (
-                        <Text fontSize="xs" fontWeight="semibold" color="orange.500">
+                        <Text fontSize="xs" fontWeight="semibold" color="orange.fg">
                           {isTentative ? "Tentative — awaiting confirmation" : isAdminOnlyOcc ? "Unassigned — admin must assign" : "Unclaimed"}
                         </Text>
                       ) : null}
@@ -6944,7 +6962,7 @@ export default function JobsTab({
                           </Badge>
                         )}
                         {occ.payment && (occ.payment as any).confirmed === false && (
-                          <Badge bg="blue.600" color="white" fontSize="xs" px="2" py="0.5" borderRadius="full">
+                          <Badge bg="blue.solid" color="blue.contrast" fontSize="xs" px="2" py="0.5" borderRadius="full">
                             Pending approval: ${(occ.payment as any).amountPaid.toFixed(2)}
                           </Badge>
                         )}
@@ -7049,7 +7067,7 @@ export default function JobsTab({
                           }
                           if (isPaused) parts.push("paused");
                           if (parts.length === 0) return null;
-                          const color = isPaused ? "orange.600" : occ.completedAt && actual != null && adjEst ? (actual <= adjEst ? "green.600" : "red.600") : "fg.muted";
+                          const color = isPaused ? "orange.fg" : occ.completedAt && actual != null && adjEst ? (actual <= adjEst ? "green.fg" : "red.fg") : "fg.muted";
                           return (
                             <Text color={color} fontWeight="medium" cursor={canEdit ? "pointer" : undefined} textDecoration={canEdit ? "underline" : undefined} onClick={canEdit ? (e: any) => { e.stopPropagation(); setEditTimeOcc(occ); } : undefined}>
                               {parts.join(" · ")}
@@ -7117,11 +7135,11 @@ export default function JobsTab({
                   <VStack align="start" gap={2} w="full">
                     {/* Warning: next occurrence not created */}
                     {occ.payment?.nextOccurrenceSkipReason && occ.payment.nextOccurrenceSkipReason !== "one_off" && (
-                      <Box w="full" p={2} bg="red.50" borderWidth="1px" borderColor="red.300" borderRadius="md">
-                        <Text fontSize="xs" fontWeight="bold" color="red.700">
+                      <Box w="full" p={2} bg="red.faint" borderWidth="1px" borderColor="red.emphasized" borderRadius="md">
+                        <Text fontSize="xs" fontWeight="bold" color="red.fg">
                           ⚠️ Next occurrence was NOT auto-created
                         </Text>
-                        <Text fontSize="xs" color="red.600">
+                        <Text fontSize="xs" color="red.fg">
                           {occ.payment.nextOccurrenceSkipReason === "no_frequency_set" && "No repeat frequency is set on the job or occurrence."}
                           {occ.payment.nextOccurrenceSkipReason === "job_paused" && "The job service is paused."}
                           {occ.payment.nextOccurrenceSkipReason === "duplicate_exists" && "A scheduled occurrence already exists on the next date."}
@@ -7131,7 +7149,7 @@ export default function JobsTab({
                     )}
                     {/* Event time — prominent */}
                     {isEvent && occ.startAt && (
-                      <Text fontSize="md" fontWeight="bold" color="#B45309">
+                      <Text fontSize="md" fontWeight="bold" color="yellow.fg">
                         {fmtTimeOpts(occ.startAt, { hour: "numeric", minute: "2-digit" })}
                       </Text>
                     )}
@@ -7147,7 +7165,7 @@ export default function JobsTab({
                       </Text>
                     )}
                     {isLightEstimate && (occ.contactName || occ.contactPhone || occ.contactEmail) && (
-                      <Box p={2} bg="pink.50" rounded="md" fontSize="xs">
+                      <Box p={2} bg="pink.faint" rounded="md" fontSize="xs">
                         {occ.contactName && <Text><strong>Contact:</strong> {occ.contactName}</Text>}
                         {occ.contactPhone && <Text><strong>Phone:</strong> {occ.contactPhone}</Text>}
                         {occ.contactEmail && <Text><strong>Email:</strong> {occ.contactEmail}</Text>}
@@ -7161,7 +7179,7 @@ export default function JobsTab({
                           </Badge>
                         ))}
                         {(occ.addons ?? []).map((addon: any) => (
-                          <Badge key={addon.id} title={addon.detail ?? undefined} fontSize="xs" px="2" borderRadius="full" bg="gray.200" color="gray.700">
+                          <Badge key={addon.id} title={addon.detail ?? undefined} fontSize="xs" px="2" borderRadius="full" bg="gray.muted" color="gray.fg">
                             +{addon.tag ? jobTagLabel(addon.tag) : addon.customLabel}
                           </Badge>
                         ))}
@@ -7191,7 +7209,7 @@ export default function JobsTab({
                               key={a.userId}
                               fontSize="xs"
                               fontWeight={isMe ? "semibold" : "normal"}
-                              color={isMe ? "teal.600" : "fg.muted"}
+                              color={isMe ? "teal.fg" : "fg.muted"}
                             >
                               <span
                                 style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}
@@ -7208,7 +7226,7 @@ export default function JobsTab({
                       </VStack>
                     )}
                     {isUnassigned && !isEvent && !isFollowup && !isAnnouncement && occ.status !== "ARCHIVED" && (
-                      <Text fontSize="xs" color="orange.500" fontWeight="medium">
+                      <Text fontSize="xs" color="orange.fg" fontWeight="medium">
                         {isTentative
                           ? "Unclaimed — tentative, awaiting admin confirmation"
                           : isAdminOnlyOcc
@@ -7223,7 +7241,7 @@ export default function JobsTab({
                       // to decide whether the small print below belongs to the
                       // number above it. Kept as a tint rather than solid green
                       // so the Paid / receipt / tip badges inside still read.
-                      <Box borderWidth="1px" borderColor="green.300" borderRadius="xl" p={2.5} bg="green.50" fontSize="xs" w="full">
+                      <Box borderWidth="1px" borderColor="green.emphasized" borderRadius="xl" p={2.5} bg="green.faint" fontSize="xs" w="full">
                         <VStack align="start" gap={1.5}>
                           {totalPrice(occ) != null && (() => {
                             // The EXPANDED card's price badge — a second copy of
@@ -7252,13 +7270,13 @@ export default function JobsTab({
                             return (
                             <VStack align="stretch" gap={0.5} w="full">
                               <HStack justify="space-between" align="baseline" gap={3}>
-                                <Text fontSize="xs" color="green.700" fontWeight="medium">
+                                <Text fontSize="xs" color="green.fg" fontWeight="medium">
                                   {isEstimateOcc ? "Proposal total" : "Invoice total"}
                                 </Text>
                                 <Text
                                   fontSize="lg"
                                   fontWeight="bold"
-                                  color="green.900"
+                                  color="green.fg"
                                   lineHeight="1.2"
                                   fontVariantNumeric="tabular-nums"
                                 >
@@ -7272,8 +7290,8 @@ export default function JobsTab({
                                 <VStack align="stretch" gap={0} pt={0.5}>
                                   {lines.map(([label, amount]) => (
                                     <HStack key={label} justify="space-between" gap={3}>
-                                      <Text color="green.800">{label}</Text>
-                                      <Text color="green.800" fontVariantNumeric="tabular-nums">
+                                      <Text color="green.fg">{label}</Text>
+                                      <Text color="green.fg" fontVariantNumeric="tabular-nums">
                                         ${amount.toFixed(2)}
                                       </Text>
                                     </HStack>
@@ -7329,16 +7347,16 @@ export default function JobsTab({
                                 mt={1}
                                 pt={1.5}
                                 borderTopWidth="1px"
-                                borderColor="green.200"
+                                borderColor="green.emphasized"
                               >
                                 <HStack justify="space-between" align="baseline" gap={3}>
-                                  <Text fontSize="xs" fontWeight="semibold" color="green.900">
+                                  <Text fontSize="xs" fontWeight="semibold" color="green.fg">
                                     {pay ? "Job profit" : "Est. job profit"}
                                   </Text>
                                   <Text
                                     fontSize="sm"
                                     fontWeight="bold"
-                                    color={profit >= 0 ? "green.900" : "red.600"}
+                                    color={profit >= 0 ? "green.fg" : "red.fg"}
                                     fontVariantNumeric="tabular-nums"
                                   >
                                     ${profit.toFixed(2)}
@@ -7351,7 +7369,7 @@ export default function JobsTab({
                                   {processorFee > 0 ? ` − $${processorFee.toFixed(2)} processor fee` : ""}
                                 </Text>
                                 {missingCost > 0 && (
-                                  <Text fontSize="2xs" color="orange.600">
+                                  <Text fontSize="2xs" color="orange.fg">
                                     Upper bound — no cost recorded on {missingCost}{" "}
                                     {missingCost === 1 ? "charge" : "charges"}.
                                   </Text>
@@ -7608,11 +7626,11 @@ export default function JobsTab({
                       const estDiscrepancy = actual != null && adjEst ? Math.abs(actual - adjEst) / adjEst : 0;
                       const avgDiscrepancy = actual != null && median ? Math.abs(actual - median) / median : 0;
                       return (
-                        <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" p={2} bg="gray.50" fontSize="xs">
+                        <Box borderWidth="1px" borderColor="gray.emphasized" borderRadius="md" p={2} bg="gray.faint" fontSize="xs">
                           <VStack align="start" gap={1}>
                             <HStack gap={3} wrap="wrap">
                               {actual != null && (
-                                <Text color={occ.status === "PAUSED" ? "orange.600" : occ.completedAt && adjEst ? (actual <= adjEst ? "green.600" : "red.600") : "fg.default"} fontWeight="semibold">
+                                <Text color={occ.status === "PAUSED" ? "orange.fg" : occ.completedAt && adjEst ? (actual <= adjEst ? "green.fg" : "red.fg") : "fg.default"} fontWeight="semibold">
                                   Actual: {formatDuration(actual)}{workerCount > 1 ? ` (${workerCount} workers)` : ""}{occ.status === "PAUSED" ? " (paused)" : ""}
                                 </Text>
                               )}
@@ -7628,13 +7646,13 @@ export default function JobsTab({
                               )}
                             </HStack>
                             {occ.completedAt && actual != null && estDiscrepancy > hoursVarianceThreshold && adjEst && (
-                              <Text color="orange.600" fontWeight="medium">
+                              <Text color="orange.fg" fontWeight="medium">
                                 ⚠ {Math.round(estDiscrepancy * 100)}% {actual > adjEst ? "over" : "under"} estimate —{" "}
                                 <Box as="span" textDecoration="underline" cursor="pointer" onClick={(e: any) => { e.stopPropagation(); setEditTimeOcc(occ); }}>Edit time</Box>
                               </Text>
                             )}
                             {occ.completedAt && actual != null && avgDiscrepancy > hoursVarianceThreshold && median && !( estDiscrepancy > hoursVarianceThreshold && adjEst) && (
-                              <Text color="orange.600" fontWeight="medium">
+                              <Text color="orange.fg" fontWeight="medium">
                                 ⚠ {Math.round(avgDiscrepancy * 100)}% {actual > median ? "above" : "below"} average —{" "}
                                 <Box as="span" textDecoration="underline" cursor="pointer" onClick={(e: any) => { e.stopPropagation(); setEditTimeOcc(occ); }}>Edit time</Box>
                               </Text>
@@ -7648,7 +7666,7 @@ export default function JobsTab({
                     })()}
                     {/* Followup attachments */}
                     {isFollowup && ((occ as any).followupClients?.length > 0 || (occ as any).followupJobs?.length > 0) && (
-                      <Box p={2} bg="red.50" rounded="md" fontSize="xs">
+                      <Box p={2} bg="red.faint" rounded="md" fontSize="xs">
                         {(occ as any).followupClients?.length > 0 && (
                           <Box mb={(occ as any).followupJobs?.length > 0 ? 1 : 0}>
                             <Text fontWeight="medium" mb={0.5}>Clients:</Text>
@@ -7703,7 +7721,7 @@ export default function JobsTab({
                       return (
                         <>
                           {otherLines && isEstimateOcc && (
-                            <Box w="full" borderWidth="1px" borderColor="pink.200" bg="pink.50" rounded="md" overflow="hidden">
+                            <Box w="full" borderWidth="1px" borderColor="pink.emphasized" bg="pink.faint" rounded="md" overflow="hidden">
                               <Box
                                 as="button"
                                 w="full"
@@ -7714,7 +7732,7 @@ export default function JobsTab({
                                 justifyContent="space-between"
                                 gap={2}
                                 cursor="pointer"
-                                _hover={{ bg: "pink.100" }}
+                                _hover={{ bg: "pink.subtle" }}
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   setCollapsedEstimateNotes((prev) => {
@@ -7725,7 +7743,7 @@ export default function JobsTab({
                                   });
                                 }}
                               >
-                                <Text fontSize="xs" fontWeight="semibold" color="pink.800" textAlign="left">
+                                <Text fontSize="xs" fontWeight="semibold" color="pink.fg" textAlign="left">
                                   Notes
                                 </Text>
                                 <HStack gap={1} flexShrink={0}>
@@ -7735,7 +7753,7 @@ export default function JobsTab({
                                     alignItems="center"
                                     p={1}
                                     borderRadius="sm"
-                                    _hover={{ bg: "pink.200" }}
+                                    _hover={{ bg: "pink.muted" }}
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       navigator.clipboard.writeText(otherLines);
@@ -7752,7 +7770,7 @@ export default function JobsTab({
                               </Box>
                               {notesOpen && (
                                 <Box px={2} pb={2} pt={0}>
-                                  <Text fontSize="xs" color="pink.900" whiteSpace="pre-wrap">
+                                  <Text fontSize="xs" color="pink.fg" whiteSpace="pre-wrap">
                                     {otherLines}
                                   </Text>
                                 </Box>
@@ -7782,48 +7800,48 @@ export default function JobsTab({
                             </HStack>
                           )}
                           {occ.proposalNotes && (
-                            <Box p={2} bg="purple.50" rounded="sm" mt={1}>
-                              <Text fontSize="xs" fontWeight="medium" color="purple.700">Completed:</Text>
-                              <TruncatedText color="purple.600">{occ.proposalNotes}</TruncatedText>
+                            <Box p={2} bg="purple.faint" rounded="sm" mt={1}>
+                              <Text fontSize="xs" fontWeight="medium" color="purple.fg">Completed:</Text>
+                              <TruncatedText color="purple.fg">{occ.proposalNotes}</TruncatedText>
                               {occ.proposalAmount != null && occ.proposalAmount > 0 && (
-                                <Text fontSize="xs" color="purple.600" mt={0.5}>Amount: ${occ.proposalAmount.toFixed(2)}</Text>
+                                <Text fontSize="xs" color="purple.fg" mt={0.5}>Amount: ${occ.proposalAmount.toFixed(2)}</Text>
                               )}
                             </Box>
                           )}
                           {(occ.status === "ACCEPTED" || acceptComment) && (
-                            <Box p={2} bg="green.50" rounded="sm" mt={1}>
-                              <Text fontSize="xs" fontWeight="medium" color="green.700">Accepted{acceptComment ? ":" : ""}</Text>
-                              {acceptComment && <TruncatedText color="green.600">{acceptComment}</TruncatedText>}
+                            <Box p={2} bg="green.faint" rounded="sm" mt={1}>
+                              <Text fontSize="xs" fontWeight="medium" color="green.fg">Accepted{acceptComment ? ":" : ""}</Text>
+                              {acceptComment && <TruncatedText color="green.fg">{acceptComment}</TruncatedText>}
                             </Box>
                           )}
                         </>
                       );
                     })()}
                     {occ.rejectionReason && (
-                      <Box p={2} bg="red.50" rounded="sm" mt={1}>
-                        <Text fontSize="xs" fontWeight="medium" color="red.700">Rejected:</Text>
-                        <TruncatedText color="red.600">{occ.rejectionReason}</TruncatedText>
+                      <Box p={2} bg="red.faint" rounded="sm" mt={1}>
+                        <Text fontSize="xs" fontWeight="medium" color="red.fg">Rejected:</Text>
+                        <TruncatedText color="red.fg">{occ.rejectionReason}</TruncatedText>
                       </Box>
                     )}
                     {occ.status === "REJECTED" && !occ.rejectionReason && (
-                      <Box p={2} bg="red.50" rounded="sm" mt={1}>
-                        <Text fontSize="xs" fontWeight="medium" color="red.700">Rejected</Text>
+                      <Box p={2} bg="red.faint" rounded="sm" mt={1}>
+                        <Text fontSize="xs" fontWeight="medium" color="red.fg">Rejected</Text>
                       </Box>
                     )}
                     {forAdmin && occ.generatedEstimateBreakdown && (
-                      <Box p={2} bg="gray.50" rounded="sm" mt={1} borderWidth="1px" borderColor="gray.200">
+                      <Box p={2} bg="gray.faint" rounded="sm" mt={1} borderWidth="1px" borderColor="gray.emphasized">
                         <HStack gap={1} mb={1}>
-                          <Text fontSize="xs" fontWeight="medium" color="gray.700">Cost Breakdown</Text>
+                          <Text fontSize="xs" fontWeight="medium" color="gray.fg">Cost Breakdown</Text>
                           <Badge size="sm" colorPalette="orange" variant="subtle">Internal</Badge>
                         </HStack>
-                        <TruncatedText color="gray.600" whiteSpace="pre-wrap">{occ.generatedEstimateBreakdown}</TruncatedText>
+                        <TruncatedText color="gray.fg" whiteSpace="pre-wrap">{occ.generatedEstimateBreakdown}</TruncatedText>
                       </Box>
                     )}
                     {forAdmin && occ.generatedEstimate && (
-                      <Box p={2} bg="blue.50" rounded="sm" mt={1}>
+                      <Box p={2} bg="blue.faint" rounded="sm" mt={1}>
                         <HStack justify="space-between" mb={1}>
                           <HStack gap={1}>
-                            <Text fontSize="xs" fontWeight="medium" color="blue.700">Client Message</Text>
+                            <Text fontSize="xs" fontWeight="medium" color="blue.fg">Client Message</Text>
                             <Badge size="sm" colorPalette="orange" variant="subtle">AI Generated</Badge>
                           </HStack>
                           <Button
@@ -7839,18 +7857,18 @@ export default function JobsTab({
                             Copy
                           </Button>
                         </HStack>
-                        <TruncatedText color="blue.600" whiteSpace="pre-wrap">{occ.generatedEstimate}</TruncatedText>
+                        <TruncatedText color="blue.fg" whiteSpace="pre-wrap">{occ.generatedEstimate}</TruncatedText>
                       </Box>
                     )}
                     {(occ.startLat != null || occ.completeLat != null) && (
                       <VStack align="start" gap={0} fontSize="xs" color="fg.muted">
                         {occ.startLat != null && occ.startLng != null && (
-                          <a href={`https://maps.google.com/?q=${occ.startLat},${occ.startLng}`} target="_blank" rel="noopener" style={{ color: "var(--chakra-colors-blue-600)" }}>
+                          <a href={`https://maps.google.com/?q=${occ.startLat},${occ.startLng}`} target="_blank" rel="noopener" style={{ color: "var(--chakra-colors-blue-fg)" }}>
                             Start Location: {occ.startLat.toFixed(4)}, {occ.startLng.toFixed(4)}
                           </a>
                         )}
                         {occ.completeLat != null && occ.completeLng != null && (
-                          <a href={`https://maps.google.com/?q=${occ.completeLat},${occ.completeLng}`} target="_blank" rel="noopener" style={{ color: "var(--chakra-colors-blue-600)" }}>
+                          <a href={`https://maps.google.com/?q=${occ.completeLat},${occ.completeLng}`} target="_blank" rel="noopener" style={{ color: "var(--chakra-colors-blue-fg)" }}>
                             Complete Location: {occ.completeLat.toFixed(4)}, {occ.completeLng.toFixed(4)}
                           </a>
                         )}
@@ -7897,8 +7915,8 @@ export default function JobsTab({
                       const feeableSplitTotal = (pay.splits ?? []).filter((sp: any) => sp.user?.workerType !== "EMPLOYEE" && sp.user?.workerType !== "TRAINEE").reduce((s: number, sp: any) => s + sp.amount, 0);
                       const employeeSplitTotal = (pay.splits ?? []).filter((sp: any) => sp.user?.workerType === "EMPLOYEE" || sp.user?.workerType === "TRAINEE").reduce((s: number, sp: any) => s + sp.amount, 0);
                       return (
-                        <Box mt={1} p={2} bg="green.50" rounded="sm">
-                          <Text fontSize="xs" fontWeight="medium" color="green.700">
+                        <Box mt={1} p={2} bg="green.faint" rounded="sm">
+                          <Text fontSize="xs" fontWeight="medium" color="green.fg">
                             {/* THIRD site making the same claim. A confirmed
                                 $0 payment is a job closed with nothing
                                 collected, and an unapproved one has not been
@@ -7910,20 +7928,20 @@ export default function JobsTab({
                                 : "Closed with nothing collected"}
                           </Text>
                           {pay.note && (
-                            <Text fontSize="xs" color="green.600">{pay.note}</Text>
+                            <Text fontSize="xs" color="green.fg">{pay.note}</Text>
                           )}
                           {(pay.splits ?? []).length > 0 && (
                             <VStack align="start" gap={1} mt={1}>
                               {(pay.splits ?? []).map((sp: any) => (
                                 <HStack key={sp.userId} gap={2} align="center" fontSize="xs">
-                                  <Text fontWeight="medium" color="green.700">
+                                  <Text fontWeight="medium" color="green.fg">
                                     {sp.user?.displayName ?? sp.user?.email ?? sp.userId}
                                   </Text>
                                   <Badge colorPalette="green" variant="solid" fontSize="xs" px="2" borderRadius="full">
                                     ${sp.amount.toFixed(2)}
                                   </Badge>
                                   {tipFor(sp) > 0 && (
-                                    <Text color="green.700">+ ${tipFor(sp).toFixed(2)} tip</Text>
+                                    <Text color="green.fg">+ ${tipFor(sp).toFixed(2)} tip</Text>
                                   )}
                                 </HStack>
                               ))}
@@ -7937,7 +7955,7 @@ export default function JobsTab({
                                 </Box>
                               )}
                               {showAdminExtras && (
-                                <Box fontSize="xs" color="fg.muted" mt={0.5} borderTopWidth="1px" borderColor="green.200" pt={0.5}>
+                                <Box fontSize="xs" color="fg.muted" mt={0.5} borderTopWidth="1px" borderColor="green.emphasized" pt={0.5}>
                                   <Text>
                                     ${splitTotal.toFixed(2)} job pay
                                     {tipTotal > 0 ? ` + $${tipTotal.toFixed(2)} tips` : ""}
@@ -7946,7 +7964,7 @@ export default function JobsTab({
                                     {Math.abs(unaccounted) < 0.02 ? ` = $${pay.amountPaid.toFixed(2)} paid` : ""}
                                   </Text>
                                   {Math.abs(unaccounted) >= 0.02 && (
-                                    <Text color="red.600" fontWeight="medium">
+                                    <Text color="red.fg" fontWeight="medium">
                                       Unaccounted: ${unaccounted.toFixed(2)} of the ${pay.amountPaid.toFixed(2)} paid
                                     </Text>
                                   )}
@@ -7972,14 +7990,14 @@ export default function JobsTab({
                       // card reports what is on the visit; the dialog is where
                       // it changes, with every line in view at once.
                       return (
-                      <Box mt={1} p={1} bg="green.50" rounded="sm" w="full" borderWidth="1px" borderColor="green.200">
-                        <Text fontSize="xs" fontWeight="medium" color="green.700">
+                      <Box mt={1} p={1} bg="green.faint" rounded="sm" w="full" borderWidth="1px" borderColor="green.emphasized">
+                        <Text fontSize="xs" fontWeight="medium" color="green.fg">
                           Added Services: +${addonTotal(occ).toFixed(2)}
                         </Text>
                         <VStack align="start" gap={0} mt={0.5}>
                           {(occ.addons ?? []).map((addon: any) => (
                             <Box key={addon.id}>
-                              <Text fontSize="xs" color="green.600">
+                              <Text fontSize="xs" color="green.fg">
                                 +${addon.price.toFixed(2)} — {addon.tag ? jobTagLabel(addon.tag) : addon.customLabel}
                               </Text>
                               {/* The note captured when the service was added.
@@ -7990,7 +8008,7 @@ export default function JobsTab({
                                   select, so it reached no surface at all —
                                   which reads as "the field does nothing". */}
                               {addon.detail && (
-                                <Text fontSize="2xs" color="green.700" pl={2} whiteSpace="pre-wrap">
+                                <Text fontSize="2xs" color="green.fg" pl={2} whiteSpace="pre-wrap">
                                   {addon.detail}
                                 </Text>
                               )}
@@ -8002,8 +8020,8 @@ export default function JobsTab({
                     })()}
                     {/* Invoice charges */}
                     {occ.invoiceCharges && occ.invoiceCharges.length > 0 && (
-                      <Box mt={1} p={1} bg="red.50" rounded="sm" w="full" borderWidth="1px" borderColor="red.200">
-                        <Text fontSize="xs" fontWeight="medium" color="red.700">
+                      <Box mt={1} p={1} bg="red.faint" rounded="sm" w="full" borderWidth="1px" borderColor="red.emphasized">
+                        <Text fontSize="xs" fontWeight="medium" color="red.fg">
                           Invoice charges: −${occ.invoiceCharges.reduce((s, e) => s + e.cost, 0).toFixed(2)}
                         </Text>
                         <VStack align="start" gap={0} mt={0.5}>
@@ -8021,7 +8039,7 @@ export default function JobsTab({
                             const fromInventory = !!(exp as any).supplyHold;
                             return (
                               <HStack key={exp.id} gap={1.5} align="center" wrap="wrap">
-                                <Text fontSize="xs" color="red.600">
+                                <Text fontSize="xs" color="red.fg">
                                   −${exp.cost.toFixed(2)} — {exp.description}
                                 </Text>
                                 {fromInventory ? (
@@ -8078,8 +8096,8 @@ export default function JobsTab({
                         } catch {}
                       };
                       return (
-                        <Box mt={1} p={2} bg="gray.50" borderWidth="1px" borderColor="gray.200" borderRadius="md">
-                          <Text fontSize="xs" fontWeight="semibold" color="gray.700" mb={1}>Suggested Equipment & Collections</Text>
+                        <Box mt={1} p={2} bg="gray.faint" borderWidth="1px" borderColor="gray.emphasized" borderRadius="md">
+                          <Text fontSize="xs" fontWeight="semibold" color="gray.fg" mb={1}>Suggested Equipment & Collections</Text>
                           <HStack gap={1.5} wrap="wrap">
                             {suggestions.map((s) => (
                               <Button
@@ -8177,8 +8195,8 @@ export default function JobsTab({
                       const linked = items.filter((o) => o.linkGroupId === occ.linkGroupId && o.id !== occ.id);
                       if (linked.length === 0) return null;
                       return (
-                        <Box mt={1} p={2} bg="purple.50" rounded="md">
-                          <Text fontSize="xs" fontWeight="medium" color="purple.700">
+                        <Box mt={1} p={2} bg="purple.faint" rounded="md">
+                          <Text fontSize="xs" fontWeight="medium" color="purple.fg">
                             <Link2 size={10} style={{ display: "inline", verticalAlign: "middle", marginRight: 3 }} />
                             Linked occurrences:
                           </Text>
@@ -8319,7 +8337,7 @@ export default function JobsTab({
                         alongside the per-occurrence Claim/Start/etc.
                         actions. */}
                     {(isAdmin || isSuper) && !isTaskOrReminder && !occ.jobId && isEstimateOcc && (
-                      <Text fontSize="xs" color="orange.600">Stand-alone estimate — not yet linked to a Job Service</Text>
+                      <Text fontSize="xs" color="orange.fg">Stand-alone estimate — not yet linked to a Job Service</Text>
                     )}
                     {/* Approve payroll hours — admin/super only, surfaces when
                         an outlier completion left hoursApprovedAt = null. Opens
@@ -8418,8 +8436,8 @@ export default function JobsTab({
                     )}
                     {(isClaimer || isActiveAssignee || forAdmin) && occ.status === "PENDING_PAYMENT" && occ.workflow !== "ESTIMATE" && !occ.isEstimate && (<>
                       {occ.workflow === "STANDARD" && !occ.isOneOff && !occ.frequencyDays && !(occ.job as any)?.frequencyDays && (
-                        <Box p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" borderRadius="md">
-                          <Text fontSize="xs" color="yellow.800">
+                        <Box p={2} bg="yellow.faint" borderWidth="1px" borderColor="yellow.emphasized" borderRadius="md">
+                          <Text fontSize="xs" color="yellow.fg">
                             This is a repeating job but has no frequency set. Accepting payment will NOT create a next occurrence.
                           </Text>
                         </Box>
@@ -8437,12 +8455,12 @@ export default function JobsTab({
                         const when = isRevert ? occ.lastPaymentRevertedAt : occ.lastPaymentRejectedAt;
                         const reason = isRevert ? occ.lastPaymentRevertReason : occ.lastPaymentRejectionReason;
                         return (
-                          <Box p={2} bg="red.50" borderWidth="1px" borderColor="red.200" borderLeftWidth="4px" borderLeftColor="red.500" borderRadius="md">
-                            <Text fontSize="xs" fontWeight="semibold" color="red.800">
+                          <Box p={2} bg="red.faint" borderWidth="1px" borderColor="red.emphasized" borderLeftWidth="4px" borderLeftColor="red.500" borderRadius="md">
+                            <Text fontSize="xs" fontWeight="semibold" color="red.fg">
                               {label}{when ? ` on ${fmtDate(when)}` : ""}
                             </Text>
                             {reason && (
-                              <Text fontSize="xs" color="red.700">
+                              <Text fontSize="xs" color="red.fg">
                                 Reason: {reason}
                               </Text>
                             )}
@@ -8466,11 +8484,11 @@ export default function JobsTab({
                         const open = !pendingPayment && !requestInFlight;
                         if (pendingPayment) {
                           return (
-                            <Box p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" borderLeftWidth="4px" borderLeftColor="blue.500" borderRadius="md">
-                              <Text fontSize="xs" fontWeight="semibold" color="blue.800">
+                            <Box p={2} bg="blue.faint" borderWidth="1px" borderColor="blue.emphasized" borderLeftWidth="4px" borderLeftColor="blue.500" borderRadius="md">
+                              <Text fontSize="xs" fontWeight="semibold" color="blue.fg">
                                 Awaiting admin approval
                               </Text>
-                              <Text fontSize="xs" color="blue.700">
+                              <Text fontSize="xs" color="blue.fg">
                                 ${(occ.payment!.amountPaid ?? 0).toFixed(2)} via {occ.payment!.method}
                                 {occ.payment!.collectedBy?.displayName ? ` — reported by ${occ.payment!.collectedBy.displayName}` : " — reported by client"}
                               </Text>
@@ -8635,7 +8653,7 @@ export default function JobsTab({
                       const contractorBlocked = isContractor && daysAhead > 2;
                       if (contractorBlocked) {
                         return (
-                          <Text fontSize="xs" color="orange.500">
+                          <Text fontSize="xs" color="orange.fg">
                             Contractors can only claim jobs within 2 days. This job is {daysAhead} days out.
                           </Text>
                         );
@@ -9694,28 +9712,28 @@ export default function JobsTab({
           <VStack align="stretch" gap={3}>
             <Text fontSize="sm" color="fg.muted">{property}</Text>
             {approved ? (
-              <Box p={3} bg="green.50" borderWidth="2px" borderColor="green.400" rounded="md">
-                <Text fontSize="sm" fontWeight="semibold" color="green.800" mb={1}>
+              <Box p={3} bg="green.faint" borderWidth="2px" borderColor="green.strong" rounded="md">
+                <Text fontSize="sm" fontWeight="semibold" color="green.fg" mb={1}>
                   ✓ Hours within variance — auto-approved
                 </Text>
                 {actual != null && adjEst != null && (
-                  <Text fontSize="xs" color="green.700">
+                  <Text fontSize="xs" color="green.fg">
                     Actual: {fmt(actual)} · Estimate: {fmt(adjEst)}{workerCount > 1 ? ` (per worker · ${workerCount} workers)` : ""}
                     {variance != null ? ` · ${variance}% ${isOver ? "over" : "under"}` : ""}
                   </Text>
                 )}
               </Box>
             ) : variance != null && actual != null && adjEst != null ? (
-              <Box p={3} bg="orange.50" borderWidth="2px" borderColor="orange.400" rounded="md">
-                <Text fontSize="sm" fontWeight="semibold" color="orange.800" mb={1}>
+              <Box p={3} bg="orange.faint" borderWidth="2px" borderColor="orange.strong" rounded="md">
+                <Text fontSize="sm" fontWeight="semibold" color="orange.fg" mb={1}>
                   ⚠ Time discrepancy: {variance}% {isOver ? "over" : "under"} estimate
                 </Text>
-                <Text fontSize="xs" color="orange.700">
+                <Text fontSize="xs" color="orange.fg">
                   Actual: {fmt(actual)} · Estimate: {fmt(adjEst)}{workerCount > 1 ? ` (per worker · ${workerCount} workers)` : ""}
                 </Text>
               </Box>
             ) : (
-              <Box p={3} bg="gray.50" borderWidth="1px" borderColor="gray.300" rounded="md">
+              <Box p={3} bg="gray.faint" borderWidth="1px" borderColor="gray.emphasized" rounded="md">
                 <Text fontSize="xs" color="fg.muted">
                   No estimate baseline — hours require explicit review before payroll.
                 </Text>
@@ -9900,8 +9918,8 @@ export default function JobsTab({
                     />
                   </Box>
                   {startJobOcc?.startAt && bizDateKey(startJobOcc.startAt) !== bizDateKey(new Date()) && (
-                    <Box p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" rounded="md">
-                      <Text fontSize="xs" color="yellow.700">
+                    <Box p={2} bg="yellow.faint" borderWidth="1px" borderColor="yellow.emphasized" rounded="md">
+                      <Text fontSize="xs" color="yellow.fg">
                         This job is scheduled for {fmtDate(startJobOcc.startAt)}. Starting it now will update the date.
                       </Text>
                     </Box>
@@ -10066,8 +10084,8 @@ export default function JobsTab({
                     />
                   </Box>
                   {rescheduleDate === (rescheduleOcc?.startAt ? bizDateKey(rescheduleOcc.startAt) : "") && (
-                    <Box p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" rounded="md">
-                      <Text fontSize="xs" color="yellow.700">This is the same date as currently scheduled.</Text>
+                    <Box p={2} bg="yellow.faint" borderWidth="1px" borderColor="yellow.emphasized" rounded="md">
+                      <Text fontSize="xs" color="yellow.fg">This is the same date as currently scheduled.</Text>
                     </Box>
                   )}
                 </VStack>
@@ -10103,8 +10121,8 @@ export default function JobsTab({
                   <Text fontSize="sm" color="fg.muted">
                     The job has been rescheduled. Let the client know about the change:
                   </Text>
-                  <Box p={3} bg="blue.50" borderWidth="1px" borderLeftWidth="3px" borderColor="blue.200" rounded="md">
-                    <Text fontSize="xs" color="blue.800">{rescheduleNotify?.message}</Text>
+                  <Box p={3} bg="blue.faint" borderWidth="1px" borderLeftWidth="3px" borderColor="blue.emphasized" rounded="md">
+                    <Text fontSize="xs" color="blue.fg">{rescheduleNotify?.message}</Text>
                   </Box>
                   <VStack align="stretch" gap={2}>
                     <Button
@@ -10766,10 +10784,10 @@ export default function JobsTab({
                         </HStack>
                       </Box>
                       {endBeforeStart && (
-                        <Text fontSize="xs" color="red.500">End time cannot be before start time.</Text>
+                        <Text fontSize="xs" color="red.fg">End time cannot be before start time.</Text>
                       )}
                       {offTooLarge && (
-                        <Text fontSize="xs" color="red.500">Off-the-clock time exceeds the span between start and end.</Text>
+                        <Text fontSize="xs" color="red.fg">Off-the-clock time exceeds the span between start and end.</Text>
                       )}
                       {durationMin != null && !endBeforeStart && !offTooLarge && (
                         <Text fontSize="sm" color="fg.muted">Working time: <Text as="span" fontWeight="semibold" color="fg.default">{formatDuration(durationMin)}</Text></Text>
@@ -10893,15 +10911,15 @@ export default function JobsTab({
                       {likedOnly && <Badge size="sm" colorPalette="red" variant="subtle">Liked</Badge>}
                     </HStack>
                     <Text fontSize="sm">The feed will show a rolling window of your assigned and claimable jobs: 2 weeks past and 2 months ahead.</Text>
-                    <Box p={3} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" borderRadius="md">
-                      <Text fontSize="xs" fontWeight="medium" color="yellow.800">Staleness warning</Text>
-                      <Text fontSize="xs" color="yellow.700" mt={1}>
+                    <Box p={3} bg="yellow.faint" borderWidth="1px" borderColor="yellow.emphasized" borderRadius="md">
+                      <Text fontSize="xs" fontWeight="medium" color="yellow.fg">Staleness warning</Text>
+                      <Text fontSize="xs" color="yellow.fg" mt={1}>
                         Calendar apps refresh feeds on their own schedule. Google Calendar updates roughly every 12 hours. Apple Calendar is faster (~15 minutes). Changes to your jobs may not appear immediately in your calendar.
                       </Text>
                     </Box>
                     <Text fontSize="xs" color="fg.muted">
                       You can manage and revoke feeds anytime from your{" "}
-                      <Text as="span" color="blue.600" cursor="pointer" textDecoration="underline" onClick={() => {
+                      <Text as="span" color="blue.fg" cursor="pointer" textDecoration="underline" onClick={() => {
                         setCalFeedStep("closed");
                         window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "profile" } }));
                       }}>Profile</Text>.
@@ -10914,7 +10932,7 @@ export default function JobsTab({
                 {calFeedStep === "result" && !calFeedLoading && calFeedUrl && (
                   <VStack align="stretch" gap={3}>
                     <Text fontSize="sm">Copy this URL and add it to your calendar app (Google Calendar, Apple Calendar, Outlook, etc.):</Text>
-                    <Box p={3} bg="gray.50" borderWidth="1px" borderRadius="md" fontSize="xs" wordBreak="break-all" fontFamily="mono">
+                    <Box p={3} bg="gray.faint" borderWidth="1px" borderRadius="md" fontSize="xs" wordBreak="break-all" fontFamily="mono">
                       {calFeedUrl}
                     </Box>
                     <Button
@@ -10929,7 +10947,7 @@ export default function JobsTab({
                     </Button>
                     <Text fontSize="xs" color="fg.muted">
                       Paste this URL into your calendar app under "Subscribe" or "Add by URL". You can manage and revoke feeds from your{" "}
-                      <Text as="span" color="blue.600" cursor="pointer" textDecoration="underline" onClick={() => {
+                      <Text as="span" color="blue.fg" cursor="pointer" textDecoration="underline" onClick={() => {
                         setCalFeedStep("closed");
                         window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "profile" } }));
                       }}>Profile</Text>.

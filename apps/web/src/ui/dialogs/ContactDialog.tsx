@@ -505,29 +505,29 @@ export default function ClientDialog({
                           style={{
                             padding: "10px 12px",
                             borderRadius: 8,
-                            backgroundColor: "var(--chakra-colors-red-50)",
+                            backgroundColor: "var(--chakra-colors-red-faint)",
                             borderWidth: 1,
                             borderStyle: "solid",
-                            borderColor: "var(--chakra-colors-red-300)",
+                            borderColor: "var(--chakra-colors-red-emphasized)",
                             borderLeftWidth: 4,
                             borderLeftColor: "var(--chakra-colors-red-500)",
                           }}
                         >
-                          <Text fontSize="sm" fontWeight="semibold" color="red.800" mb={1}>
+                          <Text fontSize="sm" fontWeight="semibold" color="red.fg" mb={1}>
                             Duplicate on this client
                           </Text>
-                          <Text fontSize="xs" color="red.700" mb={1}>
+                          <Text fontSize="xs" color="red.fg" mb={1}>
                             A contact with this email or phone already exists on this client:
                           </Text>
                           <VStack align="stretch" gap={0.5}>
                             {sameClient.map((m) => (
-                              <Text key={m.id} fontSize="xs" color="red.800">
+                              <Text key={m.id} fontSize="xs" color="red.fg">
                                 • <Text as="span" fontWeight="semibold">{m.firstName} {m.lastName}</Text>
                                 {m.isPrimary && <Text as="span"> · primary</Text>}
                               </Text>
                             ))}
                           </VStack>
-                          <Text fontSize="xs" color="red.700" mt={1.5}>
+                          <Text fontSize="xs" color="red.fg" mt={1.5}>
                             Edit the existing contact instead, or change the email/phone here.
                           </Text>
                         </div>
@@ -537,46 +537,46 @@ export default function ClientDialog({
                           style={{
                             padding: "10px 12px",
                             borderRadius: 8,
-                            backgroundColor: "var(--chakra-colors-blue-50)",
+                            backgroundColor: "var(--chakra-colors-blue-faint)",
                             borderWidth: 1,
                             borderStyle: "solid",
-                            borderColor: "var(--chakra-colors-blue-300)",
+                            borderColor: "var(--chakra-colors-blue-emphasized)",
                             borderLeftWidth: 4,
                             borderLeftColor: "var(--chakra-colors-blue-500)",
                           }}
                         >
-                          <Text fontSize="sm" fontWeight="semibold" color="blue.800" mb={1}>
+                          <Text fontSize="sm" fontWeight="semibold" color="blue.fg" mb={1}>
                             {otherClient.length === 1
                               ? "This person is already a contact on another client"
                               : `This person is already a contact on ${otherClient.length} other clients`}
                           </Text>
                           <VStack align="stretch" gap={0.5} mb={1.5}>
                             {otherClient.map((m) => (
-                              <Text key={m.id} fontSize="xs" color="blue.800">
+                              <Text key={m.id} fontSize="xs" color="blue.fg">
                                 • <Text as="span" fontWeight="semibold">{m.firstName} {m.lastName}</Text>
                                 {" "}— on <Text as="span" fontWeight="semibold">{m.client.displayName}</Text>
-                                {m.clerkUserId && <Text as="span" color="blue.600"> · has login</Text>}
+                                {m.clerkUserId && <Text as="span" color="blue.fg"> · has login</Text>}
                               </Text>
                             ))}
                           </VStack>
-                          <Text fontSize="xs" color="blue.800" fontWeight="semibold" mb={0.5}>
+                          <Text fontSize="xs" color="blue.fg" fontWeight="semibold" mb={0.5}>
                             If this is the same person, adding them here will:
                           </Text>
                           <VStack align="stretch" gap={0} mb={1}>
-                            <Text fontSize="xs" color="blue.700">
+                            <Text fontSize="xs" color="blue.fg">
                               • {anyLinkedToClerk
                                 ? "Share the existing login account — they'll see jobs from both clients when they log in."
                                 : "Share a login account if they ever sign up — they'll see jobs from both clients."}
                             </Text>
-                            <Text fontSize="xs" color="blue.700">
+                            <Text fontSize="xs" color="blue.fg">
                               • Edits to their name, phone, or email will offer to propagate to all linked contacts.
                             </Text>
                           </VStack>
-                          <Text fontSize="xs" color="blue.700" fontStyle="italic">
+                          <Text fontSize="xs" color="blue.fg" fontStyle="italic">
                             If this is a different person who happens to share an email or phone, change the email/phone here before saving.
                           </Text>
                           {mode === "UPDATE" && (
-                            <Box mt={2.5} pt={2} borderTopWidth="1px" borderColor="blue.200">
+                            <Box mt={2.5} pt={2} borderTopWidth="1px" borderColor="blue.emphasized">
                               <HStack as="label" align="flex-start" gap={2} cursor="pointer">
                                 <input
                                   type="checkbox"
@@ -585,10 +585,10 @@ export default function ClientDialog({
                                   style={{ marginTop: 3 }}
                                 />
                                 <VStack align="start" gap={0}>
-                                  <Text fontSize="xs" color="blue.900" fontWeight="semibold">
+                                  <Text fontSize="xs" color="blue.fg" fontWeight="semibold">
                                     Apply name, email, and phone changes to all {otherClient.length + 1} linked contacts
                                   </Text>
-                                  <Text fontSize="2xs" color="blue.700">
+                                  <Text fontSize="2xs" color="blue.fg">
                                     Uncheck to make this edit local to this client only (identity will drift between rows).
                                   </Text>
                                 </VStack>
@@ -611,7 +611,7 @@ export default function ClientDialog({
                     <Checkbox.Label>Primary point of contact</Checkbox.Label>
                   </Checkbox.Root>
                   {primaryForced && primaryForcedReason && (
-                    <Text fontSize="xs" color="gray.600" pl="6">
+                    <Text fontSize="xs" color="gray.fg" pl="6">
                       {primaryForcedReason}
                     </Text>
                   )}
@@ -620,7 +620,7 @@ export default function ClientDialog({
             </Dialog.Body>
             {showMissingWarning && (
               <VStack align="stretch" px="4" pb="2" gap={1}>
-                <Text fontSize="sm" color="orange.600" fontWeight="medium">
+                <Text fontSize="sm" color="orange.fg" fontWeight="medium">
                   This contact is missing{" "}
                   {[
                     !lastName.trim() && "a last name",

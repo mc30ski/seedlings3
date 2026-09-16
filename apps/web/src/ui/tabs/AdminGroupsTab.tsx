@@ -291,7 +291,7 @@ export default function AdminGroupsTab({ scope }: AdminGroupsTabProps = {}) {
                       </Box>
                     )}
                   </VStack>
-                  <HStack gap={2} pt={2} borderTopWidth="1px" borderColor="gray.200">
+                  <HStack gap={2} pt={2} borderTopWidth="1px" borderColor="gray.emphasized">
                     <Button size="sm" variant="outline" onClick={() => setEditing(g)} disabled={!!g.archivedAt}>
                       Edit
                     </Button>
@@ -406,9 +406,12 @@ function FilterableSelect({ options, value, onChange, placeholder, size = "sm" }
           right="0"
           mt="1"
           zIndex={9999}
-          bg="white"
+          bg="bg.panel"
+          // A panel that paints its own background states its own ink, so it
+          // never inherits a colour meant for the surface it floats over.
+          color="fg"
           borderWidth="1px"
-          borderColor="gray.200"
+          borderColor="gray.emphasized"
           rounded="md"
           shadow="lg"
         >
@@ -420,8 +423,8 @@ function FilterableSelect({ options, value, onChange, placeholder, size = "sm" }
                 py="1.5"
                 fontSize="sm"
                 cursor="pointer"
-                bg={value === o.value ? "blue.50" : undefined}
-                _hover={{ bg: "gray.100" }}
+                bg={value === o.value ? "blue.faint" : undefined}
+                _hover={{ bg: "gray.subtle" }}
                 onMouseDown={(e) => {
                   e.preventDefault();
                   onChange(o.value);
@@ -431,7 +434,7 @@ function FilterableSelect({ options, value, onChange, placeholder, size = "sm" }
               >
                 <HStack gap={2}>
                   <Text flex="1">{o.label}</Text>
-                  {value === o.value && <Text color="blue.500" fontWeight="bold">✓</Text>}
+                  {value === o.value && <Text color="blue.fg" fontWeight="bold">✓</Text>}
                 </HStack>
               </Box>
             ))}
@@ -735,7 +738,7 @@ function GroupEditor({ initial, users, equipment, collections, onClose, onSaved 
 
                   {/* Claimer slot (implicit member) */}
                   {claimerUserId && (
-                    <HStack gap={2} p={1.5} bg="teal.50" rounded="sm" mb={1} wrap="wrap">
+                    <HStack gap={2} p={1.5} bg="teal.faint" rounded="sm" mb={1} wrap="wrap">
                       <Badge size="sm" colorPalette="teal" variant="solid">Claimer</Badge>
                       <Text fontSize="sm" fontWeight="medium">{userLabel(userMap.get(claimerUserId) ?? { id: claimerUserId })}</Text>
                       <Box flex="1" />
@@ -765,7 +768,7 @@ function GroupEditor({ initial, users, equipment, collections, onClose, onSaved 
                       {members.map((m) => {
                         const u = userMap.get(m.userId);
                         return (
-                          <HStack key={m.userId} gap={2} p={1.5} bg="gray.50" rounded="sm" wrap="wrap">
+                          <HStack key={m.userId} gap={2} p={1.5} bg="gray.faint" rounded="sm" wrap="wrap">
                             <Badge size="sm" colorPalette={m.role === "observer" ? "gray" : "blue"} variant="subtle">
                               {m.role === "observer" ? "Observer" : "Worker"}
                             </Badge>
@@ -835,13 +838,13 @@ function GroupEditor({ initial, users, equipment, collections, onClose, onSaved 
                   {percentMode && (
                     <HStack gap={2} mt={2} fontSize="xs">
                       <Text fontWeight="semibold">Equipment cost sum:</Text>
-                      <Text color={percentValid ? "green.700" : "red.700"} fontWeight="semibold">
+                      <Text color={percentValid ? "green.fg" : "red.fg"} fontWeight="semibold">
                         {percentSum.toFixed(2)} / 100
                       </Text>
                       {!percentValid && <Badge size="sm" colorPalette="red" variant="solid">Must equal 100</Badge>}
                     </HStack>
                   )}
-                  <Box mt={2} p={2} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">
+                  <Box mt={2} p={2} bg="gray.faint" rounded="md" borderWidth="1px" borderColor="gray.emphasized">
                     <Text fontSize="xs" fontWeight="semibold" mb={1}>How the equipment cost split works</Text>
                     <Text fontSize="xs" color="fg.muted">
                       When this group reserves equipment, the rental cost (days × daily rate) is charged at <Text as="span" fontWeight="semibold">return time</Text>, then split among the group's <Text as="span" fontWeight="semibold">workers</Text> (claimer + non-observer members). Each worker's share appears as a deduction on their payout — observers are excluded and never charged.

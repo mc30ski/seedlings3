@@ -44,8 +44,8 @@ export default function AddressSearchField({
   return (
     <Box
       borderWidth="1px"
-      borderColor="blue.300"
-      bg="blue.50"
+      borderColor="blue.emphasized"
+      bg="blue.faint"
       borderRadius="lg"
       px={3}
       py={2.5}

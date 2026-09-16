@@ -179,7 +179,7 @@ export default function UnapprovedHoursSection() {
             key={r.id}
             p={2}
             borderWidth="1px"
-            borderColor="gray.200"
+            borderColor="gray.emphasized"
             borderRadius="md"
           >
             <HStack justify="space-between" align="start" gap={2} wrap="wrap">

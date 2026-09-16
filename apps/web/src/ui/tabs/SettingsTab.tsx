@@ -246,7 +246,7 @@ function CommsCcEditor({ value, onChange, onSave, onCancel, saving, originalValu
                 value={e}
                 onChange={(ev) => updateEmail(idx, ev.target.value)}
                 placeholder="someone@example.com"
-                borderColor={emailLooksValid(e) ? undefined : "orange.400"}
+                borderColor={emailLooksValid(e) ? undefined : "orange.strong"}
                 flex="1"
               />
               <Button size="xs" variant="ghost" colorPalette="red" px="1" minW="0" onClick={() => removeEmail(idx)}>
@@ -254,28 +254,28 @@ function CommsCcEditor({ value, onChange, onSave, onCancel, saving, originalValu
               </Button>
             </HStack>
           ))}
-          <HStack gap={2} borderTopWidth={parsed.emails.length ? "1px" : "0"} borderColor="gray.200" pt={parsed.emails.length ? 2 : 0}>
+          <HStack gap={2} borderTopWidth={parsed.emails.length ? "1px" : "0"} borderColor="gray.emphasized" pt={parsed.emails.length ? 2 : 0}>
             <Input
               size="sm"
               value={newEmail}
               onChange={(ev) => setNewEmail(ev.target.value)}
               placeholder="Add email…"
               flex="1"
-              borderColor={newEmailIsDupe ? "orange.400" : undefined}
+              borderColor={newEmailIsDupe ? "orange.strong" : undefined}
             />
             <Button size="xs" variant="outline" onClick={addEmail} disabled={!newEmail.trim() || newEmailIsDupe}>
               <Plus size={12} />
             </Button>
           </HStack>
           {newEmailIsDupe && (
-            <Text fontSize="xs" color="orange.700">Already on the list.</Text>
+            <Text fontSize="xs" color="orange.fg">Already on the list.</Text>
           )}
         </VStack>
       </Box>
 
       <Box>
         <Text fontSize="xs" fontWeight="semibold" color="fg.muted" mb={1}>Phone CC</Text>
-        <Text fontSize="xs" color="orange.700" mb={1}>
+        <Text fontSize="xs" color="orange.fg" mb={1}>
           Phones are added as additional SMS recipients — the client sees a group thread.
         </Text>
         <VStack align="stretch" gap={1}>
@@ -286,7 +286,7 @@ function CommsCcEditor({ value, onChange, onSave, onCancel, saving, originalValu
                 value={p}
                 onChange={(ev) => updatePhone(idx, ev.target.value)}
                 placeholder="+15555551234"
-                borderColor={phoneLooksValid(p) ? undefined : "orange.400"}
+                borderColor={phoneLooksValid(p) ? undefined : "orange.strong"}
                 flex="1"
               />
               <Button size="xs" variant="ghost" colorPalette="red" px="1" minW="0" onClick={() => removePhone(idx)}>
@@ -294,21 +294,21 @@ function CommsCcEditor({ value, onChange, onSave, onCancel, saving, originalValu
               </Button>
             </HStack>
           ))}
-          <HStack gap={2} borderTopWidth={parsed.phones.length ? "1px" : "0"} borderColor="gray.200" pt={parsed.phones.length ? 2 : 0}>
+          <HStack gap={2} borderTopWidth={parsed.phones.length ? "1px" : "0"} borderColor="gray.emphasized" pt={parsed.phones.length ? 2 : 0}>
             <Input
               size="sm"
               value={newPhone}
               onChange={(ev) => setNewPhone(ev.target.value)}
               placeholder="Add phone…"
               flex="1"
-              borderColor={newPhoneIsDupe ? "orange.400" : undefined}
+              borderColor={newPhoneIsDupe ? "orange.strong" : undefined}
             />
             <Button size="xs" variant="outline" onClick={addPhone} disabled={!newPhone.trim() || newPhoneIsDupe}>
               <Plus size={12} />
             </Button>
           </HStack>
           {newPhoneIsDupe && (
-            <Text fontSize="xs" color="orange.700">Already on the list.</Text>
+            <Text fontSize="xs" color="orange.fg">Already on the list.</Text>
           )}
         </VStack>
       </Box>
@@ -366,7 +366,7 @@ function JsonMapEditor({ value, onChange, onSave, onCancel, saving, originalValu
           </Button>
         </HStack>
       ))}
-      <HStack gap={2} borderTopWidth="1px" borderColor="gray.200" pt={2}>
+      <HStack gap={2} borderTopWidth="1px" borderColor="gray.emphasized" pt={2}>
         <Input size="sm" value={newKey} onChange={(e) => setNewKey(e.target.value)} flex="1" placeholder="New tag (e.g. MOW)" />
         <Text fontSize="sm" color="fg.muted">→</Text>
         <Input size="sm" value={newVal} onChange={(e) => setNewVal(e.target.value)} flex="1" placeholder="Equipment kind (e.g. MOWER)" />
@@ -474,7 +474,7 @@ function PaymentMethodsEditor({ value, onChange, onSave, onCancel, saving, origi
   if (parseError) {
     return (
       <VStack align="stretch" gap={2} w="full">
-        <Text fontSize="xs" color="red.600">PAYMENT_METHODS JSON is malformed: {parseError}</Text>
+        <Text fontSize="xs" color="red.fg">PAYMENT_METHODS JSON is malformed: {parseError}</Text>
         <Button size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>
       </VStack>
     );
@@ -502,7 +502,7 @@ function PaymentMethodsEditor({ value, onChange, onSave, onCancel, saving, origi
         <Box w="60px" />
       </HStack>
       {items.map((row, idx) => (
-        <Box key={idx} borderWidth="1px" borderColor="gray.200" borderRadius="md" p={2}>
+        <Box key={idx} borderWidth="1px" borderColor="gray.emphasized" borderRadius="md" p={2}>
           <HStack gap={2}>
             <Input size="sm" w="80px" value={row.key} onChange={(e) => update(idx, { key: e.target.value.toUpperCase() })} placeholder="VENMO" />
             <Input size="sm" w="120px" value={row.label} onChange={(e) => update(idx, { label: e.target.value })} placeholder="Venmo" />
@@ -594,9 +594,9 @@ function PaymentMethodsEditor({ value, onChange, onSave, onCancel, saving, origi
                   <HStack gap={2} align="start">
                     <Box
                       p={2}
-                      bg="white"
+                      bg="bg.panel"
                       borderWidth="1px"
-                      borderColor="gray.300"
+                      borderColor="gray.emphasized"
                       rounded="md"
                       flexShrink={0}
                     >
@@ -769,9 +769,9 @@ function PayrollTaxEstimatesEditor({ value, onChange, onSave, onCancel, saving, 
   // so a typo (e.g. 62 instead of 6.2) jumps out.
   const sanity =
     totalPct < 7
-      ? { color: "yellow.700", msg: "Low — Federal alone is ~8.25%. Did you miss a rate?" }
+      ? { color: "yellow.fg", msg: "Low — Federal alone is ~8.25%. Did you miss a rate?" }
       : totalPct > 18
-        ? { color: "yellow.700", msg: "High — Most small employers land between 9% and 18%. Double-check for a typo." }
+        ? { color: "yellow.fg", msg: "High — Most small employers land between 9% and 18%. Double-check for a typo." }
         : { color: "fg.muted", msg: "Within typical small-employer range." };
 
   // Inputs are unitless numbers in the editor — the percent suffix is
@@ -807,7 +807,7 @@ function PayrollTaxEstimatesEditor({ value, onChange, onSave, onCancel, saving, 
   if (parseError) {
     return (
       <VStack align="stretch" gap={2} w="full">
-        <Text fontSize="xs" color="red.600">PAYROLL_TAX_ESTIMATES JSON is malformed: {parseError}</Text>
+        <Text fontSize="xs" color="red.fg">PAYROLL_TAX_ESTIMATES JSON is malformed: {parseError}</Text>
         <Button size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>
       </VStack>
     );
@@ -815,8 +815,8 @@ function PayrollTaxEstimatesEditor({ value, onChange, onSave, onCancel, saving, 
 
   return (
     <VStack align="stretch" gap={3} w="full">
-      <Box p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" rounded="md">
-        <Text fontSize="2xs" color="blue.900">
+      <Box p={2} bg="blue.faint" borderWidth="1px" borderColor="blue.emphasized" rounded="md">
+        <Text fontSize="2xs" color="blue.fg">
           Operator-tunable estimates for the company-side payroll tax burden. Applied to W-2 wages on the Reconcile P&L &quot;Employer payroll taxes (est.)&quot; line so Net Operating Income reflects what actually leaves the business — not what reaches QB once Gusto cuts the check. Workers&apos; Comp is intentionally NOT here; record it as a BusinessExpense (Insurance) when the premium bill arrives.
         </Text>
       </Box>
@@ -842,9 +842,9 @@ function PayrollTaxEstimatesEditor({ value, onChange, onSave, onCancel, saving, 
       )}
       <Box
         p={2}
-        bg="gray.50"
+        bg="gray.faint"
         borderWidth="1px"
-        borderColor="gray.200"
+        borderColor="gray.emphasized"
         rounded="md"
       >
         <HStack justify="space-between">
@@ -966,7 +966,7 @@ function SocialLinksEditor({ value, onChange, onSave, onCancel, saving, original
   if (parseError) {
     return (
       <VStack align="stretch" gap={2} w="full">
-        <Text fontSize="xs" color="red.600">SOCIAL_LINKS JSON is malformed: {parseError}</Text>
+        <Text fontSize="xs" color="red.fg">SOCIAL_LINKS JSON is malformed: {parseError}</Text>
         <Button size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>
       </VStack>
     );
@@ -992,7 +992,7 @@ function SocialLinksEditor({ value, onChange, onSave, onCancel, saving, original
         from each platform&apos;s official brand assets.
       </Text>
       {items.map((row, idx) => (
-        <Box key={idx} borderWidth="1px" borderColor="gray.200" borderRadius="md" p={2}>
+        <Box key={idx} borderWidth="1px" borderColor="gray.emphasized" borderRadius="md" p={2}>
           <VStack align="stretch" gap={2}>
             <HStack gap={2} align="start">
               {/* Icon thumbnail / uploader column. Square (64×64) so the
@@ -1005,9 +1005,9 @@ function SocialLinksEditor({ value, onChange, onSave, onCancel, saving, original
                   <VStack gap={1} align="stretch">
                     <Box
                       p={1.5}
-                      bg="white"
+                      bg="bg.panel"
                       borderWidth="1px"
-                      borderColor="gray.300"
+                      borderColor="gray.emphasized"
                       rounded="md"
                       h="64px"
                       display="flex"
@@ -1043,9 +1043,9 @@ function SocialLinksEditor({ value, onChange, onSave, onCancel, saving, original
                       height: "64px",
                       borderWidth: "1px",
                       borderStyle: "dashed",
-                      borderColor: "var(--chakra-colors-gray-400)",
+                      borderColor: "var(--chakra-colors-gray-strong)",
                       borderRadius: "var(--chakra-radii-md)",
-                      background: "var(--chakra-colors-gray-50)",
+                      background: "var(--chakra-colors-gray-faint)",
                       cursor: "pointer",
                     }}
                   >
@@ -1101,7 +1101,7 @@ function SocialLinksEditor({ value, onChange, onSave, onCancel, saving, original
                     fontFamily="mono"
                   />
                   {row.url.trim().length > 0 && !row.url.startsWith("https://") && (
-                    <Text fontSize="2xs" color="red.600" mt={0.5}>
+                    <Text fontSize="2xs" color="red.fg" mt={0.5}>
                       URL must start with https://
                     </Text>
                   )}
@@ -1155,7 +1155,7 @@ function PaymentFromOptionsEditor({ value, onChange, onSave, onCancel, saving }:
   if (parseError) {
     return (
       <VStack align="stretch" gap={2} w="full">
-        <Text fontSize="xs" color="red.600">PAYMENT_FROM_OPTIONS JSON is malformed: {parseError}</Text>
+        <Text fontSize="xs" color="red.fg">PAYMENT_FROM_OPTIONS JSON is malformed: {parseError}</Text>
         <Button size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>
       </VStack>
     );
@@ -1344,7 +1344,7 @@ function ExpenseCategoriesEditor({ value, onChange, onSave, onCancel, saving }: 
   if (parseError) {
     return (
       <VStack align="stretch" gap={2} w="full">
-        <Text fontSize="xs" color="red.600">EXPENSE_CATEGORIES JSON is malformed: {parseError}</Text>
+        <Text fontSize="xs" color="red.fg">EXPENSE_CATEGORIES JSON is malformed: {parseError}</Text>
         <Button size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>
       </VStack>
     );
@@ -1583,7 +1583,7 @@ function JsonArrayEditor({ value, onChange, onSave, onCancel, saving, originalVa
           </Button>
         </HStack>
       ))}
-      <HStack gap={2} borderTopWidth="1px" borderColor="gray.200" pt={2}>
+      <HStack gap={2} borderTopWidth="1px" borderColor="gray.emphasized" pt={2}>
         <Input size="sm" value={newKey} onChange={(e) => setNewKey(e.target.value)} flex="1" placeholder="New key" />
         <Input size="sm" value={newLabel} onChange={(e) => setNewLabel(e.target.value)} flex="1" placeholder="Label" />
         {hasEquipmentKind && (
@@ -1836,9 +1836,9 @@ function BusinessStartStatusPanel({ isSuper }: { isSuper: boolean }) {
       ? "reveal"
       : "info";
   const toneColors = {
-    info:   { border: "blue.200",   bg: "blue.50",   icon: "blue.700",   title: "blue.900",   body: "blue.800" },
+    info:   { border: "blue.emphasized",   bg: "blue.faint",   icon: "blue.fg",   title: "blue.fg",   body: "blue.fg" },
     warn:   { border: "amber.300",  bg: "amber.50",  icon: "amber.700",  title: "amber.900",  body: "amber.800" },
-    reveal: { border: "purple.300", bg: "purple.50", icon: "purple.700", title: "purple.900", body: "purple.800" },
+    reveal: { border: "purple.emphasized", bg: "purple.faint", icon: "purple.fg", title: "purple.fg", body: "purple.fg" },
   }[tone];
   return (
     // The status indicator. Informational only — no controls. Visually
@@ -1889,19 +1889,19 @@ function BusinessStartRevealToggle() {
     <Box
       borderWidth="1px"
       borderStyle="dashed"
-      borderColor={reveal ? "purple.400" : "purple.200"}
-      bg={reveal ? "purple.50" : "transparent"}
+      borderColor={reveal ? "purple.strong" : "purple.emphasized"}
+      bg={reveal ? "purple.faint" : "transparent"}
       borderRadius="md"
       px={3}
       py={2}
     >
       <HStack align="center" gap={3}>
-        <Box color={reveal ? "purple.700" : "purple.500"} flexShrink={0}>
+        <Box color={reveal ? "purple.fg" : "purple.fg"} flexShrink={0}>
           {reveal ? <Eye size={16} /> : <EyeOff size={16} />}
         </Box>
         <VStack align="start" gap={0.5} flex="1" minW={0}>
           <HStack gap={2} align="center">
-            <Text fontSize="xs" fontWeight="semibold" color="purple.900">
+            <Text fontSize="xs" fontWeight="semibold" color="purple.fg">
               Reveal pre-cutoff history
             </Text>
             <Badge
@@ -1917,7 +1917,7 @@ function BusinessStartRevealToggle() {
               Session only
             </Badge>
           </HStack>
-          <Text fontSize="xs" color="purple.800">
+          <Text fontSize="xs" color="purple.fg">
             Temporarily restores the full unfiltered view for YOUR browser.
             Resets on page reload — other users are never affected, and the
             persistent settings below are unchanged.
@@ -2263,29 +2263,29 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                     py={3}
                     cursor="pointer"
                     onClick={() => toggleSection(section.key)}
-                    bg="teal.50"
+                    bg="teal.faint"
                     borderWidth="1px"
-                    borderColor="teal.200"
+                    borderColor="teal.emphasized"
                     borderLeftWidth="4px"
                     borderLeftColor="teal.500"
                     borderRadius="md"
                     boxShadow="sm"
-                    _hover={{ bg: "teal.100", borderColor: "teal.300", boxShadow: "md" }}
+                    _hover={{ bg: "teal.subtle", borderColor: "teal.emphasized", boxShadow: "md" }}
                     transition="background 0.15s, box-shadow 0.15s"
                   >
-                    <Box color="teal.700" flexShrink={0}>
+                    <Box color="teal.fg" flexShrink={0}>
                       {collapsed ? <ChevronRight size={22} /> : <ChevronDown size={22} />}
                     </Box>
                     <VStack align="start" gap={0.5} flex="1" minW={0}>
                       <HStack gap={2} align="center">
-                        <Text fontSize="md" fontWeight="bold" color="teal.900">
+                        <Text fontSize="md" fontWeight="bold" color="teal.fg">
                           {section.title}
                         </Text>
                         <Badge size="sm" colorPalette="teal" variant="solid" borderRadius="full" px="2">
                           {items.length}
                         </Badge>
                       </HStack>
-                      <Text fontSize="xs" color="teal.800">{section.description}</Text>
+                      <Text fontSize="xs" color="teal.fg">{section.description}</Text>
                     </VStack>
                   </HStack>
                   {!collapsed && (
@@ -2460,7 +2460,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                                   autoFocus
                                 />
                                 {!valid && (
-                                  <Text fontSize="xs" color="red.600">{numericCfg.hint}</Text>
+                                  <Text fontSize="xs" color="red.fg">{numericCfg.hint}</Text>
                                 )}
                               </VStack>
                               <Button size="sm" onClick={() => handleSave(s.key)} loading={saving} disabled={editValue === s.value || !valid}>Save</Button>
@@ -2536,7 +2536,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                               </HStack>
                             </HStack>
                             {editError && (
-                              <Text fontSize="xs" color="red.700">Invalid JSON — {editError}</Text>
+                              <Text fontSize="xs" color="red.fg">Invalid JSON — {editError}</Text>
                             )}
                           </VStack>
                         );
@@ -2593,7 +2593,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                                     gap={1.5}
                                     px="2"
                                     py="0.5"
-                                    bg="gray.100"
+                                    bg="gray.subtle"
                                     borderRadius="full"
                                     fontSize="xs"
                                   >
@@ -2742,7 +2742,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                                 <Badge size="sm" colorPalette="red" variant="solid" px="2" borderRadius="full" fontSize="xs">
                                   Invalid JSON
                                 </Badge>
-                                <Text fontSize="xs" color="red.700">{syntaxError}</Text>
+                                <Text fontSize="xs" color="red.fg">{syntaxError}</Text>
                               </HStack>
                               <Text fontSize="sm" fontFamily="mono" color="fg.muted" wordBreak="break-all">
                                 {s.value}

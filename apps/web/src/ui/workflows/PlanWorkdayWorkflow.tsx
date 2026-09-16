@@ -76,7 +76,7 @@ function EquipmentSummary({ onCostLoaded }: { myId?: string; onCostLoaded?: (cos
   }, []);
 
   return (
-    <Box p={3} bg="orange.50" rounded="md">
+    <Box p={3} bg="orange.faint" rounded="md">
       <Text fontSize="xs" fontWeight="semibold" color="fg.muted" mb={2} textTransform="uppercase" letterSpacing="wide">Equipment Reserved</Text>
       {!loaded ? (
         <Spinner size="sm" />
@@ -90,7 +90,7 @@ function EquipmentSummary({ onCostLoaded }: { myId?: string; onCostLoaded?: (cos
               <HStack key={eq.id} justify="space-between" fontSize="sm">
                 <Text>{eq.shortDesc || eq.type || "Equipment"}{eq.brand ? ` — ${eq.brand}` : ""}{eq.model ? ` ${eq.model}` : ""}</Text>
                 {chip && (
-                  <Text fontWeight="medium" color="orange.700" flexShrink={0}>{chip}</Text>
+                  <Text fontWeight="medium" color="orange.fg" flexShrink={0}>{chip}</Text>
                 )}
               </HStack>
             );
@@ -513,8 +513,8 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
               </Dialog.Header>
               <Dialog.Body>
                 <VStack align="stretch" gap={3}>
-                  <Box p={3} bg="blue.50" rounded="md" borderWidth="1px" borderColor="blue.200">
-                    <Text fontSize="sm" color="blue.800">
+                  <Box p={3} bg="blue.faint" rounded="md" borderWidth="1px" borderColor="blue.emphasized">
+                    <Text fontSize="sm" color="blue.fg">
                       Use the <strong>Routes</strong> feature to review your claimed jobs, get suggestions on potential jobs to add to fill out your day, and generate the most efficient route. When you're done, use the <strong>"Return to Workflow"</strong> button at the top of the Routes tab to come back and continue.
                     </Text>
                   </Box>
@@ -607,8 +607,8 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                 <VStack align="stretch" gap={3}>
                   {(targetDate === today || targetDate === tomorrow) ? (
                     <>
-                      <Box p={3} bg="orange.50" rounded="md" borderWidth="1px" borderColor="orange.200">
-                        <Text fontSize="sm" color="orange.800">
+                      <Box p={3} bg="orange.faint" rounded="md" borderWidth="1px" borderColor="orange.emphasized">
+                        <Text fontSize="sm" color="orange.fg">
                           Do you need to reserve any equipment for the day? Use the <strong>Equipment</strong> tab to browse available equipment and make reservations. When you're done, use the <strong>"Return to Workflow"</strong> button at the top of the Equipment tab to come back and continue.
                         </Text>
                       </Box>
@@ -628,7 +628,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                       </Button>
                     </>
                   ) : (
-                    <Box p={3} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">
+                    <Box p={3} bg="gray.faint" rounded="md" borderWidth="1px" borderColor="gray.emphasized">
                       <Text fontSize="sm" color="fg.muted">
                         Equipment reservations are only available for today or tomorrow. You can reserve equipment by visiting the Equipment tab the day before, or by re-running this workflow closer to the date.
                       </Text>
@@ -765,7 +765,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
               <Dialog.Body py="2">
                 <VStack align="stretch" gap={3}>
                   {/* Jobs */}
-                  <Box p={3} bg="gray.50" rounded="md">
+                  <Box p={3} bg="gray.faint" rounded="md">
                     <Text fontSize="xs" fontWeight="semibold" color="fg.muted" mb={2} textTransform="uppercase" letterSpacing="wide">Jobs</Text>
                     {activeOccs.length === 0 ? (
                       <Text fontSize="sm" color="fg.muted">No jobs for this day.</Text>
@@ -776,7 +776,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                             <Text>
                               {o.job?.property?.displayName}
                               {o.job?.property?.client?.displayName && (
-                                <span style={{ color: "var(--chakra-colors-fg-muted)" }}> — {o.job.property.client.displayName}</span>
+                                <span style={{ color: "var(--chakra-colors-gray-fg)" }}> — {o.job.property.client.displayName}</span>
                               )}
                             </Text>
                             <Text fontWeight="medium" flexShrink={0}>
@@ -790,8 +790,8 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
 
                   {/* Released */}
                   {releasedIds.length > 0 && (
-                    <Box p={3} bg="red.50" rounded="md">
-                      <Text fontSize="xs" fontWeight="semibold" color="red.600" mb={1}>Released: {releasedIds.length} job{releasedIds.length !== 1 ? "s" : ""}</Text>
+                    <Box p={3} bg="red.faint" rounded="md">
+                      <Text fontSize="xs" fontWeight="semibold" color="red.fg" mb={1}>Released: {releasedIds.length} job{releasedIds.length !== 1 ? "s" : ""}</Text>
                     </Box>
                   )}
 
@@ -799,7 +799,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                   <EquipmentSummary myId={myId} onCostLoaded={setEquipmentCost} />
 
                   {/* Time */}
-                  <Box p={3} bg="green.50" rounded="md">
+                  <Box p={3} bg="green.faint" rounded="md">
                     <Text fontSize="xs" fontWeight="semibold" color="fg.muted" mb={2} textTransform="uppercase" letterSpacing="wide">Time</Text>
                     {(() => {
                       const assumedCount = activeOccs.filter((o) => !o.estimatedMinutes).length;
@@ -826,29 +826,29 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                       };
                       return (
                         <Box display="grid" gridTemplateColumns="auto 1fr" gap={1} rowGap={1.5} fontSize="sm">
-                          <Text color="green.700">Jobs:</Text>
+                          <Text color="green.fg">Jobs:</Text>
                           <Text fontWeight="semibold" textAlign="right">{activeOccs.length}</Text>
 
-                          <Text color="green.700">Job time:</Text>
+                          <Text color="green.fg">Job time:</Text>
                           <Text fontWeight="semibold" textAlign="right">~{fmtDur(totalEstMinutes)}</Text>
 
-                          <Text color="green.700">Buffer ({bufferPct}%):</Text>
+                          <Text color="green.fg">Buffer ({bufferPct}%):</Text>
                           <Text fontWeight="semibold" textAlign="right">~{fmtDur(setupMins)}</Text>
 
                           {driveMins > 0 && (
                             <>
-                              <Text color="green.700">Drive time:</Text>
+                              <Text color="green.fg">Drive time:</Text>
                               <Text fontWeight="semibold" textAlign="right">{fmtDur(driveMins)}</Text>
                             </>
                           )}
 
-                          <Text color="green.800" fontWeight="medium" borderTop="1px solid" borderColor="green.200" pt={1}>Total time:</Text>
-                          <Text fontWeight="bold" textAlign="right" borderTop="1px solid" borderColor="green.200" pt={1}>~{fmtDur(totalMins)}</Text>
+                          <Text color="green.fg" fontWeight="medium" borderTop="1px solid" borderColor="green.emphasized" pt={1}>Total time:</Text>
+                          <Text fontWeight="bold" textAlign="right" borderTop="1px solid" borderColor="green.emphasized" pt={1}>~{fmtDur(totalMins)}</Text>
 
                           {assumedCount > 0 && (
                             <>
                               <Text />
-                              <Text fontSize="xs" color="orange.500" textAlign="right">
+                              <Text fontSize="xs" color="orange.fg" textAlign="right">
                                 * {assumedCount} job{assumedCount !== 1 ? "s" : ""} assumed 60 min
                               </Text>
                             </>
@@ -867,7 +867,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                   </Box>
 
                   {/* Financials */}
-                  <Box p={3} bg="blue.50" rounded="md">
+                  <Box p={3} bg="blue.faint" rounded="md">
                     <Text fontSize="xs" fontWeight="semibold" color="fg.muted" mb={2} textTransform="uppercase" letterSpacing="wide">Financials</Text>
                     {(() => {
                       const allExpenses = totalExpenses + equipmentCost;
@@ -876,28 +876,28 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                       const workerPayout = netRevenue - deduction;
                       return (
                         <Box display="grid" gridTemplateColumns="auto 1fr" gap={1} rowGap={1.5} fontSize="sm">
-                          <Text color="blue.600">Customer cost:</Text>
+                          <Text color="blue.fg">Customer cost:</Text>
                           <Text fontWeight="semibold" textAlign="right">${totalCustomerCost.toFixed(2)}</Text>
 
                           {totalExpenses > 0 && (
                             <>
-                              <Text color="blue.600">Job expenses:</Text>
-                              <Text fontWeight="semibold" textAlign="right" color="red.600">-${totalExpenses.toFixed(2)}</Text>
+                              <Text color="blue.fg">Job expenses:</Text>
+                              <Text fontWeight="semibold" textAlign="right" color="red.fg">-${totalExpenses.toFixed(2)}</Text>
                             </>
                           )}
 
                           {equipmentCost > 0 && (
                             <>
-                              <Text color="blue.600">Equipment rental:</Text>
-                              <Text fontWeight="semibold" textAlign="right" color="red.600">-${equipmentCost.toFixed(2)}</Text>
+                              <Text color="blue.fg">Equipment rental:</Text>
+                              <Text fontWeight="semibold" textAlign="right" color="red.fg">-${equipmentCost.toFixed(2)}</Text>
                             </>
                           )}
 
-                          <Text color="blue.600">Platform fee ({marginPercent}%):</Text>
-                          <Text fontWeight="semibold" textAlign="right" color="red.600">-${deduction.toFixed(2)}</Text>
+                          <Text color="blue.fg">Platform fee ({marginPercent}%):</Text>
+                          <Text fontWeight="semibold" textAlign="right" color="red.fg">-${deduction.toFixed(2)}</Text>
 
-                          <Text color="blue.700" fontWeight="medium" borderTop="1px solid" borderColor="blue.200" pt={1}>Est. payout:</Text>
-                          <Text fontWeight="bold" textAlign="right" color="green.700" borderTop="1px solid" borderColor="blue.200" pt={1}>
+                          <Text color="blue.fg" fontWeight="medium" borderTop="1px solid" borderColor="blue.emphasized" pt={1}>Est. payout:</Text>
+                          <Text fontWeight="bold" textAlign="right" color="green.fg" borderTop="1px solid" borderColor="blue.emphasized" pt={1}>
                             ${workerPayout.toFixed(2)}
                           </Text>
                         </Box>
@@ -973,7 +973,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
             <Dialog.Body py="2">
               <VStack align="start" gap={2}>
                 {/* Job details */}
-                <Box w="full" p={3} bg="gray.50" rounded="md">
+                <Box w="full" p={3} bg="gray.faint" rounded="md">
                   <Text fontWeight="semibold" fontSize="sm">
                     {prop?.displayName}
                     {prop?.client?.displayName && (

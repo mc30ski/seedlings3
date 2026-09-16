@@ -119,7 +119,7 @@ export function AdminWorkerPicker({
         />
         {dropOpen && (
           <Box
-            position="fixed" zIndex={9999} bg="white" borderWidth="1px" borderColor="gray.200"
+            position="fixed" zIndex={9999} bg="bg.panel" borderWidth="1px" borderColor="gray.emphasized"
             rounded="md" shadow="lg" w="240px" mt="1"
             ref={(el: HTMLDivElement | null) => {
               if (el && dropRef.current) {
@@ -133,8 +133,8 @@ export function AdminWorkerPicker({
               {/* "Me" option — clears selection back to self. */}
               <Box
                 px="3" py="1.5" fontSize="sm" cursor="pointer"
-                bg={selectedWorkerId === null ? "blue.50" : undefined}
-                _hover={{ bg: "gray.100" }}
+                bg={selectedWorkerId === null ? "blue.faint" : undefined}
+                _hover={{ bg: "gray.subtle" }}
                 onMouseDown={(e) => {
                   e.preventDefault();
                   onChange(null);
@@ -144,14 +144,14 @@ export function AdminWorkerPicker({
               >
                 <HStack gap={2}>
                   <Text flex="1" fontStyle="italic">Me (plan my own routes)</Text>
-                  {selectedWorkerId === null && <Text color="blue.500" fontWeight="bold">✓</Text>}
+                  {selectedWorkerId === null && <Text color="blue.fg" fontWeight="bold">✓</Text>}
                 </HStack>
               </Box>
               {limited.map((w) => (
                 <Box
                   key={w.id} px="3" py="1.5" fontSize="sm" cursor="pointer"
-                  bg={selectedWorkerId === w.id ? "blue.50" : undefined}
-                  _hover={{ bg: "gray.100" }}
+                  bg={selectedWorkerId === w.id ? "blue.faint" : undefined}
+                  _hover={{ bg: "gray.subtle" }}
                   onMouseDown={(e) => {
                     e.preventDefault();
                     onChange(w.id);
@@ -161,7 +161,7 @@ export function AdminWorkerPicker({
                 >
                   <HStack gap={2}>
                     <Text flex="1">{w.displayName || w.email || w.id}</Text>
-                    {selectedWorkerId === w.id && <Text color="blue.500" fontWeight="bold">✓</Text>}
+                    {selectedWorkerId === w.id && <Text color="blue.fg" fontWeight="bold">✓</Text>}
                   </HStack>
                 </Box>
               ))}
@@ -248,7 +248,7 @@ export function SectionExpander({
   }
 
   return (
-    <Box borderWidth="1px" borderColor="gray.200" rounded="md" bg="white">
+    <Box borderWidth="1px" borderColor="gray.emphasized" rounded="md" bg="bg.panel">
       <HStack
         as="button"
         onClick={toggle}
@@ -258,7 +258,7 @@ export function SectionExpander({
         px={3}
         py={2}
         cursor="pointer"
-        _hover={{ bg: "gray.50" }}
+        _hover={{ bg: "gray.faint" }}
         textAlign="left"
       >
         {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
@@ -267,7 +267,7 @@ export function SectionExpander({
         </Text>
       </HStack>
       {open && (
-        <Box px={3} py={3} borderTopWidth="1px" borderColor="gray.200">
+        <Box px={3} py={3} borderTopWidth="1px" borderColor="gray.emphasized">
           {children}
         </Box>
       )}
@@ -375,7 +375,7 @@ export function RoutesOperationsPanel() {
       summarySlot={
         <Text
           fontSize="xs"
-          color="gray.700"
+          color="gray.fg"
           textAlign="right"
           w="full"
           truncate

@@ -347,7 +347,7 @@ export default function GuidesTab({
                     key={g.id}
                     variant="outline"
                     cursor="pointer"
-                    _hover={{ borderColor: "blue.300" }}
+                    _hover={{ borderColor: "blue.emphasized" }}
                     onClick={() => setOpenId(g.slug)}
                   >
                     <Card.Body p={3}>
@@ -649,11 +649,11 @@ function GuideDetailView({
           payload, so "a worker's payload has no versions" was never a
           safe thing to reason from. */}
       {showAdminExtras && (pending || draft || !guide.isPublished) && (
-        <Card.Root variant="outline" mb={3} borderColor="orange.300" bg="orange.50">
+        <Card.Root variant="outline" mb={3} borderColor="orange.emphasized" bg="orange.faint">
           <Card.Body p={3}>
             <VStack align="stretch" gap={1}>
               {pending && (
-                <Text fontSize="xs" color="orange.900">
+                <Text fontSize="xs" color="orange.fg">
                   <strong>v{pending.versionNumber} is awaiting approval.</strong>{" "}
                   {guide.isPublished
                     ? "Workers keep reading the published version until a Super approves it."
@@ -661,12 +661,12 @@ function GuideDetailView({
                 </Text>
               )}
               {draft?.status === "REJECTED" && draft.rejectionNote && (
-                <Text fontSize="xs" color="orange.900">
+                <Text fontSize="xs" color="orange.fg">
                   <strong>Sent back:</strong> {draft.rejectionNote}
                 </Text>
               )}
               {!pending && draft && (
-                <Text fontSize="xs" color="orange.900">
+                <Text fontSize="xs" color="orange.fg">
                   You have an unsubmitted draft (v{draft.versionNumber}).
                 </Text>
               )}
@@ -697,7 +697,7 @@ function GuideDetailView({
                   They save on their own button because they live on the guide
                   rather than a version: changing a title is immediate and
                   needs no approval, while changing the body does. */}
-              <Box borderWidth="1px" borderColor="gray.200" rounded="md" p={3}>
+              <Box borderWidth="1px" borderColor="gray.emphasized" rounded="md" p={3}>
                 <Text fontSize="2xs" color="fg.muted" textTransform="uppercase" mb={2}>
                   Page details
                 </Text>
@@ -799,7 +799,7 @@ function GuideDetailView({
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
               />
-              <Box borderWidth="1px" borderColor="gray.200" rounded="md" p={3} bg="white">
+              <Box borderWidth="1px" borderColor="gray.emphasized" rounded="md" p={3} bg="bg.panel">
                 <Text fontSize="2xs" color="fg.muted" textTransform="uppercase" mb={2}>
                   Preview
                 </Text>
@@ -1052,7 +1052,7 @@ function GuideDetailView({
             <Box mt={1} px={1}>
               <VStack align="stretch" gap={1}>
                 {versions.map((v) => (
-                  <HStack key={v.id} gap={2} p={2} borderWidth="1px" borderColor="gray.200" rounded="md" wrap="wrap">
+                  <HStack key={v.id} gap={2} p={2} borderWidth="1px" borderColor="gray.emphasized" rounded="md" wrap="wrap">
                     <Badge size="sm" colorPalette={v.status === "PUBLISHED" ? "green" : "gray"} variant="subtle">
                       v{v.versionNumber} · {statusLabel(v.status)}
                     </Badge>

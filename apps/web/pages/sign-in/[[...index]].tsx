@@ -74,7 +74,7 @@ export default function SignInPage() {
     window.location.replace(target);
   }, []);
   return (
-    <Box minH="100vh" display="flex" alignItems="center" justifyContent="center" bg="gray.50" p={4}>
+    <Box minH="100vh" display="flex" alignItems="center" justifyContent="center" bg="gray.faint" p={4}>
       <VStack gap={4} maxW="md" w="full">
         <Heading size="lg" textAlign="center">Welcome to Seedlings</Heading>
         {isRedirectingToPrimary ? (
@@ -100,7 +100,7 @@ export default function SignInPage() {
             display="inline-flex"
             alignItems="center"
             gap={1}
-            _hover={{ color: "blue.600", textDecoration: "underline" }}
+            _hover={{ color: "blue.fg", textDecoration: "underline" }}
           >
             <ArrowLeft size={14} /> Cancel and go back
           </Text>
@@ -441,7 +441,7 @@ function SignInForm() {
             as="form"
             onSubmit={handleEmailSubmit}
             w="full"
-            bg="white"
+            bg="bg.panel"
             p={6}
             rounded="lg"
             boxShadow="0 4px 24px rgba(0,0,0,0.06)"
@@ -458,7 +458,7 @@ function SignInForm() {
                 autoComplete="email"
               />
               {error && (
-                <Text fontSize="xs" color="red.600">{error}</Text>
+                <Text fontSize="xs" color="red.fg">{error}</Text>
               )}
               <Button
                 type="submit"
@@ -483,7 +483,7 @@ function SignInForm() {
             as="form"
             onSubmit={handlePasswordSubmit}
             w="full"
-            bg="white"
+            bg="bg.panel"
             p={6}
             rounded="lg"
             boxShadow="0 4px 24px rgba(0,0,0,0.06)"
@@ -500,7 +500,7 @@ function SignInForm() {
                 autoComplete="current-password"
               />
               {error && (
-                <Text fontSize="xs" color="red.600">{error}</Text>
+                <Text fontSize="xs" color="red.fg">{error}</Text>
               )}
               <Button
                 type="submit"
@@ -519,9 +519,9 @@ function SignInForm() {
                    *  genuine alternative — not a small "forgot password?"
                    *  afterthought. */}
                   <HStack align="center" my={1}>
-                    <Box flex={1} h="1px" bg="gray.200" />
+                    <Box flex={1} h="1px" bg="gray.muted" />
                     <Text fontSize="xs" color="fg.muted">or</Text>
-                    <Box flex={1} h="1px" bg="gray.200" />
+                    <Box flex={1} h="1px" bg="gray.muted" />
                   </HStack>
                   <Button
                     type="button"
@@ -559,7 +559,7 @@ function SignInForm() {
             as="form"
             onSubmit={handleCodeSubmit}
             w="full"
-            bg="white"
+            bg="bg.panel"
             p={6}
             rounded="lg"
             boxShadow="0 4px 24px rgba(0,0,0,0.06)"
@@ -581,7 +581,7 @@ function SignInForm() {
                 letterSpacing="0.4em"
               />
               {error && (
-                <Text fontSize="xs" color="red.600">{error}</Text>
+                <Text fontSize="xs" color="red.fg">{error}</Text>
               )}
               <Button
                 type="submit"
@@ -615,7 +615,7 @@ function SignInForm() {
             as="form"
             onSubmit={handleNameSubmit}
             w="full"
-            bg="white"
+            bg="bg.panel"
             p={6}
             rounded="lg"
             boxShadow="0 4px 24px rgba(0,0,0,0.06)"
@@ -641,7 +641,7 @@ function SignInForm() {
                 autoComplete="family-name"
               />
               {error && (
-                <Text fontSize="xs" color="red.600">{error}</Text>
+                <Text fontSize="xs" color="red.fg">{error}</Text>
               )}
               <Button
                 type="submit"

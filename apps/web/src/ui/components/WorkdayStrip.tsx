@@ -595,8 +595,8 @@ export default function WorkdayStrip({
       {payload.openPrior.length > 0 && (
         <Card.Root
           variant="outline"
-          bg="orange.50"
-          borderColor="orange.400"
+          bg="orange.faint"
+          borderColor="orange.strong"
           borderWidth="2px"
         >
           <Card.Body p={3}>
@@ -839,12 +839,12 @@ function WorkdayCard({
     <Box
       mb={2}
       p={2}
-      bg="gray.100"
+      bg="gray.subtle"
       borderLeftWidth="3px"
       borderColor="gray.500"
       borderRadius="md"
     >
-      <Text fontSize="xs" color="gray.800">
+      <Text fontSize="xs" color="gray.fg">
         <b>Read-only view.</b> Only Super can act on {viewAsName}'s workday on this tab.
       </Text>
     </Box>
@@ -856,7 +856,7 @@ function WorkdayCard({
   // times, etc.) are hidden behind the chevron so the card matches the
   // size of a job-card row.
   if (collapsed) {
-    let bg = "gray.50", borderColor = "gray.300", iconBg = "gray.500";
+    let bg = "gray.faint", borderColor = "gray.emphasized", iconBg = "gray.500";
     let icon: React.ReactNode = <CheckCircle2 size={18} />;
     let summary: React.ReactNode = "";
     let primary: React.ReactNode = null;
@@ -867,7 +867,7 @@ function WorkdayCard({
     let primaryAction: (() => void) | null = null;
     let primaryActionLabel = "";
     if (today.state === "NOT_STARTED") {
-      bg = "orange.50"; borderColor = "orange.400"; iconBg = "orange.500";
+      bg = "orange.faint"; borderColor = "orange.strong"; iconBg = "orange.500";
       icon = <Clock size={18} />;
       summary = viewAsName ? `${viewAsName} hasn't started` : "Start your workday";
       if (canAct) {
@@ -878,7 +878,7 @@ function WorkdayCard({
       // orange clock icon starts the workday. Keeps the row at
       // job-card height.
     } else if (today.state === "IN_PROGRESS") {
-      bg = "blue.50"; borderColor = "blue.400"; iconBg = "blue.500";
+      bg = "blue.faint"; borderColor = "blue.strong"; iconBg = "blue.500";
       icon = <Clock size={18} />;
       const active = activeMs(today.workday);
       const allDone = pulseInProgress; // same condition that drives the pulse
@@ -890,7 +890,7 @@ function WorkdayCard({
       // No explicit End button on the collapsed row — tapping the blue
       // clock icon ends the workday. Keeps the row at job-card height.
     } else if (today.state === "PAUSED") {
-      bg = "yellow.50"; borderColor = "yellow.400"; iconBg = "yellow.500";
+      bg = "yellow.faint"; borderColor = "yellow.strong"; iconBg = "yellow.500";
       icon = <Pause size={18} />;
       const pausedMs = totalPausedMsLive(today.workday);
       summary = `Paused · ${fmtDuration(pausedMs)}`;
@@ -923,7 +923,7 @@ function WorkdayCard({
         </HStack>
       ) : null;
     } else if (today.state === "COMPLETED") {
-      bg = "gray.50"; borderColor = "gray.300"; iconBg = "gray.500";
+      bg = "gray.faint"; borderColor = "gray.emphasized"; iconBg = "gray.500";
       icon = <CheckCircle2 size={18} />;
       const active = activeMs(today.workday);
       summary = `Workday complete · ${fmtDuration(active)}`;
@@ -1021,8 +1021,8 @@ function WorkdayCard({
     return (
       <Card.Root
         variant="outline"
-        bg="orange.50"
-        borderColor="orange.400"
+        bg="orange.faint"
+        borderColor="orange.strong"
         borderWidth="2px"
         mb={cardMb}
         shadow="sm"
@@ -1033,14 +1033,14 @@ function WorkdayCard({
           {readOnlyBanner}
           <VStack align="stretch" gap={2}>
             <HStack gap={3} align="center">
-              <Box bg="orange.500" color="white" p={1.5} borderRadius="full" flexShrink={0}>
+              <Box bg="orange.solid" color="orange.contrast" p={1.5} borderRadius="full" flexShrink={0}>
                 <Clock size={18} />
               </Box>
               <VStack align="start" gap={0} flex="1" minW="0">
-                <Text fontSize="sm" fontWeight="bold" color="orange.900">
+                <Text fontSize="sm" fontWeight="bold" color="orange.fg">
                   {viewAsName ? `${viewAsName} hasn't started their workday` : "Start your workday"}
                 </Text>
-                <Text fontSize="xs" color="orange.800">
+                <Text fontSize="xs" color="orange.fg">
                   {viewAsName
                     ? "Required before they can begin any jobs. Start when they reach their first location."
                     : "Required before you can begin any jobs. Start when you reach your first location."}
@@ -1074,8 +1074,8 @@ function WorkdayCard({
     return (
       <Card.Root
         variant="outline"
-        bg="blue.50"
-        borderColor="blue.400"
+        bg="blue.faint"
+        borderColor="blue.strong"
         borderWidth="2px"
         mb={cardMb}
         position="relative"
@@ -1085,15 +1085,15 @@ function WorkdayCard({
           {readOnlyBanner}
           <VStack align="stretch" gap={2}>
             <HStack gap={3} align="center">
-              <Box bg="blue.500" color="white" p={1.5} borderRadius="full" flexShrink={0}>
+              <Box bg="blue.solid" color="blue.contrast" p={1.5} borderRadius="full" flexShrink={0}>
                 <Clock size={18} />
               </Box>
               <VStack align="start" gap={0} flex="1" minW="0">
-                <Text fontSize="sm" fontWeight="bold" color="blue.900">
+                <Text fontSize="sm" fontWeight="bold" color="blue.fg">
                   {viewAsName ? `${viewAsName} is on the clock` : "On the clock"} · {fmtDuration(active)} active
                   {pulseInProgress && " · all jobs completed"}
                 </Text>
-                <Text fontSize="xs" color="blue.800">
+                <Text fontSize="xs" color="blue.fg">
                   Started at {fmtClockTime(today.workday.startedAt)}
                   {paused > 0 && ` · ${fmtDuration(paused)} paused so far`}
                 </Text>
@@ -1130,8 +1130,8 @@ function WorkdayCard({
     return (
       <Card.Root
         variant="outline"
-        bg="yellow.50"
-        borderColor="yellow.400"
+        bg="yellow.faint"
+        borderColor="yellow.strong"
         borderWidth="2px"
         mb={cardMb}
         position="relative"
@@ -1140,14 +1140,14 @@ function WorkdayCard({
           {readOnlyBanner}
           <VStack align="stretch" gap={2}>
             <HStack gap={3} align="center">
-              <Box bg="yellow.500" color="white" p={1.5} borderRadius="full" flexShrink={0}>
+              <Box bg="yellow.solid" color="yellow.contrast" p={1.5} borderRadius="full" flexShrink={0}>
                 <Pause size={18} />
               </Box>
               <VStack align="start" gap={0} flex="1" minW="0">
-                <Text fontSize="sm" fontWeight="bold" color="yellow.900">
+                <Text fontSize="sm" fontWeight="bold" color="yellow.fg">
                   {viewAsName ? `${viewAsName}'s workday paused` : "Workday paused"} · {fmtDuration(paused)} paused
                 </Text>
-                <Text fontSize="xs" color="yellow.800">
+                <Text fontSize="xs" color="yellow.fg">
                   Paused at {fmtClockTime(today.workday.pausedAt!)} · {fmtDuration(active)} active so far
                 </Text>
               </VStack>
@@ -1179,12 +1179,12 @@ function WorkdayCard({
   const active = activeMs(today.workday);
   const paused = today.workday.totalPausedMs;
   return (
-    <Card.Root variant="outline" bg="gray.50" mb={cardMb} position="relative">
+    <Card.Root variant="outline" bg="gray.faint" mb={cardMb} position="relative">
       <Card.Body p={3} pr={9} {...bodyClickProps}>
         {readOnlyBanner}
         <VStack align="stretch" gap={2}>
           <HStack gap={3} align="center">
-            <Box bg="gray.500" color="white" p={1.5} borderRadius="full" flexShrink={0}>
+            <Box bg="gray.solid" color="gray.contrast" p={1.5} borderRadius="full" flexShrink={0}>
               <CheckCircle2 size={18} />
             </Box>
             <VStack align="start" gap={0} flex="1" minW="0">
@@ -1228,13 +1228,13 @@ function ForgotPriorRow({
 }) {
   const oldest = openPrior[0];
   return (
-    <Box p={2} bg="orange.50" borderWidth="1px" borderColor="orange.300" borderRadius="md">
+    <Box p={2} bg="orange.faint" borderWidth="1px" borderColor="orange.emphasized" borderRadius="md">
       <HStack gap={2} align="center" wrap="wrap">
         <AlertTriangle size={16} color="var(--chakra-colors-orange-600)" />
-        <Text fontSize="sm" color="orange.900" flex="1" minW={0}>
+        <Text fontSize="sm" color="orange.fg" flex="1" minW={0}>
           You didn't end your workday on <b>{fmtWorkdayDate(oldest.workdayDate)}</b>.
           {openPrior.length > 1 && (
-            <Text as="span" color="orange.700">
+            <Text as="span" color="orange.fg">
               {" "}({openPrior.length - 1} more after this)
             </Text>
           )}
@@ -1301,17 +1301,17 @@ function DialogShell({
                 mt={2}
                 mb={1}
                 p={2}
-                bg="red.50"
+                bg="red.faint"
                 borderWidth="1px"
-                borderColor="red.300"
+                borderColor="red.emphasized"
                 borderRadius="md"
                 role="alert"
               >
                 <HStack gap={2} align="start">
-                  <Box color="red.600" flexShrink={0} mt="2px">
+                  <Box color="red.fg" flexShrink={0} mt="2px">
                     <AlertTriangle size={14} />
                   </Box>
-                  <Text fontSize="sm" color="red.900" flex="1">
+                  <Text fontSize="sm" color="red.fg" flex="1">
                     {inlineError}
                   </Text>
                   {onDismissInlineError && (
@@ -1397,7 +1397,7 @@ function StartWorkdayDialog({
               width: "100%",
               padding: "6px 8px",
               fontSize: "14px",
-              border: "1px solid var(--chakra-colors-gray-200)",
+              border: "1px solid var(--chakra-colors-gray-emphasized)",
               borderRadius: "6px",
             }}
           />
@@ -1590,55 +1590,55 @@ function EndWorkdayDialog({
             here from the "I'll just call it a day" flow need to see
             that in plain English before confirming. */}
         {workday.pausedAt && (
-          <Box p={2} bg="orange.50" borderWidth="1px" borderColor="orange.400" borderRadius="md">
-            <Text fontSize="xs" color="orange.900" fontWeight="semibold" mb={1}>
+          <Box p={2} bg="orange.faint" borderWidth="1px" borderColor="orange.strong" borderRadius="md">
+            <Text fontSize="xs" color="orange.fg" fontWeight="semibold" mb={1}>
               Your workday is currently paused.
             </Text>
-            <Text fontSize="xs" color="orange.900">
+            <Text fontSize="xs" color="orange.fg">
               You paused at <b>{fmtClockTime(workday.pausedAt)}</b>. Ending now
               will lock in that pause — the time between
               {" "}<b>{fmtClockTime(workday.pausedAt)}</b> and the end time below
               will count as <b>unpaid pause</b>, not active work.
             </Text>
-            <Text fontSize="xs" color="orange.900" mt={1}>
+            <Text fontSize="xs" color="orange.fg" mt={1}>
               If you meant to keep working, tap <b>Cancel</b> and hit <b>Resume</b> first.
             </Text>
           </Box>
         )}
         {/* Soft warnings — never block, just inform. */}
         {activeJobs.length > 0 && (
-          <Box p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" borderRadius="md">
-            <Text fontSize="xs" color="yellow.900" mb={1} fontWeight="semibold">
+          <Box p={2} bg="yellow.faint" borderWidth="1px" borderColor="yellow.emphasized" borderRadius="md">
+            <Text fontSize="xs" color="yellow.fg" mb={1} fontWeight="semibold">
               You still have these jobs active:
             </Text>
             <VStack align="stretch" gap={0.5}>
               {activeJobs.map((j) => (
-                <Text key={j.occurrenceId} fontSize="xs" color="yellow.900">
+                <Text key={j.occurrenceId} fontSize="xs" color="yellow.fg">
                   • {j.title || j.propertyName || "(untitled)"}
                   {j.clientName && ` — ${j.clientName}`}
                   {" "}<Badge size="xs" colorPalette={j.status === "PAUSED" ? "orange" : "blue"} variant="subtle">{j.status.toLowerCase()}</Badge>
                 </Text>
               ))}
             </VStack>
-            <Text fontSize="xs" color="yellow.800" mt={1} fontStyle="italic">
+            <Text fontSize="xs" color="yellow.fg" mt={1} fontStyle="italic">
               End or pause those before ending your workday so the job times stay accurate.
             </Text>
           </Box>
         )}
 
         {activeCheckouts.length > 0 && (
-          <Box p={2} bg="blue.50" borderWidth="1px" borderColor="blue.300" borderRadius="md">
-            <Text fontSize="xs" color="blue.900" mb={1} fontWeight="semibold">
+          <Box p={2} bg="blue.faint" borderWidth="1px" borderColor="blue.emphasized" borderRadius="md">
+            <Text fontSize="xs" color="blue.fg" mb={1} fontWeight="semibold">
               You still have equipment checked out:
             </Text>
             <VStack align="stretch" gap={0.5}>
               {activeCheckouts.map((c) => (
-                <Text key={c.checkoutId} fontSize="xs" color="blue.900">
+                <Text key={c.checkoutId} fontSize="xs" color="blue.fg">
                   • {[c.brand, c.model].filter(Boolean).join(" ") || c.shortDesc || "(unnamed)"}
                 </Text>
               ))}
             </VStack>
-            <Text fontSize="xs" color="blue.800" mt={1} fontStyle="italic">
+            <Text fontSize="xs" color="blue.fg" mt={1} fontStyle="italic">
               That's fine if you're keeping it across days. Otherwise return it before ending.
             </Text>
           </Box>
@@ -1652,28 +1652,28 @@ function EndWorkdayDialog({
             — the stop endpoint is worker-side (`/me/mileage/...`)
             and doesn't accept impersonation. */}
         {openMileageEntries.length > 0 && isViewingAs && (
-          <Box p={2} bg="orange.50" borderWidth="1px" borderColor="orange.300" borderRadius="md">
-            <Text fontSize="xs" color="orange.900" mb={1} fontWeight="semibold">
+          <Box p={2} bg="orange.faint" borderWidth="1px" borderColor="orange.emphasized" borderRadius="md">
+            <Text fontSize="xs" color="orange.fg" mb={1} fontWeight="semibold">
               {viewAsName ?? "They"} still {openMileageEntries.length === 1 ? "has" : "have"} {openMileageEntries.length} open mileage session{openMileageEntries.length === 1 ? "" : "s"}:
             </Text>
             <VStack align="stretch" gap={0.5}>
               {openMileageEntries.map((e) => (
-                <Text key={e.id} fontSize="xs" color="orange.900">
+                <Text key={e.id} fontSize="xs" color="orange.fg">
                   • {e.vehicleName} (started at {e.startOdometer.toLocaleString()} mi)
                 </Text>
               ))}
             </VStack>
-            <Text fontSize="xs" color="orange.800" mt={1} fontStyle="italic">
+            <Text fontSize="xs" color="orange.fg" mt={1} fontStyle="italic">
               Have {viewAsName ?? "the worker"} close these on their MileageStrip, or edit them on the Vehicles tab.
             </Text>
           </Box>
         )}
         {visibleOpen.length > 0 && !isViewingAs && (
-          <Box p={2} bg="teal.50" borderWidth="1px" borderColor="teal.300" borderRadius="md">
-            <Text fontSize="xs" color="teal.900" mb={2} fontWeight="semibold">
+          <Box p={2} bg="teal.faint" borderWidth="1px" borderColor="teal.emphasized" borderRadius="md">
+            <Text fontSize="xs" color="teal.fg" mb={2} fontWeight="semibold">
               Open mileage session{visibleOpen.length === 1 ? "" : "s"} — optional to close now:
             </Text>
-            <Text fontSize="2xs" color="teal.800" mb={2} fontStyle="italic">
+            <Text fontSize="2xs" color="teal.fg" mb={2} fontStyle="italic">
               Enter the ending odometer to close a session here, or leave blank and the workday ends without touching it — you can close it later from the Vehicles tab. Picked the wrong vehicle? Tap "Cancel session" to remove the row entirely.
             </Text>
             <VStack align="stretch" gap={2}>
@@ -1687,12 +1687,12 @@ function EndWorkdayDialog({
                   <Box
                     key={e.id}
                     p={2}
-                    bg="white"
+                    bg="bg.panel"
                     borderWidth="1px"
-                    borderColor="teal.200"
+                    borderColor="teal.emphasized"
                     borderRadius="md"
                   >
-                    <Text fontSize="xs" fontWeight="semibold" color="teal.900" mb={1}>
+                    <Text fontSize="xs" fontWeight="semibold" color="teal.fg" mb={1}>
                       {e.vehicleName}
                     </Text>
                     <Text fontSize="2xs" color="fg.muted" mb={1}>
@@ -1718,14 +1718,14 @@ function EndWorkdayDialog({
                         padding: "6px 8px",
                         fontSize: "14px",
                         border: showErr
-                          ? "1px solid var(--chakra-colors-red-400)"
-                          : "1px solid var(--chakra-colors-gray-200)",
+                          ? "1px solid var(--chakra-colors-red-strong)"
+                          : "1px solid var(--chakra-colors-gray-emphasized)",
                         borderRadius: "6px",
                         marginBottom: 4,
                       }}
                     />
                     {showErr && (
-                      <Text fontSize="2xs" color="red.600" mb={1}>
+                      <Text fontSize="2xs" color="red.fg" mb={1}>
                         Must be a whole number, at least {e.startOdometer.toLocaleString()}.
                       </Text>
                     )}
@@ -1746,12 +1746,12 @@ function EndWorkdayDialog({
                         width: "100%",
                         padding: "6px 8px",
                         fontSize: "13px",
-                        border: "1px solid var(--chakra-colors-gray-200)",
+                        border: "1px solid var(--chakra-colors-gray-emphasized)",
                         borderRadius: "6px",
                       }}
                     />
                     {isValid && (
-                      <Text fontSize="2xs" color="teal.800" mt={1}>
+                      <Text fontSize="2xs" color="teal.fg" mt={1}>
                         {(num - e.startOdometer).toLocaleString()} mi this session
                       </Text>
                     )}
@@ -1786,7 +1786,7 @@ function EndWorkdayDialog({
               width: "100%",
               padding: "6px 8px",
               fontSize: "14px",
-              border: "1px solid var(--chakra-colors-gray-200)",
+              border: "1px solid var(--chakra-colors-gray-emphasized)",
               borderRadius: "6px",
             }}
           />
@@ -1801,7 +1801,7 @@ function EndWorkdayDialog({
               width: "100%",
               padding: "6px 8px",
               fontSize: "14px",
-              border: "1px solid var(--chakra-colors-gray-200)",
+              border: "1px solid var(--chakra-colors-gray-emphasized)",
               borderRadius: "6px",
             }}
           />
@@ -1817,12 +1817,12 @@ function EndWorkdayDialog({
               width: "100%",
               padding: "6px 8px",
               fontSize: "14px",
-              border: "1px solid var(--chakra-colors-gray-200)",
+              border: "1px solid var(--chakra-colors-gray-emphasized)",
               borderRadius: "6px",
             }}
           />
         </Box>
-        <HStack justify="space-between" pt={1} borderTopWidth="1px" borderColor="gray.200">
+        <HStack justify="space-between" pt={1} borderTopWidth="1px" borderColor="gray.emphasized">
           <Text fontSize="sm" fontWeight="semibold">Active total</Text>
           <Text fontSize="sm" fontWeight="semibold">{fmtDuration(liveActive)}</Text>
         </HStack>
@@ -1910,7 +1910,7 @@ function EditWorkdayDialog({
               width: "100%",
               padding: "6px 8px",
               fontSize: "14px",
-              border: "1px solid var(--chakra-colors-gray-200)",
+              border: "1px solid var(--chakra-colors-gray-emphasized)",
               borderRadius: "6px",
             }}
           />
@@ -1925,7 +1925,7 @@ function EditWorkdayDialog({
               width: "100%",
               padding: "6px 8px",
               fontSize: "14px",
-              border: "1px solid var(--chakra-colors-gray-200)",
+              border: "1px solid var(--chakra-colors-gray-emphasized)",
               borderRadius: "6px",
             }}
           />
@@ -1941,12 +1941,12 @@ function EditWorkdayDialog({
               width: "100%",
               padding: "6px 8px",
               fontSize: "14px",
-              border: "1px solid var(--chakra-colors-gray-200)",
+              border: "1px solid var(--chakra-colors-gray-emphasized)",
               borderRadius: "6px",
             }}
           />
         </Box>
-        <HStack justify="space-between" pt={1} borderTopWidth="1px" borderColor="gray.200">
+        <HStack justify="space-between" pt={1} borderTopWidth="1px" borderColor="gray.emphasized">
           <Text fontSize="sm" fontWeight="semibold">Active total</Text>
           <Text fontSize="sm" fontWeight="semibold">{fmtDuration(liveActive)}</Text>
         </HStack>
@@ -2044,7 +2044,7 @@ function ForgotPriorDialog({
               width: "100%",
               padding: "6px 8px",
               fontSize: "14px",
-              border: "1px solid var(--chakra-colors-gray-200)",
+              border: "1px solid var(--chakra-colors-gray-emphasized)",
               borderRadius: "6px",
             }}
           />
@@ -2059,7 +2059,7 @@ function ForgotPriorDialog({
               width: "100%",
               padding: "6px 8px",
               fontSize: "14px",
-              border: "1px solid var(--chakra-colors-gray-200)",
+              border: "1px solid var(--chakra-colors-gray-emphasized)",
               borderRadius: "6px",
             }}
           />
@@ -2075,12 +2075,12 @@ function ForgotPriorDialog({
               width: "100%",
               padding: "6px 8px",
               fontSize: "14px",
-              border: "1px solid var(--chakra-colors-gray-200)",
+              border: "1px solid var(--chakra-colors-gray-emphasized)",
               borderRadius: "6px",
             }}
           />
         </Box>
-        <HStack justify="space-between" pt={1} borderTopWidth="1px" borderColor="gray.200">
+        <HStack justify="space-between" pt={1} borderTopWidth="1px" borderColor="gray.emphasized">
           <Text fontSize="sm" fontWeight="semibold">Active total</Text>
           <Text fontSize="sm" fontWeight="semibold">{fmtDuration(liveActive)}</Text>
         </HStack>
@@ -2139,8 +2139,8 @@ function CancelWorkdayDialog({
           This will <b>delete</b> your workday started at {fmtClockTime(workday.startedAt)}
           {" "}({startedDuration} so far). The record won't be saved.
         </Text>
-        <Box p={2} bg="blue.50" borderWidth="1px" borderColor="blue.300" borderRadius="md">
-          <Text fontSize="xs" color="blue.900">
+        <Box p={2} bg="blue.faint" borderWidth="1px" borderColor="blue.emphasized" borderRadius="md">
+          <Text fontSize="xs" color="blue.fg">
             <b>If you meant to start at a different time</b>, end the workday instead and use Edit
             times to fix it — you'll keep the record.
           </Text>

@@ -265,8 +265,8 @@ export function Dashboard({
       h="18px"
       px="1.5"
       borderRadius="full"
-      bg="red.500"
-      color="white"
+      bg="red.solid"
+      color="red.contrast"
       fontSize="xs"
       fontWeight="bold"
       display="inline-flex"
@@ -291,15 +291,15 @@ export function Dashboard({
   //             the worker's estimate nor what they were paid.
   const PALETTES = {
     default: {
-      frameBg: "gray.200",
-      border: "gray.400",
+      frameBg: "gray.muted",
+      border: "gray.strong",
       shadow: undefined as string | undefined,
-      title: "gray.700",
+      title: "gray.fg",
       titleSize: "xs",
       icon: "var(--chakra-colors-gray-700)",
       chevron: undefined as string | undefined,
       headerBg: undefined as string | undefined,
-      refreshHoverBg: "gray.300",
+      refreshHoverBg: "gray.muted",
       headerHoverBg: undefined as string | undefined,
       // Intentionally NO stripe and no header band. `default` predates this
       // family of palettes and is used by an unrelated tab; new sections
@@ -316,30 +316,30 @@ export function Dashboard({
     // "disabled" beside three coloured neighbours, and teal just read as
     // green again. Purple is the one distinct slot left.
     team: {
-      frameBg: "purple.50",
-      border: "purple.300",
+      frameBg: "purple.faint",
+      border: "purple.strong",
       shadow: "sm",
-      title: "purple.900",
+      title: "purple.fg",
       titleSize: "sm",
       icon: "var(--chakra-colors-purple-700)",
       chevron: "var(--chakra-colors-purple-700)",
-      headerBg: "purple.100",
-      refreshHoverBg: "purple.300",
-      headerHoverBg: "purple.200",
+      headerBg: "purple.subtle",
+      refreshHoverBg: "purple.muted",
+      headerHoverBg: "purple.muted",
       pulse: "seedlings-pulse-purple 2.5s ease-in-out infinite",
       stripe: "purple.400",
     },
     hero: {
-      frameBg: "green.50",
-      border: "green.400",
+      frameBg: "green.faint",
+      border: "green.emphasized",
       shadow: "md",
-      title: "green.900",
+      title: "green.fg",
       titleSize: "sm",
       icon: "var(--chakra-colors-green-700)",
       chevron: "var(--chakra-colors-green-700)",
-      headerBg: "green.200",
+      headerBg: "green.muted",
       refreshHoverBg: "green.400",
-      headerHoverBg: "green.300",
+      headerHoverBg: "green.muted",
       pulse: "seedlings-pulse-green 2.5s ease-in-out infinite",
       stripe: "green.500",
     },
@@ -347,30 +347,30 @@ export function Dashboard({
     // Home's "Approximate pay per hour" sits in this, directly above the
     // blue `info` PAYROLL section reporting what was actually paid.
     estimate: {
-      frameBg: "yellow.50",
-      border: "yellow.300",
+      frameBg: "yellow.faint",
+      border: "yellow.emphasized",
       shadow: "sm",
-      title: "yellow.900",
+      title: "yellow.fg",
       titleSize: "sm",
       icon: "var(--chakra-colors-yellow-800)",
       chevron: "var(--chakra-colors-yellow-800)",
-      headerBg: "yellow.100",
-      refreshHoverBg: "yellow.300",
-      headerHoverBg: "yellow.200",
+      headerBg: "yellow.subtle",
+      refreshHoverBg: "yellow.muted",
+      headerHoverBg: "yellow.muted",
       pulse: "seedlings-pulse-yellow 2.5s ease-in-out infinite",
       stripe: "yellow.400",
     },
     info: {
-      frameBg: "blue.50",
-      border: "blue.300",
+      frameBg: "blue.faint",
+      border: "blue.emphasized",
       shadow: "sm",
-      title: "blue.900",
+      title: "blue.fg",
       titleSize: "sm",
       icon: "var(--chakra-colors-blue-700)",
       chevron: "var(--chakra-colors-blue-700)",
-      headerBg: "blue.100",
-      refreshHoverBg: "blue.300",
-      headerHoverBg: "blue.200",
+      headerBg: "blue.subtle",
+      refreshHoverBg: "blue.muted",
+      headerHoverBg: "blue.muted",
       pulse: "seedlings-pulse-blue 2.5s ease-in-out infinite",
       stripe: "blue.400",
     },
@@ -384,16 +384,16 @@ export function Dashboard({
     // uses it: it is a container for the whole team's state, not one of the
     // colour-coded measures beside it.
     neutral: {
-      frameBg: "gray.50",
-      border: "gray.300",
+      frameBg: "gray.faint",
+      border: "gray.emphasized",
       shadow: "sm",
-      title: "gray.800",
+      title: "gray.fg",
       titleSize: "sm",
       icon: "var(--chakra-colors-gray-700)",
       chevron: "var(--chakra-colors-gray-700)",
-      headerBg: "gray.200",
+      headerBg: "gray.muted",
       refreshHoverBg: "gray.400",
-      headerHoverBg: "gray.300",
+      headerHoverBg: "gray.muted",
       pulse: "seedlings-pulse-gray 2.5s ease-in-out infinite",
       stripe: "gray.400",
     },
@@ -413,30 +413,30 @@ export function Dashboard({
     // work that is blocked on you, and it used to justify a pulsing
     // animation. The strength difference is what carries that now.
     attention: {
-      frameBg: "orange.50",
-      border: "orange.300",
+      frameBg: "orange.faint",
+      border: "orange.emphasized",
       shadow: "sm",
-      title: "orange.900",
+      title: "orange.fg",
       titleSize: "sm",
       icon: "var(--chakra-colors-orange-700)",
       chevron: "var(--chakra-colors-orange-700)",
-      headerBg: "orange.200",
-      headerHoverBg: "orange.300",
+      headerBg: "orange.muted",
+      headerHoverBg: "orange.muted",
       refreshHoverBg: "orange.400",
       pulse: "seedlings-pulse-orange 2.5s ease-in-out infinite",
       stripe: "orange.500",
     },
     insights: {
-      frameBg: "orange.50",
-      border: "orange.200",
+      frameBg: "orange.faint",
+      border: "orange.emphasized",
       shadow: "sm",
-      title: "orange.900",
+      title: "orange.fg",
       titleSize: "sm",
       icon: "var(--chakra-colors-orange-700)",
       chevron: "var(--chakra-colors-orange-700)",
-      headerBg: "orange.100",
-      refreshHoverBg: "orange.300",
-      headerHoverBg: "orange.200",
+      headerBg: "orange.subtle",
+      refreshHoverBg: "orange.muted",
+      headerHoverBg: "orange.muted",
       pulse: "seedlings-pulse-orange 2.5s ease-in-out infinite",
       stripe: "yellow.500",
     },
@@ -553,7 +553,7 @@ export function Dashboard({
                 key={i}
                 display="inline-flex"
                 alignItems="center"
-                color={`${r.palette}.600`}
+                color={`${r.palette}.fg`}
               >
                 {r.icon}
               </Box>
@@ -641,7 +641,11 @@ export function Dashboard({
               position="absolute"
               inset="0"
               zIndex={2}
-              bg="whiteAlpha.700"
+              // A scrim dims the section under it, so it has to be the
+              // colour of the page it covers. Pinned white, it painted a
+              // near-white slab over a dark page every time a section
+              // refreshed — the loading state read as a rendering bug.
+              bg={{ base: "whiteAlpha.700", _dark: "blackAlpha.700" }}
               borderRadius="md"
               display="flex"
               alignItems="center"

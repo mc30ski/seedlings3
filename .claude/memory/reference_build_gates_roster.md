@@ -234,3 +234,5 @@ internally.
 The gate includes a self-test asserting its own regexes still match the
 2026-08-31 line — without it a pattern typo turns the gate into a
 silent no-op.
+
+- **theming-build-gate** — the app has 14 themes and four of them are dark-grounded WITHOUT being the Dark theme, so `_dark` misses them. Forbids `{ base, _dark }` raw-ramp pairs, hardcoded hex, `solid` used as a text colour, and a theme id missing from any of the seven maps it must be wired into. Also guards that the eight theme e2e specs still exist. See [[reference-theming]].

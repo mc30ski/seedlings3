@@ -271,7 +271,7 @@ export default function MulchJobTool() {
                   <Text fontSize="sm">
                     <Text as="span" fontWeight="medium">{mulchPricing.parsedValue?.label ?? "Mulch"}</Text>
                     {" — "}
-                    <Text as="span" color="green.700" fontWeight="bold">${Number(mulchPricing.parsedValue?.amount ?? 0).toFixed(2)}</Text>
+                    <Text as="span" color="green.fg" fontWeight="bold">${Number(mulchPricing.parsedValue?.amount ?? 0).toFixed(2)}</Text>
                     {" "}{mulchPricing.parsedValue?.unit ?? "per cubic yard"}
                   </Text>
                 )}
@@ -298,8 +298,8 @@ export default function MulchJobTool() {
           ) : (
             <VStack align="stretch" gap={2}>
               <HStack gap={2} align="start">
-                <Box color="orange.500" mt="0.5"><TriangleAlert size={16} /></Box>
-                <Text fontSize="sm" color="orange.800">
+                <Box color="orange.fg" mt="0.5"><TriangleAlert size={16} /></Box>
+                <Text fontSize="sm" color="orange.fg">
                   No mulch rate found in Pricing settings (looking for an entry
                   tagged <code>MULCH</code>). Enter a rate to use just for this quote,
                   or add one in <Text as="span" fontWeight="semibold">Money → Pricing</Text>.
@@ -356,7 +356,7 @@ export default function MulchJobTool() {
             {beds.map((b, i) => {
               const calc = computeBed(b, depthNum);
               return (
-                <Box key={b.id} borderWidth="1px" borderColor="gray.200" borderRadius="md" p={2}>
+                <Box key={b.id} borderWidth="1px" borderColor="gray.emphasized" borderRadius="md" p={2}>
                   <HStack justify="space-between" mb={2}>
                     <HStack gap={2}>
                       <Text fontSize="sm" fontWeight="medium">Bed {i + 1}</Text>
@@ -410,15 +410,15 @@ export default function MulchJobTool() {
       </Card.Root>
 
       {/* Quote card */}
-      <Card.Root variant="outline" borderColor="green.300" bg="green.50">
+      <Card.Root variant="outline" borderColor="green.emphasized" bg="green.faint">
         <Card.Body p={3}>
           <HStack justify="space-between" align="start">
             <VStack align="start" gap={1}>
-              <Text fontSize="xs" color="green.800" fontWeight="medium">Total quote</Text>
-              <Text fontSize="3xl" fontWeight="bold" color="green.900" lineHeight="1">
+              <Text fontSize="xs" color="green.fg" fontWeight="medium">Total quote</Text>
+              <Text fontSize="3xl" fontWeight="bold" color="green.fg" lineHeight="1">
                 ${totalPrice.toFixed(2)}
               </Text>
-              <Text fontSize="xs" color="green.700">
+              <Text fontSize="xs" color="green.fg">
                 {totalYards.toFixed(roundHalfYard ? 1 : 2)} cubic yd
                 {totalYards === 1 ? "" : "s"} × ${ratePerYard.toFixed(2)}/yd
                 {ratePerYardSource === "override" && (
@@ -426,7 +426,7 @@ export default function MulchJobTool() {
                 )}
               </Text>
               {roundHalfYard && Math.abs(totalYards - rawTotalYards) > 0.001 && (
-                <Text fontSize="2xs" color="green.700">
+                <Text fontSize="2xs" color="green.fg">
                   Raw {rawTotalYards.toFixed(2)} yd → delivery rounded to {totalYards.toFixed(1)} yd
                 </Text>
               )}

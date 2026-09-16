@@ -527,7 +527,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
         </Box>
       )}
       <HStack mb={2} gap={2}>
-        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)" }}>
+        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-subtle)" }}>
           <RefreshCw size={14} />
         </Button>
         <SearchWithClear
@@ -546,7 +546,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: kind[0] !== "ALL" ? "var(--chakra-colors-blue-200)" : "var(--chakra-colors-blue-100)", border: kind[0] !== "ALL" ? "1px solid var(--chakra-colors-blue-400)" : "1px solid var(--chakra-colors-blue-300)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: kind[0] !== "ALL" ? "var(--chakra-colors-blue-muted)" : "var(--chakra-colors-blue-subtle)", border: kind[0] !== "ALL" ? "1px solid var(--chakra-colors-blue-strong)" : "1px solid var(--chakra-colors-blue-emphasized)", borderRadius: "6px" }}>
               <LayoutList size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -570,7 +570,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: statusFilter[0] !== "ALL" ? "var(--chakra-colors-purple-200)" : "var(--chakra-colors-purple-100)", border: statusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-purple-400)" : "1px solid var(--chakra-colors-purple-300)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: statusFilter[0] !== "ALL" ? "var(--chakra-colors-purple-muted)" : "var(--chakra-colors-purple-subtle)", border: statusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-purple-strong)" : "1px solid var(--chakra-colors-purple-emphasized)", borderRadius: "6px" }}>
               <Filter size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -595,7 +595,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
             css={{ width: "auto", flex: "0 0 auto" }}
           >
             <Select.Control>
-              <Select.Trigger w="auto" minW="0" px="2" css={{ background: tagFilter !== "ALL" ? "var(--chakra-colors-red-200)" : "var(--chakra-colors-red-100)", border: tagFilter !== "ALL" ? "1px solid var(--chakra-colors-red-400)" : "1px solid var(--chakra-colors-red-300)", borderRadius: "6px" }}>
+              <Select.Trigger w="auto" minW="0" px="2" css={{ background: tagFilter !== "ALL" ? "var(--chakra-colors-red-muted)" : "var(--chakra-colors-red-subtle)", border: tagFilter !== "ALL" ? "1px solid var(--chakra-colors-red-strong)" : "1px solid var(--chakra-colors-red-emphasized)", borderRadius: "6px" }}>
                 <Tag size={14} />
                 <Select.Indicator display="none" />
               </Select.Trigger>
@@ -617,10 +617,10 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
           px="2"
           onClick={() => setVipOnly(!vipOnly)}
           css={vipOnly ? {
-            background: "var(--chakra-colors-yellow-100)",
-            color: "var(--chakra-colors-yellow-800)",
-            border: "1px solid var(--chakra-colors-yellow-400)",
-            "&:hover": { background: "var(--chakra-colors-yellow-200)" },
+            background: "var(--chakra-colors-yellow-subtle)",
+            color: "var(--chakra-colors-yellow-fg)",
+            border: "1px solid var(--chakra-colors-yellow-strong)",
+            "&:hover": { background: "var(--chakra-colors-yellow-muted)" },
           } : undefined}
         >
           <Star size={14} fill={vipOnly ? "var(--chakra-colors-yellow-500)" : "none"} color={vipOnly ? "var(--chakra-colors-yellow-500)" : undefined} />
@@ -633,10 +633,10 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
             onClick={() => setPausedOnly(!pausedOnly)}
             title={pausedOnly ? "Showing only clients with paused services" : "Show only clients with paused services"}
             css={pausedOnly ? {
-              background: "var(--chakra-colors-yellow-100)",
-              color: "var(--chakra-colors-yellow-800)",
-              border: "1px solid var(--chakra-colors-yellow-400)",
-              "&:hover": { background: "var(--chakra-colors-yellow-200)" },
+              background: "var(--chakra-colors-yellow-subtle)",
+              color: "var(--chakra-colors-yellow-fg)",
+              border: "1px solid var(--chakra-colors-yellow-strong)",
+              "&:hover": { background: "var(--chakra-colors-yellow-muted)" },
             } : undefined}
           >
             <PauseCircle size={14} />
@@ -941,27 +941,27 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                                 ? `Delete client + ${contactCount} ${contactCount === 1 ? "contact" : "contacts"}`
                                 : "Delete",
                               details: hasProperties ? (
-                                <Text color="red.500">
+                                <Text color="red.fg">
                                   This client has associated properties. Delete all properties before deleting the client.
                                 </Text>
                               ) : superRequired ? (
-                                <Text color="red.500">
+                                <Text color="red.fg">
                                   You must be a Super Admin to delete.
                                 </Text>
                               ) : contactCount > 0 ? (
                                 <Box
                                   p="3"
-                                  bg="red.50"
+                                  bg="red.faint"
                                   borderWidth="1px"
-                                  borderColor="red.300"
+                                  borderColor="red.emphasized"
                                   borderLeftWidth="4px"
                                   borderLeftColor="red.500"
                                   rounded="md"
                                 >
-                                  <Text color="red.800" fontWeight="semibold" fontSize="sm" mb="1">
+                                  <Text color="red.fg" fontWeight="semibold" fontSize="sm" mb="1">
                                     Cascading delete
                                   </Text>
-                                  <Text color="red.800" fontSize="sm" mb="2">
+                                  <Text color="red.fg" fontSize="sm" mb="2">
                                     This will <b>also permanently delete</b> the{" "}
                                     {contactCount === 1
                                       ? "following contact"
@@ -970,14 +970,14 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                                   </Text>
                                   <VStack align="start" gap="0.5" pl="2">
                                     {contacts.map((ct: any) => (
-                                      <Text key={ct.id} fontSize="sm" color="red.800">
+                                      <Text key={ct.id} fontSize="sm" color="red.fg">
                                         • {ct.firstName} {ct.lastName}
                                         {ct.isPrimary ? " (primary)" : ""}
                                         {ct.email ? ` — ${ct.email}` : ct.phone ? ` — ${ct.phone}` : ""}
                                       </Text>
                                     ))}
                                   </VStack>
-                                  <Text color="red.700" fontSize="xs" mt="2">
+                                  <Text color="red.fg" fontSize="xs" mt="2">
                                     Contacts cannot be recovered. Any Clerk accounts linked to these contacts will be orphaned.
                                   </Text>
                                 </Box>
@@ -1168,7 +1168,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                                                   ? false
                                                   : true,
                                                 details: (
-                                                  <Text color="red.500">
+                                                  <Text color="red.fg">
                                                     You must be a Super Admin to
                                                     delete.
                                                   </Text>
@@ -1251,7 +1251,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                                 <HStack w="100%">
                                   <Text
                                     fontWeight="medium"
-                                    color="blue.600"
+                                    color="blue.fg"
                                     cursor="pointer"
                                     _hover={{ textDecoration: "underline" }}
                                     onClick={() => openEventSearch(
@@ -1422,24 +1422,24 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                   </Text>
                   <Box
                     borderWidth="1px"
-                    borderColor="orange.300"
-                    bg="orange.50"
+                    borderColor="orange.emphasized"
+                    bg="orange.faint"
                     borderRadius="md"
                     p={3}
                   >
                     <VStack align="start" gap={1.5}>
-                      <Text fontSize="xs" color="orange.900">
+                      <Text fontSize="xs" color="orange.fg">
                         • <b>{jobsToPause}</b> active job{jobsToPause === 1 ? "" : "s"} will be paused. Future scheduled visits will be removed from worker schedules.
                       </Text>
                       {alreadyPaused > 0 && (
-                        <Text fontSize="xs" color="orange.900">
+                        <Text fontSize="xs" color="orange.fg">
                           • {alreadyPaused} job{alreadyPaused === 1 ? " that's" : "s that are"} already paused won't be touched.
                         </Text>
                       )}
-                      <Text fontSize="xs" color="orange.900">
+                      <Text fontSize="xs" color="orange.fg">
                         • Historical work, invoices, and payments stay intact and accessible.
                       </Text>
-                      <Text fontSize="xs" color="orange.900">
+                      <Text fontSize="xs" color="orange.fg">
                         • Any outstanding invoices remain payable via the client's pay link.
                       </Text>
                     </VStack>
@@ -1483,21 +1483,21 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                   </Text>
                   <Box
                     borderWidth="1px"
-                    borderColor="green.300"
-                    bg="green.50"
+                    borderColor="green.emphasized"
+                    bg="green.faint"
                     borderRadius="md"
                     p={3}
                   >
                     <VStack align="start" gap={1.5}>
-                      <Text fontSize="xs" color="green.900">
+                      <Text fontSize="xs" color="green.fg">
                         • <b>{jobsToResume}</b> job{jobsToResume === 1 ? "" : "s"} will return to Active with a fresh scheduled next visit.
                       </Text>
                       {individuallyPaused > 0 && (
-                        <Text fontSize="xs" color="green.900">
+                        <Text fontSize="xs" color="green.fg">
                           • {individuallyPaused} job{individuallyPaused === 1 ? " that was" : "s that were"} paused individually will stay paused (respects your prior intent).
                         </Text>
                       )}
-                      <Text fontSize="xs" color="green.900">
+                      <Text fontSize="xs" color="green.fg">
                         • Missed cycles during the pause are not backfilled — service resumes at the next natural cadence date.
                       </Text>
                     </VStack>

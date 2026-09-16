@@ -57,7 +57,7 @@ export function OpsSummaryStrip({ rows }: { rows: WorkerOccurrence[] }) {
         {summaryItems.map((it) => (
           <HStack key={it.label} gap={1} flexShrink={0}>
             <Badge size="sm" variant="subtle" colorPalette={it.palette}>{it.count}</Badge>
-            <Text fontSize="xs" color="gray.700">{it.label}</Text>
+            <Text fontSize="xs" color="gray.fg">{it.label}</Text>
           </HStack>
         ))}
       </HStack>
@@ -701,7 +701,7 @@ export function SkeletonBanner({ label }: { label: string }) {
       px={3}
       bg="blackAlpha.50"
       borderWidth="1px"
-      borderColor="gray.200"
+      borderColor="gray.emphasized"
       borderRadius="md"
       display="flex"
       alignItems="center"
@@ -709,7 +709,7 @@ export function SkeletonBanner({ label }: { label: string }) {
       aria-busy
       aria-label={`${label} loading`}
     >
-      <Spinner size="xs" color="gray.400" />
+      <Spinner size="xs" color="fg.muted" />
       <Text fontSize="sm" color="fg.muted">Loading {label}…</Text>
     </Box>
   );
@@ -983,9 +983,9 @@ export function AdminViewAsSelector({
           <Box
             position="fixed"
             zIndex={9999}
-            bg="white"
+            bg="bg.panel"
             borderWidth="1px"
-            borderColor="gray.200"
+            borderColor="gray.emphasized"
             rounded="md"
             shadow="lg"
             w="240px"
@@ -1007,8 +1007,8 @@ export function AdminViewAsSelector({
                   py="1.5"
                   fontSize="sm"
                   cursor="pointer"
-                  bg={selected.includes(it.value) ? "blue.50" : undefined}
-                  _hover={{ bg: "gray.100" }}
+                  bg={selected.includes(it.value) ? "blue.faint" : undefined}
+                  _hover={{ bg: "gray.subtle" }}
                   onMouseDown={(e) => {
                     e.preventDefault();
                     onChange(
@@ -1020,7 +1020,7 @@ export function AdminViewAsSelector({
                 >
                   <HStack gap={2}>
                     <Text flex="1">{it.label}</Text>
-                    {selected.includes(it.value) && <Text color="blue.500" fontWeight="bold">✓</Text>}
+                    {selected.includes(it.value) && <Text color="blue.fg" fontWeight="bold">✓</Text>}
                   </HStack>
                 </Box>
               ))}

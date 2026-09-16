@@ -361,7 +361,7 @@ export default function PendingApprovalsSection({ onReady }: {
               <Box
                 key={r.id}
                 borderWidth="1px"
-                borderColor="gray.200"
+                borderColor="gray.emphasized"
                 borderRadius="md"
                 p={2}
               >
@@ -377,8 +377,8 @@ export default function PendingApprovalsSection({ onReady }: {
                         size="sm"
                         colorPalette="orange"
                         variant="solid"
-                        bg="orange.500"
-                        color="white"
+                        bg="orange.solid"
+                        color="orange.contrast"
                         px="1.5"
                       >
                         {r.method}
@@ -431,6 +431,11 @@ export default function PendingApprovalsSection({ onReady }: {
                       size="xs"
                       colorPalette="gray"
                       bg="gray.600"
+                      // The fill is pinned, so the ink has to be pinned too.
+                      // `colorPalette.contrast` flips to near-black in dark —
+                      // Chakra assumes a gray SOLID button is white there —
+                      // which put black text on this mid-grey at 2.6:1.
+                      color="white"
                       _hover={{ bg: "gray.700" }}
                       _active={{ bg: "gray.800" }}
                       onClick={() => setWritingOffRow(r)}
@@ -448,8 +453,8 @@ export default function PendingApprovalsSection({ onReady }: {
                       size="xs"
                       variant="ghost"
                       colorPalette="orange"
-                      color="orange.800"
-                      _hover={{ bg: "orange.200" }}
+                      color="orange.fg"
+                      _hover={{ bg: "orange.muted" }}
                       onClick={() => openJob(r)}
                       title="Open the job"
                     >

@@ -34,7 +34,7 @@ export default function StatusPanel({
             {badge}
           </Badge>
           <Heading size="md">{title}</Heading>
-          {description ? <Text color="gray.600">{description}</Text> : null}
+          {description ? <Text color="gray.fg">{description}</Text> : null}
         </Stack>
       </Box>
     </Center>

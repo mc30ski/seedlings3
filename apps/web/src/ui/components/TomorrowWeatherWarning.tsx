@@ -6,10 +6,10 @@ import { useTomorrowWeather, type TomorrowWeather } from "@/src/lib/useTomorrowW
 
 function themeFor(cat: TomorrowWeather["category"]) {
   switch (cat) {
-    case "rain": return { bg: "blue.100", border: "blue.300", text: "blue.800", Icon: CloudRain };
-    case "thunderstorm": return { bg: "purple.100", border: "purple.300", text: "purple.800", Icon: CloudLightning };
-    case "snow": return { bg: "gray.100", border: "gray.400", text: "gray.800", Icon: Snowflake };
-    case "wind": return { bg: "yellow.100", border: "yellow.300", text: "yellow.800", Icon: Wind };
+    case "rain": return { bg: "blue.subtle", border: "blue.emphasized", text: "blue.fg", Icon: CloudRain };
+    case "thunderstorm": return { bg: "purple.subtle", border: "purple.emphasized", text: "purple.fg", Icon: CloudLightning };
+    case "snow": return { bg: "gray.subtle", border: "gray.strong", text: "gray.fg", Icon: Snowflake };
+    case "wind": return { bg: "yellow.subtle", border: "yellow.emphasized", text: "yellow.fg", Icon: Wind };
     default: return null;
   }
 }

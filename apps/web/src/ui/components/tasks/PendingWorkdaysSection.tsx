@@ -226,7 +226,7 @@ export default function PendingWorkdaysSection() {
             key={r.id}
             p={2}
             borderWidth="1px"
-            borderColor="gray.200"
+            borderColor="gray.emphasized"
             borderRadius="md"
           >
             <HStack justify="space-between" align="start" gap={2} wrap="wrap">
@@ -274,7 +274,7 @@ export default function PendingWorkdaysSection() {
                 mt={2}
                 pt={2}
                 borderTopWidth="1px"
-                borderColor="gray.100"
+                borderColor="gray.muted"
               >
                 <HStack gap={2} align="start" flex={1} minW={0}>
                   <Box color="fg.muted" mt={0.5}>
@@ -286,7 +286,7 @@ export default function PendingWorkdaysSection() {
                       {" · "}
                       {totalMiles.toLocaleString()} mi
                       {pendingMileage.length > 0 && (
-                        <Text as="span" color="orange.700" fontWeight="medium">
+                        <Text as="span" color="orange.fg" fontWeight="medium">
                           {" · "}{pendingMileage.length} pending
                         </Text>
                       )}

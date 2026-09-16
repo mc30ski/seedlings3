@@ -404,7 +404,7 @@ function PolicyListItem({ policy, onClick }: { policy: PolicyListRow; onClick: (
       variant="outline"
       cursor="pointer"
       onClick={onClick}
-      _hover={{ borderColor: "blue.300", bg: "gray.50" }}
+      _hover={{ borderColor: "blue.emphasized", bg: "gray.faint" }}
       opacity={policy.archivedAt ? 0.6 : 1}
     >
       <Card.Body p={3}>
@@ -480,7 +480,7 @@ function PolicyListItem({ policy, onClick }: { policy: PolicyListRow; onClick: (
               )}
             </HStack>
           </VStack>
-          <ChevronRight size={16} color="var(--chakra-colors-fg-muted)" />
+          <ChevronRight size={16} color="var(--chakra-colors-gray-fg)" />
         </HStack>
       </Card.Body>
     </Card.Root>
@@ -802,8 +802,8 @@ function PolicyDetailDrawer({
                             key={ex.id}
                             p={2}
                             borderWidth="1px"
-                            borderColor="yellow.200"
-                            bg="yellow.50"
+                            borderColor="yellow.emphasized"
+                            bg="yellow.faint"
                             borderRadius="md"
                             gap={2}
                             fontSize="xs"
@@ -980,7 +980,7 @@ function PolicyDetailDrawer({
                   • <b>{detail.exceptions.length}</b> active exception{detail.exceptions.length === 1 ? "" : "s"}
                 </Text>
               </VStack>
-              <Text fontSize="sm" color="red.700" mb={2}>
+              <Text fontSize="sm" color="red.fg" mb={2}>
                 This cannot be undone. Consider leaving it archived instead — archive preserves the audit trail forever.
               </Text>
               <Text fontSize="sm">Type <b>DELETE</b> below to confirm.</Text>
@@ -1524,8 +1524,8 @@ function UploadReviewRow({ row, onReviewed }: { row: PendingUploadReview; onRevi
       <Box
         p={2}
         borderWidth="1px"
-        borderColor="orange.200"
-        bg="orange.50"
+        borderColor="orange.emphasized"
+        bg="orange.faint"
         borderRadius="md"
         fontSize="xs"
       >
@@ -1763,7 +1763,7 @@ function AdminUploadOnBehalfDialog({
                     </HStack>
                   )}
                   {uploadedFileName && !uploading && (
-                    <Text fontSize="xs" color="green.700" mt={1}>
+                    <Text fontSize="xs" color="green.fg" mt={1}>
                       ✓ {uploadedFileName}
                     </Text>
                   )}
@@ -1781,7 +1781,7 @@ function AdminUploadOnBehalfDialog({
                 )}
                 {requireApproveType && (
                   <Box>
-                    <Text fontSize="xs" color="red.700" mb={1}>
+                    <Text fontSize="xs" color="red.fg" mb={1}>
                       This is a SIGN-type policy. Uploading on behalf bypasses the worker signature.
                       Type <b>APPROVE</b> to confirm.
                     </Text>
@@ -2073,7 +2073,7 @@ function UploadFileTypesPicker({
         </Text>
       )}
       {!hasAny && (
-        <Text fontSize="2xs" color="red.600" mt={1}>
+        <Text fontSize="2xs" color="red.fg" mt={1}>
           Pick at least one file type. The upload button won't work otherwise.
         </Text>
       )}
@@ -2358,7 +2358,7 @@ function EditPolicyMetadataDialog({
                   {resignTrigger === "DAYS_SINCE_SIGN" && (
                     <Box mt={2}>
                       <Text fontSize="2xs" color="fg.muted" mb={1}>
-                        Days between re-signs <Text as="span" color="red.700">*</Text>
+                        Days between re-signs <Text as="span" color="red.fg">*</Text>
                       </Text>
                       <Input
                         type="number"
@@ -2369,7 +2369,7 @@ function EditPolicyMetadataDialog({
                         placeholder="90"
                         borderColor={
                           !resignParamDays.trim() || !(Number(resignParamDays) > 0)
-                            ? "red.400"
+                            ? "red.strong"
                             : undefined
                         }
                       />
@@ -2378,14 +2378,14 @@ function EditPolicyMetadataDialog({
                   {resignTrigger === "ANNUAL_ON_DATE" && (
                     <Box mt={2}>
                       <Text fontSize="2xs" color="fg.muted" mb={1}>
-                        Which day of the year <Text as="span" color="red.700">*</Text>
+                        Which day of the year <Text as="span" color="red.fg">*</Text>
                       </Text>
                       <Input
                         type="date"
                         size="sm"
                         value={monthDayToDateInput(resignParamMonthDay)}
                         onChange={(e) => setResignParamMonthDay(dateInputToMonthDay(e.target.value))}
-                        borderColor={!resignParamMonthDay ? "red.400" : undefined}
+                        borderColor={!resignParamMonthDay ? "red.strong" : undefined}
                       />
                       <Text fontSize="2xs" color="fg.muted" mt={1}>
                         Everyone re-signs by this date each year (year is ignored).
@@ -2481,7 +2481,7 @@ function EditPolicyMetadataDialog({
                           mt={2}
                           pl={3}
                           borderLeftWidth="2px"
-                          borderLeftColor="gray.300"
+                          borderLeftColor="gray.emphasized"
                         >
                           <Text fontSize="2xs" color="fg.muted" mb={1}>
                             Only fire the Claim-a-job block on jobs above this price (optional)
@@ -2819,26 +2819,26 @@ function SignMatrixView() {
           mb={3}
           p={3}
           borderWidth="1px"
-          borderColor="red.300"
-          bg="red.50"
+          borderColor="red.emphasized"
+          bg="red.faint"
           borderRadius="md"
         >
           <HStack gap={2} align="start">
-            <Box color="red.600" flexShrink={0} mt={0.5}>
+            <Box color="red.fg" flexShrink={0} mt={0.5}>
               <AlertTriangle size={16} />
             </Box>
             <VStack align="start" gap={1} flex="1" minW={0}>
-              <Text fontSize="sm" fontWeight="semibold" color="red.900">
+              <Text fontSize="sm" fontWeight="semibold" color="red.fg">
                 {data.unclassifiedWorkers.length === 1
                   ? "1 worker has no worker type set"
                   : `${data.unclassifiedWorkers.length} workers have no worker type set`}
                 {" "}— no compliance coverage
               </Text>
-              <Text fontSize="xs" color="red.800">
+              <Text fontSize="xs" color="red.fg">
                 These workers bypass every compliance gate. Assign a worker
                 type on the Users tab so they can be targeted by policies.
               </Text>
-              <Text fontSize="xs" color="red.900" fontWeight="medium">
+              <Text fontSize="xs" color="red.fg" fontWeight="medium">
                 {data.unclassifiedWorkers
                   .map((u) => u.displayName ?? u.email ?? u.id)
                   .join(", ")}
@@ -2850,7 +2850,7 @@ function SignMatrixView() {
 
       <Box overflowX="auto" borderWidth="1px" borderRadius="md">
         <Box as="table" w="full" style={{ borderCollapse: "collapse" }}>
-          <Box as="thead" bg="gray.50">
+          <Box as="thead" bg="gray.faint">
             <Box as="tr">
               <Box
                 as="th"
@@ -2861,7 +2861,7 @@ function SignMatrixView() {
                 borderBottomWidth="1px"
                 position="sticky"
                 left={0}
-                bg="gray.50"
+                bg="gray.faint"
                 zIndex={1}
                 minW="180px"
               >
@@ -2907,7 +2907,7 @@ function SignMatrixView() {
           </Box>
           <Box as="tbody">
             {filteredUsers.map((u) => (
-              <Box as="tr" key={u.id} _hover={{ bg: "gray.50" }}>
+              <Box as="tr" key={u.id} _hover={{ bg: "gray.faint" }}>
                 <Box
                   as="td"
                   p={2}
@@ -2915,7 +2915,7 @@ function SignMatrixView() {
                   fontSize="xs"
                   position="sticky"
                   left={0}
-                  bg="white"
+                  bg="bg.panel"
                   zIndex={1}
                 >
                   <HStack gap={2} align="center">
@@ -3045,7 +3045,7 @@ function VersionPreviewDialog({
                   <Spinner size="sm" /> <Text fontSize="sm">Loading PDF…</Text>
                 </HStack>
               ) : pdfError ? (
-                <Text fontSize="sm" color="red.700">{pdfError}</Text>
+                <Text fontSize="sm" color="red.fg">{pdfError}</Text>
               ) : pdfUrl ? (
                 <VStack align="stretch" gap={2}>
                   <Box borderWidth="1px" borderRadius="md" overflow="hidden">
@@ -3560,8 +3560,8 @@ function PolicySuggestionsPanel({
     <Box
       mt={4}
       borderWidth="1px"
-      borderColor="blue.300"
-      bg="blue.50"
+      borderColor="blue.emphasized"
+      bg="blue.faint"
       borderRadius="md"
       overflow="hidden"
     >
@@ -3573,30 +3573,30 @@ function PolicySuggestionsPanel({
         gap={2}
         align="center"
         cursor="pointer"
-        _hover={{ bg: "blue.100" }}
+        _hover={{ bg: "blue.subtle" }}
         aria-expanded={expanded}
       >
-        <Box color="blue.600" flexShrink={0}>
+        <Box color="blue.fg" flexShrink={0}>
           <Info size={16} />
         </Box>
         <VStack align="start" gap={0} flex="1" minW={0}>
-          <Text fontSize="sm" fontWeight="semibold" color="blue.900" textAlign="left">
+          <Text fontSize="sm" fontWeight="semibold" color="blue.fg" textAlign="left">
             Suggested policies — {totalSuggestions} ideas across {visibleTiers.length} tiers
           </Text>
-          <Text fontSize="xs" color="blue.800" textAlign="left">
+          <Text fontSize="xs" color="blue.fg" textAlign="left">
             Reminder of policies worth building next. Grouped by priority. Click to {expanded ? "hide" : "expand"}.
           </Text>
         </VStack>
-        <Box color="blue.700" flexShrink={0}>
+        <Box color="blue.fg" flexShrink={0}>
           {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
         </Box>
       </HStack>
       {expanded && (
-        <Box borderTopWidth="1px" borderColor="blue.200" bg="white" p={3}>
+        <Box borderTopWidth="1px" borderColor="blue.emphasized" bg="bg.panel" p={3}>
           <VStack align="stretch" gap={4}>
             {visibleTiers.map((tier) => (
               <Box key={tier.key}>
-                <Text fontSize="sm" fontWeight="semibold" color="blue.900" mb={0.5}>
+                <Text fontSize="sm" fontWeight="semibold" color="blue.fg" mb={0.5}>
                   {tier.title}
                 </Text>
                 <Text fontSize="xs" color="fg.muted" mb={2}>
@@ -3608,9 +3608,9 @@ function PolicySuggestionsPanel({
                       key={item.title}
                       p={2}
                       borderWidth="1px"
-                      borderColor="gray.200"
+                      borderColor="gray.emphasized"
                       borderRadius="md"
-                      bg="gray.50"
+                      bg="gray.faint"
                     >
                       <HStack gap={2} align="start" wrap="wrap" mb={1}>
                         <Text fontSize="sm" fontWeight="medium" flex="1" minW="180px">

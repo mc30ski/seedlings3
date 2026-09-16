@@ -29,8 +29,8 @@ export default function BusinessStartRevealBanner() {
       left={0}
       right={0}
       zIndex={9999}
-      bg="purple.600"
-      color="white"
+      bg="purple.solid"
+      color="purple.contrast"
       px={3}
       py={1.5}
       borderBottomWidth="1px"
@@ -52,9 +52,9 @@ export default function BusinessStartRevealBanner() {
           flexShrink={0}
           css={{
             background: "white",
-            color: "var(--chakra-colors-purple-800)",
+            color: "var(--chakra-colors-purple-fg)",
             borderColor: "white",
-            _hover: { background: "var(--chakra-colors-purple-50)" },
+            _hover: { background: "var(--chakra-colors-purple-faint)" },
           }}
         >
           Turn off

@@ -582,7 +582,7 @@ export default function HomeTab({
     if (heroCanMake <= 0) return null;
     const c = theme === "orange"
       ? { bg: "whiteAlpha.200", border: "whiteAlpha.400", label: "orange.50", value: "white" }
-      : { bg: "white",           border: "green.200",     label: "green.700", value: "green.800" };
+      : { bg: "bg.panel",           border: "green.emphasized",     label: "green.fg", value: "green.fg" };
     // Tooltip on the two projected columns — hints that the equal-split
     // assumption is used for jobs that haven't been completed yet, so
     // the worker isn't surprised when actuals land differently on jobs
@@ -702,14 +702,14 @@ export default function HomeTab({
           cursor="pointer"
           onClick={() => navTo("jobs", { status: "IN_PROGRESS", datePreset: "lastMonth" })}
           _hover={{ shadow: "lg", "& [data-hero-go]": { transform: "translateX(3px)" } }}
-          bg="orange.500"
-          color="white"
+          bg="orange.solid"
+          color="orange.contrast"
           position="relative"
         >
           <Card.Body px={3} py={2}>
             <VStack align="stretch" gap={2}>
               <HStack gap={3} align="center">
-                <Box bg="white" color="orange.600" p={2} borderRadius="full" flexShrink={0}>
+                <Box bg="bg.panel" color="orange.fg" p={2} borderRadius="full" flexShrink={0}>
                   <FiPlay size={22} />
                 </Box>
                 <Box flex={1} minW={0}>
@@ -726,8 +726,8 @@ export default function HomeTab({
                   </Text>
                 </VStack>
                 <Box
-                  bg="white"
-                  color="orange.600"
+                  bg="bg.panel"
+                  color="orange.fg"
                   p={2}
                   borderRadius="full"
                   flexShrink={0}
@@ -760,22 +760,22 @@ export default function HomeTab({
       {!isAggregate && (heroMode === "begin" || heroMode === "finish") && (
         <Card.Root
           variant="outline"
-          bg="green.50"
-          borderColor="green.300"
+          bg="green.faint"
+          borderColor="green.emphasized"
           position="relative"
           cursor={canBeginWorkday ? "pointer" : "default"}
           onClick={canBeginWorkday ? () => onLaunchWorkflow("begin-workday") : undefined}
-          _hover={canBeginWorkday ? { shadow: "md", borderColor: "green.400" } : undefined}
+          _hover={canBeginWorkday ? { shadow: "md", borderColor: "green.strong" } : undefined}
         >
           <Card.Body px={3} py={2}>
             <VStack align="stretch" gap={2}>
               <HStack gap={3} align="center">
-                <Box bg="green.500" color="white" p={2} borderRadius="full" flexShrink={0}>
+                <Box bg="green.solid" color="green.contrast" p={2} borderRadius="full" flexShrink={0}>
                   <FiSun size={22} />
                 </Box>
                 <Box flex={1} minW={0}>
-                  <Text fontSize="md" fontWeight="bold" color="green.800">{greeting}{firstName ? `, ${firstName}` : ""}</Text>
-                  <Text fontSize="sm" color="green.700">{greetingSubtitle}</Text>
+                  <Text fontSize="md" fontWeight="bold" color="green.fg">{greeting}{firstName ? `, ${firstName}` : ""}</Text>
+                  <Text fontSize="sm" color="green.fg">{greetingSubtitle}</Text>
                 </Box>
               </HStack>
               {/* Money strip replaces the old "$X earned · $Y remaining
@@ -794,10 +794,10 @@ export default function HomeTab({
               {canBeginWorkday && (
                 <HStack gap={3}>
                   <VStack align="start" gap={0} flex={1} minW={0}>
-                    <Text fontSize="md" fontWeight="bold" color="green.800">
+                    <Text fontSize="md" fontWeight="bold" color="green.fg">
                       {heroMode === "begin" ? "Prepare for work day" : "Finish remaining jobs"}
                     </Text>
-                    <Text fontSize="sm" color="green.700">
+                    <Text fontSize="sm" color="green.fg">
                       Review jobs, confirm clients, check equipment · start the day
                     </Text>
                   </VStack>
@@ -852,9 +852,9 @@ export default function HomeTab({
                 // and open on some other day.
                 () => onLaunchWorkflow("plan-workday", { targetDate: bizTomorrow() })
           }
-          _hover={isViewingOther ? undefined : { shadow: "md", borderColor: "blue.400" }}
-          bg="blue.50"
-          borderColor="blue.300"
+          _hover={isViewingOther ? undefined : { shadow: "md", borderColor: "blue.strong" }}
+          bg="blue.faint"
+          borderColor="blue.emphasized"
           position="relative"
         >
           <Card.Body px={3} py={2}>
@@ -862,18 +862,18 @@ export default function HomeTab({
               <HStack gap={3} align="center">
                 {/* Moon once the greeting says evening, calendar before
                     that. See the icon rules above the hero cards. */}
-                <Box bg="blue.500" color="white" p={2} borderRadius="full" flexShrink={0}>
+                <Box bg="blue.solid" color="blue.contrast" p={2} borderRadius="full" flexShrink={0}>
                   {isEveningGreeting ? <FiMoon size={22} /> : <FiCalendar size={22} />}
                 </Box>
                 <Box flex={1} minW={0}>
-                  <Text fontSize="md" fontWeight="bold" color="blue.800">{greeting}{firstName ? `, ${firstName}` : ""}</Text>
-                  <Text fontSize="sm" color="blue.700">{greetingSubtitle}</Text>
+                  <Text fontSize="md" fontWeight="bold" color="blue.fg">{greeting}{firstName ? `, ${firstName}` : ""}</Text>
+                  <Text fontSize="sm" color="blue.fg">{greetingSubtitle}</Text>
                 </Box>
               </HStack>
               <HStack gap={3}>
                 <VStack align="start" gap={0} flex={1} minW={0}>
-                  <Text fontSize="md" fontWeight="bold" color="blue.800">Plan tomorrow</Text>
-                  <Text fontSize="sm" color="blue.700">
+                  <Text fontSize="md" fontWeight="bold" color="blue.fg">Plan tomorrow</Text>
+                  <Text fontSize="sm" color="blue.fg">
                     {s.tomorrow} job{s.tomorrow === 1 ? "" : "s"} scheduled
                     {(s.tomorrowUnconfirmedClientCount ?? 0) > 0
                       ? ` · confirm ${s.tomorrowUnconfirmedClientCount} client${s.tomorrowUnconfirmedClientCount === 1 ? "" : "s"}`
@@ -882,7 +882,7 @@ export default function HomeTab({
                   {(s.tomorrowUnclaimedCount ?? 0) > 0 && (
                     <Text
                       fontSize="sm"
-                      color="blue.700"
+                      color="blue.fg"
                       mt={1}
                       textDecoration="underline"
                       cursor="pointer"
@@ -937,19 +937,19 @@ export default function HomeTab({
 
       {/* Hero: Wrap up — quiet end-of-day state. Combines greeting + status into one card. */}
       {!isAggregate && heroMode === "wrap" && (
-        <Card.Root variant="outline" bg="gray.50" borderColor="gray.200" position="relative">
+        <Card.Root variant="outline" bg="gray.faint" borderColor="gray.emphasized" position="relative">
           <Card.Body px={3} py={2}>
             <HStack gap={3}>
               {/* Moon in the evening; a tick before that — "you are caught
                   up" is just as true at 10am, it just isn't night yet. */}
-              <Box bg="gray.200" color="gray.700" p={2} borderRadius="full">
+              <Box bg="gray.muted" color="gray.fg" p={2} borderRadius="full">
                 {isEveningGreeting ? <FiMoon size={22} /> : <FiCheckCircle size={22} />}
               </Box>
               <VStack align="start" gap={0} flex={1}>
-                <Text fontSize="md" fontWeight="bold" color="gray.800">
+                <Text fontSize="md" fontWeight="bold" color="gray.fg">
                   {greeting}{firstName ? `, ${firstName}` : ""}
                 </Text>
-                <Text fontSize="sm" color="gray.700">{greetingSubtitle}</Text>
+                <Text fontSize="sm" color="gray.fg">{greetingSubtitle}</Text>
               </VStack>
             </HStack>
           </Card.Body>
@@ -1156,7 +1156,7 @@ export default function HomeTab({
                the headline — "13 jobs scheduled today · 2 in progress" is
                the whole reason an operator opens this page. */
             collapsedSummarySlot={
-              <Text fontSize="xs" color="gray.700" lineClamp={1}>
+              <Text fontSize="xs" color="gray.fg" lineClamp={1}>
                 {s.today} job{s.today === 1 ? "" : "s"} today
                 {s.activeWork > 0 ? ` · ${s.activeWork} in progress` : ""}
                 {(s.tomorrow ?? 0) > 0 ? ` · ${s.tomorrow} tomorrow` : ""}
@@ -1167,7 +1167,7 @@ export default function HomeTab({
                 renders the shared one for every section. */}
             <Box>
               <VStack align="stretch" gap={1}>
-                <Text fontSize="sm" color="gray.700">
+                <Text fontSize="sm" color="gray.fg">
                   {s.today} job{s.today === 1 ? "" : "s"} scheduled today
                   {s.activeWork > 0 ? ` · ${s.activeWork} in progress` : ""}
                   {(s.tomorrow ?? 0) > 0 ? ` · ${s.tomorrow} tomorrow` : ""}
@@ -1191,8 +1191,8 @@ export default function HomeTab({
                     the occurrence on the Admin Jobs tab via the existing
                     pendingHighlight handoff. */}
                 {(s.inProgressJobs?.length ?? 0) > 0 && (
-                  <VStack align="stretch" gap={1} w="full" mt={2} pt={2} borderTopWidth="1px" borderColor="gray.300">
-                    <Text fontSize="xs" fontWeight="medium" color="gray.700" textTransform="uppercase">
+                  <VStack align="stretch" gap={1} w="full" mt={2} pt={2} borderTopWidth="1px" borderColor="gray.emphasized">
+                    <Text fontSize="xs" fontWeight="medium" color="gray.fg" textTransform="uppercase">
                       Jobs in progress now
                     </Text>
                     {(s.inProgressJobs ?? []).map((occ) => {
@@ -1230,7 +1230,7 @@ export default function HomeTab({
                           p={1.5}
                           borderRadius="sm"
                           cursor="pointer"
-                          _hover={{ bg: "white" }}
+                          _hover={{ bg: "bg.panel" }}
                           onClick={() => {
                             try {
                               localStorage.setItem(
@@ -1274,10 +1274,10 @@ export default function HomeTab({
                               title="In progress"
                             />
                           )}
-                          <Text flex="1" minW={0} truncate color="gray.800">
+                          <Text flex="1" minW={0} truncate color="gray.fg">
                             {jobLabel}
                             {dateLabel && (
-                              <Text as="span" color="gray.500" fontSize="xs" ml={1}>
+                              <Text as="span" color="gray.fg" fontSize="xs" ml={1}>
                                 · {dateLabel}
                               </Text>
                             )}
@@ -1297,10 +1297,10 @@ export default function HomeTab({
                               totalPausedMs={occ.totalPausedMs}
                             />
                           )}
-                          <Text fontSize="xs" color="gray.600" whiteSpace="nowrap">
+                          <Text fontSize="xs" color="gray.fg" whiteSpace="nowrap">
                             {assigneeText}
                           </Text>
-                          <Text fontSize="xs" color="blue.600">→</Text>
+                          <Text fontSize="xs" color="blue.fg">→</Text>
                         </HStack>
                       );
                     })}
@@ -1313,8 +1313,8 @@ export default function HomeTab({
                     CLOSED) so the admin can see the day's output at a
                     glance and drill into any row. */}
                 {(s.completedTodayJobs?.length ?? 0) > 0 && (
-                  <VStack align="stretch" gap={1} w="full" mt={2} pt={2} borderTopWidth="1px" borderColor="gray.300">
-                    <Text fontSize="xs" fontWeight="medium" color="gray.700" textTransform="uppercase">
+                  <VStack align="stretch" gap={1} w="full" mt={2} pt={2} borderTopWidth="1px" borderColor="gray.emphasized">
+                    <Text fontSize="xs" fontWeight="medium" color="gray.fg" textTransform="uppercase">
                       Completed today
                     </Text>
                     {(s.completedTodayJobs ?? []).map((occ) => {
@@ -1350,9 +1350,9 @@ export default function HomeTab({
                       // (paid + done), green = freshly completed.
                       const dotColor =
                         occ.status === "PENDING_PAYMENT"
-                          ? "blue.500"
+                          ? "blue.fg"
                           : occ.status === "CLOSED"
-                            ? "gray.500"
+                            ? "gray.fg"
                             : "green.500";
                       const dotTitle =
                         occ.status === "PENDING_PAYMENT"
@@ -1368,7 +1368,7 @@ export default function HomeTab({
                           p={1.5}
                           borderRadius="sm"
                           cursor="pointer"
-                          _hover={{ bg: "white" }}
+                          _hover={{ bg: "bg.panel" }}
                           onClick={() => {
                             try {
                               localStorage.setItem(
@@ -1401,10 +1401,10 @@ export default function HomeTab({
                             flexShrink={0}
                             title={dotTitle}
                           />
-                          <Text flex="1" minW={0} truncate color="gray.800">
+                          <Text flex="1" minW={0} truncate color="gray.fg">
                             {jobLabel}
                             {timeLabel && (
-                              <Text as="span" color="gray.500" fontSize="xs" ml={1}>
+                              <Text as="span" color="gray.fg" fontSize="xs" ml={1}>
                                 · {timeLabel}
                               </Text>
                             )}
@@ -1422,15 +1422,15 @@ export default function HomeTab({
                                 - (occ.totalPausedMs ?? 0),
                             );
                             return (
-                              <Text fontSize="xs" color="gray.600" whiteSpace="nowrap" fontVariantNumeric="tabular-nums">
+                              <Text fontSize="xs" color="gray.fg" whiteSpace="nowrap" fontVariantNumeric="tabular-nums">
                                 {fmtJobElapsed(ms)}
                               </Text>
                             );
                           })()}
-                          <Text fontSize="xs" color="gray.600" whiteSpace="nowrap">
+                          <Text fontSize="xs" color="gray.fg" whiteSpace="nowrap">
                             {assigneeText}
                           </Text>
-                          <Text fontSize="xs" color="blue.600">→</Text>
+                          <Text fontSize="xs" color="blue.fg">→</Text>
                         </HStack>
                       );
                     })}
@@ -1572,7 +1572,7 @@ function LiveJobElapsed({
   return (
     <Text
       fontSize="xs"
-      color="gray.600"
+      color="gray.fg"
       whiteSpace="nowrap"
       fontVariantNumeric="tabular-nums"
     >
@@ -1605,8 +1605,8 @@ function WorkdaysInProgressPanel({
     return () => window.clearInterval(id);
   }, []);
   return (
-    <VStack align="stretch" gap={1} w="full" mt={2} pt={2} borderTopWidth="1px" borderColor="gray.300">
-      <Text fontSize="xs" fontWeight="medium" color="gray.700" textTransform="uppercase">
+    <VStack align="stretch" gap={1} w="full" mt={2} pt={2} borderTopWidth="1px" borderColor="gray.emphasized">
+      <Text fontSize="xs" fontWeight="medium" color="gray.fg" textTransform="uppercase">
         Workdays in progress
       </Text>
       {workdays.map((wd) => {
@@ -1637,17 +1637,17 @@ function WorkdaysInProgressPanel({
               w="8px"
               h="8px"
               borderRadius="full"
-              bg={isPaused ? "yellow.400" : "blue.500"}
+              bg={isPaused ? "yellow.strong" : "blue.500"}
               flexShrink={0}
               title={isPaused ? "Paused" : "On the clock"}
             />
-            <Text flex="1" minW={0} truncate color="gray.800">
+            <Text flex="1" minW={0} truncate color="gray.fg">
               {wd.displayName}
-              <Text as="span" color="gray.500" fontSize="xs" ml={1}>
+              <Text as="span" color="gray.fg" fontSize="xs" ml={1}>
                 · started {startedLabel}
               </Text>
             </Text>
-            <Text fontSize="xs" color="gray.600" whiteSpace="nowrap" fontVariantNumeric="tabular-nums">
+            <Text fontSize="xs" color="gray.fg" whiteSpace="nowrap" fontVariantNumeric="tabular-nums">
               {fmtJobElapsed(activeMs)}{isPaused ? " · paused" : ""}
             </Text>
           </HStack>

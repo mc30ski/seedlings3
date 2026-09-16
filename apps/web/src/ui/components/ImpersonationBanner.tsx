@@ -60,9 +60,9 @@ export default function ImpersonationBanner({ me }: Props) {
           <Button
             size="xs"
             variant="solid"
-            bg="white"
-            color="purple.700"
-            _hover={{ bg: "purple.50" }}
+            bg="bg.panel"
+            color="purple.fg"
+            _hover={{ bg: "purple.faint" }}
             onClick={() => void setClientImpersonation(null)}
           >
             Exit view-as
@@ -80,8 +80,8 @@ export default function ImpersonationBanner({ me }: Props) {
   const label = IMPERSONATION_LABELS[value] ?? value;
   return (
     <Box
-      bg="red.600"
-      color="white"
+      bg="red.solid"
+      color="red.contrast"
       px={3}
       py={2}
       position="sticky"
@@ -105,9 +105,9 @@ export default function ImpersonationBanner({ me }: Props) {
           size="xs"
           variant="solid"
           colorPalette="red"
-          bg="white"
-          color="red.700"
-          _hover={{ bg: "red.50" }}
+          bg="bg.panel"
+          color="red.fg"
+          _hover={{ bg: "red.faint" }}
           onClick={() => void setImpersonation(null)}
         >
           Exit impersonation

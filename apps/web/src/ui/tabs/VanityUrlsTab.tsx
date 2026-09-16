@@ -475,7 +475,7 @@ export default function VanityUrlsTab() {
           <Card.Root
             key={p.id}
             variant="outline"
-            borderColor={p.isDefault ? "teal.300" : "gray.200"}
+            borderColor={p.isDefault ? "teal.emphasized" : "gray.emphasized"}
           >
             <Card.Body>
               {/* Mobile: stacks column (reorder row → content →
@@ -600,7 +600,7 @@ export default function VanityUrlsTab() {
                                 px={0}
                                 minH="auto"
                                 h="auto"
-                                color="teal.700"
+                                color="teal.fg"
                                 textDecoration="underline"
                                 fontSize="xs"
                                 fontWeight="normal"
@@ -734,12 +734,12 @@ export default function VanityUrlsTab() {
                 {target?.isDefault && (
                   <Box
                     borderWidth="1px"
-                    borderColor="orange.300"
-                    bg="orange.50"
+                    borderColor="orange.emphasized"
+                    bg="orange.faint"
                     borderRadius="md"
                     p={3}
                   >
-                    <Text fontSize="sm" color="orange.900">
+                    <Text fontSize="sm" color="orange.fg">
                       <b>"{targetSlug}" is currently the default page.</b>{" "}
                       After deletion, no fallback exists — visitors who hit an
                       unknown vanity slug will get a 404 until you star another
@@ -783,7 +783,7 @@ export default function VanityUrlsTab() {
                     other vanity URL
                     {deleteBlocked?.dependents.length === 1 ? "" : "s"}:
                   </Text>
-                  <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" p={3} bg="gray.50">
+                  <Box borderWidth="1px" borderColor="gray.emphasized" borderRadius="md" p={3} bg="gray.faint">
                     <VStack align="start" gap={1}>
                       {deleteBlocked?.dependents.map((d) => (
                         <Text key={d.id} fontFamily="mono" fontSize="sm">
@@ -1153,7 +1153,7 @@ function VanityEditor({
                     autoFocus
                   />
                   {slugError ? (
-                    <Text fontSize="xs" color="red.600" mt={1}>
+                    <Text fontSize="xs" color="red.fg" mt={1}>
                       {slugError}
                     </Text>
                   ) : (
@@ -1211,10 +1211,10 @@ function VanityEditor({
                       {imageUrl ? (
                         <Box
                           borderWidth="1px"
-                          borderColor="gray.200"
+                          borderColor="gray.emphasized"
                           borderRadius="md"
                           overflow="hidden"
-                          bg="gray.50"
+                          bg="gray.faint"
                         >
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
@@ -1227,7 +1227,7 @@ function VanityEditor({
                               display: "block",
                             }}
                           />
-                          <HStack gap={2} p={2} borderTopWidth="1px" borderColor="gray.200">
+                          <HStack gap={2} p={2} borderTopWidth="1px" borderColor="gray.emphasized">
                             <Button
                               size="xs"
                               variant="outline"
@@ -1250,9 +1250,9 @@ function VanityEditor({
                       ) : (
                         <Box
                           borderWidth="1px"
-                          borderColor="gray.200"
+                          borderColor="gray.emphasized"
                           borderRadius="md"
-                          bg="gray.50"
+                          bg="gray.faint"
                           p={4}
                           textAlign="center"
                         >
@@ -1305,7 +1305,7 @@ function VanityEditor({
                     </Box>
                     <Box>
                       <Text fontSize="sm" fontWeight="medium" mb={1}>
-                        Headline <Text as="span" color="red.500">*</Text>
+                        Headline <Text as="span" color="red.fg">*</Text>
                       </Text>
                       <Input
                         size="sm"
@@ -1356,7 +1356,7 @@ function VanityEditor({
                           <Box
                             key={idx}
                             borderWidth="1px"
-                            borderColor="gray.200"
+                            borderColor="gray.emphasized"
                             borderRadius="md"
                             p={3}
                           >
@@ -1521,7 +1521,7 @@ function VanityEditor({
                 {kind === "REDIRECT" && (
                   <Box>
                     <Text fontSize="sm" fontWeight="medium" mb={1}>
-                      Destination URL <Text as="span" color="red.500">*</Text>
+                      Destination URL <Text as="span" color="red.fg">*</Text>
                     </Text>
                     <Input
                       size="sm"
@@ -1539,7 +1539,7 @@ function VanityEditor({
                 {kind === "ALIAS" && (
                   <Box>
                     <Text fontSize="sm" fontWeight="medium" mb={1}>
-                      Mirror this vanity URL <Text as="span" color="red.500">*</Text>
+                      Mirror this vanity URL <Text as="span" color="red.fg">*</Text>
                     </Text>
                     {aliasTargetCollection.items.length === 0 ? (
                       <Text fontSize="xs" color="fg.muted">
@@ -1601,12 +1601,12 @@ function VanityEditor({
                 )}
 
                 {kindError && (
-                  <Text fontSize="xs" color="red.600">
+                  <Text fontSize="xs" color="red.fg">
                     {kindError}
                   </Text>
                 )}
                 {buttonsError && (
-                  <Text fontSize="xs" color="red.600">
+                  <Text fontSize="xs" color="red.fg">
                     {buttonsError}
                   </Text>
                 )}

@@ -471,12 +471,12 @@ export default function OccurrenceDialog({
                       style={{ width: "100%", padding: "6px 10px", fontSize: "14px", border: "1px solid #ccc", borderRadius: "6px" }}
                     />
                     {freqError && (
-                      <Box p={2} bg="red.50" borderWidth="1px" borderColor="red.200" borderRadius="md" mt={2}>
-                        <Text fontSize="xs" color="red.700">{freqError}</Text>
+                      <Box p={2} bg="red.faint" borderWidth="1px" borderColor="red.emphasized" borderRadius="md" mt={2}>
+                        <Text fontSize="xs" color="red.fg">{freqError}</Text>
                       </Box>
                     )}
-                    <Box p={2} bg={!occFrequencyDays && !jobFrequencyDays ? "red.50" : "yellow.50"} borderWidth="1px" borderColor={!occFrequencyDays && !jobFrequencyDays ? "red.200" : "yellow.200"} borderRadius="md" mt={freqError ? 1 : 2}>
-                      <Text fontSize="xs" color={!occFrequencyDays && !jobFrequencyDays ? "red.700" : "yellow.800"}>
+                    <Box p={2} bg={!occFrequencyDays && !jobFrequencyDays ? "red.faint" : "yellow.faint"} borderWidth="1px" borderColor={!occFrequencyDays && !jobFrequencyDays ? "red.emphasized" : "yellow.emphasized"} borderRadius="md" mt={freqError ? 1 : 2}>
+                      <Text fontSize="xs" color={!occFrequencyDays && !jobFrequencyDays ? "red.fg" : "yellow.fg"}>
                         {occFrequencyDays !== ""
                           ? `This occurrence will repeat every ${occFrequencyDays} days, overriding the job's ${jobFrequencyDays ? `default of ${jobFrequencyDays} days` : "frequency (not set)"}.`
                           : jobFrequencyDays
@@ -590,8 +590,8 @@ export default function OccurrenceDialog({
                     placeholder="e.g. 45"
                     min={1}
                   />
-                  <Box px={2} py={1} mt={1} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" rounded="md">
-                    <Text fontSize="2xs" color="yellow.700">Enter the time as if one person were completing the job alone. The app will automatically adjust the estimate when multiple workers are assigned.</Text>
+                  <Box px={2} py={1} mt={1} bg="yellow.faint" borderWidth="1px" borderColor="yellow.emphasized" rounded="md">
+                    <Text fontSize="2xs" color="yellow.fg">Enter the time as if one person were completing the job alone. The app will automatically adjust the estimate when multiple workers are assigned.</Text>
                   </Box>
                 </div>
                 {isAdmin && mode === "UPDATE" && (
@@ -746,7 +746,7 @@ export default function OccurrenceDialog({
                 </Checkbox.Root>
 
                 {mode === "CREATE" && jobGuidanceNote && (
-                  <Box mt={2} borderWidth="1px" borderColor="blue.200" bg="blue.50" borderRadius="md" p={2}>
+                  <Box mt={2} borderWidth="1px" borderColor="blue.emphasized" bg="blue.faint" borderRadius="md" p={2}>
                     <Checkbox.Root
                       checked={includeGuidanceNote}
                       onCheckedChange={(e) => setIncludeGuidanceNote(!!e.checked)}

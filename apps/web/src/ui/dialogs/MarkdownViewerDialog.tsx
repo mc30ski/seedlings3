@@ -75,7 +75,7 @@ export default function MarkdownViewerDialog({
                   <Text color="fg.muted">Loading document…</Text>
                 </HStack>
               ) : error ? (
-                <Text color="red.600" py={6}>{error}</Text>
+                <Text color="red.fg" py={6}>{error}</Text>
               ) : text != null ? (
                 <Box css={MD_STYLES}>
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>

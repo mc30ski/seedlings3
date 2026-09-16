@@ -170,7 +170,7 @@ function ExpandableText({
         <Button
           variant="plain"
           size="xs"
-          color="blue.600"
+          color="blue.fg"
           fontWeight="medium"
           mt={0.5}
           h="auto"
@@ -693,7 +693,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
           loading={loading}
           px="2"
           flexShrink={0}
-          css={{ background: "var(--chakra-colors-gray-100)" }}
+          css={{ background: "var(--chakra-colors-gray-subtle)" }}
         >
           <RefreshCw size={14} />
         </Button>
@@ -717,8 +717,8 @@ export default function DocumentsTab({ isSuper = false }: Props) {
               minW="0"
               px="2"
               css={{
-                background: typeFilter[0] !== "ALL" ? "var(--chakra-colors-orange-200)" : "var(--chakra-colors-orange-100)",
-                border: typeFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-orange-400)" : "1px solid var(--chakra-colors-orange-300)",
+                background: typeFilter[0] !== "ALL" ? "var(--chakra-colors-orange-muted)" : "var(--chakra-colors-orange-subtle)",
+                border: typeFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-orange-strong)" : "1px solid var(--chakra-colors-orange-emphasized)",
                 borderRadius: "6px",
               }}
               title={typeItems.find((i) => i.value === typeFilter[0])?.label}
@@ -751,8 +751,8 @@ export default function DocumentsTab({ isSuper = false }: Props) {
               minW="0"
               px="2"
               css={{
-                background: statusFilter[0] !== "all" ? "var(--chakra-colors-teal-200)" : "var(--chakra-colors-teal-100)",
-                border: statusFilter[0] !== "all" ? "1px solid var(--chakra-colors-teal-400)" : "1px solid var(--chakra-colors-teal-300)",
+                background: statusFilter[0] !== "all" ? "var(--chakra-colors-teal-muted)" : "var(--chakra-colors-teal-subtle)",
+                border: statusFilter[0] !== "all" ? "1px solid var(--chakra-colors-teal-strong)" : "1px solid var(--chakra-colors-teal-emphasized)",
                 borderRadius: "6px",
               }}
               title={STATUS_ITEMS.find((i) => i.value === statusFilter[0])?.label}
@@ -792,7 +792,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
               disabled={filtered.length === 0}
               title={anythingOpen ? "Collapse all documents" : "Expand all documents"}
               aria-label={anythingOpen ? "Collapse all documents" : "Expand all documents"}
-              css={{ background: "var(--chakra-colors-gray-100)" }}
+              css={{ background: "var(--chakra-colors-gray-subtle)" }}
             >
               {anythingOpen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
             </Button>
@@ -965,7 +965,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
                   )}
 
                   {isExpanded && (
-                    <Box pl={4} borderLeftWidth="2px" borderColor="gray.200">
+                    <Box pl={4} borderLeftWidth="2px" borderColor="gray.emphasized">
                       {!detail ? (
                         <HStack py={2}><Spinner size="sm" /><Text fontSize="xs" color="fg.muted">Loading…</Text></HStack>
                       ) : (
@@ -1005,7 +1005,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
                               {detail.versions.map((v) => {
                                 const isCurrent = v.id === d.currentVersionId;
                                 return (
-                                  <HStack key={v.id} gap={2} py={1} borderBottomWidth="1px" borderColor="gray.100">
+                                  <HStack key={v.id} gap={2} py={1} borderBottomWidth="1px" borderColor="gray.muted">
                                     <Text fontSize="xs" flex="1" minW={0} truncate>
                                       {isCurrent && <Badge size="xs" colorPalette="green" variant="solid" mr={1}>Current</Badge>}
                                       {v.originalFilename} · {fmtSize(v.sizeBytes)} · {fmtDateShort(v.uploadedAt)}
@@ -1143,7 +1143,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
                   </HStack>
 
                   {!collapsed && (
-                    <Box pl={3} borderLeftWidth="2px" borderColor="gray.200" mt={1}>
+                    <Box pl={3} borderLeftWidth="2px" borderColor="gray.emphasized" mt={1}>
                       <VStack align="stretch" gap={2}>
                         {docs.map((d) => renderDocCard(d, true))}
                         {isSuper && !opts.singleton && (

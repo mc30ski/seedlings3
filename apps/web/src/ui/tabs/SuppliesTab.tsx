@@ -928,7 +928,7 @@ export default function SuppliesTab({
                       borderRadius="md"
                       overflow="hidden"
                       borderWidth="1px"
-                      borderColor="gray.200"
+                      borderColor="gray.emphasized"
                       flexShrink={0}
                       position="relative"
                       cursor="pointer"
@@ -986,7 +986,7 @@ export default function SuppliesTab({
                         // Worker view: just "Remaining" (= available). Holds
                         // and onHand are operational detail they don't need.
                         <Text>
-                          Remaining: <Text as="span" fontWeight="medium" color={s.available <= 0 ? "orange.600" : "green.600"}>{s.available}</Text> {s.unit}
+                          Remaining: <Text as="span" fontWeight="medium" color={s.available <= 0 ? "orange.fg" : "green.fg"}>{s.available}</Text> {s.unit}
                         </Text>
                       ) : (
                         <>
@@ -994,7 +994,7 @@ export default function SuppliesTab({
                             On hand: <Text as="span" fontWeight="medium" color="fg">{s.onHand}</Text>
                           </Text>
                           <Text>
-                            Available: <Text as="span" fontWeight="medium" color={s.available <= 0 ? "orange.600" : "green.600"}>{s.available}</Text>
+                            Available: <Text as="span" fontWeight="medium" color={s.available <= 0 ? "orange.fg" : "green.fg"}>{s.available}</Text>
                             {s.held > 0 && (
                               <>
                                 {/* UNITS, NOT JOBS. This said "claimed by
@@ -1007,7 +1007,7 @@ export default function SuppliesTab({
                                 <Text as="span" color="fg.muted"> (</Text>
                                 <Text
                                   as="span"
-                                  color="blue.600"
+                                  color="blue.fg"
                                   fontWeight="medium"
                                   cursor={s.activeHolds && s.activeHolds.length > 0 ? "pointer" : "default"}
                                   textDecoration={s.activeHolds && s.activeHolds.length > 0 ? "underline" : "none"}
@@ -1039,7 +1039,7 @@ export default function SuppliesTab({
                                 {pausedHeld > 0 && (
                                   <Text
                                     as="span"
-                                    color="purple.600"
+                                    color="purple.fg"
                                     title="A repeating job on hold keeps its stock reserved. Resuming it asks for a new start date, so this can sit for a while."
                                   >
                                     , {pausedHeld} for a paused series
@@ -1078,7 +1078,7 @@ export default function SuppliesTab({
                                 &mdash; <Text as="span" fontSize="2xs">(needs a purchase first)</Text>
                               </Text>
                             ) : (
-                              <Text as="span" fontWeight="medium" color="orange.600">
+                              <Text as="span" fontWeight="medium" color="orange.fg">
                                 {fmtUSD(s.defaultClientPrice)}
                               </Text>
                             )}
@@ -1107,7 +1107,7 @@ export default function SuppliesTab({
                         mt={2}
                         pl={2}
                         borderLeftWidth="2px"
-                        borderColor={pausedHeld > 0 ? "purple.200" : "blue.200"}
+                        borderColor={pausedHeld > 0 ? "purple.emphasized" : "blue.emphasized"}
                       >
                         {s.activeHolds.map((h) => {
                           const job = h.occurrence?.job;
@@ -1130,7 +1130,7 @@ export default function SuppliesTab({
                               wrap="wrap"
                               borderRadius="sm"
                               cursor={h.occurrence?.id ? "pointer" : "default"}
-                              _hover={h.occurrence?.id ? { bg: "blue.50" } : undefined}
+                              _hover={h.occurrence?.id ? { bg: "blue.faint" } : undefined}
                               onClick={() => {
                                 if (!h.occurrence?.id) return;
                                 try {
@@ -1147,14 +1147,14 @@ export default function SuppliesTab({
                               }}
                               title={h.occurrence?.id ? "Open this occurrence on Admin Jobs" : ""}
                             >
-                              <Text color="blue.700" fontWeight="medium" flexShrink={0}>
+                              <Text color="blue.fg" fontWeight="medium" flexShrink={0}>
                                 −{h.quantity}
                               </Text>
                               <Text color="fg" flex="1" minW="140px">
                                 {propLabel}
                                 {clientLabel ? ` — ${clientLabel}` : ""}
                                 {dateLabel ? ` (${dateLabel})` : ""}
-                                {h.occurrence?.id && <Text as="span" color="blue.600"> →</Text>}
+                                {h.occurrence?.id && <Text as="span" color="blue.fg"> →</Text>}
                               </Text>
                               {/* NEVER PRINT AN INTERNAL KEY. This rendered
                                   the raw enum, so the row read "STREAM_PAUSED"
@@ -1405,8 +1405,8 @@ export default function SuppliesTab({
               </Dialog.Header>
               <Dialog.Body>
                 <VStack align="stretch" gap={3}>
-                  <Box p={2} bg="green.50" borderWidth="1px" borderColor="green.200" borderRadius="md">
-                    <Text fontSize="xs" color="green.800">
+                  <Box p={2} bg="green.faint" borderWidth="1px" borderColor="green.emphasized" borderRadius="md">
+                    <Text fontSize="xs" color="green.fg">
                       This adds units to the shelf. It records <Text as="span" fontWeight="semibold">no
                       tax entry</Text> — the deduction is the card charge you enter in the Ledger.
                       Point this purchase at that Ledger row below if you want a record of what the
@@ -1446,7 +1446,7 @@ export default function SuppliesTab({
                       style={{
                         padding: "6px 8px",
                         fontSize: "14px",
-                        border: "1px solid var(--chakra-colors-gray-200)",
+                        border: "1px solid var(--chakra-colors-gray-emphasized)",
                         borderRadius: "6px",
                         width: "100%",
                       }}
@@ -1615,7 +1615,7 @@ export default function SuppliesTab({
                 ) : (
                   <VStack align="stretch" gap={1}>
                     {historyRows.map((evt, idx) => (
-                      <Box key={idx} p={2} borderWidth="1px" borderColor="gray.200" borderRadius="md">
+                      <Box key={idx} p={2} borderWidth="1px" borderColor="gray.emphasized" borderRadius="md">
                         <HStack justify="space-between" align="flex-start" gap={2} wrap="wrap">
                           <Box flex="1" minW={0}>
                             {evt.kind === "PURCHASE" && (
@@ -1651,7 +1651,7 @@ export default function SuppliesTab({
                                           the id, dispatch the nav event, let
                                           the destination consume it. */}
                                       <Text
-                                        color="blue.600"
+                                        color="blue.fg"
                                         flex="1"
                                         minW={0}
                                         truncate

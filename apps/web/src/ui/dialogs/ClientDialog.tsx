@@ -299,7 +299,7 @@ export default function ClientDialog({
                     rows={3}
                   />
                 </div>
-                <Box p={3} bg={isVip ? "yellow.50" : "gray.50"} rounded="md" borderWidth="1px" borderColor={isVip ? "yellow.300" : "gray.200"}>
+                <Box p={3} bg={isVip ? "yellow.faint" : "gray.faint"} rounded="md" borderWidth="1px" borderColor={isVip ? "yellow.emphasized" : "gray.emphasized"}>
                   <Checkbox.Root
                     checked={isVip}
                     onCheckedChange={(e) => setIsVip(!!e.checked)}

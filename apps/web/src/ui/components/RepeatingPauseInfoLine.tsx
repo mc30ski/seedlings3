@@ -28,9 +28,9 @@ export default function RepeatingPauseInfoLine({ occ }: { occ: Occ }) {
 
   return (
     <Box
-      bg="purple.50"
+      bg="purple.faint"
       borderWidth="1px"
-      borderColor="purple.300"
+      borderColor="purple.emphasized"
       borderLeftWidth="4px"
       borderLeftColor="purple.500"
       borderRadius="md"
@@ -38,15 +38,15 @@ export default function RepeatingPauseInfoLine({ occ }: { occ: Occ }) {
       mt={2}
     >
       <HStack align="start" gap={2}>
-        <Box color="purple.600" flexShrink={0} mt={0.5}>
+        <Box color="purple.fg" flexShrink={0} mt={0.5}>
           <PauseCircle size={18} />
         </Box>
         <VStack align="start" gap={1} flex={1} minW={0}>
-          <Text fontSize="sm" fontWeight="semibold" color="purple.900" lineHeight="1.2">
+          <Text fontSize="sm" fontWeight="semibold" color="purple.fg" lineHeight="1.2">
             Repeating service paused
           </Text>
           {(occ.streamPausedAt || occ.streamResumeReminderAt) && (
-            <Text fontSize="xs" color="purple.800" lineHeight="1.3">
+            <Text fontSize="xs" color="purple.fg" lineHeight="1.3">
               {occ.streamPausedAt && (
                 <>Paused <b>{fmtDate(occ.streamPausedAt)}</b></>
               )}
@@ -59,7 +59,7 @@ export default function RepeatingPauseInfoLine({ occ }: { occ: Occ }) {
           {occ.streamPauseReason && (
             <Text
               fontSize="xs"
-              color="purple.900"
+              color="purple.fg"
               fontStyle="italic"
               lineHeight="1.4"
             >
