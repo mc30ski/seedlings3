@@ -1094,6 +1094,20 @@ model JobOccurrence {
   jobType String? // Legacy/custom free-text job type
   jobTags String? // JSON array of tags, e.g. ["MOW","TRIM","EDGE","BLOW"]
   notes   String?
+
+  /// Free text the CUSTOMER sees — it rides along on the invoice, the
+  /// receipt, and the job in their account. Named for its visibility rather
+  /// than its author because that is the property that matters at the
+  /// callsite: `notes` above is internal and must never be confused with it.
+  ///
+  /// Per-occurrence on purpose. A note explains what happened on THIS visit
+  /// ("trimmed the hedge at no charge"), so it must not leak onto the next
+  /// invoice. There is deliberately no Job-level default.
+  ///
+  /// Editable by the claimer, an admin, or a super — the crew that did the
+  /// work is usually the only one who knows what to say.
+  customerVisibleNotes String?
+
   price   Float?
 
   /// Optional CLIENT-VISIBLE detail under the labor line on the invoice —

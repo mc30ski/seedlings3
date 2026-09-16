@@ -1476,25 +1476,49 @@ describe("[build-gate] the invoice preview cannot drift from the invoice", () =>
   const PREVIEW = web("ui/dialogs/InvoicePreviewDialog.tsx");
   const TAB = web("ui/tabs/JobsTab.tsx");
 
+  /** Body of one method on the requests service, by exact name. */
+  const methodBody = (name: string) => {
+    const at = REQUESTS.indexOf(`async ${name}(`);
+    expect(at, `paymentRequests.${name} is gone`).toBeGreaterThan(-1);
+    return REQUESTS.slice(at, REQUESTS.indexOf("\n  async ", at + 1));
+  };
+
   it("the preview computes no money of its own", () => {
-    const at = REQUESTS.indexOf("async previewInvoice");
-    const fn = REQUESTS.slice(at, REQUESTS.indexOf("\n  async ", at + 1));
-    expect(fn).not.toMatch(/invoiceTotal\(|invoiceLines\(/);
-    expect(fn).toMatch(/await buildInvoice\(occ\)/);
-    // crewPool is a DIFFERENT number and legitimately belongs — but from the
-    // shared helper, and never inside buildInvoice (the client's payload).
-    expect(fn).toMatch(/crewPool: crewPool\(occ as any\)/);
+    // There are THREE previews now — a shared one, an admin one that adds
+    // the crew figure, and a worker one that must not. All three have to
+    // trace back to buildInvoice, or a preview starts quoting a number the
+    // client never gets.
+    const shared = methodBody("previewInvoiceShared");
+    expect(shared).not.toMatch(/invoiceTotal\(|invoiceLines\(/);
+    expect(shared).toMatch(/await buildInvoice\(occ\)/);
+
+    // crewPool is a DIFFERENT number and legitimately belongs on the ADMIN
+    // preview — but from the shared helper, and never inside buildInvoice
+    // (the client's payload).
+    expect(methodBody("previewInvoice")).toMatch(/crewPool: crewPool\(/);
     expect(REQUESTS.slice(
       REQUESTS.indexOf("export async function buildInvoice"),
       REQUESTS.indexOf("function propertyLabel"),
     )).not.toMatch(/crewPool/);
   });
 
+  it("the WORKER preview carries no crew-pay figure", () => {
+    // A worker previews what the CUSTOMER receives. `crewPool` is what the
+    // crew is paid, and worker surfaces must not expose pay — the same rule
+    // that keeps wages off the team roster.
+    const worker = methodBody("previewInvoiceForWorker");
+    expect(worker, "the worker preview must not compute or forward crewPool")
+      .not.toMatch(/crewPool/);
+    expect(worker, "it must strip the raw occurrence row it builds from")
+      .toMatch(/_occ/);
+  });
+
   it("previewing changes nothing — it is a read", () => {
-    const at = REQUESTS.indexOf("async previewInvoice");
-    const fn = REQUESTS.slice(at, REQUESTS.indexOf("\n  async ", at + 1));
-    for (const w of [/\.update\(/, /\.create\(/, /\.delete\(/, /writeAudit\(/, /randomBytes\(/]) {
-      expect(fn, `previewInvoice must not write: ${w}`).not.toMatch(w);
+    for (const name of ["previewInvoiceShared", "previewInvoice", "previewInvoiceForWorker"]) {
+      const fn = methodBody(name);
+      for (const w of [/\.update\(/, /\.create\(/, /\.delete\(/, /writeAudit\(/, /randomBytes\(/]) {
+        expect(fn, `${name} must not write: ${w}`).not.toMatch(w);
+      }
     }
   });
 
@@ -1503,25 +1527,34 @@ describe("[build-gate] the invoice preview cannot drift from the invoice", () =>
     expect(PREVIEW).not.toMatch(/reduce\(/);
   });
 
-  it("it is admin/super only, on the route AND the button", () => {
+  it("the preview is reachable by the crew, and the crew-pay split is not", () => {
+    // POLICY CHANGED 2026-09-16: this used to be admin-only on both the route
+    // and the button. A worker can already SEND the payment request, so being
+    // unable to read the invoice first was the odd part. What stays admin-only
+    // is the CREW-PAY figure, not the invoice.
+    //
+    // Two routes on purpose: the admin one adds `crewPool`, the worker one
+    // cannot. Both resolve through previewInvoiceShared, so they can never
+    // quote different money.
     expect(ADMIN).toMatch(/app\.get\("\/admin\/occurrences\/:id\/invoice-preview", adminGuard/);
-    // Gated on the SELECTED scope. `forAdmin ||` would light it up for a
-    // super sitting on another chip.
-    // It lives on the Admin row, gated on the SELECTED scope. `forAdmin`
-    // here would light it up for a super sitting on another chip.
-    const at = TAB.indexOf("adminExtras={");
-    expect(at, "the preview button must be on the Admin row").toBeGreaterThan(-1);
-    const gate = TAB.slice(at, TAB.indexOf("\n                />", at));
-    // The ROW is gated on the selected scope…
-    expect(gate).toMatch(/!isCardCompact && \(isAdmin \|\| isSuper\)/);
-    expect(gate).toMatch(/Invoice preview/);
-    // …and the preview's OWN condition adds no `forAdmin`, which would light
-    // it up for a super sitting on another chip. Scoped to this button's
-    // conditional rather than "anything before the label" — other buttons on
-    // the row carry their own, stricter, pre-existing gates.
-    const own = gate.slice(gate.lastIndexOf("{", gate.indexOf("Invoice preview")) - 200,
-                           gate.indexOf("Invoice preview"));
-    expect(own).not.toMatch(/forAdmin/);
+    expect(WORKER, "workers need their own preview route")
+      .toMatch(/app\.get\("\/occurrences\/:id\/invoice-preview", workerGuard/);
+
+    // The button sits on the EVERYDAY row now, gated the same way the API is:
+    // claimer, active assignee, or admin. Anchored on the CLICK HANDLER, not
+    // on the label — the label also appears in the comment explaining the
+    // move, and matching that made this rule pass against no button at all.
+    const at = TAB.indexOf("setPreviewOccId(occ.id)");
+    expect(at, "the preview button is gone").toBeGreaterThan(-1);
+    const own = TAB.slice(Math.max(0, at - 700), at);
+    expect(own, "the button must be gated like the API: claimer/assignee/admin")
+      .toMatch(/isClaimer \|\| isActiveAssignee \|\| forAdmin/);
+
+    // And the dialog must not default to showing pay.
+    expect(PREVIEW, "canSeeCrewPay must default to the safe side")
+      .toMatch(/canSeeCrewPay = false/);
+    expect(TAB, "the tab must pass the real role through")
+      .toMatch(/canSeeCrewPay=\{isAdmin \|\| isSuper\}/);
   });
 
   it("it says on its face that it is not a record", () => {
@@ -1542,7 +1575,7 @@ describe("[build-gate] the invoice preview cannot drift from the invoice", () =>
     //
     // Asserted structurally rather than by copy: both headings must exist and
     // must be selected by the same computed figure that drives the styling.
-    expect(PREVIEW).toMatch(/const notShared = Math\.max\(/);
+    expect(PREVIEW).toMatch(/const notShared = data\.crewPool == null \? 0 : Math\.max\(/);
     expect(PREVIEW).toMatch(/notShared > 0\s*\n?\s*\? "Not all of this is shared with the crew"/);
     expect(PREVIEW).toMatch(/: "All of this is shared with the crew"/);
     // Yellow is reserved for the case that actually needs a caution.
@@ -3929,9 +3962,13 @@ describe("[build-gate] admin-only buttons sit on the Admin row", () => {
   });
 
   it("these admin-only buttons are on it", () => {
+    // "Invoice preview" was removed from this list 2026-09-16 — it moved to
+    // the everyday row on purpose. See the preview policy gate above; the
+    // rule ElevatedActionRow states is that a button lives on the LOWEST role
+    // row that applies to it, and the crew can preview now.
     for (const label of [
       "Manage in Services", "Review Hours", "Reset Job",
-      "Edit Charges", "Adjust Price", "Invoice preview",
+      "Edit Charges", "Adjust Price",
     ]) {
       expect(adminRow, `"${label}" belongs on the Admin row`).toContain(label);
     }

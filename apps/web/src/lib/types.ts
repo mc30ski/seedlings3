@@ -742,6 +742,11 @@ export type EquipmentCharge = {
 };
 
 export type WorkerOccurrence = {
+  /** Free text the CUSTOMER sees — rides along on the invoice, the receipt
+   *  and the job in their account. Distinct from any internal note: what is
+   *  written here leaves the building. Per-occurrence, so it describes THIS
+   *  visit only. */
+  customerVisibleNotes?: string | null;
   id: string;
   jobId?: string | null;
   kind?: JobKind | null;

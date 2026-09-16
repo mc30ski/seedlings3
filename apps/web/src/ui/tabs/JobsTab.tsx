@@ -40,6 +40,7 @@ import {
   Text,
   VStack,
   createListCollection,
+  Textarea,
 } from "@chakra-ui/react";
 import { AlertCircle, AlertTriangle, Archive, CalendarArrowUp, BarChart3, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, ExternalLink, Eye, Filter, Hand, Heart, Inbox, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, Play, RefreshCw, Repeat, Share2, Star, Tag, Users, X,
   Map as MapIcon,
@@ -1405,6 +1406,12 @@ export default function JobsTab({
   // Re-price a finished visit — quoted three hours, took four. Admin+ only,
   // and the server refuses once a Payment row exists.
   const [priceEditOcc, setPriceEditOcc] = useState<WorkerOccurrence | null>(null);
+  // Notes the CUSTOMER will see. Same shape as the price edit above: a
+  // dialog rather than an inline field, because this text leaves the
+  // building and a stray keystroke should not be able to publish it.
+  const [custNotesOcc, setCustNotesOcc] = useState<WorkerOccurrence | null>(null);
+  const [custNotesValue, setCustNotesValue] = useState("");
+  const [custNotesSaving, setCustNotesSaving] = useState(false);
   const [priceEditValue, setPriceEditValue] = useState("");
   const [priceEditReason, setPriceEditReason] = useState("");
   // CLIENT-VISIBLE detail for the labor line on the invoice. Distinct from
@@ -7133,6 +7140,52 @@ export default function JobsTab({
                 ) : (
                 <Card.Body pt="2" px="4">
                   <VStack align="start" gap={2} w="full">
+                    {/* NOTES FOR CUSTOMER — expanded density only.
+                        Shown to anyone who can see the card so the crew can
+                        read what was promised, but only the claimer, an
+                        active assignee or an admin can change it (the API
+                        enforces the same set). A visible empty state on those
+                        cards, because a note nobody knows exists never gets
+                        written. Not on tasks/reminders/announcements: they
+                        generate no invoice. */}
+                    {!isTaskOrReminder && !isAnnouncement && !isFollowup && (occ.customerVisibleNotes || isClaimer || isActiveAssignee || forAdmin) && (
+                      <Box
+                        w="full"
+                        p={2.5}
+                        bg={occ.customerVisibleNotes ? "blue.faint" : "bg.subtle"}
+                        borderWidth="1px"
+                        borderColor={occ.customerVisibleNotes ? "blue.emphasized" : "border.default"}
+                        borderRadius="md"
+                      >
+                        <HStack justify="space-between" align="start" gap={2} mb={occ.customerVisibleNotes ? 1 : 0}>
+                          <Text fontSize="2xs" textTransform="uppercase" letterSpacing="wide" color={occ.customerVisibleNotes ? "blue.fg" : "fg.muted"}>
+                            Notes for customer
+                          </Text>
+                          {(isClaimer || isActiveAssignee || forAdmin) && !isOffline && (
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              colorPalette="blue"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setCustNotesOcc(occ);
+                                setCustNotesValue(occ.customerVisibleNotes ?? "");
+                              }}
+                            >
+                              {occ.customerVisibleNotes ? "Edit" : "Add"}
+                            </Button>
+                          )}
+                        </HStack>
+                        {occ.customerVisibleNotes ? (
+                          <Text fontSize="sm" whiteSpace="pre-wrap">{occ.customerVisibleNotes}</Text>
+                        ) : (
+                          <Text fontSize="xs" color="fg.muted">
+                            Nothing yet. Anything added here shows on the customer&rsquo;s invoice and receipt.
+                          </Text>
+                        )}
+                      </Box>
+                    )}
+
                     {/* Warning: next occurrence not created */}
                     {occ.payment?.nextOccurrenceSkipReason && occ.payment.nextOccurrenceSkipReason !== "one_off" && (
                       <Box w="full" p={2} bg="red.faint" borderWidth="1px" borderColor="red.emphasized" borderRadius="md">
@@ -8907,6 +8960,26 @@ export default function JobsTab({
                           Delete
                         </Button>
                       )}
+                      {/* Invoice preview — moved OFF the admin row. A worker
+                          can already SEND the payment request, so not being
+                          able to read the invoice first was the odd part.
+                          Same gate as the API: claimer, active assignee, or
+                          admin. The dialog decides what to SHOW — the crew-pay
+                          split stays admin-only.
+
+                          No isActive gate: the point is to look before
+                          sending, and on a settled job it still answers
+                          "what does this invoice say now". */}
+                      {(isClaimer || isActiveAssignee || forAdmin) && !isFollowup && !isTaskOrReminder && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          colorPalette="purple"
+                          onClick={(e) => { e.stopPropagation(); setPreviewOccId(occ.id); }}
+                        >
+                          Invoice preview
+                        </Button>
+                      )}
                       {/* Reschedule — workers/claimer only when not tentative
                           (no point rescheduling a job whose client hasn't
                           confirmed); admin/super can reschedule regardless. */}
@@ -9488,19 +9561,7 @@ export default function JobsTab({
                             Adjust Price
                           </Button>
                         )}
-                        {/* No isActive gate: the point is to look before
-                            sending, and on a settled job it still answers
-                            "what does this invoice say now". */}
-                        {!isFollowup && !isTaskOrReminder && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            colorPalette="purple"
-                            onClick={(e) => { e.stopPropagation(); setPreviewOccId(occ.id); }}
-                          >
-                            Invoice preview
-                          </Button>
-                        )}
+
                       </>
                     ) : null
                   }
@@ -10563,8 +10624,87 @@ export default function JobsTab({
       <InvoicePreviewDialog
         occurrenceId={previewOccId}
         onClose={() => setPreviewOccId(null)}
+        canSeeCrewPay={isAdmin || isSuper}
       />
 
+
+      {/* Notes for customer — per visit, customer-visible */}
+      <Dialog.Root
+        open={!!custNotesOcc}
+        onOpenChange={(e) => { if (!e.open) { setCustNotesOcc(null); setCustNotesValue(""); } }}
+      >
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg">
+              <Dialog.CloseTrigger />
+              <Dialog.Header>
+                <Dialog.Title>Notes for customer</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <ImpersonationWarning viewAsName={effectiveViewAsName} />
+                <VStack align="stretch" gap={3}>
+                  {/* Said plainly, because the failure mode is someone typing
+                      an internal aside here. The card's other note fields are
+                      private; this one is not. */}
+                  <Box p={2.5} bg="blue.faint" borderWidth="1px" borderColor="blue.emphasized" borderRadius="md">
+                    <Text fontSize="xs" color="blue.fg">
+                      <b>The customer reads this.</b> It appears on their invoice,
+                      their receipt, and this job in their account. For THIS visit
+                      only — the next one starts blank.
+                    </Text>
+                  </Box>
+                  <Textarea
+                    value={custNotesValue}
+                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setCustNotesValue(e.target.value)}
+                    placeholder="e.g. Trimmed the hedge by the shed at no charge."
+                    rows={5}
+                    maxLength={2000}
+                    autoFocus
+                  />
+                  <Text fontSize="2xs" color="fg.muted">
+                    {custNotesValue.trim().length}/2000 · leave blank to remove the note
+                  </Text>
+                </VStack>
+              </Dialog.Body>
+              <Dialog.Footer>
+                <HStack justify="flex-end" w="full" gap={2}>
+                  <Button variant="outline" onClick={() => { setCustNotesOcc(null); setCustNotesValue(""); }}>
+                    Cancel
+                  </Button>
+                  <Button
+                    colorPalette="blue"
+                    loading={custNotesSaving}
+                    onClick={async () => {
+                      if (!custNotesOcc) return;
+                      setCustNotesSaving(true);
+                      try {
+                        const next = custNotesValue.trim() || null;
+                        await apiPatch(`/api/occurrences/${custNotesOcc.id}/customer-notes`, {
+                          customerVisibleNotes: next,
+                        });
+                        // Patch the row in place so the card reflects it without
+                        // a full reload losing the operator's scroll position.
+                        setItems((prev) => prev.map((o) =>
+                          o.id === custNotesOcc.id ? { ...o, customerVisibleNotes: next } : o));
+                        publishInlineMessage({ type: "SUCCESS", text: "Notes for customer saved." });
+                        setCustNotesOcc(null);
+                        setCustNotesValue("");
+                      } catch (err) {
+                        publishInlineMessage({ type: "ERROR", text: getErrorMessage("Could not save notes", err) });
+                      } finally {
+                        setCustNotesSaving(false);
+                      }
+                    }}
+                  >
+                    Save
+                  </Button>
+                </HStack>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
 
       {/* Adjust Price Dialog */}
       <Dialog.Root

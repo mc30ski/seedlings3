@@ -929,6 +929,8 @@ export default async function clientRoutes(app: FastifyInstance) {
       amountDue: number;
       paymentPending: boolean;
       invoiceUrl: string | null;
+      /** What the crew wrote about this visit, or null. */
+      customerVisibleNotes: string | null;
       projectedNextDate: string | null;
       frequencyDays: number | null;
     }> = [];
@@ -957,6 +959,8 @@ export default async function clientRoutes(app: FastifyInstance) {
               price: true,
               paymentRequestToken: true,
               frequencyDays: true,
+              // Customer-visible by definition — this IS the client's view.
+              customerVisibleNotes: true,
               addons: { select: { price: true } },
               payment: {
                 select: { confirmed: true, selfReported: true, amountPaid: true },
@@ -1003,6 +1007,7 @@ export default async function clientRoutes(app: FastifyInstance) {
           amountDue,
           paymentPending,
           invoiceUrl,
+          customerVisibleNotes: (occ.customerVisibleNotes ?? "").trim() || null,
           projectedNextDate,
           frequencyDays: freq,
         });

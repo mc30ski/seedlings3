@@ -138,6 +138,10 @@ export const INVOICE_OCCURRENCE_SELECT = {
   title: true,
   price: true,
   laborDetail: true,
+  // Customer-visible, so it belongs in the SHARED select rather than being
+  // added per-callsite: the preview, the pay page and the receipt must all
+  // show the same text or the preview is lying.
+  customerVisibleNotes: true,
   addons: { select: { price: true, tag: true, customLabel: true, detail: true } },
   invoiceCharges: { select: { cost: true, description: true, detail: true } },
   job: {
@@ -205,6 +209,9 @@ export async function buildInvoice(occ: any): Promise<{
   propertyLabel: string;
   propertyAddress: string | null;
   serviceDate: Date | null;
+  /** Free text the crew or an admin wrote for this visit. Null when blank —
+   *  the surfaces render nothing rather than an empty heading. */
+  customerVisibleNotes: string | null;
 }> {
   const prop = occ.job?.property ?? null;
   const labels = await serviceLabelMap();
@@ -218,6 +225,8 @@ export async function buildInvoice(occ: any): Promise<{
       ? [prop.street1, prop.city, prop.state].filter(Boolean).join(", ") || null
       : null,
     serviceDate: occ.completedAt ?? occ.startAt ?? null,
+    // Trimmed to null so whitespace never renders an empty "Notes" block.
+    customerVisibleNotes: (occ.customerVisibleNotes ?? "").trim() || null,
   };
 }
 
@@ -833,48 +842,61 @@ export const paymentRequests = {
    * Reads through `buildInvoice`, the same function the real pay page uses,
    * so the preview cannot show a number the client wouldn't get.
    */
-  async previewInvoice(occurrenceId: string) {
+  /**
+   * The invoice as the CLIENT will see it, plus the payment-state flags an
+   * operator needs to read it. Deliberately carries nothing about what the
+   * crew is paid.
+   *
+   * Split out of `previewInvoice` so the worker-facing preview and the admin
+   * one are the SAME object — the comment on buildInvoice above says it
+   * plainly: a second implementation is how a preview starts showing a
+   * number the client never gets.
+   */
+  async previewInvoiceShared(occurrenceId: string) {
     const occ = await prisma.jobOccurrence.findUnique({
       where: { id: occurrenceId },
       select: {
         ...INVOICE_OCCURRENCE_SELECT,
-        // Context the operator needs to read the preview. None of it is ever
-        // shown to a client.
         status: true,
         paymentRequestSentAt: true,
         payment: { select: { id: true, amountPaid: true, confirmed: true } },
       },
     });
     if (!occ) throw new ServiceError("NOT_FOUND", "Occurrence not found.", 404);
-
     const invoice = await buildInvoice(occ);
     return {
       occurrenceId: occ.id,
       ...invoice,
-      // OPERATOR-ONLY, and deliberately NOT part of buildInvoice — the
-      // client's payload must never carry it. Read from the same shared
-      // helper the payout engine agrees with, so the warning on the preview
-      // quotes a number the crew will actually be paid.
-      crewPool: crewPool(occ as any),
-      /** True once a request went out — the client has seen a number, and
-       *  this preview may no longer match it. */
       alreadySent: !!occ.paymentRequestSentAt,
-      /** True once money has actually landed: history, not a preview.
-       *
-       *  REQUIRES `confirmed`. This was `!!occ.payment` — the row's mere
-       *  existence — so a payment still awaiting admin approval made the
-       *  preview announce "This job is already paid". `confirmed` was in the
-       *  select the whole time and simply never read. */
       settled: !!occ.payment?.confirmed,
-      /** A recorded but unapproved payment. Different sentence, different
-       *  action: nothing has landed yet, so the preview is still live. */
       paymentPending: !!occ.payment && !occ.payment.confirmed,
-      /** Null rather than 0 when nothing was collected — "already paid
-       *  ($0.00)" is not a sentence about money. A confirmed $0 payment is a
-       *  write-off, and the banner says that instead. */
       paidAmount: occ.payment?.amountPaid ? occ.payment.amountPaid : null,
-      /** Confirmed, but nothing collected. */
       writtenOff: !!occ.payment?.confirmed && !occ.payment.amountPaid,
+      /** Raw occurrence row, for callers that need to add operator-only
+       *  fields. Not returned to any client. */
+      _occ: occ as any,
+    };
+  },
+
+  /**
+   * WORKER-SAFE preview. The client-facing invoice and its payment state,
+   * with `_occ` stripped and no crew-pay figure — a worker previews what the
+   * CUSTOMER will receive, not what the crew earns.
+   */
+  async previewInvoiceForWorker(occurrenceId: string) {
+    const { _occ, ...rest } = await this.previewInvoiceShared(occurrenceId);
+    return rest;
+  },
+
+  async previewInvoice(occurrenceId: string) {
+    const { _occ, ...shared } = await this.previewInvoiceShared(occurrenceId);
+    return {
+      ...shared,
+      // OPERATOR-ONLY, and the reason the worker preview is a different
+      // method: this is what the CREW is paid, which a worker view must not
+      // carry. Read from the same shared helper the payout engine agrees
+      // with, so the warning quotes a number the crew will actually be paid.
+      crewPool: crewPool(_occ),
     };
   },
 
@@ -886,6 +908,9 @@ export const paymentRequests = {
     propertyLabel: string;
     propertyAddress: string | null;
     serviceDate: Date | null;
+    /** Spread in from buildInvoice — the client sees the same text the
+     *  preview showed. */
+    customerVisibleNotes: string | null;
     jobTags: string | null;
     payment: {
       id: string;
