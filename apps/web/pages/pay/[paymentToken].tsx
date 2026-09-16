@@ -91,6 +91,8 @@ type ResolveResponse = {
   propertyLabel: string;
   propertyAddress: string | null;
   serviceDate: string | null;
+  /** Free text the crew wrote for this visit. */
+  customerVisibleNotes: string | null;
   jobTags: string | null;
   photos: { url: string; contentType: string | null }[];
   payment: {
@@ -452,6 +454,18 @@ function PaymentPageInner() {
             </VStack>
           </Box>
         </Box>
+
+        {/* A note from the crew about THIS visit. Sits above the photos
+            because it explains them — "trimmed the hedge at no charge" is
+            the caption for the picture of the hedge. */}
+        {data.customerVisibleNotes && (
+          <Box>
+            <SectionHeader>Notes from your crew</SectionHeader>
+            <Box p={3} bg="#f7fafc" borderWidth="1px" borderColor="gray.200" borderRadius="md">
+              <Text fontSize="sm" whiteSpace="pre-wrap">{data.customerVisibleNotes}</Text>
+            </Box>
+          </Box>
+        )}
 
         {data.photos.length > 0 && (
           <Box>

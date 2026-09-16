@@ -39,7 +39,11 @@ type Preview = {
   /** What the crew actually splits out of this invoice. Operator-only — never
    *  in the client's payload. Comes from the shared helper the payout engine
    *  agrees with, so the warning below quotes a real number. */
-  crewPool: number;
+  /** ADMIN-ONLY. Absent on the worker preview, which must not carry what the
+   *  crew is paid — the same rule that keeps wages off the team roster. */
+  crewPool?: number;
+  /** What the crew wrote for the customer on this visit. */
+  customerVisibleNotes?: string | null;
 };
 
 const dollar = (n: number) =>
@@ -48,10 +52,15 @@ const dollar = (n: number) =>
 export default function InvoicePreviewDialog({
   occurrenceId,
   onClose,
+  canSeeCrewPay = false,
 }: {
   /** Occurrence to preview; null closes the dialog. */
   occurrenceId: string | null;
   onClose: () => void;
+  /** Admins and supers get the crew-pay breakdown and the admin endpoint;
+   *  everyone else gets the client-facing invoice only. Defaults to the safe
+   *  side, so a new callsite cannot leak pay by forgetting the prop. */
+  canSeeCrewPay?: boolean;
 }) {
   const [data, setData] = useState<Preview | null>(null);
   const [loading, setLoading] = useState(false);
@@ -62,11 +71,15 @@ export default function InvoicePreviewDialog({
     setData(null);
     setError(null);
     setLoading(true);
-    apiGet<Preview>(`/api/admin/occurrences/${occurrenceId}/invoice-preview`)
+    apiGet<Preview>(
+      canSeeCrewPay
+        ? `/api/admin/occurrences/${occurrenceId}/invoice-preview`
+        : `/api/occurrences/${occurrenceId}/invoice-preview`,
+    )
       .then(setData)
       .catch((err) => setError(getErrorMessage("Couldn't build the preview.", err)))
       .finally(() => setLoading(false));
-  }, [occurrenceId]);
+  }, [occurrenceId, canSeeCrewPay]);
 
   return (
     <Dialog.Root open={!!occurrenceId} onOpenChange={(e) => { if (!e.open) onClose(); }}>
@@ -107,7 +120,9 @@ export default function InvoicePreviewDialog({
                   // What the client is billed on top of the crew's pool. Named
                   // once so the heading, the row and the footer can never
                   // disagree about whether there is any.
-                  const notShared = Math.max(
+                  // Zero when the crew figure is absent (worker preview), which
+                  // also switches off the split block below.
+                  const notShared = data.crewPool == null ? 0 : Math.max(
                     0,
                     Math.round((data.amountDue - data.crewPool) * 100) / 100,
                   );
@@ -221,6 +236,23 @@ export default function InvoicePreviewDialog({
                       </VStack>
                     </Box>
 
+                    {/* Notes the crew wrote for this visit. Rendered here
+                        exactly as the customer will see them on the invoice
+                        and the receipt — the point of a preview is that there
+                        is no second version. */}
+                    {data.customerVisibleNotes && (
+                      <Box p={2.5} bg="blue.faint" borderWidth="1px" borderColor="blue.emphasized" borderRadius="md">
+                        <Text fontSize="2xs" textTransform="uppercase" letterSpacing="wide" color="blue.fg" mb={1}>
+                          Notes for customer
+                        </Text>
+                        <Text fontSize="sm" whiteSpace="pre-wrap">{data.customerVisibleNotes}</Text>
+                      </Box>
+                    )}
+
+                    {/* ADMIN-ONLY. The worker preview has no crew figure at
+                        all, so this whole block is absent rather than showing
+                        a $0 split that would read as "the crew gets nothing". */}
+                    {data.crewPool != null && (<>
                     {/* THE DISTINCTION THE WHOLE MODEL RESTS ON, stated with
                         this job's real numbers rather than as a rule.
                         "Services are shared, charges aren't" is easy to nod
@@ -291,6 +323,7 @@ export default function InvoicePreviewDialog({
                         )}
                       </Text>
                     </Box>
+                    </>)}
                   </>
                   );
                 })()}

@@ -2197,6 +2197,74 @@ export default async function workerRoutes(app: FastifyInstance) {
     );
   });
 
+  // ── Notes for the customer ────────────────────────────────────────────
+  //
+  // Free text that rides along on the invoice, the receipt and the job in
+  // the client's account. The crew that did the work is usually the only
+  // one who knows what to say ("trimmed the hedge at no charge"), so the
+  // claimer can write it, not just an admin.
+  //
+  // Per-occurrence: it describes THIS visit and must not leak onto the next
+  // invoice. See JobOccurrence.customerVisibleNotes.
+  app.patch("/occurrences/:id/customer-notes", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occId = String(req.params.id);
+    const body = req.body || {};
+
+    const occ = await prisma.jobOccurrence.findUniqueOrThrow({
+      where: { id: occId },
+      select: { id: true, jobId: true, customerVisibleNotes: true, assignees: { select: { userId: true, role: true } } },
+    });
+    const isClaimer = occ.assignees?.some((a: any) => a.userId === uid && a.role === "CLAIMER");
+    // Roles come from `req.user`, NOT a fresh DB read — a lookup here would
+    // hand a Super using "view as Worker" their real powers back.
+    const roles = new Set((req.user?.roles ?? []) as RoleVal[]);
+    const isAdmin = roles.has(RoleVal.ADMIN) || roles.has(RoleVal.SUPER);
+    if (!isClaimer && !isAdmin) {
+      throw new ServiceError("FORBIDDEN", "Only the claimer or an admin can edit customer notes.", 403);
+    }
+
+    const raw = body.customerVisibleNotes;
+    const next = raw == null ? null : String(raw).trim() || null;
+    const before = occ.customerVisibleNotes ?? null;
+
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.jobOccurrence.update({
+        where: { id: occId },
+        data: { customerVisibleNotes: next },
+        select: { id: true, customerVisibleNotes: true },
+      });
+      // This text reaches the customer, so the audit keeps both sides of the
+      // change — "what did we tell them, and who decided that" is the
+      // question this row exists to answer.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+        occurrenceId: occId,
+        jobId: occ.jobId ?? null,
+        action: "customer_notes_edited",
+        byClaimer: !!isClaimer,
+        byAdmin: !!isAdmin,
+        customerVisible: true,
+        before,
+        after: updated.customerVisibleNotes ?? null,
+      });
+      return updated;
+    });
+  });
+
+  // Invoice preview, worker-accessible.
+  //
+  // Workers can already SEND a payment request (see
+  // /occurrences/:id/send-payment-request-email), so not being able to read
+  // the invoice first was the odd part. This returns the client-facing
+  // invoice and its payment state — and NOT `crewPool`, which is what the
+  // crew is paid. That stays on the admin route.
+  //
+  // view-as-allow: the invoice is a property of the OCCURRENCE and is
+  // identical for every caller; there is no per-worker state to impersonate.
+  app.get("/occurrences/:id/invoice-preview", workerGuard, async (req: any) => {
+    return services.paymentRequests.previewInvoiceForWorker(String(req.params.id));
+  });
+
   // Edit time tracking: start/end timestamps and off-the-clock (paused) ms.
   app.patch("/occurrences/:id/time", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);

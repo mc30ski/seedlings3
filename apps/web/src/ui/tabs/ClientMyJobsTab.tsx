@@ -64,6 +64,8 @@ type AwaitingPayment = {
    *  hasn't marked it received yet. Copy shifts to "we got your note". */
   paymentPending: boolean;
   invoiceUrl: string | null;
+  /** What the crew wrote about this visit. */
+  customerVisibleNotes?: string | null;
   projectedNextDate: string | null;
   frequencyDays: number | null;
 };
@@ -662,6 +664,17 @@ export default function ClientMyJobsTab() {
                         <Text fontSize="xs" color="orange.fg">
                           <b>Projected next visit:</b> {fmtDate(ap.projectedNextDate)} (once payment is confirmed).
                         </Text>
+                      )}
+                      {/* The crew's note for this visit — the same text that
+                          is on the invoice, so the client never sees two
+                          versions of what happened. */}
+                      {ap.customerVisibleNotes && (
+                        <Box mt={1} p={2} bg="bg.panel" borderWidth="1px" borderColor="border.default" borderRadius="md">
+                          <Text fontSize="2xs" textTransform="uppercase" letterSpacing="wide" color="fg.muted" mb={0.5}>
+                            Notes from your crew
+                          </Text>
+                          <Text fontSize="xs" whiteSpace="pre-wrap">{ap.customerVisibleNotes}</Text>
+                        </Box>
                       )}
                       <HStack gap={2} wrap="wrap" mt={1}>
                         {ap.invoiceUrl && !ap.paymentPending && (
