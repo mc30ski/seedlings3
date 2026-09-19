@@ -5583,15 +5583,30 @@ export default function JobsTab({
   // The wrapper below is SPACING ONLY. The pulse lives inside the drawer, on
   // its header band: a ring drawn around a blue box in the same blue was
   // invisible, which is what "it's not pulsating" turned out to mean.
-  const guidanceSection =
-    ((occ.propertyPhotos ?? []).length > 0 || (occ as any).guidanceNote) ? (
+  /** The visit is finished — nothing here is "read this before you start"
+   *  any more. Instructions and Guidance both still SHOW (they are the record
+   *  of what was asked for and how it was done); they just stop demanding
+   *  attention. One flag for both, so the two cannot disagree about when a
+   *  job is over. */
+  const pulseIsPointless =
+    occ.status === "COMPLETED" ||
+    occ.status === "PENDING_PAYMENT" ||
+    occ.status === "CLOSED";
+
+  /** Whether this occurrence has anything to show in the Guidance drawer.
+   *  ONE predicate for every density — the compact and expanded cards each
+   *  had their own and they disagreed. */
+  const guidanceSectionApplies =
+    (occ.propertyPhotos ?? []).length > 0 || !!(occ as any).guidanceNote;
+
+  const guidanceSection = guidanceSectionApplies ? (
       <Box w="full" mt="2">
         <OccurrenceInstructions
           occurrenceId={occ.id}
           count={(occ.propertyPhotos ?? []).length}
           guidanceNote={(occ as any).guidanceNote ?? null}
           defaultExpanded={false}
-          pulse={!!(occ as any).guidanceNote && !guidanceOpened.has(occ.id)}
+          pulse={!pulseIsPointless && !!(occ as any).guidanceNote && !guidanceOpened.has(occ.id)}
           onExpandedChange={(open) => {
             if (!open) return;
             setGuidanceOpened((prev) => {
@@ -5629,8 +5644,8 @@ export default function JobsTab({
               borderWidth="1px"
               borderColor={oneOff ? "yellow.500" : "yellow.strong"}
               borderRadius="md"
-              data-instruction-pulse={oneOff ? "1" : undefined}
-              css={oneOff ? { animation: "seedlings-pulse-instruction 1.6s ease-in-out infinite" } : undefined}
+              data-instruction-pulse={oneOff && !pulseIsPointless ? "1" : undefined}
+              css={oneOff && !pulseIsPointless ? { animation: "seedlings-pulse-instruction 1.6s ease-in-out infinite" } : undefined}
             >
               <AlertCircle
                 size={18}
@@ -6254,8 +6269,8 @@ export default function JobsTab({
                             display="inline-flex"
                             alignItems="center"
                             borderRadius="full"
-                            data-instruction-pulse-icon={oneOffs > 0 ? "1" : undefined}
-                            css={oneOffs > 0 ? { animation: "seedlings-pulse-instruction-icon 1.6s ease-in-out infinite" } : undefined}
+                            data-instruction-pulse-icon={oneOffs > 0 && !pulseIsPointless ? "1" : undefined}
+                            css={oneOffs > 0 && !pulseIsPointless ? { animation: "seedlings-pulse-instruction-icon 1.6s ease-in-out infinite" } : undefined}
                             title={
                               oneOffs > 0
                                 ? `${oneOffs} instruction${oneOffs === 1 ? "" : "s"} just for this visit${active.length > oneOffs ? ` (${active.length} in total)` : ""}`
@@ -6289,7 +6304,7 @@ export default function JobsTab({
                           const note = (occ as any).guidanceNote as string | null | undefined;
                           const photos = (occ.propertyPhotos ?? []).length;
                           if (!note && photos === 0) return null;
-                          const unread = !!note && !guidanceOpened.has(occ.id);
+                          const unread = !pulseIsPointless && !!note && !guidanceOpened.has(occ.id);
                           return (
                           <Box
                             flexShrink={0}
@@ -9671,26 +9686,12 @@ export default function JobsTab({
                 {/* COMPACT densities only. The expanded card renders its
                     guidance under the photos inside Card.Body above, so the
                     action rows stay last. */}
-                {isCardCompact && (occ.propertyPhotos ?? []).length > 0 && (
-                  <Box mx="3" mb="2" mt="0">
-                    <OccurrenceInstructions
-                      occurrenceId={occ.id}
-                      count={(occ.propertyPhotos ?? []).length}
-                      guidanceNote={(occ as any).guidanceNote ?? null}
-                      defaultExpanded={false}
-                      pulse={!!(occ as any).guidanceNote && !guidanceOpened.has(occ.id)}
-                      onExpandedChange={(open) => {
-                        if (!open) return;
-                        setGuidanceOpened((prev) => {
-                          if (prev.has(occ.id)) return prev;
-                          const next = new Set(prev);
-                          next.add(occ.id);
-                          return next;
-                        });
-                      }}
-                    />
-                  </Box>
-                )}
+                {/* SAME CONDITION AS THE EXPANDED CARD. This read
+                    `photos.length > 0` — from when the drawer was only ever
+                    photos — so a job with a guidance note and NO photos
+                    rendered no drawer at all here, while the expanded card
+                    showed one and pulsed. Same card, different density,
+                    different answer: that is the "sometimes it pulsates". */}
                 </>
                 )}
                 {/* Elevated action row — nested INSIDE Card.Root so

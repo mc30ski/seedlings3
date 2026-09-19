@@ -1315,6 +1315,125 @@ describe("[build-gate] Guidance does not look like the weather panel", () => {
   });
 });
 
+describe("[build-gate] nothing pulses on a finished visit", () => {
+  // Instructions and Guidance are both "read this before you start". Once the
+  // visit is awaiting payment or closed there is nothing to start, so they
+  // still SHOW — they are the record of what was asked for and how it was
+  // done — but they stop demanding attention.
+  //
+  // There are FIVE separate pulse decisions across two densities (two chips
+  // on the ultra row, the instruction rows, and the guidance drawer at each
+  // density). Gating four of five would be worse than none: the card would
+  // go quiet except for the one that kept twitching.
+  const TAB = web("ui/tabs/JobsTab.tsx");
+
+  it("one flag decides, named for what it means", () => {
+    const m = /const pulseIsPointless =([\s\S]{0,300}?);/.exec(TAB);
+    expect(m, "the finished-visit flag must exist").toBeTruthy();
+    const statuses = (m![1].match(/"([A-Z_]+)"/g) ?? []).map((x) => x.replace(/"/g, ""));
+    // The whole post-work tail. COMPLETED is the one that is easy to miss:
+    // it sits BETWEEN the two obvious ones in the flow, so leaving it out
+    // means the card goes quiet, then twitches again, then goes quiet.
+    expect(statuses.sort()).toEqual(["CLOSED", "COMPLETED", "PENDING_PAYMENT"]);
+  });
+
+  it("every pulse decision consults it", () => {
+    // Each entry is a decision POINT: either it names the flag directly, or
+    // it reads a variable that does (checked by its declaration).
+    const direct = [
+      // the guidance drawer, one per density
+      ...(TAB.match(/(?<![-a-zA-Z])pulse=\{[^}]*\}/g) ?? []),
+      // the instruction rows, and the instruction chip on the ultra row
+      ...(TAB.match(/data-instruction-pulse(-icon)?=\{[^}]*\}/g) ?? []),
+      // the guidance chip's own gate
+      ...(TAB.match(/const unread = [^;]*;/g) ?? []),
+    ];
+    // Four now, not five: the duplicate compact drawer that used to carry a
+    // fifth `pulse=` prop was removed. The number is a floor against the
+    // list silently emptying, not a spec of how many there should be.
+    expect(direct.length, "the pulse decision points must be found").toBeGreaterThanOrEqual(4);
+    for (const d of direct) {
+      expect(d, `this pulse decision ignores the finished-visit flag: ${d.slice(0, 90)}`)
+        .toMatch(/pulseIsPointless/);
+    }
+  });
+
+  it("the animations themselves are gated, not just the markers", () => {
+    // The data-* attribute drives the reduced-motion rule; the `css` prop
+    // drives the animation. Gating only the marker would leave it pulsing.
+    for (const m of TAB.match(/css=\{[^}]*seedlings-pulse-(instruction|guidance)[^}]*\}/g) ?? []) {
+      const gated = /pulseIsPointless/.test(m) || /\bunread\b/.test(m);
+      expect(gated, `animation not gated on a finished visit: ${m.slice(0, 90)}`).toBe(true);
+    }
+  });
+});
+
+describe("[build-gate] Guidance appears at every card density or none", () => {
+  // SHIPPED TO PRODUCTION. The compact card gated its Guidance drawer on
+  // `propertyPhotos.length > 0` — left over from when the drawer was only
+  // photos — while the expanded card used `photos > 0 || guidanceNote`. A job
+  // with a written note and no photos therefore showed a pulsing drawer when
+  // expanded and NOTHING when compact.
+  //
+  // From the outside that is "sometimes the Guidance pulsates and sometimes
+  // it doesn't", with no way to tell which. Density-dependent presence is
+  // indistinguishable from a flickering bug.
+  const TAB = web("ui/tabs/JobsTab.tsx");
+
+  it("one predicate decides, and every density uses it", () => {
+    expect(TAB, "the shared predicate must exist")
+      .toMatch(/const guidanceSectionApplies =\s*\n?\s*\(occ\.propertyPhotos \?\? \[\]\)\.length > 0 \|\| !!\(occ as any\)\.guidanceNote;/);
+
+    // Every place that decides whether to render the drawer must use it.
+    // There is exactly ONE such place now (see the single-render-site rule
+    // above), which is why this is a "each of whatever we find" check rather
+    // than a head-count — the population is allowed to shrink to one, never
+    // to grow a site that decides for itself.
+    const sites = TAB.match(/(?:const guidanceSection = |isCardCompact && )([A-Za-z]+)/g) ?? [];
+    expect(sites.length, "the render decision must be found at all").toBeGreaterThanOrEqual(1);
+    for (const site of sites) {
+      expect(site, `a render site decides for itself: "${site}"`)
+        .toMatch(/guidanceSectionApplies/);
+    }
+  });
+
+  it("exactly ONE place renders the drawer", () => {
+    // Moving Guidance to the top of the card left the old bottom-of-card
+    // copy in place, so a SEMI card rendered the drawer TWICE — 8 on screen
+    // where expanded showed 4. Neither typecheck nor any static rule saw it;
+    // the e2e count did.
+    const sites = (TAB.match(/<OccurrenceInstructions\b/g) ?? []).length;
+    expect(
+      sites,
+      `JobsTab renders OccurrenceInstructions ${sites} times — one shared ` +
+        "`guidanceSection` covers every density, so a second site is a duplicate drawer",
+    ).toBe(1);
+  });
+
+  it("no density re-derives the condition from photos alone", () => {
+    // The exact shape of the shipped bug.
+    expect(
+      TAB,
+      "a density gating Guidance on photo count alone hides written guidance",
+    ).not.toMatch(/isCardCompact && \(occ\.propertyPhotos \?\? \[\]\)\.length > 0/);
+  });
+
+  it("the pulse signal is identical at every density", () => {
+    // Same reasoning one level down: if one density computed `pulse`
+    // differently, the drawer would appear everywhere but only breathe
+    // sometimes.
+    // Lookbehind because `pulse=` is a substring of `data-instruction-pulse=`
+    // — without it this also collected the instruction chip's marker and
+    // compared two unrelated things.
+    const pulses = TAB.match(/(?<![-a-zA-Z])pulse=\{[^}]*\}/g) ?? [];
+    expect(pulses.length, "the drawer must be passed a pulse").toBeGreaterThanOrEqual(1);
+    expect(
+      new Set(pulses).size,
+      `the render sites compute pulse differently: ${[...new Set(pulses)].join(" VS ")}`,
+    ).toBe(1);
+  });
+});
+
 describe("[build-gate] the collapsed Guidance drawer says it is unread", () => {
   // A collapsed drawer with an unread note in it looks exactly like one with
   // nothing in it. The pulse is the only thing that distinguishes them, so

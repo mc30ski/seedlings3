@@ -151,7 +151,11 @@ describe("theming build gate", () => {
       ["theme-season-logo-admin.spec.ts", "a theme pins the mark; a manual choice survives"],
       ["mobile-theme-chip.spec.ts", "the theme menu fits a 320px phone"],
       ["theme-contrast-sweep-admin.spec.ts", "every element on every tab in every theme"],
-    ];
+        [
+      "job-guidance-pulse-admin.spec.ts",
+      "Guidance renders at every card density and stops pulsing on a finished visit — both shipped broken and both were invisible to static rules",
+    ],
+];
     for (const [file, why] of specs) {
       expect(existsSync(join(WEB, "tests/e2e/specs", file)),
         `tests/e2e/specs/${file} is missing — it is the only check that ${why}.`).toBe(true);
