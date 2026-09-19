@@ -443,6 +443,10 @@ export default function ServicesTab({
   const [confirmAction, setConfirmAction] = useState<{
     title: string;
     message: string;
+    /** Richer JSX body — replaces `message` when set. */
+    messageNode?: React.ReactNode;
+    /** Yellow "why this matters" strip under the body. */
+    warning?: string;
     confirmLabel: string;
     colorPalette: string;
     onConfirm: ((inputValue: string) => void) | (() => void);
@@ -644,17 +648,22 @@ export default function ServicesTab({
     void refreshOverdueCount();
   }, [items]);
 
-  // Handoff from ClientsTab "N services paused" click. Same event pattern
+  // Handoff from the ClientsTab "Job services" button. Same event pattern
   // as the other cross-tab searches — index.tsx routes to Services, we
-  // consume the `:run` event here. Beyond setting q to the client name,
-  // this also flips the Job status filter to PAUSED so the operator
-  // lands on the exact subset they were looking at.
+  // consume the `:run` event here, and set q to the client name.
+  //
+  // Status filter is cleared to ALL, not set to PAUSED. It used to narrow
+  // to PAUSED because its only caller was a "N services paused" count, and
+  // the question was "did my bulk pause cover everything?". Bulk pause is
+  // gone; this button now exists so an operator can PAUSE a service, which
+  // means the running ones are exactly what they need to see. Landing on a
+  // PAUSED-only list would hide every service they came to act on.
   useEffect(() => {
     const onRun = (ev: Event) => {
       const { q: clientName } = (ev as CustomEvent<{ q?: string }>).detail || {};
       if (typeof clientName !== "string") return;
       setQ(clientName);
-      setJobStatusFilter(["PAUSED"]);
+      setJobStatusFilter(["ALL"]);
       requestAnimationFrame(() => {
         inputRef.current?.focus();
         inputRef.current?.select();
@@ -769,6 +778,151 @@ export default function ServicesTab({
     const next = !expandedMap[jobId];
     setExpandedMap((prev) => ({ ...prev, [jobId]: next }));
     if (next) void loadDetail(jobId);
+  }
+
+  function serviceLabel(job: JobListItem): string {
+    const prop = job.property?.displayName ?? "this service";
+    const client = job.property?.client?.displayName;
+    return client ? `${client} \u2014 ${prop}` : prop;
+  }
+
+  /**
+   * Confirm before any Job status change. Pause/Resume fetch a preview
+   * first, because neither is guessable from the card: PAUSING DELETES
+   * every scheduled visit on the service, and resuming picks a date the
+   * operator has no way to compute. Both numbers come from the server —
+   * `resumeWouldScheduleAt` from the same helper the resume itself uses,
+   * so the date in the dialog is the date that happens.
+   */
+  async function confirmJobStatus(job: JobListItem, newStatus: string) {
+    const label = serviceLabel(job);
+
+    if (newStatus === "PAUSED" || (newStatus === "ACCEPTED" && job.status === "PAUSED")) {
+      let preview: {
+        scheduledToRemove: number;
+        nextScheduledAt: string | null;
+        resumeWouldScheduleAt: string | null;
+        frequencyDays: number | null;
+      } | null = null;
+      try {
+        preview = await apiGet(`/api/admin/jobs/${job.id}/pause-preview`);
+      } catch {
+        // A preview that won't load must not block the action — the dialog
+        // just falls back to describing the behaviour without the numbers.
+      }
+
+      if (newStatus === "PAUSED") {
+        const n = preview?.scheduledToRemove ?? null;
+        setConfirmAction({
+          title: "Pause this service?",
+          message: "",
+          messageNode: (
+            <VStack align="stretch" gap={2}>
+              <Text fontSize="sm">
+                Stop scheduling visits for <b>{label}</b>.
+              </Text>
+              <Text fontSize="sm">
+                {n === null
+                  ? "Any visit already on the schedule for this service will be removed."
+                  : n === 0
+                    ? "There are no scheduled visits to remove."
+                    : n === 1
+                      ? `The scheduled visit${preview?.nextScheduledAt ? ` on ${fmtDate(preview.nextScheduledAt)}` : ""} will be removed.`
+                      : `${n} scheduled visits will be removed.`}{" "}
+                Visits already in progress, completed or paid are untouched.
+              </Text>
+              <Text fontSize="sm" color="fg.muted">
+                No new visits post while it&rsquo;s paused, and it raises no
+                &ldquo;next visit not scheduled&rdquo; warnings. Resuming
+                schedules the next visit forward from today &mdash; you
+                won&rsquo;t get a backlog of missed ones.
+              </Text>
+              {/* The non-destructive alternative. Pausing the SERVICE and
+                  pausing the REPEATING VISIT are near-identical gestures
+                  with opposite consequences for the scheduled visit: one
+                  deletes it, the other holds it exactly where it is. An
+                  operator who only wants to skip ahead is one button away
+                  from the wrong one, so the dialog has to name the other. */}
+              <Box
+                px={3}
+                py={2.5}
+                bg="blue.subtle"
+                color="blue.fg"
+                borderRadius="md"
+                borderLeftWidth="3px"
+                borderColor="blue.solid"
+              >
+                <Text fontSize="xs" fontWeight="semibold" mb={1}>
+                  Want to keep the scheduled visit?
+                </Text>
+                <Text fontSize="xs" lineHeight="1.5">
+                  Use <b>Pause repeating</b> on the visit itself instead. That
+                  holds the visit in place &mdash; nothing is deleted &mdash;
+                  and freezes the cycle there until you resume it on a date you
+                  pick. Pausing the service is for stopping it altogether.
+                </Text>
+              </Box>
+            </VStack>
+          ),
+          // Shown unconditionally, and worded so it is true whether or not
+          // anything is on the schedule right now. Hiding it when the count
+          // happened to be zero meant the one irreversible fact about
+          // pausing was taught only to operators who tripped over it.
+          warning:
+            "Pausing removes any scheduled visit, and that cannot be undone \u2014 resuming creates a new visit on the next cycle date, not the one that was removed.",
+          confirmLabel: "Pause service",
+          colorPalette: "yellow",
+          onConfirm: async () => await patchJobStatus(job, "PAUSED"),
+        });
+        return;
+      }
+
+      const when = preview?.resumeWouldScheduleAt;
+      setConfirmAction({
+        title: "Resume this service?",
+        message: "",
+        messageNode: (
+          <VStack align="stretch" gap={2}>
+            <Text fontSize="sm">
+              Start scheduling visits for <b>{label}</b> again.
+            </Text>
+            <Text fontSize="sm">
+              {when
+                ? <>The next visit will be scheduled for <b>{fmtDate(when)}</b>.</>
+                : "The next visit will be scheduled on the service\u2019s normal cycle."}
+              {preview?.frequencyDays
+                ? ` It repeats every ${preview.frequencyDays} days from there.`
+                : ""}
+            </Text>
+          </VStack>
+        ),
+        confirmLabel: "Resume service",
+        colorPalette: "green",
+        onConfirm: async () => await patchJobStatus(job, "ACCEPTED"),
+      });
+      return;
+    }
+
+    // PROPOSED → ACCEPTED. No preview to fetch; the point of confirming is
+    // that accepting is what starts the service scheduling at all.
+    setConfirmAction({
+      title: "Accept this service?",
+      message: `Accept ${label}. It starts scheduling visits on its normal cycle.`,
+      confirmLabel: "Accept service",
+      colorPalette: "green",
+      onConfirm: async () => await patchJobStatus(job, newStatus),
+    });
+  }
+
+  function confirmArchiveJob(job: JobListItem) {
+    setConfirmAction({
+      title: "Archive this service?",
+      message: `Archive ${serviceLabel(job)}. It stops scheduling, leaves the Services list, and its scheduled visits are removed. Past visits and their payments are kept.`,
+      warning: "Archiving is how a service ends. To stop it temporarily, use Pause instead — that keeps it on the list and resumes onto the next cycle date.",
+      confirmLabel: "Archive service",
+      colorPalette: "red",
+      onConfirm: async () => await archiveJob(job.id),
+    });
   }
 
   async function patchJobStatus(job: JobListItem, newStatus: string) {
@@ -1850,7 +2004,7 @@ export default function ServicesTab({
                         id="job-accept"
                         itemId={job.id}
                         label="Accept"
-                        onClick={async () => patchJobStatus(job, "ACCEPTED")}
+                        onClick={async () => confirmJobStatus(job, "ACCEPTED")}
                         variant="outline"
                         colorPalette="green"
                         busyId={statusButtonBusyId}
@@ -1862,7 +2016,7 @@ export default function ServicesTab({
                         id="job-pause"
                         itemId={job.id}
                         label="Pause"
-                        onClick={async () => patchJobStatus(job, "PAUSED")}
+                        onClick={async () => confirmJobStatus(job, "PAUSED")}
                         variant="outline"
                         colorPalette="yellow"
                         busyId={statusButtonBusyId}
@@ -1874,7 +2028,7 @@ export default function ServicesTab({
                         id="job-resume"
                         itemId={job.id}
                         label="Resume"
-                        onClick={async () => patchJobStatus(job, "ACCEPTED")}
+                        onClick={async () => confirmJobStatus(job, "ACCEPTED")}
                         variant="outline"
                         colorPalette="green"
                         busyId={statusButtonBusyId}
@@ -1886,7 +2040,7 @@ export default function ServicesTab({
                         id="job-archive"
                         itemId={job.id}
                         label="Archive"
-                        onClick={async () => archiveJob(job.id)}
+                        onClick={async () => confirmArchiveJob(job)}
                         variant="outline"
                         colorPalette="gray"
                         busyId={statusButtonBusyId}
@@ -3364,6 +3518,8 @@ export default function ServicesTab({
         open={!!confirmAction}
         title={confirmAction?.title ?? ""}
         message={confirmAction?.message ?? ""}
+        messageNode={confirmAction?.messageNode}
+        warning={confirmAction?.warning}
         confirmLabel={confirmAction?.confirmLabel}
         confirmColorPalette={confirmAction?.colorPalette}
         inputPlaceholder={confirmAction?.inputPlaceholder}

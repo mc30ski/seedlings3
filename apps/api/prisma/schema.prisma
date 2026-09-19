@@ -1012,13 +1012,24 @@ model Job {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Bulk-pause bookkeeping — set when this Job was paused as part of a
-  // Client-level bulk-pause action ("pause services"). Non-null means
-  // "this Job was paused for a bulk reason and should be brought back
-  // when the operator hits Resume services on the Client." Null on a
-  // paused Job means "individually paused" — bulk-resume leaves it
-  // alone, respecting the operator's independent intent. Cleared on
-  // bulk-resume or on any manual status flip.
+  /// DEPRECATED — nothing reads or writes these. The Client-level bulk
+  /// "Pause services" / "Resume services" action they existed for has been
+  /// removed: it was a loop over Jobs wearing the costume of a client-level
+  /// state, and pausing is a per-service decision. Resume needed to know
+  /// which Jobs IT had paused (versus ones paused deliberately), and that
+  /// is the only thing these two columns ever recorded.
+  ///
+  /// Left in place rather than dropped in the same change so the removal is
+  /// reversible and so no historical row is destroyed on the way out; the
+  /// AuditEvent log already carries the CLIENT_BULK_PAUSED history
+  /// independently. Safe to drop in a follow-up migration along with the
+  /// index below.
+  ///
+  /// Note the doc above was also wrong while the feature was live: it
+  /// claimed the stamp was "cleared on any manual status flip", but
+  /// jobs.update() never touched it. Pause a Client, manually resume one
+  /// Job, then manually pause it again, and the stale stamp meant the next
+  /// Resume services swept up a Job the operator had stopped on purpose.
   clientBulkPausedAt   DateTime?
   clientBulkPausedById String?
 
@@ -1307,6 +1318,30 @@ model JobOccurrence {
   streamPausedById       String?
   streamPauseReason      String?
   streamResumeReminderAt DateTime?
+
+  // "Next visit not scheduled" warning — suppressed by an admin.
+  //
+  // A next-visit ghost is NOT a row. It is synthesized per-job by
+  // services.jobs.listNextOccurrenceGhosts() from the job's most-recent
+  // occurrence, which is why the suppression flag lives HERE, on the
+  // occurrence that is blocking the next visit, rather than on the Job.
+  // That placement is the whole semantic: suppressing dismisses the
+  // warning about THIS stall, not about the job forever. Once the next
+  // occurrence is finally generated it becomes the most-recent one, it
+  // carries no flag, and a future stall warns again.
+  //
+  // Replaces a 30-day auto-drop. Expired ghosts used to fade out on
+  // their own once they were a month past due, which silently threw
+  // away the reminder whether or not anyone had dealt with it. Now they
+  // persist until an admin says so, and saying so is an explicit,
+  // audited, reversible act.
+  //
+  // Set together via PATCH /occurrences/:id/next-visit-warning — ADMIN
+  // or SUPER only. Suppressed ghosts are excluded from the feed and from
+  // BOTH ghost-expiry counts; the "Suppressed next visits" status filter
+  // is what brings them back into view to be restored.
+  nextVisitWarningSuppressedAt   DateTime?
+  nextVisitWarningSuppressedById String?
 
   startedAt     DateTime?
   completedAt   DateTime?

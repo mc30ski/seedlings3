@@ -439,17 +439,15 @@ export default function JobsTab({
   );
 
   const [statusFilter, setStatusFilter] = usePersistedState<string[]>(`${pfx}_status`, ["ALL"]);
-  // True while the status filter is one of the synthetic ghost-card
-  // options. Changes the API query, not just the client-side filter,
-  // so it's a `load()` dependency.
-  const ghostExpiryMode =
-    statusFilter[0] === "GHOST_EXPIRING" || statusFilter[0] === "GHOST_EXPIRED";
-  // Count of next-visit ghosts that expired within the server's grace
-  // window (GHOST_EXPIRED_GRACE_DAYS, currently 30 days). Fetched
-  // separately from the feed on purpose: ghosts are dated on the day the
-  // visit was due, so a forward-looking date range contains none of the
-  // expired ones. This number is the heads-up that some slipped into the
-  // past — the feed can't supply it.
+  // Count of next-visit ghosts that are already past due. Unbounded in
+  // time — the server's 30-day grace window is gone, so this is every
+  // outstanding stall, however old, minus the ones an admin suppressed.
+  // The suppressed ones are still in the FEED — only this number, and the
+  // alert surfaces that read it, leave them out.
+  // Fetched separately from the feed on purpose: ghosts are dated on the
+  // day the visit was due, so a forward-looking date range contains none
+  // of the expired ones. This number is the heads-up that some slipped
+  // into the past — the feed can't supply it.
   const [expiredGhostCount, setExpiredGhostCount] = useState(0);
   // Client Requests frame state. The child owns the fetch and reports
   // back, so refreshing is just "tell the app change-requests moved" —
@@ -484,6 +482,11 @@ export default function JobsTab({
       // forward to today.
       { label: "Expiring next visits", value: "GHOST_EXPIRING" },
       { label: "Expired next visits", value: "GHOST_EXPIRED" },
+      // "Which warnings have I muted?" — a pure client-side narrowing;
+      // suppressed ghosts are in every response already. Not the way back
+      // from a suppression (the card itself is, in place, in the feed),
+      // just a way to review them together.
+      { label: "Suppressed next visits", value: "GHOST_SUPPRESSED" },
     ].map((s) => ({ label: s.label, value: s.value })),
     []
   );
@@ -1000,7 +1003,124 @@ export default function JobsTab({
     void load(true, { from: fromKey, to: toKey }, occId);
   }, []);
 
-  const applyGhostFilter = useCallback((bucket: "expiring" | "expired") => {
+  /**
+   * Suppress / restore the "next visit not scheduled" warning.
+   *
+   * ADMIN + SUPER ONLY. The server enforces it (PATCH
+   * /occurrences/:id/next-visit-warning rejects a plain worker), and the
+   * button is only rendered on the admin form of this tab — the gate is
+   * written twice on purpose, because only one of the two is enforcement.
+   *
+   * The flag lives on the BLOCKING occurrence, not on the ghost: a ghost
+   * has no row of its own. That is also why suppressing is scoped to this
+   * one stall — when the next occurrence finally posts it becomes the
+   * job's most-recent one, carries no flag, and a later stall warns again.
+   */
+  const toggleNextVisitWarning = useCallback((
+    blockingOccId: string,
+    jobLabel: string,
+    /** The card's own blocker line ("waiting on payment", "prior visit
+     *  closed — next was never created", …). Named in the dialog because
+     *  the right next step depends on it: a payment-blocked visit posts
+     *  itself when the money lands, a closed-blocker one never will and
+     *  needs Force next. A dialog that just said "waiting on payment"
+     *  would be wrong for half these cards. */
+    blockerLabel: string,
+    suppress: boolean,
+  ) => {
+    setConfirmAction({
+      title: suppress ? "Mute this warning?" : "Unmute this warning?",
+      message: "",
+      messageNode: suppress ? (
+        <VStack align="stretch" gap={3}>
+          <Text fontSize="sm">
+            Mute the &ldquo;next visit not scheduled&rdquo; warning for{" "}
+            <b>{jobLabel}</b>. It stops counting toward the expired badge, the
+            alerts and the Tasks page.
+          </Text>
+          <Text fontSize="sm" color="fg.muted">
+            The card itself stays in the feed, on its own day, marked{" "}
+            <b>Muted</b> &mdash; go back to it any time to turn the warning
+            back on.
+          </Text>
+          {/* The thing an operator most needs to not misread. Hiding the
+              reminder does not restart the schedule — the job is stalled,
+              and it stays stalled. */}
+          <Text fontSize="sm">
+            <b>This does not schedule the visit.</b> The next one still
+            won&rsquo;t post until what&rsquo;s blocking it clears &mdash;
+            currently <b>{blockerLabel}</b>.
+          </Text>
+          <Text fontSize="sm" color="fg.muted">
+            The job&rsquo;s schedule itself is untouched, so when the block
+            clears the visit posts and the cycle picks back up from there.
+          </Text>
+          {/* The blue box is the recommendation, not the action. If the
+              service really has stopped, pausing it is the honest record
+              and suppressing is just hiding the symptom. */}
+          <Box
+            px={3}
+            py={2.5}
+            bg="blue.subtle"
+            color="blue.fg"
+            borderRadius="md"
+            borderLeftWidth="3px"
+            borderColor="blue.solid"
+          >
+            <Text fontSize="xs" fontWeight="semibold" mb={1}>
+              Is the service actually stopping?
+            </Text>
+            <Text fontSize="xs" lineHeight="1.5">
+              Pausing the repeating service does this too, and says why. A
+              paused service raises no next-visit warnings at all, and resuming
+              it schedules the next visit forward from today. Suppressing only
+              hides this one warning and leaves the service looking active.
+            </Text>
+          </Box>
+        </VStack>
+      ) : (
+        <Text fontSize="sm">
+          Start counting the &ldquo;next visit not scheduled&rdquo; warning for{" "}
+          <b>{jobLabel}</b> again. It returns to the expired badge, the alerts
+          and the Tasks page.
+        </Text>
+      ),
+      confirmLabel: suppress ? "Mute warning" : "Unmute warning",
+      colorPalette: suppress ? "orange" : "blue",
+      onConfirm: async () => {
+        setConfirmAction(null);
+        try {
+          await apiPatch(`/api/occurrences/${blockingOccId}/next-visit-warning`, {
+            suppressed: suppress,
+          });
+          // Names the job and the consequence. "Warning muted." said neither,
+          // and the card it applies to is one of several near-identical dashed
+          // cards on screen — so the toast has to identify which one moved.
+          publishInlineMessage({
+            type: "SUCCESS",
+            text: suppress
+              ? `Muted the next-visit warning for ${jobLabel} — it no longer counts toward the expired badge, alerts or Tasks. The card stays in the feed.`
+              : `Unmuted the next-visit warning for ${jobLabel} — it counts toward the expired badge, alerts and Tasks again.`,
+          });
+          // Full quiet reload rather than a local patch: suppressing moves
+          // a row between two filters AND changes the range-independent
+          // expired count, which is fetched separately. Patching in place
+          // would leave the chip disagreeing with the feed beside it.
+          void load(false);
+        } catch (err) {
+          publishInlineMessage({
+            type: "ERROR",
+            text: getErrorMessage(
+              suppress ? "Could not mute the warning" : "Could not unmute the warning",
+              err,
+            ),
+          });
+        }
+      },
+    });
+  }, []);
+
+  const applyGhostFilter = useCallback((bucket: "expiring" | "expired" | "suppressed") => {
     setQ("");
     setKind(["ALL"]);
     setTypeFilter(["ALL"]);
@@ -1011,15 +1131,21 @@ export default function JobsTab({
     setOverdueActive(false);
     setUnapprovedHoursActive(false);
     setPausedRepeatingOnly(false);
-    // MUST COVER THE SERVER'S GRACE WINDOW. An expired ghost stays listed for
-    // GHOST_EXPIRED_GRACE_DAYS (30) and is dated on the day it was due, so a
-    // narrower range hides rows the badge has already counted — the chip said
-    // "Expired 3", the filter opened, and one row was there. This was
-    // "lastWeek" while the server kept 7 days; when the server moved to 30 the
-    // two silently came apart. A build gate now ties them together.
-    const preset: DatePreset = bucket === "expired" ? "lastMonth" : "now";
+    // MUST COVER THE SERVER'S WINDOW, AND THE SERVER NO LONGER HAS ONE.
+    // An expired ghost is dated on the day it was due and now stays until
+    // it's dealt with, so anything short of "all" hides rows the badge has
+    // already counted — the chip says "Expired 3", the filter opens, one
+    // row is there. That exact split shipped twice: "lastWeek" against a
+    // 7-day server, then "lastWeek" against a 30-day one. With the grace
+    // window gone the only preset that can keep up is the unbounded one.
+    // A build gate ties them together.
+    const preset: DatePreset = bucket === "expiring" ? "now" : "all";
     const d = computeDatesFromPreset(preset);
-    setStatusFilter([bucket === "expired" ? "GHOST_EXPIRED" : "GHOST_EXPIRING"]);
+    setStatusFilter([
+      bucket === "expired" ? "GHOST_EXPIRED"
+      : bucket === "suppressed" ? "GHOST_SUPPRESSED"
+      : "GHOST_EXPIRING",
+    ]);
     setDatePreset(preset);
     setDateFrom(d.from);
     setDateTo(d.to);
@@ -1679,13 +1805,6 @@ export default function JobsTab({
       // point of the Team toggle is to give workers a view-only peek).
       // Admin tab omits this param → normal admin-full-view behavior.
       if (isWorkerView) qs.set("workerView", "1");
-      // Ghost-expiry search mode. Tells the API to match from/to against
-      // the ghost's expiry date rather than its (snapped-to-today)
-      // display date, and to stop hiding ghosts that expired more than
-      // a week ago — otherwise a backward-looking range finds nothing.
-      if (statusFilter[0] === "GHOST_EXPIRING" || statusFilter[0] === "GHOST_EXPIRED") {
-        qs.set("ghostExpiry", "1");
-      }
       // When admin is impersonating a single worker, ask the API to attach that
       // worker's reminders/pins/likes instead of the admin's. Without this the DUE
       // filter (which keys off attached reminders) would show the admin's reminders
@@ -1890,9 +2009,7 @@ export default function JobsTab({
     // filter runs inside load() and would otherwise keep the
     // previously-scoped items in place, showing e.g. team cards to
     // a worker after they'd been visible to admin.
-    // ghostExpiryMode included because it changes the API query itself
-    // (see `ghostExpiry` in load()), not just client-side row filtering.
-  }, [dateFrom, dateTo, viewAsUserIds, isTrainee, peekActive, showAdminExtras, ghostExpiryMode]);
+  }, [dateFrom, dateTo, viewAsUserIds, isTrainee, peekActive, showAdminExtras]);
 
   // Re-fetch data after offline queue syncs
   const loadRef = useRef(load);
@@ -2734,11 +2851,22 @@ export default function JobsTab({
         // Ghost-card filters — "expiring" is every ghost still inside
         // its window (the ghost only exists because the next visit is
         // still viable), "expired" is the ones already past due.
+        // NEITHER of these excludes a muted ghost, deliberately. Muting
+        // silences the COUNTS — the expired badge, the alerts, the Tasks
+        // page — and changes nothing about where the card lives. An
+        // expired-and-muted visit is still an expired visit, so it stays
+        // in the expired list wearing its "Muted" marker. Filtering it out
+        // here made the card vanish the moment it was muted, which is the
+        // behaviour this whole design replaced.
         if (sf === "GHOST_EXPIRING") {
           return !!(occ as any)._isNextOccurrenceGhost && !(occ as any)._isExpired;
         }
         if (sf === "GHOST_EXPIRED") {
           return !!(occ as any)._isNextOccurrenceGhost && !!(occ as any)._isExpired;
+        }
+        // The one option that IS about muting: review what you've silenced.
+        if (sf === "GHOST_SUPPRESSED") {
+          return !!(occ as any)._isNextOccurrenceGhost && !!(occ as any)._warningSuppressedAt;
         }
         return occ.status === sf;
       });
@@ -4087,12 +4215,12 @@ export default function JobsTab({
                       separate range-independent fetch (see
                       `expiredGhostCount`), NOT from this group's rows.
 
-                      The server only keeps expired ghosts for
-                      GHOST_EXPIRED_GRACE_DAYS (30), so this count is inherently
-                      "expired in the last month" — older ones have
-                      already faded out. Clicking narrows to the
-                      matching filter over that same window; from there
-                      the date range can be widened to find older ones. */}
+                      Nothing ages out any more — the server's grace
+                      window is gone — so this counts every outstanding
+                      stall however old, minus the ones an admin has
+                      suppressed. Clicking opens the matching filter over
+                      an unbounded range, because a narrower one would
+                      show fewer rows than the number on this chip. */}
                   {group.label === "Today" && (() => {
                     const expiredGhosts = expiredGhostCount;
                     if (expiredGhosts === 0) return null;
@@ -4112,14 +4240,14 @@ export default function JobsTab({
                         whiteSpace="nowrap"
                         _hover={{ bg: "gray.700" }}
                         css={{ animation: "seedlings-pulse-ghost-chip 2s ease-in-out infinite" }}
-                        title="Filter to next visits that expired in the last month"
+                        title="Filter to next visits that are past due"
                         onClick={(e: any) => {
                           e.stopPropagation();
                           setStatusFilter(["GHOST_EXPIRED"]);
                           // Same window as applyGhostFilter, and for the same
                           // reason — see the note there.
-                          setDatePreset("lastMonth");
-                          const d = computeDatesFromPreset("lastMonth");
+                          setDatePreset("all");
+                          const d = computeDatesFromPreset("all");
                           setDateFrom(d.from);
                           setDateTo(d.to);
                         }}
@@ -4703,11 +4831,19 @@ export default function JobsTab({
               //        entirely once it's more than a week past)
               const ghostDaysLeft = (occ as any)._daysUntilExpiry as number | undefined;
               const ghostExpired = !!(occ as any)._isExpired;
+              // Only ever true under the "Suppressed next visits" filter —
+              // the API withholds these rows from every other response.
+              const ghostSuppressed = !!(occ as any)._warningSuppressedAt;
               // Pulse once the window is closing — the user's threshold is
               // "within 3 days of expiring", and an already-expired card is
               // past that line, so it keeps pulsing rather than going quiet
               // exactly when it most needs chasing.
-              const ghostUrgent = typeof ghostDaysLeft === "number" && ghostDaysLeft <= 3;
+              // A suppressed card is being looked at deliberately, in the
+              // filter that exists to restore it. Pulsing it would be the
+              // app nagging about the one thing it was told to stop
+              // nagging about.
+              const ghostUrgent = !ghostSuppressed
+                && typeof ghostDaysLeft === "number" && ghostDaysLeft <= 3;
               const ghostChipLabel = typeof ghostDaysLeft !== "number"
                 ? "Expiring"
                 : ghostDaysLeft < 0
@@ -4725,6 +4861,10 @@ export default function JobsTab({
                 ...(ghostUrgent
                   ? { animation: "seedlings-pulse-ghost 1.8s ease-out infinite" }
                   : {}),
+                // Still there, visibly stood down. It has to read as
+                // quieter than its neighbours at a glance or "did that
+                // suppress actually take?" becomes a question every time.
+                ...(ghostSuppressed ? { opacity: 0.72 } : {}),
               } as const;
 
               // Ultra — single scan row, matches the ~44px height the
@@ -4743,6 +4883,21 @@ export default function JobsTab({
                   >
                     <HStack px="3" py="1" gap={2} h="44px" align="center" fontSize="xs">
                       <Clock size={13} style={{ color: "var(--chakra-colors-gray-200)", flexShrink: 0 }} />
+                      {ghostSuppressed && (
+                        <Badge
+                          size="xs"
+                          variant="outline"
+                          colorPalette="gray"
+                          color="gray.100"
+                          borderColor="gray.strong"
+                          flexShrink={0}
+                          whiteSpace="nowrap"
+                          title="Warning suppressed — not counted in alerts or the expired badge"
+                        >
+                          <BellOff size={10} />
+                          Muted
+                        </Badge>
+                      )}
                       <Badge size="xs" variant="solid" colorPalette="gray" bg={ghostExpired ? "gray.700" : "gray.subtle"} color={ghostExpired ? "gray.50" : "gray.fg"} flexShrink={0}>
                         {ghostChipLabel}
                       </Badge>
@@ -4792,9 +4947,11 @@ export default function JobsTab({
                             <Text fontSize="xs" color="gray.100">
                               This card will disappear once the prior visit is
                               closed and the next occurrence is generated.
-                              {ghostExpired
-                                ? " It has already passed its due date and will stop showing a week after it expired."
-                                : ""}
+                              {ghostSuppressed
+                                ? " Its warning is muted, so it isn\u2019t counted in the expired badge, the alerts or the Tasks page \u2014 but the card stays here."
+                                : ghostExpired
+                                  ? " It has already passed its due date, and it will keep showing until that is resolved \u2014 nothing hides it on a timer."
+                                  : ""}
                             </Text>
                             {(occ as any)._blockingOccurrenceId && (
                               <Button
@@ -4819,12 +4976,60 @@ export default function JobsTab({
                                 Open the last visit
                               </Button>
                             )}
+                            {/* Suppress / restore. ADMIN + SUPER ONLY, and
+                                gated on `forAdmin` rather than a bare role
+                                check so it is absent from the Worker form of
+                                this tab even for an admin who is standing in
+                                it — the same rule every other admin control
+                                here follows. The server gate is the one that
+                                enforces; this one is why a worker never sees
+                                a button they cannot press. */}
+                            {forAdmin && (occ as any)._blockingOccurrenceId && (
+                              <Button
+                                size="xs"
+                                variant="outline"
+                                mt={2}
+                                borderColor="gray.strong"
+                                color="gray.50"
+                                _hover={{ bg: "gray.700" }}
+                                onClick={(e: any) => {
+                                  // The card body toggles density on click.
+                                  e.stopPropagation();
+                                  toggleNextVisitWarning(
+                                    (occ as any)._blockingOccurrenceId,
+                                    jobTitleText(propName, clientName),
+                                    blockerLabel,
+                                    !ghostSuppressed,
+                                  );
+                                }}
+                              >
+                                {ghostSuppressed ? <Bell size={13} /> : <BellOff size={13} />}
+                                {ghostSuppressed ? "Unmute warning" : "Mute warning"}
+                              </Button>
+                            )}
                           </VStack>
                         )}
                       </VStack>
-                      <Badge size="xs" variant="solid" colorPalette="gray" bg={ghostExpired ? "gray.700" : "gray.subtle"} color={ghostExpired ? "gray.50" : "gray.fg"} flexShrink={0} whiteSpace="nowrap">
-                        {ghostChipLabel}
-                      </Badge>
+                      <VStack align="end" gap={1} flexShrink={0}>
+                        <Badge size="xs" variant="solid" colorPalette="gray" bg={ghostExpired ? "gray.700" : "gray.subtle"} color={ghostExpired ? "gray.50" : "gray.fg"} whiteSpace="nowrap">
+                          {ghostChipLabel}
+                        </Badge>
+                        {ghostSuppressed && (
+                        <Badge
+                          size="xs"
+                          variant="outline"
+                          colorPalette="gray"
+                          color="gray.100"
+                          borderColor="gray.strong"
+                          flexShrink={0}
+                          whiteSpace="nowrap"
+                          title="Warning suppressed — not counted in alerts or the expired badge"
+                        >
+                          <BellOff size={10} />
+                          Muted
+                        </Badge>
+                      )}
+                      </VStack>
                     </HStack>
                   </Card.Body>
                 </Card.Root>

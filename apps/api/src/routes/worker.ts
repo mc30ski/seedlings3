@@ -1531,10 +1531,6 @@ export default async function workerRoutes(app: FastifyInstance) {
       const ghosts = await services.jobs.listNextOccurrenceGhosts({
         from, to, cutoff,
         assigneeUserId: ghostAssigneeUserId,
-        // Set by the Jobs tab when the status filter is narrowed to
-        // expiring/expired ghosts — makes from/to search the expiry
-        // date and lifts the "older than the grace window fades away" drop.
-        matchRangeOnExpiry: String((req.query as any)?.ghostExpiry ?? "") === "1",
       });
       return [...filtered, ...ghosts];
     } catch (err: any) {
@@ -2206,6 +2202,87 @@ export default async function workerRoutes(app: FastifyInstance) {
   //
   // Per-occurrence: it describes THIS visit and must not leak onto the next
   // invoice. See JobOccurrence.customerVisibleNotes.
+  /**
+   * Suppress (or restore) the "next visit not scheduled" warning for a
+   * repeating job, by flagging the occurrence that is blocking it.
+   *
+   * ADMIN / SUPER ONLY, and deliberately not "claimer or admin" like the
+   * sibling customer-notes route. Suppressing hides a reminder from every
+   * operator's feed and subtracts it from both expiry counts — it changes
+   * what the whole company sees is outstanding, which is not a claimer's
+   * call to make about their own stalled job.
+   *
+   * Reversible by design: the flag is a timestamp, not a delete, and the
+   * "Suppressed next visits" status filter lists exactly these rows so
+   * one can be turned back on. The confirm dialog says so; this route has
+   * to keep that promise.
+   *
+   * Scoped to THIS stall. Once the next occurrence finally generates it
+   * becomes the job's most-recent one, carries no flag, and a future
+   * stall warns again. See the schema comment on
+   * JobOccurrence.nextVisitWarningSuppressedAt.
+   */
+  app.patch("/occurrences/:id/next-visit-warning", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occId = String(req.params.id);
+    const body = req.body || {};
+
+    // Roles come from `req.user`, NOT a fresh DB read — a lookup here would
+    // hand a Super using "view as Worker" their real powers back.
+    const roles = new Set((req.user?.roles ?? []) as RoleVal[]);
+    const isAdmin = roles.has(RoleVal.ADMIN) || roles.has(RoleVal.SUPER);
+    if (!isAdmin) {
+      throw new ServiceError(
+        "FORBIDDEN",
+        "Only an admin can suppress a next-visit warning.",
+        403,
+      );
+    }
+
+    const occ = await prisma.jobOccurrence.findUniqueOrThrow({
+      where: { id: occId },
+      select: {
+        id: true,
+        jobId: true,
+        startAt: true,
+        nextVisitWarningSuppressedAt: true,
+        nextVisitWarningSuppressedById: true,
+      },
+    });
+
+    const suppressed = body.suppressed === true;
+    const wasSuppressed = !!occ.nextVisitWarningSuppressedAt;
+
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.jobOccurrence.update({
+        where: { id: occId },
+        data: {
+          nextVisitWarningSuppressedAt: suppressed ? new Date() : null,
+          nextVisitWarningSuppressedById: suppressed ? uid : null,
+        },
+        select: {
+          id: true,
+          nextVisitWarningSuppressedAt: true,
+          nextVisitWarningSuppressedById: true,
+        },
+      });
+      // Suppressing removes a visit from everyone's outstanding work
+      // without anything happening to the visit itself. "Who decided we
+      // stop chasing this, and when" is the question this row answers.
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+        occurrenceId: occId,
+        jobId: occ.jobId ?? null,
+        action: suppressed
+          ? "next_visit_warning_suppressed"
+          : "next_visit_warning_restored",
+        wasSuppressed,
+        previousSuppressedById: occ.nextVisitWarningSuppressedById ?? null,
+        blockingOccurrenceStartAt: occ.startAt ? occ.startAt.toISOString() : null,
+      });
+      return updated;
+    });
+  });
+
   app.patch("/occurrences/:id/customer-notes", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const occId = String(req.params.id);

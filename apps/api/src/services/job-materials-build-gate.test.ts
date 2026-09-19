@@ -1251,74 +1251,347 @@ describe("[build-gate] client texts greet people by first name", () => {
   });
 });
 
-describe("[build-gate] the expired-ghost window is one number, not three", () => {
-  // An expired next-visit ghost is COUNTED by the server (which keeps it for
-  // GHOST_EXPIRED_GRACE_DAYS) and REVEALED by a client date preset. The two
-  // are written in different files, in different units — a day count on one
-  // side, a named preset on the other — and nothing joined them.
+describe("[build-gate] Job status buttons confirm before they fire", () => {
+  // Standing project rule: every mutation button gets a ConfirmDialog. The
+  // Services tab's four Job status buttons shipped without one and mutated
+  // on a single tap — on a phone, in a list of near-identical rows.
+  //
+  // Pause is the one that actually costs something: it DELETES every
+  // SCHEDULED occurrence on the service. Resuming does not bring them back;
+  // it creates one fresh visit on the next cycle date. A mis-tap is a
+  // deleted visit, and the old UI gave no warning and no undo.
+  const TAB = web("ui/tabs/ServicesTab.tsx");
+
+  /** The onClick expression for a StatusButton with this label. */
+  function onClickFor(label: string): string {
+    const i = TAB.indexOf(`label="${label}"`);
+    expect(i, `the ${label} button must exist`).toBeGreaterThan(-1);
+    const rest = TAB.slice(i, i + 400);
+    const m = /onClick=\{([\s\S]*?)\}\s*\n/.exec(rest);
+    expect(m, `the ${label} button must have an onClick`).toBeTruthy();
+    return m![1];
+  }
+
+  it("Pause, Resume, Accept and Archive all route through a confirm", () => {
+    for (const label of ["Pause", "Resume", "Accept"]) {
+      expect(
+        onClickFor(label),
+        `the ${label} button must open a confirm, not call patchJobStatus directly`,
+      ).toMatch(/confirmJobStatus\(/);
+    }
+    expect(
+      onClickFor("Archive"),
+      "the Archive button must open a confirm, not call archiveJob directly",
+    ).toMatch(/confirmArchiveJob\(/);
+  });
+
+  it("the pause confirm says how many visits it will delete", () => {
+    // Confirming without saying what is destroyed is just a speed bump.
+    // Scoped to the pause dialog's own body — matching `scheduledToRemove`
+    // anywhere in the file passes on the type declaration alone, which is
+    // true even if the dialog never renders it.
+    const start = TAB.indexOf('if (newStatus === "PAUSED") {');
+    expect(start, "the pause confirm branch must exist").toBeGreaterThan(-1);
+    const end = TAB.indexOf('confirmLabel: "Pause service"', start);
+    expect(end, "the pause confirm must have its button").toBeGreaterThan(start);
+    const body = TAB.slice(start, end);
+    expect(body, "the slice must cover the dialog title").toMatch(/Pause this service\?/);
+
+    expect(body, "the dialog body must read the count from the server preview")
+      .toMatch(/scheduledToRemove/);
+    // No assertion on the prose itself. "will be removed" appears in the
+    // zero/one/many branches, so pinning it passes while any two of the
+    // three are gutted — a check that cannot fail is worse than none.
+    expect(body, "the dialog must warn that resuming does not bring them back")
+      .toMatch(/cannot be undone/);
+    // UNCONDITIONALLY. It was once gated on the count being > 0, so the one
+    // irreversible fact about pausing was shown only to operators who
+    // already had a visit about to be deleted. A `warning:` whose value
+    // depends on the count is the shape of that bug.
+    expect(
+      body.slice(body.indexOf("warning:")),
+      "the pause warning must not be conditional on the scheduled count",
+    ).not.toMatch(/warning:[\s\S]{0,120}\?[\s\S]{0,240}:\s*undefined/);
+  });
+
+  it("the pause confirm names the non-destructive alternative", () => {
+    // "Pause service" and "Pause repeating" are adjacent gestures with
+    // opposite consequences for the scheduled visit — one deletes it, one
+    // holds it in place. Someone who only means to skip a cycle is one
+    // button away from the destructive one, so the destructive dialog has
+    // to name the other by the label it actually wears.
+    const start = TAB.indexOf('if (newStatus === "PAUSED") {');
+    const end = TAB.indexOf('confirmLabel: "Pause service"', start);
+    const body = TAB.slice(start, end);
+    expect(body, "the dialog must point at Pause repeating by name")
+      .toMatch(/Pause repeating/);
+    expect(body, "and say plainly that it deletes nothing")
+      .toMatch(/nothing is deleted/);
+    expect(body, "as an informational callout, not a second warning")
+      .toMatch(/bg="blue\.subtle"/);
+    // The label it points at must be the label that exists.
+    expect(TAB, 'the "Pause repeating" button must exist to be pointed at')
+      .toMatch(/label="Pause repeating"/);
+  });
+
+  it("the resume date comes from the code that will set it", () => {
+    // A preview that re-derives the cycle date independently drifts from the
+    // mutation and starts quietly lying about the date.
+    const JOBS = readFileSync(join(__dirname, "./jobs.ts"), "utf8");
+    const ADMIN = readFileSync(join(__dirname, "../routes/admin.ts"), "utf8");
+    expect(JOBS, "the resume-date helper must be exported for reuse")
+      .toMatch(/export function computeResumeStartAt\(/);
+    expect(
+      JOBS,
+      "applyJobResumeSideEffectsInTx must use the shared helper, not its own copy",
+    ).toMatch(/const nextStart = computeResumeStartAt\(/);
+    expect(ADMIN, "the preview route must use the same helper")
+      .toMatch(/computeResumeStartAt\(/);
+  });
+});
+
+describe("[build-gate] expired ghosts have no window, and nothing may imply one", () => {
+  // An expired next-visit ghost is COUNTED by the server and REVEALED by a
+  // client date preset. The two are written in different files, in different
+  // units — a day count on one side, a named preset on the other — and
+  // nothing joined them.
   //
   // They came apart exactly as you would expect: the server's grace window
   // moved from 7 days to 30 and both client presets stayed on "lastWeek", so
   // the chip counted three expired visits and the filter it opened showed one.
   // The count was right and the filter was right; they were answering
   // different questions.
+  //
+  // The grace window is now GONE — an expired ghost persists until an admin
+  // suppresses it, the Job is paused, or the stall resolves. That does not
+  // retire this rule, it tightens it: an unbounded server needs an unbounded
+  // preset, and ANY finite preset reintroduces the same split permanently
+  // rather than only after someone edits a number.
   const JOBS_SVC = readFileSync(join(__dirname, "./jobs.ts"), "utf8");
   const TAB = web("ui/tabs/JobsTab.tsx");
 
-  /** Roughly how many days back each preset reaches. Only the presets a
-   *  reveal-the-expired control could plausibly use. */
-  const PRESET_DAYS: Record<string, number> = {
-    lastWeek: 7,
-    lastMonth: 30,
-    lastYear: 365,
-    all: Number.POSITIVE_INFINITY,
-  };
-
-  function graceDays(): number {
-    const m = /export const GHOST_EXPIRED_GRACE_DAYS = (\d+);/.exec(JOBS_SVC);
-    expect(m, "GHOST_EXPIRED_GRACE_DAYS must be a plain numeric literal").toBeTruthy();
-    return Number(m![1]);
-  }
+  /** Presets that reach back far enough to reveal an unbounded set. Only
+   *  "all" ({ from: "", to: "" }) does; everything else is a finite lookback. */
+  const UNBOUNDED = new Set(["all"]);
 
   /** Every preset the client uses to reveal EXPIRED ghosts, ONE ENTRY PER
    *  SITE — not deduplicated. Both sites agreeing is the healthy case, and a
    *  Set would collapse them to one and make "did I find both?" unanswerable. */
   function expiredPresets(): string[] {
     const out: string[] = [];
-    // applyGhostFilter's ternary.
-    const t = /bucket === "expired" \? "([a-zA-Z]+)"/.exec(TAB);
+    // applyGhostFilter's ternary. "expiring" is the live-window bucket; the
+    // other branch is the one that has to reach expired rows.
+    const t = /bucket === "expiring" \? "[a-zA-Z0-9]+" : "([a-zA-Z0-9]+)"/.exec(TAB);
     if (t) out.push(t[1]);
     // The chip's own onClick, which sets the filter and the dates together.
-    const chip = /setStatusFilter\(\["GHOST_EXPIRED"\]\);[\s\S]{0,400}?setDatePreset\("([a-zA-Z]+)"\)/g;
+    const chip = /setStatusFilter\(\["GHOST_EXPIRED"\]\);[\s\S]{0,400}?setDatePreset\("([a-zA-Z0-9]+)"\)/g;
     for (let m = chip.exec(TAB); m; m = chip.exec(TAB)) out.push(m[1]);
     return out;
   }
 
-  it("parses both sides — a regex that matched nothing would pass vacuously", () => {
-    expect(graceDays()).toBeGreaterThan(0);
+  it("parses the client side — a regex that matched nothing would pass vacuously", () => {
     expect(expiredPresets().length).toBeGreaterThanOrEqual(2);
   });
 
-  it("every expired-ghost preset reaches back at least as far as the server keeps them", () => {
-    const grace = graceDays();
+  it("the server keeps no grace window at all", () => {
+    // Reintroducing the constant is how the old bug comes back: the number
+    // would be authoritative on the server and invisible to the presets below.
+    expect(
+      JOBS_SVC,
+      "GHOST_EXPIRED_GRACE_DAYS is gone on purpose — expired ghosts persist until suppressed. Reintroducing a window means updating the reveal presets in JobsTab too.",
+    ).not.toMatch(/export const GHOST_EXPIRED_GRACE_DAYS/);
+    // The cull itself, independent of what the constant is called.
+    expect(
+      JOBS_SVC,
+      "nothing may drop a ghost for being too old — that is what suppression replaced",
+    ).not.toMatch(/daysUntilExpiry < -/);
+  });
+
+  it("every expired-ghost preset reaches back indefinitely", () => {
     for (const preset of expiredPresets()) {
-      const days = PRESET_DAYS[preset];
-      expect(days, `unknown preset "${preset}" — add it to PRESET_DAYS`).toBeDefined();
       expect(
-        days,
-        `the server keeps expired ghosts ${grace} days but the filter opens "${preset}" (~${days} days), so the chip would count rows the filter hides`,
-      ).toBeGreaterThanOrEqual(grace);
+        UNBOUNDED.has(preset),
+        `expired ghosts are unbounded in time but the filter opens "${preset}", a finite lookback — the chip would count rows the filter hides`,
+      ).toBe(true);
     }
   });
 
-  it("the copy does not promise a different window than the filter applies", () => {
+  it("the copy does not promise a window the app no longer has", () => {
     // The chip's tooltip said "expired in the last week" long after the filter
-    // stopped meaning that.
-    const grace = graceDays();
-    if (grace > 7) {
-      expect(TAB, "tooltip must not still say 'last week'")
-        .not.toMatch(/expired in the last week/);
-    }
+    // stopped meaning that, then "in the last month" after the window died.
+    expect(TAB, "tooltip must not promise a lookback window")
+      .not.toMatch(/expired in the last (week|month|year)/);
+  });
+});
+
+describe("[build-gate] muting a next-visit warning is admin-only and reversible", () => {
+  // Muting silences a stalled visit in the expiry counts — and therefore in
+  // the "Expired N" chip, the alerts dropdown and the Tasks page, which read
+  // those two numbers and nothing else. It does NOT remove the card. Four
+  // things have to hold or it turns into a silent delete:
+  //   1. only ADMIN/SUPER can do it — enforced on the SERVER, not just hidden
+  //   2. the control is absent from the Worker form of the tab
+  //   3. the COUNTS drop muted rows and the LIST does not
+  //   4. the card stays findable so the warning can be turned back on
+  const WORKER_ROUTES = readFileSync(join(__dirname, "../routes/worker.ts"), "utf8");
+  const JOBS_SVC = readFileSync(join(__dirname, "./jobs.ts"), "utf8");
+  const TAB = web("ui/tabs/JobsTab.tsx");
+
+  /** The suppress route body, from its app.patch to the next app. registration. */
+  function routeBody(): string {
+    const i = WORKER_ROUTES.indexOf('app.patch("/occurrences/:id/next-visit-warning"');
+    expect(i, "the suppress route must exist").toBeGreaterThan(-1);
+    const rest = WORKER_ROUTES.slice(i + 10);
+    const j = rest.search(/\n  app\.(get|post|patch|put|delete)\(/);
+    return rest.slice(0, j === -1 ? rest.length : j);
+  }
+
+  it("the server refuses a non-admin — the UI gate is not the enforcement", () => {
+    const body = routeBody();
+    expect(body, "roles must come from req.user, never a fresh DB read (view-as bypass)")
+      .toMatch(/req\.user\?\.roles/);
+    expect(body).toMatch(/RoleVal\.ADMIN/);
+    expect(body).toMatch(/RoleVal\.SUPER/);
+    expect(body, "a non-admin caller must be rejected").toMatch(/if \(!isAdmin\)/);
+    expect(body).toMatch(/FORBIDDEN/);
+    // Deliberately NOT "claimer or admin" like the sibling customer-notes
+    // route — suppressing changes what the whole company sees is outstanding.
+    expect(body, "a claimer must not be able to suppress their own stalled job")
+      .not.toMatch(/isClaimer/);
+  });
+
+  it("the mutation is audited in the same edit", () => {
+    const body = routeBody();
+    expect(body).toMatch(/writeAudit\(/);
+    expect(body).toMatch(/next_visit_warning_suppressed/);
+    expect(body).toMatch(/next_visit_warning_restored/);
+  });
+
+  it("suppression is a reversible flag, not a destructive write", () => {
+    const body = routeBody();
+    // Clearing to null is what makes "Restore" possible. A route that only
+    // ever set a timestamp would pass every other rule here and still be a
+    // one-way door.
+    expect(body, "restoring must clear the flag")
+      .toMatch(/nextVisitWarningSuppressedAt: suppressed \? new Date\(\) : null/);
+    expect(body).not.toMatch(/\.delete\(|deleteMany/);
+  });
+
+  it("the COUNTS drop muted rows — and the LIST does not", () => {
+    // The whole shape of the feature. Filtering in the list instead was the
+    // first implementation and it was wrong: muting made the card vanish,
+    // which is not what muting means. The card is history; the count is noise.
+    const ghosts = JOBS_SVC.slice(
+      JOBS_SVC.indexOf("async listNextOccurrenceGhosts("),
+      JOBS_SVC.indexOf("async countGhostExpiry("),
+    );
+    expect(ghosts.length, "both functions must be found").toBeGreaterThan(1000);
+    expect(
+      ghosts,
+      "listNextOccurrenceGhosts must NOT skip muted ghosts — the card stays in the feed",
+    ).not.toMatch(/nextVisitWarningSuppressedAt\) continue;/);
+
+    const counts = JOBS_SVC.slice(JOBS_SVC.indexOf("async countGhostExpiry("));
+    expect(counts.slice(0, 1400), "counts must derive from listNextOccurrenceGhosts")
+      .toMatch(/this\.listNextOccurrenceGhosts\(/);
+    expect(
+      counts.slice(0, 1400),
+      "countGhostExpiry must skip muted ghosts — that is the only thing muting does",
+    ).toMatch(/if \(g\._warningSuppressedAt\) continue;/);
+  });
+
+  it("the CLIENT filters don't re-hide what the server kept", () => {
+    // The server-side rule above is only half of it. The Jobs tab runs its
+    // own predicate per status filter, and the first version excluded muted
+    // ghosts there too — written as "defensive" back when muting meant
+    // removal. Result: mute a card while looking at "Expired next visits"
+    // and it vanished out from under you, with the server entirely innocent.
+    // Two places can hide a row; both have to be checked.
+    const start = TAB.indexOf('if (sf === "GHOST_EXPIRING")');
+    const end = TAB.indexOf('if (sf === "GHOST_SUPPRESSED")');
+    expect(start, "the ghost predicates must be found").toBeGreaterThan(-1);
+    expect(end, "the suppressed predicate must be found").toBeGreaterThan(start);
+    const expiringAndExpired = TAB.slice(start, end);
+    expect(
+      expiringAndExpired,
+      "the expiring/expired filters must not exclude muted ghosts — the card stays put and wears its Muted marker",
+    ).not.toMatch(/_warningSuppressedAt/);
+  });
+
+  it("every alert surface reads those counts and nothing else", () => {
+    // If any of the three grew its own ghost query, muting would silence two
+    // surfaces and leave the third shouting.
+    const INDEX = web("../pages/index.tsx");
+    const TASKS = web("ui/pages/TasksPage.tsx");
+    expect(INDEX, "the alerts dropdown must read the counts endpoint")
+      .toMatch(/occurrences\/ghost-expiry-counts/);
+    expect(TASKS, "the Tasks page must read the same counts, passed down")
+      .toMatch(/counts\.ghostExpiredCount/);
+    expect(TASKS, "the Tasks page must not run its own ghost query")
+      .not.toMatch(/listNextOccurrenceGhosts|_isNextOccurrenceGhost/);
+  });
+
+  it("the muted card stays visible and offers the way back", () => {
+    expect(TAB, "the card must mark itself muted").toMatch(/Muted/);
+    expect(TAB, "the card must offer the unmute direction").toMatch(/Unmute warning/);
+    // A review filter, not the escape hatch — the card in the feed is that.
+    expect(TAB).toMatch(/value: "GHOST_SUPPRESSED"/);
+  });
+
+  it("the control is absent from the Worker form of the tab", () => {
+    // Anchor on the BUTTON, not on the label text — the same words appear
+    // earlier as the confirm dialog's button label, and matching that one
+    // would check the gating of the wrong thing.
+    const i = TAB.indexOf('{ghostSuppressed ? "Unmute warning" : "Mute warning"}');
+    expect(i, "the suppress control must exist").toBeGreaterThan(-1);
+    // Walk back to the conditional that renders it. `forAdmin` is the tab's
+    // admin-form flag; a bare role check would leak the button into the
+    // Worker tab for an admin standing in it.
+    const before = TAB.slice(Math.max(0, i - 1400), i);
+    expect(
+      before,
+      "the suppress control must be gated on forAdmin, not on a bare role check",
+    ).toMatch(/\{forAdmin && \(occ as any\)\._blockingOccurrenceId && \(/);
+  });
+
+  it("the confirm dialog does not claim the job keeps repeating", () => {
+    // IT DOES NOT KEEP REPEATING. A next-visit ghost exists precisely
+    // BECAUSE the cycle has stalled: the next occurrence is created by
+    // approvePayment when the money lands, or by the admin force-next
+    // escape hatch, and by nothing else. So while the warning is up the
+    // job is producing no visits at all.
+    //
+    // The first draft of this dialog said "Nothing happens to the job
+    // itself — it keeps repeating", which reads as "hide it, the schedule
+    // carries on" — the single most expensive thing an operator could
+    // wrongly believe at this button. Suppressing hides the reminder and
+    // leaves the stall exactly where it was.
+    expect(TAB, "the dialog must not imply the schedule is still running")
+      .not.toMatch(/it keeps repeating/);
+    // Equally wrong in the other direction: muting must not claim to remove
+    // the card, which is what the first implementation actually did.
+    expect(TAB, "the dialog must not claim the card leaves the feed")
+      .not.toMatch(/card leaves the job feed/);
+    expect(TAB, "the dialog must say the card stays")
+      .toMatch(/card itself stays in the feed/);
+    expect(TAB, "the dialog must say plainly that suppressing schedules nothing")
+      .toMatch(/This does not schedule the visit/);
+    // And it must name what is actually blocking this one. "Waiting on
+    // payment" is wrong for a closed-blocker ghost, where the payment
+    // already landed and only Force next will ever create the visit.
+    expect(TAB, "the dialog must name the specific blocker")
+      .toMatch(/currently <b>\{blockerLabel\}<\/b>/);
+  });
+
+  it("the confirm dialog offers pausing as the honest alternative", () => {
+    // Muting a warning about a service that has actually stopped hides the
+    // symptom and leaves the service looking active. The dialog has to say
+    // so, or the quiet option becomes the default one.
+    expect(TAB).toMatch(/Mute this warning\?/);
+    expect(TAB, "the dialog must point at pausing the service")
+      .toMatch(/Pausing the repeating service/);
+    expect(TAB, "the alternative must be an informational callout, not a warning")
+      .toMatch(/bg="blue\.subtle"/);
   });
 });
 

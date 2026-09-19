@@ -14,10 +14,9 @@ import {
   Select,
   Icon,
   Spinner,
-  Accordion,
   createListCollection,
 } from "@chakra-ui/react";
-import { Filter, LayoutList, Link2, Mail, MessageCircle, PauseCircle, Plus, RefreshCw, Star, Tag, X } from "lucide-react";
+import { Filter, LayoutList, Link2, Mail, MessageCircle, PauseCircle, Plus, RefreshCw, Star, Tag, Wrench, X } from "lucide-react";
 import { prettyStatus, clientLabel } from "@/src/lib/labels";
 import { determineRoles } from "@/src/lib/roles";
 import { clientStatusColor } from "@/src/lib/statusColors";
@@ -60,7 +59,6 @@ import { Dashboard } from "@/src/ui/components/Dashboard";
 const kindStates = ["ALL", ...CLIENT_KIND] as const;
 
 // Constant representing the status states for this entity.
-const statusStates = ["ALL", ...CLIENT_STATUS] as const;
 
 type ClientsTabProps = TabPropsType & {
   /** Additive scope — capabilities ADD as you climb the ladder.
@@ -102,6 +100,11 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
   // Variables for filtering the items.
   const [q, setQ] = useState("");
   const [highlightId, setHighlightId] = useState<string | null>(null);
+  /** Which detail panel is open per client card — at most one at a time, so
+   *  a card never grows two long lists at once. Replaces the two Accordions
+   *  that each reserved a full-width row on every card, open or not. */
+  const [openPanel, setOpenPanel] = useState<Record<string, "contacts" | "properties" | null>>({});
+
   const [statusFilter, setStatusFilter] = usePersistedState<string[]>(`${pfx}_status`, ["ALL"]);
   const [kind, setKind] = usePersistedState<string[]>(`${pfx}_kind`, ["ALL"]);
   const [vipOnly, setVipOnly] = useState(false);
@@ -139,8 +142,15 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
     [kindItems]
   );
 
+  // Two client statuses exist, so this dropdown is really "which half am I
+  // looking at". "ALL" is the default and now EXCLUDES archived, which makes
+  // a separate "Active" entry a synonym for it — dropped rather than shipped
+  // as two options that do the same thing.
   const statusItems = useMemo(
-    () => statusStates.map((s) => ({ label: s === "ALL" ? "All Statuses" : prettyStatus(s), value: s })),
+    () => [
+      { label: "Active", value: "ALL" },
+      { label: "Archived", value: "ARCHIVED" },
+    ],
     []
   );
   const statusCollection = useMemo(
@@ -231,8 +241,16 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
     }
 
     // Filter based on entity status.
+    //
+    // ARCHIVED IS HIDDEN UNLESS ASKED FOR. An archived client is a closed
+    // relationship — it belongs in the list you go looking for, not the one
+    // you scan every day. Same shape as the Services tab's "Archived only",
+    // except here the status dropdown IS that control, because ACTIVE and
+    // ARCHIVED are the only two client statuses there are.
     const sf = statusFilter[0];
-    if (sf !== "ALL") {
+    if (sf === "ALL") {
+      rows = rows.filter((i) => i.status !== "ARCHIVED");
+    } else {
       rows = rows.filter((i) => i.status === sf);
     }
 
@@ -345,84 +363,6 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
       publishInlineMessage({
         type: "ERROR",
         text: getErrorMessage("Could not load unarchive preview.", err),
-      });
-    }
-  }
-
-  // Bulk-pause services confirmation. Preview shows both what WILL be
-  // paused (ACCEPTED Jobs) and what's already paused (for context so
-  // the operator understands the total picture).
-  const [bulkPauseConfirm, setBulkPauseConfirm] = useState<
-    | { client: Client; jobsToPause: number; alreadyPaused: number }
-    | null
-  >(null);
-  const [bulkResumeConfirm, setBulkResumeConfirm] = useState<
-    | { client: Client; jobsToResume: number; individuallyPaused: number }
-    | null
-  >(null);
-
-  async function openBulkPauseConfirm(c: Client) {
-    try {
-      const preview = await apiGet<{ jobsToPause: number; alreadyPaused: number }>(
-        `/api/admin/clients/${c.id}/pause-services-preview`,
-      );
-      setBulkPauseConfirm({ client: c, ...preview });
-    } catch (err) {
-      publishInlineMessage({
-        type: "ERROR",
-        text: getErrorMessage("Could not load pause preview.", err),
-      });
-    }
-  }
-
-  async function openBulkResumeConfirm(c: Client) {
-    try {
-      const preview = await apiGet<{ jobsToResume: number; individuallyPaused: number }>(
-        `/api/admin/clients/${c.id}/resume-services-preview`,
-      );
-      setBulkResumeConfirm({ client: c, ...preview });
-    } catch (err) {
-      publishInlineMessage({
-        type: "ERROR",
-        text: getErrorMessage("Could not load resume preview.", err),
-      });
-    }
-  }
-
-  async function doBulkPause(c: Client) {
-    try {
-      const result = await apiPost<{ jobsPaused: number }>(
-        `/api/admin/clients/${c.id}/pause-services`,
-        {},
-      );
-      await load(false);
-      publishInlineMessage({
-        type: "SUCCESS",
-        text: `Paused ${result.jobsPaused} job${result.jobsPaused === 1 ? "" : "s"} for '${c.displayName}'.`,
-      });
-    } catch (err) {
-      publishInlineMessage({
-        type: "ERROR",
-        text: getErrorMessage(`Pause services failed for '${c.displayName}'.`, err),
-      });
-    }
-  }
-
-  async function doBulkResume(c: Client) {
-    try {
-      const result = await apiPost<{ jobsResumed: number }>(
-        `/api/admin/clients/${c.id}/resume-services`,
-        {},
-      );
-      await load(false);
-      publishInlineMessage({
-        type: "SUCCESS",
-        text: `Resumed ${result.jobsResumed} job${result.jobsResumed === 1 ? "" : "s"} for '${c.displayName}'.`,
-      });
-    } catch (err) {
-      publishInlineMessage({
-        type: "ERROR",
-        text: getErrorMessage(`Resume services failed for '${c.displayName}'.`, err),
       });
     }
   }
@@ -663,7 +603,25 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
           return (
             <>
               <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">{active} Active</Badge>
-              {forAdmin && <Badge colorPalette="red" variant="subtle" fontSize="xs" px="2" borderRadius="full">{archived} Archived</Badge>}
+              {/* Archived are hidden from the default list, so this count is
+                  the only thing that says they exist. Clicking it is how you
+                  get to them — a dead number next to a filter that hides
+                  them would just be a puzzle. */}
+              {forAdmin && archived > 0 && (
+                <Badge
+                  colorPalette="red"
+                  variant="subtle"
+                  fontSize="xs"
+                  px="2"
+                  borderRadius="full"
+                  cursor="pointer"
+                  _hover={{ opacity: 0.8 }}
+                  title="Show archived clients"
+                  onClick={() => setStatusFilter(["ARCHIVED"])}
+                >
+                  {archived} Archived &rarr;
+                </Badge>
+              )}
             </>
           );
         })()}
@@ -723,71 +681,109 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
             No clients or contacts match current filters.
           </Box>
         )}
-        {filtered.map((c: Client) => (
-          <Card.Root key={c.id} variant="outline">
-            <Card.Header py="2" px="3" pb="0">
-              <VStack align="start" gap={1.5}>
-                <HStack gap={1} minW={0}>
-                  {(c as any).isVip && <Text title={(c as any).vipReason || "VIP Client"} cursor="help">⭐</Text>}
-                  <Text fontSize="md" fontWeight="semibold">{clientLabel(c.displayName)}</Text>
-                </HStack>
-                <HStack gap={1} wrap="wrap">
-                  {/* Client-level "Missing contact info" — fires only when
-                      we have NO way to reach this client (no active
-                      contact carries an email or phone). Previously this
-                      used `.some`, which fired whenever ANY single
-                      contact lacked comm info — duplicating the
-                      per-contact "No contact info" tag and misleading
-                      the operator when a different contact on the same
-                      client (e.g. spouse / neighbor) DID have a phone
-                      or email and the client was perfectly reachable. */}
-                  {(() => {
-                    const active = (c.contacts ?? []).filter(
-                      (ct: any) => (ct.status ?? "ACTIVE") === "ACTIVE",
-                    );
-                    const noneReachable =
-                      active.length === 0 ||
-                      active.every(
-                        (ct: any) => !ct.email && !ct.phone && !ct.normalizedPhone,
-                      );
-                    return noneReachable ? (
-                      <Badge size="xs" colorPalette="red" variant="subtle">Missing contact info</Badge>
-                    ) : null;
-                  })()}
-                  <StatusBadge status={c.type} palette="gray" variant="outline" />
-                  <StatusBadge
-                    status={c.status}
-                    palette={clientStatusColor(c.status)}
-                    variant="subtle"
-                  />
-                </HStack>
-              </VStack>
-            </Card.Header>
-            {c.notesInternal && (
-              <Card.Body py="2" px="3" pt="1" pb="0">
-                <TruncatedText>{c.notesInternal}</TruncatedText>
-              </Card.Body>
-            )}
-            {forAdmin && parseAdminTags((c as any).adminTags).length > 0 && (
-              <Card.Body py="2" px="4" pt={c.notesInternal ? "1" : "2"} pb="0">
-                <Box display="flex" gap="4px" flexWrap="wrap">
-                  {parseAdminTags((c as any).adminTags).map((tag: string) => (
-                    <Badge
-                      key={tag}
-                      size="sm"
-                      variant="solid"
-                      colorPalette={adminTagColor(tag)}
-                      px="2"
-                      borderRadius="full"
-                    >
-                      ⚠ {adminTagLabel(tag)}
+        {filtered.map((c: Client) => {
+          // One body, not Header + two Bodies + Footer. The card used to
+          // stack a title row, a badge row, a notes block and a tags block
+          // as four separate Card sections, each with its own padding, so a
+          // client with nothing unusual about them still occupied four bands
+          // of vertical space. Matches the InventoryTab shape now: a single
+          // tight body, title and meta on two lines, and colour carried by
+          // the border instead of by a row of badges.
+          const activeContacts = (c.contacts ?? []).filter(
+              (ct: any) => (ct.status ?? "ACTIVE") === "ACTIVE",
+            );
+            // NO way to reach this client — not "some contact is missing a
+            // phone". See the long note this replaced: `.some` fired
+            // whenever any one contact lacked comm info, which duplicated
+            // the per-contact badge and cried wolf on clients who were
+            // perfectly reachable via a different contact.
+            const noneReachable =
+              activeContacts.length === 0 ||
+              activeContacts.every(
+                (ct: any) => !ct.email && !ct.phone && !ct.normalizedPhone,
+              );
+            const isVip = !!(c as any).isVip;
+            const isArchived = c.status === "ARCHIVED";
+            const tags = forAdmin ? parseAdminTags((c as any).adminTags) : [];
+            const paused = c.pausedJobsCount ?? 0;
+
+            // Border does the work a badge row used to. Unreachable is the
+            // only one that needs chasing, so it outranks VIP.
+            const borderColor = isArchived
+              ? "gray.emphasized"
+              : noneReachable
+                ? "red.emphasized"
+                : isVip
+                  ? "yellow.emphasized"
+                  : "gray.emphasized";
+
+          return (
+          <Card.Root
+            key={c.id}
+            variant="outline"
+            borderColor={borderColor}
+            opacity={isArchived ? 0.75 : 1}
+          >
+            <Card.Body py="2" px="3">
+              <VStack align="start" gap={0.5} w="full" minW={0}>
+                <HStack gap={1.5} minW={0} w="full">
+                  {isVip && (
+                    <Text title={(c as any).vipReason || "VIP Client"} cursor="help" flexShrink={0}>
+                      \u2b50
+                    </Text>
+                  )}
+                  <Text fontSize="sm" fontWeight="semibold" minW={0} truncate>
+                    {clientLabel(c.displayName)}
+                  </Text>
+                  {/* Status badge ONLY when archived. Every client in the
+                      default list is active, so an "Active" badge on all of
+                      them is a column of noise that says nothing. */}
+                  {isArchived && (
+                    <StatusBadge
+                      status={c.status}
+                      palette={clientStatusColor(c.status)}
+                      variant="subtle"
+                    />
+                  )}
+                  {noneReachable && (
+                    <Badge size="xs" colorPalette="red" variant="subtle" flexShrink={0}>
+                      Unreachable
                     </Badge>
-                  ))}
-                </Box>
-              </Card.Body>
-            )}
-            <Card.Footer py="2" px="3" pt="2">
-              <HStack gap={2} wrap="wrap" w="full">
+                  )}
+                </HStack>
+                {/* Meta line — the type badge became text here, which reads
+                    faster and costs no height of its own. */}
+                <Text fontSize="xs" color="fg.muted">
+                  {prettyStatus(c.type)}
+                  {" \u00b7 "}
+                  {activeContacts.length} contact{activeContacts.length === 1 ? "" : "s"}
+                  {paused > 0 ? ` \u00b7 ${paused} service${paused === 1 ? "" : "s"} paused` : ""}
+                </Text>
+                {tags.length > 0 && (
+                  <HStack gap="4px" wrap="wrap" pt={0.5}>
+                    {tags.map((tag: string) => (
+                      <Badge
+                        key={tag}
+                        size="xs"
+                        variant="solid"
+                        colorPalette={adminTagColor(tag)}
+                        px="2"
+                        borderRadius="full"
+                      >
+                        \u26a0 {adminTagLabel(tag)}
+                      </Badge>
+                    ))}
+                  </HStack>
+                )}
+                {c.notesInternal && (
+                  <Box pt={0.5} w="full" minW={0}>
+                    <TruncatedText>{c.notesInternal}</TruncatedText>
+                  </Box>
+                )}
+              </VStack>
+            </Card.Body>
+            <Card.Footer py="1.5" px="3" pt="1.5">
+              <HStack gap={1.5} wrap="wrap" w="full">
                 {forAdmin && (
                   <>
                     <StatusButton
@@ -801,6 +797,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                       disabled={loading}
                       busyId={statusButtonBusyId}
                       setBusyId={setStatusButtonBusyId}
+                      size="xs"
                     />
                     {/* Super-only "View as this client" — sits next to
                         Edit in the action row so operators debugging a
@@ -822,67 +819,101 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                     {showSuperExtras && c.contacts?.some((ct) => !!ct.clerkUserId) && (
                       <ViewAsClientButton clientId={c.id} clientName={c.displayName} />
                     )}
-                    {/* Client-level "Pause" / "Unpause" buttons removed
-                        in Step 3. The client-level PAUSED state was
-                        cosmetic and confusing. The real workflow —
-                        "pause this client's services" — lives on the
-                        Pause services / Resume services buttons below. */}
-                    {/* Bulk pause / resume services — Step 2 additive
-                        actions. Both shown for ACTIVE Clients so the
-                        operator can pause all Jobs at once ("client is
-                        on vacation") without walking each Property.
-                        Confirm dialog shows the exact counts before
-                        proceeding. */}
-                    {c.status === "ACTIVE" && (
-                      <>
-                        <StatusButton
-                          id={"client-pause-services"}
-                          itemId={c.id}
-                          label={"Pause services"}
-                          onClick={async () => await openBulkPauseConfirm(c)}
-                          variant={"outline"}
-                          disabled={loading}
-                          busyId={statusButtonBusyId}
-                          setBusyId={setStatusButtonBusyId}
-                        />
-                        <StatusButton
-                          id={"client-resume-services"}
-                          itemId={c.id}
-                          label={"Resume services"}
-                          onClick={async () => await openBulkResumeConfirm(c)}
-                          variant={"outline"}
-                          disabled={loading}
-                          busyId={statusButtonBusyId}
-                          setBusyId={setStatusButtonBusyId}
-                        />
-                        {/* Follow-up hint: after a Pause services action,
-                            the operator gets no on-card confirmation of
-                            what actually paused. This clickable count is
-                            that surface — jumps to Services filtered to
-                            this client + PAUSED job status. Zero-count
-                            is intentionally hidden (no signal to nudge on). */}
+                    {/* NO client-level pause. There is no such thing as a
+                        paused client — ClientStatus is ACTIVE | ARCHIVED —
+                        and the bulk "Pause services" / "Resume services"
+                        pair that used to sit here was only ever a loop that
+                        paused each Job in turn. It read as a client-level
+                        switch while actually being a one-shot batch against
+                        whatever Jobs existed at that moment (a Job added the
+                        next day scheduled normally), and the
+                        `Job.clientBulkPausedAt` bookkeeping it needed to
+                        un-do itself was a second way to pause a Job that
+                        had to stay in step with the first.
+
+                        Pausing is a per-service decision, so it lives on
+                        the service. This button is the way to get there.  */}
+                    {showAdminExtras && c.status === "ACTIVE" && (
+                      <Button
+                        // xs to match the StatusButtons beside it. This was
+                        // written before those dropped from sm to xs and was
+                        // the only oversized control left in the row.
+                        size="xs"
+                        variant="outline"
+                        px="2"
+                        colorPalette={(c.pausedJobsCount ?? 0) > 0 ? "yellow" : undefined}
+                        onClick={() =>
+                          openEventSearch(
+                            "clientsTabToServicesTabSearch",
+                            c.displayName,
+                            true,
+                            c.id,
+                          )
+                        }
+                        title={
+                          (c.pausedJobsCount ?? 0) > 0
+                            ? `Open this client's job services — ${c.pausedJobsCount} currently paused`
+                            : "Open this client's job services to pause or resume them"
+                        }
+                      >
+                        <Wrench size={12} />
+                        Job services
                         {(c.pausedJobsCount ?? 0) > 0 && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            colorPalette="yellow"
-                            px="2"
-                            onClick={() =>
-                              openEventSearch(
-                                "clientsTabToServicesTabSearch",
-                                c.displayName,
-                                true,
-                                c.id,
-                              )
-                            }
-                            title={`View this client's ${c.pausedJobsCount} paused service${c.pausedJobsCount === 1 ? "" : "s"} in the Services tab`}
-                          >
+                          <>
+                            {" · "}
                             <PauseCircle size={12} />
-                            {c.pausedJobsCount} paused
-                          </Button>
+                            {c.pausedJobsCount}
+                          </>
                         )}
-                      </>
+                      </Button>
                     )}
+                  </>
+                )}
+                {/* Contacts and Properties used to be two separate
+                    full-width Accordion.Roots, so every card carried two
+                    more rows whether or not anyone opened them — the real
+                    bulk of this card, and the thing that made it feel long.
+                    They are inline toggles in the action row now; the
+                    content only takes space once it is asked for. */}
+                <Button
+                  size="xs"
+                  variant={openPanel[c.id] === "contacts" ? "subtle" : "ghost"}
+                  colorPalette="gray"
+                  px="2"
+                  onClick={() =>
+                    setOpenPanel((prev) => ({
+                      ...prev,
+                      [c.id]: prev[c.id] === "contacts" ? null : "contacts",
+                    }))
+                  }
+                >
+                  <Icon as={FiUsers} boxSize="3" />
+                  Contacts ({c.contacts?.length ?? 0})
+                </Button>
+                <Button
+                  size="xs"
+                  variant={openPanel[c.id] === "properties" ? "subtle" : "ghost"}
+                  colorPalette="gray"
+                  px="2"
+                  onClick={() =>
+                    setOpenPanel((prev) => ({
+                      ...prev,
+                      [c.id]: prev[c.id] === "properties" ? null : "properties",
+                    }))
+                  }
+                >
+                  <Icon as={FiMapPin} boxSize="3" />
+                  Properties ({(c as any)?.properties?.length ?? 0})
+                </Button>
+                {/* Terminal actions, pushed to the far end of the row.
+                    Archive ends the relationship and cascades to every
+                    property and job under the client; it should not sit
+                    shoulder to shoulder with Edit and a navigation link.
+                    The Spacer eats the slack, so it lands right-aligned on
+                    a wide row and simply last once the row wraps. */}
+                <Spacer />
+                {forAdmin && (
+                  <>
                     {/* Archive now applies directly from ACTIVE (previous
                         two-step ACTIVE → PAUSED → ARCHIVED flow retired
                         with the PAUSED status). Friction is preserved by
@@ -894,9 +925,17 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                         label={"Archive"}
                         onClick={async () => await openArchiveClientConfirm(c)}
                         variant={"subtle"}
+                        // Light red, not grey. Archiving a client cascades to
+                        // every property and job under them — it is the end of
+                        // the relationship, not a filing action, and grey read
+                        // as neutral housekeeping. Safe to share red with
+                        // Delete because the two are never on the same card:
+                        // Archive shows for ACTIVE, Delete only for ARCHIVED.
+                        colorPalette={"red"}
                         disabled={loading}
                         busyId={statusButtonBusyId}
                         setBusyId={setStatusButtonBusyId}
+                        size="xs"
                       />
                     )}
                     {c.status === "ARCHIVED" && (
@@ -910,6 +949,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                           disabled={loading}
                           busyId={statusButtonBusyId}
                           setBusyId={setStatusButtonBusyId}
+                          size="xs"
                         />
                         <StatusButton
                           id={"client-delete"}
@@ -990,19 +1030,14 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                           colorPalette={"red"}
                           busyId={statusButtonBusyId}
                           setBusyId={setStatusButtonBusyId}
+                          size="xs"
                         />
                       </>
                     )}
                   </>
                 )}
-                <Accordion.Root collapsible w="full">
-                  <Accordion.Item key={"contacts_" + c.id} value={"Contacts"}>
-                    <Accordion.ItemTrigger>
-                      <Icon as={FiUsers} boxSize="3" />
-                      Contacts ({c.contacts?.length ?? 0})
-                    </Accordion.ItemTrigger>
-                    <Accordion.ItemContent>
-                      <Accordion.ItemBody>
+                {openPanel[c.id] === "contacts" && (
+                  <Box w="full" pt={1}>
                         <VStack mt={2}>
                           {(c as any)?.contacts?.length === 0 && (
                             <Text fontSize="xs" color="fg.muted">
@@ -1107,6 +1142,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                                         disabled={loading}
                                         busyId={statusButtonBusyId}
                                         setBusyId={setStatusButtonBusyId}
+                                        size="xs"
                                       />
                                       {/* Contact "Pause" / "Unpause" removed in Step 3.
                                           Contact-level PAUSED silently blocked
@@ -1129,6 +1165,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                                           disabled={loading}
                                           busyId={statusButtonBusyId}
                                           setBusyId={setStatusButtonBusyId}
+                                          size="xs"
                                         />
                                       )}
                                       {/* PAUSED-only Archive branch removed in Step 5 —
@@ -1150,6 +1187,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                                             disabled={loading}
                                             busyId={statusButtonBusyId}
                                             setBusyId={setStatusButtonBusyId}
+                                            size="xs"
                                           />
                                           <StatusButton
                                             id={"contact-delete"}
@@ -1180,6 +1218,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                                             colorPalette={"red"}
                                             busyId={statusButtonBusyId}
                                             setBusyId={setStatusButtonBusyId}
+                                            size="xs"
                                           />
                                         </>
                                       )}
@@ -1204,21 +1243,10 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                             </Button>
                           )}
                         </VStack>
-                      </Accordion.ItemBody>
-                    </Accordion.ItemContent>
-                  </Accordion.Item>
-                </Accordion.Root>
-                <Accordion.Root collapsible w="full">
-                  <Accordion.Item
-                    key={"properties_" + c.id}
-                    value={"Properties"}
-                  >
-                    <Accordion.ItemTrigger>
-                      <Icon as={FiMapPin} boxSize="3" />
-                      Properties ({(c as any)?.properties?.length ?? 0})
-                    </Accordion.ItemTrigger>
-                    <Accordion.ItemContent>
-                      <Accordion.ItemBody>
+                  </Box>
+                )}
+                {openPanel[c.id] === "properties" && (
+                  <Box w="full" pt={1}>
                         <VStack mt={2}>
                           {(c as any)?.properties?.length === 0 && (
                             <Text fontSize="xs" color="fg.muted">
@@ -1275,14 +1303,13 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                             ) : null;
                           })}
                         </VStack>
-                      </Accordion.ItemBody>
-                    </Accordion.ItemContent>
-                  </Accordion.Item>
-                </Accordion.Root>
+                  </Box>
+                )}
               </HStack>
             </Card.Footer>
           </Card.Root>
-        ))}
+          );
+        })}
       </VStack>
       </Box>
 
@@ -1391,129 +1418,6 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
             await takeAction(c, "unarchive");
           }}
           onCancel={() => setUnarchiveClientConfirm(null)}
-        />
-      )}
-      {/* Bulk-pause services confirmation. The message emphasizes that
-          it's the JOBS that get paused (the Client itself stays ACTIVE)
-          because operators sometimes expect a "paused client" concept.
-          "already paused" callout so the operator understands the total
-          picture without being surprised by no-op Jobs. */}
-      {bulkPauseConfirm && (
-        <ConfirmDialog
-          open
-          title="Pause services for this client?"
-          message=""
-          messageNode={
-            (() => {
-              const { client, jobsToPause, alreadyPaused } = bulkPauseConfirm;
-              if (jobsToPause === 0 && alreadyPaused === 0) {
-                return (
-                  <Text fontSize="sm" color="fg.default">
-                    <b>{client.displayName}</b> has no active jobs. Nothing to pause.
-                  </Text>
-                );
-              }
-              return (
-                <VStack align="stretch" gap={3}>
-                  <Text fontSize="sm" color="fg.default">
-                    This pauses <b>the jobs</b> for {client.displayName}, not the client themselves.
-                    The client's status stays <b>Active</b>. Their services stop until you hit
-                    "Resume services".
-                  </Text>
-                  <Box
-                    borderWidth="1px"
-                    borderColor="orange.emphasized"
-                    bg="orange.faint"
-                    borderRadius="md"
-                    p={3}
-                  >
-                    <VStack align="start" gap={1.5}>
-                      <Text fontSize="xs" color="orange.fg">
-                        • <b>{jobsToPause}</b> active job{jobsToPause === 1 ? "" : "s"} will be paused. Future scheduled visits will be removed from worker schedules.
-                      </Text>
-                      {alreadyPaused > 0 && (
-                        <Text fontSize="xs" color="orange.fg">
-                          • {alreadyPaused} job{alreadyPaused === 1 ? " that's" : "s that are"} already paused won't be touched.
-                        </Text>
-                      )}
-                      <Text fontSize="xs" color="orange.fg">
-                        • Historical work, invoices, and payments stay intact and accessible.
-                      </Text>
-                      <Text fontSize="xs" color="orange.fg">
-                        • Any outstanding invoices remain payable via the client's pay link.
-                      </Text>
-                    </VStack>
-                  </Box>
-                </VStack>
-              );
-            })()
-          }
-          confirmLabel="Pause services"
-          confirmColorPalette="orange"
-          onConfirm={async () => {
-            const c = bulkPauseConfirm.client;
-            setBulkPauseConfirm(null);
-            await doBulkPause(c);
-          }}
-          onCancel={() => setBulkPauseConfirm(null)}
-        />
-      )}
-      {bulkResumeConfirm && (
-        <ConfirmDialog
-          open
-          title="Resume services for this client?"
-          message=""
-          messageNode={
-            (() => {
-              const { client, jobsToResume, individuallyPaused } = bulkResumeConfirm;
-              if (jobsToResume === 0) {
-                return (
-                  <Text fontSize="sm" color="fg.default">
-                    {individuallyPaused > 0
-                      ? `${client.displayName} has ${individuallyPaused} job${individuallyPaused === 1 ? "" : "s"} paused individually, but nothing paused via "Pause services". Individual pauses have to be resumed one at a time on the Services tab.`
-                      : `${client.displayName} has no paused services to resume.`}
-                  </Text>
-                );
-              }
-              return (
-                <VStack align="stretch" gap={3}>
-                  <Text fontSize="sm" color="fg.default">
-                    This resumes <b>the jobs</b> that were paused via "Pause services" for {client.displayName}.
-                    Each resumed job gets one fresh next occurrence scheduled at its natural cadence date.
-                  </Text>
-                  <Box
-                    borderWidth="1px"
-                    borderColor="green.emphasized"
-                    bg="green.faint"
-                    borderRadius="md"
-                    p={3}
-                  >
-                    <VStack align="start" gap={1.5}>
-                      <Text fontSize="xs" color="green.fg">
-                        • <b>{jobsToResume}</b> job{jobsToResume === 1 ? "" : "s"} will return to Active with a fresh scheduled next visit.
-                      </Text>
-                      {individuallyPaused > 0 && (
-                        <Text fontSize="xs" color="green.fg">
-                          • {individuallyPaused} job{individuallyPaused === 1 ? " that was" : "s that were"} paused individually will stay paused (respects your prior intent).
-                        </Text>
-                      )}
-                      <Text fontSize="xs" color="green.fg">
-                        • Missed cycles during the pause are not backfilled — service resumes at the next natural cadence date.
-                      </Text>
-                    </VStack>
-                  </Box>
-                </VStack>
-              );
-            })()
-          }
-          confirmLabel="Resume services"
-          confirmColorPalette="green"
-          onConfirm={async () => {
-            const c = bulkResumeConfirm.client;
-            setBulkResumeConfirm(null);
-            await doBulkResume(c);
-          }}
-          onCancel={() => setBulkResumeConfirm(null)}
         />
       )}
     </Box>

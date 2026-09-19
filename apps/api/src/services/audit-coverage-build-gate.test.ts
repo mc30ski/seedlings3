@@ -98,7 +98,14 @@ const BASELINE: Record<string, number> = {
   "apps/api/src/services/vanityPages.ts": 4,
   "apps/api/src/services/users.ts": 3,
   "apps/api/src/services/mileage.ts": 2,
-  "apps/api/src/services/clients.ts": 2,
+  // Ratcheted 2 -> 1 on 2026-09-19. Removing the Client bulk pause/resume
+  // pair took two well-audited mutations out of this file and exposed how
+  // much slack the whole-file count had been carrying; three single-primary
+  // invariant writes now carry `audit-allow`. The remaining 1 is the
+  // multi-client identity propagation in updateContact — it edits contact
+  // rows belonging to OTHER clients, and the CONTACT_UPDATED row beside it
+  // names only the contact the operator actually edited.
+  "apps/api/src/services/clients.ts": 1,
   "apps/api/src/services/documentSyncQueue.ts": 1,
   "apps/api/src/services/companyDocuments.ts": 1,
   "apps/api/src/services/banners.ts": 1,

@@ -20,18 +20,27 @@ import {
 } from "@prisma/client";
 import type { ServicesJobs } from "../types/services";
 /**
- * How long an EXPIRED next-visit ghost stays listed before dropping out
- * silently. A month, so a visit blocked on a slow-paying client is still
- * on screen when the payment finally lands rather than having quietly
- * aged out. Beyond that the visit is water under the bridge and the card
- * is just clutter.
+ * EXPIRED NEXT-VISIT GHOSTS NEVER DROP OUT ON THEIR OWN.
  *
- * Was 7. A week turned out to be shorter than the tail on chasing a
- * payment, which is the single most common reason a next visit never
- * posts — so the reminder disappeared while the thing it was reminding
- * about was still live.
+ * There used to be a `GHOST_EXPIRED_GRACE_DAYS` here — 7 days, then 30 —
+ * after which an expired ghost stopped being listed. Both numbers were
+ * guesses at how long someone would care, and the clock ran whether or
+ * not anyone had actually dealt with the stalled visit. The reminder
+ * went quiet on its own schedule instead of on the operator's.
+ *
+ * The warning now persists until an admin explicitly suppresses it
+ * (`JobOccurrence.nextVisitWarningSuppressedAt`), which is audited and
+ * reversible, or until the stall resolves and the next occurrence
+ * actually generates. Pausing the Job also clears it — a PAUSED job
+ * never enters the candidate set at all.
+ *
+ * Consequence worth knowing: the "Expired N" chip and the expired-ghost
+ * filter are now unbounded in time, so any client date preset used to
+ * REVEAL them must reach back indefinitely ("all"). A narrower preset
+ * would count rows the filter then fails to show — the exact bug the
+ * old grace window produced when it moved from 7 to 30 and the presets
+ * stayed on "lastWeek". Gated in job-materials-build-gate.
  */
-export const GHOST_EXPIRED_GRACE_DAYS = 30;
 
 /**
  * How close to its due date a next-visit ghost has to be before it counts
@@ -65,11 +74,16 @@ import { computeBreakdown } from "@repo/money";
 // Pause / resume side-effect helpers
 //
 // Shared between `jobs.update()` (the canonical single-Job status change
-// entry point) and `clients.bulkPauseServices()` / `bulkResumeServices()`
-// (the Client-level bulk actions built on top). Both entry points must
-// produce identical side effects — future-occurrence deletion on pause,
-// recurring-chain rebuild on resume — otherwise the bulk operation drifts
-// from what an operator sees when they pause one Job manually.
+// entry point) and the CASCADES that stop or restart a Job as a
+// consequence of something larger: archiving / unarchiving a Client
+// (`clients.ts`) or a Property (`properties.ts`). Every entry point must
+// produce identical side effects — future-occurrence deletion on stop,
+// recurring-chain rebuild on restart — otherwise a cascaded Job ends up
+// in a different state from one an operator paused by hand.
+//
+// There is deliberately NO bulk "pause this Client's services" caller any
+// more. That was a loop presented as a client-level state; pausing is a
+// per-service decision and lives on the service.
 //
 // Both helpers accept an existing tx so the caller can compose them into
 // a larger transaction (e.g. bulk-pausing 5 Jobs all-or-nothing).
@@ -137,6 +151,29 @@ export async function applyJobPauseSideEffectsInTx(
  * `sideEffectAction` distinguishes unpause from unarchive in the audit
  * trail — defaults to the unpause label so existing callers stay stable.
  */
+/**
+ * Where a resumed Job's next visit lands: step forward from the last
+ * occurrence by `frequencyDays` until the date is today-or-later. A long
+ * pause therefore produces ONE future visit, not a backlog of missed ones.
+ *
+ * Exported so the pause/resume confirm dialog can show the operator the
+ * real date before they commit, computed by the same code that will do it.
+ * A preview that re-derives this independently is a preview that will
+ * eventually lie.
+ */
+export function computeResumeStartAt(lastStartAt: Date, freq: number, now: Date = new Date()): Date {
+  const nextStart = new Date(lastStartAt);
+  // date-handling-allow: recurrence — adds calendar days to the last
+  // occurrence's startAt to compute the next cycle. Same pattern as
+  // approvePayment / forceCreateNextOccurrence; the documented Vercel-UTC
+  // exemption applies (see date-handling-build-gate.test.ts rule 8).
+  nextStart.setDate(nextStart.getDate() + freq);
+  while (nextStart.getTime() < now.getTime()) {
+    nextStart.setDate(nextStart.getDate() + freq);
+  }
+  return nextStart;
+}
+
 export async function applyJobResumeSideEffectsInTx(
   tx: Prisma.TransactionClient,
   currentUserId: string,
@@ -197,16 +234,7 @@ export async function applyJobResumeSideEffectsInTx(
   });
   if (!lastOcc?.startAt || !lastOcc.job) return;
 
-  const nextStart = new Date(lastOcc.startAt);
-  // date-handling-allow: recurrence — adds calendar days to the last
-  // occurrence's startAt to compute the next cycle. Same pattern as
-  // approvePayment / forceCreateNextOccurrence; the documented Vercel-UTC
-  // exemption applies (see date-handling-build-gate.test.ts rule 8).
-  nextStart.setDate(nextStart.getDate() + freq);
-  const now = new Date();
-  while (nextStart.getTime() < now.getTime()) {
-    nextStart.setDate(nextStart.getDate() + freq);
-  }
+  const nextStart = computeResumeStartAt(lastOcc.startAt, freq);
   const nextEnd = lastOcc.endAt
     ? new Date(nextStart.getTime() + (lastOcc.endAt.getTime() - lastOcc.startAt.getTime()))
     : null;
@@ -2456,8 +2484,9 @@ export const jobs: ServicesJobs = {
    * hasn't reached CLOSED (payment landed) and therefore the auto-
    * generation of the next one hasn't fired.
    *
-   * Expired ghosts stay listed for GHOST_EXPIRED_GRACE_DAYS and then
-   * disappear on their own.
+   * Expired ghosts NEVER expire out on their own — they stay until the
+   * stall resolves, the Job is paused, or an admin suppresses the
+   * warning. See the note on GHOST_EXPIRING_SOON_DAYS above.
    *
    * Purpose: gives the operator/worker a visible reminder to chase
    * the blocking occurrence (usually a payment) instead of just
@@ -2492,20 +2521,9 @@ export const jobs: ServicesJobs = {
     to?: string;
     assigneeUserId?: string | null;
     cutoff?: Date | null;
-    /**
-     * "Ghost expiry search" mode, set when the caller is explicitly
-     * filtering the Jobs tab to expiring/expired next-visit ghosts.
-     *
-     * Lifts the GHOST_EXPIRED_GRACE_DAYS drop, so a range reaching back
-     * further than that window actually finds the older ones. Without it
-     * they fade out of the normal feed on their own once the window
-     * passes.
-     */
-    matchRangeOnExpiry?: boolean;
   }) {
     const fromDate = params?.from ? etMidnight(params.from as EtDateKey) : null;
     const toDate = params?.to ? etEndOfDay(params.to as EtDateKey) : null;
-    const byExpiry = !!params?.matchRangeOnExpiry;
 
     // Load all candidate jobs. Small scale (<a few hundred per business);
     // Prisma handles the include tree without a materially large query.
@@ -2575,6 +2593,12 @@ export const jobs: ServicesJobs = {
       // "Paused repeating to review" queue already surfaces these, so a
       // ghost here reports the same job in two places.
       if (latest.status === JobOccurrenceStatus.STREAM_PAUSED) continue;
+      // NOTE: a suppressed warning is NOT filtered here, deliberately.
+      // Suppressing silences the alerts and the counts; it does not erase
+      // the visit from the feed. The card stays exactly where it was, in
+      // its own day group, carrying `_warningSuppressedAt` — which is
+      // also what makes it findable again to turn the warning back on.
+      // The filtering lives in countGhostExpiry instead.
 
       const effectiveFreq = latest.frequencyDays ?? job.frequencyDays;
       if (!effectiveFreq || effectiveFreq <= 0) continue;
@@ -2611,11 +2635,9 @@ export const jobs: ServicesJobs = {
       const daysUntilExpiry = etDaysBetween(etToday(), expiresOn);
       const isExpired = daysUntilExpiry < 0;
 
-      // An expired ghost is worth chasing for GHOST_EXPIRED_GRACE_DAYS;
-      // after that the visit is water under the bridge and the card would
-      // just be permanent clutter. It drops out silently — no
-      // notification, no count.
-      if (!byExpiry && isExpired && daysUntilExpiry < -GHOST_EXPIRED_GRACE_DAYS) continue;
+      // NO GRACE WINDOW. An expired ghost stays until the stall resolves,
+      // the Job is paused, or an admin suppresses it. Nothing ages out on
+      // a timer — see the note where GHOST_EXPIRED_GRACE_DAYS used to be.
 
       // Date-range filter (matches the caller's from/to on the real
       // occurrences query). Always anchored on the ghost's own date,
@@ -2670,6 +2692,13 @@ export const jobs: ServicesJobs = {
         _daysUntilExpiry: daysUntilExpiry,
         _isExpired: isExpired,
         _ghostDate: rawStartAt.toISOString(),
+        /** Set when an admin suppressed this warning. Only ever populated
+         *  when the caller asked for suppressed ghosts — in the normal
+         *  feed a ghost carrying this would not be here at all. */
+        _warningSuppressedAt: (latest as any).nextVisitWarningSuppressedAt
+          ? ((latest as any).nextVisitWarningSuppressedAt as Date).toISOString()
+          : null,
+        _warningSuppressedById: (latest as any).nextVisitWarningSuppressedById ?? null,
         _blockingOccurrenceId: latest.id,
         _blockingOccurrenceStatus: latest.status,
         /** startAt of the last real visit — the client widens its date
@@ -2686,7 +2715,14 @@ export const jobs: ServicesJobs = {
    * Next-visit ghosts that need the operator's attention, bucketed.
    *
    *   expiringSoon — due within GHOST_EXPIRING_SOON_DAYS. Still fixable.
-   *   expired      — already past due, inside the grace window.
+   *   expired      — already past due. No upper bound: there is no grace
+   *                  window any more, so this counts every stall however
+   *                  old.
+   *
+   * THIS is where a suppressed warning is dropped — not in the list. The
+   * ghost card stays in the feed as history; what suppressing buys you is
+   * silence from the "Expired N" chip, the alerts dropdown and the Tasks
+   * page, all three of which read these two numbers and nothing else.
    *
    * Deliberately independent of any caller date range. Ghosts are dated on
    * the day the visit was due, so a forward-looking Jobs range contains
@@ -2706,6 +2742,9 @@ export const jobs: ServicesJobs = {
     let expiringSoon = 0;
     let expired = 0;
     for (const g of ghosts as any[]) {
+      // The whole point of suppressing: still on the board, no longer
+      // shouting. Every alert surface derives from these two numbers.
+      if (g._warningSuppressedAt) continue;
       const d = g._daysUntilExpiry as number;
       if (d < 0) expired++;
       else if (d <= GHOST_EXPIRING_SOON_DAYS) expiringSoon++;

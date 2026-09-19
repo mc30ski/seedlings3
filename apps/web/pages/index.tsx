@@ -254,8 +254,10 @@ export default function HomePage() {
   // stream-pauses live.
   const [streamPauseRemindersCount, setStreamPauseRemindersCount] = useState<number>(0);
   // Next-visit ghost placeholders needing attention. Two buckets: due within
-  // three days (still fixable) and already past due inside the one-week
-  // grace. Deliberately range-independent — see countGhostExpiry.
+  // three days (still fixable) and already past due. The expired bucket has
+  // no upper bound — there is no grace window any more, so it counts every
+  // outstanding stall however old, minus the ones an admin has suppressed.
+  // Deliberately range-independent — see countGhostExpiry.
   const [ghostExpiringCount, setGhostExpiringCount] = useState<number>(0);
   const [ghostExpiredCount, setGhostExpiredCount] = useState<number>(0);
 
