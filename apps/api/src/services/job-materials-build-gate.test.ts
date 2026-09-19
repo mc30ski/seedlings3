@@ -1337,6 +1337,26 @@ describe("[build-gate] nothing pulses on a finished visit", () => {
     expect(statuses.sort()).toEqual(["CLOSED", "COMPLETED", "PENDING_PAYMENT"]);
   });
 
+  it("a finished visit stays quiet even when it is assigned", () => {
+    // TWO RULES COLLIDE HERE and the precedence is a decision, not an
+    // accident:
+    //   "an assigned job must pulse"  vs  "a finished visit must not"
+    // Status wins. The work is done; there is nothing to read before
+    // starting. An assigned, awaiting-payment visit with guidance is
+    // therefore silent — confirmed as intended 2026-09-20 after it was
+    // reported as a bug, because from the outside it looks like one.
+    //
+    // Encoded as: the finished-visit flag must be the FIRST term, so
+    // assignment can never override it by short-circuit.
+    const i = TAB.indexOf("pulse={");
+    expect(i, "the drawer's pulse expression must exist").toBeGreaterThan(-1);
+    const expr = TAB.slice(i, TAB.indexOf("}", TAB.indexOf("guidanceOpened", i)));
+    expect(expr, "the pulse must be gated on the finished-visit flag first")
+      .toMatch(/pulse=\{\s*\n?\s*!pulseIsPointless/);
+    expect(expr, "assignment must not be able to override status")
+      .toMatch(/guidanceHasOwner/);
+  });
+
   it("every pulse decision consults it", () => {
     // Each entry is a decision POINT: either it names the flag directly, or
     // it reads a variable that does (checked by its declaration).
@@ -1346,7 +1366,9 @@ describe("[build-gate] nothing pulses on a finished visit", () => {
       // the instruction rows, and the instruction chip on the ultra row
       ...(TAB.match(/data-instruction-pulse(-icon)?=\{[^}]*\}/g) ?? []),
       // the guidance chip's own gate
-      ...(TAB.match(/const unread = [^;]*;/g) ?? []),
+      // `=\s*` not `= ` — the expression wraps onto the next line now, and a
+      // hardcoded space silently dropped this decision point from the list.
+      ...(TAB.match(/const unread =\s*[^;]*;/g) ?? []),
     ];
     // Four now, not five: the duplicate compact drawer that used to carry a
     // fifth `pulse=` prop was removed. The number is a floor against the

@@ -5593,6 +5593,18 @@ export default function JobsTab({
     occ.status === "PENDING_PAYMENT" ||
     occ.status === "CLOSED";
 
+  /** SOMEONE IS ON THE HOOK FOR THIS VISIT.
+   *
+   *  An unclaimed job may stay quiet — nobody has picked it up, so there is
+   *  no one to warn. The moment it is assigned there IS someone who has to
+   *  know how the job is done before they arrive, so guidance pulses for
+   *  them whether it is a written note or only reference photos. Photos
+   *  alone stay quiet on an unclaimed card and nowhere else.
+   *
+   *  Observers are watching, not doing — they do not count as assigned, the
+   *  same rule the Unclaimed filter uses. */
+  const guidanceHasOwner = (occ.assignees ?? []).some((a: any) => a.role !== "observer");
+
   /** Whether this occurrence has anything to show in the Guidance drawer.
    *  ONE predicate for every density — the compact and expanded cards each
    *  had their own and they disagreed. */
@@ -5606,7 +5618,12 @@ export default function JobsTab({
           count={(occ.propertyPhotos ?? []).length}
           guidanceNote={(occ as any).guidanceNote ?? null}
           defaultExpanded={false}
-          pulse={!pulseIsPointless && !!(occ as any).guidanceNote && !guidanceOpened.has(occ.id)}
+          pulse={
+            !pulseIsPointless
+            && guidanceSectionApplies
+            && (!!(occ as any).guidanceNote || guidanceHasOwner)
+            && !guidanceOpened.has(occ.id)
+          }
           onExpandedChange={(open) => {
             if (!open) return;
             setGuidanceOpened((prev) => {
@@ -6304,7 +6321,13 @@ export default function JobsTab({
                           const note = (occ as any).guidanceNote as string | null | undefined;
                           const photos = (occ.propertyPhotos ?? []).length;
                           if (!note && photos === 0) return null;
-                          const unread = !pulseIsPointless && !!note && !guidanceOpened.has(occ.id);
+                          // A note always pulses. Photos alone pulse only
+                          // once somebody is assigned to go and do the work.
+                          const unread =
+                            !pulseIsPointless
+                            && (!!note || guidanceHasOwner)
+                            && (!!note || photos > 0)
+                            && !guidanceOpened.has(occ.id);
                           return (
                           <Box
                             flexShrink={0}
