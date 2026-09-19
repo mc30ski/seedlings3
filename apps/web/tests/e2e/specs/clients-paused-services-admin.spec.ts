@@ -97,31 +97,55 @@ test.describe("Clients tab — paused services affordance", () => {
       await expect(search).toBeVisible({ timeout: 15_000 });
       await search.fill(CLIENT_WITH);
 
-      // 1. The "N paused" pill renders. Since we've narrowed to a single
-      // client card, the button locator on the page is unambiguous.
-      // Match specifically "1 paused" (digit prefix) so the filter
-      // toggle button up in the header doesn't false-positive.
-      const pausedPill = page.getByRole("button", { name: /^\s*1 paused\s*$/i });
-      await expect(pausedPill).toBeVisible({ timeout: 15_000 });
+      // 1. The client card's "Job services" button carries the paused count.
+      //
+      // This used to be a separate "N paused" pill that only appeared when
+      // something was paused. It merged into the always-present Job services
+      // button when the client-level bulk Pause/Resume pair was removed —
+      // two buttons to the same destination was exactly the clutter that
+      // change was about. The COUNT is still the signal; it is now a suffix
+      // rather than a button of its own.
+      const jobServicesBtn = page.getByRole("button", { name: /Job services/i });
+      await expect(jobServicesBtn).toBeVisible({ timeout: 15_000 });
+      await expect(
+        jobServicesBtn,
+        "the paused count must still be on the button for a client with paused work",
+      ).toHaveText(/Job services.*1/);
 
-      // Confirm the unpaused client's card would NOT have this pill:
-      // swap the search to the other client and assert no "N paused"
-      // pill exists in the visible list. Match "<digit> paused" so the
-      // "Show only clients with paused services" filter toggle (which
-      // has no digit prefix) doesn't false-positive.
+      // The unpaused client gets the same button with NO count — the button
+      // is the way into Services for every client, the number is the alarm.
       await search.fill(CLIENT_WITHOUT);
-      await expect(page.getByRole("button", { name: /\d+ paused/i })).toHaveCount(0, { timeout: 15_000 });
+      const plainBtn = page.getByRole("button", { name: /Job services/i });
+      await expect(plainBtn).toBeVisible({ timeout: 15_000 });
+      await expect(
+        plainBtn,
+        "a client with nothing paused must show no count",
+      ).not.toHaveText(/\d/);
 
-      // 2. Click the pill → lands in Services with q + PAUSED filter set.
+      // 2. Click it → lands in Services narrowed to this client.
       await search.fill(CLIENT_WITH);
-      await expect(pausedPill).toBeVisible();
-      await pausedPill.click();
+      await expect(jobServicesBtn).toBeVisible();
+      await jobServicesBtn.click();
       const servicesSearch = page.locator('input#services-search');
       await expect(servicesSearch).toBeVisible({ timeout: 15_000 });
       await expect(servicesSearch).toHaveValue(CLIENT_WITH);
-      // ServicesTab renders a chip strip that shows the active job-status
-      // filter label ("Paused") when non-ALL. Assert that chip exists.
-      await expect(page.getByText(/Paused/).first()).toBeVisible();
+
+      // ...at ALL statuses, deliberately. The handoff used to force the job
+      // status filter to PAUSED, because its only caller was a paused-count
+      // pill. This button now exists so an operator can PAUSE a service —
+      // which means the RUNNING ones are what they came to act on, and a
+      // paused-only list would hide every one of them. ServicesTab shows a
+      // chip naming the active job-status filter only when it is not ALL.
+      // Asserted on the FILTER STATE, not on page text: this client has a
+      // paused service, so its card carries a "Paused" status badge and a
+      // text match finds that instead of the filter chip.
+      const jobStatusFilter = await page.evaluate(() =>
+        localStorage.getItem("seedlings_services_jobStatus"),
+      );
+      expect(
+        jobStatusFilter,
+        "landing on Services must not pre-filter to paused only",
+      ).toBe(JSON.stringify(["ALL"]));
 
       // 3. Back to Clients — toggle "Paused only" and the unpaused
       // client should disappear from the list.
