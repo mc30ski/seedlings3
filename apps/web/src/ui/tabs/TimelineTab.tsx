@@ -481,7 +481,6 @@ export default function TimelineTab({ isSuper = false }: Props) {
 
   return (
     <Box w="full">
-      <Box mb={3}>
       <TabExplainer storageKey={`seedlings:timelineTab:guideOpen:${isSuper ? "super" : "admin"}`} title="What the Timeline is">
         {isSuper ? (
           <>
@@ -509,7 +508,6 @@ export default function TimelineTab({ isSuper = false }: Props) {
           </>
         )}
       </TabExplainer>
-      </Box>
       <HStack mb={2} gap={2}>
         <Button
           size="sm"

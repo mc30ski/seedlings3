@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
-import { DEFAULT_PAYMENT_REQUEST_EXPIRY_HOURS, isOccurrenceOverdue, isPaymentLinkExpired, loadPaymentRequestExpiryHours } from "@/src/lib/overdueRule";
+import { DEFAULT_PAYMENT_REQUEST_EXPIRY_HOURS, isJobOverdue, isPaymentLinkExpired, loadPaymentRequestExpiryHours } from "@/src/lib/overdueRule";
 import {
   Badge,
   Box,
@@ -636,7 +636,7 @@ export default function ServicesTab({
       // old inline filter: PENDING_PAYMENT rows only count once their
       // invoice pay link has expired.
       const count = (Array.isArray(list) ? list : []).filter((o) =>
-        isOccurrenceOverdue(o, { todayKey, expiryHours, nowMs }),
+        isJobOverdue(o, { todayKey, expiryHours, nowMs }),
       ).length;
       setOverdueCount(count);
     } catch {
@@ -1111,7 +1111,6 @@ export default function ServicesTab({
     <Box w="full">
       {/* Role-tailored orientation. Services is admin+super only — no
           worker branch exists because the tab is not mounted for them. */}
-      <Box mb={3}>
         <TabExplainer
           storageKey={`seedlings:servicesTab:guideOpen:${isSuper ? "super" : "admin"}`}
           title="What Services holds"
@@ -1149,7 +1148,6 @@ export default function ServicesTab({
             </>
           )}
         </TabExplainer>
-      </Box>
       {forAdmin && (
         <Box mb={3}>
           <Dashboard
@@ -1230,7 +1228,7 @@ export default function ServicesTab({
             )}
           </Box>
           {overdueActive && (
-            <Badge size="sm" colorPalette="red" variant="solid">Overdue</Badge>
+            <Badge size="sm" colorPalette="red" variant="solid">Job Overdue</Badge>
           )}
           {kind[0] !== "ALL" && (
             <Badge size="sm" colorPalette="blue" variant="solid">
@@ -1750,13 +1748,16 @@ export default function ServicesTab({
                 if (tf === "ESTIMATE" && !o.isEstimate) return false;
                 if (tf === "TENTATIVE" && !o.isTentative) return false;
                 if (overdueActive) {
-                  // Done statuses are never Overdue.
-                  if ((new Set(["COMPLETED", "CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"])).has(o.status)) return false;
-                  // PENDING_PAYMENT gets the pay-link-expired grace
-                  // period — hide rows whose invoice link is still
-                  // live so the "Overdue" filter matches the count
-                  // predicate in lib/overdueRule.ts.
-                  if (o.status === "PENDING_PAYMENT" && !isPaymentLinkExpired(o as any, overdueExpiryHours)) return false;
+                  // Shared predicate, not a local copy of it. This block used
+                  // to hand-roll its own status set plus a pay-link check —
+                  // a fourth transcription of a rule that already existed in
+                  // lib/overdueRule.ts, and one that drifted the moment the
+                  // rule changed. Everything about what counts as overdue
+                  // now lives in one place.
+                  if (!isJobOverdue(o as any, {
+                    todayKey: bizDateKey(new Date()),
+                    expiryHours: overdueExpiryHours,
+                  })) return false;
                 }
                 if (skippedNextOnly) {
                   const reason = (o.payment as any)?.nextOccurrenceSkipReason;

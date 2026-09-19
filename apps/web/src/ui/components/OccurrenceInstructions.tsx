@@ -21,17 +21,38 @@ type Props = {
   startInEditMode?: boolean;
   /** Current overall guidance description (separate from per-photo captions) */
   guidanceNote?: string | null;
+  /** Fired whenever the drawer opens or closes. The pulse that draws
+   *  attention to this section lives on the PARENT (it has to wrap the
+   *  whole box), so the parent needs to know the moment it has been read —
+   *  otherwise it keeps flashing at someone already looking at it. */
+  onExpandedChange?: (expanded: boolean) => void;
+  /** Breathe the header band to say "there is something unread in here".
+   *  The pulse has to live on the HEADER, not on a wrapper around the whole
+   *  drawer: a ring drawn around a blue box in the same blue reads as
+   *  nothing. Only ever applied while collapsed — an open drawer is being
+   *  read, and pulsing at it is just noise. */
+  pulse?: boolean;
   /** Called after edit saves, so parent can update count */
   onUpdated?: (newCount: number) => void;
 };
 
 type AllPhoto = PropertyPhotoItem & { selected: boolean };
 
-export default function OccurrenceInstructions({ occurrenceId, count, propertyId, canEdit, defaultExpanded = true, startInEditMode, guidanceNote, onUpdated }: Props) {
+export default function OccurrenceInstructions({ occurrenceId, count, propertyId, canEdit, defaultExpanded = true, startInEditMode, guidanceNote, onUpdated, onExpandedChange, pulse }: Props) {
   const [photos, setPhotos] = useState<PropertyPhotoItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  const [expanded, setExpanded] = useState(defaultExpanded);
+  const [expanded, setExpandedState] = useState(defaultExpanded);
+  /** Every path that changes `expanded` goes through here — there are four
+   *  of them (header toggle, two Manage buttons, the empty-state button) and
+   *  a parent that missed one would keep pulsing at an open drawer. */
+  const setExpanded = (next: boolean | ((v: boolean) => boolean)) => {
+    setExpandedState((v) => {
+      const resolved = typeof next === "function" ? next(v) : next;
+      if (resolved !== v) onExpandedChange?.(resolved);
+      return resolved;
+    });
+  };
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const [editing, setEditing] = useState(!!startInEditMode);
   const [allPhotos, setAllPhotos] = useState<AllPhoto[]>([]);
@@ -105,15 +126,51 @@ export default function OccurrenceInstructions({ occurrenceId, count, propertyId
     );
   }
 
+  // DARKER THAN blue.faint ON PURPOSE. The job weather panel is
+  // `blue.emphasized` border on `blue.faint` — byte-identical to what this
+  // drawer used to be — so on an expanded card the two read as one repeated
+  // element. Guidance now carries a solid header band matching the saturation
+  // of its collapsed-card chip (`blue.400`), which is what ties the two
+  // together for someone who tapped that chip to get here.
+  //
+  // Dialled back one step from `blue.solid` (#2563eb), which was a hard
+  // saturated band — correct in being unmistakable, too heavy for something
+  // that sits at the top of every card carrying guidance. `blue.muted` header
+  // over a `blue.subtle` body keeps the header reading as a header, stays a
+  // full step darker than the weather panel, and stops shouting.
   return (
-    <Box borderWidth="1px" borderColor="blue.emphasized" borderRadius="md" bg="blue.faint" overflow="hidden">
+    <Box
+      borderWidth="1px"
+      borderColor="blue.strong"
+      borderRadius="md"
+      bg="blue.subtle"
+      overflow="hidden"
+      // THE PULSE LIVES HERE, NOT ON THE HEADER INSIDE.
+      //
+      // `overflow="hidden"` on this Box clips its children's box-shadows.
+      // With the animation on the header, the expanding ring — the part that
+      // actually reads as a pulse — was cut off at this boundary every
+      // frame, leaving only the background fade behind. Hence two rounds of
+      // "it is not pulsating, it is just changing colour": it literally was
+      // only changing colour. An element's OWN shadow is not clipped by its
+      // own overflow, so the ring escapes from here.
+      data-guidance-pulse={pulse && !expanded ? "1" : undefined}
+      css={pulse && !expanded
+        ? { animation: "seedlings-pulse-guidance 1.8s ease-in-out infinite" }
+        : undefined}
+    >
       <HStack
         px={3} py={2}
+        // Transparent while pulsing so the Box's breathing background shows
+        // through — collapsed, this band IS the whole drawer, and an opaque
+        // fill here would hide the animation completely.
+        bg={pulse && !expanded ? "transparent" : "blue.muted"}
+        color="blue.fg"
         cursor="pointer"
         onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); }}
         justify="space-between"
       >
-        <HStack gap={1.5} fontSize="xs" fontWeight="semibold" color="blue.fg">
+        <HStack gap={1.5} fontSize="xs" fontWeight="semibold">
           <Camera size={14} />
           <Text>Guidance ({displayCount})</Text>
         </HStack>
@@ -127,7 +184,7 @@ export default function OccurrenceInstructions({ occurrenceId, count, propertyId
               Manage
             </Button>
           )}
-          {expanded ? <ChevronUp size={14} color="var(--chakra-colors-blue-500)" /> : <ChevronDown size={14} color="var(--chakra-colors-blue-500)" />}
+          {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
         </HStack>
       </HStack>
 
@@ -140,7 +197,7 @@ export default function OccurrenceInstructions({ occurrenceId, count, propertyId
           )}
           {loading && <Text fontSize="xs" color="fg.muted">Loading...</Text>}
           {photos.map((photo, idx) => (
-            <HStack key={photo.id} gap={3} py={2} borderTopWidth="1px" borderColor="blue.muted" align="start" onClick={(e) => e.stopPropagation()}>
+            <HStack key={photo.id} gap={3} py={2} borderTopWidth="1px" borderColor="blue.emphasized" align="start" onClick={(e) => e.stopPropagation()}>
               <Box
                 flexShrink={0}
                 w="80px"
@@ -288,7 +345,7 @@ export default function OccurrenceInstructions({ occurrenceId, count, propertyId
 export function InstructionsBadge({ count }: { count: number }) {
   if (count === 0) return null;
   return (
-    <HStack gap={1.5} px="2" py="1" bg="blue.faint" borderWidth="1px" borderColor="blue.emphasized" borderRadius="md">
+    <HStack gap={1.5} px="2" py="1" bg="blue.subtle" borderWidth="1px" borderColor="blue.strong" borderRadius="md">
       <Camera size={12} color="var(--chakra-colors-blue-600)" />
       <Text fontSize="xs" fontWeight="semibold" color="blue.fg">Guidance ({count})</Text>
     </HStack>

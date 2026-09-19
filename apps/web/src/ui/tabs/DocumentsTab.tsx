@@ -655,7 +655,6 @@ export default function DocumentsTab({ isSuper = false }: Props) {
 
   return (
     <Box w="full">
-      <Box mb={3}>
       <TabExplainer storageKey={`seedlings:documentsTab:guideOpen:${isSuper ? "super" : "admin"}`} title="What Documents holds">
         {isSuper ? (
           <>
@@ -683,7 +682,6 @@ export default function DocumentsTab({ isSuper = false }: Props) {
           </>
         )}
       </TabExplainer>
-      </Box>
       {isSuper && <DocumentSyncStatusPanel refreshNonce={syncPanelNonce} />}
       <HStack gap={2} mb={2}>
         <Button

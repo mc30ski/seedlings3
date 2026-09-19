@@ -154,7 +154,6 @@ export default function ActivityTab({ role = "worker" }: TabRolePropType) {
 
   return (
     <Box>
-      <Box mb={3}>
       <TabExplainer storageKey="seedlings:activityTab:guideOpen" title="What Engagement shows">
         <ExplainerText>
           Who has been using the app, drawn from the <Em>audit log</Em> — every approved user with
@@ -167,7 +166,6 @@ export default function ActivityTab({ role = "worker" }: TabRolePropType) {
           super admin.
         </ExplainerText>
       </TabExplainer>
-      </Box>
       <Heading size="md" mb="3">
         Engagement by User (for last 30 days)
       </Heading>

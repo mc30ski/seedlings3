@@ -497,7 +497,14 @@ export default function BreadcrumbNav({
           </Box>
         )}
         {headerRight && (
-          <Box flexShrink={0}>
+          // Takes the remaining width rather than hugging the tabs, so a
+          // caller can push something to the SCREEN edge with its own
+          // Spacer. Previously `flexShrink={0}`, which left everything
+          // packed against the breadcrumb no matter what the caller did —
+          // the prop is documented as "the right edge of the row" and was
+          // not that. Callers that just want their content next to the tabs
+          // are unaffected: content still starts at the left of this box.
+          <Box flex="1" minW={0} display="flex" alignItems="center">
             {headerRight}
           </Box>
         )}

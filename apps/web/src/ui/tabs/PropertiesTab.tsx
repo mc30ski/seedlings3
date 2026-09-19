@@ -353,7 +353,6 @@ export default function PropertiesTab({
 
   return (
     <Box w="full">
-      <Box mb={3}>
       <TabExplainer storageKey={`seedlings:propertiesTab:guideOpen:${showAdminExtras ? "admin" : "worker"}`} title="What Properties holds">
         {showAdminExtras ? (
           <>
@@ -380,7 +379,6 @@ export default function PropertiesTab({
           </>
         )}
       </TabExplainer>
-      </Box>
       <HStack mb={2} gap={2}>
         <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-subtle)" }}>
           <RefreshCw size={14} />

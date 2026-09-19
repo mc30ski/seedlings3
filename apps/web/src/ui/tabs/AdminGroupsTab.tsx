@@ -178,7 +178,6 @@ export default function AdminGroupsTab({ scope }: AdminGroupsTabProps = {}) {
 
   return (
     <Box w="full" pb={8}>
-      <Box mb={3}>
       <TabExplainer storageKey="seedlings:groupsTab:guideOpen:admin" title="What Crews are">
         <ExplainerText>
           Named teams that get assigned to jobs together, so a recurring visit does not have to be
@@ -191,7 +190,6 @@ export default function AdminGroupsTab({ scope }: AdminGroupsTabProps = {}) {
           when they claim work.
         </ExplainerText>
       </TabExplainer>
-      </Box>
       {/* Title row — kept intentionally identical in shape to the
           Worker "My Groups" view below (same outer Box, same HStack
           props, same Text sizing) so the title's font size and
@@ -1004,7 +1002,6 @@ function WorkerMyCrews() {
 
   return (
     <Box w="full" pb={8}>
-      <Box mb={3}>
       <TabExplainer storageKey="seedlings:groupsTab:guideOpen:worker" title="What your crews are">
         <ExplainerText>
           The crews you are part of, and who else is on each one. Your role on a crew is either{" "}
@@ -1015,7 +1012,6 @@ function WorkerMyCrews() {
           are not shown here. Crews are set up by an admin.
         </ExplainerText>
       </TabExplainer>
-      </Box>
       <HStack mb={3} gap={2} wrap="wrap" align="center">
         <Text fontSize="lg" fontWeight="semibold" lineHeight="1.2">My Groups</Text>
         <Badge size="sm" colorPalette="gray" variant="subtle">{crews.length}</Badge>

@@ -68,6 +68,7 @@ type ShortcutCounts = {
   ledgerFollowupCount: number;
   dueToRecordCount: number;
   streamPauseRemindersCount: number;
+  activitiesOverdueCount: number;
   ghostExpiringCount: number;
   ghostExpiredCount: number;
   pendingUsersCount: number;
@@ -109,6 +110,7 @@ type ShortcutHandlers = {
   goToApprovals: () => void;
   goToEstimateFollowups: () => void;
   goToOverdue: () => void;
+  goToActivitiesOverdue: () => void;
   goToUnclaimed: () => void;
   goToTimeline: () => void;
   // Collapsible-section "Goto Task" handlers — same close-Tasks-and-
@@ -302,10 +304,21 @@ export default function TasksPage({
 
           {isAdmin && counts.overdueCount > 0 && (
             <ShortcutCard
-              label="Overdue jobs"
+              label="Job Overdue"
               count={counts.overdueCount}
               dotColor="#EF4444"
               onReview={wrap(handlers.goToOverdue)}
+            />
+          )}
+          {/* Directly after Job Overdue — same rule, split by workflow, and
+              the alerts dropdown pushes them in this order. The
+              alert-ordering gate enforces that the two lists agree. */}
+          {isAdmin && counts.activitiesOverdueCount > 0 && (
+            <ShortcutCard
+              label="Activities Overdue"
+              count={counts.activitiesOverdueCount}
+              dotColor="#F59E0B"
+              onReview={wrap(handlers.goToActivitiesOverdue)}
             />
           )}
           {isSuper && (

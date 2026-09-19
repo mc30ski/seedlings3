@@ -241,6 +241,52 @@ html, body {
   }
 }
 
+/* GUIDANCE SECTION — the blue twin of `seedlings-pulse-instruction`, which
+   breathes a row's BACKGROUND rather than only ringing it. A ring alone was
+   not enough here: the ring is blue and the drawer it surrounds is blue, so
+   at 0.45 alpha it read as nothing at all. Same geometry as the yellow
+   instruction row, one hue over. */
+/* Two scale steps apart (emphasized <-> subtle), matching the yellow
+   instruction row exactly. The first version swung emphasized <-> muted —
+   ADJACENT steps — which read as "slightly changing colour" rather than a
+   pulse. The distance travelled is the whole effect. */
+@keyframes seedlings-pulse-guidance {
+  0% {
+    background-color: var(--chakra-colors-blue-emphasized);
+    box-shadow: 0 0 0 0 rgba(var(--pulse-blue), 0.7);
+  }
+  70% {
+    background-color: var(--chakra-colors-blue-subtle);
+    box-shadow: 0 0 0 7px rgba(var(--pulse-blue), 0);
+  }
+  100% {
+    background-color: var(--chakra-colors-blue-emphasized);
+    box-shadow: 0 0 0 0 rgba(var(--pulse-blue), 0);
+  }
+}
+
+/* GUIDANCE ICON — a blue twin of the instruction pulse above, and
+   deliberately identical in every respect except the tint.
+   The two chips sit side by side on a collapsed card. The instruction
+   keyframe scales 1.25 -> 1, so pairing it with a plain ring pulse made the
+   guidance chip look both smaller and fainter — read as "less important"
+   rather than "different kind of thing". Same scale, same 8px ring, same
+   0.8 alpha, same duration at the call site. */
+@keyframes seedlings-pulse-guidance-icon {
+  0% {
+    transform: scale(1.25);
+    box-shadow: 0 0 0 0 rgba(var(--pulse-blue), 0.8);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 8px rgba(var(--pulse-blue), 0);
+  }
+  100% {
+    transform: scale(1.25);
+    box-shadow: 0 0 0 0 rgba(var(--pulse-blue), 0);
+  }
+}
+
 /* Anyone who has asked the OS for less motion gets the colour, not the
    movement — the row still reads as the urgent one. */
 @media (prefers-reduced-motion: reduce) {
@@ -248,7 +294,12 @@ html, body {
     animation: none !important;
     background-color: #fde047 !important;
   }
-  [data-instruction-pulse-icon] {
+  [data-instruction-pulse-icon],
+  [data-guidance-pulse-icon] {
     animation: none !important;
+  }
+  [data-guidance-pulse] {
+    animation: none !important;
+    background-color: var(--chakra-colors-blue-emphasized) !important;
   }
 }

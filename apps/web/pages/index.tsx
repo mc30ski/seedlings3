@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useState, useCallback, useRef, ReactNode } from "react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
-import { Badge, Box, Button, Container, Dialog, HStack, Portal, Spinner, Text, VStack } from "@chakra-ui/react";
+import { Badge, Box, Button, Container, Dialog, HStack,
+  Spacer, Portal, Spinner, Text, VStack } from "@chakra-ui/react";
 import { AlertTriangle, ArrowLeftCircle, Banknote, Link2, LineChart } from "lucide-react";
 import OnClockBubble from "@/src/ui/components/OnClockBubble";
 import { useOffline } from "@/src/lib/offline";
@@ -11,7 +12,8 @@ import MileageReminderInterceptor from "@/src/ui/components/MileageReminderInter
 import { apiGet } from "@/src/lib/api";
 import { setCompressionDefaults } from "@/src/lib/imageRedact";
 import { bizDateKey, bizToday, bizTomorrow, bizYesterday, bizAddDays, bizHour } from "@/src/lib/dates";
-import { isOccurrenceOverdue, loadPaymentRequestExpiryHours } from "@/src/lib/overdueRule";
+import { overdueKind, loadPaymentRequestExpiryHours } from "@/src/lib/overdueRule";
+import { ActiveTabExplainerButton } from "@/src/ui/components/TabExplainer";
 import { computeDatesFromPreset } from "@/src/lib/datePresets";
 import BrandLabel from "@/src/ui/helpers/BrandLabel";
 import { useRouter } from "next/router";
@@ -2623,6 +2625,10 @@ chip: false, bucket: t.bucket }));
   // expired (per PAYMENT_REQUEST_TOKEN_EXPIRY_HOURS setting) — matches
   // "we can't do anything until the link times out" mental model.
   const [overdueCount, setOverdueCount] = useState(0);
+  /** TASK / REMINDER / FOLLOWUP / EVENT past their date. Same fetch and the
+   *  same rule as Job Overdue — they differ only by workflow, so counting
+   *  them in one pass keeps the two numbers from ever drifting apart. */
+  const [activitiesOverdueCount, setActivitiesOverdueCount] = useState(0);
   const loadOverdue = useCallback(async () => {
     if (!isAdmin) { setOverdueCount(0); markAlertLoaded("overdue"); return; }
     try {
@@ -2634,15 +2640,21 @@ chip: false, bucket: t.bucket }));
         loadPaymentRequestExpiryHours(),
       ]);
       const nowMs = Date.now();
-      const count = (Array.isArray(list) ? list : []).filter((o) =>
-        isOccurrenceOverdue(o, { todayKey: today, expiryHours, nowMs })
+      let jobs = 0;
+      let activities = 0;
+      for (const o of Array.isArray(list) ? list : []) {
         // Extra 60-day lower bound preserves the badge's existing
         // scope (don't scan ancient history for the alert count).
-        && o.startAt && bizDateKey(o.startAt) >= fromStr,
-      ).length;
-      setOverdueCount(count);
+        if (!o.startAt || bizDateKey(o.startAt) < fromStr) continue;
+        const kind = overdueKind(o, { todayKey: today, expiryHours, nowMs });
+        if (kind === "job") jobs++;
+        else if (kind === "activity") activities++;
+      }
+      setOverdueCount(jobs);
+      setActivitiesOverdueCount(activities);
     } catch {
       setOverdueCount(0);
+      setActivitiesOverdueCount(0);
     }
     markAlertLoaded("overdue");
   }, [isAdmin]);
@@ -2984,6 +2996,20 @@ chip: false, bucket: t.bucket }));
     // Also dispatch event in case the tab is already mounted
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent("adminJobs:showUnclaimed"));
+    }, 50);
+  }, [gotoOperatorSurface]);
+
+  const goToActivitiesOverdue = useCallback(() => {
+    try {
+      localStorage.setItem("seedlings_adminJobs_showActivitiesOverdue", "1");
+      // Same "View as" clear as goToOverdue — the count is company-wide, so
+      // landing on a list scoped to one worker would show fewer rows than
+      // the badge promised.
+      localStorage.setItem("seedlings_adminjobs_workers", JSON.stringify([]));
+    } catch {}
+    gotoOperatorSurface({ superTab: "jobs", superCategory: "Work", adminTab: "jobs" });
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent("adminJobs:showActivitiesOverdue"));
     }, 50);
   }, [gotoOperatorSurface]);
 
@@ -4239,7 +4265,11 @@ chip: false, bucket: t.bucket }));
               // alerts they can't act on from the current tab. See the
               // scope var definitions near the top of this component.
               const alerts: { label: string; count: number; bg: string; color: string; dotColor: string; onClick: () => void }[] = [];
-              if (scopeIsAdmin && overdueCount > 0) alerts.push({ label: "Overdue", count: overdueCount, bg: "#FEE2E2", color: "#991B1B", dotColor: "#EF4444", onClick: goToOverdue });
+              if (scopeIsAdmin && overdueCount > 0) alerts.push({ label: "Job Overdue", count: overdueCount, bg: "#FEE2E2", color: "#991B1B", dotColor: "#EF4444", onClick: goToOverdue });
+              // Sits next to Job Overdue because they are the same rule split
+              // by workflow — an operator reading "3 / 2" should see at a
+              // glance that those are five late things, in two queues.
+              if (scopeIsAdmin && activitiesOverdueCount > 0) alerts.push({ label: "Activities Overdue", count: activitiesOverdueCount, bg: "#FEF3C7", color: "#92400E", dotColor: "#F59E0B", onClick: goToActivitiesOverdue });
               if (scopeIsSuper && pending > 0) alerts.push({ label: "Pending Users", count: pending, bg: "#FFEDD5", color: "#9A3412", dotColor: "#FB923C", onClick: goToApprovals });
               // Payments to review — combined alert that rolls up
               // pending-admin-approval payments + outstanding client
@@ -4693,6 +4723,7 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
             pendingUsersCount: pending,
             estimateFollowupCount,
             overdueCount,
+            activitiesOverdueCount,
             unclaimedCount,
             timelineUrgentCount,
             announcementCount,
@@ -4717,6 +4748,7 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
             goToApprovals,
             goToEstimateFollowups,
             goToOverdue,
+            goToActivitiesOverdue,
             goToUnclaimed,
             goToTimeline,
             goToPaymentApprovals,
@@ -4791,7 +4823,13 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
             </Box>
           }
           headerRight={
-            <HStack gap={3} align="center">
+            <HStack gap={3} align="center" w="full">
+              {/* TRIAL (worker Jobs only): the "How Jobs work" explainer's
+                  trigger, moved out of the content area. Inline, that
+                  disclosure held a full row at the top of every visit even
+                  when collapsed; here it costs nothing until opened. Scoped
+                  to one tab deliberately — if it reads well it can replace
+                  the inline header everywhere. */}
               <Box
                 as="button"
                 aria-label="Copy link to this tab"
@@ -4835,6 +4873,13 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
             >
                 <Link2 size={16} />
               </Box>
+              {/* Whatever explainer the current tab mounted, pushed to the
+                  screen edge — a page-level affordance, not part of the tab
+                  path. Unconditional: the button renders nothing on tabs that
+                  have no explainer, and there is deliberately no per-tab
+                  mapping here to fall out of date when a tab is added. */}
+              <Spacer />
+              <ActiveTabExplainerButton />
             </HStack>
           }
         />

@@ -790,7 +790,6 @@ export default function SuppliesTab({
             • super  → everything. */}
       {/* Own bottom margin: the surrounding stack has no `gap` here, so
           without it the explainer butts straight into the filters. */}
-      <Box mb={3}>
   <TabExplainer
           storageKey={`seedlings:suppliesTab:guideOpen:${showSuperExtras ? "super" : showAdminExtras ? "admin" : "worker"}`}
           title="How supplies are tracked"
@@ -839,7 +838,6 @@ export default function SuppliesTab({
             </>
           )}
         </TabExplainer>
-      </Box>
       {/* THE OLD WORKER NOTICE IS GONE, and it was not merely redundant: it
           said the cost shown was "the per-unit charge to your payout when you
           use that supply on a job". Supplies have never come out of a

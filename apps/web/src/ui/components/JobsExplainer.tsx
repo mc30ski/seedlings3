@@ -105,6 +105,13 @@ const COLORS: Array<{ name: string; bg: string; border: string; palette: string;
   { name: "Bright purple", bg: "purple.subtle", border: "purple.solid", palette: "purple", means: "High priority. Only a reminder can carry this flag, and it overrides every colour above" },
 ];
 
+/** The storage key, exported so the out-of-line trigger in the breadcrumb row
+ *  targets the same explainer. Two literals would silently drift and the
+ *  button would toggle nothing. */
+export function jobsExplainerKey(role: "worker" | "admin" | "super") {
+  return `seedlings:jobsTab:guideOpen:${role}`;
+}
+
 export default function JobsExplainer({
   isAdminView,
   isSuperView,
@@ -123,7 +130,7 @@ export default function JobsExplainer({
   const isContractor = workerType === "CONTRACTOR";
 
   return (
-    <TabExplainer storageKey={`seedlings:jobsTab:guideOpen:${role}`} title="How Jobs work">
+    <TabExplainer storageKey={jobsExplainerKey(role)} title="How Jobs work">
       {/* ── Who this feed is, per role ── */}
       {isSuperView ? (
         <>

@@ -319,7 +319,6 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
 
   return (
     <Box w="full" pb={8}>
-      <Box mb={3}>
       <TabExplainer storageKey={`seedlings:profileTab:guideOpen:${isAdmin ? "admin" : "worker"}`} title="What Profile is for">
         {isAdmin ? (
           <>
@@ -346,7 +345,6 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
           </>
         )}
       </TabExplainer>
-      </Box>
       {/* Admin: user selector */}
       {isAdmin && (
         <HStack mb={4} gap={2} align="center" wrap="wrap">

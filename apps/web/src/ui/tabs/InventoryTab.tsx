@@ -1712,7 +1712,6 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
           per class: contractors are billed for what they take out,
           employees never are, and trainees cannot reserve at all
           (see canWorkerReserve + the workerRateBadge below). */}
-      <Box mb={3}>
         <TabExplainer
           storageKey={`seedlings:inventoryTab:guideOpen:${showSuperExtras ? "super" : showAdminExtras ? "admin" : "worker"}`}
           title="How Inventory works"
@@ -1788,7 +1787,6 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
             </>
           )}
         </TabExplainer>
-      </Box>
       {/* Top toolbar — tab-level actions only (refresh, scan-to-find,
           admin Add). Section-scoped controls (search / compact /
           kind / status / liked / active-filter chips) live inside

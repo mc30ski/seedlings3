@@ -252,7 +252,6 @@ export default function AdminComplianceTab() {
 
   return (
     <Box w="full" pb={8}>
-      <Box mb={3}>
       <TabExplainer storageKey="seedlings:complianceTab:guideOpen" title="What Compliance tracks">
         <ExplainerText>
           Policies the crew must read and sign, and who has signed what. A policy is{" "}
@@ -265,7 +264,6 @@ export default function AdminComplianceTab() {
           own Profile.
         </ExplainerText>
       </TabExplainer>
-      </Box>
       <HStack justify="space-between" mb={3} wrap="wrap" gap={2} align="center">
         <HStack gap={3} align="center" flexWrap="wrap">
           <VStack align="start" gap={0}>

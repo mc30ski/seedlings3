@@ -1251,6 +1251,677 @@ describe("[build-gate] client texts greet people by first name", () => {
   });
 });
 
+describe("[build-gate] Guidance does not look like the weather panel", () => {
+  // Both sit on an expanded job card, one above the other. The Guidance
+  // drawer was `blue.emphasized` border on `blue.faint` — byte-identical to
+  // JobWeather — so the two read as one repeated element and the operator
+  // had no idea which they had opened.
+  //
+  // This rule does not pin Guidance's exact colours; it pins the thing that
+  // went wrong: the two panels must not share a surface treatment.
+  const GUIDE = web("ui/components/OccurrenceInstructions.tsx");
+  const WEATHER = web("ui/components/JobWeather.tsx");
+
+  /** The (borderColor, bg) pair on a component's outermost panel Box. */
+  function surface(src: string, label: string): string {
+    const m = /borderColor="(blue\.[a-z]+)"[^>]*?bg="(blue\.[a-z]+)"|bg="(blue\.[a-z]+)"[^>]*?borderColor="(blue\.[a-z]+)"/.exec(src);
+    expect(m, `${label} must paint a blue panel surface`).toBeTruthy();
+    const border = m![1] ?? m![4];
+    const bg = m![2] ?? m![3];
+    return `${border} on ${bg}`;
+  }
+
+  it("the two panels do not share a surface", () => {
+    const g = surface(GUIDE, "Guidance");
+    const w = surface(WEATHER, "JobWeather");
+    expect(g, `Guidance and JobWeather both render "${g}" — they are indistinguishable`)
+      .not.toBe(w);
+  });
+
+  it("Guidance is the darker of the two", () => {
+    // Ordered light -> dark. Guidance carries the saturation of its
+    // collapsed-card chip so the two read as the same feature.
+    const RANK = ["faint", "subtle", "muted", "emphasized", "strong", "solid"];
+    const step = (s: string) => RANK.indexOf(s.split(" on ")[1].split(".")[1]);
+    expect(
+      step(surface(GUIDE, "Guidance")),
+      "Guidance's fill must be at least as dark as the weather panel's",
+    ).toBeGreaterThan(step(surface(WEATHER, "JobWeather")));
+  });
+
+  it("the header band states its own ink, whatever fill it uses", () => {
+    // A band that paints a background without stating its ink inherits
+    // whatever is above it — the shipped bug where a panel's labels went
+    // white-on-white in three themes. See reference-theming.
+    //
+    // Deliberately NOT pinned to one fill: this started as `blue.solid` +
+    // `blue.contrast` and was softened to `blue.muted` + `blue.fg`. Both are
+    // fine; a band with a fill and NO ink is not.
+    // Anchor on the band's OPENING TAG and read to its close, rather than a
+    // fixed window around `cursor="pointer"` — adding the pulse props pushed
+    // the fill 250 chars away from that anchor and the rule started failing
+    // on correct code.
+    const i = GUIDE.indexOf("<HStack\n        px={3} py={2}");
+    expect(i, "the clickable header band must exist").toBeGreaterThan(-1);
+    const band = GUIDE.slice(i, GUIDE.indexOf(">", GUIDE.indexOf("justify=", i)));
+    expect(band, "the anchored block must be the clickable band")
+      .toMatch(/cursor="pointer"/);
+    // The fill may be conditional — it goes transparent while pulsing so the
+    // Box's animated background shows through — so accept either form.
+    const bg = /bg=(?:"(blue\.[a-z]+)"|\{[^}]*"(blue\.[a-z]+)"[^}]*\})/.exec(band);
+    expect(bg, "the header band must paint a fill").toBeTruthy();
+    expect(band, `the header paints ${bg![1] ?? bg![2]} but states no ink`)
+      .toMatch(/color="(blue\.(fg|contrast)|fg\.[a-z]+)"/);
+  });
+});
+
+describe("[build-gate] the collapsed Guidance drawer says it is unread", () => {
+  // A collapsed drawer with an unread note in it looks exactly like one with
+  // nothing in it. The pulse is the only thing that distinguishes them, so
+  // it has to actually be visible — and the first attempt was not: a
+  // `seedlings-pulse-blue` RING drawn around a blue drawer, which read as
+  // nothing at all. It has to breathe the BACKGROUND, the way the yellow
+  // instruction rows beside it do.
+  const GUIDE = web("ui/components/OccurrenceInstructions.tsx");
+  const CSS = web("styles/globals.css");
+
+  function keyframe(name: string): string {
+    const i = CSS.indexOf(`@keyframes ${name} {`);
+    expect(i, `${name} must exist`).toBeGreaterThan(-1);
+    return CSS.slice(i, CSS.indexOf("100%", i) + 200);
+  }
+
+  it("the section pulse breathes a background, not just a ring", () => {
+    const k = keyframe("seedlings-pulse-guidance");
+    const instr = keyframe("seedlings-pulse-instruction");
+    // EVERY stop, not "somewhere in the keyframe". Dropping the 0% breath
+    // leaves two more behind and a `toMatch` still passes, while the
+    // animation no longer starts from the darker fill — a visibly weaker
+    // pulse that the rule called healthy.
+    const breaths = (b: string) =>
+      (b.match(/background-color: var\(--chakra-colors-[a-z]+-[a-z]+\)/g) ?? []).length;
+    expect(
+      breaths(k),
+      "the guidance pulse must breathe its background at every stop, as the instruction row does",
+    ).toBe(breaths(instr));
+    expect(breaths(k), "a ring alone is invisible on a drawer of the same hue")
+      .toBeGreaterThan(0);
+
+    // HOW FAR it travels, not just that it moves. The first version swung
+    // between ADJACENT scale steps (emphasized <-> muted) and read as a
+    // slight colour shift; the instruction row it sits under spans two.
+    const RANK = ["faint", "subtle", "muted", "emphasized", "strong", "solid"];
+    const distance = (b: string) => {
+      const steps = [...b.matchAll(/--chakra-colors-[a-z]+-([a-z]+)\)/g)]
+        .map((m) => RANK.indexOf(m[1]))
+        .filter((x) => x >= 0);
+      expect(steps.length, "the keyframe must name scale steps").toBeGreaterThan(1);
+      return Math.max(...steps) - Math.min(...steps);
+    };
+    expect(
+      distance(k),
+      "the guidance pulse must travel as far on the token scale as the instruction row",
+    ).toBe(distance(instr));
+    const shape = (b: string) => (b.match(/box-shadow: 0 0 0 (\d+px|0) rgba\(var\(--pulse-[a-z]+\), ([\d.]+)\)/g) ?? [])
+      .map((r) => r.replace(/--pulse-[a-z]+/, "--pulse-X")).join("|");
+    expect(shape(k), "guidance and instruction rows must ring identically")
+      .toBe(shape(instr));
+  });
+
+  it("the pulse is NOT inside the drawer's overflow:hidden box", () => {
+    // THE BUG THIS RULE EXISTS FOR. `overflow: hidden` clips a CHILD's
+    // box-shadow. With the animation on the header band inside the drawer,
+    // the expanding ring — the part that reads as a pulse — was cut off at
+    // that boundary every frame and only the background fade survived. It
+    // took two rounds of "it's not pulsating, it's just changing colour"
+    // to find, because the animation was running correctly the whole time.
+    //
+    // An element's own shadow is not clipped by its own overflow, so the
+    // pulse must sit ON the clipping box, never within it.
+    const anim = GUIDE.indexOf('animation: "seedlings-pulse-guidance');
+    expect(anim, "the pulse animation must exist").toBeGreaterThan(-1);
+
+    const clip = GUIDE.indexOf('overflow="hidden"');
+    expect(clip, "the drawer's clipping box must exist").toBeGreaterThan(-1);
+
+    // Both must belong to the SAME element: the outermost Box. Its opening
+    // tag starts at `<Box` and ends at the first `>` on its own line.
+    const box = GUIDE.indexOf("<Box\n      borderWidth");
+    expect(box, "the outer drawer Box must be found").toBeGreaterThan(-1);
+    const boxTagEnd = GUIDE.indexOf("\n    >", box);
+    expect(
+      clip > box && clip < boxTagEnd,
+      "overflow:hidden must be on the outer Box",
+    ).toBe(true);
+    expect(
+      anim > box && anim < boxTagEnd,
+      "the pulse must be on the SAME element as overflow:hidden, not a child of it — a child's ring is clipped away",
+    ).toBe(true);
+  });
+
+  it("the collapsed band does not paint over the breathing background", () => {
+    // Collapsed, the header IS the whole drawer. An opaque fill on it hides
+    // the Box's animated background behind it, which leaves the ring alone
+    // doing the work.
+    expect(GUIDE, "the header must go transparent while pulsing")
+      .toMatch(/bg=\{pulse && !expanded \? "transparent"/);
+  });
+
+  it("the pulse stops when the drawer is opened", () => {
+    // `!expanded` is what stops it. Pulsing at an open drawer is noise.
+    //
+    // Checked on the ANIMATION's own condition, not "somewhere in the file":
+    // the data-attribute next to it also reads `pulse && !expanded`, so a
+    // file-wide match passed while the css gate had been loosened to bare
+    // `pulse` and the drawer pulsed while open.
+    const anim = GUIDE.indexOf('animation: "seedlings-pulse-guidance');
+    const css = GUIDE.lastIndexOf("css={", anim);
+    expect(css, "the animation must sit inside a css prop").toBeGreaterThan(-1);
+    expect(
+      GUIDE.slice(css, anim),
+      "the animation's own condition must require the drawer to be collapsed",
+    ).toMatch(/pulse && !expanded/);
+    expect(GUIDE, "and marked for the reduced-motion rule")
+      .toMatch(/data-guidance-pulse=\{pulse && !expanded/);
+  });
+
+  it("reduced motion silences the section too", () => {
+    const i = CSS.indexOf("@media (prefers-reduced-motion: reduce)");
+    const block = CSS.slice(i, i + 700);
+    expect(block, "the pulsing header band must opt into reduced motion")
+      .toMatch(/\[data-guidance-pulse\]/);
+  });
+});
+
+describe("[build-gate] the stacked card panels share one vertical rhythm", () => {
+  // Instructions, Guidance and Job Weather stack directly on top of each
+  // other at the top of an expanded card. They are siblings in a plain flow
+  // container with no `gap`, so each one's margins are the ONLY thing
+  // setting the space around it — and margins from two neighbours add up.
+  //
+  // They shipped as mt1/mb1, mt1/mb1 and mt2: the gap between instructions
+  // and guidance was 2 units, guidance to weather was 3, and the column
+  // looked arbitrary. The rule is one-directional margins — every panel owns
+  // its TOP gap and sets no bottom — so the space between any two is one
+  // value, not a sum.
+  //
+  // This list grew three times after I declared it fixed: the access note and
+  // the address had no top gap, then the two badge rows (one with none, one
+  // with mt1). EVERY block in the stack has to be in here — a single one left
+  // out is a visible seam, and it is always the one nobody listed.
+  const TAB = web("ui/tabs/JobsTab.tsx");
+  const WEATHER = web("ui/components/JobWeather.tsx");
+
+  const PANELS: [string, string, RegExp][] = [
+    ["instructions banner", TAB, /<VStack align="stretch" gap="\d+"([^>]*)>/],
+    ["guidance wrapper", TAB, /<Box w="full"([^>]*)>\s*\n\s*<OccurrenceInstructions/],
+    ["job weather", WEATHER, /<Box\n\s+w="full"([\s\S]{0,40}?)borderWidth/],
+    // Anchored on `accessNotes`, not on `orange.faint` — the offline banner
+    // earlier in the file paints the same fill and was matching first.
+    ["access note", TAB, /accessNotes && \(\s*\n\s*<HStack([\s\S]{0,400}?)bg="orange\.faint"/],
+    ["property address", TAB, /<Box fontSize="sm"([^>]*)>\s*\n\s*<MapLink/],
+    ["badge row (expanded)", TAB, /<HStack gap=\{1\} flexShrink=\{0\} alignItems="center" wrap="wrap"([^>]*)>/],
+    ["badge row (semi)", TAB, /<HStack gap=\{1\} flexWrap="wrap"([^>]*)>/],
+  ];
+
+  it("every stacked panel owns its top gap and sets no bottom margin", () => {
+    const tops: string[] = [];
+    for (const [name, src, re] of PANELS) {
+      const m = re.exec(src);
+      expect(m, `${name}: could not find its container`).toBeTruthy();
+      const attrs = m![1];
+      const mt = /mt=\{?"?(\d+)"?\}?/.exec(attrs);
+      expect(mt, `${name} must set an explicit top margin`).toBeTruthy();
+      expect(
+        attrs,
+        `${name} sets a bottom margin — it would add to the next panel's top gap`,
+      ).not.toMatch(/\bmb=/);
+      tops.push(mt![1]);
+    }
+    expect(
+      new Set(tops).size,
+      `the stacked panels use different top gaps (${tops.join(", ")})`,
+    ).toBe(1);
+
+    // The instruction rows stack inside their own VStack. Its `gap` is a
+    // FOURTH rhythm unless it matches — three different spacings in one
+    // column is what "the spacing sucks" meant.
+    const inner = /<VStack align="stretch" gap="(\d+)"/.exec(TAB);
+    expect(inner, "the instruction rows' container must be found").toBeTruthy();
+    expect(
+      inner![1],
+      `instruction rows sit ${inner![1]} apart while the panels sit ${tops[0]} apart`,
+    ).toBe(tops[0]);
+  });
+});
+
+describe("[build-gate] every tab explainer is driven from the breadcrumb", () => {
+  // The "what is this tab" disclosure used to hold a full row at the top of
+  // every tab even when collapsed. Its trigger now lives at the right edge of
+  // the breadcrumb row, and the panel renders NOTHING until opened.
+  //
+  // The failure mode is silence. The trigger and the panel are in different
+  // component trees; if they lose their connection the button toggles nothing
+  // at all — no error, no visible change, just a dead control.
+  const INDEX = web("../pages/index.tsx");
+  const TAB_EXPLAINER = web("ui/components/TabExplainer.tsx");
+
+  it("a closed explainer renders nothing — not an empty wrapper", () => {
+    // The entire point. A wrapper with margin still holds the space this
+    // change exists to reclaim.
+    expect(TAB_EXPLAINER, "closed must return null")
+      .toMatch(/\/\/ NOTHING AT ALL when closed[\s\S]{0,200}?if \(!open\) return null;/);
+    expect(
+      TAB_EXPLAINER,
+      "there is no headerless MODE any more — headerless is the only behaviour",
+    ).not.toMatch(/hideHeader/);
+  });
+
+  it("no tab wraps its explainer in a margin-only box", () => {
+    // 23 call sites did. With the panel rendering null when closed, that
+    // wrapper is an empty div holding mb=3 of dead space on every tab —
+    // exactly what was being removed, just smaller.
+    for (const f of webFilesContaining("<TabExplainer")) {
+      expect(
+        /<Box mb=\{\d+\}>\s*\n\s*<TabExplainer\b/.test(web(f)),
+        `${f} wraps its TabExplainer in a margin-only Box — the explainer owns its own spacing now`,
+      ).toBe(false);
+    }
+  });
+
+  it("the breadcrumb renders the trigger with NO per-tab mapping", () => {
+    // 37 explainers across ~34 tabs, several with role-dependent keys. A
+    // hand-kept table in index.tsx would be the thing nobody updates when a
+    // tab is added, and the failure would be a silently missing button.
+    expect(INDEX, "the generic trigger must be mounted")
+      .toMatch(/<ActiveTabExplainerButton \/>/);
+    expect(INDEX, "it must be unconditional — no tab-name gate around it")
+      .not.toMatch(/topTab === "[a-z]+" && [a-zA-Z]+ === "[a-z]+" && \(\s*\n?\s*<(Spacer|>|ActiveTabExplainerButton)/);
+    expect(INDEX, "index.tsx must not name any explainer's storage key")
+      .not.toMatch(/seedlings:[a-zA-Z]+Tab:guideOpen/);
+  });
+
+  it("explainers announce themselves, and stand down on unmount", () => {
+    // Inverted registration is what removes the mapping. Failing to clear on
+    // unmount would leave the button pointing at the previous tab's panel.
+    expect(TAB_EXPLAINER, "an active-explainer channel must exist")
+      .toMatch(/const ACTIVE_EVENT = "seedlings:tab-explainer-active"/);
+    expect(TAB_EXPLAINER, "the panel must register on mount")
+      .toMatch(/setActive\(\{ storageKey, title \}\);/);
+    expect(TAB_EXPLAINER, "and clear on unmount")
+      .toMatch(/return \(\) => setActive\(null\);/);
+    expect(TAB_EXPLAINER, "the button must follow the active explainer")
+      .toMatch(/addEventListener\(ACTIVE_EVENT/);
+  });
+
+  it("the trigger and the panel are actually connected", () => {
+    // `usePersistedState` is per-hook state: without the toggle event the
+    // button would write localStorage and the panel would never re-render.
+    expect(TAB_EXPLAINER, "a toggle event must exist")
+      .toMatch(/const TOGGLE_EVENT = "seedlings:tab-explainer-toggle"/);
+    expect(TAB_EXPLAINER, "the button must dispatch it")
+      .toMatch(/window\.dispatchEvent\(new CustomEvent\(TOGGLE_EVENT/);
+    const listeners = TAB_EXPLAINER.match(/addEventListener\(TOGGLE_EVENT/g) ?? [];
+    expect(
+      listeners.length,
+      "both the button and the panel must listen, or they fall out of step",
+    ).toBe(2);
+  });
+
+  it("the trigger shows an on/off state", () => {
+    const i = TAB_EXPLAINER.indexOf("export function TabExplainerButton");
+    expect(i, "the trigger component must exist").toBeGreaterThan(-1);
+    const end = TAB_EXPLAINER.indexOf("export default function", i);
+    expect(end, "a following export must bound the slice").toBeGreaterThan(i);
+    const btn = TAB_EXPLAINER.slice(i, end);
+    expect(btn, "the button must change appearance when open")
+      .toMatch(/bg=\{open \? "[a-z]+\.[a-z]+" : "transparent"\}/);
+    expect(btn, "and report its state to assistive tech")
+      .toMatch(/aria-expanded=\{open\}/);
+  });
+
+  it("the open panel names itself, closes itself, and has no chevron", () => {
+    const i = TAB_EXPLAINER.indexOf("if (!open) return null;");
+    const panel = TAB_EXPLAINER.slice(i);
+    // Matched as a RENDERED <Text>, not the substring `{title}` — the
+    // aria-label nearby contains `${title}`.
+    expect(panel, "the open panel must render its title as visible text")
+      .toMatch(/<Text[^>]*>\s*\n?\s*\{title\}\s*\n?\s*<\/Text>/);
+    expect(panel, "and be closable from itself")
+      .toMatch(/onClick=\{\(\) => setOpen\(false\)\}/);
+    // It only ever renders open, so a chevron would point one way forever.
+    expect(panel, "no chevron in a panel that is always open")
+      .not.toMatch(/Chevron(Down|Right)/);
+  });
+});
+
+describe("[build-gate] job card titles lead with the client", () => {
+  // A card title truncates from the RIGHT. Built property-first, a phone
+  // shows "Main House" for every job at every property called that — which
+  // identifies nothing. The client is the half worth keeping when there is
+  // only room for one.
+  //
+  // `jobTitleText` in lib/labels.ts exists precisely because six surfaces
+  // once built this string by hand and a swap missed two of them, leaving
+  // the app showing both orders at once. Nothing enforced the helper, so a
+  // SEVENTH site drifted back to property-first — the collapsed ultra row,
+  // which is the one that truncates hardest of all.
+  const LABELS = web("lib/labels.ts");
+  const TABS = ["ui/tabs/JobsTab.tsx", "ui/tabs/ServicesTab.tsx"] as const;
+
+  it("the helper still puts the client in the part that survives", () => {
+    const lead = LABELS.slice(LABELS.indexOf("export function jobTitleLead"));
+    expect(lead.slice(0, 400), "the lead must be the client when there is one")
+      .toMatch(/if \(clientName\) return clientLabel\(clientName\);/);
+    const trail = LABELS.slice(LABELS.indexOf("export function jobTitleTrail"));
+    expect(trail.slice(0, 400), "the droppable half must be the property")
+      .toMatch(/return clientName && propertyName \? propertyName : "";/);
+  });
+
+  it("no surface builds a property-then-client title by hand", () => {
+    // The shape that keeps coming back: a property displayName, then an
+    // em-dash, then the client's. In a template literal or in JSX.
+    const HAND_BUILT = [
+      /\$\{propertyName\}\$\{clientName \? ` — /,
+      /property\?\.displayName[^\n]{0,40}\n[^\n]{0,80}` — \$\{clientLabel\(/,
+      /\{[a-zA-Z.?]*property\?\.displayName[^}]*\}\s*\n\s*\{[^}]*client\?\.displayName && ` — /,
+    ];
+    for (const f of TABS) {
+      const src = web(f);
+      for (const re of HAND_BUILT) {
+        const m = re.exec(src);
+        expect(
+          m,
+          `${f} builds a job title property-first by hand — use jobTitleText() so it truncates to the client:\n  ${m?.[0]?.slice(0, 120)}`,
+        ).toBeNull();
+      }
+    }
+  });
+
+  it("the ultra row — the hardest-truncating title — uses the helper", () => {
+    const TAB = web("ui/tabs/JobsTab.tsx");
+    const i = TAB.indexOf("const titleText =");
+    expect(i, "the ultra row's title must exist").toBeGreaterThan(-1);
+    expect(TAB.slice(i, i + 400), "it must go through jobTitleText")
+      .toMatch(/jobTitleText\(/);
+  });
+});
+
+describe("[build-gate] the two card chips read as equals", () => {
+  // A collapsed job card shows one chip per section it has no room to render:
+  // yellow AlertCircle for Instructions, blue Info for Guidance. They sit
+  // side by side, so any difference in size, stroke or pulse geometry reads
+  // as one being more important than the other rather than a different KIND
+  // of thing.
+  //
+  // This shipped wrong once: the guidance chip used the plain
+  // `seedlings-pulse-blue` ring while the instruction chip's keyframe also
+  // scales 1.25 -> 1. The guidance chip looked smaller AND fainter.
+  const TAB = web("ui/tabs/JobsTab.tsx");
+  const CSS = web("styles/globals.css");
+
+  /** The lucide element rendered inside a chip Box carrying `attr`. */
+  function chip(attr: string): Record<string, string> {
+    const i = TAB.indexOf(attr);
+    expect(i, `${attr} must exist`).toBeGreaterThan(-1);
+    // Any icon component — the names are a design choice and have already
+    // changed once (Info -> Lightbulb). What must hold is that the two chips
+    // are built alike, not which glyphs they use.
+    const m = /<([A-Z][A-Za-z]*)\b([\s\S]{0,300}?)\/>/.exec(TAB.slice(i));
+    expect(m, `${attr} must render an icon`).toBeTruthy();
+    const props: Record<string, string> = {};
+    for (const pm of m![2].matchAll(/(\w+)=\{?"?([^"\n}]+)"?\}?/g)) props[pm[1]] = pm[2].trim();
+    return props;
+  }
+
+  /** The icon component name rendered inside a chip Box carrying `attr`. */
+  function chipName(attr: string): string {
+    const i = TAB.indexOf(attr);
+    expect(i, `${attr} must exist`).toBeGreaterThan(-1);
+    const m = /<([A-Z][A-Za-z]*)\b[\s\S]{0,300}?\/>/.exec(TAB.slice(i));
+    expect(m, `${attr} must render an icon`).toBeTruthy();
+    return m![1];
+  }
+
+  it("the guidance chip wears the same glyph as the section it stands for", () => {
+    // The chip IS that section, collapsed. Sharing the icon is what makes
+    // "tap this, get that" obvious — a chip with its own glyph is a second
+    // thing to learn.
+    const GUIDE = web("ui/components/OccurrenceInstructions.tsx");
+    const header = /<([A-Z][A-Za-z]*) size=\{14\} \/>/.exec(
+      GUIDE.slice(GUIDE.indexOf("Guidance ({displayCount})") - 300),
+    );
+    expect(header, "the drawer header must render an icon").toBeTruthy();
+    expect(
+      chipName("data-guidance-pulse-icon"),
+      `the drawer header uses <${header![1]}> — the chip must match it`,
+    ).toBe(header![1]);
+  });
+
+  it("the two chips use different glyphs", () => {
+    // A circle-with-an-"i" beside a circle-with-a-"!" is the same icon at
+    // 16px. The chip exists to distinguish the two sections at a glance on a
+    // collapsed card, so the silhouettes have to differ.
+    const instr = chipName("data-instruction-pulse-icon");
+    const guid = chipName("data-guidance-pulse-icon");
+    expect(guid, `both chips render <${instr}> — they are indistinguishable`)
+      .not.toBe(instr);
+  });
+
+  it("both chips are the same size and weight", () => {
+    const instr = chip("data-instruction-pulse-icon");
+    const guid = chip("data-guidance-pulse-icon");
+    expect(guid.size, "guidance chip must match the instruction chip's size").toBe(instr.size);
+    expect(guid.strokeWidth, "…and its stroke weight").toBe(instr.strokeWidth);
+  });
+
+  it("both chips pulse with the same geometry and timing", () => {
+    // Same scale and same ring — only the tint may differ.
+    const geom = (name: string) => {
+      const i = CSS.indexOf(`@keyframes ${name} {`);
+      expect(i, `${name} must exist`).toBeGreaterThan(-1);
+      const body = CSS.slice(i, CSS.indexOf("}\n", CSS.indexOf("100%", i)));
+      return {
+        scales: (body.match(/transform: scale\(([\d.]+)\)/g) ?? []).join("|"),
+        rings: (body.match(/box-shadow: 0 0 0 (\d+px|0) rgba\(var\(--pulse-[a-z]+\), ([\d.]+)\)/g) ?? [])
+          .map((r) => r.replace(/--pulse-[a-z]+/, "--pulse-X")).join("|"),
+      };
+    };
+    expect(geom("seedlings-pulse-guidance-icon"))
+      .toEqual(geom("seedlings-pulse-instruction-icon"));
+
+    // And the same duration at the call site.
+    const dur = (attr: string) => {
+      const i = TAB.indexOf(attr);
+      const m = /animation: "seedlings-pulse-[a-z-]+ ([\d.]+s)/.exec(TAB.slice(i, i + 400));
+      expect(m, `${attr} must set an animation`).toBeTruthy();
+      return m![1];
+    };
+    expect(dur("data-guidance-pulse-icon")).toBe(dur("data-instruction-pulse-icon"));
+  });
+
+  it("reduced motion silences both, not just one", () => {
+    const i = CSS.indexOf("@media (prefers-reduced-motion: reduce)");
+    expect(i, "the reduced-motion block must exist").toBeGreaterThan(-1);
+    const block = CSS.slice(i, i + 500);
+    expect(block).toMatch(/\[data-instruction-pulse-icon\]/);
+    expect(block, "a new pulsing chip must opt into reduced motion too")
+      .toMatch(/\[data-guidance-pulse-icon\]/);
+  });
+});
+
+describe("[build-gate] an alert count and the filter it opens agree", () => {
+  // THIRD TIME. Every alert in the header dropdown is a number computed one
+  // way and a filtered list computed another way, in a different file. When
+  // the two drift the operator sees "Overdue 1", clicks it, and counts three
+  // rows — which reads as the app lying, because it is.
+  //
+  //   1. expired ghosts — server grace window vs client date preset
+  //   2. Overdue        — ghosts and Timeline rows in the list, not the count
+  //   3. Unclaimed      — client checked no status and allowed estimates;
+  //                       the server predicate required SCHEDULED and
+  //                       excluded them
+  //
+  // Each is the same shape: a predicate written twice. These rules pin the
+  // parts that can be checked statically.
+  const TAB = web("ui/tabs/JobsTab.tsx");
+  const RULE = web("lib/overdueRule.ts");
+  const ADMIN = readFileSync(join(__dirname, "../routes/admin.ts"), "utf8");
+
+  it("the two overdue queues partition by workflow, with no overlap", () => {
+    // Job Overdue and Activities Overdue are ONE rule split by workflow. If a
+    // workflow appeared in both sets, one late row would be counted twice —
+    // the exact bug this whole area keeps producing. If it appeared in
+    // neither, it would be late and silent, which is worse.
+    const job = /const JOB_WORKFLOWS = new Set\(\[([^\]]*)\]\)/.exec(RULE);
+    const act = /const ACTIVITY_WORKFLOWS = new Set\(\[([^\]]*)\]\)/.exec(RULE);
+    expect(job, "JOB_WORKFLOWS must be a plain literal set").toBeTruthy();
+    expect(act, "ACTIVITY_WORKFLOWS must be a plain literal set").toBeTruthy();
+    const parse = (m: RegExpExecArray) =>
+      (m[1].match(/"([A-Z_]+)"/g) ?? []).map((x) => x.replace(/"/g, ""));
+    const jobs = parse(job!);
+    const acts = parse(act!);
+    expect(jobs).toEqual(["STANDARD", "ONE_OFF", "ESTIMATE"]);
+    expect(acts).toEqual(["TASK", "REMINDER", "FOLLOWUP", "EVENT"]);
+    expect(
+      jobs.filter((w) => acts.includes(w)),
+      "a workflow in both sets would be counted by both alerts",
+    ).toEqual([]);
+    // ANNOUNCEMENT must be in NEITHER — it is not work.
+    expect(jobs.concat(acts)).not.toContain("ANNOUNCEMENT");
+  });
+
+  it("no caller can ask 'is it overdue' without saying which queue", () => {
+    // The permissive helper is gone on purpose. While it existed, every call
+    // site defaulted to "both", which is how Timeline rows ended up inside
+    // the job count in the first place.
+    expect(RULE, "the undifferentiated export must stay gone")
+      .not.toMatch(/export function isOccurrenceOverdue/);
+    for (const f of ["ui/tabs/JobsTab.tsx", "ui/tabs/ServicesTab.tsx", "../pages/index.tsx"]) {
+      expect(web(f), `${f} must not call an undifferentiated overdue helper`)
+        .not.toMatch(/isOccurrenceOverdue\(/);
+    }
+  });
+
+  it("Job Overdue excludes visits waiting on payment", () => {
+    // The work got done; the money has not landed. That is a payment
+    // problem, carried by "Payments to review" / "Awaiting client payment".
+    // Counting it here too was the last double-count in this alert, and it
+    // is why the alert is named "Job Overdue" — a job that did not get
+    // FINISHED on time.
+    expect(RULE, "PENDING_PAYMENT must never be overdue")
+      .toMatch(/"PENDING_PAYMENT",\n\]\);/);
+    expect(
+      RULE,
+      "the old pay-link-expiry branch must be gone from the predicate",
+    ).not.toMatch(/if \(occ\.status === "PENDING_PAYMENT"\) \{/);
+  });
+
+  it("only one file decides what overdue means", () => {
+    // ServicesTab hand-rolled its own status set plus a pay-link check — a
+    // fourth transcription of this rule, which drifted the moment the rule
+    // changed. Every overdue filter goes through isOccurrenceOverdue now.
+    const SERVICES = web("ui/tabs/ServicesTab.tsx");
+    // Anchor on the ROW FILTER, not on the first `if (overdueActive)` in the
+    // file — that one is the date-range handler. `skippedNextOnly` is the
+    // next clause in the same filter chain and is stable.
+    const j = SERVICES.indexOf("if (skippedNextOnly) {");
+    expect(j, "the Services row filter must exist").toBeGreaterThan(-1);
+    const i = SERVICES.lastIndexOf("if (overdueActive) {", j);
+    expect(i, "an overdue clause must precede it").toBeGreaterThan(-1);
+    const block = SERVICES.slice(i, j);
+    expect(block, "it must call the shared predicate")
+      .toMatch(/isJobOverdue\(/);
+    // No status literal of ANY shape in this block. Pinning the old
+    // `new Set(["COMPLETED"` spelling let a re-rolled predicate written as
+    // `o.status === "COMPLETED"` sail straight through.
+    expect(
+      block.replace(/\/\/[^\n]*/g, ""),
+      "it must not re-implement the done-status list in any form",
+    ).not.toMatch(/"(COMPLETED|CLOSED|ARCHIVED|CANCELED|PENDING_PAYMENT)"/);
+  });
+
+  it("the alert is named for what it means, everywhere it appears", () => {
+    // Renaming one surface and not the others is how an operator ends up
+    // with two names for one number.
+    const INDEX = web("../pages/index.tsx");
+    const TASKS = web("ui/pages/TasksPage.tsx");
+    expect(INDEX, "the dropdown row").toMatch(/label: "Job Overdue"/);
+    expect(TASKS, "the Tasks card").toMatch(/label="Job Overdue"/);
+    expect(TAB, "the Jobs feed filter badge").toMatch(/Job Overdue/);
+  });
+
+  it("Job Overdue excludes rows that carry their own alert", () => {
+    // A ghost is not late work — it is a visit that was never created, and
+    // "Next visits expired" already counts it. A Timeline activity has the
+    // "Timeline" alert. Counting either here is one situation, two numbers.
+    expect(RULE, "the predicate must skip next-visit ghosts")
+      .toMatch(/if \(occ\._isNextOccurrenceGhost\) return false;/);
+    expect(RULE, "the predicate must skip foreign (Timeline / document) rows")
+      .toMatch(/if \(occ\._foreignKind\) return false;/);
+  });
+
+  it("Timeline rows are not appended past the Overdue filter", () => {
+    // The predicate above is necessary but NOT sufficient: foreignRows are
+    // pushed into the list AFTER the filter has run, so the predicate never
+    // sees them. The append itself has to be gated.
+    const i = TAB.indexOf("if (showAdminExtras && foreignRows.length > 0");
+    expect(i, "the foreignRows append must exist").toBeGreaterThan(-1);
+    const cond = TAB.slice(i, TAB.indexOf("{", i + 10));
+    expect(cond, "the foreignRows append must be skipped while Overdue is on")
+      .toMatch(/!overdueActive/);
+  });
+
+  it("the client UNCLAIMED filter carries every server condition", () => {
+    // Source of truth is `jobsUnclaimed` in routes/admin.ts — that is what
+    // the chip counts. The client block used to copy only its observer rule
+    // while claiming in a comment to match the whole predicate.
+    const si = ADMIN.indexOf("const jobsUnclaimed = occurrences.filter(");
+    expect(si, "the server predicate must exist").toBeGreaterThan(-1);
+    const server = ADMIN.slice(si, si + 400);
+    expect(server).toMatch(/o\.status === "SCHEDULED"/);
+    expect(server).toMatch(/!o\.isEstimate/);
+
+    const ci = TAB.indexOf('if (sf === "UNCLAIMED")');
+    expect(ci, "the client filter must exist").toBeGreaterThan(-1);
+    const client = TAB.slice(ci, ci + 1600);
+    expect(client, "client must require SCHEDULED, as the server does")
+      .toMatch(/occ\.status !== "SCHEDULED"/);
+    expect(client, "client must exclude estimates, as the server does")
+      .toMatch(/isEstimate/);
+    expect(client, "client must exclude next-visit ghosts")
+      .toMatch(/_isNextOccurrenceGhost/);
+    // The server puts ESTIMATE in nonJobWorkflows, so the client's
+    // claimable allow-list must not name it.
+    expect(ADMIN, "server excludes the ESTIMATE workflow")
+      .toMatch(/nonJobWorkflows = new Set\(\[\"ESTIMATE\"/);
+    expect(
+      client.slice(client.indexOf("const claimable")),
+      'client claimable list must not include "ESTIMATE" — the server excludes it',
+    ).not.toMatch(/w === "ESTIMATE"/);
+  });
+
+  it("a filter that seizes the date range says which range it took", () => {
+    // Both Overdue and Unclaimed already narrow the range to exactly the
+    // window their chip counts over — but they cleared `datePreset`, so the
+    // control read "Custom dates". An unexplained range next to a count
+    // that does not match the list reads as the cause of the mismatch.
+    expect(TAB, "Unclaimed must name its preset rather than clearing it")
+      .toMatch(/setDatePreset\("overdueAndNext3"\)/);
+    // BOTH chip sites (the tab renders one per density variant). Matching
+    // "somewhere in the file" passed while one of the two was gutted.
+    const chips = TAB.match(
+      /\(overdueActive \|\| activitiesOverdueActive\) \? "Last 60 days \(overdue\)"/g,
+    ) ?? [];
+    const sites = (TAB.match(/\? \(PRESET_LABELS\[datePreset\]/g) ?? []).length;
+    expect(sites, "the date chip render sites must be found").toBeGreaterThan(0);
+    expect(
+      chips.length,
+      `every date chip must label the Overdue window (${chips.length} of ${sites} do)`,
+    ).toBe(sites);
+  });
+});
+
 describe("[build-gate] Job status buttons confirm before they fire", () => {
   // Standing project rule: every mutation button gets a ConfirmDialog. The
   // Services tab's four Job status buttons shipped without one and mutated
@@ -3558,7 +4229,7 @@ describe("[build-gate] every Money tab explains itself", () => {
     expect(J, "…and the tab must mount the explainer instead").toContain("<JobsExplainer");
     const E = readFileSync(join(__dirname, "../../../web/src/ui/components/JobsExplainer.tsx"), "utf8");
     expect(E).toContain("<TabExplainer");
-    expect(E, "role-keyed storage").toMatch(/storageKey=\{`seedlings:jobsTab:guideOpen:\$\{role\}`\}/);
+    expect(E, "role-keyed storage (via the shared jobsExplainerKey helper, so the out-of-line trigger targets the same explainer)").toMatch(/storageKey=\{jobsExplainerKey\(role\)\}/);
   });
 
   it("the Jobs reference states the claim rules the server actually enforces", () => {

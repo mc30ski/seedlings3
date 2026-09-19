@@ -185,7 +185,6 @@ export default function GuidesTab({
 
   return (
     <Box w="full">
-      <Box mb={3}>
       <TabExplainer storageKey={`seedlings:guidesTab:guideOpen:${showSuperExtras ? "super" : showAdminExtras ? "admin" : "worker"}`} title="What Guides are">
         {showSuperExtras ? (
           <>
@@ -224,7 +223,6 @@ export default function GuidesTab({
           </>
         )}
       </TabExplainer>
-      </Box>
       <HStack mb={3} gap={2} align="center" wrap="wrap">
         <HStack gap={1} flex="1" minW="200px">
           <Search size={14} color="var(--chakra-colors-gray-500)" />

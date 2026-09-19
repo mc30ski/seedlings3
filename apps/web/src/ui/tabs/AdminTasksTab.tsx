@@ -34,7 +34,6 @@ export default function AdminTasksTab({ tasks, scope, workerType }: Props) {
           everyone. The action list differs sharply by role — two workday
           workflows for a worker, four setup/export ones for an admin — so
           the copy does too. */}
-      <Box mb={3}>
         <TabExplainer
           storageKey={`seedlings:actionsTab:guideOpen:${isSuper ? "super" : isAdminView ? "admin" : "worker"}`}
           title="What Actions are"
@@ -76,7 +75,6 @@ export default function AdminTasksTab({ tasks, scope, workerType }: Props) {
             </>
           )}
         </TabExplainer>
-      </Box>
       <VStack align="stretch" gap={3} pt={2}>
         {tasks.map((task) => (
           <Box
