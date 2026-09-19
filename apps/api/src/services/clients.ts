@@ -184,12 +184,11 @@ export const clients: ServicesClients = {
       },
     });
 
-    // Per-client count of Jobs in PAUSED status. Powers the "N services
-    // paused" line + click-through + "paused services only" filter on
-    // Admin → Directory → Clients. Bulk-paused Jobs (via /admin/clients/
-    // :id/pause-services) and individually-paused Jobs both count — the
-    // client card is the operator's "did the pause actually cover
-    // everything?" surface, not a status breakdown by cause.
+    // Per-client count of Jobs in PAUSED status. Powers the count on the
+    // "Job services" button + the "paused services only" filter on
+    // Admin → Directory → Clients. Every paused Job counts however it got
+    // there — the client card answers "is anything stopped for this
+    // client?", not a breakdown by cause.
     //
     // Only counts paused jobs whose CLIENT and PROPERTY are both ACTIVE.
     // "Paused services" is meaningless for an archived client (they're
@@ -294,15 +293,13 @@ export const clients: ServicesClients = {
     });
   },
 
-  // NOTE: Client.pause/unpause writers removed in Step 3 of the pause-
-  // simplification migration. The Client-level "pause" state was
-  // cosmetic (no downstream code consulted it) and the operator's
-  // actual workflow — "stop this client's services" — is now served by
-  // bulkPauseServices / bulkResumeServices (which live above these
-  // comments). Existing Client.status = PAUSED rows continue to render
-  // their badge; Step 4 migrates them by cascading their Jobs to
-  // PAUSED and flipping the Client back to ACTIVE. Step 5 drops the
-  // PAUSED enum value from ClientStatus.
+  // NO pause writers here, at any level. A Client cannot be paused
+  // (ClientStatus is ACTIVE | ARCHIVED), and the bulk "pause every Job on
+  // this Client" pair that used to live here is gone too: it was a loop
+  // over jobs.update, presented as though it were a client-level state.
+  // Pausing is a per-service decision — Job.status = PAUSED, via
+  // services/jobs.ts update(). The Clients tab links to the Services tab
+  // so the operator makes that decision per service, where it belongs.
 
   // Archive the Client AND cascade to every non-archived Property + every
   // non-archived Job under those Properties. Populates the previously-
@@ -502,125 +499,6 @@ export const clients: ServicesClients = {
   },
 
   // ─────────────────────────────────────────────────────────────────────
-  // Bulk pause / resume services for a Client.
-  //
-  // The operator's mental model: "Client X is going on vacation for 3
-  // months — stop all their services." Instead of walking each Job on
-  // each Property manually, this fans out one gesture across every
-  // ACCEPTED Job on the Client.
-  //
-  // Bookkeeping via Job.clientBulkPausedAt/ById so bulk-resume can
-  // find its own targets without touching Jobs that were independently
-  // paused before the bulk op. Same cascadeGroupId pattern as Step 1's
-  // archive cascade — every audited row carries the shared correlation
-  // id so "show me every Job affected by this bulk pause" is one query.
-  //
-  // Idempotent per-Job:
-  //   - Already-paused (independent or bulk) → skipped, not double-counted
-  //   - PROPOSED / ARCHIVED Jobs → not touched (paused-services concept
-  //     only applies to ACCEPTED recurring services)
-  //
-  // Side effects (per Job) come from the shared helpers in jobs.ts, so
-  // the observable behavior matches a manual per-Job pause exactly.
-  // ─────────────────────────────────────────────────────────────────────
-  async bulkPauseServices(currentUserId: string, clientId: string) {
-    const cascadeGroupId = `cg_${randomBytes(9).toString("hex")}`;
-    return prisma.$transaction(async (tx) => {
-      const client = await tx.client.findUnique({ where: { id: clientId } });
-      if (!client) throw new ServiceError("NOT_FOUND", "Client not found.", 404);
-      const jobs = await tx.job.findMany({
-        where: {
-          property: { clientId },
-          status: JobStatus.ACCEPTED,
-        },
-        select: { id: true },
-      });
-      const now = new Date();
-      let jobsPaused = 0;
-      for (const j of jobs) {
-        await tx.job.update({
-          where: { id: j.id },
-          data: {
-            status: JobStatus.PAUSED,
-            clientBulkPausedAt: now,
-            clientBulkPausedById: currentUserId,
-          },
-        });
-        await applyJobPauseSideEffectsInTx(tx, currentUserId, j.id, {
-          cascadeGroupId,
-          triggeredBy: "client_bulk_pause",
-          clientId,
-        });
-        await writeAudit(tx, AUDIT.JOB.UPDATED, currentUserId, {
-          jobId: j.id,
-          action: "CLIENT_BULK_PAUSED",
-          cascadeGroupId,
-          clientId,
-        });
-        jobsPaused++;
-      }
-      // Top-level trigger event — carries the roll-up count so operators
-      // can find "the pause I did last Tuesday" in one row.
-      await writeAudit(tx, AUDIT.CLIENT.UPDATED, currentUserId, {
-        clientId,
-        action: "BULK_PAUSED_SERVICES",
-        cascadeGroupId,
-        jobsPaused,
-      });
-      return { jobsPaused, cascadeGroupId };
-    });
-  },
-
-  async bulkResumeServices(currentUserId: string, clientId: string) {
-    const cascadeGroupId = `cg_${randomBytes(9).toString("hex")}`;
-    return prisma.$transaction(async (tx) => {
-      const client = await tx.client.findUnique({ where: { id: clientId } });
-      if (!client) throw new ServiceError("NOT_FOUND", "Client not found.", 404);
-      // Only touch Jobs that were paused as part of a bulk pause. Any
-      // Job the operator individually paused (clientBulkPausedAt IS NULL
-      // but status = PAUSED) stays paused — resume must not overwrite
-      // that intent.
-      const jobs = await tx.job.findMany({
-        where: {
-          property: { clientId },
-          status: JobStatus.PAUSED,
-          clientBulkPausedAt: { not: null },
-        },
-        select: { id: true },
-      });
-      let jobsResumed = 0;
-      for (const j of jobs) {
-        await tx.job.update({
-          where: { id: j.id },
-          data: {
-            status: JobStatus.ACCEPTED,
-            clientBulkPausedAt: null,
-            clientBulkPausedById: null,
-          },
-        });
-        await applyJobResumeSideEffectsInTx(tx, currentUserId, j.id, {
-          cascadeGroupId,
-          triggeredBy: "client_bulk_resume",
-          clientId,
-        });
-        await writeAudit(tx, AUDIT.JOB.UPDATED, currentUserId, {
-          jobId: j.id,
-          action: "CLIENT_BULK_RESUMED",
-          cascadeGroupId,
-          clientId,
-        });
-        jobsResumed++;
-      }
-      await writeAudit(tx, AUDIT.CLIENT.UPDATED, currentUserId, {
-        clientId,
-        action: "BULK_RESUMED_SERVICES",
-        cascadeGroupId,
-        jobsResumed,
-      });
-      return { jobsResumed, cascadeGroupId };
-    });
-  },
-
   async addContact(currentUserId: string, clientId: string, payload: any) {
     const cp = normalizeContactPayload(payload);
     return prisma.$transaction(async (tx) => {
@@ -672,6 +550,10 @@ export const clients: ServicesClients = {
       };
       const contact = await tx.clientContact.create({ data });
       if (isPrimary) {
+        // audit-allow: invariant enforcement, not an operator decision —
+        // "exactly one primary contact per client" demoting the previous
+        // holder. The decision itself is the CONTACT_CREATED row below,
+        // which carries isPrimary.
         await tx.clientContact.updateMany({
           where: { clientId, NOT: { id: contact.id } },
           data: { isPrimary: false },
@@ -745,6 +627,8 @@ export const clients: ServicesClients = {
         data,
       });
       if (cp.isPrimary) {
+        // audit-allow: same single-primary invariant as addContact above.
+        // The operator's decision is recorded by CONTACT_UPDATED below.
         await tx.clientContact.updateMany({
           where: { clientId, NOT: { id: contactId } },
           data: { isPrimary: false },
@@ -868,6 +752,9 @@ export const clients: ServicesClients = {
           409,
         );
       }
+      // audit-allow: the clear half of a clear-then-set pair enforcing the
+      // single-primary invariant. The set below is the actual change and is
+      // audited immediately after, naming the contact that won.
       await tx.clientContact.updateMany({
         where: { clientId },
         data: { isPrimary: false },

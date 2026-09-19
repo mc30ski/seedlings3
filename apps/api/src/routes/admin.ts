@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { crewPool } from "../lib/jobPricing";
 import { ESTIMATE_ADDRESS_PART_FIELDS, pickEstimateAddressParts } from "../lib/estimateAddress";
 import { carryInstructionsToNewOccurrence } from "../lib/instructionCarry";
+import { computeResumeStartAt } from "../services/jobs";
 import { randomUUID } from "crypto";
 import { services } from "../services";
 import { prisma } from "../db/prisma";
@@ -733,74 +734,16 @@ export default async function adminRoutes(app: FastifyInstance) {
     );
   });
 
-  // /admin/clients/:id/pause and /unpause routes removed in Step 3.
-  // The operator workflow "stop a client's services" now routes through
-  // /admin/clients/:id/pause-services (defined below).
+  // No client-level pause routes, and no bulk pause-services routes
+  // either. There is no paused Client; pausing is a per-Job decision and
+  // lives on PATCH /admin/jobs/:id (status = PAUSED). The Clients tab
+  // links through to the Services tab rather than looping over Jobs here.
 
   app.post("/admin/clients/:id/archive", adminGuard, async (req: any) => {
     return services.clients.archive(
       await currentUserId(req),
       String(req.params.id)
     );
-  });
-
-  // Bulk-pause every ACCEPTED Job on the Client. "Pause services" —
-  // the operator gesture behind long-vacation / short-hold workflows.
-  // See services/clients.ts bulkPauseServices for semantics.
-  app.post("/admin/clients/:id/pause-services", adminGuard, async (req: any) => {
-    return services.clients.bulkPauseServices(
-      await currentUserId(req),
-      String(req.params.id)
-    );
-  });
-
-  // Reverse of pause-services. Only resumes Jobs paused via the bulk
-  // action; individually-paused Jobs stay paused (respects operator intent).
-  app.post("/admin/clients/:id/resume-services", adminGuard, async (req: any) => {
-    return services.clients.bulkResumeServices(
-      await currentUserId(req),
-      String(req.params.id)
-    );
-  });
-
-  // Preview counts for the pause-services confirmation dialog. Shows
-  // how many Jobs will be paused, and how many are already paused (so
-  // the operator understands "5 will change, 2 are already off").
-  app.get("/admin/clients/:id/pause-services-preview", adminGuard, async (req: any) => {
-    const clientId = String(req.params.id);
-    const [jobsToPause, alreadyPaused] = await Promise.all([
-      prisma.job.count({
-        where: { property: { clientId }, status: "ACCEPTED" as any },
-      }),
-      prisma.job.count({
-        where: { property: { clientId }, status: "PAUSED" as any },
-      }),
-    ]);
-    return { jobsToPause, alreadyPaused };
-  });
-
-  // Preview counts for the resume-services confirmation dialog. Shows
-  // how many bulk-paused Jobs will be resumed, and how many are paused
-  // independently (won't be touched).
-  app.get("/admin/clients/:id/resume-services-preview", adminGuard, async (req: any) => {
-    const clientId = String(req.params.id);
-    const [jobsToResume, individuallyPaused] = await Promise.all([
-      prisma.job.count({
-        where: {
-          property: { clientId },
-          status: "PAUSED" as any,
-          clientBulkPausedAt: { not: null },
-        },
-      }),
-      prisma.job.count({
-        where: {
-          property: { clientId },
-          status: "PAUSED" as any,
-          clientBulkPausedAt: null,
-        },
-      }),
-    ]);
-    return { jobsToResume, individuallyPaused };
   });
 
   app.post("/admin/clients/:id/unarchive", adminGuard, async (req: any) => {
@@ -1678,6 +1621,56 @@ export default async function adminRoutes(app: FastifyInstance) {
       defaultPrice: body.defaultPrice != null ? Number(body.defaultPrice) : null,
       estimatedMinutes: body.estimatedMinutes != null ? Math.round(Number(body.estimatedMinutes)) : null,
     } as any);
+  });
+
+  /**
+   * What a Pause or Resume on this Job is about to do, for the confirm
+   * dialog. Read-only.
+   *
+   * Pausing DELETES every SCHEDULED occurrence on the Job — it is the one
+   * destructive thing in this flow, and an operator has no way to see the
+   * count from the card. Resuming creates one visit, stepped forward to
+   * today-or-later; `resumeWouldScheduleAt` is computed by the same helper
+   * the resume itself uses, so the date shown is the date that happens.
+   */
+  app.get("/admin/jobs/:id/pause-preview", adminGuard, async (req: any) => {
+    const jobId = String(req.params.id);
+    const job = await prisma.job.findUniqueOrThrow({
+      where: { id: jobId },
+      select: { id: true, status: true, frequencyDays: true },
+    });
+
+    const scheduled = await prisma.jobOccurrence.findMany({
+      where: {
+        jobId,
+        status: "SCHEDULED",
+        workflow: "STANDARD",
+      },
+      select: { startAt: true },
+      orderBy: { startAt: "asc" },
+    });
+
+    // Mirrors applyJobResumeSideEffectsInTx's anchor: the most recent
+    // STANDARD, non-one-off occurrence, whatever its status.
+    const lastOcc = await prisma.jobOccurrence.findFirst({
+      where: { jobId, workflow: "STANDARD", isOneOff: false },
+      orderBy: { startAt: "desc" },
+      select: { startAt: true },
+    });
+
+    const freq = job.frequencyDays ?? 0;
+    const resumeWouldScheduleAt =
+      freq > 0 && lastOcc?.startAt
+        ? computeResumeStartAt(lastOcc.startAt, freq).toISOString()
+        : null;
+
+    return {
+      status: job.status,
+      frequencyDays: job.frequencyDays ?? null,
+      scheduledToRemove: scheduled.length,
+      nextScheduledAt: scheduled[0]?.startAt?.toISOString() ?? null,
+      resumeWouldScheduleAt,
+    };
   });
 
   app.patch("/admin/jobs/:id", adminGuard, async (req: any) => {

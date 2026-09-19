@@ -36,6 +36,7 @@ listeners** · Clerk satellite hostnames still hardcoded · large tabs never
 split (JobsTab ~11k LOC).
 
 ## Notes
+- [Area hierarchy & managers — DESIGN, not built](project_area_hierarchy_design.md) — multi-area expansion. Manager is an ASSIGNMENT, not a role (Role stays 3 values). Money rides occurrence.areaId. Open: read-only vs read-write manager gates the rest.
 - [DEFERRED WORK — read when starting related work](project_deferred_work.md) — postponed items w/ context and rough size.
 - [Never commit, push, or deploy — the user does all of it](feedback_never_push_without_permission.md) — HARD RULE, `git commit` included. No exceptions, no urgency override.
 - [Never write to the production database](feedback_never_write_production_db.md) — reads fine; every write is the user's. Validate prod config against `git show HEAD`, not the working tree.

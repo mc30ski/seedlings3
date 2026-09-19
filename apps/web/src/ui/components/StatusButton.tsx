@@ -13,6 +13,9 @@ export default function StatusButton({
   title,
   busyId,
   setBusyId,
+  /** Defaults to "sm" — the size every existing caller was getting
+   *  implicitly. Pass "xs" for dense card action rows. */
+  size = "sm",
 }: {
   id: string;
   itemId: string;
@@ -24,6 +27,7 @@ export default function StatusButton({
   title?: string;
   busyId: string;
   setBusyId: (id: string) => void;
+  size?: "xs" | "sm" | "md";
 }) {
   return (
     <Button
@@ -38,7 +42,7 @@ export default function StatusButton({
       }}
       disabled={disabled || busyId !== ""}
       loading={busyId === id + itemId}
-      size="sm"
+      size={size}
     >
       {label}
     </Button>

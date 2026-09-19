@@ -3492,14 +3492,14 @@ async function seedDatabase() {
 
   console.log("  Creating occurrence instructions...");
   // Willowbrook today: 2 instructions, one repeating preset + one one-time custom
-  await prisma.occurrenceInstruction.create({ data: { occurrenceId: todayWillowbrook.id, text: "Cut shorter", isPreset: true, repeats: true, sortOrder: 0 } });
-  await prisma.occurrenceInstruction.create({ data: { occurrenceId: todayWillowbrook.id, text: "Board meeting tomorrow — extra clean edges", isPreset: false, repeats: false, sortOrder: 1 } });
+  await prisma.occurrenceInstruction.create({ data: { occurrenceId: todayWillowbrook.id, text: "Cut shorter", isPreset: true, scope: "EVERY_VISIT", sortOrder: 0 } });
+  await prisma.occurrenceInstruction.create({ data: { occurrenceId: todayWillowbrook.id, text: "Board meeting tomorrow — extra clean edges", isPreset: false, scope: "THIS_VISIT", sortOrder: 1 } });
   // River Bend today: 3 instructions, mix of repeating and one-time
-  await prisma.occurrenceInstruction.create({ data: { occurrenceId: todayRiverBend.id, text: "Bag clippings", isPreset: true, repeats: false, sortOrder: 0 } });
-  await prisma.occurrenceInstruction.create({ data: { occurrenceId: todayRiverBend.id, text: "Watch for pet", isPreset: true, repeats: true, sortOrder: 1 } });
-  await prisma.occurrenceInstruction.create({ data: { occurrenceId: todayRiverBend.id, text: "Client event this weekend — park on street", isPreset: false, repeats: false, sortOrder: 2 } });
+  await prisma.occurrenceInstruction.create({ data: { occurrenceId: todayRiverBend.id, text: "Bag clippings", isPreset: true, scope: "THIS_VISIT", sortOrder: 0 } });
+  await prisma.occurrenceInstruction.create({ data: { occurrenceId: todayRiverBend.id, text: "Watch for pet", isPreset: true, scope: "EVERY_VISIT", sortOrder: 1 } });
+  await prisma.occurrenceInstruction.create({ data: { occurrenceId: todayRiverBend.id, text: "Client event this weekend — park on street", isPreset: false, scope: "THIS_VISIT", sortOrder: 2 } });
   // Harrington today: 1 repeating instruction
-  await prisma.occurrenceInstruction.create({ data: { occurrenceId: todayHarrington.id, text: "Gate code changed", isPreset: true, repeats: true, sortOrder: 0 } });
+  await prisma.occurrenceInstruction.create({ data: { occurrenceId: todayHarrington.id, text: "Gate code changed", isPreset: true, scope: "EVERY_VISIT", sortOrder: 0 } });
 
   console.log("  Creating linked occurrences...");
   // Link the Harrington today and tomorrow occurrences
