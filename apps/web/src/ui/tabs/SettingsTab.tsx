@@ -2210,7 +2210,6 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
 
   return (
     <Box w="full" pb={8}>
-      <Box mb={3}>
       <TabExplainer storageKey={`seedlings:settingsTab:guideOpen:${userIsSuper ? "super" : "admin"}`} title="What Settings control">
         {userIsSuper ? (
           <>
@@ -2239,7 +2238,6 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
           </>
         )}
       </TabExplainer>
-      </Box>
       {/* Pricing Guide moved to its own tab under Directory. Settings now
           only carries the general key/value settings rows. */}
 

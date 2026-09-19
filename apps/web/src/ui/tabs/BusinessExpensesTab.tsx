@@ -1214,7 +1214,6 @@ export default function BusinessExpensesTab() {
           Sits BELOW the header so the tab leads with its own name, and
           carries its own bottom margin — the root Box has no gap, so a child
           without a margin butts straight against the next one. */}
-      <Box mb={3}>
         <TabExplainer storageKey="seedlings:ledgerTab:guideOpen" title="What the Ledger is">
           <ExplainerText>
             The <Em>tax record</Em> — real money off a card or bank statement, entered by hand. It
@@ -1264,7 +1263,6 @@ export default function BusinessExpensesTab() {
             </Box>
           </Box>
         </TabExplainer>
-      </Box>
 
       {/* Due to record — recurring expenses whose next expected instance
           has arrived (or is within the lead window). Hidden when nothing

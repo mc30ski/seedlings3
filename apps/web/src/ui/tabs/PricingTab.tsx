@@ -194,7 +194,6 @@ export default function PricingTab({ isSuper, readOnly, scope }: Props) {
           reading that would go looking for buttons that are not rendered. */}
       {/* Own bottom margin: this tab's root Box has no `gap`, so without it
           the explainer butts straight into the Add Pricing Entry button. */}
-      <Box mb={3}>
   <TabExplainer
           storageKey={`seedlings:pricingTab:guideOpen:${canEdit ? "super" : "read"}`}
           title="What this pricing is for"
@@ -216,7 +215,6 @@ export default function PricingTab({ isSuper, readOnly, scope }: Props) {
             </ExplainerText>
           )}
         </TabExplainer>
-      </Box>
 
       {canEdit && (
         <Box mb={3}>

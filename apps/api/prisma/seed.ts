@@ -3501,6 +3501,72 @@ async function seedDatabase() {
   // Harrington today: 1 repeating instruction
   await prisma.occurrenceInstruction.create({ data: { occurrenceId: todayHarrington.id, text: "Gate code changed", isPreset: true, scope: "EVERY_VISIT", sortOrder: 0 } });
 
+  console.log("  Creating guidance notes + photos...");
+  // GUIDANCE is the standing "how this job is done" description, plus the
+  // property photos that go with it. Distinct from INSTRUCTIONS above, which
+  // are what the client asked for. The Jobs tab surfaces guidance as a
+  // collapsed blue drawer under the instruction band, with a pulsing Info
+  // chip while it is unread — so the fixtures below deliberately cover all
+  // three shapes the card has to render:
+  //
+  //   note + photos  → Willowbrook (the full case, chip pulses)
+  //   note only      → River Bend, Harrington (chip pulses, no thumbnails)
+  //   photos only    → Chen tomorrow (chip does NOT pulse — nothing unread)
+  //
+  // The r2Key values point at nothing. Dev has no R2 bucket, so thumbnails
+  // render broken; the note, the layout, the pulse and the expand/collapse
+  // are what these fixtures exist to exercise.
+  const guidancePhotos = await Promise.all(
+    [
+      { property: todayWillowbrook, description: "Park in the visitor bay — the north gate is chained." },
+      { property: todayWillowbrook, description: "Beds along the clubhouse wall: edge, do not scalp." },
+      { property: tomorrowChenLeaf, description: "Leaf pile goes behind the shed, not at the curb." },
+    ].map(async (g, i) => {
+      const occ = await prisma.jobOccurrence.findUniqueOrThrow({
+        where: { id: g.property.id },
+        select: { job: { select: { propertyId: true } } },
+      });
+      const photo = await prisma.propertyPhoto.create({
+        data: {
+          propertyId: occ.job!.propertyId,
+          r2Key: `seed/guidance-placeholder-${i + 1}.jpg`,
+          fileName: `guidance-${i + 1}.jpg`,
+          contentType: "image/jpeg",
+          description: g.description,
+          sortOrder: i,
+          uploadedById: ADMIN_WORKER_ID,
+        },
+      });
+      await prisma.occurrencePropertyPhoto.create({
+        data: { occurrenceId: g.property.id, propertyPhotoId: photo.id },
+      });
+      return photo;
+    }),
+  );
+
+  await prisma.jobOccurrence.update({
+    where: { id: todayWillowbrook.id },
+    data: {
+      guidanceNote:
+        "Mow the common greens first — residents walk dogs on the back path after 9am and it is easier for everyone if that end is already done. Blow the clubhouse steps clear before you leave; the board notices.",
+    },
+  });
+  await prisma.jobOccurrence.update({
+    where: { id: todayRiverBend.id },
+    data: {
+      guidanceNote:
+        "Tight backyard. Use the 21\" push mower, not the rider — the gate is 36\" and the rider has clipped the post twice. Trim around the raised beds by hand.",
+    },
+  });
+  await prisma.jobOccurrence.update({
+    where: { id: todayHarrington.id },
+    data: {
+      guidanceNote:
+        "Long driveway — start at the top and work down so clippings blow away from the house. Owner works nights; keep the blower off the east side before 10am.",
+    },
+  });
+  console.log(`    ${guidancePhotos.length} guidance photos, 3 guidance notes`);
+
   console.log("  Creating linked occurrences...");
   // Link the Harrington today and tomorrow occurrences
   const linkGroup1 = "link-group-harrington-1";

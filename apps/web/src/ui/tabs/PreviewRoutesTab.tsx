@@ -486,7 +486,6 @@ export default function PreviewRoutesTab({ scope }: Props) {
       {/* Role-tailored orientation. Replaces nothing — the one-line AI
           disclaimer below stays, because it has to be visible without
           opening anything. */}
-      <Box mb={3}>
         <TabExplainer
           storageKey={`seedlings:routesTab:guideOpen:${scope.isSuper ? "super" : scope.isAdmin ? "admin" : "worker"}`}
           title="How Routes plans a day"
@@ -534,7 +533,6 @@ export default function PreviewRoutesTab({ scope }: Props) {
             </>
           )}
         </TabExplainer>
-      </Box>
       {/* Tiny AI disclaimer — one line, muted (was previously a
           full yellow card that dominated the first render). */}
       <Text fontSize="xs" color="fg.muted" mb={3}>

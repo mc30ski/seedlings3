@@ -42,7 +42,7 @@ import {
   createListCollection,
   Textarea,
 } from "@chakra-ui/react";
-import { AlertCircle, AlertTriangle, Archive, CalendarArrowUp, BarChart3, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, ExternalLink, Eye, Filter, Hand, Heart, Inbox, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, Play, RefreshCw, Repeat, Share2, Star, Tag, Users, X,
+import { AlertCircle, AlertTriangle, Archive, Camera, CalendarArrowUp, BarChart3, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, ExternalLink, Eye, Filter, Hand, Heart, Inbox, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, Play, RefreshCw, Repeat, Share2, Star, Tag, Users, X,
   Map as MapIcon,
   KeyRound,
 } from "lucide-react";
@@ -78,7 +78,7 @@ import {
 } from "@/src/lib/labels";
 import { determineRoles } from "@/src/lib/roles";
 import { occurrenceStatusColor } from "@/src/lib/statusColors";
-import { isOccurrenceOverdue, loadPaymentRequestExpiryHours, DEFAULT_PAYMENT_REQUEST_EXPIRY_HOURS } from "@/src/lib/overdueRule";
+import { isJobOverdue, isActivityOverdue, loadPaymentRequestExpiryHours, DEFAULT_PAYMENT_REQUEST_EXPIRY_HOURS } from "@/src/lib/overdueRule";
 import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
 import { useBranding } from "@/src/lib/useBranding";
 import { type TabPropsType, type WorkerOccurrence, type Role } from "@/src/lib/types";
@@ -851,6 +851,7 @@ export default function JobsTab({
     const onRun = (ev: Event) => {
       const { q: searchQ, entityId } = (ev as CustomEvent<{ q?: string; entityId?: string }>).detail || {};
       setOverdueActive(false);
+    setActivitiesOverdueActive(false);
       if (entityId) {
         // entityId is "occId|startAt"
         const sepIdx = entityId.indexOf("|");
@@ -893,6 +894,7 @@ export default function JobsTab({
       setFilterJobId(null);
       setQ("");
       setOverdueActive(false);
+    setActivitiesOverdueActive(false);
       setDatePreset(null);
       if (startAt) {
         const occKey = bizDateKey(startAt);
@@ -936,6 +938,7 @@ export default function JobsTab({
         setCardOverrides(new Map([[occId, "expanded"]]));
         setFilterJobId(null);
         setOverdueActive(false);
+    setActivitiesOverdueActive(false);
         setDatePreset(null);
         if (startAt) {
           const occKey = bizDateKey(startAt);
@@ -974,8 +977,34 @@ export default function JobsTab({
     setDateFrom(overdueFrom);
     setDateTo(overdueTo);
     setOverdueActive(true);
+    setActivitiesOverdueActive(false);
     setUnapprovedHoursActive(false);
     void load(true, { from: overdueFrom, to: overdueTo });
+  }, []);
+
+  /** "Activities Overdue" header alert + Tasks card. Same shape and the same
+   *  60-day window as applyOverdue — the two counts come from one fetch, so
+   *  the two filters have to look at one range. */
+  const applyActivitiesOverdue = useCallback(() => {
+    setQ("");
+    setHighlightOccId(null);
+    setFilterJobId(null);
+    setKind(["ALL"]);
+    setStatusFilter(["ALL"]);
+    setTypeFilter(["ALL"]);
+    setVipOnly(false);
+    setLikedOnly(false);
+    setShowCanceled(false);
+    setShowArchived(false);
+    setDatePreset(null);
+    const to = bizYesterday();
+    const from = bizAddDays(bizToday(), -60);
+    setDateFrom(from);
+    setDateTo(to);
+    setOverdueActive(false);
+    setActivitiesOverdueActive(true);
+    setUnapprovedHoursActive(false);
+    void load(true, { from, to });
   }, []);
 
   // "Next visits expiring / expired" header alerts + Tasks cards → narrow to
@@ -994,6 +1023,7 @@ export default function JobsTab({
     setQ("");
     setStatusFilter(["ALL"]);
     setOverdueActive(false);
+    setActivitiesOverdueActive(false);
     setDatePreset(null);
     const anchor = startAt ? bizDateKey(startAt) : bizToday();
     const fromKey = bizAddDays(anchor, -3);
@@ -1129,6 +1159,7 @@ export default function JobsTab({
     setShowCanceled(false);
     setShowArchived(false);
     setOverdueActive(false);
+    setActivitiesOverdueActive(false);
     setUnapprovedHoursActive(false);
     setPausedRepeatingOnly(false);
     // MUST COVER THE SERVER'S WINDOW, AND THE SERVER NO LONGER HAS ONE.
@@ -1184,9 +1215,21 @@ export default function JobsTab({
         applyOverdue();
       }
     } catch {}
+    try {
+      const aflag = localStorage.getItem("seedlings_adminJobs_showActivitiesOverdue");
+      if (aflag) {
+        localStorage.removeItem("seedlings_adminJobs_showActivitiesOverdue");
+        applyActivitiesOverdue();
+      }
+    } catch {}
     const onShowOverdue = () => applyOverdue();
+    const onShowActivities = () => applyActivitiesOverdue();
     window.addEventListener("adminJobs:showOverdue", onShowOverdue);
-    return () => window.removeEventListener("adminJobs:showOverdue", onShowOverdue);
+    window.addEventListener("adminJobs:showActivitiesOverdue", onShowActivities);
+    return () => {
+      window.removeEventListener("adminJobs:showOverdue", onShowOverdue);
+      window.removeEventListener("adminJobs:showActivitiesOverdue", onShowActivities);
+    };
   }, [showAdminExtras]);
 
   // "Estimate follow-ups" header alert → filter to ESTIMATE/PROPOSAL_SUBMITTED
@@ -1205,6 +1248,7 @@ export default function JobsTab({
     setShowArchived(false);
     setDatePreset(null);
     setOverdueActive(false);
+    setActivitiesOverdueActive(false);
     setUnapprovedHoursActive(false);
     const today = bizToday();
     const from = bizAddDays(today, -28);
@@ -1245,6 +1289,7 @@ export default function JobsTab({
     setShowArchived(false);
     setDatePreset(null);
     setOverdueActive(false);
+    setActivitiesOverdueActive(false);
     const to = bizToday();
     const from = bizAddDays(to, -90);
     setDateFrom(from);
@@ -1292,7 +1337,19 @@ export default function JobsTab({
   const [dateFrom, setDateFrom] = usePersistedState(`${pfx}_dateFrom`, presetDates.from);
   const [dateTo, setDateTo] = usePersistedState(`${pfx}_dateTo`, presetDates.to);
   const [quickDate, setQuickDate] = useState<string[]>([]);
+  /** Occurrences whose Guidance drawer has been opened this session. The
+   *  pulse is an unread marker, so opening it once is enough — it must not
+   *  keep flashing at a drawer the operator is looking at. Session-scoped on
+   *  purpose: a fresh load re-flags it, which is the right behaviour for
+   *  "read this before you start". */
+  const [guidanceOpened, setGuidanceOpened] = useState<Set<string>>(new Set());
+
   const [overdueActive, setOverdueActive] = useState(false);
+  /** "Activities Overdue" — TASK / REMINDER / FOLLOWUP / EVENT past their
+   *  date. Mutually exclusive with overdueActive: they are two halves of one
+   *  rule, and turning both on would mean "show me everything late", which
+   *  is the undifferentiated thing this split exists to get rid of. */
+  const [activitiesOverdueActive, setActivitiesOverdueActive] = useState(false);
   // Pay-link expiry hours — loaded once, cached via the shared module.
   // Feeds the Overdue predicate so PENDING_PAYMENT rows only count as
   // Overdue once their invoice link has expired. Initialized to the
@@ -1320,6 +1377,7 @@ export default function JobsTab({
       setTypeFilter(["ALL"]);
       setKind(["ALL"]);
       setOverdueActive(false);
+    setActivitiesOverdueActive(false);
       setVipOnly(false);
       setLikedOnly(false);
       setQ("");
@@ -1406,6 +1464,7 @@ export default function JobsTab({
         setTypeFilter(["ALL"]);
         setStatusFilter(["ALL"]);
         setOverdueActive(false);
+    setActivitiesOverdueActive(false);
         setVipOnly(false);
         setLikedOnly(false);
         setQ("");
@@ -1419,7 +1478,9 @@ export default function JobsTab({
   // Re-apply preset dates when preset changes (e.g., on mount or when user selects a preset).
   // Worker date clamp is silently applied; no inline warning — the cap is intentional, not an error.
   useEffect(() => {
-    if (overdueActive) {
+    if (overdueActive || activitiesOverdueActive) {
+      // Both counts come from one 60-day fetch, so both filters take the
+      // same window — otherwise the badge and the list disagree.
       const { from, to } = clampWorkerDates(
         bizAddDays(bizToday(), -60),
         bizYesterday(),
@@ -1432,7 +1493,7 @@ export default function JobsTab({
       setDateFrom(from);
       setDateTo(to);
     }
-  }, [datePreset, overdueActive]);
+  }, [datePreset, overdueActive, activitiesOverdueActive]);
 
   const quickDateItems = useMemo(
     () =>
@@ -2077,9 +2138,14 @@ export default function JobsTab({
     setShowCanceled(false);
     setShowArchived(false);
     setOverdueActive(false);
+    setActivitiesOverdueActive(false);
     setStatusFilter(["UNCLAIMED"]);
+    // Name the preset rather than clearing it. The window is exactly the
+    // one the chip counts over, so leaving datePreset null made the date
+    // control read "Custom dates" — which looks arbitrary, and looks like
+    // the reason the numbers differ even when it isn't.
     const d = computeDatesFromPreset("overdueAndNext3");
-    setDatePreset(null);
+    setDatePreset("overdueAndNext3");
     setDateFrom(d.from);
     setDateTo(d.to);
     void load(true, { from: d.from, to: d.to });
@@ -2106,6 +2172,7 @@ export default function JobsTab({
     setKind(["ALL"]);
     setStatusFilter(["ALL"]);
     setOverdueActive(false);
+    setActivitiesOverdueActive(false);
     setVipOnly(false);
     setLikedOnly(false);
     setShowCanceled(false);
@@ -2145,6 +2212,7 @@ export default function JobsTab({
     setFilterJobId(null);
     setQ("");
     setOverdueActive(false);
+    setActivitiesOverdueActive(false);
     setDatePreset(null);
     let fromStr: string;
     let toStr: string;
@@ -2245,7 +2313,7 @@ export default function JobsTab({
       const todayKey = bizDateKey(new Date());
       const nowMs = Date.now();
       const count = list.filter((o) =>
-        isOccurrenceOverdue(o as any, { todayKey, expiryHours, nowMs }),
+        isJobOverdue(o as any, { todayKey, expiryHours, nowMs }),
       ).length;
       setOverdueCount(count);
     } catch {
@@ -2800,8 +2868,19 @@ export default function JobsTab({
           // announcements/followups have no claim semantics and would otherwise
           // pollute the feed since they default to no assignees.
           if ((occ as any)._isReminderGhost) return false;
+          if ((occ as any)._isNextOccurrenceGhost) return false;
+          // SCHEDULED only, and no estimates — both come straight from the
+          // server predicate behind the chip (`jobsUnclaimed` in
+          // routes/admin.ts). This block already claimed to match that
+          // predicate, but only copied its observer rule: it checked no
+          // status at all, so a COMPLETED or PENDING_PAYMENT visit that
+          // happened to carry no assignee showed up as "unclaimed" work
+          // nobody could claim, and it counted ESTIMATE where the server
+          // excludes `isEstimate`. Chip said 1, list showed 3.
+          if (occ.status !== "SCHEDULED") return false;
+          if ((occ as any).isEstimate) return false;
           const w = occ.workflow;
-          const claimable = w === "STANDARD" || w === "ONE_OFF" || w === "ESTIMATE" || !w;
+          const claimable = w === "STANDARD" || w === "ONE_OFF" || !w;
           // "Unclaimed" = no NON-OBSERVER assignee. An observer is just
           // watching — they haven't claimed the work. Must match the chip's
           // count source (`/admin/operations` jobsUnclaimed) which uses the
@@ -2887,7 +2966,14 @@ export default function JobsTab({
       const todayKey = bizDateKey(new Date());
       const nowMs = Date.now();
       rows = rows.filter((occ) =>
-        isOccurrenceOverdue(occ as any, { todayKey, expiryHours: overdueExpiryHours, nowMs }),
+        isJobOverdue(occ as any, { todayKey, expiryHours: overdueExpiryHours, nowMs }),
+      );
+    }
+    if (activitiesOverdueActive) {
+      const todayKey = bizDateKey(new Date());
+      const nowMs = Date.now();
+      rows = rows.filter((occ) =>
+        isActivityOverdue(occ as any, { todayKey, expiryHours: overdueExpiryHours, nowMs }),
       );
     }
     if (unapprovedHoursActive) {
@@ -2966,7 +3052,13 @@ export default function JobsTab({
     //    Unclaimed alert — should not be polluted with Timeline cards.
     const statusFilterIsRestricted =
       statusFilter.length > 0 && !statusFilter.includes("ALL");
-    if (showAdminExtras && foreignRows.length > 0 && !unapprovedHoursActive && !statusFilterIsRestricted) {
+    // `!overdueActive` matters because these rows are appended AFTER the
+    // Overdue filter above has already run — the predicate never sees them,
+    // so excluding them there is not enough on its own. Timeline activities
+    // and document expirations carry their own "Timeline" alert; letting
+    // them through here made the Overdue list show three rows against a
+    // count of one.
+    if (showAdminExtras && foreignRows.length > 0 && !unapprovedHoursActive && !overdueActive && !statusFilterIsRestricted) {
       const tf = typeFilter[0];
       const showActivities = tf === "ALL" || tf === "ACTIVITY";
       const showDocs = tf === "ALL" || tf === "DOC_EXPIRATION";
@@ -3004,7 +3096,7 @@ export default function JobsTab({
     }
 
     return rows;
-  }, [items, q, kind, statusFilter, typeFilter, overdueActive, overdueExpiryHours, unapprovedHoursActive, vipOnly, likedOnly, likedIds, isTrainee, highlightOccId, filterJobId, pinnedIds, isWorkerView, dateFrom, dateTo, showCanceled, showArchived, pausedRepeatingOnly, forAdmin, showAdminExtras, foreignRows]);
+  }, [items, q, kind, statusFilter, typeFilter, overdueActive, activitiesOverdueActive, overdueExpiryHours, unapprovedHoursActive, vipOnly, likedOnly, likedIds, isTrainee, highlightOccId, filterJobId, pinnedIds, isWorkerView, dateFrom, dateTo, showCanceled, showArchived, pausedRepeatingOnly, forAdmin, showAdminExtras, foreignRows]);
 
   // Which advisory is expanded. Held here, not in the badge: the chip sits in
   // a horizontal header row, so the body has to render below that row.
@@ -3249,13 +3341,14 @@ export default function JobsTab({
           flags, who can claim what. Was an (i) button opening a modal;
           moved here so it reads like every other tab's explainer and so
           the copy sits next to the feed it describes. */}
-      <Box mb={2}>
-        <JobsExplainer
-          isAdminView={showAdminExtras}
-          isSuperView={isSuper}
-          workerType={viewAsWorkerType !== undefined ? viewAsWorkerType : me?.workerType}
-        />
-      </Box>
+      {/* Driven by the Info button at the right edge of the breadcrumb row.
+          Renders nothing at all until opened — no wrapper, no margin — so it
+          costs no vertical space on a tab nobody has asked for help on. */}
+      <JobsExplainer
+        isAdminView={showAdminExtras}
+        isSuperView={isSuper}
+        workerType={viewAsWorkerType !== undefined ? viewAsWorkerType : me?.workerType}
+      />
       {/* ─── Admin / super overlays ───────────────────────────────
           Section frames match the Equipment tab pattern: outlined
           box (or orange Card for Insights), icon + UPPERCASE title,
@@ -3525,7 +3618,13 @@ export default function JobsTab({
               cursor="pointer"
               onClick={() => setQuickDateMenuOpen((v) => !v)}
             >
-              {datePreset ? (PRESET_LABELS[datePreset] ?? datePreset)
+              {/* Overdue owns the range while it's on (last 60 days to
+                  yesterday — the window its chip counts over), so say that
+                  instead of "Custom dates". An unexplained "Custom dates"
+                  next to a count that doesn't match the list reads as the
+                  cause of the mismatch. */}
+              {(overdueActive || activitiesOverdueActive) ? "Last 60 days (overdue)"
+                : datePreset ? (PRESET_LABELS[datePreset] ?? datePreset)
                 : (dateFrom || dateTo) ? (dateFrom === dateTo && dateFrom === bizDateKey(new Date()) ? "Today" : "Custom dates")
                 : "Now"}
               {" "}<Box as="span" display="inline-flex" alignItems="center" justifyContent="center" w="14px" h="14px" borderRadius="full" bg="green.solid" color="green.contrast" verticalAlign="middle"><ChevronDown size={9} /></Box>
@@ -3559,12 +3658,14 @@ export default function JobsTab({
                           message: "This will load all occurrences for all time. This may be slow. Are you sure?",
                           confirmLabel: "Load All",
                           colorPalette: "orange",
-                          onConfirm: () => { setDatePreset("all"); setOverdueActive(false); setUnapprovedHoursActive(false); },
+                          onConfirm: () => { setDatePreset("all"); setOverdueActive(false);
+    setActivitiesOverdueActive(false); setUnapprovedHoursActive(false); },
                         });
                         return;
                       }
                       setDatePreset(val);
                       setOverdueActive(false);
+    setActivitiesOverdueActive(false);
                     }}
                   >
                     {it.label}
@@ -3588,7 +3689,10 @@ export default function JobsTab({
           )}
           {headerBelowSlot}
           {overdueActive && (
-            <Badge size="sm" colorPalette="red" variant="subtle">Overdue</Badge>
+            <Badge size="sm" colorPalette="red" variant="subtle">Job Overdue</Badge>
+          )}
+          {activitiesOverdueActive && (
+            <Badge size="sm" colorPalette="orange" variant="subtle">Activities Overdue</Badge>
           )}
           {kind[0] !== "ALL" && (
             <Badge size="sm" colorPalette="blue" variant="subtle">
@@ -3620,7 +3724,7 @@ export default function JobsTab({
           {highlightOccId && <Badge size="sm" colorPalette="teal" variant="subtle">Filtered to 1 occurrence</Badge>}
           {!highlightOccId && filterJobId && <Badge size="sm" colorPalette="teal" variant="subtle">Filtered to job</Badge>}
           {q && <Badge size="sm" colorPalette="gray" variant="subtle">"{q}"</Badge>}
-          {!(kind[0] === "ALL" && statusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !likedOnly && !showCanceled && !showArchived && !pausedRepeatingOnly && !highlightOccId && !filterJobId && !q && !viewAsUserIds?.length && datePreset && !peekActive) && (
+          {!(kind[0] === "ALL" && statusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !activitiesOverdueActive && !vipOnly && !likedOnly && !showCanceled && !showArchived && !pausedRepeatingOnly && !highlightOccId && !filterJobId && !q && !viewAsUserIds?.length && datePreset && !peekActive) && (
             <Badge
               size="sm"
               colorPalette="red"
@@ -3631,6 +3735,7 @@ export default function JobsTab({
                 setStatusFilter(["ALL"]);
                 setTypeFilter(["ALL"]);
                 setOverdueActive(false);
+    setActivitiesOverdueActive(false);
                 setUnapprovedHoursActive(false);
                 setVipOnly(false);
                 setLikedOnly(false);
@@ -3776,6 +3881,7 @@ export default function JobsTab({
           onClick={() => {
             if (overdueActive) {
               setOverdueActive(false);
+    setActivitiesOverdueActive(false);
               setDatePreset(presetBeforeOverdueRef.current ?? (forAdmin ? "thisWeek" : "now"));
             } else {
               presetBeforeOverdueRef.current = datePreset;
@@ -3792,7 +3898,7 @@ export default function JobsTab({
             border: "1px solid var(--chakra-colors-red-strong)",
             "&:hover": { background: "var(--chakra-colors-red-muted)" },
           } : undefined}
-          title="Show overdue — the scheduled day has passed and the item isn't in a done status. Awaiting-payment rows only count once the client's invoice pay link has expired (see PAYMENT_REQUEST_TOKEN_EXPIRY_HOURS setting)."
+          title="Job Overdue — the scheduled day has passed and the job was never finished. Visits waiting on payment are NOT included: the work got done, and they are carried by the payment alerts instead."
         >
           <AlertTriangle size={14} color="var(--chakra-colors-red-500)" />
           {overdueCount > 0 && (
@@ -3843,6 +3949,7 @@ export default function JobsTab({
             setDateTo(to);
             setDatePreset(null);
             setOverdueActive(false);
+    setActivitiesOverdueActive(false);
             if (clamped) publishInlineMessage({ type: "WARNING", text: "Date range limited to 2 months." });
           }}
         />
@@ -3857,6 +3964,7 @@ export default function JobsTab({
             setDateTo(to);
             setDatePreset(null);
             setOverdueActive(false);
+    setActivitiesOverdueActive(false);
             if (clamped) publishInlineMessage({ type: "WARNING", text: "Date range limited to 2 months." });
           }}
         />
@@ -3875,7 +3983,13 @@ export default function JobsTab({
               cursor="pointer"
               onClick={() => setQuickDateMenuOpen((v) => !v)}
             >
-              {datePreset ? (PRESET_LABELS[datePreset] ?? datePreset)
+              {/* Overdue owns the range while it's on (last 60 days to
+                  yesterday — the window its chip counts over), so say that
+                  instead of "Custom dates". An unexplained "Custom dates"
+                  next to a count that doesn't match the list reads as the
+                  cause of the mismatch. */}
+              {(overdueActive || activitiesOverdueActive) ? "Last 60 days (overdue)"
+                : datePreset ? (PRESET_LABELS[datePreset] ?? datePreset)
                 : (dateFrom || dateTo) ? (dateFrom === dateTo && dateFrom === bizDateKey(new Date()) ? "Today" : "Custom dates")
                 : "Now"}
               {" "}<Box as="span" display="inline-flex" alignItems="center" justifyContent="center" w="14px" h="14px" borderRadius="full" bg="green.solid" color="green.contrast" verticalAlign="middle"><ChevronDown size={9} /></Box>
@@ -3909,12 +4023,14 @@ export default function JobsTab({
                           message: "This will load all occurrences for all time. This may be slow. Are you sure?",
                           confirmLabel: "Load All",
                           colorPalette: "orange",
-                          onConfirm: () => { setDatePreset("all"); setOverdueActive(false); setUnapprovedHoursActive(false); },
+                          onConfirm: () => { setDatePreset("all"); setOverdueActive(false);
+    setActivitiesOverdueActive(false); setUnapprovedHoursActive(false); },
                         });
                         return;
                       }
                       setDatePreset(val);
                       setOverdueActive(false);
+    setActivitiesOverdueActive(false);
                     }}
                   >
                     {it.label}
@@ -3939,7 +4055,12 @@ export default function JobsTab({
           {headerBelowSlot}
           {overdueActive && (
             <Badge size="sm" colorPalette="red" variant="subtle">
-              Overdue
+              Job Overdue
+            </Badge>
+          )}
+          {activitiesOverdueActive && (
+            <Badge size="sm" colorPalette="orange" variant="subtle">
+              Activities Overdue
             </Badge>
           )}
           {kind[0] !== "ALL" && (
@@ -3994,7 +4115,7 @@ export default function JobsTab({
               Filtered to job
             </Badge>
           )}
-          {!(kind[0] === "ALL" && statusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !likedOnly && !showCanceled && !showArchived && !pausedRepeatingOnly && !highlightOccId && !filterJobId && !q && !viewAsUserIds?.length && datePreset && !peekActive) && (
+          {!(kind[0] === "ALL" && statusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !activitiesOverdueActive && !vipOnly && !likedOnly && !showCanceled && !showArchived && !pausedRepeatingOnly && !highlightOccId && !filterJobId && !q && !viewAsUserIds?.length && datePreset && !peekActive) && (
             <Badge
               size="sm"
               colorPalette="red"
@@ -4005,6 +4126,7 @@ export default function JobsTab({
                 setStatusFilter(["ALL"]);
                 setTypeFilter(["ALL"]);
                 setOverdueActive(false);
+    setActivitiesOverdueActive(false);
                 setUnapprovedHoursActive(false);
                 setVipOnly(false);
                 setLikedOnly(false);
@@ -4698,8 +4820,11 @@ export default function JobsTab({
                         )}
                       </HStack>
                       <Text fontSize="xs" color="fg.muted">
-                        {occ.job?.property?.displayName ?? occ.title ?? "Job"}
-                        {occ.job?.property?.client?.displayName && ` — ${clientLabel(occ.job.property.client.displayName)}`}
+                        {jobTitleText(
+                          occ.job?.property?.displayName,
+                          occ.job?.property?.client?.displayName,
+                          occ.title ?? "Job",
+                        )}
                         {parseJobTags(occ).length > 0 && ` · ${parseJobTags(occ).map(jobTagLabel).join(", ")}`}
                         {(occ.addons ?? []).length > 0 && ` + ${(occ.addons ?? []).map((a: any) => a.tag ? jobTagLabel(a.tag) : a.customLabel).join(", ")}`}
                         {(occ as any).jobType && ` · ${(occ as any).jobType}`}
@@ -5439,13 +5564,54 @@ export default function JobsTab({
     .slice()
     .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
 
+  /**
+   * Guidance drawer — photos plus the overall "how this job is done" note.
+   *
+   * Sits directly under the instructions band, at the TOP of the card. It
+   * used to be the last thing in the body, below every button, which put the
+   * standing description of the work after everything the worker might click
+   * instead of before it.
+   *
+   * ALWAYS COLLAPSED to start. It can be long (a note plus N photos) and it
+   * is reference material, not a line to act on — expanded by default it
+   * pushed the actual work off the screen.
+   *
+   * Which means a collapsed drawer with a note inside is indistinguishable
+   * from one without: hence the pulse, and hence the pulse stopping the
+   * moment it is opened.
+   */
+  // The wrapper below is SPACING ONLY. The pulse lives inside the drawer, on
+  // its header band: a ring drawn around a blue box in the same blue was
+  // invisible, which is what "it's not pulsating" turned out to mean.
+  const guidanceSection =
+    ((occ.propertyPhotos ?? []).length > 0 || (occ as any).guidanceNote) ? (
+      <Box w="full" mt="2">
+        <OccurrenceInstructions
+          occurrenceId={occ.id}
+          count={(occ.propertyPhotos ?? []).length}
+          guidanceNote={(occ as any).guidanceNote ?? null}
+          defaultExpanded={false}
+          pulse={!!(occ as any).guidanceNote && !guidanceOpened.has(occ.id)}
+          onExpandedChange={(open) => {
+            if (!open) return;
+            setGuidanceOpened((prev) => {
+              if (prev.has(occ.id)) return prev;
+              const next = new Set(prev);
+              next.add(occ.id);
+              return next;
+            });
+          }}
+        />
+      </Box>
+    ) : null;
+
   const instructionsBanner =
     allInstructions.length > 0 ? (
       // EACH INSTRUCTION GETS ITS OWN ROW, not a shared band with lines in it.
       // Four of them stacked inside one rectangle read as a paragraph; the
       // crew skims and misses the third. Separate rounded rows read as
       // separate things to do.
-      <VStack align="stretch" gap="1" mt="1" mb="1">
+      <VStack align="stretch" gap="2" mt="2">
         {activeInstructions.map((inst) => {
           // A ONE-OFF IS THE ONE THAT SURPRISES YOU. A standing order is
           // already known — it was true last visit and will be true next
@@ -5960,8 +6126,12 @@ export default function JobsTab({
                   (() => {
                     const propertyName = occ.job?.property?.displayName ?? null;
                     const clientName = occ.job?.property?.client?.displayName ?? null;
-                    const titleText = propertyName
-                      ? `${propertyName}${clientName ? ` — ${clientName}` : ""}`
+                    // CLIENT FIRST — via the shared helper, not by hand.
+                    // This row truncates hardest of any card in the app, and
+                    // built property-first it read "Main House" on a phone
+                    // for every job at every property called that.
+                    const titleText = propertyName || clientName
+                      ? jobTitleText(propertyName, clientName)
                       : (occ.title ?? "(untitled)");
                     // Show the active lead's name regardless of how they got
                     // assigned. "Lead" = the claimer (self-assigned) if there
@@ -6035,27 +6205,27 @@ export default function JobsTab({
                         {quickActionButton ? (
                           <Box
                             flexShrink={0}
-                            w="18px"
-                            h="18px"
+                            w="22px"
+                            h="22px"
                             display="flex"
                             alignItems="center"
                             justifyContent="center"
                             css={{
                               "& > button, & > div > button": {
-                                width: "18px !important",
-                                minWidth: "18px !important",
-                                height: "18px !important",
+                                width: "22px !important",
+                                minWidth: "22px !important",
+                                height: "22px !important",
                               },
                               "& > button svg, & > div > button svg": {
-                                width: "10px",
-                                height: "10px",
+                                width: "13px",
+                                height: "13px",
                               },
                             }}
                           >
                             {quickActionButton}
                           </Box>
                         ) : (
-                          <Box flexShrink={0} w="18px" h="18px" />
+                          <Box flexShrink={0} w="22px" h="22px" />
                         )}
                         {/* Instructions indicator — bold yellow alert-circle
                             shown when this occurrence has one or more
@@ -6093,9 +6263,63 @@ export default function JobsTab({
                             }
                           >
                             <AlertCircle
-                              size={16}
+                              size={14}
                               color="var(--chakra-colors-yellow-900)"
                               fill="var(--chakra-colors-yellow-400)"
+                              strokeWidth={2.5}
+                            />
+                          </Box>
+                          );
+                        })()}
+                        {/* GUIDANCE, beside the instruction chip and built the
+                            same way: one filled circle standing in for a whole
+                            section the collapsed card has no room to show.
+                            Blue because the drawer it points at is already
+                            blue — Guidance's identity in this app — and Info
+                            rather than AlertCircle because it is reference
+                            material, not an alarm. The two sit together and
+                            read as different KINDS of thing at a glance.
+
+                            Pulses only while there is a note and nobody has
+                            opened it this session. Photos alone do not pulse:
+                            a collapsed drawer of photos is a convenience, a
+                            collapsed drawer with a written instruction in it
+                            is something unread. */}
+                        {(() => {
+                          const note = (occ as any).guidanceNote as string | null | undefined;
+                          const photos = (occ.propertyPhotos ?? []).length;
+                          if (!note && photos === 0) return null;
+                          const unread = !!note && !guidanceOpened.has(occ.id);
+                          return (
+                          <Box
+                            flexShrink={0}
+                            display="inline-flex"
+                            alignItems="center"
+                            borderRadius="full"
+                            data-guidance-pulse-icon={unread ? "1" : undefined}
+                            css={unread ? { animation: "seedlings-pulse-guidance-icon 1.6s ease-in-out infinite" } : undefined}
+                            title={
+                              note
+                                ? `Guidance for this job${photos > 0 ? ` (and ${photos} photo${photos === 1 ? "" : "s"})` : ""}`
+                                : `${photos} guidance photo${photos === 1 ? "" : "s"}`
+                            }
+                          >
+                            {/* THE SAME GLYPH THE GUIDANCE SECTION USES.
+                                The chip stands in for that section on a
+                                collapsed card, so sharing its icon is what
+                                makes the connection obvious — tap the chip,
+                                expand the card, and the same camera is
+                                sitting on the drawer header.
+
+                                It also solves what a circle could not: `Info`
+                                was a circle with an "i" beside a circle with
+                                a "!", which at 16px filled is the same icon.
+                                The silhouette had to differ, not just the
+                                glyph inside it. */}
+                            <Camera
+                              size={14}
+                              color="var(--chakra-colors-blue-900)"
+                              fill="var(--chakra-colors-blue-400)"
                               strokeWidth={2.5}
                             />
                           </Box>
@@ -6327,6 +6551,7 @@ export default function JobsTab({
                           the confirmation banner and the badge rows. They
                           change what the worker does on arrival. */}
                       {instructionsBanner}
+                      {guidanceSection}
                       {/* Client confirmation banner — sits directly under
                           the title row, above status badges. Same callout
                           shape as before, just relocated. */}
@@ -6338,7 +6563,7 @@ export default function JobsTab({
                       {isLightEstimate && occ.estimateAddress && (
                         <Box fontSize="xs" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap"><MapLink address={occ.estimateAddress} /></Box>
                       )}
-                      <HStack gap={1} flexShrink={0} alignItems="center" wrap="wrap">
+                      <HStack gap={1} flexShrink={0} alignItems="center" wrap="wrap" mt={2}>
                         <Box display="flex" gap={1} flexWrap="wrap" alignItems="center">
                           {isTentative ? (
                             <StatusBadge status="Tentative" palette="orange" variant="solid" />
@@ -6655,6 +6880,7 @@ export default function JobsTab({
                             the address, the View Property / View Client links
                             and the badge rows. */}
                         {instructionsBanner}
+                      {guidanceSection}
                         {/* WEATHER AT THE VERY TOP, under the instructions
                             band and nothing else. Whether the crew drives out
                             at all is settled before anything further down the
@@ -6715,8 +6941,10 @@ export default function JobsTab({
                                     }
                                   }}
                                 >
-                                  {occ.linkedOccurrence.job?.property?.displayName ?? "Job"}
-                                  {occ.linkedOccurrence.job?.property?.client?.displayName && ` — ${clientLabel(occ.linkedOccurrence.job.property.client.displayName)}`}
+                                  {jobTitleText(
+                                    occ.linkedOccurrence.job?.property?.displayName,
+                                    occ.linkedOccurrence.job?.property?.client?.displayName,
+                                  )}
                                   {parseJobTags(occ.linkedOccurrence).length > 0 && ` · ${parseJobTags(occ.linkedOccurrence).map(jobTagLabel).join(", ")}`}
                                   {occ.linkedOccurrence.jobType && ` · ${occ.linkedOccurrence.jobType}`}
                                   {occ.linkedOccurrence.startAt && ` · ${fmtDate(occ.linkedOccurrence.startAt)}`}
@@ -6738,7 +6966,7 @@ export default function JobsTab({
                               <HStack
                                 gap={1.5}
                                 align="start"
-                                mb={1}
+                                mt={2}
                                 px={2}
                                 py={1.5}
                                 bg="orange.faint"
@@ -6760,7 +6988,12 @@ export default function JobsTab({
                               </HStack>
                             )}
                             {!isTaskOrReminder && (
-                            <Box fontSize="sm">
+                            // Same mt as every other block in this stack. The
+                            // address sat flush against the access note above
+                            // it, because that note owns only a TOP gap — the
+                            // one-directional rule means each block has to
+                            // claim its own space rather than inherit one.
+                            <Box fontSize="sm" mt={2}>
                               <MapLink address={[
                                   occ.job?.property?.street1,
                                   occ.job?.property?.city,
@@ -6803,7 +7036,7 @@ export default function JobsTab({
                             )}
                           </VStack>
                         )}
-                        <HStack gap={1} flexWrap="wrap" mt={1}>
+                        <HStack gap={1} flexWrap="wrap" mt={2}>
                           {isTentative ? (
                             <StatusBadge status="Tentative" palette="orange" variant="solid" />
                           ) : occ.status !== "SCHEDULED" ? (
@@ -8448,37 +8681,6 @@ export default function JobsTab({
                       />
                     )}
 
-                    {/* GUIDANCE — directly under the photos it belongs with,
-                        and above the action rows: buttons are the last thing
-                        in a card. It used to sit below them, which put a
-                        reference you read BEFORE doing the work underneath
-                        the controls you use when you are done.
-
-                        Pulses while the job actually carries a guidance note,
-                        because the drawer is collapsed by default and a
-                        silent collapsed drawer is indistinguishable from no
-                        drawer at all. Photos alone do not pulse — they are
-                        visible in the card already. */}
-                    {((occ.propertyPhotos ?? []).length > 0 || (occ as any).guidanceNote) && (
-                      <Box
-                        w="full"
-                        mt="1"
-                        borderRadius="md"
-                        css={(occ as any).guidanceNote
-                          // Ring only. `seedlings-pulse-instruction` also
-                          // paints a background, which would fight the
-                          // drawer's own — that one is for the bare banner.
-                          ? { animation: "seedlings-pulse-yellow 2.2s ease-in-out infinite" }
-                          : undefined}
-                      >
-                        <OccurrenceInstructions
-                          occurrenceId={occ.id}
-                          count={(occ.propertyPhotos ?? []).length}
-                          guidanceNote={(occ as any).guidanceNote ?? null}
-                        />
-                      </Box>
-                    )}
-
                     {occ.linkGroupId && (() => {
                       // Find other occurrences in the same link group from the loaded items
                       const linked = items.filter((o) => o.linkGroupId === occ.linkGroupId && o.id !== occ.id);
@@ -9476,6 +9678,16 @@ export default function JobsTab({
                       count={(occ.propertyPhotos ?? []).length}
                       guidanceNote={(occ as any).guidanceNote ?? null}
                       defaultExpanded={false}
+                      pulse={!!(occ as any).guidanceNote && !guidanceOpened.has(occ.id)}
+                      onExpandedChange={(open) => {
+                        if (!open) return;
+                        setGuidanceOpened((prev) => {
+                          if (prev.has(occ.id)) return prev;
+                          const next = new Set(prev);
+                          next.add(occ.id);
+                          return next;
+                        });
+                      }}
                     />
                   </Box>
                 )}

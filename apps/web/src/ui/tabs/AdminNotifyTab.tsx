@@ -280,7 +280,6 @@ export default function AdminNotifyTab() {
   // ── Render ────────────────────────────────────────────────────
   return (
     <Box w="full">
-      <Box mb={3}>
       <TabExplainer storageKey="seedlings:notifyTab:guideOpen" title="What Notify does">
         <ExplainerText>
           Sends an ad-hoc message to one or more approved people on the team. Each send fans out
@@ -297,7 +296,6 @@ export default function AdminNotifyTab() {
           with invoices and through Promotions.
         </ExplainerText>
       </TabExplainer>
-      </Box>
       <VStack align="stretch" gap={4}>
         {/* Compose / Preview Card */}
         <Card.Root variant="outline">

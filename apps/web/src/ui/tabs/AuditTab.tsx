@@ -156,7 +156,6 @@ export default function AuditTab() {
 
   return (
     <Box>
-      <Box mb={3}>
       <TabExplainer storageKey="seedlings:auditTab:guideOpen" title="What the Audit checks">
         <ExplainerText>
           Runs a set of <Em>data-integrity checks</Em> across the app and reports what looks wrong:
@@ -170,7 +169,6 @@ export default function AuditTab() {
           you can decide. A finding is a question worth asking, not proof of a mistake.
         </ExplainerText>
       </TabExplainer>
-      </Box>
       <Text fontWeight="bold" fontSize="lg" mb={1}>System Audit</Text>
       <Text fontSize="sm" color="fg.muted" mb={4}>
         Select which checks to run. The audit scans the system for potential data issues but does not take any action.

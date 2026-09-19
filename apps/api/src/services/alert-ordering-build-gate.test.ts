@@ -48,8 +48,9 @@ const TASKS_SRC = readFileSync(
 /**
  * Dropdown label -> the Tasks label(s) that cover it, in order.
  *
- * Labels differ by design: the dropdown is a terse one-line row ("Overdue")
- * while a Tasks card has room to say what it is ("Overdue jobs"). Mapping
+ * Labels may differ by design: the dropdown is a terse one-line row while a
+ * Tasks card has room to say more. ("Job Overdue" is deliberately identical
+ * on both — it is already exact.) Mapping
  * them explicitly is better than loose matching — a renamed label should
  * fail LOUDLY here rather than quietly stop being checked.
  *
@@ -59,7 +60,8 @@ const TASKS_SRC = readFileSync(
  * another split means editing this table on purpose.
  */
 const ALERT_TO_TASKS: ReadonlyArray<readonly [string, readonly string[]]> = [
-  ["Overdue", ["Overdue jobs"]],
+  ["Job Overdue", ["Job Overdue"]],
+  ["Activities Overdue", ["Activities Overdue"]],
   ["Pending Users", ["User sign-ups awaiting approval"]],
   ["Payments to review", ["Pending payment approvals", "Outstanding client invoices"]],
   ["Workdays / mileage to review", ["Workdays to approve"]],

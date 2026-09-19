@@ -587,7 +587,6 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
 
   return (
     <Box w="full">
-      <Box mb={3}>
       <TabExplainer storageKey={`seedlings:usersTab:guideOpen:${showSuperExtras ? "super" : "admin"}`} title="What the directory shows">
         {showSuperExtras ? (
           <>
@@ -616,7 +615,6 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
           </>
         )}
       </TabExplainer>
-      </Box>
       {/* Filters */}
       <HStack mb={2} gap={2}>
         <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-subtle)" }}>
@@ -1591,7 +1589,6 @@ function WorkerTeamRoster() {
 
   return (
     <Box w="full">
-      <Box mb={3}>
       <TabExplainer storageKey="seedlings:usersTab:guideOpen:worker" title="Who is on the team">
         <ExplainerText>
           The people you work alongside — names and whether each is an employee, trainee or
@@ -1602,7 +1599,6 @@ function WorkerTeamRoster() {
           — this view is built to carry only what a crew needs to know about each other.
         </ExplainerText>
       </TabExplainer>
-      </Box>
       <HStack mb={3} gap={2}>
         <SearchWithClear value={q} onChange={setQ} inputId="worker-team-search" placeholder="Search teammates…" />
       </HStack>

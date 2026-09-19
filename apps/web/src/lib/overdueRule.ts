@@ -3,15 +3,17 @@
 // spot — pages/index.tsx (title-bar alert), ServicesTab, JobsTab.
 //
 // Rule (in plain English):
-//   Overdue = the occurrence's scheduled day has passed AND it hasn't
-//   reached a "done" status yet AND (for PENDING_PAYMENT specifically)
-//   the invoice pay link has expired.
+//   Job Overdue = the occurrence's scheduled day has passed AND it hasn't
+//   reached a "done" status yet.
 //
-// The PENDING_PAYMENT branch is the recent addition: as long as the
-// client can still click and pay, we don't call it Overdue. Once the
-// tokenized pay link ages past PAYMENT_REQUEST_TOKEN_EXPIRY_HOURS (a
-// server setting, default 72h), the client can no longer pay from
-// their end and someone has to act — that's the Overdue moment.
+// PENDING_PAYMENT used to be included, gated on the invoice pay link
+// having expired. It is now never overdue: the work was finished, and a
+// visit waiting on money is already carried by the payment alerts. The
+// rename to "Job Overdue" followed from that — this alert means a job
+// that did not get finished on time, nothing else.
+//
+// `isPaymentLinkExpired` stays exported: ServicesTab still uses it for the
+// separate awaiting-payment surfaces.
 //
 // Sibling settings:
 //   • PAYMENT_REQUEST_TOKEN_EXPIRY_HOURS — drives THIS rule
@@ -40,6 +42,13 @@ const NEVER_OVERDUE_STATUSES = new Set([
   "CANCELED",
   // Held-on-purpose — see comment above.
   "STREAM_PAUSED",
+  // A visit waiting on money is a PAYMENT problem, not late WORK. The job
+  // itself got done. It is already carried by "Payments to review" /
+  // "Awaiting client payment", and counting it here too was the last
+  // double-count in this alert. This is also why the filter is now called
+  // "Job Overdue" — it means a job that did not get finished on time, and a
+  // finished-but-unpaid visit is not that.
+  "PENDING_PAYMENT",
 ]);
 
 /** Minimal shape needed to evaluate the predicate. Every consumer of
@@ -50,6 +59,12 @@ export type OverdueCandidate = {
   workflow?: string | null;
   startAt?: string | null;
   paymentRequestTokenCreatedAt?: string | null;
+  /** Set on synthesized "next visit not scheduled" cards. NOT work — see
+   *  the exclusion in isOccurrenceOverdue. */
+  _isNextOccurrenceGhost?: boolean;
+  /** Set on rows borrowed from another system (Timeline activities,
+   *  document expirations) that are merged into the job feed. */
+  _foreignKind?: string | null;
 };
 
 /** True when a PENDING_PAYMENT occurrence's pay link has expired.
@@ -75,23 +90,91 @@ export function isPaymentLinkExpired(
  *  DST/timezone-safe. `expiryHours` should come from the loaded
  *  PAYMENT_REQUEST_TOKEN_EXPIRY_HOURS setting (or the default constant
  *  when unavailable). */
-export function isOccurrenceOverdue(
+/**
+ * WHICH KIND of overdue this row is, or null when it isn't overdue at all.
+ *
+ * Two alerts, one rule. They differ only in workflow:
+ *
+ *   "job"      — STANDARD / ONE_OFF / ESTIMATE (and legacy null). Work at a
+ *                property that did not get finished on time. This is the
+ *                "Job Overdue" alert.
+ *   "activity" — TASK / REMINDER / FOLLOWUP / EVENT. Things the business owes
+ *                itself. Late in a real sense, but a different queue and a
+ *                different fix, so a separate "Activities Overdue" alert.
+ *
+ * ANNOUNCEMENT is in neither set and so is never overdue — it falls out of
+ * the classification rather than needing its own special case.
+ *
+ * There is deliberately no exported "is it overdue at all" helper. Every
+ * caller has to say which queue it is asking about; a permissive default is
+ * how the two alerts would silently start counting each other's rows.
+ */
+export type OverdueKind = "job" | "activity";
+
+/** Legacy rows predate `workflow` and are ordinary visits. */
+const JOB_WORKFLOWS = new Set(["STANDARD", "ONE_OFF", "ESTIMATE"]);
+const ACTIVITY_WORKFLOWS = new Set(["TASK", "REMINDER", "FOLLOWUP", "EVENT"]);
+
+export function overdueKind(
+  occ: OverdueCandidate,
+  opts: { todayKey: string; expiryHours: number; nowMs?: number },
+): OverdueKind | null {
+  if (!isLate(occ, opts)) return null;
+  const w = occ.workflow ?? "";
+  if (!w || JOB_WORKFLOWS.has(w)) return "job";
+  if (ACTIVITY_WORKFLOWS.has(w)) return "activity";
+  return null;
+}
+
+/** "Job Overdue" — a visit or estimate that did not get finished on time. */
+export function isJobOverdue(
   occ: OverdueCandidate,
   opts: { todayKey: string; expiryHours: number; nowMs?: number },
 ): boolean {
-  // Announcements aren't work items — never Overdue.
-  if (occ.workflow === "ANNOUNCEMENT") return false;
+  return overdueKind(occ, opts) === "job";
+}
+
+/** "Activities Overdue" — a task, reminder, follow-up or timeline event
+ *  whose date has passed. */
+export function isActivityOverdue(
+  occ: OverdueCandidate,
+  opts: { todayKey: string; expiryHours: number; nowMs?: number },
+): boolean {
+  return overdueKind(occ, opts) === "activity";
+}
+
+/** Shared "is this row late and unfinished", before the workflow split.
+ *  Not exported — see the note on overdueKind. */
+function isLate(
+  occ: OverdueCandidate,
+  opts: { todayKey: string; expiryHours: number; nowMs?: number },
+): boolean {
+  // (ANNOUNCEMENT needs no case here — it is in neither workflow set, so
+  // overdueKind classifies it as null.)
+
+  // THINGS THAT HAVE THEIR OWN ALERT ARE NOT ALSO OVERDUE. Every exclusion
+  // below is a row that already reports itself somewhere else in the alerts
+  // dropdown; counting it here too means one situation, two numbers, and an
+  // operator who can't tell whether they have one problem or two.
+  //
+  // A next-visit ghost is the clearest case. It is not a visit that ran
+  // late — it is a placeholder for a visit that was never created, and it
+  // is already counted by "Next visits expired". It carries
+  // `status: "SCHEDULED"` and a startAt of the day it was due, which is
+  // exactly the shape this predicate otherwise calls overdue, so it has to
+  // be excluded explicitly.
+  if (occ._isNextOccurrenceGhost) return false;
+
+  // Timeline activities and document expirations, merged into the job feed
+  // from elsewhere. They carry their own "overdue N days" badge and their
+  // own "Timeline" alert.
+  if (occ._foreignKind) return false;
   if (!occ.startAt) return false;
   if (NEVER_OVERDUE_STATUSES.has(occ.status)) return false;
   const startKey = bizDateKey(occ.startAt);
   if (startKey >= opts.todayKey) return false;
-  // PENDING_PAYMENT gets the pay-link-expired grace period. All other
-  // non-done statuses (SCHEDULED, IN_PROGRESS, PAUSED,
-  // PROPOSAL_SUBMITTED) fall through with just the "startAt is in the
-  // past" rule, unchanged.
-  if (occ.status === "PENDING_PAYMENT") {
-    return isPaymentLinkExpired(occ, opts.expiryHours, opts.nowMs);
-  }
+  // Everything left (SCHEDULED, IN_PROGRESS, PAUSED, PROPOSAL_SUBMITTED)
+  // is work whose day has passed and which nobody finished.
   return true;
 }
 

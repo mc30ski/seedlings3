@@ -409,7 +409,6 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
 
   return (
     <Box w="full">
-      <Box mb={3}>
       <TabExplainer storageKey={`seedlings:clientsTab:guideOpen:${showSuperExtras ? "super" : showAdminExtras ? "admin" : "worker"}`} title="What Clients holds">
         {showSuperExtras ? (
           <>
@@ -449,7 +448,6 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
           </>
         )}
       </TabExplainer>
-      </Box>
       {forAdmin && (
         <Box mb={3}>
           <Dashboard
