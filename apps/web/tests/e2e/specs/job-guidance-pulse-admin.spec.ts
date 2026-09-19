@@ -144,3 +144,81 @@ test("nothing pulses on a finished visit", async ({ page }) => {
     await prisma.$disconnect();
   }
 });
+
+test("claim state does not change whether Guidance pulses", async ({ page }) => {
+  test.setTimeout(240_000);
+  // Guidance is "how this job is done" — it is for whoever ends up doing it,
+  // so an UNCLAIMED job with a note must pulse exactly like a claimed one.
+  // Asked because an unclaimed card looked quiet in production; it turned out
+  // that job had photos and no note. This pins the distinction so the answer
+  // stays true: claim state is irrelevant, a written note is what pulses.
+  const prisma = makePrisma();
+  try {
+    const occ = await prisma.jobOccurrence.findFirst({
+      where: { status: "SCHEDULED", workflow: "STANDARD", assignees: { none: {} } },
+      select: { id: true, guidanceNote: true },
+    });
+    expect(occ, "no unclaimed scheduled occurrence to test with").toBeTruthy();
+    const before = occ!.guidanceNote;
+
+    await gotoJobs(page, "semi");
+    const baseline = await page.locator("[data-guidance-pulse]").count();
+
+    await prisma.jobOccurrence.update({
+      where: { id: occ!.id },
+      data: { guidanceNote: "E2E_UNCLAIMED_GUIDANCE — an unclaimed job still pulses." },
+    });
+    try {
+      await gotoJobs(page, "semi");
+      const withNote = await page.locator("[data-guidance-pulse]").count();
+      console.log(`unclaimed guidance — pulsing before: ${baseline}, after: ${withNote}`);
+      expect(
+        withNote,
+        "adding a guidance note to an UNCLAIMED job did not add a pulse — claim state is leaking into the signal",
+      ).toBe(baseline + 1);
+    } finally {
+      await prisma.jobOccurrence.update({
+        where: { id: occ!.id },
+        data: { guidanceNote: before },
+      });
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+});
+
+test("an ASSIGNED job pulses its guidance — note or photos, no exceptions", async ({ page }) => {
+  test.setTimeout(240_000);
+  // THE HARD REQUIREMENT. An unclaimed job may stay quiet; the moment someone
+  // is assigned there is a person who has to know how this job is done before
+  // they arrive, and photos-only is still guidance they have not seen.
+  const prisma = makePrisma();
+  try {
+    // Every assigned, unfinished visit that has ANY guidance content must be
+    // pulsing. Derived from the data, so it keeps meaning as the seed moves.
+    const mustPulse = await prisma.jobOccurrence.findMany({
+      where: {
+        status: { notIn: FINISHED as any },
+        assignees: { some: { role: { not: "observer" } } },
+        OR: [{ guidanceNote: { not: null } }, { propertyPhotos: { some: {} } }],
+      },
+      select: { id: true },
+    });
+    expect(
+      mustPulse.length,
+      "no assigned visit carries guidance — this spec would prove nothing",
+    ).toBeGreaterThan(0);
+
+    for (const density of ["semi", "expanded"] as const) {
+      await gotoJobs(page, density);
+      const pulsing = await page.locator("[data-guidance-pulse]").count();
+      console.log(`${density}: assigned-with-guidance ${mustPulse.length}, pulsing ${pulsing}`);
+      expect(
+        pulsing,
+        `${density}: ${mustPulse.length} assigned visits carry guidance but only ${pulsing} are pulsing`,
+      ).toBeGreaterThanOrEqual(mustPulse.length);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+});
